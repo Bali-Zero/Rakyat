@@ -79,7 +79,7 @@ class TestSendPaymentEmailsCreatedByFallback:
         assert client_call.args[0] == CLIENT
         assert client_call.kwargs["cc"] == CREATOR
         team_call = listener._send_via_internal_api.await_args_list[1]
-        assert team_call.kwargs["to_email"] == CREATOR
+        assert team_call.args[0] == CREATOR
         assert team_call.kwargs["cc"] == ACCOUNTING_EMAIL
 
     @pytest.mark.asyncio
@@ -98,7 +98,7 @@ class TestSendPaymentEmailsCreatedByFallback:
         client_call = listener._send_via_internal_api.await_args_list[0]
         assert client_call.kwargs["cc"] == ASSIGNEE
         team_call = listener._send_via_internal_api.await_args_list[1]
-        assert team_call.kwargs["to_email"] == ASSIGNEE
+        assert team_call.args[0] == ASSIGNEE
 
     @pytest.mark.asyncio
     async def test_no_team_mail_without_assignee_or_creator(self, listener):

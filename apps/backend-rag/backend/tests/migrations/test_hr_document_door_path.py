@@ -1,8 +1,9 @@
 """The HR document door (STAFF_CARD.md C13) against a real Postgres. Synthetic data only.
 
 Provenance lives in the card (`profile.doc_proof.<slot>`), written in the same UPDATE as the slot.
-The test schema deliberately has NO `security_audit_log`: production does not have one either, so
-every door transaction here proves it touches only `hr_employees`."""
+The test schema deliberately has NO `security_audit_log`: the table is created by v2 migration 359,
+but the C13 door writes no audit row by design (SPEC v2.1: provenance is `doc_proof`), so every
+door transaction here proves it works without that table and touches only `hr_employees`."""
 
 from __future__ import annotations
 

@@ -49,6 +49,7 @@ INTERNAL_ROLES_ALWAYS_ALLOWED: frozenset[str] = frozenset(
         "direktur",  # reorganisation 2026-11-09
         "tax supervisor",
         "tax responsible",
+        "tax consultant",  # owner order 2026-11-15: same access as Tax Lead
         "senior consultant",
         "hr & accounting",
         "tax care",

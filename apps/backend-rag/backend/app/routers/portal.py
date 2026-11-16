@@ -15,8 +15,10 @@ All endpoints require client authentication (role='client').
 Created: 2025-12-30
 """
 
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -1159,6 +1161,47 @@ async def get_required_documents(
 # ================================================
 
 
+# Identity fields (passport number, date of birth) leave the API masked by
+# default. The full values come only from POST /profile/reveal, for the
+# client's own session, and every reveal is audit-logged without the values
+# (DAI-140). The masks mirror the profile page: passport keeps its last 3
+# characters, date of birth keeps its year.
+_IDENTITY_MASK = "\u2022" * 5
+_IDENTITY_FIELDS = ("passport_number", "date_of_birth")
+_WITA = ZoneInfo("Asia/Makassar")
+
+
+def _mask_passport_number(value: str | None) -> str | None:
+    if not value:
+        return None
+    return f"{_IDENTITY_MASK}{value[-3:]}" if len(value) > 3 else _IDENTITY_MASK
+
+
+def _coerce_date(value: date | str | None) -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _mask_identity(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a profile payload with identity fields masked."""
+    dob = _coerce_date(data.get("date_of_birth"))
+    today = datetime.now(_WITA).date()
+    masked = dict(data)
+    masked["passport_number"] = _mask_passport_number(data.get("passport_number"))
+    masked["date_of_birth"] = str(dob.year) if dob else None
+    masked["identity_masked"] = True
+    masked["birthday_today"] = bool(dob and (dob.month, dob.day) == (today.month, today.day))
+    return masked
+
+
 @router.get("/profile")
 async def get_profile(
     client: dict = Depends(get_current_client),
@@ -1213,7 +1256,7 @@ async def get_profile(
                 # client's passport/DOB/address (2026-08-20).
                 raise HTTPException(status_code=404, detail="Profile not found")
 
-            return {
+            payload = {
                 "success": True,
                 "data": {
                     "id": row["id"],
@@ -1241,6 +1284,8 @@ async def get_profile(
                     else None,
                 },
             }
+            payload["data"] = _mask_identity(payload["data"])
+            return payload
     except HTTPException:
         raise
     except Exception as e:
@@ -1249,6 +1294,54 @@ async def get_profile(
             status_code=500,
             detail="Failed to load profile",
         ) from e
+
+
+@router.post("/profile/reveal")
+async def reveal_profile_identity(
+    response: Response,
+    client: dict = Depends(get_current_client),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Full passport number + date of birth for the signed-in client only.
+
+    Fail-closed: a superuser impersonation session (``?as_client=``) is
+    refused — it is somebody else's identity, not the session owner's. The
+    reveal is written to security_audit_log with the field names only, never
+    the values.
+    """
+    if client.get("impersonating") or not client.get("client_id"):
+        raise HTTPException(status_code=403, detail="Reveal is limited to the client's own session")
+
+    response.headers["Cache-Control"] = "no-store"
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT passport_number, date_of_birth FROM clients WHERE id = $1 AND deleted_at IS NULL",
+            client["client_id"],
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        from backend.services.security.audit_service import SecurityAuditService
+
+        await SecurityAuditService().log_event(
+            conn=conn,
+            action="portal_identity_reveal",
+            user_email=client.get("email"),
+            user_id=client.get("user_id"),
+            resource_type="client",
+            resource_id=str(client["client_id"]),
+            success=True,
+            details={"fields": list(_IDENTITY_FIELDS)},
+        )
+
+    dob = _coerce_date(row["date_of_birth"])
+    return {
+        "success": True,
+        "data": {
+            "passport_number": row["passport_number"],
+            "date_of_birth": dob.isoformat() if dob else None,
+        },
+    }
 
 
 class UpdateProfileRequest(BaseModel):
@@ -1276,7 +1369,7 @@ async def update_profile(
         )
         if fields:
             await invalidate_cache("zantara:crm_clients_stats:*")
-        return {"success": True, "data": result}
+        return {"success": True, "data": _mask_identity(result)}
     except ValueError as e:
         # Client soft-deleted / gone (portal_service filters
         # `deleted_at IS NULL`) -> not-found, not a 500. Consistent

@@ -73,11 +73,25 @@ describe("dropProtectedUiBreadcrumb", () => {
 });
 
 describe("sentry.client.config", () => {
-  it("installs the protected-region filter as beforeBreadcrumb", async () => {
+  it("installs the protected-region filter, then the URL scrub, as beforeBreadcrumb", async () => {
     await import("../../sentry.client.config");
     expect(initMock).toHaveBeenCalledTimes(1);
-    expect(initMock.mock.calls[0][0].beforeBreadcrumb).toBe(
-      dropProtectedUiBreadcrumb,
-    );
+    const hook = initMock.mock.calls[0][0].beforeBreadcrumb;
+
+    // the protected-region rule still applies
+    const host = mount('<div data-sentry-block=""><button>x</button></div>');
+    expect(
+      hook({ category: "ui.click" }, click(host.querySelector("button"))),
+    ).toBeNull();
+    const crumb = { category: "ui.click", message: "nav > a" };
+    expect(hook(crumb, click(null))).toEqual(crumb);
+
+    // and a breadcrumb URL keeps its path only
+    const fetchCrumb = hook({
+      category: "fetch",
+      data: { url: "https://kita.example/api/crm/clients?search=zeta" },
+    });
+    expect(JSON.stringify(fetchCrumb)).not.toContain("zeta");
+    expect(JSON.stringify(fetchCrumb)).toContain("/api/crm/clients");
   });
 });

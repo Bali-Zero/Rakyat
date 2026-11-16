@@ -84,373 +84,385 @@ canonicalUrl: "https://balizero.com/digital-nomad/bali-digital-nomad-complete-gu
 ogImage: "/static/insights/lifestyle/bali-digital-nomad.jpg"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "38a2d98e72761154802124fcc4c3df8eb4fd6c4b6e5cc807c7fed33f50870c60"
+source_sha256: "0d80ca3e57846b988d3c68ec4390ca7a8730136b93c51e897065dc28873fba1c"
 ---
 
-# Bali per Nomadi Digital: La Guida Completa del 2026
+import {
+  DecisionTree,
+  Calculator,
+  ComparisonTable,
+  JourneyMap,
+  Checklist,
+  InfoCard,
+  GlossaryTerm,
+  ConfidenceMeter,
+  AskZantara,
+} from "@/components/insights/interactive";
 
-Bali non è solo un paradiso tropicale—è diventato uno dei destini più popolari al mondo per i lavoratori remoti. La combinazione di costo della vita accessibile, internet affidabile, infrastrutture coworking consolidate e una comunità internazionale lo rende una base d'attrazione per i nomadi digitali.
+# Bali per Nomadi Digitali: La Guida Completa 2026
 
-Ma lavorare da remoto a Bali non è così semplice come prenotare un volo e aprire il laptop. Ci sono considerazioni sui visti, aree grigie legali, sfide pratiche e fattori di stile di vita da navigare.
+Bali non è solo un paradiso tropicale: è diventata una delle destinazioni più popolari al mondo per chi lavora da remoto. La combinazione di costo della vita accessibile, internet affidabile, infrastrutture di coworking consolidate e una comunità internazionale la rende una base interessante per i nomadi digitali.
 
-Questa guida copre tutto ciò che devi sapere per far funzionare Bali come base per il tuo lavoro remoto.
+Ma lavorare da remoto da Bali non è semplice come prenotare un volo e aprire il laptop. Ci sono considerazioni sui visti, zone grigie legali, sfide pratiche e fattori di stile di vita da affrontare.
+
+Questa guida copre tutto ciò che devi sapere per rendere Bali la tua base per il lavoro da remoto.
 
 <ConfidenceMeter
-  title="Livello di Fiducia delle Informazioni"
+  title="Information Confidence"
   items={[
     {
-      label: "Informazioni sui Coworking",
+      label: "Coworking Information",
       confidence: 92,
-      source: "Ricerche dirette + recensioni utenti 2024",
+      source: "Direct research + user reviews 2024",
     },
     {
-      label: "Dati sull'Internet",
+      label: "Internet Data",
       confidence: 88,
-      source: "Test di velocità + dati dei provider",
+      source: "Speed tests + provider data",
     },
     {
-      label: "Informazioni sui Visti",
+      label: "Visa Information",
       confidence: 95,
-      source: "Regolamenti dell'immigrazione",
+      source: "Immigration regulations",
     },
     {
-      label: "Stime dei Costi",
+      label: "Cost Estimates",
       confidence: 85,
-      source: "Indagini sulla comunità + ricerche di mercato",
+      source: "Community surveys + market research",
     },
     {
-      label: "Orientamento Legale",
+      label: "Legal Guidance",
       confidence: 80,
-      source: "Regolamenti + input di professionisti",
+      source: "Regulations + practitioner input",
     },
   ]}
 />
 
 ---
 
-## La Realtà Legale: Puoi Lavorare Davvero da Bali?
+## La realtà legale: puoi davvero lavorare da Bali?
 
 Affrontiamo subito l'elefante nella stanza.
 
-<InfoCard variant="warning" title="L'Area Grigia">
-**Tecnicamente**, lavorare con un visto turistico in Indonesia è illegale. La legge richiede una licenza di lavoro (IMTA) per qualsiasi attività lavorativa svolta in Indonesia, indipendentemente dal tuo datore di lavoro.
+<InfoCard variant="warning" title="The Gray Area">
+**Tecnicamente**, lavorare con un visto turistico in Indonesia è illegale. La legge richiede un permesso di lavoro (IMTA) per qualsiasi lavoro svolto in Indonesia, indipendentemente da chi sia il tuo datore di lavoro.
 
-**Nella pratica**, l'Indonesia non ha storicamente applicato questa regola contro i lavoratori remoti che servono clienti fuori dall'Indonesia. Migliaia di nomadi digitali lavorano da Bali con visti turistici senza problemi.
+**Nella pratica**, storicamente Indonesia non ha applicato questa regola contro i lavoratori da remoto che servono clienti al di fuori di Indonesia. Migliaia di nomadi digitali lavorano da Bali con visti turistici senza problemi.
 
-**Ma**: Si tratta di un'area grigia, non di una via legale. Il rischio è reale, anche se l'applicazione della legge è rara. Questa guida presenta i fatti; tu devi valutare il tuo rischio personale.
+**Ma**: questa è una zona grigia, non un percorso legale. Il rischio è reale, anche se i controlli sono rari. Questa guida presenta i fatti; sei tu a fare la tua valutazione del rischio.
 
 </InfoCard>
 
 <DecisionTree
-  title="Trova la Tua Via Legale"
-  description="Comprendi le tue opzioni per lavorare da remoto a Bali"
+  title="Find Your Legal Pathway"
+  description="Understand your options for working remotely from Bali"
   nodes={[
     {
       id: "start",
-      question: "Che tipo di lavoro remoto svolgi?",
+      question: "What type of remote work do you do?",
       options: [
         {
-          label: "Dipendente (lavoro remoto per azienda estera)",
+          label: "Employee (remote for foreign company)",
           nextNodeId: "employee-length",
         },
-        { label: "Freelancer/contrattista", nextNodeId: "freelance-clients" },
-        { label: "Proprietario di business online", nextNodeId: "business-size" },
-        { label: "Creatore di contenuti/influencer", nextNodeId: "creator-income" },
+        { label: "Freelancer/contractor", nextNodeId: "freelance-clients" },
+        { label: "Own online business", nextNodeId: "business-size" },
+        { label: "Content creator/influencer", nextNodeId: "creator-income" },
       ],
     },
     {
       id: "employee-length",
-      question: "Per quanto tempo intendi restare a Bali?",
+      question: "How long do you plan to stay in Bali?",
       options: [
         {
-          label: "Visita breve (1-2 mesi)",
+          label: "Short visit (1-2 months)",
           nextNodeId: "result-short-tourist",
         },
         {
-          label: "Soggiorno prolungato (3-6 mesi)",
+          label: "Extended stay (3-6 months)",
           nextNodeId: "result-extended-stay",
         },
-        { label: "Lungo termine (6+ mesi/anno)", nextNodeId: "employee-assets" },
+        { label: "Long-term (6+ months/year)", nextNodeId: "employee-assets" },
       ],
     },
     {
       id: "employee-assets",
-      question: "Hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.000 USD?",
+      question: "Do you have a USD 130,000 deposit in your own name at a state-owned (BUMN) Indonesian bank, or a USD 1,000,000 completed strata unit?",
       options: [
-        { label: "Sì", nextNodeId: "result-second-home" },
+        { label: "Yes", nextNodeId: "result-second-home" },
         { label: "No", nextNodeId: "result-rotation-strategy" },
       ],
     },
     {
       id: "freelance-clients",
-      question: "Dove sono basati i tuoi clienti?",
+      question: "Where are your clients based?",
       options: [
-        { label: "100% fuori dall'Indonesia", nextNodeId: "freelance-length" },
-        { label: "Alcuni clienti indonesiani", nextNodeId: "result-need-pt" },
+        { label: "100% outside Indonesia", nextNodeId: "freelance-length" },
+        { label: "Some Indonesian clients", nextNodeId: "result-need-pt" },
         {
-          label: "Soprattutto clienti indonesiani",
+          label: "Mostly Indonesian clients",
           nextNodeId: "result-need-pt-serious",
         },
       ],
     },
     {
       id: "freelance-length",
-      question: "Per quanto tempo intendi restare?",
+      question: "How long do you plan to stay?",
       options: [
         {
-          label: "Soggiorni brevi (rotazioni dei visti)",
+          label: "Short stays (visa runs)",
           nextNodeId: "result-freelance-tourist",
         },
-        { label: "Base a lungo termine", nextNodeId: "freelance-assets" },
+        { label: "Long-term base", nextNodeId: "freelance-assets" },
       ],
     },
     {
       id: "freelance-assets",
-      question: "Hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.000 USD?",
+      question: "Do you have a USD 130,000 deposit in your own name at a state-owned (BUMN) Indonesian bank, or a USD 1,000,000 completed strata unit?",
       options: [
-        { label: "Sì", nextNodeId: "result-second-home-freelance" },
+        { label: "Yes", nextNodeId: "result-second-home-freelance" },
         {
-          label: "No, ma vuoi uno status legittimo",
+          label: "No, but want legitimate status",
           nextNodeId: "result-investor-kitas",
         },
         {
-          label: "No, accetto l'area grigia",
+          label: "No, will accept gray area",
           nextNodeId: "result-rotation-strategy",
         },
       ],
     },
     {
       id: "business-size",
-      question: "Qual è il fatturato/scala del tuo business?",
+      question: "What's your business revenue/scale?",
       options: [
-        { label: "Piccolo (< 50k USD/anno)", nextNodeId: "result-small-business" },
-        { label: "Medio (50k-200k USD/anno)", nextNodeId: "result-consider-pt" },
-        { label: "Grande (200k+ USD/anno)", nextNodeId: "result-pt-recommended" },
+        { label: "Small (< $50k/year)", nextNodeId: "result-small-business" },
+        { label: "Medium ($50k-200k/year)", nextNodeId: "result-consider-pt" },
+        { label: "Large ($200k+/year)", nextNodeId: "result-pt-recommended" },
       ],
     },
     {
       id: "creator-income",
-      question: "Da dove proviene il tuo reddito?",
+      question: "Where does your income come from?",
       options: [
         {
-          label: "Piattaforme internazionali (YouTube, ecc.)",
+          label: "International platforms (YouTube, etc.)",
           nextNodeId: "result-creator-international",
         },
         {
-          label: "Marche/sponsor indonesiani",
+          label: "Indonesian brands/sponsors",
           nextNodeId: "result-creator-local",
         },
-        { label: "Misto di entrambi", nextNodeId: "result-creator-mixed" },
+        { label: "Mix of both", nextNodeId: "result-creator-mixed" },
       ],
     },
     {
       id: "result-short-tourist",
       isResult: true,
-      title: "VOA / C1 Turismo",
-      description: "Lavoro remoto a breve termine",
+      title: "VOA / C1 Tourism",
+      description: "Short-term remote work",
       recommendation:
-        "Per visite brevi, la maggior parte dei nomadi digitali usa il VOA (30+30 giorni) o il C1 Turismo (60 giorni). Tecnicamente area grigia ma comune. Basso rischio per soggiorni brevi.",
+        "For short visits, most digital nomads use VOA (30+30 days) or C1 Tourism (60 days). Technically gray area but common practice. Low risk for short stays.",
       nextSteps: [
-        "VOA fino a 60 giorni",
-        "C1 Turismo per 60 giorni",
-        "Non pubblicizzare di lavorare localmente",
-        "Mantieni la documentazione sul reddito per il paese d'origine",
+        "VOA for up to 60 days",
+        "C1 Tourism for 60 days",
+        "Don't advertise working locally",
+        "Keep income documentation for home country",
       ],
     },
     {
       id: "result-extended-stay",
       isResult: true,
-      title: "D12 Business Investigation o E33G",
-      description: "Opzione di soggiorno prolungato",
+      title: "D12 Business Investigation or E33G",
+      description: "Extended stay option",
       recommendation:
-        "Il visto D12 permette 180 giorni per ingresso per indagini commerciali. Per un lungo termine, considera l'E33G Digital Nomad KITAS (1 anno, rinnovabile fino a 6 anni totali) se guadagni 60.000 USD+/anno dall'estero.",
+        "D12 visa allows 180 days per entry for business investigation. For long-term, consider E33G Digital Nomad KITAS (1 year, renewable up to 6 years total) if you earn USD 60,000+/year from overseas.",
       nextSteps: [
-        "D12 per soggiorni commerciali da 180 giorni",
-        "E33G per un KITAS nomade digitale da 1 anno, rinnovabile fino a 6 anni",
-        "Avere pronti i documenti di prova del reddito",
-        "Considera un agente per il visto per comodità",
+        "D12 for 180-day business stays",
+        "E33G for a 1-year digital nomad KITAS, renewable up to 6 years",
+        "Have proof of income ready",
+        "Consider visa agent for convenience",
       ],
     },
     {
       id: "result-second-home",
       isResult: true,
-      title: "Visto Second Home",
-      description: "Soggiorno legittimo di 5 anni, rinnovabile fino a 10 anni cumulativi",
+      title: "Second Home Visa",
+      description: "5-year legitimate stay, renewable to 10 years cumulative",
       recommendation:
-        "Se hai un deposito di 130.000 USD a tuo nome presso una banca statale (BUMN) indonesiana o un'unità stratale completata da 1.000.000 USD, il Visto Second Home offre una residenza legittima iniziale di 5 anni, rinnovabile fino a 10 anni cumulativi. Non richiede licenza di lavoro ma ti permette di gestire affari esteri.",
+        "If you have a USD 130,000 deposit in your own name at a state-owned (BUMN) Indonesian bank, or a USD 1,000,000 completed strata unit, the Second Home Visa offers a 5-year first-grant legitimate residency, renewable up to 10 years cumulative. No work permit but allows you to manage overseas affairs.",
       nextSteps: [
-        "Verifica i requisiti patrimoniali",
-        "Richiedi tramite l'Immigrazione",
-        "Diritti di residenza a lungo termine",
-        "Via legale più chiara",
+        "Verify asset requirements",
+        "Apply through Immigration",
+        "Long-term residence rights",
+        "Clearest legal pathway",
       ],
     },
     {
       id: "result-rotation-strategy",
       isResult: true,
-      title: "Strategia di Rotazione dei Visti",
-      description: "Comune ma non ideale",
+      title: "Visa Rotation Strategy",
+      description: "Common but not ideal",
       recommendation:
-        "Molti nomadi a lungo termine ruotano tra il VOA con uscite verso paesi vicini. Funziona ma non è una vera soluzione—considera l'E33G Digital Nomad KITAS per uno status legale.",
+        "Many long-term nomads rotate between VOA with exits to neighboring countries. This works but is not a real solution—consider E33G Digital Nomad KITAS for legal status.",
       nextSteps: [
-        "Pianisci uscite regolari",
-        "Mantieni fondi di viaggio disponibili",
-        "Monitora i cambiamenti delle politiche",
-        "Considera alternative a lungo termine",
+        "Plan regular exits",
+        "Keep travel funds available",
+        "Monitor policy changes",
+        "Consider long-term alternatives",
       ],
     },
     {
       id: "result-freelance-tourist",
       isResult: true,
-      title: "Freelancer con Visto Turistico",
-      description: "Pratica comune",
+      title: "Freelancer on Tourist Visa",
+      description: "Common practice",
       recommendation:
-        "I freelancer con clienti al 100% internazionali lavorano comunemente da Bali con visti turistici. Area grigia ma diffusa. Non creare flussi di reddito indonesiani.",
+        "Freelancers with 100% international clients commonly work from Bali on tourist visas. Gray area but widespread. Don't create Indonesian income streams.",
       nextSteps: [
-        "Usa il visto appropriato in base alla durata",
-        "Tutti i clienti fuori dall'Indonesia",
-        "Conformità fiscale nel paese d'origine",
-        "Mantieni un profilo basso",
+        "Use appropriate visa for length",
+        "All clients outside Indonesia",
+        "Home country tax compliance",
+        "Keep low profile",
       ],
     },
     {
       id: "result-second-home-freelance",
       isResult: true,
-      title: "Visto Second Home + Freelancing",
-      description: "Opzione a lungo termine legittima",
+      title: "Second Home Visa + Freelancing",
+      description: "Legitimate long-term option",
       recommendation:
-        "Il Visto Second Home con lavoro freelance internazionale è l'opzione più pulita. Hai una residenza legittima; il tuo lavoro non tocca l'Indonesia. Paga le tasse nel paese d'origine.",
+        "Second Home Visa with international freelance work is the cleanest option. You have legitimate residence; your work doesn't touch Indonesia. Pay taxes at home.",
       nextSteps: [
-        "Richiedi il Visto Second Home",
-        "Mantieni lo status fiscale del paese d'origine",
-        "Mantieni il reddito indonesiano a zero",
-        "Stabilità a lungo termine",
+        "Apply for Second Home Visa",
+        "Maintain home country tax status",
+        "Keep Indonesian income at zero",
+        "Long-term stability",
       ],
     },
     {
       id: "result-investor-kitas",
       isResult: true,
-      title: "Investor KITAS tramite PT PMA",
-      description: "Piena legittimità, costo più elevato",
+      title: "Investor KITAS via PT PMA",
+      description: "Full legitimacy, higher cost",
       recommendation:
-        "Stabilire una PT PMA (investimento di 10 miliardi IDR) ti dà diritti di lavoro legittimi tramite l'Investor KITAS. Costoso ma pienamente legale. Ha senso se sei impegnato a lungo termine.",
+        "Establishing PT PMA (IDR 10B investment) gives you legitimate work rights through Investor KITAS. Expensive but fully legal. Makes sense if you're committed long-term.",
       nextSteps: [
-        "Stabilimento PT PMA",
-        "Impegno di investimento di 10 miliardi IDR",
-        "Richiesta Investor KITAS",
-        "Pieni diritti di lavoro in Indonesia",
+        "PT PMA establishment",
+        "IDR 10B investment commitment",
+        "Investor KITAS application",
+        "Full work rights in Indonesia",
       ],
     },
     {
       id: "result-need-pt",
       isResult: true,
-      title: "PT PMA Consigliata",
-      description: "Clienti indonesiani richiedono legalità",
+      title: "PT PMA Recommended",
+      description: "Indonesian clients require legality",
       recommendation:
-        "Se hai clienti indonesiani, hai bisogno di una PT PMA per emettere loro fatture legalmente. Lavorare senza questo crea esposizione legale sia per te che per i tuoi clienti.",
+        "If you have Indonesian clients, you need PT PMA to invoice them legally. Working without this creates legal exposure for both you and your clients.",
       nextSteps: [
-        "Stabilisci una PT PMA",
-        "Ottieni codici KBLI appropriati",
-        "Fattura tramite azienda",
-        "Piena conformità fiscale",
+        "Establish PT PMA",
+        "Get proper KBLI codes",
+        "Invoice through company",
+        "Full tax compliance",
       ],
     },
     {
       id: "result-need-pt-serious",
       isResult: true,
-      title: "PT PMA Necessaria",
-      description: "Il mercato indonesiano richiede struttura",
+      title: "PT PMA Required",
+      description: "Indonesian market requires structure",
       recommendation:
-        "Con clienti principalmente indonesiani, hai assolutamente bisogno di una PT PMA. Operare senza è evasione fiscale e lavoro illegale—rischio molto più alto del lavoro remoto internazionale.",
+        "With mostly Indonesian clients, you absolutely need PT PMA. Operating without it is tax evasion and illegal work—much higher risk than international remote work.",
       nextSteps: [
-        "Priorità: stabilisci PT PMA",
-        "Registrati per le tasse indonesiane",
-        "Configurazione fatturazione appropriata",
-        "Consulta un professionista fiscale",
+        "Priority: establish PT PMA",
+        "Register for Indonesian taxes",
+        "Proper invoicing setup",
+        "Consult tax professional",
       ],
     },
     {
       id: "result-small-business",
       isResult: true,
-      title: "Piccolo Business Online",
-      description: "Simile al freelancing",
+      title: "Small Online Business",
+      description: "Similar to freelancing",
       recommendation:
-        "I piccoli business online che servono mercati internazionali sono trattati similmente al freelancing. Area grigia con visto turistico, ma rischio inferiore senza presenza indonesiana.",
+        "Small online businesses serving international markets are treated similarly to freelancing. Gray area on tourist visa, but lower risk with no Indonesian presence.",
       nextSteps: [
-        "Visto turistico o sociale",
-        "Solo clienti internazionali",
-        "Tasse nel paese d'origine",
-        "Considera una via di crescita",
+        "Tourist or social visa",
+        "International clients only",
+        "Home country taxes",
+        "Consider growth path",
       ],
     },
     {
       id: "result-consider-pt",
       isResult: true,
-      title: "Valuta PT PMA",
-      description: "Business in crescita necessita struttura",
+      title: "Consider PT PMA",
+      description: "Growing business needs structure",
       recommendation:
-        "A 50k-200k USD di fatturato, sei oltre il nomadismo occasionale. La PT PMA dà legittimità, capacità di assumere localmente e struttura aziendale appropriata. L'investimento ha senso.",
+        "At $50k-200k revenue, you're beyond casual nomading. PT PMA gives legitimacy, ability to hire locally, and proper business structure. The investment makes sense.",
       nextSteps: [
-        "Valuta i benefici della PT PMA",
-        "Considera il timing",
-        "Pianisci la transizione",
-        "Consulenza professionale",
+        "Evaluate PT PMA benefits",
+        "Consider timing",
+        "Plan transition",
+        "Professional advice",
       ],
     },
     {
       id: "result-pt-recommended",
       isResult: true,
-      title: "PT PMA Fortemente Consigliata",
-      description: "Business serio necessita struttura seria",
+      title: "PT PMA Strongly Recommended",
+      description: "Serious business needs serious structure",
       recommendation:
-        "A 200k+ USD di fatturato, operare informalmente crea rischi inutili. La PT PMA ti dà standing legale, capacità di scalare con un team locale e contabilità appropriata.",
+        "At $200k+ revenue, operating informally creates unnecessary risk. PT PMA gives you legal standing, ability to scale with local team, and proper accounting.",
       nextSteps: [
-        "Stabilisci PT PMA",
-        "Assumi correttamente",
-        "Piena conformità",
-        "Infrastruttura di crescita",
+        "Establish PT PMA",
+        "Hire properly",
+        "Full compliance",
+        "Growth infrastructure",
       ],
     },
     {
       id: "result-creator-international",
       isResult: true,
-      title: "Creatore Internazionale",
-      description: "Reddito da piattaforma è semplice",
+      title: "International Creator",
+      description: "Platform income is straightforward",
       recommendation:
-        "Il reddito da YouTube, Patreon, ecc. verso account internazionali è simile al freelancing. Lavora da Bali, ricevi pagamenti internazionalmente, paga le tasse nel paese d'origine.",
+        "Income from YouTube, Patreon, etc. to international accounts is similar to freelancing. Work from Bali, get paid internationally, pay taxes at home.",
       nextSteps: [
-        "Visto appropriato per la durata del soggiorno",
-        "Account bancari internazionali",
-        "Conformità fiscale nel paese d'origine",
-        "Non accettare sponsorizzazioni indonesiane",
+        "Appropriate visa for stay length",
+        "International bank accounts",
+        "Home country tax compliance",
+        "Don't take Indonesian sponsorships",
       ],
     },
     {
       id: "result-creator-local",
       isResult: true,
-      title: "Creatore di Marchi Locali",
-      description: "Reddito indonesiano necessita struttura",
+      title: "Local Brand Creator",
+      description: "Indonesian income needs structure",
       recommendation:
-        "Se le marche indonesiane ti pagano, stai guadagnando reddito indonesiano. Questo tecnicamente richiede licenza di lavoro e registrazione fiscale locale. Valuta la PT PMA.",
+        "If Indonesian brands pay you, you're earning Indonesian income. This technically requires work permit and local tax registration. Consider PT PMA.",
       nextSteps: [
-        "Valuta PT PMA",
-        "Fatturazione appropriata",
-        "Conformità fiscale",
-        "Considerazione per licenza di lavoro",
+        "Evaluate PT PMA",
+        "Proper invoicing",
+        "Tax compliance",
+        "Work permit consideration",
       ],
     },
     {
       id: "result-creator-mixed",
       isResult: true,
-      title: "Creatore con Reddito Misto",
-      description: "Separa i flussi attentamente",
+      title: "Mixed Income Creator",
+      description: "Separate streams carefully",
       recommendation:
-        "Mantieni separati il reddito internazionale e indonesiano. Reddito internazionale = trattamento freelancer. Reddito indonesiano = necessita struttura appropriata.",
+        "Keep international and Indonesian income separate. International income = freelancer treatment. Indonesian income = needs proper structure.",
       nextSteps: [
-        "Separa i flussi di reddito",
-        "Internazionale tramite personale",
-        "Indonesiano tramite azienda",
-        "Consulenza fiscale professionale",
+        "Separate income streams",
+        "International via personal",
+        "Indonesian via company",
+        "Professional tax advice",
       ],
     },
   ]}
@@ -458,111 +470,111 @@ Affrontiamo subito l'elefante nella stanza.
 
 ---
 
-## Opzioni Viste per Nomadi Digitali
+## Opzioni di visto per nomadi digitali
 
 <ComparisonTable
-  title="Confronto dei Visti per Lavoratori Remoti"
-  description="Confronta le opzioni di visto per lavorare da remoto da Bali"
+  title="Visa Comparison for Remote Workers"
+  description="Compare visa options for working remotely from Bali"
   items={[
     {
       name: "VOA",
-      subtitle: "Vista all'Arrivo",
+      subtitle: "Visa on Arrival",
       values: {
-        "Durata Iniziale": "30 giorni",
-        Estensioni: "1x 30 giorni",
-        "Soggiorno Massimo": "60 giorni",
-        Costo: "~70 USD totali",
-        "Lavoro Permessato": "No (area grigia)",
-        "Ideale Per": "Visite brevi",
-        Sforzo: "Più facile",
+        "Initial Duration": "30 days",
+        Extensions: "1x 30 days",
+        "Max Stay": "60 days",
+        Cost: "~$70 total",
+        "Work Permitted": "No (gray area)",
+        "Best For": "Short visits",
+        Effort: "Easiest",
       },
     },
     {
       name: "D12",
-      subtitle: "Indagine Commerciale",
+      subtitle: "Business Investigation",
       values: {
-        "Durata Iniziale": "180 giorni",
-        Estensioni: "Multipla ingresso",
-        "Soggiorno Massimo": "180 giorni/ingresso",
-        Costo: "~400-600 USD totali",
-        "Lavoro Permessato": "Attività commerciali",
-        "Ideale Per": "Soggiorni prolungati",
-        Sforzo: "Moderato",
+        "Initial Duration": "180 days",
+        Extensions: "Multiple entry",
+        "Max Stay": "180 days/entry",
+        Cost: "~$400-600 total",
+        "Work Permitted": "Business activities",
+        "Best For": "Extended stays",
+        Effort: "Moderate",
       },
       highlight: true,
     },
     {
       name: "Second Home",
-      subtitle: "Residenza a lungo termine",
+      subtitle: "Long-term residence",
       values: {
-        "Durata Iniziale": "5 anni",
-        Estensioni: "Rinnovabile",
-        "Soggiorno Massimo": "10 anni (cumulativo)",
-        Costo: "~1.500 USD + requisiti banca.",
-        "Lavoro Permessato": "Lavoro estero OK",
-        "Ideale Per": "Lungo termine, benestanti",
-        Sforzo: "Moderato",
+        "Initial Duration": "5 years",
+        Extensions: "Renewable",
+        "Max Stay": "10 years (cumulative)",
+        Cost: "Visa fee + proof of funds",
+        "Work Permitted": "Overseas work OK",
+        "Best For": "Long-term, wealthy",
+        Effort: "Moderate",
       },
     },
     {
       name: "Investor KITAS",
-      subtitle: "Tramite PT PMA",
+      subtitle: "Via PT PMA",
       values: {
-        "Durata Iniziale": "1-2 anni",
-        Estensioni: "Rinnovabile",
-        "Soggiorno Massimo": "Indefinito",
-        Costo: "50k+ USD (configurazione azienda)",
-        "Lavoro Permessato": "Sì (completo)",
-        "Ideale Per": "Business serio",
-        Sforzo: "Significativo",
+        "Initial Duration": "1-2 years",
+        Extensions: "Renewable",
+        "Max Stay": "Indefinite",
+        Cost: "$50k+ (company setup)",
+        "Work Permitted": "Yes (full)",
+        "Best For": "Serious business",
+        Effort: "Significant",
       },
     },
   ]}
   categories={[
     {
       id: "duration",
-      label: "Durata",
-      fields: ["Durata Iniziale", "Estensioni", "Soggiorno Massimo"],
+      label: "Duration",
+      fields: ["Initial Duration", "Extensions", "Max Stay"],
     },
     {
       id: "practical",
-      label: "Pratico",
-      fields: ["Costo", "Lavoro Permessato", "Sforzo"],
+      label: "Practical",
+      fields: ["Cost", "Work Permitted", "Effort"],
     },
   ]}
 />
 
-<InfoCard variant="tip" title="E33G: Il KITAS Nomade Digitale">
-Il KITAS Digital Nomad E33G è la migliore opzione legale per i lavoratori remoti:
-- Validità di 1 anno con multipli ingressi, rinnovabile fino a 6 anni totali
-- Richiede reddito di 60.000 USD/anno dall'estero
-- Nessun lavoro locale permesso, ma il lavoro remoto è pienamente legale
-- Il processo richiede 2-3 settimane tramite agente
+<InfoCard variant="tip" title="E33G: The Digital Nomad KITAS">
+E33G Digital Nomad KITAS è la migliore opzione legale per i lavoratori da remoto:
+- Validità di 1 anno con ingressi multipli, rinnovabile fino a un totale di 6 anni
+- Richiede un reddito di USD 60.000/anno dall'estero
+- Nessun lavoro locale consentito, ma il lavoro da remoto è pienamente legale
+- La procedura richiede 2-3 settimane tramite un agente
 
-Per soggiorni più brevi, usa VOA (60 giorni) o D12 Business Investigation (180 giorni).
+Per soggiorni più brevi, usa VOA (30 giorni, estendibile una volta fino a 60 giorni totali) o D12 Business Investigation (180 giorni).
 
 </InfoCard>
 
 ---
 
-## Spazi Coworking
+## Spazi di coworking
 
-La scena dei coworking di Bali è matura e diversificata. Ecco le migliori opzioni:
+La scena del coworking di Bali è matura e variegata. Ecco le migliori opzioni:
 
 <ComparisonTable
-  title="Migliori Spazi Coworking a Bali"
-  description="Confronta i migliori luoghi per lavorare da remoto"
+  title="Top Coworking Spaces in Bali"
+  description="Compare the best places to work remotely"
   items={[
     {
       name: "Dojo Bali",
       subtitle: "Canggu",
       values: {
-        "Day Pass": "250.000 IDR",
-        Mensile: "3.500.000 IDR",
+        "Day Pass": "IDR 250,000",
+        Monthly: "IDR 3,500,000",
         Internet: "100+ Mbps",
-        Vibe: "Sociale, energetico",
-        "Ideale Per": "Networking, comunità",
-        Extra: "Piscina, eventi, ristorante",
+        Vibe: "Social, energetic",
+        "Best For": "Networking, community",
+        Extras: "Pool, events, restaurant",
       },
       highlight: true,
     },
@@ -570,135 +582,135 @@ La scena dei coworking di Bali è matura e diversificata. Ecco le migliori opzio
       name: "Outpost",
       subtitle: "Canggu & Ubud",
       values: {
-        "Day Pass": "300.000 IDR",
-        Mensile: "4.000.000 IDR",
+        "Day Pass": "IDR 300,000",
+        Monthly: "IDR 4,000,000",
         Internet: "100+ Mbps",
-        Vibe: "Professionale, focalizzato",
-        "Ideale Per": "Lavoro serio",
-        Extra: "Sale riunioni, cabine Skype",
+        Vibe: "Professional, focused",
+        "Best For": "Serious work",
+        Extras: "Meeting rooms, Skype booths",
       },
     },
     {
       name: "Hubud",
       subtitle: "Ubud",
       values: {
-        "Day Pass": "250.000 IDR",
-        Mensile: "3.200.000 IDR",
+        "Day Pass": "IDR 250,000",
+        Monthly: "IDR 3,200,000",
         Internet: "50+ Mbps",
-        Vibe: "Bambù, consapevole dell'eco",
-        "Ideale Per": "Benessere + lavoro",
-        Extra: "Yoga, eventi, caffè",
+        Vibe: "Bamboo, eco-conscious",
+        "Best For": "Wellness + work",
+        Extras: "Yoga, events, cafe",
       },
     },
     {
       name: "Tropical Nomad",
       subtitle: "Canggu",
       values: {
-        "Day Pass": "200.000 IDR",
-        Mensile: "2.800.000 IDR",
+        "Day Pass": "IDR 200,000",
+        Monthly: "IDR 2,800,000",
         Internet: "100+ Mbps",
-        Vibe: "Relassato, accessibile",
-        "Ideale Per": "Budget-conscious",
-        Extra: "Accesso 24/7, cucina",
+        Vibe: "Relaxed, affordable",
+        "Best For": "Budget-conscious",
+        Extras: "24/7 access, kitchen",
       },
     },
     {
       name: "BWork",
       subtitle: "Sanur",
       values: {
-        "Day Pass": "180.000 IDR",
-        Mensile: "2.500.000 IDR",
+        "Day Pass": "IDR 180,000",
+        Monthly: "IDR 2,500,000",
         Internet: "75+ Mbps",
-        Vibe: "Calmo, professionale",
-        "Ideale Per": "Lavoro focalizzato, famiglie",
-        Extra: "Sale riunioni, parcheggio",
+        Vibe: "Quiet, professional",
+        "Best For": "Focused work, families",
+        Extras: "Meeting rooms, parking",
       },
     },
     {
       name: "Livit",
       subtitle: "Sanur",
       values: {
-        "Day Pass": "200.000 IDR",
-        Mensile: "3.000.000 IDR",
+        "Day Pass": "IDR 200,000",
+        Monthly: "IDR 3,000,000",
         Internet: "100+ Mbps",
         Vibe: "Coliving + coworking",
-        "Ideale Per": "Vita tutto-in-uno",
-        Extra: "Pacchetti alloggio",
+        "Best For": "All-in-one living",
+        Extras: "Accommodation packages",
       },
     },
   ]}
   categories={[
-    { id: "pricing", label: "Prezzi", fields: ["Day Pass", "Mensile"] },
+    { id: "pricing", label: "Pricing", fields: ["Day Pass", "Monthly"] },
     {
       id: "features",
-      label: "Caratteristiche",
-      fields: ["Internet", "Vibe", "Ideale Per", "Extra"],
+      label: "Features",
+      fields: ["Internet", "Vibe", "Best For", "Extras"],
     },
   ]}
 />
 
-<InfoCard variant="note" title="Oltre il Coworking">
+<InfoCard variant="note" title="Beyond Coworking">
 Molti nomadi digitali lavorano da:
-- **Caffè**: Canggu e Ubud hanno eccellenti caffè per lavorare (Zin Cafe, Sensorium, Milk & Madu)
-- **Casa/villa**: Con internet buono, molti lavorano dalla loro sistemazione
-- **Club beach**: Alcuni hanno WiFi (La Brisa, The Lawn) per lavoro informale
+- **Caffè**: Canggu e Ubud hanno ottimi caffè dove lavorare (Zin Cafe, Sensorium, Milk & Madu)
+- **Casa/villa**: Con una buona connessione internet, molti lavorano dal proprio alloggio
+- **Beach club**: Alcuni dispongono di WiFi (La Brisa, The Lawn) per lavorare in modo informale
 
-Il coworking ha senso per: internet affidabile, comunità, sale riunioni e separazione vita-lavoro.
+Il coworking è utile per: internet affidabile, comunità, sale riunioni e separazione tra lavoro e vita privata.
 
 </InfoCard>
 
 ---
 
-## Realtà dell'Internet
+## La realtà di internet
 
-<InfoCard variant="important" title="L'Internet è Buono (Di Solito)">
-L'internet di Bali si è migliorato drasticamente. Nelle aree popolari, puoi aspettarti:
+<InfoCard variant="important" title="Internet Is Good (Usually)">
+La connessione internet a Bali è migliorata notevolmente. Nelle aree più popolari, puoi aspettarti:
 - **Connessioni in fibra**: 50-200 Mbps disponibili nella maggior parte delle aree sviluppate
 - **4G/LTE**: Buona copertura, utile come backup
-- **Coworking**: Generalmente 100+ Mbps, connessioni ridondanti
+- **Coworking**: Generalmente 100+ Mbps, con connessioni ridondanti
 
-Ma non è perfetto:
+Ma non è perfetta:
 
-- Interruzioni accadono (pioggia, problemi infrastrutturali)
-- Alcune aree hanno ancora copertura scarsa
-- Sempre avere un backup (hotspot telefonico)
+- Si verificano interruzioni (pioggia, problemi infrastrutturali)
+- Alcune aree hanno ancora scarsa copertura
+- Tieni sempre un backup disponibile (hotspot del telefono)
 </InfoCard>
 
-### Opzioni Internet
+### Opzioni internet
 
-| Opzione                         | Velocità       | Costo/Mese     | Affidabilità | Note                           |
-| ------------------------------ | ----------- | ------------ | ----------- | ------------------------------- |
-| **Fibra (Biznet, MyRepublic)** | 50-200 Mbps | 400.000-900.000 IDR | Buona        | Richiede indirizzo, contratto 1 anno  |
-| **IndiHome**                   | 20-100 Mbps | 300.000-600.000 IDR | Variabile    | Provider governativo, diffuso   |
-| **Hotspot 4G**                 | 10-50 Mbps  | 100.000-300.000 IDR | Buona        | Telkomsel/XL, buon backup       |
-| **Coworking**                  | 100+ Mbps   | Incluso       | Eccellente   | Opzione più affidabile          |
-| **Starlink**                   | 50-150 Mbps | ~120 USD/mese     | Eccellente   | Nuova opzione, richiede registrazione  |
+| Opzione                        | Velocità    | Costo/mese   | Affidabilità | Note                            |
+| ------------------------------ | ----------- | ------------ | ------------ | ------------------------------- |
+| **Fibra (Biznet, MyRepublic)** | 50-200 Mbps | IDR 400-900k | Buona        | Richiede indirizzo, contratto 1 anno |
+| **IndiHome**                   | 20-100 Mbps | IDR 300-600k | Variabile    | Provider governativo, diffuso   |
+| **Hotspot 4G**                 | 10-50 Mbps  | IDR 100-300k | Buona        | Telkomsel/XL, buon backup       |
+| **Coworking**                  | 100+ Mbps   | Incluso      | Eccellente   | Opzione più affidabile          |
+| **Starlink**                   | 50-150 Mbps | ~$120/mese   | Eccellente   | Nuova opzione, richiede registrazione |
 
-### Consigli sull'Internet
+### Consigli per internet
 
-1. **Testa prima di impegnarti** in un alloggio a lungo termine
-2. **Avere backup mobile** (Telkomsel ha la migliore copertura)
-3. **Usa VPN** per accedere a siti bloccati
-4. **Coworking** per chiamate importanti/scadenze
-5. **Starlink** se sei in un'area remota
+1. **Verifica prima di impegnarti** in un alloggio a lungo termine
+2. **Tieni un backup mobile** (Telkomsel ha la copertura migliore)
+3. **Usa una VPN** per accedere ai siti bloccati
+4. **Coworking** per chiamate o scadenze importanti
+5. **Starlink** se ti trovi in un'area remota
 
 ---
 
-## Calcolatore di Budget Mensile
+## Calcolatore del budget mensile
 
 <Calculator
-  title="Budget Mensile Nomade Digitale"
-  description="Stima i tuoi costi come lavoratore remoto a Bali"
+  title="Digital Nomad Monthly Budget"
+  description="Estimate your costs as a remote worker in Bali"
   fields={[
     {
       id: "accommodation",
-      label: "Tipo di Alloggio",
+      label: "Accommodation Style",
       type: "select",
       options: [
-        { value: "room", label: "Camera privata (casa condivisa)" },
-        { value: "studio", label: "Studio/appartamento 1 camera" },
-        { value: "villa-shared", label: "Camera villa (coliving)" },
-        { value: "villa-private", label: "Villa privata" }
+        { value: "room", label: "Private room (shared house)" },
+        { value: "studio", label: "Studio/1BR apartment" },
+        { value: "villa-shared", label: "Villa room (coliving)" },
+        { value: "villa-private", label: "Private villa" }
       ],
       defaultValue: "studio"
     },
@@ -710,58 +722,58 @@ Ma non è perfetto:
         { value: "canggu", label: "Canggu" },
         { value: "ubud", label: "Ubud" },
         { value: "sanur", label: "Sanur" },
-        { value: "other", label: "Altro/Aree economiche" }
+        { value: "other", label: "Other/Budget areas" }
       ],
       defaultValue: "canggu"
     },
     {
       id: "coworking",
-      label: "Membership Coworking",
+      label: "Coworking Membership",
       type: "select",
       options: [
-        { value: "none", label: "Lavora da casa/café" },
-        { value: "flex", label: "Flessibile/giornalieri" },
-        { value: "monthly", label: "Membership mensile" }
+        { value: "none", label: "Work from home/cafe" },
+        { value: "flex", label: "Flex/day passes" },
+        { value: "monthly", label: "Monthly membership" }
       ],
       defaultValue: "flex"
     },
     {
       id: "food",
-      label: "Tipo di Cibo",
+      label: "Food Style",
       type: "select",
       options: [
-        { value: "local", label: "Soprattutto locale/cucina" },
-        { value: "mixed", label: "Misto locale & occidentale" },
-        { value: "western", label: "Soprattutto caffè occidentali" },
-        { value: "fancy", label: "Ristoranti & delivery" }
+        { value: "local", label: "Mostly local/cooking" },
+        { value: "mixed", label: "Mix local & Western" },
+        { value: "western", label: "Mostly Western cafes" },
+        { value: "fancy", label: "Restaurants & delivery" }
       ],
       defaultValue: "mixed"
     },
     {
       id: "transport",
-      label: "Trasporti",
+      label: "Transportation",
       type: "select",
       options: [
-        { value: "scooter", label: "Noleggio scooter" },
+        { value: "scooter", label: "Scooter rental" },
         { value: "gojek", label: "Gojek/Grab" },
-        { value: "both", label: "Scooter + Gojek occasionale" }
+        { value: "both", label: "Scooter + occasional Gojek" }
       ],
       defaultValue: "scooter"
     },
     {
       id: "lifestyle",
-      label: "Stile di Vita",
+      label: "Lifestyle",
       type: "select",
       options: [
-        { value: "minimal", label: "Minimale (vita tranquilla)" },
-        { value: "moderate", label: "Moderato (yoga, palestra, uscite occasionali)" },
-        { value: "active", label: "Attivo (club beach, sociale)" }
+        { value: "minimal", label: "Minimal (quiet life)" },
+        { value: "moderate", label: "Moderate (yoga, gym, occasional out)" },
+        { value: "active", label: "Active (beach clubs, social)" }
       ],
       defaultValue: "moderate"
     },
     {
       id: "health-insurance",
-      label: "Assicurazione Sanitaria",
+      label: "Health Insurance",
       type: "checkbox",
       defaultValue: true
     }
@@ -770,7 +782,7 @@ Ma non è perfetto:
     let total = 0;
     const breakdown = [];
 
-    // Alloggio
+    // Accommodation
     const accCosts = {
       room: { canggu: 4000000, ubud: 3000000, sanur: 3500000, other: 2500000 },
       studio: { canggu: 7000000, ubud: 5000000, sanur: 6000000, other: 4000000 },
@@ -779,7 +791,7 @@ Ma non è perfetto:
     };
     const acc = accCosts[values.accommodation][values.area];
     total += acc;
-    breakdown.push({ label: "Alloggio", amount: acc });
+    breakdown.push({ label: "Accommodation", amount: acc });
 
     // Coworking
     const coworkCosts = { none: 0, flex: 1000000, monthly: 3000000 };
@@ -789,34 +801,34 @@ Ma non è perfetto:
       breakdown.push({ label: "Coworking", amount: cowork });
     }
 
-    // Cibo
+    // Food
     const foodCosts = { local: 3000000, mixed: 5000000, western: 7000000, fancy: 10000000 };
     const food = foodCosts[values.food];
     total += food;
-    breakdown.push({ label: "Cibo e Bevande", amount: food });
+    breakdown.push({ label: "Food & Drinks", amount: food });
 
-    // Trasporti
+    // Transport
     const transportCosts = { scooter: 1000000, gojek: 2000000, both: 1500000 };
     const transport = transportCosts[values.transport];
     total += transport;
-    breakdown.push({ label: "Trasporti", amount: transport });
+    breakdown.push({ label: "Transportation", amount: transport });
 
-    // Internet/telefono
+    // Internet/phone
     const internet = 500000;
     total += internet;
-    breakdown.push({ label: "Internet e Telefono", amount: internet });
+    breakdown.push({ label: "Internet & Phone", amount: internet });
 
-    // Stile di vita
+    // Lifestyle
     const lifestyleCosts = { minimal: 1000000, moderate: 2500000, active: 5000000 };
     const lifestyle = lifestyleCosts[values.lifestyle];
     total += lifestyle;
-    breakdown.push({ label: "Stile di Vita e Sociale", amount: lifestyle });
+    breakdown.push({ label: "Lifestyle & Social", amount: lifestyle });
 
-    // Assicurazione sanitaria
+    // Health insurance
     if (values['health-insurance']) {
       const insurance = 2000000;
       total += insurance;
-      breakdown.push({ label: "Assicurazione Sanitaria", amount: insurance });
+      breakdown.push({ label: "Health Insurance", amount: insurance });
     }
 
     const usdTotal = Math.round(total / 16000);
@@ -825,7 +837,7 @@ Ma non è perfetto:
       total,
       breakdown,
       currency: "IDR",
-      note: `Circa $${usdTotal} USD. Esclude costi visti, voli e risparmi.`
+      note: `Approximately $${usdTotal} USD. Excludes visa costs, flights, and savings.`
     };
 
 }}
@@ -833,118 +845,118 @@ Ma non è perfetto:
 
 ---
 
-## Giornata Tipica: Nomade Digitale a Bali
+## Giornata tipo: nomade digitale a Bali
 
 <JourneyMap
-  title="Una Giornata nella Vita"
-  description="Come potrebbe essere una giornata lavorativa tipica a Bali"
-  estimatedTotal="Giornata completa"
+  title="A Day in the Life"
+  description="What a typical workday might look like in Bali"
+  estimatedTotal="Full day"
   steps={[
     {
       id: "morning",
-      title: "6:00 - Rituale Mattutino",
-      description: "Inizia la giornata al meglio",
-      duration: "1.5 ore",
-      status: "opzionale",
+      title: "6:00 AM - Morning Ritual",
+      description: "Start the day right",
+      duration: "1.5 hours",
+      status: "optional",
       tips: [
-        "Surf all'alba a Echo Beach",
-        "Classe di yoga a Ubud",
-        "Corsa mattutina nei campi di riso",
-        "O semplicemente caffè sulla terrazza della villa",
+        "Sunrise surf at Echo Beach",
+        "Yoga class in Ubud",
+        "Morning run in rice fields",
+        "Or just coffee on your villa terrace",
       ],
     },
     {
       id: "breakfast",
-      title: "7:30 - Colazione",
-      description: "Carburante per la giornata",
-      duration: "1 ora",
-      status: "richiesto",
+      title: "7:30 AM - Breakfast",
+      description: "Fuel for the day",
+      duration: "1 hour",
+      status: "required",
       tips: [
-        "Bowl di smoothie al caffè",
-        "Nasi locale per budget",
-        "Cucina a casa",
-        "Molti caffè per lavoro servono ottima colazione",
+        "Smoothie bowl at cafe",
+        "Local nasi for budget",
+        "Cook at home",
+        "Many work cafes serve excellent breakfast",
       ],
     },
     {
       id: "deep-work",
-      title: "9:00 - Blocco di Lavoro Profondo",
-      description: "Ore più produttive",
-      duration: "3-4 ore",
-      status: "richiesto",
+      title: "9:00 AM - Deep Work Block",
+      description: "Most productive hours",
+      duration: "3-4 hours",
+      status: "required",
       tips: [
-        "Vai al coworking o caffè per lavoro",
-        "Modalità focus - nessuna riunioni",
-        "Affronta prima i compiti più difficili",
-        "Internet affidabile essenziale",
+        "Head to coworking or work cafe",
+        "Focus mode - no meetings",
+        "Tackle hardest tasks first",
+        "Reliable internet essential",
       ],
     },
     {
       id: "lunch",
-      title: "13:00 - Pausa Pranzo",
-      description: "Ricarica e socializza",
-      duration: "1-1.5 ore",
-      status: "richiesto",
+      title: "1:00 PM - Lunch Break",
+      description: "Recharge and socialize",
+      duration: "1-1.5 hours",
+      status: "required",
       tips: [
-        "Esplora diversi warung",
-        "Networking con altri nomadi",
-        "Prendi una vera pausa dagli schermi",
+        "Explore different warungs",
+        "Network with other nomads",
+        "Take a real break from screens",
       ],
     },
     {
       id: "afternoon",
-      title: "14:30 - Lavoro Pomeridiano",
-      description: "Riunioni e collaborazione",
-      duration: "2-3 ore",
-      status: "richiesto",
+      title: "2:30 PM - Afternoon Work",
+      description: "Meetings and collaboration",
+      duration: "2-3 hours",
+      status: "required",
       tips: [
-        "Buon momento per chiamate Europa",
-        "Lavoro collaborativo",
-        "Email e amministrazione",
-        "Concludi compiti chiave",
+        "Good time for Europe calls",
+        "Collaborative work",
+        "Emails and admin",
+        "Wrap up key tasks",
       ],
     },
     {
       id: "evening-activity",
-      title: "17:30 - Attività Serale",
-      description: "Tempo stile di vita Bali",
-      duration: "2 ore",
-      status: "opzionale",
+      title: "5:30 PM - Evening Activity",
+      description: "Bali lifestyle time",
+      duration: "2 hours",
+      status: "optional",
       tips: [
-        "Sessione surf al tramonto",
-        "Drink club beach",
-        "Classe yoga",
-        "Allenamento palestra",
+        "Sunset surf session",
+        "Beach club drinks",
+        "Yoga class",
+        "Gym workout",
       ],
     },
     {
       id: "dinner",
-      title: "19:30 - Cena",
-      description: "Tempo sociale",
-      duration: "1.5 ore",
-      status: "richiesto",
+      title: "7:30 PM - Dinner",
+      description: "Social time",
+      duration: "1.5 hours",
+      status: "required",
       tips: [
-        "Cena con amici nomadi",
-        "Esplora la scena culinaria di Bali",
-        "Mercati notturni per avventura",
-        "Cucina a casa per risparmiare",
+        "Dinner with nomad friends",
+        "Explore Bali's food scene",
+        "Night markets for adventure",
+        "Cook at home for savings",
       ],
     },
     {
       id: "evening",
-      title: "21:00 - Sera",
-      description: "Rilassamento o chiamate USA",
-      duration: "Variabile",
-      status: "condizionale",
+      title: "9:00 PM - Evening",
+      description: "Wind down or US calls",
+      duration: "Variable",
+      status: "conditional",
       tips: [
-        "Costa Ovest USA online",
-        "Lavoro serale rapido se necessario",
-        "O disconnetti completamente",
-        "Eventi sociali e meetup",
+        "US West Coast coming online",
+        "Quick evening work if needed",
+        "Or fully disconnect",
+        "Social events and meetups",
       ],
       warnings: [
-        "Non lasciare che le ore USA consumino la tua vita",
-        "La comunicazione asincrona è il tuo amico",
+        "Don't let US hours consume your life",
+        "Async communication is your friend",
       ],
     },
   ]}
@@ -952,197 +964,197 @@ Ma non è perfetto:
 
 ---
 
-## Comunità e Networking
+## Comunità e networking
 
-Uno dei più grandi asset di Bali è la comunità.
+Uno dei maggiori punti di forza di Bali è la comunità.
 
-### Modi per Connettersi
+### Modi per entrare in contatto
 
-- **Eventi coworking**: La maggior parte degli spazi ospita meetup regolari
+- **Eventi di coworking**: la maggior parte degli spazi organizza incontri regolari
 - **Meetup.com**: Bali ha gruppi attivi per vari interessi
-- **Gruppi Facebook**: "Digital Nomads Bali", gruppi specifici per area
-- **Sport**: Crew surf, comunità yoga, gruppi di corsa
-- **Basati su competenze**: Meetup marketing, dev hangouts, collaborazioni creator
+- **Gruppi Facebook**: “Digital Nomads Bali”, gruppi specifici per area
+- **Sport**: gruppi di surf, comunità yoga, gruppi di corsa
+- **Basati sulle competenze**: incontri di marketing, ritrovi di sviluppatori, collaborazioni tra creator
 
-### Gruppi Facebook Chiave
+### Principali gruppi Facebook
 
-| Gruppo               | Focus                | Membri |
-| ------------------- | -------------------- | ------- |
-| Digital Nomads Bali | Comunità DN generale | 50k+    |
-| Canggu Community    | Specifico Canggu      | 30k+    |
-| Ubud Community      | Specifico Ubud        | 20k+    |
-| Bali Surfing        | Comunità surf         | 15k+    |
-| Bali Remote Workers | Focalizzato sul lavoro | 10k+    |
+| Gruppo               | Focus                    | Membri |
+| -------------------- | ------------------------ | ------ |
+| Digital Nomads Bali | Comunità DN generale     | 50k+   |
+| Canggu Community    | Specifico per Canggu     | 30k+   |
+| Ubud Community      | Specifico per Ubud       | 20k+   |
+| Bali Surfing        | Comunità surf            | 15k+   |
+| Bali Remote Workers | Focalizzato sul lavoro   | 10k+   |
 
-<InfoCard variant="tip" title="Consigli Pro sulla Comunità">
-  1. **Presentati costantemente** - Stesso coworking, stesso caffè, le relazioni si costruiscono
-  2. **Partecipa ad attività** - Sport, workshop, volontariato 3. **Dai valore** -
-  Aiuta gli altri, condividi conoscenze 4. **Evita mentalità transitoria** - Investi in
-  connessioni anche se temporanee 5. **Mescola** - Non frequentare solo persone
-  del tuo paese
+<InfoCard variant="tip" title="Community Pro Tips">
+  1. **Presentati con costanza** - Stesso coworking, stesso caffè: le relazioni si costruiscono
+  2. **Partecipa alle attività** - Sport, workshop, volontariato 3. **Offri valore** -
+  Aiuta gli altri, condividi conoscenze 4. **Evita la mentalità transitoria** - Investi nelle
+  relazioni anche se temporanee 5. **Varia** - Non frequentare solo persone
+  del tuo Paese
 </InfoCard>
 
 ---
 
-## Gestione dei Fusi Orari
+## Gestione del fuso orario
 
 <ComparisonTable
-  title="Lavoro con Diversi Fusi Orari"
-  description="Bali è UTC+8 (WITA)"
+  title="Working with Different Timezones"
+  description="Bali is UTC+8 (WITA)"
   items={[
     {
       name: "Asia/Australia",
-      subtitle: "Abbinamento ideale",
+      subtitle: "Ideal match",
       values: {
-        "Differenza Oraria": "0-3 ore",
-        "Sovrapposizione Lavoro": "Giornata completa",
-        "Impatto Stile di Vita": "Nessuno",
-        Strategia: "Ore normali",
+        "Time Difference": "0-3 hours",
+        "Work Overlap": "Full day",
+        "Lifestyle Impact": "None",
+        Strategy: "Normal hours",
       },
       highlight: true,
     },
     {
-      name: "Europa",
-      subtitle: "Gestibile",
+      name: "Europe",
+      subtitle: "Manageable",
       values: {
-        "Differenza Oraria": "6-8 ore avanti",
-        "Sovrapposizione Lavoro": "Pomeriggio/sera",
-        "Impatto Stile di Vita": "Moderato",
-        Strategia: "Libertà mattina, lavoro pomeriggio",
+        "Time Difference": "6-8 hours ahead",
+        "Work Overlap": "Afternoon/evening",
+        "Lifestyle Impact": "Moderate",
+        Strategy: "Morning freedom, afternoon work",
       },
     },
     {
-      name: "Costa Est USA",
-      subtitle: "Sfidente",
+      name: "US East Coast",
+      subtitle: "Challenging",
       values: {
-        "Differenza Oraria": "12-13 ore avanti",
-        "Sovrapposizione Lavoro": "Chiamate sera/notte",
-        "Impatto Stile di Vita": "Significativo",
-        Strategia: "Negozia asincrono, limita riunioni in diretta",
+        "Time Difference": "12-13 hours ahead",
+        "Work Overlap": "Evening/night calls",
+        "Lifestyle Impact": "Significant",
+        Strategy: "Negotiate async, limit live meetings",
       },
     },
     {
-      name: "Costa Ovest USA",
-      subtitle: "Più difficile",
+      name: "US West Coast",
+      subtitle: "Most difficult",
       values: {
-        "Differenza Oraria": "15-16 ore avanti",
-        "Sovrapposizione Lavoro": "Chiamate tarda notte",
-        "Impatto Stile di Vita": "Alto",
-        Strategia: "Cultura asincrona forte essenziale",
+        "Time Difference": "15-16 hours ahead",
+        "Work Overlap": "Late night calls",
+        "Lifestyle Impact": "High",
+        Strategy: "Strong async culture essential",
       },
     },
   ]}
 />
 
-### Consigli per Sopravvivere ai Fusi Orari
+### Consigli per sopravvivere ai fusi orari
 
-1. **Negozia lavoro asincrono** dove possibile
-2. **Raggruppa riunioni** in giorni/ori specifici
-3. **Proteggi le tue mattine** per la vita a Bali
-4. **Usa registrazioni** invece di riunioni in diretta
-5. **Sii onesto** con te stesso sulla sostenibilità
+1. **Negozia il lavoro asincrono** ove possibile
+2. **Raggruppa le riunioni** in giorni/orari specifici
+3. **Proteggi le tue mattine** per goderti Bali
+4. **Usa le registrazioni** invece delle riunioni dal vivo
+5. **Sii onesto** con te stesso riguardo alla sostenibilità
 
 ---
 
-## Checklist: Inizio Attività
+## Checklist: per iniziare
 
 <Checklist
-  title="Configurazione Nomade Digitale Bali"
-  description="Tutto ciò che ti serve per iniziare a lavorare da remoto da Bali"
+  title="Digital Nomad Bali Setup"
+  description="Everything you need to get started working remotely from Bali"
   persistKey="dn-bali-checklist"
   items={[
     {
       id: "visa",
-      label: "Visto organizzato",
-      description: "VOA, D12 o visto a lungo termine appropriato (E33G)",
+      label: "Visa arranged",
+      description: "VOA, D12, or appropriate long-term visa (E33G)",
       required: true,
       category: "legal",
     },
     {
       id: "insurance",
-      label: "Assicurazione viaggio/sanitaria",
-      description: "Copertura internazionale inclusa Indonesia",
+      label: "Travel/health insurance",
+      description: "International coverage including Indonesia",
       required: true,
       category: "legal",
     },
     {
       id: "bank-cards",
-      label: "Carte internazionali ordinate",
-      description: "Wise, Revolut o carte di debito senza commissioni",
+      label: "International cards sorted",
+      description: "Wise, Revolut, or no-fee debit cards",
       required: true,
       category: "money",
     },
     {
       id: "vpn",
-      label: "VPN installata",
-      description: "Alcuni siti bloccati in Indonesia",
+      label: "VPN installed",
+      description: "Some sites blocked in Indonesia",
       required: true,
       category: "tech",
     },
     {
       id: "phone",
-      label: "Telefono sbloccato",
-      description: "Per SIM card indonesiana",
+      label: "Unlocked phone",
+      description: "For Indonesian SIM card",
       required: true,
       category: "tech",
     },
     {
       id: "accommodation",
-      label: "Alloggio prima settimana",
-      description: "Prenotazione flessibile per esplorare",
+      label: "First week accommodation",
+      description: "Flexible booking to explore",
       required: true,
       category: "setup",
     },
     {
       id: "coworking",
-      label: "Coworking ricercato",
-      description: "Conosci le tue opzioni per il giorno 1",
+      label: "Coworking researched",
+      description: "Know your options for day 1",
       required: false,
       category: "work",
     },
     {
       id: "backup-internet",
-      label: "Piano dati mobile",
-      description: "Telkomsel o XL per backup",
+      label: "Mobile data plan",
+      description: "Telkomsel or XL for backup",
       required: true,
       category: "tech",
     },
     {
       id: "time-management",
-      label: "Strategia fusi orari",
-      description: "Pianifica come gestire le ore di lavoro",
+      label: "Timezone strategy",
+      description: "Plan how you'll manage work hours",
       required: true,
       category: "work",
     },
     {
       id: "scooter",
-      label: "Scooter/trasporti ordinati",
-      description: "Noleggio o strategia Gojek",
+      label: "Scooter/transport sorted",
+      description: "Rental or Gojek strategy",
       required: false,
       category: "setup",
     },
     {
       id: "community",
-      label: "Gruppi comunità uniti",
-      description: "Gruppi Facebook, canali Slack",
+      label: "Community groups joined",
+      description: "Facebook groups, Slack channels",
       required: false,
       category: "social",
     },
     {
       id: "routine",
-      label: "Routine pianificata",
-      description: "Blocchi di lavoro, esercizio, tempo sociale",
+      label: "Routine planned",
+      description: "Work blocks, exercise, social time",
       required: false,
       category: "work",
     },
   ]}
   categories={[
-    { id: "legal", label: "Legale/Amministrazione", color: "blue" },
-    { id: "money", label: "Denaro", color: "green" },
+    { id: "legal", label: "Legal/Admin", color: "blue" },
+    { id: "money", label: "Money", color: "green" },
     { id: "tech", label: "Tech", color: "purple" },
     { id: "setup", label: "Setup", color: "amber" },
-    { id: "work", label: "Lavoro", color: "red" },
-    { id: "social", label: "Sociale", color: "pink" },
+    { id: "work", label: "Work", color: "red" },
+    { id: "social", label: "Social", color: "pink" },
   ]}
   showProgress={true}
   allowExport={true}
@@ -1150,66 +1162,67 @@ Uno dei più grandi asset di Bali è la comunità.
 
 ---
 
-## Errori Comuni da Evitare
+## Errori comuni da evitare
 
-<InfoCard variant="error" title="Non Fare Questo">
-**1. Sottostimare la complessità dei visti**
-Non assumere che puoi semplicemente "capirlo" all'arrivo. Avere un piano per il visto.
+<InfoCard variant="error" title="Don't Do This">
+**1. Sottovalutare la complessità dei visti**  
+Non presumere di poter semplicemente “capire tutto” all'arrivo. Predisponi un piano per il visto.
 
-**2. Sovra-ottimizzare per i fusi orari**
-Lavorare le notti USA ti distruggerà alla fine. Prioritizza una configurazione sostenibile.
+**2. Ottimizzare eccessivamente per il fuso orario**  
+Lavorare di notte per gli Stati Uniti finirà per distruggerti. Dai priorità a una configurazione sostenibile.
 
-**3. Rimanere nella bolla**
-Bali è più di Canggu. Esplora. Incontra locali. Impara qualche indonesiano.
+**3. Restare nella bolla**  
+Bali è molto più di Canggu. Esplora. Incontra persone del posto. Impara un po' di indonesiano.
 
-**4. Nessun backup internet**
-Quando il WiFi muore prima di una chiamata importante, hai bisogno di un piano.
+**4. Nessun internet di backup**  
+Quando il WiFi smette di funzionare prima di una chiamata importante, hai bisogno di un piano.
 
-**5. Ignorare l'assicurazione sanitaria**
-Una visita ospedaliera può cancellare mesi di "risparmi".
+**5. Ignorare l'assicurazione sanitaria**  
+Una sola visita in ospedale può azzerare mesi di “risparmi”.
 
-**6. Rotazioni dei visti come strategia a lungo termine**
-Funziona finché non smette. Costruisci verso qualcosa di stabile.
+**6. Visa run come strategia a lungo termine**  
+Funziona finché non smette di funzionare. Costruisci qualcosa di stabile.
 
-**7. Solo lavoro, nessun gioco**
-Sei venuto a Bali. Vivi l'esperienza. Il laptop aspetterà.
+**7. Solo lavoro, niente divertimento**  
+Sei venuto a Bali. Vivila. Il laptop può aspettare.
 
 </InfoCard>
 
 ---
 
-## Hai Domande?
+## Hai domande?
 
-Ogni situazione nomade digitale è unica. Se hai domande specifiche:
+Ogni situazione da nomade digitale è unica. Se hai domande specifiche:
 
 <AskZantara
-  context="Nomade digitale a Bali, lavoro remoto, coworking, visti, internet, costi, considerazioni legali"
-  placeholder="Chiedi su lavoro remoto da Bali..."
+  context="Digital nomad in Bali, remote work, coworking, visas, internet, costs, legal considerations"
+  placeholder="Ask about remote work from Bali..."
   suggestedQuestions={[
-    "Qual è il miglior spazio coworking a Canggu?",
-    "Posso lavorare legalmente con un visto turistico?",
-    "Come ottengo un visto E33G Digital Nomad?",
-    "Quale velocità di internet posso aspettarmi?",
-    "Come gestisco il fuso orario USA da Bali?",
+    "What's the best coworking space in Canggu?",
+    "Can I legally work on a tourist visa?",
+    "How do I get an E33G Digital Nomad visa?",
+    "What internet speed can I expect?",
+    "How do I handle US timezone from Bali?",
   ]}
 />
 
 ---
 
-## Articoli Correlati
+## Articoli correlati
 
-- [Migliori Spazi Coworking a Bali](/living/coworking-spaces-bali)
-- [Visto Second Home Indonesia](/visas/second-home-visa-indonesia)
-- [Freelancing Legalmente in Indonesia](/insights/lifestyle/freelancing-legally-indonesia)
-- [Implicazioni Fiscali del Lavoro Remoto](/living/remote-work-tax)
-- [Vivere a Bali: La Guida Onesta](/insights/lifestyle/living-in-bali-honest-guide)
+- [I migliori spazi di coworking a Bali](/living/coworking-spaces-bali)
+- [Second Home Visa Indonesia](/visas/second-home-visa-indonesia)
+- [Lavorare legalmente come freelance in Indonesia](/insights/lifestyle/freelancing-legally-indonesia)
+- [Implicazioni fiscali del lavoro da remoto](/living/remote-work-tax)
+- [Vivere a Bali: la guida onesta](/insights/lifestyle/living-in-bali-honest-guide)
 
 ---
 
 <InfoCard variant="note" title="Disclaimer">
 
-  Questa guida è solo a scopo informativo. I visti e le normative sul lavoro possono
-  cambiare. Lo status legale del lavoro remoto con visti turistici è un'area grigia - questa
-  guida presenta fatti, non consigli legali. Consulta professionisti appropriati per
-  la tua situazione specifica. Ultimo aggiornamento: Gennaio 2026.
+  Questa guida ha esclusivamente finalità informative. Le normative sui visti e
+  sul lavoro possono cambiare. Lo status legale del lavoro da remoto con visti
+  turistici è una zona grigia: questa guida presenta fatti, non consulenza
+  legale. Consulta professionisti appropriati per la tua situazione specifica.
+  Ultimo aggiornamento: gennaio 2026.
 </InfoCard>

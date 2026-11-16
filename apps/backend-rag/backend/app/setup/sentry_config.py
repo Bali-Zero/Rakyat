@@ -34,6 +34,7 @@ import os
 import re
 import threading
 from typing import Any
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 PII_REDACTION_PLACEHOLDER = "[REDACTED]"
 logger = logging.getLogger("zantara.backend")
@@ -53,6 +54,7 @@ _SENTRY_INIT_STARTED = False
 _PII_KEY_SUBSTRINGS: tuple[str, ...] = (
     "npwp",
     "nib",
+    "document_number",
     "tax_id",
     "passport",
     "email",
@@ -232,6 +234,90 @@ _LABELLED_ID_RE = re.compile(
 )
 
 
+# Typed search text (client, practice and company search bars): names, e-mails, phones and tax ids
+# are typed into `?search=` / `?q=`. The key says nothing about the content, so these two query
+# keys lose their VALUE wherever a query string or a URL appears (the ASGI integration attaches
+# `request.query_string`, HTTP breadcrumbs carry the full URL). Same two keys as the access-log
+# filter in `core/secret_log_redaction.py`.
+_SEARCH_PARAM_KEYS = frozenset({"search", "q"})
+# STRUCTURED FIELDS ONLY (no regex over free text: text is not reliably URL-shaped, and a cutter
+# corrupts "Foo#bar", "Ready? retry" and SQL "#>>"). Typed search text travels in the query string
+# of a URL, so the event is cleaned by FIELD: query-string fields are replaced, URL-valued fields
+# keep their path only, and the request headers that carry a URL as an opaque string (Referer,
+# Link, Location) are dropped. Exception messages, log messages and every other free text are left
+# to the existing PII patterns.
+_QUERY_FIELD_KEYS = frozenset(
+    {"query_string", "QUERY_STRING", "http.query", "http.fragment", "url.query", "url.fragment"}
+)
+_URL_FIELD_KEYS = frozenset({"url", "http.url", "url.full"})
+_URL_HEADER_NAMES = frozenset({"referer", "referrer", "link", "location"})
+
+
+def _path_only_url(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return PII_REDACTION_PLACEHOLDER
+    if not parts.query and not parts.fragment:
+        return value
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _scrub_headers(headers: Any) -> Any:
+    if isinstance(headers, dict):
+        return {
+            k: v
+            for k, v in headers.items()
+            if not (isinstance(k, str) and k.lower() in _URL_HEADER_NAMES)
+        }
+    if isinstance(headers, list):
+        return [
+            pair
+            for pair in headers
+            if not (
+                isinstance(pair, (list, tuple))
+                and pair
+                and isinstance(pair[0], str)
+                and pair[0].lower() in _URL_HEADER_NAMES
+            )
+        ]
+    return headers
+
+
+def _scrub_url_fields(obj: Any) -> Any:
+    """Clean query strings and URLs by field name, anywhere in the event (request, breadcrumbs,
+    spans, contexts). Never raises on odd shapes: unknown values pass through unchanged."""
+    if isinstance(obj, dict):
+        out: dict[Any, Any] = {}
+        for k, v in obj.items():
+            if isinstance(k, str) and k in _QUERY_FIELD_KEYS and isinstance(v, str):
+                out[k] = PII_REDACTION_PLACEHOLDER
+            elif isinstance(k, str) and k.lower() == "headers":
+                out[k] = _scrub_headers(v)
+            elif isinstance(k, str) and k in _URL_FIELD_KEYS and isinstance(v, str):
+                out[k] = _path_only_url(v)
+            elif (
+                k == "description"
+                and isinstance(v, str)
+                and isinstance(obj.get("op"), str)
+                and obj["op"].startswith("http")
+            ):
+                method, sep, target = v.partition(" ")
+                out[k] = f"{method} {_path_only_url(target)}" if sep else _path_only_url(v)
+            else:
+                out[k] = _scrub_url_fields(v)
+        return out
+    if isinstance(obj, list):
+        return [_scrub_url_fields(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_scrub_url_fields(v) for v in obj)
+    return obj
+
+
+def _is_search_param(key: Any) -> bool:
+    return isinstance(key, str) and unquote_plus(key).strip().lower() in _SEARCH_PARAM_KEYS
+
+
 def _is_pii_key(key: Any) -> bool:
     if not isinstance(key, str):
         return False
@@ -269,7 +355,7 @@ def _redact_query_string(s: str) -> str:
     for pair in pairs:
         if "=" in pair:
             k, _, _v = pair.partition("=")
-            if _is_pii_key(k):
+            if _is_pii_key(k) or _is_search_param(k):
                 out.append(f"{k}={PII_REDACTION_PLACEHOLDER}")
             else:
                 out.append(pair)
@@ -283,7 +369,7 @@ def _scrub(obj: Any, parent_key: str | None = None) -> Any:
     if isinstance(obj, dict):
         scrubbed: dict[Any, Any] = {}
         for k, v in obj.items():
-            if _is_pii_key(k):
+            if _is_pii_key(k) or (_is_search_param(k) and isinstance(v, str)):
                 scrubbed[k] = PII_REDACTION_PLACEHOLDER
             elif isinstance(k, str) and k in _QUERY_KEYS and isinstance(v, str):
                 scrubbed[k] = _redact_query_string(v)
@@ -377,6 +463,7 @@ def _before_send_impl(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, 
     to be added at cron entrypoints (`cron-wrapper.sh`, `auto_sentinel.sh`,
     `cron_notifiers.py`) in a follow-up before a dedup filter can land here.
     """
+    event = _scrub_url_fields(event)
     if _is_hr_route_event(event):
         event = _drop_hr_request_payload(event)
     return _scrub(event)

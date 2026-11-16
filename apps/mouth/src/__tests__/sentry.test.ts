@@ -33,9 +33,10 @@ describe("Sentry Configuration", () => {
         dsn: "https://uxx9@dxxxx3.io/123",
         environment: "production",
         tracesSampleRate: 0.1,
-        replaysSessionSampleRate: 0.1,
-        replaysOnErrorSampleRate: 1.0,
       });
+      // Session Replay stays off (it records navigation URLs with the typed search text)
+      expect(initCall).not.toHaveProperty("replaysSessionSampleRate");
+      expect(initCall).not.toHaveProperty("replaysOnErrorSampleRate");
 
       vi.unstubAllEnvs();
     });
@@ -47,7 +48,6 @@ describe("Sentry Configuration", () => {
 
       // Verify that Sentry.init was called (from previous test or config load)
       expect(Sentry.init).toBeDefined();
-      expect(Sentry.replayIntegration).toBeDefined();
 
       // The beforeSend logic in sentry.client.config.ts blocks errors in development
       // This is verified by the config structure, not runtime behavior in tests

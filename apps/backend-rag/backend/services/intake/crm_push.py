@@ -102,8 +102,10 @@ class CrmPushResult:
     ok: bool
     status: str  # pushed | too_large | denied_rbac | rejected | server_error |
     #              unreachable | no_token | missing_blob | error |
-    #              identity_unresolved | practice_identity_unresolved
+    #              identity_unresolved | practice_identity_unresolved |
+    #              company_identity_unresolved
     fly_doc_id: int | None = None
+    fly_company_doc_id: int | None = None
     file_id: str | None = None
     file_url: str | None = None
     detail: str | None = None
@@ -238,6 +240,9 @@ async def push_committed_document(
     blob_path: str,
     practice_id: int | None = None,
     practice_uuid: str | None = None,
+    company_id: int | None = None,
+    company_uuid: str | None = None,
+    intake_idempotency_key: str | None = None,
     document_category: str | None = None,
     mime_type: str | None = None,
     expiry_date: str | None = None,
@@ -253,17 +258,13 @@ async def push_committed_document(
     Matches ``DocumentUploadBase64`` (crm_enhanced_documents.py) exactly:
     ``file`` (base64), ``file_name``, ``document_type`` + the optional
     ``mime_type`` / ``notes`` / ``document_category`` / ``expiry_date`` /
-    ``family_member_id`` / ``practice_id`` / ``client_visible``. Fields the
-    endpoint does not accept (e.g. extracted_fields) are deliberately NOT sent.
+    ``family_member_id`` / ``practice_id`` / ``company_id`` /
+    ``intake_idempotency_key`` / ``client_visible``. Fields the endpoint does
+    not accept (e.g. extracted_fields) are deliberately NOT sent.
 
-    A practice attachment requires ``practice_uuid`` from the canonical replica.
-    Its UUID string travels on the existing ``practice_id`` wire key so an older
-    integer-only endpoint rejects the request before uploading. The legacy
-    local ``practice_id`` argument alone fails closed.
-
-    ``client_visible=None`` (every caller that does not ask) leaves the key out
-    of the body, so the endpoint's database default applies exactly as before;
-    an explicit ``False`` is sent so the Fly row is born staff-only.
+    A practice or company attachment requires its canonical UUID from the
+    replica. The UUID string travels on ``practice_id`` / ``company_id`` so an
+    older integer-only endpoint rejects the request before uploading.
 
     Auth: prefer the reviewer's own ``Authorization: Bearer <jwt>``. Headless
     auto-attach can instead pass ``crm_write_key`` for the scoped internal upload
@@ -296,6 +297,22 @@ async def push_committed_document(
                 detail="invalid canonical practice UUID",
             )
 
+    if company_id is not None and company_uuid is None:
+        return CrmPushResult(
+            ok=False,
+            status="company_identity_unresolved",
+            detail="a local numeric company id cannot identify a canonical company",
+        )
+    if company_uuid is not None:
+        try:
+            company_uuid = str(UUID(str(company_uuid)))
+        except ValueError:
+            return CrmPushResult(
+                ok=False,
+                status="company_identity_unresolved",
+                detail="invalid canonical company UUID",
+            )
+
     path = Path(blob_path)
     try:
         raw = await asyncio.to_thread(path.read_bytes)
@@ -321,9 +338,11 @@ async def push_committed_document(
         "document_category": document_category,
         "expiry_date": expiry_date,
         "family_member_id": family_member_id,
-        # Keep the existing wire key: old integer-only servers reject this
-        # UUID before upload instead of silently ignoring an added field.
+        # Keep existing wire keys: old integer-only servers reject a UUID
+        # before upload instead of silently ignoring an added field.
         "practice_id": practice_uuid,
+        "company_id": company_uuid,
+        "intake_idempotency_key": intake_idempotency_key,
         "client_visible": client_visible,
     }
     payload.update({key: value for key, value in optional_fields.items() if value is not None})
@@ -341,17 +360,6 @@ async def push_committed_document(
             {"X-CRM-Write-Key": crm_write_key or ""},
         )
 
-    # Cross-DB identity bridge (Codex 2026-07-19 rounds 4-5, F5): the local Pro
-    # pk and the Fly pk are DIFFERENT namespaces — the same number can name a
-    # DIFFERENT person on Fly, and an upload addressed by the local pk that
-    # happens to exist there delivers PII to the wrong client. This holds for
-    # BOTH auth modes: every caller (auto-attach delivery AND the reviewer
-    # approve flow) passes the LOCALLY-committed plan.client_id, so the bearer
-    # only changes which upload endpoint authorizes the write — never the id
-    # namespace. The Fly id is therefore ALWAYS resolved by phone BEFORE any
-    # upload; with no phone or no service key to resolve with, delivery fails
-    # CLOSED (the document stays committed locally, the verdict says
-    # undelivered — never claims Kita).
     if not sender_phone:
         return CrmPushResult(
             ok=False,
@@ -385,11 +393,6 @@ async def push_committed_document(
         )
     target_client_id = fly_cid
 
-    # Ownership token (Codex round 12, F12 gap 3): the resolve and the upload
-    # are SEPARATE HTTP requests — a Fly-side phone move in between would land
-    # the document on a card that no longer owns the resolved phone. Carry the
-    # resolved core so the upload endpoint re-proves ownership atomically with
-    # its documents INSERT (409 on mismatch -> delivery fails closed).
     _expected_core = phone_core(sender_phone)
     if _expected_core:
         payload["expected_phone_core"] = _expected_core
@@ -434,14 +437,18 @@ async def push_committed_document(
                     error = resp.json()
                 except ValueError:
                     error = None
-                if (
-                    isinstance(error, dict)
-                    and error.get("detail") == "practice_identity_unresolved"
-                ):
+                detail_str = str(error.get("detail") or "") if isinstance(error, dict) else ""
+                if detail_str == "practice_identity_unresolved":
                     return CrmPushResult(
                         ok=False,
                         status="practice_identity_unresolved",
                         detail="canonical practice identity could not be verified for this client",
+                    )
+                if detail_str.startswith("company_identity_unresolved"):
+                    return CrmPushResult(
+                        ok=False,
+                        status="company_identity_unresolved",
+                        detail="canonical company identity could not be verified for this client",
                     )
             if resp.status_code >= 400:
                 return CrmPushResult(
@@ -450,7 +457,7 @@ async def push_committed_document(
                     detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
                 )
 
-            # 2xx — response shape: {"success", "document_id", "file_url", ...}
+            # 2xx — response shape: {"success", "document_id", "company_document_id", "file_url", ...}
             try:
                 data = resp.json()
             except ValueError:
@@ -458,22 +465,198 @@ async def push_committed_document(
             if not isinstance(data, dict):
                 data = {}
             fly_doc_id = data.get("document_id")
+            fly_company_doc_id = data.get("company_document_id")
             file_url = data.get("file_url")
             logger.info(
-                "intake.crm_push.pushed client=%s fly_doc=%s file_url=%s",
+                "intake.crm_push.pushed client=%s fly_doc=%s fly_company_doc=%s file_url=%s",
                 client_id,
                 fly_doc_id,
+                fly_company_doc_id,
                 bool(file_url),
             )
             return CrmPushResult(
                 ok=True,
                 status="pushed",
                 fly_doc_id=int(fly_doc_id) if fly_doc_id is not None else None,
-                file_id=_parse_drive_file_id(file_url),
+                fly_company_doc_id=(
+                    int(fly_company_doc_id) if fly_company_doc_id is not None else None
+                ),
+                file_id=data.get("file_id") or _parse_drive_file_id(file_url),
                 file_url=file_url,
             )
         # Unreachable: the loop always returns. Defensive fallthrough.
         return CrmPushResult(ok=False, status="error", detail=last_detail or "exhausted retries")
     except Exception as exc:  # delivery must never break the approve
         logger.exception("intake.crm_push.unexpected client=%s", client_id)
+        return CrmPushResult(ok=False, status="error", detail=f"{type(exc).__name__}: {exc}")
+
+
+async def push_committed_company_document(
+    *,
+    bearer_token: str | None,
+    crm_write_key: str | None = None,
+    company_id: int | None = None,
+    company_uuid: str | None,
+    file_name: str,
+    document_type: str,
+    blob_path: str,
+    document_category: str | None = None,
+    document_number: str | None = None,
+    mime_type: str | None = None,
+    expiry_date: str | None = None,
+    notes: str | None = None,
+    base_url: str | None = None,
+    client_visible: bool | None = None,
+    intake_idempotency_key: str | None = None,
+) -> CrmPushResult:
+    """Deliver a standalone company document via canonical company UUID on Fly."""
+    if not bearer_token and not crm_write_key:
+        return CrmPushResult(
+            ok=False,
+            status="no_token",
+            detail="no bearer token or CRM service-write key available",
+        )
+    if not company_uuid:
+        return CrmPushResult(
+            ok=False,
+            status="company_identity_unresolved",
+            detail="local company lacks canonical UUID",
+        )
+    try:
+        canonical_uuid = str(UUID(str(company_uuid)))
+    except ValueError:
+        return CrmPushResult(
+            ok=False,
+            status="company_identity_unresolved",
+            detail="invalid canonical company UUID",
+        )
+
+    path = Path(blob_path)
+    try:
+        raw = await asyncio.to_thread(path.read_bytes)
+    except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as exc:
+        return CrmPushResult(ok=False, status="missing_blob", detail=f"{type(exc).__name__}: {exc}")
+
+    max_bytes = _max_push_bytes()
+    if len(raw) > max_bytes:
+        return CrmPushResult(
+            ok=False,
+            status="too_large",
+            detail=f"blob {len(raw)} bytes exceeds limit {max_bytes} bytes",
+        )
+
+    payload: dict[str, Any] = {
+        "file": base64.b64encode(raw).decode("ascii"),
+        "file_name": file_name,
+        "document_type": document_type,
+    }
+    optional_fields: dict[str, Any] = {
+        "mime_type": mime_type,
+        "notes": notes,
+        "document_category": document_category,
+        "document_number": document_number,
+        "expiry_date": expiry_date,
+        "client_visible": client_visible,
+        "intake_idempotency_key": intake_idempotency_key,
+    }
+    payload.update({key: value for key, value in optional_fields.items() if value is not None})
+
+    base = (base_url or _push_base_url()).rstrip("/")
+    using_bearer = bool(bearer_token)
+    if using_bearer:
+        url = f"{base}/api/crm/companies/{canonical_uuid}/documents/upload"
+        headers = {"Authorization": f"Bearer {bearer_token}"}
+    else:
+        url = f"{base}/api/crm/internal/companies/{canonical_uuid}/documents/upload"
+        headers = {"X-CRM-Write-Key": crm_write_key or ""}
+
+    client = _get_client()
+    try:
+        last_detail: str | None = None
+        fallback_service_key_used = False
+        attempt = 0
+        while attempt < 2:
+            try:
+                resp = await client.post(url, json=payload, headers=headers)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_detail = f"{type(exc).__name__}: {exc}"
+                if attempt == 0:
+                    logger.warning(
+                        "intake.crm_push.company_transient company=%s err=%s — retrying once",
+                        company_id,
+                        last_detail,
+                    )
+                    attempt += 1
+                    continue
+                return CrmPushResult(ok=False, status="unreachable", detail=last_detail)
+
+            if resp.status_code in (401, 403):
+                if using_bearer and crm_write_key and not fallback_service_key_used:
+                    fallback_service_key_used = True
+                    using_bearer = False
+                    url = f"{base}/api/crm/internal/companies/{canonical_uuid}/documents/upload"
+                    headers = {"X-CRM-Write-Key": crm_write_key}
+                    continue
+                return CrmPushResult(
+                    ok=False,
+                    status="denied_rbac",
+                    detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                )
+            if resp.status_code >= 500:
+                last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                if attempt == 0:
+                    logger.warning(
+                        "intake.crm_push.company_5xx company=%s detail=%s — retrying once",
+                        company_id,
+                        last_detail,
+                    )
+                    attempt += 1
+                    continue
+                return CrmPushResult(ok=False, status="server_error", detail=last_detail)
+            if resp.status_code == 409:
+                try:
+                    error = resp.json()
+                except ValueError:
+                    error = None
+                detail_str = str(error.get("detail") or "") if isinstance(error, dict) else ""
+                if detail_str.startswith("company_identity_unresolved"):
+                    return CrmPushResult(
+                        ok=False,
+                        status="company_identity_unresolved",
+                        detail="canonical company identity could not be verified",
+                    )
+            if resp.status_code >= 400:
+                return CrmPushResult(
+                    ok=False,
+                    status="rejected",
+                    detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                )
+
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            fly_company_doc_id = data.get("company_document_id")
+            file_url = data.get("file_url")
+            file_id = data.get("file_id") or _parse_drive_file_id(file_url)
+            logger.info(
+                "intake.crm_push.company_pushed company=%s fly_company_doc=%s file_url=%s",
+                company_id,
+                fly_company_doc_id,
+                bool(file_url),
+            )
+            return CrmPushResult(
+                ok=True,
+                status="pushed",
+                fly_company_doc_id=(
+                    int(fly_company_doc_id) if fly_company_doc_id is not None else None
+                ),
+                file_id=file_id,
+                file_url=file_url,
+            )
+        return CrmPushResult(ok=False, status="error", detail=last_detail or "exhausted retries")
+    except Exception as exc:
+        logger.exception("intake.crm_push.company_unexpected company=%s", company_id)
         return CrmPushResult(ok=False, status="error", detail=f"{type(exc).__name__}: {exc}")

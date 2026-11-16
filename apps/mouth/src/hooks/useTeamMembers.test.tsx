@@ -153,6 +153,7 @@ describe("isNonHumanRole", () => {
 describe("isTeamRole", () => {
   it("admits every role the backend allow-list admits (innocence)", () => {
     expect(isTeamRole("Tax Lead")).toBe(true);
+    expect(isTeamRole("Tax Consultant")).toBe(true);
     expect(isTeamRole("  board member ")).toBe(true);
     expect(isTeamRole("member")).toBe(true);
   });

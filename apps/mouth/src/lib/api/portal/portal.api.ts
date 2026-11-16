@@ -17,6 +17,7 @@ import type {
   SendMessageRequest,
   PortalPreferences,
   PortalProfile,
+  PortalProfileIdentity,
   UpdateProfileRequest,
   InviteValidationResponse,
   CompleteRegistrationRequest,
@@ -188,6 +189,8 @@ export class PortalApi {
       gender: data.gender,
       address: data.address,
       memberSince: data.member_since,
+      identityMasked: data.identity_masked,
+      birthdayToday: data.birthday_today,
       assignedTo: data.assigned_to
         ? {
             email: data.assigned_to.email,
@@ -195,6 +198,24 @@ export class PortalApi {
             avatarUrl: data.assigned_to.avatar_url,
           }
         : undefined,
+    };
+  }
+
+  /**
+   * Full passport number + date of birth for the signed-in client only. The
+   * backend refuses impersonation sessions and audit-logs every reveal.
+   */
+  async revealProfileIdentity(): Promise<PortalProfileIdentity> {
+    const response = await this.client.request<
+      PortalApiResponse<{
+        passport_number: string | null;
+        date_of_birth: string | null;
+      }>
+    >("/api/portal/profile/reveal", { method: "POST" });
+    const d = response.data!;
+    return {
+      passportNumber: d.passport_number ?? undefined,
+      dateOfBirth: d.date_of_birth ?? undefined,
     };
   }
 
@@ -221,6 +242,8 @@ export class PortalApi {
       gender: d.gender,
       address: d.address,
       memberSince: d.member_since,
+      identityMasked: d.identity_masked,
+      birthdayToday: d.birthday_today,
       assignedTo: d.assigned_to
         ? {
             email: d.assigned_to.email,

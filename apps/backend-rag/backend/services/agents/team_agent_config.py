@@ -558,17 +558,22 @@ TEAM_AGENTS: dict[str, AgentRole] = {
     "damar@balizero.com": ROLE_VISA_SPECIALIST,
     # Executive Consultants (setup team)
     "krisna@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
-    "dea@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "ari.firda@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "surya@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "sahira@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     "vino@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
+    # Rio: Junior Consultant, setup department (owner order 2026-11-15).
+    "rio@balizero.com": ROLE_EXECUTIVE_CONSULTANT,
     # Department heads (reorganisation 2026-11-09): Direktur, Tax Supervisor
     "adit@balizero.com": ROLE_MANAGER,
     "angel.tax@balizero.com": ROLE_MANAGER,
     # Tax team
     "kadek.tax@balizero.com": ROLE_TAX_SPECIALIST,
     "dewaayu.tax@balizero.com": ROLE_TAX_SPECIALIST,
+    # Dea and Candra: Tax Consultants, tax department (owner order 2026-11-15);
+    # plain addresses, no .tax@ alias. Dea moved over from the setup team.
+    "dea@balizero.com": ROLE_TAX_SPECIALIST,
+    "candra@balizero.com": ROLE_TAX_SPECIALIST,
     # faysha.tax@balizero.com removed 2026-09-19 — offboarded, no agent role.
 }
 

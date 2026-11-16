@@ -171,3 +171,15 @@ async def test_rag_proxy_failure_log_masks_search(monkeypatch, caplog, exc, rout
     assert client.urls == [f"{path}?search={VALUE}&page=2"], "upstream URL must stay unchanged"
     assert f"{path}?search=***&page=2" in caplog.text, "failure line never logged — vacuous"
     assert VALUE not in caplog.text
+
+
+def test_redact_query_params_replaces_only_the_search_values():
+    from backend.core.secret_log_redaction import redact_query_params
+
+    assert redact_query_params({"search": VALUE, " Q ": VALUE, "page": "2"}) == {
+        "search": "***",
+        " Q ": "***",
+        "page": "2",
+    }
+    assert redact_query_params({"se%61rch": VALUE}) == {"se%61rch": "***"}
+    assert redact_query_params(None) == {}

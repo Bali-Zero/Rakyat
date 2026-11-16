@@ -2,10 +2,12 @@
 
 Tax team (*.tax@) → the Tax Supervisor (angel.tax@balizero.com)
 Setup team, the Tax Responsible and HR & Accounting → the Direktur (adit@balizero.com)
-Rina → Ruslana
+Rina, Rio, Dea and Candra → Ruslana, whatever their department
 Everyone else (including the Tax Supervisor and the Direktur themselves) → Zero
 
-Reorganisation 2026-11-09 (owner order).
+Reorganisation 2026-11-09 (owner order). Ruslana's reports widened 2026-11-15
+(owner order): Dea and Candra are Tax Consultants in the tax department, Rio
+is in the setup department, and Ruslana approves all three.
 
 When the org chart changes, update SUPERVISOR_MAP and add tests.
 No DB column, no migration: rules stable per Zero (2026-04-07, 2026-10-20).
@@ -19,7 +21,8 @@ RUSLANA_EMAIL = "ruslana@balizero.com"
 
 #: The tax department, including its supervisor. Both spellings of Dewa Ayu's
 #: address are kept: the roster carries `dewaayu.tax@`, the original map carried
-#: `dewa.ayu.tax@`.
+#: `dewa.ayu.tax@`. Dea and Candra (Tax Consultants, plain addresses) are in the
+#: department but report to Ruslana, see RUSLANA_REPORTS.
 TAX_TEAM_EMAILS: frozenset[str] = frozenset(
     {
         "kadek.tax@balizero.com",
@@ -27,19 +30,33 @@ TAX_TEAM_EMAILS: frozenset[str] = frozenset(
         "dewaayu.tax@balizero.com",
         "dewa.ayu.tax@balizero.com",
         "faysha.tax@balizero.com",
+        "dea@balizero.com",
+        "candra@balizero.com",
     }
 )
 
-#: The setup team (department `setup` in the off-repo staff roster).
+#: The setup team (department `setup` in the off-repo staff roster). Rio is in
+#: the department but reports to Ruslana, see RUSLANA_REPORTS.
 SETUP_TEAM_EMAILS: frozenset[str] = frozenset(
     {
         "adit@balizero.com",
         "ari.firda@balizero.com",
         "krisna@balizero.com",
-        "dea@balizero.com",
         "surya@balizero.com",
         "damar@balizero.com",
         "vino@balizero.com",
+        "rio@balizero.com",
+    }
+)
+
+#: Everyone Ruslana approves, whatever their department (owner orders 2026-10-20
+#: for Rina, 2026-11-15 for Rio, Dea and Candra). Taken out of both department
+#: heads' reports below, so each person has exactly one approver.
+RUSLANA_REPORTS: frozenset[str] = frozenset(
+    {
+        "rina@balizero.com",
+        "rio@balizero.com",
+        "dea@balizero.com",
         "candra@balizero.com",
     }
 )
@@ -47,17 +64,21 @@ SETUP_TEAM_EMAILS: frozenset[str] = frozenset(
 ZERO_EMAIL = "zero@balizero.com"
 ASYA_EMAIL = "asya@balizero.com"
 
-#: Everyone the Tax Supervisor approves: the tax team minus the supervisor.
-TAX_SUPERVISOR_REPORTS: frozenset[str] = TAX_TEAM_EMAILS - {TAX_SUPERVISOR_EMAIL}
+#: Everyone the Tax Supervisor approves: the tax team minus the supervisor and
+#: minus Ruslana's reports.
+TAX_SUPERVISOR_REPORTS: frozenset[str] = TAX_TEAM_EMAILS - {TAX_SUPERVISOR_EMAIL} - RUSLANA_REPORTS
 
-#: Everyone the Direktur approves: the setup team minus the Direktur, plus HR &
-#: Accounting (direct assistant). The Tax Responsible (ari) sits in the setup team.
-SETUP_DIRECTOR_REPORTS: frozenset[str] = (SETUP_TEAM_EMAILS - {SETUP_DIRECTOR_EMAIL}) | {ASYA_EMAIL}
+#: Everyone the Direktur approves: the setup team minus the Direktur and minus
+#: Ruslana's reports, plus HR & Accounting (direct assistant). The Tax
+#: Responsible (ari) sits in the setup team.
+SETUP_DIRECTOR_REPORTS: frozenset[str] = (
+    SETUP_TEAM_EMAILS - {SETUP_DIRECTOR_EMAIL} - RUSLANA_REPORTS
+) | {ASYA_EMAIL}
 
 SUPERVISOR_MAP: dict[str, str] = {
     **dict.fromkeys(sorted(TAX_SUPERVISOR_REPORTS), TAX_SUPERVISOR_EMAIL),
     **dict.fromkeys(sorted(SETUP_DIRECTOR_REPORTS), SETUP_DIRECTOR_EMAIL),
-    "rina@balizero.com": RUSLANA_EMAIL,
+    **dict.fromkeys(sorted(RUSLANA_REPORTS), RUSLANA_EMAIL),
 }
 
 

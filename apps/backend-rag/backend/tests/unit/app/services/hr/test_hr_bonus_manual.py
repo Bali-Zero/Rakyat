@@ -183,6 +183,10 @@ def test_practice_group_rules():
 def test_department_of_uses_the_org_chart_then_the_stored_text():
     assert department_of("Angel.Tax@balizero.com") == "tax"
     assert department_of("adit@balizero.com") == "setup"
+    # 2026-11-15: Dea and Candra are Tax Consultants, Rio is in setup.
+    assert department_of("dea@balizero.com", "setup") == "tax"
+    assert department_of("candra@balizero.com") == "tax"
+    assert department_of("rio@balizero.com") == "setup"
     assert department_of("fake.person@balizero.com", "Tax") == "tax"
     assert department_of("fake.person@balizero.com", "ops") == "office"
     assert department_of(None) == "office"

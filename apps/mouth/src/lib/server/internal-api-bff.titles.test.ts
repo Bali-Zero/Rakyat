@@ -14,6 +14,8 @@ const NEW_TITLES = [
   "Tax Supervisor",
   "Tax Responsible",
   "Senior Consultant",
+  // owner order 2026-11-15: same access as Tax Lead
+  "Tax Consultant",
 ];
 const OLD_TITLES_STILL_HELD = [
   "Supervisor",
@@ -105,6 +107,8 @@ describe("editorial approver roles carry the 2026-11-09 titles", () => {
     ["Team Leader", "Tax Responsible"],
     ["Executive Consultant", "Senior Consultant"],
     ["Accounting", "HR & Accounting"],
+    // owner order 2026-11-15
+    ["Tax Lead", "Tax Consultant"],
   ];
 
   async function baseGateAdmits(role: string): Promise<boolean> {

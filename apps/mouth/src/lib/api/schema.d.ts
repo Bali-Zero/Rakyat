@@ -5508,6 +5508,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/companies/{company_ref}/documents/upload": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload Company Document Base64
+     * @description Upload a standalone document directly to a company workspace.
+     */
+    post: operations["upload_company_document_base64_api_crm_companies__company_ref__documents_upload_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/document-categories": {
     parameters: {
       query?: never;
@@ -5888,6 +5908,26 @@ export interface paths {
      *     because Pro-side intake already resolved and gate-checked the target client.
      */
     post: operations["upload_document_base64_internal_api_crm_internal_clients__client_id__documents_upload_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/crm/internal/companies/{company_uuid}/documents/upload": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload Company Document Base64 Internal
+     * @description Service-to-service standalone company intake upload keyed by canonical UUID.
+     */
+    post: operations["upload_company_document_base64_internal_api_crm_internal_companies__company_uuid__documents_upload_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -6900,7 +6940,7 @@ export interface paths {
     put?: never;
     /**
      * Run Unpaid Invoice Notifier
-     * @description Check invoices unpaid for 7+ days and remind Asya.
+     * @description Digest of invoices still unpaid 3 days after issue (once per invoice) to Asya.
      */
     post: operations["run_unpaid_invoice_notifier_api_cron_notifiers_unpaid_invoices_post"];
     delete?: never;
@@ -10221,8 +10261,8 @@ export interface paths {
      *     P0#5: the caller must hold the active claim — non-admins must present the
      *     matching ``claim_token`` on a non-expired lease.
      *
-     *     body: {client_id?, practice_id?, document_category?, document_subtype?,
-     *            final_fields?, claim_token?}
+     *     body: {client_id?, company_id?, practice_id?, document_category?,
+     *            document_subtype?, final_fields?, claim_token?}
      */
     post: operations["approve_review_api_intake_review__proposal_id__approve_post"];
     delete?: never;
@@ -14324,6 +14364,31 @@ export interface paths {
      * @description Update client profile. Only phone, whatsapp, address, and language can be changed.
      */
     patch: operations["update_profile_api_portal_profile_patch"];
+    trace?: never;
+  };
+  "/api/portal/profile/reveal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reveal Profile Identity
+     * @description Full passport number + date of birth for the signed-in client only.
+     *
+     *     Fail-closed: a superuser impersonation session (``?as_client=``) is
+     *     refused — it is somebody else's identity, not the session owner's. The
+     *     reveal is written to security_audit_log with the field names only, never
+     *     the values.
+     */
+    post: operations["reveal_profile_identity_api_portal_profile_reveal_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/api/portal/settings": {
@@ -21329,6 +21394,29 @@ export interface components {
       /** Mime Type */
       mime_type?: string | null;
     };
+    /** CompanyDocumentUploadBase64 */
+    CompanyDocumentUploadBase64: {
+      /** Client Visible */
+      client_visible?: boolean | null;
+      /** Document Category */
+      document_category?: string | null;
+      /** Document Number */
+      document_number?: string | null;
+      /** Document Type */
+      document_type: string;
+      /** Expiry Date */
+      expiry_date?: string | null;
+      /** File */
+      file: string;
+      /** File Name */
+      file_name: string;
+      /** Intake Idempotency Key */
+      intake_idempotency_key?: string | null;
+      /** Mime Type */
+      mime_type?: string | null;
+      /** Notes */
+      notes?: string | null;
+    };
     /** CompanyDriveSource */
     CompanyDriveSource: {
       /** Kinds */
@@ -22144,7 +22232,7 @@ export interface components {
       /** Client Visible */
       client_visible?: boolean | null;
       /** Company Id */
-      company_id?: number | null;
+      company_id?: number | string | null;
       /** Document Category */
       document_category?: string | null;
       /** Document Type */
@@ -22159,6 +22247,8 @@ export interface components {
       file: string;
       /** File Name */
       file_name: string;
+      /** Intake Idempotency Key */
+      intake_idempotency_key?: string | null;
       /** Mime Type */
       mime_type?: string | null;
       /** Notes */
@@ -38626,6 +38716,52 @@ export interface operations {
       };
     };
   };
+  upload_company_document_base64_api_crm_companies__company_ref__documents_upload_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        company_ref: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CompanyDocumentUploadBase64"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Duplicate document content or unresolved client or practice ownership. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentUploadConflict"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   get_document_categories_api_crm_document_categories_get: {
     parameters: {
       query?: never;
@@ -39257,6 +39393,52 @@ export interface operations {
       };
     };
   };
+  upload_company_document_base64_internal_api_crm_internal_companies__company_uuid__documents_upload_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        company_uuid: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CompanyDocumentUploadBase64"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Duplicate document content or unresolved client or practice ownership. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentUploadConflict"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   get_member_obligations_api_crm_member_obligations_get: {
     parameters: {
       query?: {
@@ -39696,6 +39878,8 @@ export interface operations {
         priority?: string | null;
         /** @description Filter by month YYYY-MM */
         month?: string | null;
+        /** @description Smart search: client name or e-mail, service, practice number, phone */
+        search?: string | null;
         /** @description Include status transition history */
         include_history?: boolean;
         limit?: number;
@@ -51523,6 +51707,28 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reveal_profile_identity_api_portal_profile_reveal_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
         };
       };
     };
