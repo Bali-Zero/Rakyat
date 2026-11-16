@@ -1226,6 +1226,11 @@ class Settings(BaseSettings):
     wa_mirror_crm_write_key: str | None = None
     wa_mirror_crm_write_enabled: bool = False
 
+    # Related-subject registry (slice 1): POST /api/crm/related-subjects/register, same scoped
+    # X-CRM-Write-Key as above. Own kill switch, default off (503): the WA Mirror flag alone
+    # never opens it.
+    related_subject_registry_enabled: bool = False
+
     # Scoped service key EXCLUSIVE to wa_inbox_bot.py's own call to
     # POST /api/agentic-rag/query, used ONLY to gate WA sender-profile
     # resolution (owner/team persona override — P0-ID, hardened 2026-07-24).
