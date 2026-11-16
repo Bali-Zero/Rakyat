@@ -5,28 +5,28 @@ import { AlertTriangle } from "lucide-react";
 import { WhatsAppLeadButton } from "@/components/lead/WhatsAppLeadButton";
 
 const BUILDER_WA_CONTEXT: { label: string; value: string }[] = [
-  { label: "Layanan", value: "KBLI Builder" },
-  { label: "Halaman", value: "/kbli/builder" },
+  { label: "Service", value: "KBLI Builder" },
+  { label: "Page", value: "/kbli/builder" },
 ];
 
 const PAIN_POINTS: string[] = [
-  "Struktur kode KBLI yang salah = permohonan BKPM ditolak saat pendaftaran PT PMA",
-  "Satu bisnis PT PMA bisa membutuhkan 2-5 kode KBLI primer dan sekunder yang kompatibel",
-  "Perubahan DNI 2024 mempengaruhi eligibilitas kepemilikan asing — kode lama bisa tidak valid",
+  "Incompatible KBLI codes can delay notarial deed approval, AHU registration, or OSS licensing",
+  "Most PT PMA structures combine primary and supporting KBLI 2025 codes across related activities",
+  "Foreign ownership rules (Perpres 10/2021 & 49/2021), PP 28/2025 risk tiers, and Bali zoning rules apply per code",
 ];
 
 const STEPS: { step: string; text: string }[] = [
   {
     step: "1",
-    text: "Ceritakan model bisnis dan struktur kepemilikan PT PMA yang direncanakan",
+    text: "Share your planned business model, activities, and shareholding structure",
   },
   {
     step: "2",
-    text: "Tim kami menyusun paket kode KBLI primer + sekunder yang kompatibel dengan DNI",
+    text: "Our corporate team structures compatible primary and secondary KBLI 2025 codes",
   },
   {
     step: "3",
-    text: "Anda menerima struktur kode lengkap beserta dokumen referensi untuk notaris",
+    text: "Receive a complete KBLI code schedule ready for notarial deed and OSS filing",
   },
 ];
 
@@ -54,9 +54,9 @@ export function KBLIBuilderCTA() {
         className="text-base md:text-lg mb-8"
         style={{ color: "var(--text-secondary)" }}
       >
-        Mau mendirikan PT PMA? Kami susun struktur kode KBLI 2025 yang tepat —
-        kompatibel dengan Daftar Negatif Investasi dan siap untuk pengajuan ke
-        BKPM.
+        Setting up a PT PMA? We structure compatible KBLI 2025 codes aligned
+        with Indonesia&apos;s Investment List (Perpres 10/2021 &amp; 49/2021),
+        PP 28/2025 risk-based licensing, and Bali local regulations.
       </p>
 
       <div className="mb-12">
@@ -69,7 +69,7 @@ export function KBLIBuilderCTA() {
             color: "var(--text-on-accent)",
           }}
         >
-          Mulai Konsultasi via WhatsApp →
+          Start Consultation on WhatsApp →
         </WhatsAppLeadButton>
       </div>
 
@@ -78,7 +78,7 @@ export function KBLIBuilderCTA() {
           className="text-xs font-semibold uppercase tracking-widest mb-4"
           style={{ color: "var(--text-secondary)" }}
         >
-          Mengapa kode yang tepat penting
+          Why code structure matters
         </h2>
         <ul className="space-y-3" role="list">
           {PAIN_POINTS.map((point) => (
@@ -105,7 +105,7 @@ export function KBLIBuilderCTA() {
           className="text-xs font-semibold uppercase tracking-widest mb-4"
           style={{ color: "var(--text-secondary)" }}
         >
-          Cara kerja
+          How it works
         </h2>
         <ol className="space-y-5" role="list">
           {STEPS.map(({ step, text }) => (
@@ -132,13 +132,13 @@ export function KBLIBuilderCTA() {
       </div>
 
       <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-        Cari kode sendiri?{" "}
+        Prefer to browse codes yourself?{" "}
         <Link
           href="/kbli"
           className="underline underline-offset-2"
           style={{ color: "var(--text-primary)" }}
         >
-          Buka KBLI Navigator →
+          Open KBLI Navigator →
         </Link>
       </p>
     </section>

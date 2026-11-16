@@ -30,7 +30,11 @@ import {
   isPmaVerdictVerified,
 } from "@/lib/kbli-provenance";
 import { formatPmaOwnership } from "@/lib/kbli-pma-disclosure";
-import { formatTimeframe, riskLabelEn } from "@/lib/kbli-derive";
+import {
+  summarizeLicenseRange,
+  summarizeRiskRange,
+  summarizeTimeframeRange,
+} from "@/lib/kbli-derive";
 import type { KBLICode } from "@/lib/kbli-types";
 
 export function LicensingQuickFacts({ kbli }: { kbli: KBLICode }) {
@@ -39,34 +43,41 @@ export function LicensingQuickFacts({ kbli }: { kbli: KBLICode }) {
 
   const rowsVerified = isLicensingVerifiedForBareClaim(kbli);
   const pmaVerified = isPmaVerdictVerified(kbli);
+  const baliBlocked = kbli.baliL4?.blocked === true;
   const detached = kbli.provenance?.licensing.status === "detached";
+
+  const nationalOwnership = pmaVerified
+    ? formatPmaOwnership(kbli.pma)
+    : UNVERIFIED_LICENSING_FACT;
+  const ownershipValue =
+    pmaVerified && baliBlocked
+      ? `National: ${nationalOwnership} · blocked in Bali`
+      : nationalOwnership;
 
   const cells: { label: string; value: string; muted: boolean }[] = [
     {
       label: "Risk Level",
       value: rowsVerified
-        ? (riskLabelEn(primary.riskCategory) ?? primary.riskCategory)
+        ? (summarizeRiskRange(kbli.licensing, "en") ?? primary.riskCategory)
         : UNVERIFIED_LICENSING_FACT,
       muted: !rowsVerified,
     },
     {
       label: "License Type",
       value: rowsVerified
-        ? primary.licenseType || "NIB"
+        ? summarizeLicenseRange(kbli.licensing) || "NIB"
         : UNVERIFIED_LICENSING_FACT,
       muted: !rowsVerified,
     },
     {
       label: "Foreign Ownership",
-      value: pmaVerified
-        ? formatPmaOwnership(kbli.pma)
-        : UNVERIFIED_LICENSING_FACT,
+      value: ownershipValue,
       muted: !pmaVerified,
     },
     {
       label: "Processing",
       value: rowsVerified
-        ? (formatTimeframe(primary.timeframe) ?? "Through OSS")
+        ? (summarizeTimeframeRange(kbli.licensing) ?? "Through OSS")
         : UNVERIFIED_LICENSING_FACT,
       muted: !rowsVerified,
     },

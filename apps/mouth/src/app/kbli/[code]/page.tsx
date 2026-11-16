@@ -268,12 +268,17 @@ export default async function KBLICodePage({
               >
                 {kbli.titleEn}
               </h1>
-              <p
-                className="mt-2 text-lg text-[var(--kbli-text-muted)]"
-                style={{ textShadow: "none" }}
-              >
-                {kbli.titleId}
-              </p>
+              {kbli.titleId && (
+                <p
+                  className="mt-2 text-base text-[var(--kbli-text-muted)] sm:text-lg"
+                  style={{ textShadow: "none" }}
+                >
+                  <span className="mr-2 text-xs font-semibold uppercase tracking-[0.08em]">
+                    Official title (Bahasa Indonesia):
+                  </span>
+                  <span lang="id">{kbli.titleId}</span>
+                </p>
+              )}
 
               {/* Section line */}
               {sectionMeta && (
@@ -484,6 +489,26 @@ export default async function KBLICodePage({
           {intel?.editorial && (
             <section className="pb-10 pt-2">
               <KBLIEditorial editorial={intel.editorial} />
+              {kbli.description && (
+                <details
+                  className="mt-5 rounded-xl border border-[var(--border)] overflow-hidden"
+                  style={{
+                    background: "var(--kbli-bg-elevated)",
+                    maxWidth: "680px",
+                  }}
+                >
+                  <summary className="cursor-pointer px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground)]">
+                    Official BPS Scope Description (Bahasa Indonesia)
+                  </summary>
+                  <div
+                    lang="id"
+                    className="border-t border-[var(--border)] px-4 py-3.5 text-sm leading-relaxed text-[var(--foreground-secondary)]"
+                    style={{ background: "var(--kbli-bg-surface)" }}
+                  >
+                    {kbli.description}
+                  </div>
+                </details>
+              )}
             </section>
           )}
 
@@ -499,6 +524,26 @@ export default async function KBLICodePage({
                   >
                     {gold.whatItMeans}
                   </p>
+                  {kbli.description && (
+                    <details
+                      className="mt-5 rounded-xl border border-[var(--border)] overflow-hidden"
+                      style={{
+                        background: "var(--kbli-bg-elevated)",
+                        maxWidth: "680px",
+                      }}
+                    >
+                      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground)]">
+                        Official BPS Scope Description (Bahasa Indonesia)
+                      </summary>
+                      <div
+                        lang="id"
+                        className="border-t border-[var(--border)] px-4 py-3.5 text-sm leading-relaxed text-[var(--foreground-secondary)]"
+                        style={{ background: "var(--kbli-bg-surface)" }}
+                      >
+                        {kbli.description}
+                      </div>
+                    </details>
+                  )}
                 </section>
               )}
 
@@ -688,7 +733,11 @@ export default async function KBLICodePage({
                                 </span>
                               )}
                             </span>
-                            <span className="ml-auto text-xs text-[var(--foreground-muted)] hidden sm:inline">
+                            <span
+                              lang="id"
+                              title="Official Kepmenaker position title (Bahasa Indonesia)"
+                              className="ml-auto text-xs text-[var(--foreground-muted)] hidden sm:inline"
+                            >
                               {pos.titleId}
                             </span>
                           </div>
@@ -769,6 +818,26 @@ export default async function KBLICodePage({
                       >
                         {intel.whatItMeans}
                       </p>
+                      {kbli.description && (
+                        <details
+                          className="mt-5 rounded-xl border border-[var(--border)] overflow-hidden"
+                          style={{
+                            background: "var(--kbli-bg-elevated)",
+                            maxWidth: "680px",
+                          }}
+                        >
+                          <summary className="cursor-pointer px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground)]">
+                            Official BPS Scope Description (Bahasa Indonesia)
+                          </summary>
+                          <div
+                            lang="id"
+                            className="border-t border-[var(--border)] px-4 py-3.5 text-sm leading-relaxed text-[var(--foreground-secondary)]"
+                            style={{ background: "var(--kbli-bg-surface)" }}
+                          >
+                            {kbli.description}
+                          </div>
+                        </details>
+                      )}
                     </section>
                   )}
 
@@ -884,8 +953,35 @@ export default async function KBLICodePage({
                     className="text-lg leading-relaxed text-[var(--foreground-secondary)] sm:text-xl sm:leading-[1.7]"
                     style={{ maxWidth: "680px" }}
                   >
-                    {kbli.description}
+                    KBLI {kbli.code} ({kbli.titleEn}) is a five-digit Indonesian
+                    business activity classification under Section{" "}
+                    {kbli.section}
+                    {sectionMeta ? ` — ${sectionMeta.nameEn}` : ""} of KBLI 2025
+                    (BPS Regulation No. 7/2025). English scope commentary is
+                    pending editorial verification for this classification;
+                    expand the statutory Bahasa Indonesia scope text from Badan
+                    Pusat Statistik (BPS) below.
                   </p>
+                  {kbli.description && (
+                    <details
+                      className="mt-5 rounded-xl border border-[var(--border)] overflow-hidden"
+                      style={{
+                        background: "var(--kbli-bg-elevated)",
+                        maxWidth: "680px",
+                      }}
+                    >
+                      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground)]">
+                        Official BPS Scope Description (Bahasa Indonesia)
+                      </summary>
+                      <div
+                        lang="id"
+                        className="border-t border-[var(--border)] px-4 py-3.5 text-sm leading-relaxed text-[var(--foreground-secondary)]"
+                        style={{ background: "var(--kbli-bg-surface)" }}
+                      >
+                        {kbli.description}
+                      </div>
+                    </details>
+                  )}
                 </section>
               )}
 
