@@ -262,9 +262,6 @@ async def post(stack, payload, headers=HEADERS):
 
 @pytest.mark.asyncio
 async def test_c1_batch_counters_cover_the_two_new_tables_only(conn):
-    await conn.execute(
-        "INSERT INTO clients (full_name, passport_number) VALUES ('Fixture', 'QQ111222')"
-    )
     tr = conn.transaction()
     await tr.start()
     try:
@@ -310,6 +307,10 @@ async def test_c2_session_header_and_user_email_also_update_session_tracking(
     pool, conn, enabled, audit_logger
 ):
     stack = Stack(pool)
+    await conn.execute(
+        "INSERT INTO session_tracking (session_id, user_email) "
+        "VALUES ('sess-probe-1', 'staff@example.test')"
+    )
     before = await snapshot(conn)
     headers = {**HEADERS, "X-Session-ID": "sess-probe-1", "X-User-Email": "staff@example.test"}
     resp = await post(
