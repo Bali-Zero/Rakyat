@@ -318,7 +318,9 @@ async def get_clock(
         hash=saved.hash,
         visa_type=saved.visa_type,
         entry_date=saved.entry_date,
-        expiry_date=saved.expiry_date,
+        # Recompute from inclusive Day-1 timeline so pre-deploy rows stored as
+        # entry_date + duration_days stay consistent with their checkpoints.
+        expiry_date=timeline.expiry_date,
         extensions_possible=saved.extensions_possible,
         extension_days=saved.extension_days,
         checkpoints=[

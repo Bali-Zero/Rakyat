@@ -5,7 +5,7 @@ Exports
     VisaCheckRepository         persistence
     VisaClockResult             shape returned by /api/visa/clock
     VisaMatchResult             shape returned by /api/visa/match
-    clock_timeline              deterministic 5-checkpoint builder
+    clock_timeline              deterministic stay-timeline builder (up to 5 checkpoints)
     recommend_visa              match decision tree
     estimate_match_cost         PricingTool bridge (read-only)
 """

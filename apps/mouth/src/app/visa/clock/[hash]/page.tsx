@@ -76,22 +76,33 @@ export default function VisaClockResultPage({
       </AppFrame>
     );
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = witaCivilDay(new Date());
   const checkpoints: TimelineCheckpoint[] = data.checkpoints.map((c) => ({
     ...c,
     past: c.at < today,
   }));
-  // SIGNED, deliberately un-clamped. This used to be `Math.max(0, …)`, which did
-  // not guard against NaN — it suppressed the negative, so someone 65 days into
-  // an overstay was shown "0 days from today" under the heading "Valid until".
-  // The number below is allowed to go negative precisely so the branch after it
-  // can exist.
-  const daysToExpiry = Math.ceil(
-    (new Date(data.expiry_date).getTime() - Date.now()) / 86_400_000,
-  );
+  const checkpointCount = checkpoints.length;
+  const timelineHeading =
+    checkpointCount === 1
+      ? "1-checkpoint timeline"
+      : checkpointCount > 1
+        ? `${checkpointCount}-checkpoint timeline`
+        : "Timeline checkpoints";
+  const emailPromise =
+    checkpointCount === 1
+      ? "Get a reminder email at the checkpoint. One-click unsubscribe."
+      : checkpointCount > 1
+        ? `Get reminder emails at each of the ${checkpointCount} checkpoints. One-click unsubscribe.`
+        : "Get timeline reminder emails. One-click unsubscribe.";
+  // SIGNED, deliberately un-clamped, computed as whole civil days in
+  // Asia/Makassar (WITA) rather than `Math.ceil((expiry - now) / 86_400_000)`
+  // — which yielded `-0` between 00:00 and 08:00 WITA on Day 1 of an overstay
+  // and shifted with the viewer's local timezone. Normalized with
+  // `diff === 0 ? 0 : diff` so `-0` is impossible.
+  const daysToExpiry = civilDaysBetween(today, data.expiry_date) ?? 0;
   const isOverstay = daysToExpiry < 0;
-  const daysOverstayed = -daysToExpiry;
-  const daysLeft = Math.max(0, daysToExpiry);
+  const daysOverstayed = isOverstay ? -daysToExpiry : 0;
+  const daysLeft = isOverstay ? 0 : daysToExpiry === 0 ? 0 : daysToExpiry;
   const publicUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}/visa/clock/${data.hash}`
@@ -229,7 +240,7 @@ export default function VisaClockResultPage({
             color: "var(--color-text-muted)",
           }}
         >
-          Five-checkpoint timeline
+          {timelineHeading}
         </div>
         <AppResultTimeline
           checkpoints={checkpoints}
@@ -251,7 +262,7 @@ export default function VisaClockResultPage({
         <AppEmailOptIn
           app="visa_clock"
           resultHash={data.hash}
-          promise="Get reminder emails at each of the 5 checkpoints. One-click unsubscribe."
+          promise={emailPromise}
           payload={{
             visa_type: data.visa_type,
             entry_date: data.entry_date,
@@ -295,13 +306,45 @@ export default function VisaClockResultPage({
   );
 }
 
+const WITA_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Makassar",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function witaCivilDay(now: Date): string {
+  const part: Record<string, string> = {};
+  for (const p of WITA_DAY_FORMATTER.formatToParts(now)) {
+    part[p.type] = p.value;
+  }
+  return `${part.year}-${part.month}-${part.day}`;
+}
+
+function civilDaysBetween(fromDay: string, toDay: string): number | null {
+  const a = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fromDay);
+  const b = /^(\d{4})-(\d{2})-(\d{2})$/.exec(toDay);
+  if (!a || !b) return null;
+  const at = Date.UTC(Number(a[1]), Number(a[2]) - 1, Number(a[3]));
+  const bt = Date.UTC(Number(b[1]), Number(b[2]) - 1, Number(b[3]));
+  if (Number.isNaN(at) || Number.isNaN(bt)) return null;
+  const diff = Math.round((bt - at) / 86_400_000);
+  return diff === 0 ? 0 : diff;
+}
+
+const ISO_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
 function formatIsoDate(iso: string): string {
   if (!iso) return "";
-  const d = new Date(iso);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const d = m
+    ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+    : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return ISO_DATE_FORMATTER.format(d);
 }

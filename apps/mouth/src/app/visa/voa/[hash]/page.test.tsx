@@ -42,6 +42,7 @@ describe("VoaResultPage — DECLINE (owner decision 5, constraint 5b)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    window.sessionStorage.clear();
     fetchMock.mockReset();
   });
 
@@ -131,11 +132,71 @@ describe("VoaResultPage — DECLINE (owner decision 5, constraint 5b)", () => {
       screen.queryByRole("button", { name: /pay|checkout/i }),
     ).not.toBeInTheDocument();
   });
+
+  it("renders real nationality, traveller count and purpose from sessionStorage after wizard clears localStorage", async () => {
+    window.sessionStorage.setItem(
+      "bz.garuda_voa.check.hash-nga-decline",
+      JSON.stringify({
+        case_type: "issuance",
+        nationality: "NGA",
+        purpose: "family",
+        travellers: 3,
+        self_pay: true,
+        extension_already_used: false,
+      }),
+    );
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        verdict: "DECLINE",
+        reason_codes: ["NATIONALITY_NOT_ELIGIBLE"],
+      }),
+    });
+
+    const { unmount } = renderWithHash("hash-nga-decline");
+    await waitFor(() =>
+      expect(screen.getByTestId("bz-empty-stamp")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(/You told us you hold a passport from Nigeria\./i),
+    ).toBeInTheDocument();
+    unmount();
+
+    window.sessionStorage.setItem(
+      "bz.garuda_voa.check.hash-group-decline",
+      JSON.stringify({
+        case_type: "issuance",
+        nationality: "KOR",
+        purpose: "family",
+        travellers: 4,
+        self_pay: true,
+        extension_already_used: false,
+      }),
+    );
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        verdict: "DECLINE",
+        reason_codes: ["GROUP_CASE"],
+      }),
+    });
+
+    renderWithHash("hash-group-decline");
+    await waitFor(() =>
+      expect(screen.getByTestId("bz-empty-stamp")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(
+        /You told us you're travelling with 4 people on this application\./i,
+      ),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("VoaResultPage — ACCEPT", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.sessionStorage.clear();
     fetchMock.mockReset();
   });
 
@@ -317,6 +378,7 @@ describe("VoaResultPage — ACCEPT", () => {
 describe("VoaResultPage — self-service deletion (design-A §2, DELIBERA lane S6)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.sessionStorage.clear();
     fetchMock.mockReset();
   });
 
@@ -343,6 +405,17 @@ describe("VoaResultPage — self-service deletion (design-A §2, DELIBERA lane S
     ).toBeInTheDocument();
 
     fetchMock.mockResolvedValueOnce({ status: 204 });
+    window.sessionStorage.setItem(
+      "bz.garuda_voa.check.opaque-test-hash",
+      JSON.stringify({
+        case_type: "issuance",
+        nationality: "ITA",
+        purpose: "tourism",
+        travellers: 1,
+        self_pay: true,
+        extension_already_used: false,
+      }),
+    );
     await user.click(screen.getByRole("button", { name: /yes, delete/i }));
 
     await waitFor(() =>
@@ -350,6 +423,9 @@ describe("VoaResultPage — self-service deletion (design-A §2, DELIBERA lane S
         screen.getByText(/this check has been deleted/i),
       ).toBeInTheDocument(),
     );
+    expect(
+      window.sessionStorage.getItem("bz.garuda_voa.check.opaque-test-hash"),
+    ).toBeNull();
 
     // The request itself: same-origin DELETE, cookie included, a real
     // Idempotency-Key header (never empty, never a body).
