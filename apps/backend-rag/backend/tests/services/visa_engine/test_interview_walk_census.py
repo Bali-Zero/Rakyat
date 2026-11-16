@@ -1805,6 +1805,10 @@ FUNNEL_REASON_CHANGES: dict[str, ReasonPin] = {
     "offshore/invest/undecided": _FUNNEL_ACTIVITY_BOUNDARY,
     "offshore/invest/undecided/currency_still_unsure": _FUNNEL_ACTIVITY_BOUNDARY,
     "offshore/other/no_paid_activity/medical": _FUNNEL_ACTIVITY_BOUNDARY,
+    "offshore/tourism/disclosed_conditions": (
+        (),
+        ("DISCLOSED_BLACKLIST_ENTRY_REVIEW", "DISCLOSED_IMMIGRATION_INVESTIGATION_REVIEW"),
+    ),
     "offshore/tourism/disclosed_criminal": ((), ("DISCLOSED_CRIMINAL_RECORD_REVIEW",)),
     **dict.fromkeys(_T06_FLAGGED_WALKS, _FUNNEL_ACTIVITY_BOUNDARY),
     # PR-13: the criminal-record walk is held for review and the paid medical walk dead-ends,
@@ -4537,6 +4541,7 @@ def test_the_flagged_census_is_the_funnel_the_applicant_meets(
         if set(flags) & _HOLDING_DISCLOSED_FLAG_NAMES
     }
     assert disclosure_held == {
+        "offshore/tourism/disclosed_conditions",
         "offshore/tourism/disclosed_criminal",
         "offshore/work/disclosed_criminal",  # PR-13
     }
@@ -4642,16 +4647,24 @@ def test_every_disclosure_flag_reports_the_walks_it_rewrites(
         holds = flag in _HOLDING_DISCLOSED_FLAG_NAMES
         dead_ends = flag in _DEAD_END_DISCLOSED_FLAG_NAMES
         for label, before, after in rows:
+            walk_flags = EXPECTED_DISCLOSED_REVIEW_FLAGS[label]
+            co_held = bool(set(walk_flags) & _HOLDING_DISCLOSED_FLAG_NAMES)
             assert (
                 outcomes[label]["candidates"] == flagged_outcomes[label]["candidates"]
                 or holds
                 or dead_ends
+                or co_held
             ), (
                 f"{label}: {flag} changed the candidate set — a conditioning "
                 "flag can never create, reorder or remove a candidate"
             )
             if holds:
                 review_code = EXPECTED_REVIEW_REASON_FOR_HOLDING_FLAG[flag]
+                expected_holding_codes = [
+                    EXPECTED_REVIEW_REASON_FOR_HOLDING_FLAG[f]
+                    for f in walk_flags
+                    if f in _HOLDING_DISCLOSED_FLAG_NAMES
+                ]
                 assert after == "HUMAN_REVIEW_REQUIRED", (
                     f"{label}: raises {flag}, a holding flag, but the funnel "
                     f"state ({after}) never moved to HUMAN_REVIEW_REQUIRED"
@@ -4659,8 +4672,9 @@ def test_every_disclosure_flag_reports_the_walks_it_rewrites(
                 assert flagged_outcomes[label]["candidates"] == [], (
                     f"{label}: {flag} holds but candidates were not emptied"
                 )
-                assert flagged_outcomes[label]["review_reason_codes"] == [review_code], (
-                    f"{label}: {flag} holds but review_reason_codes does not name {review_code}"
+                assert review_code in flagged_outcomes[label]["review_reason_codes"]
+                assert flagged_outcomes[label]["review_reason_codes"] == expected_holding_codes, (
+                    f"{label}: {flag} holds but review_reason_codes does not match {expected_holding_codes}"
                 )
             elif dead_ends:
                 no_path_code = EXPECTED_NO_PATH_REASON_FOR_DEAD_END_FLAG[flag]
@@ -4680,15 +4694,21 @@ def test_every_disclosure_flag_reports_the_walks_it_rewrites(
                 )
             else:
                 condition_code = EXPECTED_CONDITION_REASON_FOR_FLAG[flag]
-                assert after == before, (
-                    f"{label}: raises {flag}, a non-holding flag, but the funnel "
-                    f"state ({after}) diverged from the engine state ({before}) — "
-                    "a conditioning flag may only ADD a notice"
-                )
-                assert flagged_outcomes[label]["review_reason_codes"] == [], (
-                    f"{label}: {flag} is not in HOLDING_DISCLOSED_FLAGS but still "
-                    "populated review_reason_codes"
-                )
+                if co_held:
+                    assert after == "HUMAN_REVIEW_REQUIRED", (
+                        f"{label}: co-discloses a holding flag alongside {flag}, "
+                        f"but funnel state is {after}"
+                    )
+                else:
+                    assert after == before, (
+                        f"{label}: raises {flag}, a non-holding flag, but the funnel "
+                        f"state ({after}) diverged from the engine state ({before}) — "
+                        "a conditioning flag may only ADD a notice"
+                    )
+                    assert flagged_outcomes[label]["review_reason_codes"] == [], (
+                        f"{label}: {flag} is not in HOLDING_DISCLOSED_FLAGS but still "
+                        "populated review_reason_codes"
+                    )
                 assert condition_code in flagged_outcomes[label]["notice_codes"], (
                     f"{label}: rewritten by {flag} without emitting {condition_code}"
                 )

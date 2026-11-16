@@ -7,6 +7,7 @@ import {
   PROHIBITED_ACTIVITY_PRODUCT_COPY,
   REVIEW_REASON_COPY,
   REVIEW_REASON_ELEMENTS,
+  SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY,
   SECOND_HOME_STUDIO_REVIEW_REASON_CODE,
   SUPPORT_REASON_COPY,
   UNMAPPED_REASON_COPY,
@@ -164,6 +165,14 @@ function clientStrings(): { where: string; value: string; strict?: boolean }[] {
       ...PROHIBITED_ACTIVITY_COPY,
     })) {
       rows.push({ where: `${language}:reason.${name}`, value: copy[language] });
+    }
+    for (const [variant, copy] of Object.entries(
+      SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY,
+    )) {
+      rows.push({
+        where: `${language}:reason.SECOND_HOME_PROPERTY_TITLE_STUDIO.${variant}`,
+        value: copy[language],
+      });
     }
     for (const [productCode, overrides] of Object.entries(
       PROHIBITED_ACTIVITY_PRODUCT_COPY,

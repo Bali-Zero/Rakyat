@@ -932,6 +932,19 @@ function propertyBasisDecisivelyNotChosen(facts: OracleFacts): boolean {
   return false;
 }
 
+/**
+ * NC-08 (Permenkumham 22/2023): villas, leasehold/freehold land, HGB titles,
+ * and off-plan units do not qualify for the E33 Second Home property route, so
+ * selecting the non-qualifying option (or "unsure", resolved conservatively to
+ * it) records `secondhome.qualifying_property_value_usd` as KNOWN(0).
+ */
+function propertyTitleDisqualifies(facts: OracleFacts): boolean {
+  return (
+    facts.secondhome_property_title ===
+    "non_qualifying_leasehold_villa_offplan"
+  );
+}
+
 export interface MapFactsOptions {
   assessmentId: string;
   /** One frozen clock shared by evaluation, dedupe and presentation. */
@@ -1150,8 +1163,9 @@ export function mapOracleFactsToApplicantFacts(
         ? known(false)
         : booleanFact(facts.secondhome_own_name),
     "secondhome.qualifying_property_value_usd":
-      facts.secondhome_property_value_usd === undefined &&
-      propertyBasisDecisivelyNotChosen(facts)
+      propertyTitleDisqualifies(facts) ||
+      (facts.secondhome_property_value_usd === undefined &&
+        propertyBasisDecisivelyNotChosen(facts))
         ? known(0)
         : integerFact(
             facts.secondhome_property_value_usd,

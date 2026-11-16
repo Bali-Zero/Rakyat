@@ -881,9 +881,11 @@ describe("OutcomeSheet — PR-O4 review causes", () => {
   // `assumptionDisplay` must resolve their own `assumption.<id>` key
   // instead of falling through to `assumption.generic`, in both languages.
   // Slice A6-bis adds two more: `diaspora_documents` ("no") and
-  // `retirement_basis` ("undecided"), nine in total.
-  const NINE_DECLARED_CONSERVATIVE_QUESTIONS = [
+  // `retirement_basis` ("undecided"); NC-08 adds `secondhome_property_title`,
+  // ten in total here (`retirement_penjamin_confirmed` tested separately).
+  const TEN_DECLARED_CONSERVATIVE_QUESTIONS = [
     "secondhome_deposit_usd",
+    "secondhome_property_title",
     "secondhome_property_value_usd",
     "secondhome_passive_income_usd",
     "secondhome_state_bank",
@@ -894,7 +896,7 @@ describe("OutcomeSheet — PR-O4 review causes", () => {
     "retirement_basis",
   ] as const;
 
-  it.each(NINE_DECLARED_CONSERVATIVE_QUESTIONS)(
+  it.each(TEN_DECLARED_CONSERVATIVE_QUESTIONS)(
     "assumptionDisplay names the value assumed for %s instead of falling through to the generic sentence (A6-4b)",
     (questionId) => {
       for (const language of ["en", "id"] as const) {

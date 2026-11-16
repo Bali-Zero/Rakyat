@@ -154,7 +154,20 @@ const WALKS: readonly WalkCase[] = [
     branch: [
       ["sponsor_category", "INVESTMENT"],
       ["investment_vehicle", "property"],
+      ["secondhome_property_title", "completed_strata"],
       ["secondhome_property_value_usd", "1200000"],
+      ["stay_days", "730"],
+    ],
+    flags: [],
+  },
+  {
+    name: "invest · property (non-qualifying leasehold/villa/off-plan) — FREED (NC-08): skips USD prompt, maps qualifying_property_value_usd=0",
+    category: "invest",
+    tripScope: "single",
+    branch: [
+      ["sponsor_category", "INVESTMENT"],
+      ["investment_vehicle", "property"],
+      ["secondhome_property_title", "non_qualifying_leasehold_villa_offplan"],
       ["stay_days", "730"],
     ],
     flags: [],
@@ -201,7 +214,22 @@ const WALKS: readonly WalkCase[] = [
     branch: [
       ["retirement_age_notice", "continue"],
       ["retirement_basis", "property"],
+      ["secondhome_property_title", "completed_strata"],
       ["secondhome_property_value_usd", "1200000"],
+      ["secondhome_passive_income_usd", "5000"],
+      ["retirement_penjamin_confirmed", "yes"],
+      ["stay_days", "365"],
+    ],
+    flags: [],
+  },
+  {
+    name: "retirement · property (non-qualifying leasehold/villa/off-plan) — FREED (NC-08 / F3): skips USD prompt, maps qualifying_property_value_usd=0",
+    category: "retirement",
+    tripScope: "single",
+    branch: [
+      ["retirement_age_notice", "continue"],
+      ["retirement_basis", "property"],
+      ["secondhome_property_title", "non_qualifying_leasehold_villa_offplan"],
       ["secondhome_passive_income_usd", "5000"],
       ["retirement_penjamin_confirmed", "yes"],
       ["stay_days", "365"],
@@ -452,6 +480,11 @@ describe("ACTIVITY_BOUNDARY — the decision table itself", () => {
       // as undecidable would delete an E33 the signed pack had proven.
       secondhome_basis:
         "engine-inert routing label; the evidence carries the fact",
+      // NC-08: Permenkumham 22/2023 title filter — `completed_strata` opens
+      // `secondhome_property_value_usd` and the non-qualifying option sets
+      // `secondhome.qualifying_property_value_usd` directly to KNOWN(0).
+      secondhome_property_title:
+        "decides secondhome.qualifying_property_value_usd directly (KNOWN(0) when non-qualifying)",
       // D3-3 (PR-D3): same shape as `secondhome_basis` above — this only
       // selects which evidence questions follow (`getCategoryQuestionIds`,
       // flow.ts); the engine reads that evidence, never this label.

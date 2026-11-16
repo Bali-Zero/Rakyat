@@ -227,7 +227,7 @@ describe("the Playwright specs pin no promise sentence", () => {
 });
 
 describe("the advisor is offered no more than the rules and Imigrasi support", () => {
-  const blacklist = NOTICE_CONDITION_COPY.DISCLOSED_BLACKLIST_ENTRY_CONDITION;
+  const blacklist = REVIEW_REASON_COPY.DISCLOSED_BLACKLIST_ENTRY_REVIEW;
 
   it("the blacklist notice names the disclosure without stating a legal effect or an advisor lookup the rule pack does not hold", () => {
     // UU 6/2011 Pasal 42 says the visa application is REJECTED for someone on

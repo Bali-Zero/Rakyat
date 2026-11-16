@@ -791,14 +791,15 @@ describe("renderCoveringWalks — assessment_id is a per-walk deterministic UUID
   // A6-bis (mouth slice, PLAN-ratified, not yet merged) adds two more "Not sure" defaults and may
   // move this pinned literal — do not re-pin speculatively; re-measure and re-pin only when
   // A6-bis lands, by command (MANDATE-vo.md, row 4 "enumeration memo-space").
-  it("cardinality: the covering subset renders 260 walks including company sponsorship", () => {
+  it("cardinality: the covering subset renders 262 walks including company sponsorship and E33 property title", () => {
     // Slice A7-M (2026-09-22): `birth_date` joins `BRANCH_RELEVANT_FACT_KEYS`
     // with two representative values (adult, minor) — 252 → 254.
     // PR-M (2026-09-27): the retirement branch asks the E33F penjamin sibling
     // `retirement_penjamin_confirmed` (yes/no) — its two answers join the
     // covering subset — 254 → 256.
-    // E28A adds the sponsoring-company question and two capital/share-value branches.
-    expect(RENDERED.length).toBe(260);
+    // E28A adds the sponsoring-company question and two capital/share-value branches — 256 → 260.
+    // NC-08 adds `secondhome_property_title` (completed_strata vs non-qualifying + unsure) — 260 → 262.
+    expect(RENDERED.length).toBe(262);
   });
 
   it("guilt+innocence: every rendered walk's assessment_id is a valid v5 UUID", () => {
