@@ -12,10 +12,10 @@ library message or a caller-controlled location, and no exception reaches the mi
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Coroutine
 from datetime import date
-from http import HTTPStatus
 from typing import Annotated, Any, Literal
 
 import asyncpg
@@ -186,11 +186,44 @@ class RelatedSubjectRegisterRequest(_Strict):
         )
 
 
-def _fixed(status_code: int, detail: Any) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"detail": detail})
+# Fixed answers: the whole failure surface is these constants. No status, code or text taken
+# from an exception or from the request ever reaches an answer.
+_ANSWER_BODIES: dict[str, bytes] = {
+    code: json.dumps({"detail": code}).encode()
+    for code in (
+        "unauthorized",
+        "registry_unavailable",
+        "registry_busy",
+        "database_error",
+        "internal_error",
+    )
+}
+_ANSWER_STATUS = {
+    "unauthorized": 401,
+    "registry_unavailable": 503,
+    "registry_busy": 503,
+    "database_error": 503,
+    "internal_error": 500,
+}
 
 
-def _invalid(errors: list[dict[str, Any]]) -> JSONResponse:
+def _answer(code: str) -> Response:
+    return Response(
+        content=_ANSWER_BODIES[code],
+        status_code=_ANSWER_STATUS[code],
+        media_type="application/json",
+    )
+
+
+def _fixed(status_code: int, detail: Any) -> Response:
+    return Response(
+        content=json.dumps({"detail": detail}).encode(),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
+def _invalid(errors: list[dict[str, Any]]) -> Response:
     """422 body: field names and codes from fixed allowlists, never an input or a message."""
     items = []
     for err in errors[:50]:
@@ -203,21 +236,36 @@ def _invalid(errors: list[dict[str, Any]]) -> JSONResponse:
     return _fixed(422, items)
 
 
-def _failure_response(exc: Exception) -> JSONResponse:
-    """The fixed answer for any failure inside the route. Logs the class name only."""
+def _failure_code(exc: BaseException) -> str:
+    """The fixed code for a failure, chosen by class only (never by anything the failure carries)."""
     if isinstance(exc, HTTPException):
-        code = {401: "unauthorized", 503: "registry_unavailable"}.get(exc.status_code)
-        if code is None:
-            code = HTTPStatus(exc.status_code).phrase.lower().replace(" ", "_")
-        return _fixed(exc.status_code, code)
+        if exc.status_code == 401:
+            return "unauthorized"
+        if exc.status_code == 503:
+            return "registry_unavailable"
+        return "internal_error"
     if isinstance(exc, RegistryUnavailable):
-        logger.warning("related subject registry busy: %s", exc.code)
-        return _fixed(503, exc.code)
+        return "registry_busy"
     if isinstance(exc, (asyncpg.PostgresError, asyncpg.InterfaceError, OSError)):
-        logger.error("related subject registry database failure: class=%s", type(exc).__name__)
-        return _fixed(503, "database_error")
-    logger.error("related subject registry failure: class=%s", type(exc).__name__)
-    return _fixed(500, "internal_error")
+        return "database_error"
+    return "internal_error"
+
+
+def _failure_response(exc: Exception) -> Response:
+    """The fixed answer for any failure inside the route. It cannot raise.
+
+    Anything that goes wrong while classifying or logging (an exception whose class lies about
+    itself, a broken logger) falls back to the fixed 500. The log line names the code only.
+    """
+    try:
+        code = _failure_code(exc)
+        try:
+            logger.error("related subject registry failure: code=%s", code)
+        except Exception:
+            pass
+        return _answer(code)
+    except Exception:
+        return _answer("internal_error")
 
 
 class _SealedRoute(APIRoute):
