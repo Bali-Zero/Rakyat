@@ -217,6 +217,8 @@ def check_operations(ops: Counter, declared: Declared) -> None:
 
 async def check_no_orphan_subjects(c) -> None:
     """Every subject owns at least one identifier (per subject, not an aggregate balance)."""
+    if await c.fetchval("SELECT to_regclass('related_subjects')") is None:
+        return  # the rollback test dropped the registry tables: nothing left to own anything
     orphans = await c.fetchval(
         "SELECT count(*) FROM related_subjects s WHERE NOT EXISTS "
         "(SELECT 1 FROM related_subject_identifiers i WHERE i.subject_id = s.id)"
