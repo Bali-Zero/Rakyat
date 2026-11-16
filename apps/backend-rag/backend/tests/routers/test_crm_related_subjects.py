@@ -12,7 +12,8 @@ import json
 import logging
 import os
 import re
-from contextlib import asynccontextmanager
+import traceback
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -50,7 +51,9 @@ MIGRATION = MIGRATIONS / "361_related_subjects_registry.sql"
 URL = "/api/crm/related-subjects/register"
 KEY = "test-crm-write-key-0000"
 HEADERS = {"X-CRM-Write-Key": KEY, "Content-Type": "application/json"}
-SHA = "a" * 64
+SHA = "5f3c" * 16
+REF = "REF-7319"
+TIER = "TIER-Q9"
 NEW_TABLES = {"related_subjects", "related_subject_identifiers"}
 AUDIT_TABLES = {"api_audit_trail", "session_tracking"}
 SENTINEL_NAME = "Zz Sentinel Name"
@@ -213,7 +216,7 @@ def subj(kind="person", ids=(("passport", "ZZ0000001"),), dob=None, name=None, *
     return SubjectInput(
         kind=kind,
         identifiers=prepare_identifiers(kind, [(t, v, {}) for t, v in ids]),
-        evidence={"plan_sha256": SHA, "subject_ref": "s-1", "tier": "T1"},
+        evidence={"plan_sha256": SHA, "subject_ref": REF, "tier": TIER},
         display_name=name,
         date_of_birth=dob,
         **kw,
@@ -224,7 +227,7 @@ def body(kind="person", ids=(("passport", "ZZ0000001"),), **over):
     data = {
         "kind": kind,
         "identifiers": [{"type": t, "value": v} for t, v in ids],
-        "evidence": {"plan_sha256": SHA, "subject_ref": "s-1", "tier": "T1"},
+        "evidence": {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER},
         "dry_run": False,
     }
     data.update(over)
@@ -274,6 +277,7 @@ class _Probe:
 class Stack:
     def __init__(self, pool, *, middleware=True):
         self.alerts = _Alerts()
+        self.has_middleware = middleware
         self.sink = {"raised": [], "handlers": [], "request_body_set": False}
         app = FastAPI()
         app.state.db_pool = pool
@@ -313,10 +317,221 @@ def audit_logger(pool):
     activity_logger.pool, activity_logger._initialized = previous
 
 
+# ── privacy by derivation: forbidden tokens come from the request itself ─────
+
+# Protocol words that legitimately appear in answers and logs. Everything else a request carries
+# (every leaf string and number, every canonical identifier form) is forbidden in every observable.
+PROTOCOL_WORDS = frozenset(
+    {
+        "person", "company", "passport", "permit", "nik", "npwp", "nib", "ahu", "true", "false",
+        "null", "kind", "display_name", "date_of_birth", "nationality", "sex", "identifiers",
+        "type", "value", "evidence", "plan_sha256", "subject_ref", "tier", "files",
+        "independent_files", "strengths", "dry_run",
+    }
+)  # fmt: skip
+MIN_TOKEN = 4  # shorter strings collide with ordinary words and numbers; test values are longer
+CLOSED_LOC = frozenset(
+    {
+        "kind", "display_name", "date_of_birth", "nationality", "sex", "identifiers", "type",
+        "value", "evidence", "plan_sha256", "subject_ref", "tier", "files", "independent_files",
+        "strengths", "dry_run", "body", "_",
+    }
+)  # fmt: skip
+CLOSED_CODES = frozenset(
+    {
+        "missing", "extra_forbidden", "string_type", "string_too_short", "string_too_long",
+        "string_pattern_mismatch", "bool_type", "int_type", "greater_than_equal",
+        "less_than_equal", "date_type", "date_from_datetime_inexact", "date_parsing",
+        "literal_error", "list_type", "too_short", "too_long", "model_type", "dict_type",
+        "json_invalid", "invalid_text", "invalid_identifier", "kind_type_mismatch",
+        "duplicate_identifier", "invalid",
+    }
+)  # fmt: skip
+CLOSED_WORDS = {
+    401: {"unauthorized"},
+    500: {"internal_error"},
+    503: {"registry_unavailable", "registry_busy", "database_error"},
+}
+CLOSED_OUTCOMES = {
+    "created", "would_create", "already_registered", "conflict", "existing_client",
+    "existing_family_member", "existing_company",
+}  # fmt: skip
+CLOSED_REASONS = {"set_differs", "partial_overlap", "two_owners", "contradiction"}
+CLOSED_BASES = {"identifiers_only", "identifiers_and_dob"}
+CLOSED_200_KEYS = {"outcome", "dry_run", "subject_id", "match_basis", "reason"}
+
+
+def _leaves(node, out):
+    if isinstance(node, dict):
+        for value in node.values():
+            _leaves(value, out)
+        for key in node:  # a caller-chosen KEY is a value too
+            out.add(str(key))
+    elif isinstance(node, list):
+        for item in node:
+            _leaves(item, out)
+    elif isinstance(node, str):
+        out.add(node)
+    elif isinstance(node, (int, float)) and not isinstance(node, bool):
+        out.add(str(node))
+
+
+def _identifier_forms(node, out):
+    if isinstance(node, dict):
+        if isinstance(node.get("type"), str) and isinstance(node.get("value"), str):
+            canonical = (
+                canonical_form(node["type"], node["value"])
+                if node["type"] in ("passport", "permit", "nik", "npwp", "nib", "ahu")
+                else ""
+            )
+            out.add(canonical)  # fmt: skip
+        for value in node.values():
+            _identifier_forms(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _identifier_forms(item, out)
+
+
+def forbidden_tokens(payload) -> set[str]:
+    """Every string/number the request carries, plus canonical identifier forms, minus protocol words."""
+    found: set[str] = set()
+    parsed = payload
+    if isinstance(payload, (bytes, str)):
+        text = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else payload
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+            found.update(re.findall(r"[A-Za-z0-9][A-Za-z0-9._\-]{3,}", text))
+    if parsed is not None:
+        _leaves(parsed, found)
+        _identifier_forms(parsed, found)
+    found.add(KEY)
+    return {t.lower() for t in found if len(t) >= MIN_TOKEN and t.lower() not in PROTOCOL_WORDS}
+
+
+def subject_tokens(subject) -> set[str]:
+    found = {subject.display_name, subject.nationality, subject.sex, str(subject.date_of_birth)}
+    for ident in subject.identifiers:
+        found.update({ident.id_raw, ident.id_norm})
+        _leaves(ident.evidence, found)
+    _leaves(subject.evidence, found)
+    return {
+        t.lower()
+        for t in found
+        if t and t != "None" and len(t) >= MIN_TOKEN and t.lower() not in PROTOCOL_WORDS
+    }
+
+
+@contextmanager
+def capture_logs():
+    """Capture every record of every logger (propagating or not) at DEBUG."""
+    records: list[logging.LogRecord] = []
+
+    class _H(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _H(level=logging.DEBUG)
+    targets = [logging.getLogger()] + [
+        lg
+        for lg in logging.Logger.manager.loggerDict.values()
+        if isinstance(lg, logging.Logger) and not lg.propagate
+    ]
+    saved = [(lg, lg.level) for lg in targets]
+    for lg in targets:
+        lg.addHandler(handler)
+    logging.getLogger().setLevel(logging.DEBUG)
+    try:
+        yield records
+    finally:
+        for lg, level in saved:
+            lg.removeHandler(handler)
+            lg.setLevel(level)
+
+
+def record_text(record: logging.LogRecord) -> str:
+    parts = [repr(sorted(vars(record).items(), key=lambda kv: kv[0]))]
+    try:
+        parts.append(record.getMessage())
+    except Exception:
+        pass
+    if record.exc_info and record.exc_info[0] is not None:
+        parts.append("".join(traceback.format_exception(*record.exc_info)))
+    return " ".join(parts)
+
+
+def assert_no_tokens(tokens, label, text):
+    hit = sorted(t for t in tokens if t in text.lower())
+    assert not hit, (
+        f"{label} carries {len(hit)} request-derived token(s): {[h[:3] + '..' for h in hit]}"
+    )
+
+
+async def observe(stack, tokens, response_text, records, trace_before):
+    """No request-derived token in ANY observable; nothing reached the middleware."""
+    assert_no_tokens(tokens, "response", response_text)
+    assert_no_tokens(tokens, "log records", " ".join(record_text(r) for r in records))
+    traces = {k: v for k, v in request_tracing._trace_storage.items() if k not in trace_before}
+    assert_no_tokens(tokens, "request traces", str(traces))
+    assert_no_tokens(tokens, "alert arguments", str(stack.alerts.calls))
+    if stack.has_middleware and activity_logger._initialized and activity_logger.pool:
+        async with activity_logger.pool.acquire() as c:
+            audit = str(await c.fetch("SELECT * FROM api_audit_trail")) + str(
+                await c.fetch("SELECT * FROM session_tracking")
+            )
+        assert_no_tokens(tokens, "audit rows", audit)
+    assert stack.sink["raised"] == [] and stack.sink["handlers"] == []
+
+
+def assert_answer_shape(resp):
+    """Closed lists for every answer: 200 keys/values, 422 loc/code, fixed words for 401/500/503."""
+    data = resp.json()
+    if resp.status_code == 200:
+        assert set(data) <= CLOSED_200_KEYS and data["outcome"] in CLOSED_OUTCOMES
+        assert data.get("reason") in (None, *CLOSED_REASONS)
+        assert data.get("match_basis") in (None, *CLOSED_BASES)
+        assert isinstance(data["dry_run"], bool)
+        assert isinstance(data.get("subject_id", 0), int)
+    elif resp.status_code == 422:
+        assert set(data) == {"detail"} and isinstance(data["detail"], list) and data["detail"]
+        for item in data["detail"]:
+            assert set(item) == {"loc", "code"}
+            assert isinstance(item["loc"], list)
+            assert all(
+                (isinstance(p, int) and not isinstance(p, bool)) or p in CLOSED_LOC
+                for p in item["loc"]
+            ), item["loc"]
+            assert item["code"] in CLOSED_CODES, item["code"]
+    else:
+        assert resp.status_code in CLOSED_WORDS, resp.status_code
+        assert set(data) == {"detail"} and data["detail"] in CLOSED_WORDS[resp.status_code]
+
+
 async def post(stack, payload, headers=HEADERS):
+    """Every HTTP call of this file: derives the forbidden tokens from the payload, observes
+    every channel, and checks the answer shape against closed lists."""
     raw = payload if isinstance(payload, (bytes, str)) else json.dumps(payload)
-    async with stack.client() as http:
-        return await http.post(URL, content=raw, headers=headers)
+    tokens = forbidden_tokens(payload)
+    trace_before = set(request_tracing._trace_storage)
+    with capture_logs() as records:
+        async with stack.client() as http:
+            resp = await http.post(URL, content=raw, headers=headers)
+    await observe(stack, tokens, resp.text + " " + str(resp.headers), records, trace_before)
+    assert_answer_shape(resp)
+    return resp
+
+
+async def reg(conn, subject, *, dry_run=True):
+    """register_subject with the service log checked against the subject's own values."""
+    tokens = subject_tokens(subject)
+    with capture_logs() as records:
+        try:
+            return await register_subject(conn, subject, dry_run=dry_run)
+        finally:
+            assert_no_tokens(
+                tokens, "service log records", " ".join(record_text(r) for r in records)
+            )
 
 
 # ── criterion 1: service level, one connection, counters on the two tables only ──
@@ -328,11 +543,11 @@ async def test_c1_batch_counters_cover_the_two_new_tables_only(conn):
     await tr.start()
     try:
         for n in range(3):
-            out = await register_subject(
+            out = await reg(
                 conn, subj(ids=(("passport", f"ZZ000000{n}"),), name=f"Zz Probe {n}"), dry_run=False
             )
             assert out["outcome"] == "created"
-        await register_subject(conn, subj(ids=(("passport", "ZZ0000000"),)), dry_run=False)
+        await reg(conn, subj(ids=(("passport", "ZZ0000000"),)), dry_run=False)
         rows = await conn.fetch(
             "SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_xact_user_tables "
             "WHERE schemaname = current_schema()"
@@ -412,9 +627,7 @@ async def test_c3_replay_is_already_registered_and_changes_no_row(pool, conn, en
 
 
 async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=None):
-    out = await register_subject(
-        conn, subj(ids=ids, dob=dob, name="Zz Probe Subject"), dry_run=False
-    )
+    out = await reg(conn, subj(ids=ids, dob=dob, name="Zz Probe Subject"), dry_run=False)
     assert out["outcome"] == "created"
     return out["subject_id"]
 
@@ -435,7 +648,7 @@ async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001"
 async def test_c4_key_set_differs_is_conflict_and_writes_nothing(conn, ids, reason):
     owner = await _seed(conn)
     async with writes_nothing(conn):
-        out = await register_subject(conn, subj(ids=ids), dry_run=False)
+        out = await reg(conn, subj(ids=ids), dry_run=False)
     assert out["outcome"] == "conflict" and out["reason"] == reason
     assert out["subject_id"] == owner
 
@@ -445,7 +658,7 @@ async def test_c4_keys_of_two_owners_conflict(conn):
     await _seed(conn)
     await _seed(conn, ids=(("passport", "ZZ0000005"),))
     async with writes_nothing(conn):
-        out = await register_subject(
+        out = await reg(
             conn, subj(ids=(("passport", "ZZ0000001"), ("passport", "ZZ0000005"))), dry_run=False
         )
     assert (out["outcome"], out["reason"]) == ("conflict", "two_owners")
@@ -455,7 +668,7 @@ async def test_c4_keys_of_two_owners_conflict(conn):
 async def test_c4_equal_set_with_a_different_birth_date_is_a_contradiction(conn):
     await _seed(conn, dob=date(1990, 1, 2))
     async with writes_nothing(conn):
-        out = await register_subject(conn, subj(ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=date(1991, 1, 2)), dry_run=False)  # fmt: skip
+        out = await reg(conn, subj(ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=date(1991, 1, 2)), dry_run=False)  # fmt: skip
     assert (out["outcome"], out["reason"]) == ("conflict", "contradiction")
 
 
@@ -466,11 +679,9 @@ async def test_c4_equal_set_match_basis_follows_the_birth_dates(conn):
     await _seed(conn, ids=ids, dob=date(1990, 1, 2))
     await _seed(conn, ids=ids2)
     async with writes_nothing(conn):
-        both = await register_subject(conn, subj(ids=ids, dob=date(1990, 1, 2)), dry_run=False)
-        request_without = await register_subject(conn, subj(ids=ids), dry_run=False)
-        owner_without = await register_subject(
-            conn, subj(ids=ids2, dob=date(1990, 1, 2)), dry_run=False
-        )
+        both = await reg(conn, subj(ids=ids, dob=date(1990, 1, 2)), dry_run=False)
+        request_without = await reg(conn, subj(ids=ids), dry_run=False)
+        owner_without = await reg(conn, subj(ids=ids2, dob=date(1990, 1, 2)), dry_run=False)
     assert (both["outcome"], both["match_basis"]) == ("already_registered", "identifiers_and_dob")
     assert (request_without["outcome"], request_without["match_basis"]) == (
         "already_registered",
@@ -496,7 +707,7 @@ async def test_c4_kind_change_keeping_the_identifiers_is_422_and_writes_nothing(
 
 @pytest.mark.asyncio
 async def test_c4_creation_stores_actor_canonical_keys_and_norm_version(conn):
-    out = await register_subject(
+    out = await reg(
         conn,
         subj(
             ids=(("passport", "zz 000-0001"), ("nik", "3201 2345 6789 0123")),
@@ -508,7 +719,7 @@ async def test_c4_creation_stores_actor_canonical_keys_and_norm_version(conn):
     row = await conn.fetchrow("SELECT * FROM related_subjects WHERE id = $1", sid)
     assert row["created_by"] == REGISTRY_ACTOR == "system:related-subject-registry"
     assert row["merged_into"] is None and row["kind"] == "person"
-    assert json.loads(row["evidence"]) == {"plan_sha256": SHA, "subject_ref": "s-1", "tier": "T1"}
+    assert json.loads(row["evidence"]) == {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER}
     keys = await conn.fetch(
         "SELECT id_type, id_norm, id_raw, norm_version FROM related_subject_identifiers "
         "WHERE subject_id = $1 ORDER BY id_type",
@@ -571,7 +782,7 @@ async def _race(pool, subjects):
 
     async def one(s):
         async with pool.acquire() as c:
-            return await register_subject(_Conn(c, barrier_hook(barrier)), s, dry_run=False)
+            return await reg(_Conn(c, barrier_hook(barrier)), s, dry_run=False)
 
     return await asyncio.gather(*(one(s) for s in subjects))
 
@@ -624,7 +835,7 @@ async def test_c5_identifiers_are_inserted_in_sorted_key_order(conn):
             return await super().fetchval(sql, *args)
 
     ids = (("passport", "ZZ0000009"), ("nik", "3201234567890123"), ("passport", "ZZ0000001"))
-    await register_subject(_Spy(conn), subj(ids=ids), dry_run=False)
+    await reg(_Spy(conn), subj(ids=ids), dry_run=False)
     assert seen == [
         ("nik", "3201234567890123"),
         ("passport", "ZZ0000001"),
@@ -707,7 +918,7 @@ class _PoolOf:
 @pytest.mark.asyncio
 async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(conn):
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
-    out = await register_subject(_Conn(conn, deadlock_hook(1)), subj(ids=ids), dry_run=False)
+    out = await reg(_Conn(conn, deadlock_hook(1)), subj(ids=ids), dry_run=False)
     assert out["outcome"] == "created"
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
     assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 2
@@ -717,7 +928,7 @@ async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(conn):
 async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(pool, conn, enabled):
     async with writes_nothing(conn):
         with pytest.raises(RegistryUnavailable) as caught:
-            await register_subject(_Conn(conn, deadlock_hook(2)), subj(), dry_run=False)
+            await reg(_Conn(conn, deadlock_hook(2)), subj(), dry_run=False)
     assert caught.value.code == "registry_busy"
 
     class _Pool:
@@ -741,7 +952,7 @@ async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(p
 @pytest.mark.asyncio
 async def test_c5_one_forced_serialization_failure_is_retried_to_the_right_outcome(conn):
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
-    out = await register_subject(_Conn(conn, serialization_hook(1)), subj(ids=ids), dry_run=False)
+    out = await reg(_Conn(conn, serialization_hook(1)), subj(ids=ids), dry_run=False)
     assert out["outcome"] == "created"
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
     assert await conn.fetchval("SELECT count(*) FROM related_subject_identifiers") == 2
@@ -753,7 +964,7 @@ async def test_c5_a_second_forced_serialization_failure_is_the_fixed_503_and_wri
 ):
     async with writes_nothing(conn):
         with pytest.raises(RegistryUnavailable) as caught:
-            await register_subject(_Conn(conn, serialization_hook(2)), subj(), dry_run=False)
+            await reg(_Conn(conn, serialization_hook(2)), subj(), dry_run=False)
     assert caught.value.code == "registry_busy"
     wrapped = _PoolOf(pool, lambda c: _Conn(c, serialization_hook(2)))
     async with writes_nothing(conn):
@@ -764,13 +975,13 @@ async def test_c5_a_second_forced_serialization_failure_is_the_fixed_503_and_wri
 @pytest.mark.asyncio
 async def test_c5_a_failed_commit_with_a_serialization_error_is_retried_once(conn, pool, enabled):
     one = _CommitConn(conn, 1, lambda: asyncpg.SerializationError("x"))
-    assert (await register_subject(one, subj(), dry_run=False))["outcome"] == "created"
+    assert (await reg(one, subj(), dry_run=False))["outcome"] == "created"
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
     await conn.execute("DELETE FROM related_subjects")
     two = _CommitConn(conn, 2, lambda: asyncpg.SerializationError("x"))
     async with writes_nothing(conn):
         with pytest.raises(RegistryUnavailable):
-            await register_subject(two, subj(), dry_run=False)
+            await reg(two, subj(), dry_run=False)
 
 
 @pytest.mark.asyncio
@@ -789,7 +1000,7 @@ async def test_c5_a_lost_race_that_loses_again_is_the_fixed_503(conn):
         raise mod._LostRace
 
     with pytest.raises(RegistryUnavailable):
-        await register_subject(_Conn(conn, hook), subj(), dry_run=False)
+        await reg(_Conn(conn, hook), subj(), dry_run=False)
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
 
 
@@ -839,10 +1050,10 @@ async def test_c6_crm_matches_in_every_stored_spelling(conn, kind, ids, outcome)
     await _crm_fixtures(conn)
     await _seed(conn, ids=(("passport", "ZZ0000500"),))
     if outcome == "created":
-        out = await register_subject(conn, subj(kind=kind, ids=ids), dry_run=False)
+        out = await reg(conn, subj(kind=kind, ids=ids), dry_run=False)
     else:
         async with writes_nothing(conn):
-            out = await register_subject(conn, subj(kind=kind, ids=ids), dry_run=False)
+            out = await reg(conn, subj(kind=kind, ids=ids), dry_run=False)
     assert out["outcome"] == outcome
 
 
@@ -866,9 +1077,9 @@ async def test_c6_python_and_sql_canonical_forms_agree_on_the_vectors(conn):
 
 INVALID_BODIES = {
     "kind_type_mismatch": body(kind="company", ids=(("passport", SENTINEL_ID),), display_name=SENTINEL_NAME),
-    "person_npwp": body(kind="person", ids=(("npwp", "0123456789012345"), ("passport", SENTINEL_ID)), display_name=SENTINEL_NAME),
-    "failing_validator": body(ids=(("passport", "ZZ12"),), display_name=SENTINEL_NAME),
-    "yearless_ahu": body(kind="company", ids=(("ahu", "AHU-1234.AH.01.01"),), display_name=SENTINEL_NAME),
+    "person_npwp": body(kind="person", ids=(("npwp", "6054321098765432"), ("passport", SENTINEL_ID)), display_name=SENTINEL_NAME),
+    "failing_validator": body(ids=(("passport", "ZQ447"),), display_name=SENTINEL_NAME),
+    "yearless_ahu": body(kind="company", ids=(("ahu", "AHU-7731.AH.04.09"),), display_name=SENTINEL_NAME),
     "duplicate_key": body(ids=(("passport", SENTINEL_ID), ("passport", "zzsent-0001")), display_name=SENTINEL_NAME),
     "nested_invalid": {
         **body(ids=(("passport", SENTINEL_ID),), display_name=SENTINEL_NAME),
@@ -1019,45 +1230,6 @@ class _Boom:
         return _Ctx()
 
 
-_STANDARD_RECORD_FIELDS = frozenset(
-    vars(logging.LogRecord("n", logging.INFO, "p", 1, "m", (), None))
-) | {"message", "asctime", "taskName"}
-
-
-def _everything_observable(stack, caplog, trace_before):
-    traces = {k: v for k, v in request_tracing._trace_storage.items() if k not in trace_before}
-    logs = " ".join(
-        r.getMessage()
-        + " "
-        + str(r.args)
-        + " "
-        + (str(r.exc_info) if r.exc_info else "")
-        + " "
-        + (r.stack_info or "")
-        + " "
-        + str({k: v for k, v in vars(r).items() if k not in _STANDARD_RECORD_FIELDS})
-        for r in caplog.records
-    )
-    return logs + " " + str(traces) + " " + str(stack.alerts.calls)
-
-
-def _leaks(text):
-    return [
-        s for s in (SENTINEL_NAME, SENTINEL_ID, "zzsent", "Sentinel") if s.lower() in text.lower()
-    ]
-
-
-async def _assert_private(stack, conn, caplog, trace_before, response_text):
-    """No submitted value in the response, any log record field, the audit row, the traces or
-    the alert arguments; nothing reached the middleware and no generic handler ran."""
-    audit = str(await conn.fetch("SELECT * FROM api_audit_trail"))
-    observed = (
-        response_text + " " + audit + " " + _everything_observable(stack, caplog, trace_before)
-    )
-    assert _leaks(observed) == [], _leaks(observed)
-    assert stack.sink["raised"] == [] and stack.sink["handlers"] == []
-
-
 async def _asgi_post(app, receive):
     sent = []
 
@@ -1081,13 +1253,10 @@ async def _asgi_post(app, receive):
 
 
 async def _privacy_run(pool, conn, caplog, setup, payload, *, expect_status):
-    caplog.set_level(logging.DEBUG)
     stack = Stack(pool)
     setup(stack)
-    trace_before = set(request_tracing._trace_storage)
     resp = await post(stack, payload)
     assert resp.status_code == expect_status, resp.text
-    await _assert_private(stack, conn, caplog, trace_before, resp.text + " " + str(resp.headers))
     return resp, stack
 
 
@@ -1107,7 +1276,7 @@ async def test_c9_privacy_on_success_and_conflict(pool, conn, enabled, audit_log
 
 @pytest.mark.asyncio
 async def test_c9_privacy_on_422(pool, conn, enabled, audit_logger, caplog):
-    for case in ("kind_type_mismatch", "malformed_json", "nested_unknown_key", "bad_date"):
+    for case in sorted(INVALID_BODIES):
         await _privacy_run(
             pool, conn, caplog, lambda s: None, INVALID_BODIES[case], expect_status=422
         )
@@ -1258,16 +1427,17 @@ async def test_c9_privacy_on_an_exception_whose_text_cannot_be_rendered(
 
 @pytest.mark.asyncio
 async def test_c9_privacy_when_reading_the_body_fails(pool, conn, enabled, audit_logger, caplog):
-    caplog.set_level(logging.DEBUG)
     stack = Stack(pool)
+    tokens = forbidden_tokens(SECRET_BODY) | {t.lower() for t in (LEAKY,)}
     trace_before = set(request_tracing._trace_storage)
 
     async def receive():
         raise RuntimeError(LEAKY)
 
-    status, text, headers = await _asgi_post(stack.app, receive)
+    with capture_logs() as records:
+        status, text, headers = await _asgi_post(stack.app, receive)
     assert status == 500 and json.loads(text) == {"detail": "internal_error"}
-    await _assert_private(stack, conn, caplog, trace_before, text + headers)
+    await observe(stack, tokens, text + headers, records, trace_before)
 
 
 @pytest.mark.asyncio
