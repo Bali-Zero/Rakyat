@@ -95,22 +95,28 @@ async def test_pin_login_service_refuses_group_staff_before_checking_the_pin() -
     svc.verify_password.assert_not_called()
 
 
+@pytest.mark.parametrize("active", [True, False])
 @pytest.mark.asyncio
-async def test_login_route_refuses_group_staff_with_a_generic_401() -> None:
+async def test_login_route_throttles_group_staff_like_an_inactive_account(active: bool) -> None:
     from backend.app.routers import auth
     from backend.app.routers.auth import LoginRequest, login
 
     row = {
         "id": "tm-1", "email": "s@example.test", "name": "S", "password_hash": "x",
-        "role": "group_staff", "active": True, "linked_client_id": None,
+        "role": "group_staff", "active": active, "linked_client_id": None,
     }
     audit = MagicMock(pool=object(), log_auth_event=AsyncMock())
     req = MagicMock()
     req.client.host = "127.0.0.1"
     req.headers.get.return_value = "ua"
     verify = MagicMock(return_value=True)
+    detector = MagicMock()
+    detector.is_blocked = AsyncMock(return_value=False)
+    detector.record_failure = AsyncMock()
     with (
         patch("backend.services.monitoring.audit_service.get_audit_service", return_value=audit),
+        patch("backend.services.security.brute_force.BruteForceDetector", return_value=detector),
+        patch("backend.core.redis_manager.RedisManager"),
         patch.object(auth, "verify_password", verify),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -118,5 +124,7 @@ async def test_login_route_refuses_group_staff_with_a_generic_401() -> None:
                 LoginRequest(email="s@example.com", credentials="1234"),
                 req, MagicMock(), _pool(_Conn([row])),
             )
-    assert exc.value.status_code == 401
+    assert exc.value.status_code == 401 and exc.value.detail == "Account inactive"
+    detector.record_failure.assert_awaited_once()
+    audit.log_auth_event.assert_awaited_once()
     verify.assert_not_called()

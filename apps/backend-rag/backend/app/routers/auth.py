@@ -416,19 +416,8 @@ async def login(
                         )
                 raise HTTPException(status_code=401, detail="Invalid email or PIN")
 
-            if is_group_staff(user["role"]):
-                # Group staff hold an HR card, never an app login (defense in depth).
-                await audit_service.log_auth_event(
-                    email=request.email,
-                    action="failed_login",
-                    success=False,
-                    ip_address=client_ip,
-                    user_agent=user_agent,
-                    failure_reason="Account inactive",
-                )
-                raise HTTPException(status_code=401, detail="Account inactive")
-
-            if not user["active"]:
+            # Group staff hold an HR card, never an app login: same path as an inactive row.
+            if not user["active"] or is_group_staff(user["role"]):
                 await audit_service.log_auth_event(
                     email=request.email,
                     action="failed_login",

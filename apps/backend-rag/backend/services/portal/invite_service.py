@@ -288,7 +288,7 @@ class InviteService:
                     invitation["client_id"],
                 )
 
-                if existing_user and is_group_staff(existing_user["role"]):
+                if existing_user and is_group_staff(existing_user.get("role")):
                     # Group staff hold an HR card, never an app login.
                     raise ValueError("This account cannot be registered")
 

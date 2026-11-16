@@ -79,7 +79,12 @@ def payroll_set_sql() -> str:
     """
     from backend.app.services.hr.hr_people_service import VISIBLE_PERSON_PREDICATE
 
-    return f"(e.is_active = TRUE AND {ON_PAYROLL_SQL} AND ({VISIBLE_PERSON_PREDICATE}))"
+    # Group staff hold an HR card but are never paid through this payroll, whatever
+    # `on_payroll` says (their rows are inactive and only the People predicate opts them in).
+    return (
+        f"(e.is_active = TRUE AND {ON_PAYROLL_SQL} AND ({VISIBLE_PERSON_PREDICATE})"
+        f" AND lower(trim(COALESCE(tm.role, ''))) NOT IN ({GROUP_STAFF_ROLES_SQL}))"
+    )
 
 
 def payroll_month_lock_key(month: int, year: int) -> str:

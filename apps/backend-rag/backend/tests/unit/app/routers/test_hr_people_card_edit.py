@@ -12,16 +12,19 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers import hr_people
 from backend.app.services.hr.hr_service import HRCardCode, HRCardError
 from backend.app.setup.exception_handlers import register_exception_handlers
+from backend.app.utils.hr_utils import HR_EXTRA_ADMIN_EMAILS, HR_SCOPED_VIEWERS, HR_WRITER_EMAILS
 from backend.tests.unit.app.routers.test_hr_my_overview import CARD_ROW, ROWS
 
 # Synthetic data only.
-OWNER = {"user_id": "tm-owner", "email": "zero@balizero.com", "role": "member"}
-ASYA = {"user_id": "tm-asya", "email": "asya@balizero.com", "role": "member"}
-ADIT = {"user_id": "tm-adit", "email": "adit@balizero.com", "role": "member"}
-SCOPED = {"user_id": "tm-scoped", "email": "ruslana@balizero.com", "role": "member"}
-MEMBER = {"user_id": "tm-m", "email": "krisna@balizero.com", "role": "member"}
-IT_ADMIN = {"user_id": "tm-it", "email": "it.dev@balizero.com", "role": "member"}
-CLIENT = {"user_id": "tm-c", "email": "zero@balizero.com", "role": "client"}
+# The closed HR sets live in hr_utils; the viewers are derived from them, never retyped here.
+_WRITER_A, _WRITER_B = sorted(HR_WRITER_EMAILS)
+OWNER = {"user_id": "tm-owner", "email": _WRITER_A, "role": "member"}
+MEMBER_A = {"user_id": "tm-a", "email": _WRITER_B, "role": "member"}
+MEMBER_B = {"user_id": "tm-b", "email": sorted(HR_EXTRA_ADMIN_EMAILS)[0], "role": "member"}
+SCOPED = {"user_id": "tm-c2", "email": sorted(HR_SCOPED_VIEWERS)[0], "role": "member"}
+MEMBER = {"user_id": "tm-m", "email": "member-d@balizero.com", "role": "member"}
+IT_ADMIN = {"user_id": "tm-it", "email": "it-admin@balizero.com", "role": "member"}
+CLIENT = {"user_id": "tm-c", "email": _WRITER_A, "role": "client"}
 
 ID_IN = "11111111-1111-4111-8111-111111111111"
 ID_NONE = "22222222-2222-4222-8222-222222222222"
@@ -43,7 +46,7 @@ def _hr_service(row_id: int | None = 7, error: HRCardCode | None = None) -> Asyn
 
 def _people() -> MagicMock:
     s = MagicMock()
-    s.member_email = AsyncMock(side_effect=lambda i: "dea@balizero.com" if i == ID_IN else None)
+    s.member_email = AsyncMock(side_effect=lambda i: "member-e@example.test" if i == ID_IN else None)
     return s
 
 
@@ -53,9 +56,9 @@ def it_admin_in_allowlist(monkeypatch):
     from backend.app.core.config import settings
 
     monkeypatch.setattr(
-        settings, "admin_emails", "zero@balizero.com,asya@balizero.com,it.dev@balizero.com"
+        settings, "admin_emails", f"{_WRITER_A},{_WRITER_B},it-admin@balizero.com"
     )
-    assert "it.dev@balizero.com" in settings.admin_emails_set
+    assert "it-admin@balizero.com" in settings.admin_emails_set
 
 
 @pytest.fixture
@@ -80,7 +83,7 @@ def make_client():
         p.stop()
 
 
-@pytest.mark.parametrize("user", [OWNER, ASYA])
+@pytest.mark.parametrize("user", [OWNER, MEMBER_A])
 def test_the_hr_writers_may_write(make_client, user):
     client, hr = make_client(user)
     res = client.patch(URL, json={"card": {"bank_name": "Bank Contoh"}})
@@ -88,11 +91,11 @@ def test_the_hr_writers_may_write(make_client, user):
     assert res.json()["viewer_team_member_id"] == user["user_id"]
     assert res.json()["person"]["card"]["employee_id"] == CARD_ROW["id"]
     hr.edit_card.assert_awaited_once_with(
-        ID_IN, "dea@balizero.com", {"bank_name": "Bank Contoh"}, {}, []
+        ID_IN, "member-e@example.test", {"bank_name": "Bank Contoh"}, {}, []
     )
 
 
-@pytest.mark.parametrize("user", [ADIT, SCOPED, MEMBER, CLIENT, IT_ADMIN])
+@pytest.mark.parametrize("user", [MEMBER_B, SCOPED, MEMBER, CLIENT, IT_ADMIN])
 def test_everyone_else_is_refused_before_any_work(make_client, it_admin_in_allowlist, user):
     # IT_ADMIN is a global admin (in the allow-list) but not an HR writer (2026-11-13).
     client, hr = make_client(user)
