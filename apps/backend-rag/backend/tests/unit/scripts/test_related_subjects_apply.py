@@ -284,3 +284,66 @@ def test_missing_key_refuses_and_a_first_call_401_stops_the_run(tmp_path, monkey
     assert "http_401=1" in capsys.readouterr().out
     monkeypatch.delenv("WA_MIRROR_CRM_WRITE_KEY")
     assert apply_mod.main(["--plan", str(plan)], client=client) == 2
+
+
+@pytest.mark.parametrize("marker", ["false", "true", 1, None, "yes", [True]])
+def test_only_the_json_boolean_true_is_proposable(marker) -> None:
+    assert apply_mod.row_to_request(person(proposable=marker), SHA, dry_run=True) == (
+        None,
+        "not_proposable",
+    )
+    row = person()
+    del row["proposable"]
+    assert apply_mod.row_to_request(row, SHA, dry_run=True) == (None, "not_proposable")
+    assert apply_mod.row_to_request(person(proposable=True), SHA, dry_run=True)[0] is not None
+
+
+def test_proposable_markers_are_rejected_and_counted_in_a_run(tmp_path, capsys):
+    rows = [
+        person(subject_id=1, proposable="true"),
+        person(subject_id=2, proposable=1),
+        person(subject_id=3),
+    ]
+    client = _Client(lambda req: _Resp(200, {"outcome": "would_create"}))
+    apply_mod.main(["--plan", str(_plan(tmp_path, rows))], client=client)
+    out = capsys.readouterr().out
+    assert len(client.calls) == 1 and "skipped:not_proposable=2" in out
+
+
+LEAK = "Zz Leak Name ZZ0000099"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        _Resp(500, {"detail": LEAK}),
+        _Resp(422, {"detail": [{"loc": [LEAK], "code": LEAK}]}),
+        _Resp(200, {"outcome": LEAK, "reason": LEAK}),
+        _Resp(200, {"outcome": "conflict", "reason": LEAK}),
+        _Resp(200, {"outcome": ["a", LEAK], "reason": {"x": LEAK}}),
+        _Resp(409, {"detail": LEAK, "outcome": LEAK}),
+    ],
+)
+def test_unrecognised_response_text_never_reaches_the_ledger_or_stdout(tmp_path, capsys, answer):
+    plan = _plan(tmp_path, [person(subject_id=1), person(subject_id=2)])
+    sha = apply_mod.plan_sha256(plan)
+    client = _Client(lambda req: answer)
+    apply_mod.main(
+        ["--plan", str(plan), "--apply", "--plan-sha256", sha, "--limit", "2"], client=client
+    )
+    out = capsys.readouterr().out
+    ledger = Path(str(plan) + ".apply-ledger.jsonl").read_text()
+    for needle in ("Leak", "ZZ0000099"):
+        assert needle not in out and needle not in ledger
+    assert "unknown" in out + ledger or "http_" in out
+
+
+def test_known_codes_pass_through_unchanged(tmp_path, capsys):
+    plan = _plan(tmp_path, [person(subject_id=1)])
+    sha = apply_mod.plan_sha256(plan)
+    client = _Client(lambda req: _Resp(200, {"outcome": "conflict", "reason": "two_owners"}))
+    apply_mod.main(["--plan", str(plan), "--apply", "--plan-sha256", sha], client=client)
+    assert "reason conflict:two_owners=1" in capsys.readouterr().out
+    client = _Client(lambda req: _Resp(503, {"detail": "registry_busy"}))
+    apply_mod.main(["--plan", str(plan), "--apply", "--plan-sha256", sha], client=client)
+    assert "registry_busy" in Path(str(plan) + ".apply-ledger.jsonl").read_text()

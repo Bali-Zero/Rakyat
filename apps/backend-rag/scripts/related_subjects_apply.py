@@ -41,6 +41,28 @@ DEFAULT_BASE_URL = "https://nuzantara-rag.fly.dev"
 ENDPOINT = "/api/crm/related-subjects/register"
 MAX_IDENTIFIERS = 20
 TERMINAL = {"created", "already_registered"}
+OUTCOMES = frozenset(
+    {
+        "created",
+        "would_create",
+        "already_registered",
+        "conflict",
+        "existing_client",
+        "existing_family_member",
+        "existing_company",
+    }
+)
+REASONS = frozenset({"set_differs", "partial_overlap", "two_owners", "contradiction"})
+FAILURE_CODES = frozenset(
+    {
+        "unauthorized",
+        "registry_unavailable",
+        "registry_busy",
+        "database_error",
+        "internal_error",
+    }
+)
+UNKNOWN = "unknown"
 _SAFE_WORD = re.compile(r"[A-Za-z0-9_.:+-]{1,32}")
 _SAFE_TIER = re.compile(r"[A-Za-z0-9_.:+-]{1,16}")
 _SAFE_REF = re.compile(r"[A-Za-z0-9_.:+-]{1,64}")
@@ -146,7 +168,7 @@ def row_to_request(
     row: dict[str, Any], sha256: str, *, dry_run: bool
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Map one plan row to a register request, or (None, reason) when it is not sent."""
-    if not row.get("proposable"):
+    if row.get("proposable") is not True:
         return None, "not_proposable"
     if row.get("kind") not in ("person", "company"):
         return None, "unknown_kind"
@@ -166,6 +188,10 @@ def row_to_request(
     }
     request.update(_person_details(row, items))
     return request, None
+
+
+def _allowed(value: Any, allowed: frozenset[str]) -> str | None:
+    return value if isinstance(value, str) and value in allowed else None
 
 
 def read_ledger(path: Path, sha256: str) -> set[str]:
@@ -258,12 +284,14 @@ def main(argv: list[str] | None = None, *, client: Any = None) -> int:
         status, body = send(client, url, key, request)
         sent += 1
         if status == 200:
-            outcome = str(body.get("outcome", "unknown"))
-            reason = body.get("reason")
+            outcome = _allowed(body.get("outcome"), OUTCOMES) or UNKNOWN
+            raw_reason = body.get("reason")
+            reason = _allowed(raw_reason, REASONS) or (UNKNOWN if raw_reason is not None else None)
         else:
-            outcome, reason = (
-                f"http_{status}",
-                body.get("detail") if isinstance(body.get("detail"), str) else None,
+            outcome = f"http_{status}" if isinstance(status, int) else UNKNOWN
+            raw_detail = body.get("detail")
+            reason = _allowed(raw_detail, FAILURE_CODES) or (
+                UNKNOWN if isinstance(raw_detail, str) else None
             )
         counts[outcome] += 1
         if reason:
