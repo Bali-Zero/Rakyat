@@ -192,7 +192,7 @@ certifi>=2026.10.19  # GHSA-6q48-6c7w-9gw2: emSign roots with compromised interm
 setuptools>=84.1.0
 
 # Structured logging
-structlog>=24.1.0
+structlog>=26.1.0
 
 # visa_engine signed rule-pack loader (backend/services/visa_engine/bundle.py):
 # RFC 8785 JCS canonicalization + JSON Schema validation of the signed envelope.
