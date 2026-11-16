@@ -340,6 +340,66 @@ def test_search_innocence_no_match_returns_empty(
     assert response.json() == {"items": [], "limit": 50}
 
 
+def _match_in_media_projection(query: str) -> str:
+    """Return the normalized SELECT expression that feeds ``match_in_media``."""
+    flat = " ".join(query.split())
+    before = flat.split(" AS match_in_media")[0]
+    return before.split(" AS attention_resolved, ")[1]
+
+
+def test_search_match_in_media_is_computed_from_the_ocr_expression(
+    admin_user: dict[str, str],
+    mock_db_pool: MagicMock,
+    mock_db_conn: AsyncMock,
+) -> None:
+    """Guilt and innocence on the SQL itself, since the DB is mocked.
+
+    Guilt: the projection must test the OCR tsvector (the indexed expression,
+    with its partial predicate). Innocence: it must not be derived from the body
+    match, which is wrong when body and media both match.
+    """
+    from backend.app.routers.wa_mirror_messages import _BODY_TSV, _OCR_TSV
+
+    mock_db_conn.fetch.return_value = []
+    client = make_client(admin_user, mock_db_pool)
+    assert client.get("/api/wa/messages/search?q=renewal").status_code == 200
+
+    query, *_ = mock_db_conn.fetch.await_args.args
+    projection = _match_in_media_projection(query)
+    assert "ocr_status = 'done'" in projection
+    assert _OCR_TSV in projection
+    assert "websearch_to_tsquery('simple', $1)" in projection
+    assert _BODY_TSV not in projection
+    assert "NOT" not in projection
+
+
+def test_search_body_and_media_both_match_reports_media_true(
+    admin_user: dict[str, str],
+    mock_db_pool: MagicMock,
+    mock_db_conn: AsyncMock,
+) -> None:
+    """A row matching in the body AND in the extracted text keeps both signals."""
+    mock_db_conn.fetch.return_value = [
+        message_row(
+            id=902,
+            body="please renew",
+            media_type="image",
+            ocr_result={"text": "renew placeholder"},
+            match_in_media=True,
+            snippet="please <b>renew</b>",
+        )
+    ]
+    client = make_client(admin_user, mock_db_pool)
+
+    response = client.get("/api/wa/messages/search?q=renew")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["match_in_media"] is True
+    assert item["snippet"] == "please <b>renew</b>"
+    assert "renew placeholder" not in json.dumps(response.json())
+
+
 def test_search_query_expressions_match_the_indexes() -> None:
     """The WHERE expressions must be byte-identical to the indexed ones."""
     from pathlib import Path

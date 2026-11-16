@@ -179,7 +179,8 @@ def _build_search_query(
                attention_priority,
                attention_reason,
                (attention_resolved_at IS NOT NULL) AS attention_resolved,
-               NOT ({_BODY_TSV} @@ websearch_to_tsquery('simple', {q_placeholder}))
+               (ocr_status = 'done' AND {_OCR_TSV}
+                   @@ websearch_to_tsquery('simple', {q_placeholder}))
                    AS match_in_media,
                CASE WHEN {_BODY_TSV} @@ websearch_to_tsquery('simple', {q_placeholder})
                     THEN ts_headline(
