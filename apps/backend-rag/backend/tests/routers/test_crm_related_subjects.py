@@ -88,13 +88,20 @@ CREATE TABLE session_tracking (
 
 
 # Every row written to any table of the schema is recorded (table, operation), same-value
-# updates and insert-then-delete included. Row-level, so a statement that touches no row
+# updates and insert-then-delete included, and every TRUNCATE (statement-level; a CASCADE fires
+# the trigger of each table it reaches). Row-level, so a statement that touches no row
 # records nothing. The whole test is measured: see the `pool` fixture and `writes(...)`.
 WRITE_LOG_SQL = """
 CREATE TABLE write_log (id bigserial PRIMARY KEY, tbl text NOT NULL, op text NOT NULL);
 CREATE FUNCTION log_write() RETURNS trigger LANGUAGE plpgsql AS $f$
 BEGIN
     INSERT INTO write_log (tbl, op) VALUES (TG_TABLE_NAME, TG_OP);
+    RETURN NULL;
+END
+$f$;
+CREATE FUNCTION log_truncate() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+    INSERT INTO write_log (tbl, op) VALUES (TG_TABLE_NAME, 'TRUNCATE');
     RETURN NULL;
 END
 $f$;
@@ -107,6 +114,9 @@ BEGIN
         EXECUTE format(
             'CREATE TRIGGER log_write AFTER INSERT OR UPDATE OR DELETE ON %I '
             'FOR EACH ROW EXECUTE FUNCTION log_write()', t);
+        EXECUTE format(
+            'CREATE TRIGGER log_truncate BEFORE TRUNCATE ON %I '
+            'FOR EACH STATEMENT EXECUTE FUNCTION log_truncate()', t);
     END LOOP;
 END
 $do$;
@@ -600,6 +610,25 @@ async def test_guard_an_undeclared_write_fails_the_teardown_assertion(writes, co
     with pytest.raises(AssertionError):
         check_declared_writes(set(), {"clients"})  # a declared write that did not happen
     check_declared_writes(actual, set(writes))
+
+
+@pytest.mark.asyncio
+async def test_guard_a_truncate_is_a_write_and_a_cascade_names_every_table_it_reaches(writes, conn):
+    await conn.execute("TRUNCATE clients")
+    plain = await written(conn)
+    assert plain == {"clients"}
+    with pytest.raises(AssertionError, match="wrote \\['clients'\\], declared \\[\\]"):
+        check_declared_writes(plain, set())
+    mark = await log_mark(conn)
+    await conn.execute(
+        "ALTER TABLE client_family_members ADD FOREIGN KEY (client_id) REFERENCES clients(id)"
+    )
+    await conn.execute("TRUNCATE clients CASCADE")
+    cascaded = await written(conn, mark)
+    assert cascaded == {"clients", "client_family_members"}
+    with pytest.raises(AssertionError):
+        check_declared_writes(cascaded, {"clients"})
+    writes("clients", "client_family_members")
 
 
 @pytest.mark.asyncio
