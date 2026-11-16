@@ -110,6 +110,10 @@ const isBirthdayToday = (dateOfBirth: string | undefined): boolean => {
 
 import { formatDate, formatLongSpan } from "@/lib/utils/format-date";
 import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
+import {
+  maskDateOfBirth,
+  maskPassportNumber,
+} from "@/lib/portal/identity-mask";
 
 // ============================================================================
 // IDENTITY MASKING
@@ -118,15 +122,7 @@ import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
 // The passport number and date of birth used to render in full on every
 // visit, readable by anyone looking at the screen. They now load masked and
 // the client reveals each one on purpose; nothing is remembered between loads.
-const MASK = "•••••";
-
-const maskPassportNumber = (value: string): string =>
-  value.length > 3 ? `${MASK}${value.slice(-3)}` : MASK;
-
-const maskDateOfBirth = (value: string): string => {
-  const year = /^(\d{4})/.exec(value)?.[1];
-  return year ? `•• ••• ${year}` : "•• ••• ••••";
-};
+// Mask rules live in @/lib/portal/identity-mask (shared with the Family page).
 
 function RevealToggle({
   label,
