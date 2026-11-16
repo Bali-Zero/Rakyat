@@ -89,12 +89,12 @@ CREATE TABLE session_tracking (
 
 # Every row written to any table of the schema is recorded (table, operation), same-value
 # updates and insert-then-delete included. Row-level, so a statement that touches no row
-# records nothing. `await clear_writes(conn)` arms a measurement window.
+# records nothing. The whole test is measured: see the `pool` fixture and `writes(...)`.
 WRITE_LOG_SQL = """
-CREATE TABLE write_log (tbl text NOT NULL, op text NOT NULL);
+CREATE TABLE write_log (id bigserial PRIMARY KEY, tbl text NOT NULL, op text NOT NULL);
 CREATE FUNCTION log_write() RETURNS trigger LANGUAGE plpgsql AS $f$
 BEGIN
-    INSERT INTO write_log VALUES (TG_TABLE_NAME, TG_OP);
+    INSERT INTO write_log (tbl, op) VALUES (TG_TABLE_NAME, TG_OP);
     RETURN NULL;
 END
 $f$;
@@ -113,19 +113,49 @@ $do$;
 """
 
 
-async def clear_writes(c) -> None:
-    await c.execute("DELETE FROM write_log")
+async def log_mark(c) -> int:
+    return await c.fetchval("SELECT coalesce(max(id), 0) FROM write_log")
 
 
-async def written(c) -> set[str]:
-    return {r["tbl"] for r in await c.fetch("SELECT DISTINCT tbl FROM write_log")}
+async def written(c, since: int = 0) -> set[str]:
+    return {
+        r["tbl"] for r in await c.fetch("SELECT DISTINCT tbl FROM write_log WHERE id > $1", since)
+    }
+
+
+@asynccontextmanager
+async def unmeasured(c):
+    """The ONE way a test seeds or cleans up mid-test: rows written inside are taken out of the
+    measurement. The guard is never switched off; only what happens in this block is excused."""
+    mark = await log_mark(c)
+    yield
+    await c.execute("DELETE FROM write_log WHERE id > $1", mark)
+
+
+class Declared(set):
+    """The tables a test declares it writes. Empty unless the test says otherwise."""
+
+    def __call__(self, *tables: str) -> None:
+        self.update(tables)
+
+
+def check_declared_writes(actual: set[str], declared: set[str]) -> None:
+    """The teardown assertion of every PostgreSQL test: written tables == declared tables."""
+    assert actual == declared, (
+        f"write measurement: wrote {sorted(actual)}, declared {sorted(declared)}"
+    )
+
+
+@pytest.fixture
+def writes():
+    return Declared()
 
 
 # ── database fixtures ─────────────────────────────────────────────────────────
 
 
 @pytest_asyncio.fixture
-async def pool():
+async def pool(writes):
     dsn = os.environ.get("TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("TEST_DATABASE_URL required for the real PostgreSQL registry proof")
@@ -146,6 +176,11 @@ async def pool():
             await conn.execute(CRM_SCHEMA)
             await conn.execute(WRITE_LOG_SQL)
         yield created
+        # Default-on write measurement: every test that uses this schema ends here, and the
+        # tables it wrote (trigger-fed log, every row write incl. same-value updates and
+        # insert-then-delete) must be exactly the ones it declared through `writes(...)`.
+        async with created.acquire() as c:
+            check_declared_writes(await written(c), set(writes))
     finally:
         await created.close()
         await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
@@ -185,19 +220,17 @@ def changed(before: dict, after: dict) -> set[str]:
 
 @asynccontextmanager
 async def writes_only(c, tables=frozenset(), *, exact_content=False):
-    """The ONE measure of "what a call wrote", for every test that makes a claim about it.
+    """A narrower window INSIDE a test (the whole test is measured anyway, by the schema fixture).
 
-    Arms the row-level write log before the call. Afterwards: the tables that received any row
-    write (same-value updates and insert-then-delete included) are exactly ``tables``, and the
+    The tables that received any row write during the window are exactly ``tables``, and the
     content snapshots show no change outside them (``exact_content``: exactly those changed).
-    With no tables, the snapshots must also be equal.
     """
     tables = set(tables)
     before = await snapshot(c)
-    await clear_writes(c)
+    mark = await log_mark(c)
     yield
     after = await snapshot(c)
-    assert await written(c) == tables
+    assert await written(c, mark) == tables
     assert changed(before, after) <= tables
     if exact_content:
         assert changed(before, after) == tables
@@ -543,11 +576,47 @@ async def reg(conn, subject, *, dry_run=True):
             )
 
 
+# ── guard on the guard ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guard_an_undeclared_write_fails_the_teardown_assertion(writes, conn):
+    """An INSERT then DELETE on `clients` leaves no row and an equal snapshot, yet the write
+    log names the table, and `check_declared_writes` (the very function the schema fixture
+    runs at the end of every test) refuses it unless the test declared it.
+
+    Done by calling the checking function directly on the real log of this test: the same
+    function, the same log, without a nested pytest session.
+    """
+    writes("clients")  # declared here only so that THIS test's own teardown passes
+    before = await snapshot(conn)
+    await conn.execute("INSERT INTO clients (full_name) VALUES ('Zz Probe')")
+    await conn.execute("DELETE FROM clients WHERE full_name = 'Zz Probe'")
+    assert await snapshot(conn) == before
+    actual = await written(conn)
+    assert actual == {"clients"}
+    with pytest.raises(AssertionError, match="wrote \\['clients'\\], declared \\[\\]"):
+        check_declared_writes(actual, set())  # the empty (default) declaration
+    with pytest.raises(AssertionError):
+        check_declared_writes(set(), {"clients"})  # a declared write that did not happen
+    check_declared_writes(actual, set(writes))
+
+
+@pytest.mark.asyncio
+async def test_guard_seeding_through_unmeasured_is_excused_but_a_later_write_is_not(writes, conn):
+    async with unmeasured(conn):
+        await conn.execute("INSERT INTO clients (full_name) VALUES ('Zz Seed')")
+    assert await written(conn) == set()
+    await conn.execute("UPDATE clients SET full_name = full_name")  # same-value update
+    assert await written(conn) == {"clients"}
+    writes("clients")
+
+
 # ── criterion 1: service level, one connection, counters on the two tables only ──
 
 
 @pytest.mark.asyncio
-async def test_c1_batch_counters_cover_the_two_new_tables_only(conn):
+async def test_c1_batch_counters_cover_the_two_new_tables_only(writes, conn):
     tr = conn.transaction()
     await tr.start()
     try:
@@ -579,8 +648,9 @@ async def test_c1_batch_counters_cover_the_two_new_tables_only(conn):
 
 @pytest.mark.asyncio
 async def test_c2_http_call_writes_two_tables_and_the_audit_row_only(
-    pool, conn, enabled, audit_logger
+    writes, pool, conn, enabled, audit_logger
 ):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
     stack = Stack(pool)
     async with writes_only(conn, NEW_TABLES | {"api_audit_trail"}, exact_content=True):
         resp = await post(stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)))
@@ -593,13 +663,15 @@ async def test_c2_http_call_writes_two_tables_and_the_audit_row_only(
 
 @pytest.mark.asyncio
 async def test_c2_session_header_and_user_email_also_update_session_tracking(
-    pool, conn, enabled, audit_logger
+    writes, pool, conn, enabled, audit_logger
 ):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail", "session_tracking")
     stack = Stack(pool)
-    await conn.execute(
-        "INSERT INTO session_tracking (session_id, user_email) "
-        "VALUES ('sess-probe-1', 'staff@example.test')"
-    )
+    async with unmeasured(conn):
+        await conn.execute(
+            "INSERT INTO session_tracking (session_id, user_email) "
+            "VALUES ('sess-probe-1', 'staff@example.test')"
+        )
     headers = {**HEADERS, "X-Session-ID": "sess-probe-1", "X-User-Email": "staff@example.test"}
     async with writes_only(conn, NEW_TABLES | AUDIT_TABLES, exact_content=True):
         resp = await post(
@@ -617,7 +689,8 @@ async def test_c2_session_header_and_user_email_also_update_session_tracking(
 
 
 @pytest.mark.asyncio
-async def test_c3_replay_is_already_registered_and_changes_no_row(pool, conn, enabled):
+async def test_c3_replay_is_already_registered_and_changes_no_row(writes, pool, conn, enabled):
+    writes("related_subjects", "related_subject_identifiers")
     stack = Stack(pool, middleware=False)
     payload = body(
         kind="person", ids=(("passport", "ZZ0000001"), ("nik", "3201234567890123")),
@@ -636,7 +709,8 @@ async def test_c3_replay_is_already_registered_and_changes_no_row(pool, conn, en
 
 
 async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=None):
-    out = await reg(conn, subj(ids=ids, dob=dob, name="Zz Probe Subject"), dry_run=False)
+    async with unmeasured(conn):
+        out = await reg(conn, subj(ids=ids, dob=dob, name="Zz Probe Subject"), dry_run=False)
     assert out["outcome"] == "created"
     return out["subject_id"]
 
@@ -654,7 +728,7 @@ async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001"
     ],
     ids=["subset", "superset", "partial-overlap-with-new-key"],
 )
-async def test_c4_key_set_differs_is_conflict_and_writes_nothing(conn, ids, reason):
+async def test_c4_key_set_differs_is_conflict_and_writes_nothing(writes, conn, ids, reason):
     owner = await _seed(conn)
     async with writes_nothing(conn):
         out = await reg(conn, subj(ids=ids), dry_run=False)
@@ -663,7 +737,7 @@ async def test_c4_key_set_differs_is_conflict_and_writes_nothing(conn, ids, reas
 
 
 @pytest.mark.asyncio
-async def test_c4_keys_of_two_owners_conflict(conn):
+async def test_c4_keys_of_two_owners_conflict(writes, conn):
     await _seed(conn)
     await _seed(conn, ids=(("passport", "ZZ0000005"),))
     async with writes_nothing(conn):
@@ -674,7 +748,7 @@ async def test_c4_keys_of_two_owners_conflict(conn):
 
 
 @pytest.mark.asyncio
-async def test_c4_equal_set_with_a_different_birth_date_is_a_contradiction(conn):
+async def test_c4_equal_set_with_a_different_birth_date_is_a_contradiction(writes, conn):
     await _seed(conn, dob=date(1990, 1, 2))
     async with writes_nothing(conn):
         out = await reg(conn, subj(ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001")), dob=date(1991, 1, 2)), dry_run=False)  # fmt: skip
@@ -682,7 +756,7 @@ async def test_c4_equal_set_with_a_different_birth_date_is_a_contradiction(conn)
 
 
 @pytest.mark.asyncio
-async def test_c4_equal_set_match_basis_follows_the_birth_dates(conn):
+async def test_c4_equal_set_match_basis_follows_the_birth_dates(writes, conn):
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
     ids2 = (("passport", "ZZ0000009"),)
     await _seed(conn, ids=ids, dob=date(1990, 1, 2))
@@ -704,7 +778,7 @@ async def test_c4_equal_set_match_basis_follows_the_birth_dates(conn):
 
 @pytest.mark.asyncio
 async def test_c4_kind_change_keeping_the_identifiers_is_422_and_writes_nothing(
-    pool, conn, enabled
+    writes, pool, conn, enabled
 ):
     stack = Stack(pool, middleware=False)
     await _seed(conn)
@@ -715,7 +789,8 @@ async def test_c4_kind_change_keeping_the_identifiers_is_422_and_writes_nothing(
 
 
 @pytest.mark.asyncio
-async def test_c4_creation_stores_actor_canonical_keys_and_norm_version(conn):
+async def test_c4_creation_stores_actor_canonical_keys_and_norm_version(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
     out = await reg(
         conn,
         subj(
@@ -806,7 +881,8 @@ async def _assert_no_subject_without_identifiers(conn):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("callers", [2, 3])
-async def test_c5_identical_requests_make_exactly_one_subject(pool, conn, callers):
+async def test_c5_identical_requests_make_exactly_one_subject(writes, pool, conn, callers):
+    writes("related_subjects", "related_subject_identifiers")
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
     results = await _race(pool, [subj(ids=ids, name="Zz Probe Subject") for _ in range(callers)])
     outcomes = sorted(r["outcome"] for r in results)
@@ -819,8 +895,9 @@ async def test_c5_identical_requests_make_exactly_one_subject(pool, conn, caller
 @pytest.mark.asyncio
 @pytest.mark.parametrize("callers", [2, 3])
 async def test_c5_shared_key_with_distinct_extra_keys_gives_one_created_rest_conflict(
-    pool, conn, callers
+    writes, pool, conn, callers
 ):
+    writes("related_subjects", "related_subject_identifiers")
     subjects = [
         subj(ids=(("passport", "ZZ0000001"), ("nik", f"320123456789012{n}")))
         for n in range(callers)
@@ -834,7 +911,8 @@ async def test_c5_shared_key_with_distinct_extra_keys_gives_one_created_rest_con
 
 
 @pytest.mark.asyncio
-async def test_c5_identifiers_are_inserted_in_sorted_key_order(conn):
+async def test_c5_identifiers_are_inserted_in_sorted_key_order(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
     seen = []
 
     class _Spy(_Conn):
@@ -925,7 +1003,8 @@ class _PoolOf:
 
 
 @pytest.mark.asyncio
-async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(conn):
+async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
     out = await reg(_Conn(conn, deadlock_hook(1)), subj(ids=ids), dry_run=False)
     assert out["outcome"] == "created"
@@ -934,7 +1013,9 @@ async def test_c5_one_forced_deadlock_is_retried_to_the_right_outcome(conn):
 
 
 @pytest.mark.asyncio
-async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(pool, conn, enabled):
+async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(
+    writes, pool, conn, enabled
+):
     async with writes_nothing(conn):
         with pytest.raises(RegistryUnavailable) as caught:
             await reg(_Conn(conn, deadlock_hook(2)), subj(), dry_run=False)
@@ -959,7 +1040,8 @@ async def test_c5_a_second_forced_deadlock_is_the_fixed_503_and_leaves_nothing(p
 
 
 @pytest.mark.asyncio
-async def test_c5_one_forced_serialization_failure_is_retried_to_the_right_outcome(conn):
+async def test_c5_one_forced_serialization_failure_is_retried_to_the_right_outcome(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
     out = await reg(_Conn(conn, serialization_hook(1)), subj(ids=ids), dry_run=False)
     assert out["outcome"] == "created"
@@ -969,7 +1051,7 @@ async def test_c5_one_forced_serialization_failure_is_retried_to_the_right_outco
 
 @pytest.mark.asyncio
 async def test_c5_a_second_forced_serialization_failure_is_the_fixed_503_and_writes_nothing(
-    pool, conn, enabled
+    writes, pool, conn, enabled
 ):
     async with writes_nothing(conn):
         with pytest.raises(RegistryUnavailable) as caught:
@@ -982,11 +1064,15 @@ async def test_c5_a_second_forced_serialization_failure_is_the_fixed_503_and_wri
 
 
 @pytest.mark.asyncio
-async def test_c5_a_failed_commit_with_a_serialization_error_is_retried_once(conn, pool, enabled):
+async def test_c5_a_failed_commit_with_a_serialization_error_is_retried_once(
+    writes, conn, pool, enabled
+):
+    writes("related_subjects", "related_subject_identifiers")
     one = _CommitConn(conn, 1, lambda: asyncpg.SerializationError("x"))
     assert (await reg(one, subj(), dry_run=False))["outcome"] == "created"
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
-    await conn.execute("DELETE FROM related_subjects")
+    async with unmeasured(conn):
+        await conn.execute("DELETE FROM related_subjects")
     two = _CommitConn(conn, 2, lambda: asyncpg.SerializationError("x"))
     async with writes_nothing(conn):
         with pytest.raises(RegistryUnavailable):
@@ -994,7 +1080,7 @@ async def test_c5_a_failed_commit_with_a_serialization_error_is_retried_once(con
 
 
 @pytest.mark.asyncio
-async def test_c5_a_lost_race_that_loses_again_is_the_fixed_503(conn):
+async def test_c5_a_lost_race_that_loses_again_is_the_fixed_503(writes, conn):
     state = {"n": 0}
 
     async def hook(sql):
@@ -1017,6 +1103,11 @@ async def test_c5_a_lost_race_that_loses_again_is_the_fixed_503(conn):
 
 
 async def _crm_fixtures(conn):
+    async with unmeasured(conn):
+        await _insert_crm_fixtures(conn)
+
+
+async def _insert_crm_fixtures(conn):
     await conn.execute(
         "INSERT INTO clients (full_name, passport_number, deleted_at) VALUES "
         "('Fixture live', 'ab-123 456', NULL), ('Fixture gone', 'CD 000111', now()), "
@@ -1055,10 +1146,11 @@ async def _crm_fixtures(conn):
         ("company", (("npwp", "0011223344556677"),), "created"),
     ],
 )
-async def test_c6_crm_matches_in_every_stored_spelling(conn, kind, ids, outcome):
+async def test_c6_crm_matches_in_every_stored_spelling(writes, conn, kind, ids, outcome):
     await _crm_fixtures(conn)
     await _seed(conn, ids=(("passport", "ZZ0000500"),))
     if outcome == "created":
+        writes("related_subjects", "related_subject_identifiers")
         out = await reg(conn, subj(kind=kind, ids=ids), dry_run=False)
     else:
         async with writes_nothing(conn):
@@ -1067,7 +1159,7 @@ async def test_c6_crm_matches_in_every_stored_spelling(conn, kind, ids, outcome)
 
 
 @pytest.mark.asyncio
-async def test_c6_python_and_sql_canonical_forms_agree_on_the_vectors(conn):
+async def test_c6_python_and_sql_canonical_forms_agree_on_the_vectors(writes, conn):
     vectors = {
         "passport": ["ab 123-456", "ZZ0000001", "ß1234", "éx12", "x-1.2/3", "ＡＢ123456", ""],
         "nib": ["1234-5678-90123", "٣٢1234567890123", "abc", "", "12 34"],
@@ -1109,7 +1201,9 @@ INVALID_BODIES = {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", sorted(INVALID_BODIES))
-async def test_c7_invalid_bodies_are_422_write_nothing_and_echo_nothing(pool, conn, enabled, case):
+async def test_c7_invalid_bodies_are_422_write_nothing_and_echo_nothing(
+    writes, pool, conn, enabled, case
+):
     stack = Stack(pool, middleware=False)
     async with writes_nothing(conn):
         resp = await post(stack, INVALID_BODIES[case])
@@ -1121,7 +1215,7 @@ async def test_c7_invalid_bodies_are_422_write_nothing_and_echo_nothing(pool, co
 
 
 @pytest.mark.asyncio
-async def test_c7_codes_name_the_failure(pool, enabled):
+async def test_c7_codes_name_the_failure(writes, pool, enabled):
     stack = Stack(pool, middleware=False)
     codes = {}
     for case in ("kind_type_mismatch", "failing_validator", "duplicate_key", "malformed_json"):
@@ -1140,7 +1234,7 @@ async def test_c7_codes_name_the_failure(pool, enabled):
 
 
 @pytest.mark.asyncio
-async def test_c8_flag_off_is_503_even_with_a_valid_key(pool, monkeypatch):
+async def test_c8_flag_off_is_503_even_with_a_valid_key(writes, pool, monkeypatch):
     monkeypatch.setattr(settings, "related_subject_registry_enabled", False, raising=False)
     monkeypatch.setattr(settings, "wa_mirror_crm_write_key", KEY, raising=False)
     monkeypatch.setattr(settings, "wa_mirror_crm_write_enabled", True, raising=False)
@@ -1158,13 +1252,13 @@ async def test_c8_flag_off_is_503_even_with_a_valid_key(pool, monkeypatch):
         {"Content-Type": "application/json", "Authorization": "Bearer portal-token-probe"},
     ],
 )
-async def test_c8_wrong_or_missing_key_is_401(pool, enabled, headers):
+async def test_c8_wrong_or_missing_key_is_401(writes, pool, enabled, headers):
     resp = await post(Stack(pool, middleware=False), body(), headers)
     assert (resp.status_code, resp.json()) == (401, {"detail": "unauthorized"})
 
 
 @pytest.mark.asyncio
-async def test_c8_key_comparison_is_constant_time(pool, enabled, monkeypatch):
+async def test_c8_key_comparison_is_constant_time(writes, pool, enabled, monkeypatch):
     import hmac
 
     calls = []
@@ -1175,7 +1269,7 @@ async def test_c8_key_comparison_is_constant_time(pool, enabled, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_c8_unconfigured_key_is_401_not_open(pool, monkeypatch):
+async def test_c8_unconfigured_key_is_401_not_open(writes, pool, monkeypatch):
     monkeypatch.setattr(settings, "related_subject_registry_enabled", True, raising=False)
     monkeypatch.setattr(settings, "wa_mirror_crm_write_key", None, raising=False)
     resp = await post(Stack(pool, middleware=False), body(), {"X-CRM-Write-Key": ""})
@@ -1183,7 +1277,9 @@ async def test_c8_unconfigured_key_is_401_not_open(pool, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_c8_dry_run_absent_and_true_write_nothing_on_every_outcome(pool, conn, enabled):
+async def test_c8_dry_run_absent_and_true_write_nothing_on_every_outcome(
+    writes, pool, conn, enabled
+):
     stack = Stack(pool, middleware=False)
     await _crm_fixtures(conn)
     owner = ("nik", "3201234567890123"), ("passport", "ZZ0000001")
@@ -1273,7 +1369,10 @@ SECRET_BODY = body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),))
 
 
 @pytest.mark.asyncio
-async def test_c9_privacy_on_success_and_conflict(pool, conn, enabled, audit_logger, caplog):
+async def test_c9_privacy_on_success_and_conflict(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
     await _privacy_run(pool, conn, caplog, lambda s: None, SECRET_BODY, expect_status=200)
     resp, _ = await _privacy_run(
         pool, conn, caplog, lambda s: None,
@@ -1284,7 +1383,8 @@ async def test_c9_privacy_on_success_and_conflict(pool, conn, enabled, audit_log
 
 
 @pytest.mark.asyncio
-async def test_c9_privacy_on_422(pool, conn, enabled, audit_logger, caplog):
+async def test_c9_privacy_on_422(writes, pool, conn, enabled, audit_logger, caplog):
+    writes("api_audit_trail")
     for case in sorted(INVALID_BODIES):
         await _privacy_run(
             pool, conn, caplog, lambda s: None, INVALID_BODIES[case], expect_status=422
@@ -1292,7 +1392,10 @@ async def test_c9_privacy_on_422(pool, conn, enabled, audit_logger, caplog):
 
 
 @pytest.mark.asyncio
-async def test_c9_privacy_on_a_forced_database_error(pool, conn, enabled, audit_logger, caplog):
+async def test_c9_privacy_on_a_forced_database_error(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
     leaky = asyncpg.UniqueViolationError(
         f"duplicate key value violates unique constraint: Key (id_norm)=({SENTINEL_ID}) {SENTINEL_NAME}"
     )
@@ -1306,8 +1409,9 @@ async def test_c9_privacy_on_a_forced_database_error(pool, conn, enabled, audit_
 
 @pytest.mark.asyncio
 async def test_c9_privacy_on_an_unexpected_service_failure(
-    pool, conn, enabled, audit_logger, caplog
+    writes, pool, conn, enabled, audit_logger, caplog
 ):
+    writes("api_audit_trail")
     resp, stack = await _privacy_run(
         pool, conn, caplog,
         lambda s: setattr(s.app.state, "db_pool", _Boom(RuntimeError(SENTINEL_NAME + SENTINEL_ID))),
@@ -1318,8 +1422,10 @@ async def test_c9_privacy_on_an_unexpected_service_failure(
 
 @pytest.mark.asyncio
 async def test_c9_privacy_on_injected_body_parsing_failure(
-    pool, conn, enabled, audit_logger, caplog, monkeypatch
+    writes, pool, conn, enabled, audit_logger, caplog, monkeypatch
 ):
+    writes("api_audit_trail")
+
     def boom(*a, **kw):
         raise RuntimeError(f"{SENTINEL_NAME} {SENTINEL_ID}")
 
@@ -1330,8 +1436,10 @@ async def test_c9_privacy_on_injected_body_parsing_failure(
 
 @pytest.mark.asyncio
 async def test_c9_privacy_on_injected_auth_dependency_failure(
-    pool, conn, enabled, audit_logger, caplog
+    writes, pool, conn, enabled, audit_logger, caplog
 ):
+    writes("api_audit_trail")
+
     async def broken():
         raise RuntimeError(f"{SENTINEL_NAME} {SENTINEL_ID}")
 
@@ -1345,8 +1453,10 @@ async def test_c9_privacy_on_injected_auth_dependency_failure(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["http_503_with_detail", "runtime_error"])
 async def test_c9_privacy_on_injected_pool_dependency_failure(
-    pool, conn, enabled, audit_logger, caplog, kind
+    writes, pool, conn, enabled, audit_logger, caplog, kind
 ):
+    writes("api_audit_trail")
+
     def broken():
         if kind == "runtime_error":
             raise RuntimeError(f"{SENTINEL_NAME} {SENTINEL_ID}")
@@ -1367,7 +1477,7 @@ async def test_c9_privacy_on_injected_pool_dependency_failure(
 
 
 @pytest.mark.asyncio
-async def test_c9_oversized_body_is_refused_with_a_fixed_code(pool, enabled):
+async def test_c9_oversized_body_is_refused_with_a_fixed_code(writes, pool, enabled):
     resp = await post(Stack(pool, middleware=False), "x" * (route_module.MAX_BODY_BYTES + 1))
     assert resp.status_code == 422 and resp.json()["detail"][0]["code"] == "too_long"
 
@@ -1386,8 +1496,10 @@ class _Hostile(Exception):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [499, 600, 0, 402, 404, 418])
 async def test_c9_privacy_on_a_dependency_http_exception_with_any_status(
-    pool, conn, enabled, audit_logger, caplog, status
+    writes, pool, conn, enabled, audit_logger, caplog, status
 ):
+    writes("api_audit_trail")
+
     async def broken():
         raise HTTPException(status_code=status, detail=LEAKY, headers={"X-Leak": SENTINEL_ID})
 
@@ -1401,8 +1513,10 @@ async def test_c9_privacy_on_a_dependency_http_exception_with_any_status(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("status", "code"), [(401, "unauthorized"), (503, "registry_unavailable")])
 async def test_c9_a_dependency_http_exception_keeps_only_its_fixed_code(
-    pool, conn, enabled, audit_logger, caplog, status, code
+    writes, pool, conn, enabled, audit_logger, caplog, status, code
 ):
+    writes("api_audit_trail")
+
     async def broken():
         raise HTTPException(status_code=status, detail=LEAKY)
 
@@ -1416,8 +1530,10 @@ async def test_c9_a_dependency_http_exception_keeps_only_its_fixed_code(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("where", ["auth", "pool"])
 async def test_c9_privacy_on_an_exception_whose_text_cannot_be_rendered(
-    pool, conn, enabled, audit_logger, caplog, where
+    writes, pool, conn, enabled, audit_logger, caplog, where
 ):
+    writes("api_audit_trail")
+
     async def broken_auth():
         raise _Hostile()
 
@@ -1435,7 +1551,10 @@ async def test_c9_privacy_on_an_exception_whose_text_cannot_be_rendered(
 
 
 @pytest.mark.asyncio
-async def test_c9_privacy_when_reading_the_body_fails(pool, conn, enabled, audit_logger, caplog):
+async def test_c9_privacy_when_reading_the_body_fails(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
     stack = Stack(pool)
     tokens = forbidden_tokens(SECRET_BODY) | {t.lower() for t in (LEAKY,)}
     trace_before = set(request_tracing._trace_storage)
@@ -1450,7 +1569,11 @@ async def test_c9_privacy_when_reading_the_body_fails(pool, conn, enabled, audit
 
 
 @pytest.mark.asyncio
-async def test_c9_privacy_when_pool_acquisition_fails(pool, conn, enabled, audit_logger, caplog):
+async def test_c9_privacy_when_pool_acquisition_fails(
+    writes, pool, conn, enabled, audit_logger, caplog
+):
+    writes("api_audit_trail")
+
     def setup(stack):
         stack.app.state.db_pool = _PoolOf(pool, fail_enter=RuntimeError(LEAKY))
 
@@ -1466,8 +1589,10 @@ async def test_c9_privacy_when_pool_acquisition_fails(pool, conn, enabled, audit
 
 @pytest.mark.asyncio
 async def test_c9_privacy_when_releasing_the_connection_fails(
-    pool, conn, enabled, audit_logger, caplog
+    writes, pool, conn, enabled, audit_logger, caplog
 ):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+
     def setup(stack):
         stack.app.state.db_pool = _PoolOf(pool, fail_exit=RuntimeError(LEAKY))
 
@@ -1488,8 +1613,10 @@ async def test_c9_privacy_when_releasing_the_connection_fails(
     ids=["runtime", "database", "serialization-twice"],
 )
 async def test_c9_privacy_when_the_commit_fails(
-    pool, conn, enabled, audit_logger, caplog, factory, status, code
+    writes, pool, conn, enabled, audit_logger, caplog, factory, status, code
 ):
+    writes("api_audit_trail")
+
     def setup(stack):
         stack.app.state.db_pool = _PoolOf(pool, lambda c: _CommitConn(c, 2, factory))
 
@@ -1500,8 +1627,10 @@ async def test_c9_privacy_when_the_commit_fails(
 
 @pytest.mark.asyncio
 async def test_c9_privacy_when_building_the_success_response_fails(
-    pool, conn, enabled, audit_logger, caplog, monkeypatch
+    writes, pool, conn, enabled, audit_logger, caplog, monkeypatch
 ):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+
     def boom(*a, **kw):
         raise RuntimeError(LEAKY)
 
@@ -1515,7 +1644,7 @@ class _Stop(BaseException):
 
 
 @pytest.mark.asyncio
-async def test_c9_a_base_exception_that_is_not_an_exception_still_propagates(pool, enabled):
+async def test_c9_a_base_exception_that_is_not_an_exception_still_propagates(writes, pool, enabled):
     async def stop():
         raise _Stop()
 
@@ -1568,7 +1697,8 @@ def test_c11_migration_is_361_alone_and_rollback_drops_both_tables():
 
 
 @pytest.mark.asyncio
-async def test_c11_database_refuses_short_duplicate_and_self_merged_rows(conn):
+async def test_c11_database_refuses_short_duplicate_and_self_merged_rows(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
     sid = await conn.fetchval(
         "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', '{}', 'x') RETURNING id"
     )
@@ -1594,7 +1724,7 @@ async def test_c11_database_refuses_short_duplicate_and_self_merged_rows(conn):
 
 
 @pytest.mark.asyncio
-async def test_c11_rollback_section_drops_both_tables(pool):
+async def test_c11_rollback_section_drops_both_tables(writes, pool):
     _, rollback = split_migration_sql(MIGRATION.read_text())
     async with pool.acquire() as c:
         await c.execute(rollback)
