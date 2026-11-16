@@ -463,9 +463,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("CRM push client close skipped: %s", e)
 
-    # NOTE: WebSocket Redis Listener, Compliance Monitor, and Autonomous Scheduler
-    # shutdown removed — _init_background_services() is disabled (omnichannel stabilization).
-    # Re-add shutdown code when _init_background_services() is re-enabled.
+    # NOTE: there is no shutdown for the WebSocket Redis Listener, the Compliance Monitor or
+    # the Autonomous Scheduler: nothing starts them. Their starter, _init_background_services(),
+    # was disabled for the omnichannel stabilization and then deleted.
 
     # Shutdown ConfirmationService (VASSAL Phase 3) — before Redis closes
     confirmation_service = getattr(app.state, "confirmation_service", None)
