@@ -1314,9 +1314,9 @@ async def test_c9_privacy_when_the_commit_fails(
     def setup(stack):
         stack.app.state.db_pool = _PoolOf(pool, lambda c: _CommitConn(c, 2, factory))
 
-    resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=status)
+    async with writes_only(conn, {"api_audit_trail"}):
+        resp, _ = await _privacy_run(pool, conn, caplog, setup, SECRET_BODY, expect_status=status)
     assert resp.json() == {"detail": code}
-    assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
 
 
 @pytest.mark.asyncio
