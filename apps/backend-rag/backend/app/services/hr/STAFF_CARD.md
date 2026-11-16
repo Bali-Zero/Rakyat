@@ -42,7 +42,7 @@ request at `:523`): `user_id` is the token's `sub` (`deps/auth.py:66`), `role` i
 current email are NOT checked there (revocation is a separate Redis check). So the route trusts
 nothing from the claim except the id it uses as a key, and the SQL enforces the rest itself:
 `get_card_for_member(id)` is `WHERE tm.id = $1 AND COALESCE(tm.role,'') <> 'client' AND
-tm.active = true`, i.e. the PRIMARY KEY, the role of the STORED row (never the claim) and the
+(tm.active = true OR role = 'group_staff')`, i.e. the PRIMARY KEY, the role of the STORED row (never the claim) and the
 stored `active`. The route's own `role == client` claim check (403) is only an early refusal;
 a client row behind a staff claim, a deactivated member holding a valid token, or an id that
 is not a key (an email in the id slot) all get 404. It never looks anyone up by email, so two

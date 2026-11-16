@@ -156,7 +156,6 @@ async def get_member_obligations(
                        COALESCE((SELECT COALESCE(NULLIF(tm.full_name, ''), tm.name)
                                    FROM team_members tm
                                   WHERE LOWER(tm.email) = v.assigned_to
-                                    AND LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
                                   ORDER BY tm.active DESC NULLS LAST, tm.id LIMIT 1),
                                 v.assigned_to, 'Unassigned') AS name,
                        COUNT(*) AS total

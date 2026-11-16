@@ -601,7 +601,6 @@ async def send_telegram_notification(
                 SELECT id FROM user_profiles WHERE email = tm.email LIMIT 1
             )
             WHERE tm.email = $1
-              AND LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
               AND mu.channel = 'telegram'
               AND mu.active = true
             """,

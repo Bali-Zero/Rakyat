@@ -21,7 +21,6 @@ from backend.app.routers.crm_interactions import get_interactions_stats, list_in
 from backend.app.routers.crm_practices import get_practices_stats, list_practices
 from backend.app.utils.crm_utils import AvatarUrl
 from backend.app.utils.logging_utils import get_logger
-from backend.app.utils.service_accounts import roster_excluded_roles_sql_array
 from backend.core.cache import get_cache_service
 from backend.core.collection_registry import resolve_collection_name
 from backend.core.qdrant_db import QdrantClient
@@ -242,14 +241,7 @@ async def _get_active_team_members_count(db_pool: asyncpg.Pool) -> int:
     """
     try:
         async with db_pool.acquire() as conn:
-            return (
-                await conn.fetchval(
-                    "SELECT COUNT(*) FROM team_members WHERE active = TRUE"
-                    " AND role <> ALL($1::text[])",
-                    roster_excluded_roles_sql_array(),
-                )
-                or 0
-            )
+            return await conn.fetchval("SELECT COUNT(*) FROM team_members WHERE active = TRUE") or 0
     except Exception as e:
         logger.warning("Failed to get active team members count: %s", e)
         return 0

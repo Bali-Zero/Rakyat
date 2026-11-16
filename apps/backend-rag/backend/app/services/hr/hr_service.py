@@ -22,6 +22,7 @@ from backend.app.utils.hr_utils import (
     calculate_bpjs,
     calculate_pph21_monthly,
 )
+from backend.app.utils.service_accounts import GROUP_STAFF_ROLES_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +301,7 @@ class HRService:
     # ─── STAFF CARD (contract: STAFF_CARD.md) ───────────────────────
 
     # Explicit column list (no `e.*`, and no `notes`: HR free text is never on the card).
-    _CARD_SELECT = """
+    _CARD_SELECT = f"""
         SELECT e.id, e.team_member_id, e.hire_date, e.is_active, e.ptkp_status,
                e.npwp, e.bpjs_kesehatan_number, e.bpjs_ketenagakerjaan_number,
                e.bank_name, e.bank_account, e.bank_account_holder, e.profile,
@@ -308,7 +309,8 @@ class HRService:
                tm.full_name, tm.role, tm.department
         FROM hr_employees e
         JOIN team_members tm ON tm.id = e.team_member_id
-        WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client' AND tm.active = true
+        WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client'
+          AND (tm.active = true OR lower(trim(COALESCE(tm.role, ''))) IN ({GROUP_STAFF_ROLES_SQL}))
     """
 
     # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once. $12 is the

@@ -198,7 +198,6 @@ async def resolve_team_email(
           -- must not classify the sender as 'team'.
           AND NULLIF(BTRIM(LOWER(COALESCE(role, ''))), '') IS NOT NULL
           AND LOWER(BTRIM(COALESCE(role, ''))) <> 'client'
-          AND LOWER(BTRIM(COALESCE(role, ''))) <> 'group_staff'
         LIMIT 1
         """,
         str(email),
@@ -433,7 +432,6 @@ async def resolve_team_name(
               -- non-blank role proves team identity.
               AND NULLIF(BTRIM(LOWER(COALESCE(role, ''))), '') IS NOT NULL
               AND LOWER(BTRIM(COALESCE(role, ''))) <> 'client'
-              AND LOWER(BTRIM(COALESCE(role, ''))) <> 'group_staff'
             ORDER BY sim DESC
             LIMIT 2
             """,

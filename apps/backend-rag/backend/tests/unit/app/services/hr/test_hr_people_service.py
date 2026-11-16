@@ -171,9 +171,11 @@ def test_predicate_lists_employees_not_system_test_or_external_accounts():
         ("partner", "partner@balizero.com", "partner", True, False),
         ("partner-with-record", "partner2@balizero.com", "Partner", True, True),
         ("client-padded", "client2@balizero.com", " client ", True, True),
-        # group staff are people with an HR card: visible by the card, whatever the role
-        ("group-staff-with-card", "staff1@example.com", "group_staff", True, True),
-        ("group-staff-no-card", "staff2@example.com", "group_staff", True, False),
+        # group staff are INACTIVE rows that only this predicate opts in, by their card
+        ("group-staff-with-card", "staff1@example.com", "group_staff", False, True),
+        ("group-staff-no-card", "staff2@example.com", "group_staff", False, False),
+        ("group-staff-active-with-card", "staff3@example.com", " Group_Staff ", True, True),
+        ("former-employee-with-card", "former@balizero.com", "consultant", False, True),
     ]
     assert _visible(rows) == {
         "consultant",
@@ -182,6 +184,7 @@ def test_predicate_lists_employees_not_system_test_or_external_accounts():
         "external-with-record",
         "no-role-with-record",
         "group-staff-with-card",
+        "group-staff-active-with-card",
     }
 
 
@@ -189,3 +192,13 @@ def test_both_queries_use_the_one_predicate():
     assert mod.VISIBLE_PERSON_PREDICATE in mod._ROSTER_SQL
     assert mod.VISIBLE_PERSON_PREDICATE in mod._MEMBER_EMAIL_SQL
     assert "LEFT JOIN hr_employees e" in mod._MEMBER_EMAIL_SQL
+
+
+def test_card_read_and_member_lock_use_the_same_group_staff_opt_in():
+    from backend.app.services.hr.hr_service import HRService, _lock_visible_person_sql
+
+    assert "IN ('group_staff')" in mod.VISIBLE_PERSON_PREDICATE
+    assert mod.VISIBLE_PERSON_PREDICATE in _lock_visible_person_sql()
+    assert mod.VISIBLE_PERSON_PREDICATE in mod._MEMBER_EMAIL_SQL
+    # the HR card read must not drop an inactive group_staff row
+    assert "IN ('group_staff')" in HRService._CARD_SELECT

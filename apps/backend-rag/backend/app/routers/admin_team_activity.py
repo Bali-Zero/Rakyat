@@ -15,8 +15,8 @@ from pydantic import BaseModel
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.service_accounts import (
-    ROSTER_EXCLUDED_ROLES_SQL,
-    roster_excluded_roles_sql_array,
+    NON_HUMAN_ROLES_SQL,
+    non_human_roles_sql_array,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ async def get_overview(
 
             # Team members count
             total_team = await conn.fetchval(
-                f"SELECT COUNT(*) FROM team_members WHERE role NOT IN ({ROSTER_EXCLUDED_ROLES_SQL})",
+                f"SELECT COUNT(*) FROM team_members WHERE role NOT IN ({NON_HUMAN_ROLES_SQL})",
             )
 
             # Active today (clocked in)
@@ -325,7 +325,7 @@ async def get_team_stats(
                       AND tm.email NOT LIKE '%example%'
                     ORDER BY COALESCE(ms.messages, 0) DESC
                 """
-                rows = await conn.fetch(query, start_date_obj, roster_excluded_roles_sql_array())
+                rows = await conn.fetch(query, start_date_obj, non_human_roles_sql_array())
                 period_info = f"from {start_date}"
             else:
                 query = """
@@ -393,7 +393,7 @@ async def get_team_stats(
                       AND tm.email NOT LIKE '%example%'
                     ORDER BY COALESCE(ms.messages, 0) DESC
                 """
-                rows = await conn.fetch(query, days, roster_excluded_roles_sql_array())
+                rows = await conn.fetch(query, days, non_human_roles_sql_array())
                 period_info = f"last {days} days"
 
         return {
@@ -553,8 +553,7 @@ async def get_practice_stats(
                     FROM practices p
                     JOIN clients c ON p.client_id = c.id
                     LEFT JOIN team_members tm
-                        ON LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
-                        AND (tm.email ILIKE c.assigned_to
+                        ON tm.email ILIKE c.assigned_to
                         OR (
                             -- handle bare-username aliases like "ari" → "ari.firda@balizero.com"
                             c.assigned_to NOT LIKE '%@%'
@@ -564,7 +563,7 @@ async def get_practice_stats(
                             -- handle old-format aliases like "ari@balizero.com" → "ari.firda@balizero.com"
                             c.assigned_to LIKE '%@%'
                             AND tm.name ILIKE SPLIT_PART(c.assigned_to, '@', 1)
-                        ))
+                        )
                     WHERE c.assigned_to IS NOT NULL
                       AND c.assigned_to != ''
                       AND c.deleted_at IS NULL

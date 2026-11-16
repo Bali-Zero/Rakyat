@@ -24,7 +24,6 @@ from typing import Any
 
 from asyncpg import Pool
 
-from backend.app.utils.service_accounts import is_group_staff
 from backend.services.integrations.whatsapp_service import whatsapp_service
 
 logger = logging.getLogger(__name__)
@@ -53,13 +52,13 @@ async def send_to_team_member(db_pool: Pool, team_email: str, text: str) -> dict
     email = (team_email or "").strip().lower()
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT email, active, whatsapp, role FROM team_members WHERE lower(email) = $1",
+            "SELECT email, active, whatsapp FROM team_members WHERE lower(email) = $1",
             email,
         )
     # `is not True` (not `is False`) also rejects a NULL active flag —
     # unknown activity status is treated the same as inactive, never as a
     # pass. This function's only two verdicts are "send" and "refuse".
-    if row is None or row["active"] is not True or is_group_staff(row["role"]):
+    if row is None or row["active"] is not True:
         raise TeamMemberNotFound(email)
     phone = (row["whatsapp"] or "").strip()
     if not phone:

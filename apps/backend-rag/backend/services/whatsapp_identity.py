@@ -57,7 +57,6 @@ SELECT id, COALESCE(full_name, name) AS display_name, email
   FROM team_members
  WHERE NULLIF(BTRIM(LOWER(COALESCE(role, ''))), '') IS NOT NULL
    AND LOWER(BTRIM(COALESCE(role, ''))) <> 'client'
-   AND LOWER(BTRIM(COALESCE(role, ''))) <> 'group_staff'
    AND COALESCE(active, TRUE) IS TRUE
    AND NULLIF(regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g'), '')
        IN ($1, '62' || $1, '0' || $1)

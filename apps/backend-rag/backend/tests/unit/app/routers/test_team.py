@@ -24,7 +24,7 @@ from backend.app.routers.team import get_team_members
 ALL_MEMBERS: list[dict[str, Any]] = [
     {
         "id": "1",
-        "email": "surya@balizero.com",
+        "email": "member-a@example.test",
         "name": "Member A",
         "full_name": "Member A",
         "role": "Tax Care",
@@ -44,20 +44,10 @@ ALL_MEMBERS: list[dict[str, Any]] = [
     },
     {
         "id": "3",
-        "email": "probe@balizero.com",
+        "email": "probe@example.test",
         "name": "Probe",
         "full_name": "Login Healthcheck Probe",
         "role": "monitoring",
-        "department": "tax",
-        "active": True,
-        "avatar": None,
-    },
-    {
-        "id": "4",
-        "email": "staff@example.com",
-        "name": "Staff",
-        "full_name": "Group Staff",
-        "role": "group_staff",
         "department": "tax",
         "active": True,
         "avatar": None,
@@ -122,14 +112,13 @@ async def test_board_branch_excludes_service_accounts_and_clients() -> None:
     """Guilt (service account) + guilt (client) + innocence (real role), board branch."""
     conn = FakeConn(viewer={"department": "board", "role": "founder"}, visibility_rules=[])
     result = await get_team_members(
-        current_user={"email": "zero@balizero.com"}, pool=_pool_for(conn)
+        current_user={"email": "board-a@example.test"}, pool=_pool_for(conn)
     )
 
     emails = {m.email for m in result}
-    assert "probe@balizero.com" not in emails, "service account (monitoring) must be excluded"
+    assert "probe@example.test" not in emails, "service account (monitoring) must be excluded"
     assert "client@example.com" not in emails, "client must be excluded"
-    assert "staff@example.com" not in emails, "group staff must be excluded"
-    assert "surya@balizero.com" in emails, "a real team member must still appear"
+    assert "member-a@example.test" in emails, "a real team member must still appear"
     assert conn.member_query_calls, "the members query must have run"
     assert "role <> ALL(" in conn.member_query_calls[0][0]
 
@@ -142,14 +131,13 @@ async def test_department_default_branch_excludes_service_accounts_and_clients()
         visibility_rules=[],
     )
     result = await get_team_members(
-        current_user={"email": "surya@balizero.com"}, pool=_pool_for(conn)
+        current_user={"email": "member-a@example.test"}, pool=_pool_for(conn)
     )
 
     emails = {m.email for m in result}
-    assert "probe@balizero.com" not in emails
+    assert "probe@example.test" not in emails
     assert "client@example.com" not in emails
-    assert "staff@example.com" not in emails
-    assert "surya@balizero.com" in emails
+    assert "member-a@example.test" in emails
 
 
 @pytest.mark.asyncio
@@ -162,25 +150,23 @@ async def test_visibility_rules_branch_excludes_service_accounts_and_clients() -
     conn = FakeConn(
         viewer={"department": "tax", "role": "Tax Care"},
         visibility_rules=[
-            {"visible_member_email": "surya@balizero.com"},
+            {"visible_member_email": "member-a@example.test"},
             {"visible_member_email": "client@example.com"},
-            {"visible_member_email": "probe@balizero.com"},
-            {"visible_member_email": "staff@example.com"},
+            {"visible_member_email": "probe@example.test"},
         ],
     )
     result = await get_team_members(
-        current_user={"email": "zero@balizero.com"}, pool=_pool_for(conn)
+        current_user={"email": "board-a@example.test"}, pool=_pool_for(conn)
     )
 
     emails = {m.email for m in result}
-    assert "probe@balizero.com" not in emails
+    assert "probe@example.test" not in emails
     assert "client@example.com" not in emails
-    assert "staff@example.com" not in emails
-    assert "surya@balizero.com" in emails
+    assert "member-a@example.test" in emails
 
 
 @pytest.mark.asyncio
 async def test_probe_cannot_be_the_innocence_case() -> None:
     """Sanity check on the fixture itself: the fake DB actually distinguishes
     the three role shapes rather than filtering everything or nothing."""
-    assert {m["role"] for m in ALL_MEMBERS} == {"Tax Care", "client", "monitoring", "group_staff"}
+    assert {m["role"] for m in ALL_MEMBERS} == {"Tax Care", "client", "monitoring"}

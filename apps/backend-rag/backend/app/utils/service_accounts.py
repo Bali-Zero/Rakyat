@@ -61,16 +61,12 @@ EXTERNAL_ROLES = frozenset({"partner"})
 #: Everything an "is this caller a colleague" gate must refuse.
 NON_TEAM_ROLES = NON_HUMAN_ROLES | EXTERNAL_ROLES
 
-#: Staff of a group company whose HR card is kept in kita but who do not use the
-#: app: no PIN login (the row carries the never-matching placeholder hash), not a
-#: colleague for app gates (deliberately absent from :data:`TEAM_ROLES`), not
-#: assignable, and absent from the team roster and headcounts. They stay visible
-#: in the HR People list, which keys on the HR card and not on the role.
+#: Staff of a group company whose HR card is kept in kita but who do not use the app.
+#: Invariant: such a row is created ``active = FALSE`` with ``PLACEHOLDER_PIN_HASH``, so
+#: every colleague-shaped selector that filters on ``active`` skips it like a former
+#: employee. Only the HR People predicate opts it in. Absent from :data:`TEAM_ROLES` and
+#: from ``ASSIGNABLE_ROLES``; the PIN doors and invite redemption also refuse it.
 GROUP_STAFF_ROLES = frozenset({"group_staff"})
-
-#: What a colleague-shaped result (team roster, headcount, activity dashboard)
-#: must leave out: machines, clients and group staff. HR-shaped queries do not use it.
-ROSTER_EXCLUDED_ROLES = NON_HUMAN_ROLES | GROUP_STAFF_ROLES
 
 
 def normalize_role(role: str | None) -> str:
@@ -162,11 +158,6 @@ def non_human_roles_sql_array() -> list[str]:
     return sorted(NON_HUMAN_ROLES)
 
 
-def roster_excluded_roles_sql_array() -> list[str]:
-    """:data:`ROSTER_EXCLUDED_ROLES` as a sorted list, for ``role <> ALL($n::text[])``."""
-    return sorted(ROSTER_EXCLUDED_ROLES)
-
-
 def _sql_literal_list(roles: frozenset[str]) -> str:
     """Render roles as a SQL ``IN`` list, refusing anything not a bare token.
 
@@ -193,5 +184,5 @@ def _sql_literal_list(roles: frozenset[str]) -> str:
 #: Ready-to-interpolate SQL fragment: ``WHERE role NOT IN (NON_HUMAN_ROLES_SQL)``.
 NON_HUMAN_ROLES_SQL = _sql_literal_list(NON_HUMAN_ROLES)
 
-#: Same as :data:`NON_HUMAN_ROLES_SQL` plus group staff, for the roster-shaped queries.
-ROSTER_EXCLUDED_ROLES_SQL = _sql_literal_list(ROSTER_EXCLUDED_ROLES)
+#: SQL ``IN`` list of the group-staff roles, for the HR People predicate and the HR card read.
+GROUP_STAFF_ROLES_SQL = _sql_literal_list(GROUP_STAFF_ROLES)

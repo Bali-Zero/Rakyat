@@ -1241,7 +1241,6 @@ async def get_profile(
                 FROM clients c
                 LEFT JOIN team_members tm ON c.assigned_to = tm.email
                     AND tm.role IS DISTINCT FROM 'client'
-                    AND LOWER(BTRIM(COALESCE(tm.role, ''))) NOT IN ('group_staff')
                 WHERE c.id = $1 AND c.deleted_at IS NULL
                 """,
                 client["client_id"],
