@@ -83,6 +83,40 @@ CREATE TABLE session_tracking (
 """
 
 
+# Every row written to any table of the schema is recorded (table, operation), same-value
+# updates and insert-then-delete included. Row-level, so a statement that touches no row
+# records nothing. `await clear_writes(conn)` arms a measurement window.
+WRITE_LOG_SQL = """
+CREATE TABLE write_log (tbl text NOT NULL, op text NOT NULL);
+CREATE FUNCTION log_write() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+    INSERT INTO write_log VALUES (TG_TABLE_NAME, TG_OP);
+    RETURN NULL;
+END
+$f$;
+DO $do$
+DECLARE t text;
+BEGIN
+    FOR t IN SELECT table_name FROM information_schema.tables
+             WHERE table_schema = current_schema() AND table_name <> 'write_log'
+    LOOP
+        EXECUTE format(
+            'CREATE TRIGGER log_write AFTER INSERT OR UPDATE OR DELETE ON %I '
+            'FOR EACH ROW EXECUTE FUNCTION log_write()', t);
+    END LOOP;
+END
+$do$;
+"""
+
+
+async def clear_writes(c) -> None:
+    await c.execute("DELETE FROM write_log")
+
+
+async def written(c) -> set[str]:
+    return {r["tbl"] for r in await c.fetch("SELECT DISTINCT tbl FROM write_log")}
+
+
 # ── database fixtures ─────────────────────────────────────────────────────────
 
 
@@ -106,6 +140,7 @@ async def pool():
         async with created.acquire() as conn:
             await conn.execute(forward)
             await conn.execute(CRM_SCHEMA)
+            await conn.execute(WRITE_LOG_SQL)
         yield created
     finally:
         await created.close()
@@ -130,7 +165,7 @@ async def snapshot(c, *, exclude: set[str] = frozenset()) -> dict[str, tuple[int
     ]
     out = {}
     for name in names:
-        if name in exclude:
+        if name in exclude or name == "write_log":
             continue
         row = await c.fetchrow(
             f"SELECT count(*) AS n, coalesce(md5(string_agg(t::text, $$|$$ ORDER BY t::text)), $$$$) "
@@ -292,10 +327,12 @@ async def test_c2_http_call_writes_two_tables_and_the_audit_row_only(
 ):
     stack = Stack(pool)
     before = await snapshot(conn)
+    await clear_writes(conn)
     resp = await post(stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)))
     assert resp.status_code == 200 and resp.json()["outcome"] == "created"
     after = await snapshot(conn)
     assert changed(before, after) == NEW_TABLES | {"api_audit_trail"}
+    assert await written(conn) == NEW_TABLES | {"api_audit_trail"}
     audit = await conn.fetch("SELECT * FROM api_audit_trail")
     assert len(audit) == 1 and audit[0]["request_body"] is None
     assert SENTINEL_NAME not in str(dict(audit[0])) and SENTINEL_ID not in str(dict(audit[0]))
@@ -312,6 +349,7 @@ async def test_c2_session_header_and_user_email_also_update_session_tracking(
         "VALUES ('sess-probe-1', 'staff@example.test')"
     )
     before = await snapshot(conn)
+    await clear_writes(conn)
     headers = {**HEADERS, "X-Session-ID": "sess-probe-1", "X-User-Email": "staff@example.test"}
     resp = await post(
         stack, body(display_name=SENTINEL_NAME, ids=(("passport", SENTINEL_ID),)), headers
@@ -319,6 +357,7 @@ async def test_c2_session_header_and_user_email_also_update_session_tracking(
     assert resp.status_code == 200
     after = await snapshot(conn)
     assert changed(before, after) == NEW_TABLES | AUDIT_TABLES
+    assert await written(conn) == NEW_TABLES | AUDIT_TABLES
     dump = str(await conn.fetch("SELECT * FROM session_tracking")) + str(
         await conn.fetch("SELECT * FROM api_audit_trail")
     )
@@ -403,23 +442,27 @@ async def test_c4_equal_set_with_a_different_birth_date_is_a_contradiction(conn)
 @pytest.mark.asyncio
 async def test_c4_equal_set_match_basis_follows_the_birth_dates(conn):
     ids = (("nik", "3201234567890123"), ("passport", "ZZ0000001"))
+    ids2 = (("passport", "ZZ0000009"),)
     await _seed(conn, ids=ids, dob=date(1990, 1, 2))
+    await _seed(conn, ids=ids2)
+    before = await snapshot(conn)
+    await clear_writes(conn)
     both = await register_subject(conn, subj(ids=ids, dob=date(1990, 1, 2)), dry_run=False)
     request_without = await register_subject(conn, subj(ids=ids), dry_run=False)
+    owner_without = await register_subject(
+        conn, subj(ids=ids2, dob=date(1990, 1, 2)), dry_run=False
+    )
     assert (both["outcome"], both["match_basis"]) == ("already_registered", "identifiers_and_dob")
     assert (request_without["outcome"], request_without["match_basis"]) == (
         "already_registered",
         "identifiers_only",
     )
-    ids2 = (("passport", "ZZ0000009"),)
-    await _seed(conn, ids=ids2)
-    owner_without = await register_subject(
-        conn, subj(ids=ids2, dob=date(1990, 1, 2)), dry_run=False
-    )
     assert (owner_without["outcome"], owner_without["match_basis"]) == (
         "already_registered",
         "identifiers_only",
     )
+    assert await snapshot(conn) == before
+    assert await written(conn) == set()
 
 
 @pytest.mark.asyncio
@@ -817,17 +860,22 @@ async def test_c8_dry_run_absent_and_true_write_nothing_on_every_outcome(pool, c
         return [absent, {**payload, "dry_run": True}]
 
     empty = await snapshot(conn)
+    await clear_writes(conn)
     for payload in variants(body(ids=owner)):  # empty registry
         resp = await post(stack, payload)
         assert resp.json() == {"outcome": "would_create", "dry_run": True}
     assert await snapshot(conn) == empty
+    assert await written(conn) == set()
 
     await _seed(conn)
     seeded = await snapshot(conn)
+    await clear_writes(conn)
     cases = {
         "already_registered": body(ids=owner),
         "conflict": body(ids=(("passport", "ZZ0000001"),)),
         "existing_client": body(ids=(("passport", "AB123456"),)),
+        "existing_family_member": body(ids=(("passport", "EF777888"),)),
+        "existing_company": body(kind="company", ids=(("npwp", "0123456789012345"),)),
         "would_create": body(ids=(("passport", "ZZ0000077"),)),
     }
     for outcome, payload in cases.items():
@@ -835,6 +883,7 @@ async def test_c8_dry_run_absent_and_true_write_nothing_on_every_outcome(pool, c
             resp = await post(stack, variant)
             assert resp.json()["outcome"] == outcome and resp.json()["dry_run"] is True
     assert await snapshot(conn) == seeded
+    assert await written(conn) == set()
 
 
 # ── criterion 9: privacy ─────────────────────────────────────────────────────
@@ -863,10 +912,23 @@ class _Boom:
         return _Ctx()
 
 
+_STANDARD_RECORD_FIELDS = frozenset(
+    vars(logging.LogRecord("n", logging.INFO, "p", 1, "m", (), None))
+) | {"message", "asctime", "taskName"}
+
+
 def _everything_observable(stack, caplog, trace_before):
     traces = {k: v for k, v in request_tracing._trace_storage.items() if k not in trace_before}
     logs = " ".join(
-        r.getMessage() + " " + str(r.args) + " " + (str(r.exc_info) if r.exc_info else "")
+        r.getMessage()
+        + " "
+        + str(r.args)
+        + " "
+        + (str(r.exc_info) if r.exc_info else "")
+        + " "
+        + (r.stack_info or "")
+        + " "
+        + str({k: v for k, v in vars(r).items() if k not in _STANDARD_RECORD_FIELDS})
         for r in caplog.records
     )
     return logs + " " + str(traces) + " " + str(stack.alerts.calls)
