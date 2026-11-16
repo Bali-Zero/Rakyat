@@ -27,6 +27,13 @@ router = APIRouter(prefix="/api/wa", tags=["wa-mirror"])
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 MAX_BODY_CHARS = 4000
+SNIPPET_MAX_CHARS = 200
+
+# These two expressions must stay byte-identical to the indexed ones, or the
+# planner cannot use the GIN indexes: idx_wmc_body_fts (migration 193) and
+# idx_wmc_ocr_text_fts (migration 361, partial on ocr_status = 'done').
+_BODY_TSV = "to_tsvector('simple', COALESCE(body, message_text, ''))"
+_OCR_TSV = "to_tsvector('simple', COALESCE(ocr_result->>'text', ''))"
 
 
 class WaMirrorMessageResponse(BaseModel):
@@ -49,11 +56,26 @@ class WaMirrorMessageResponse(BaseModel):
     has_ocr: bool
     source: str = Field(default="wa_mirror")
     # Phase 1 attention queue (migration 188) — optional, NULL = not yet classified
-    attention_priority: str | None = Field(
-        default=None, description="HIGH | MEDIUM | LOW | None"
-    )
+    attention_priority: str | None = Field(default=None, description="HIGH | MEDIUM | LOW | None")
     attention_reason: list[str] | None = None
     attention_resolved: bool = False
+
+
+class WaMirrorSearchHit(WaMirrorMessageResponse):
+    """A message response plus where the search term matched."""
+
+    match_in_media: bool
+    # Headline of the message body only; extracted media text never leaves.
+    snippet: str | None = None
+
+
+class WaMirrorSearchResponse(BaseModel):
+    """wa-mirror search response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[WaMirrorSearchHit]
+    limit: int
 
 
 class WaMirrorMessagesResponse(BaseModel):
@@ -118,6 +140,58 @@ def _build_messages_query(
          WHERE {" AND ".join(where)}
          ORDER BY message_date DESC, id DESC
          LIMIT {limit_placeholder} OFFSET {offset_placeholder}
+        """,
+        params,
+    )
+
+
+def _build_search_query(
+    *,
+    q: str,
+    client_id: int | None,
+    limit: int,
+) -> tuple[str, list[Any]]:
+    """Build the parameterized body-or-media-text search query."""
+    params: list[Any] = []
+    q_placeholder = _add_param(params, q)
+    where = [
+        "source = 'wa_mirror'",
+        "team_member_phone IS NOT NULL",
+        "counterpart_phone IS NOT NULL",
+        f"({_BODY_TSV} @@ websearch_to_tsquery('simple', {q_placeholder})"
+        f" OR (ocr_status = 'done' AND {_OCR_TSV}"
+        f" @@ websearch_to_tsquery('simple', {q_placeholder})))",
+    ]
+    if client_id is not None:
+        where.append(f"client_id = {_add_param(params, client_id)}")
+    limit_placeholder = _add_param(params, limit)
+
+    return (
+        f"""
+        SELECT id, client_id, practice_id, direction, team_member_phone,
+               counterpart_phone,
+               COALESCE(NULLIF(body, ''), message_text, '') AS body,
+               message_date,
+               COALESCE(NULLIF(media_type, ''), 'text') AS media_type,
+               media_mime,
+               (ocr_result IS NOT NULL) AS has_ocr,
+               source,
+               attention_priority,
+               attention_reason,
+               (attention_resolved_at IS NOT NULL) AS attention_resolved,
+               NOT ({_BODY_TSV} @@ websearch_to_tsquery('simple', {q_placeholder}))
+                   AS match_in_media,
+               CASE WHEN {_BODY_TSV} @@ websearch_to_tsquery('simple', {q_placeholder})
+                    THEN ts_headline(
+                        'simple',
+                        left(COALESCE(NULLIF(body, ''), message_text, ''), {MAX_BODY_CHARS}),
+                        websearch_to_tsquery('simple', {q_placeholder}),
+                        'MaxWords=30, MinWords=10, MaxFragments=1')
+               END AS snippet
+          FROM whatsapp_message_context
+         WHERE {" AND ".join(where)}
+         ORDER BY message_date DESC, id DESC
+         LIMIT {limit_placeholder}
         """,
         params,
     )
@@ -269,3 +343,42 @@ async def list_wa_mirror_messages(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/messages/search", response_model=WaMirrorSearchResponse)
+async def search_wa_mirror_messages(
+    q: str = Query(..., min_length=2, max_length=200, description="Search text"),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    client_id: int | None = Query(None, gt=0, description="Restrict to a CRM client id"),
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> WaMirrorSearchResponse:
+    """Search message bodies and text extracted from media (OCR, PDF, docs)."""
+    if not can_view_all_clients(current_user):
+        raise HTTPException(status_code=403, detail="CRM access required")
+
+    # Same rule as the prospect queue: a search across every conversation
+    # (no client filter) reaches unmatched prospects too, so it is admin-only.
+    if client_id is None and not is_crm_admin(current_user):
+        raise HTTPException(status_code=403, detail="CRM admin access required")
+
+    try:
+        async with db_pool.acquire() as conn:
+            query, params = _build_search_query(q=q.strip(), client_id=client_id, limit=limit)
+            rows = await conn.fetch(query, *params)
+    except Exception as exc:
+        logger.error("wa_mirror.search.query_failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to search wa-mirror messages") from exc
+
+    items: list[WaMirrorSearchHit] = []
+    for row in rows:
+        base = _message_response_from_row(row).model_dump()
+        snippet = _row_get(row, "snippet")
+        items.append(
+            WaMirrorSearchHit(
+                **base,
+                match_in_media=bool(_row_get(row, "match_in_media", False)),
+                snippet=str(snippet)[:SNIPPET_MAX_CHARS] if snippet else None,
+            )
+        )
+    return WaMirrorSearchResponse(items=items, limit=limit)

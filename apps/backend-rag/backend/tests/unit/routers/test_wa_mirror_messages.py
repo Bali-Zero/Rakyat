@@ -267,3 +267,122 @@ def test_wa_mirror_router_registered_in_manifest_and_runtime() -> None:
     light = FastAPI()
     include_light_routers(light)
     assert any(route.path == "/api/wa/messages" for route in iter_leaf_routes(light))
+
+
+# --- GET /api/wa/messages/search -------------------------------------------
+
+
+def test_search_finds_message_only_through_media_text(
+    admin_user: dict[str, str],
+    mock_db_pool: MagicMock,
+    mock_db_conn: AsyncMock,
+) -> None:
+    """Guilt: a hit whose body does not match is flagged and leaks no media text."""
+    mock_db_conn.fetch.return_value = [
+        message_row(
+            id=901,
+            body="",
+            message_text=None,
+            media_type="image",
+            ocr_result={"text": "placeholder extracted words"},
+            match_in_media=True,
+            snippet=None,
+        )
+    ]
+    client = make_client(admin_user, mock_db_pool)
+
+    response = client.get("/api/wa/messages/search?q=placeholder&limit=10")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["match_in_media"] is True
+    assert item["snippet"] is None
+    assert item["has_ocr"] is True
+    assert "placeholder extracted words" not in json.dumps(response.json())
+    query, *params = mock_db_conn.fetch.await_args.args
+    assert "websearch_to_tsquery('simple'" in query
+    assert "ocr_status = 'done'" in query
+    assert params == ["placeholder", 10]
+
+
+def test_search_body_hit_has_bounded_snippet(
+    admin_user: dict[str, str],
+    mock_db_pool: MagicMock,
+    mock_db_conn: AsyncMock,
+) -> None:
+    mock_db_conn.fetch.return_value = [
+        message_row(match_in_media=False, snippet="<b>renewal</b> " + "x" * 500)
+    ]
+    client = make_client(admin_user, mock_db_pool)
+
+    response = client.get("/api/wa/messages/search?q=renewal&client_id=42")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["match_in_media"] is False
+    assert len(item["snippet"]) <= 200
+    query, *params = mock_db_conn.fetch.await_args.args
+    assert "client_id = $" in query
+    assert params == ["renewal", 42, 50]
+
+
+def test_search_innocence_no_match_returns_empty(
+    admin_user: dict[str, str],
+    mock_db_pool: MagicMock,
+    mock_db_conn: AsyncMock,
+) -> None:
+    mock_db_conn.fetch.return_value = []
+    client = make_client(admin_user, mock_db_pool)
+
+    response = client.get("/api/wa/messages/search?q=nothingmatches")
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "limit": 50}
+
+
+def test_search_query_expressions_match_the_indexes() -> None:
+    """The WHERE expressions must be byte-identical to the indexed ones."""
+    from pathlib import Path
+
+    from backend.app.routers.wa_mirror_messages import _BODY_TSV, _OCR_TSV
+
+    migrations = Path(__file__).resolve().parents[3] / "db" / "migrations_v2"
+    body_index = (migrations / "193_wa_dashboard_v1.sql").read_text()
+    ocr_index = (migrations / "361_wa_mirror_ocr_text_fts.sql").read_text()
+    assert f"GIN ({_BODY_TSV})" in body_index
+    assert f"GIN ({_OCR_TSV})" in ocr_index
+
+
+def test_search_rejects_empty_query(
+    admin_user: dict[str, str],
+    mock_db_pool: MagicMock,
+) -> None:
+    client = make_client(admin_user, mock_db_pool)
+
+    assert client.get("/api/wa/messages/search?q=").status_code == 422
+    assert client.get("/api/wa/messages/search").status_code == 422
+
+
+def test_search_denied_without_crm_access(
+    mock_db_pool: MagicMock,
+    mock_db_conn: AsyncMock,
+) -> None:
+    client = make_client({}, mock_db_pool)  # no authenticated identity
+
+    response = client.get("/api/wa/messages/search?q=renewal&client_id=42")
+
+    assert response.status_code == 403
+    mock_db_conn.fetch.assert_not_awaited()
+
+
+def test_search_across_all_conversations_requires_admin(
+    member_user: dict[str, str],
+    mock_db_pool: MagicMock,
+    mock_db_conn: AsyncMock,
+) -> None:
+    client = make_client(member_user, mock_db_pool)
+
+    response = client.get("/api/wa/messages/search?q=renewal")
+
+    assert response.status_code == 403
+    mock_db_conn.fetch.assert_not_awaited()
