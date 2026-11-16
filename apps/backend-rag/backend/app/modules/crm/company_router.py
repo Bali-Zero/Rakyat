@@ -151,7 +151,8 @@ async def create_company(
     db: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Create a new company (CRM admins and the tax team; edit/delete stay admin-only)"""
+    """Create a new company"""
+    # CRM admins and the tax team; edit/delete stay admin-only.
     if not can_create_company(current_user):
         raise HTTPException(status_code=403, detail="Company creation not allowed for this role")
     user_email = current_user.get("email", "system")
