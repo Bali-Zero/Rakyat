@@ -16833,11 +16833,11 @@ export interface paths {
     put?: never;
     /**
      * Handoff
-     * @description Build WhatsApp deep-link URL and send Telegram lead notification.
+     * @description Build WhatsApp deep-link URL and record internal lead attention.
      *
      *     PR0 safety freeze (2026-07-17, W3) + hardening (Codex red-team round):
-     *     the recommended visa name and price used in the WhatsApp message /
-     *     Telegram summary come ONLY from the session this backend itself
+     *     the recommended visa name and price used in the WhatsApp message and
+     *     internal attention record come ONLY from the session this backend itself
      *     persisted at /recommend time (already PricingService-derived — see
      *     `VisaOracleService.recommend_visas`). `HandoffRequest.recommended_visas`
      *     (client-posted) is still accepted on the wire for back-compat but is
@@ -16848,10 +16848,12 @@ export interface paths {
      *     also prefer the server-persisted snapshot over the client-posted body —
      *     same-session data captured by /recommend itself, before any chance for
      *     a later handoff POST to alter it — falling back to the client body only
-     *     when no snapshot (or an empty one) exists. A body-only handoff (no
-     *     server session backing it at all) still fires the Telegram lead —
-     *     leads matter commercially — but is tagged `UNVERIFIED (no server
-     *     session):` rather than presented as if server-verified.
+     *     when no snapshot (or an empty one) exists.
+     *
+     *     Outbound Telegram notifications are retired per the 2026-11-07 owner
+     *     order (`telegram_sent` remains `False` in `HandoffResponse` for schema
+     *     compatibility while internal structured attention logging and
+     *     `handoff_triggered` persistence stay active).
      */
     post: operations["handoff_api_v1_visa_oracle_handoff_post"];
     delete?: never;

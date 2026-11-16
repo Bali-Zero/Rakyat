@@ -702,3 +702,75 @@ def test_recommend_visas_retire_innocence_other_purposes_and_kitap() -> None:
         family=False,
     )
     assert any("Working KITAS" in r["visa_name"] for r in work_res)
+
+
+# ---------------------------------------------------------------------------
+# Nationality safety & metadata alignment (NC-05, NC-14)
+# ---------------------------------------------------------------------------
+
+
+def test_visa_oracle_service_metadata_and_keywords_aligned() -> None:
+    from backend.services.visa_oracle.visa_oracle_service import (
+        DURATION_THRESHOLDS,
+        PURPOSE_KEYWORDS,
+        VISA_METADATA,
+    )
+
+    assert VISA_METADATA["C1 Tourism"]["duration"] == "60 days"
+    assert (
+        VISA_METADATA["D12 Business Investigation (1 Year)"]["duration"]
+        == "Up to 180 days/stay (non-extendable)"
+    )
+    assert (
+        VISA_METADATA["D12 Business Investigation (2 Years)"]["duration"]
+        == "Up to 180 days/stay (non-extendable)"
+    )
+    assert "permanent" in DURATION_THRESHOLDS
+    assert "e33e" in PURPOSE_KEYWORDS["retire"]
+
+
+def test_visa_oracle_service_nationality_enforcement_real_pricing() -> None:
+    from backend.services.pricing.pricing_service import PricingService
+
+    real_pricing = PricingService()
+    with patch(
+        "backend.services.visa_oracle.visa_oracle_service.get_pricing_service",
+        return_value=real_pricing,
+    ):
+        svc = VisaOracleService()
+
+    # P18: Indonesian citizens (ID / IDN / Indonesian) get [] (no tourist/VOA visas)
+    for wni_code in ("ID", "IDN", "Indonesian"):
+        assert (
+            svc.recommend_visas(
+                nationality=wni_code, purpose="visit", duration="short", family=False
+            )
+            == []
+        )
+
+    # P16: Calling Visa nationalities (NG/NGA, AF/AFG, IL/ISR, KP/PRK, LR/LBR, SO/SOM) get []
+    for calling_code in ("NG", "NGA", "AF", "AFG", "IL", "ISR", "KP", "PRK", "LR", "LBR", "SO", "SOM"):
+        assert (
+            svc.recommend_visas(
+                nationality=calling_code, purpose="visit", duration="short", family=False
+            )
+            == []
+        )
+
+    # P16 non-VOA: PK / PAK never gets B1 or A1, gets C1 Tourism instead
+    for non_voa in ("PK", "PAK", "Pakistan"):
+        res = svc.recommend_visas(
+            nationality=non_voa, purpose="visit", duration="short", family=False
+        )
+        names = [r["visa_name"] for r in res]
+        assert names, f"expected C1 recommendation for {non_voa}"
+        assert all(not n.startswith("B1 ") and not n.startswith("A1 ") for n in names), names
+        assert "C1 Tourism" in names
+
+    # VOA-only nationality (AU / AUS) gets B1/C1, never A1 Visa-Free
+    au_res = svc.recommend_visas(
+        nationality="AUS", purpose="visit", duration="short", family=False
+    )
+    au_names = [r["visa_name"] for r in au_res]
+    assert all(not n.startswith("A1 ") for n in au_names), au_names
+    assert any(n.startswith("B1 ") for n in au_names), au_names

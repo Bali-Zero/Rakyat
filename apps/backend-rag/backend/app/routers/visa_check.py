@@ -82,11 +82,11 @@ class ClockRequest(BaseModel):
     @field_validator("entry_date")
     @classmethod
     def _entry_date_reasonable(cls, v: date) -> date:
-        # Entry can be in the past (user is in country) but not > 3y ago,
-        # and not > 1 month in the future (form typos).
+        # Entry can be in the past (user is in country) but not > 6y ago
+        # (supports 5-year E33/E33E stay permits), and not > 1 month in the future (form typos).
         today = date.today()
-        if (today - v).days > 365 * 3:
-            raise ValueError("entry_date too far in the past (>3 years)")
+        if (today - v).days > 365 * 6:
+            raise ValueError("entry_date too far in the past (>6 years)")
         if (v - today).days > 31:
             raise ValueError("entry_date cannot be more than 1 month in the future")
         return v
@@ -154,6 +154,10 @@ class MatchResponse(BaseModel):
 
 def _processing_days(visa_type: VisaType) -> int:
     """Rough processing estimate for the result page; we don't persist it."""
+    # Airport VOA / e-VOA (B1) and Visa-Free (A1) issue on arrival / within ~1 working day.
+    code = visa_type.value if isinstance(visa_type, VisaType) else str(visa_type)
+    if code in {"A1", "B1"}:
+        return 1
     # Single-entry C-series and short-stay visit visas process in ~10 working days.
     # KITAS / multi-entry / yearly visas process in ~20–30 days.
     if visa_type in {

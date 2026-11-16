@@ -109,9 +109,13 @@ class TestLongTourism:
 class TestWorkRemote:
     def test_under_budget_still_produces_ranking(self):
         r = _call(purpose=Purpose.WORK_REMOTE, budget_band=BudgetBand.UNDER_50M)
-        # Under-budget users get C1/C2 short-term options, not a referral.
-        assert r.referral_mode is False
-        assert r.recommended_visa in {VisaType.C1, VisaType.C2}
+        # Visit visas (C1/C2/D2) forbid remote work (P19); under-budget remote workers
+        # get a specific WhatsApp referral naming the IDR 50,000,000 floor instead.
+        assert r.referral_mode is True
+        assert r.recommended_visa is None
+        assert not {rv.visa for rv in r.ranking} & {VisaType.C1, VisaType.C2, VisaType.D2}
+        assert "50,000,000" in r.reason
+        assert "whatsapp" in r.reason.lower()
 
     def test_mid_budget_is_E33G(self):
         r = _call(purpose=Purpose.WORK_REMOTE, budget_band=BudgetBand.MID_50_500M)
@@ -429,3 +433,84 @@ class TestMatchRequestField:
         assert MatchRequest(**base).semi_independent_arts_sports is None
         req = MatchRequest(**base, semi_independent_arts_sports=True)
         assert req.semi_independent_arts_sports is True
+
+
+class TestNationalitySafetyAndNormativeFixes:
+    """Adversarial regression coverage for P12, P16, P18, P19, P20, P21, P23."""
+
+    def test_indonesian_citizen_id_and_idn_refer_without_foreigner_visa(self):
+        for code in ("ID", "IDN", "id", "ID,US"):
+            r = recommend_visa(
+                nationality=code,
+                purpose=Purpose.LONG_TOURISM,
+                duration_months=3,
+                budget_band=BudgetBand.UNDER_50M,
+            )
+            assert r.recommended_visa is None, f"{code} got {r.recommended_visa}"
+            assert r.referral_mode is True
+            assert "Indonesian citizens" in r.reason or "WNI" in r.reason
+            assert "whatsapp" in r.reason.lower()
+
+    def test_india_ind_and_in_are_not_mistaken_for_indonesia(self):
+        for code in ("IN", "IND"):
+            r = recommend_visa(
+                nationality=code,
+                purpose=Purpose.LONG_TOURISM,
+                duration_months=1,
+                budget_band=BudgetBand.UNDER_50M,
+            )
+            assert r.referral_mode is False
+            assert r.recommended_visa is VisaType.B1
+
+    def test_calling_visa_nationalities_refer_to_advisor_never_voa_or_evisa(self):
+        calling_codes = ("AF", "AFG", "IL", "ISR", "KP", "PRK", "LR", "LBR", "NG", "NGA", "SO", "SOM")
+        for code in calling_codes:
+            for purpose in (Purpose.LONG_TOURISM, Purpose.WORK_EMPLOYEE, Purpose.INVESTOR):
+                r = recommend_visa(
+                    nationality=code,
+                    purpose=purpose,
+                    duration_months=1,
+                    budget_band=BudgetBand.OVER_500M,
+                )
+                assert r.recommended_visa is None, f"{code}/{purpose} got {r.recommended_visa}"
+                assert r.referral_mode is True
+                assert r.ranking == []
+                assert "Calling Visa" in r.reason
+                assert "whatsapp" in r.reason.lower()
+
+    def test_non_voa_nationality_pk_pak_excludes_b1_and_recommends_c1(self):
+        for code in ("PK", "PAK", "BD", "BGD"):
+            r = recommend_visa(
+                nationality=code,
+                purpose=Purpose.LONG_TOURISM,
+                duration_months=1,
+                budget_band=BudgetBand.UNDER_50M,
+            )
+            assert r.referral_mode is False
+            assert VisaType.B1 not in {rv.visa for rv in r.ranking}
+            assert r.recommended_visa is VisaType.C1
+
+    def test_p12_software_engineer_6m_and_24m_recommends_e23_never_c7(self):
+        for months in (6, 12, 24):
+            r = recommend_visa(
+                nationality="IND",
+                purpose=Purpose.WORK_EMPLOYEE,
+                duration_months=months,
+                budget_band=BudgetBand.MID_50_500M,
+            )
+            assert r.recommended_visa is VisaType.E23
+            ranked_visas = {rv.visa for rv in r.ranking}
+            assert not (ranked_visas & {VisaType.C7, VisaType.C7A, VisaType.C7B})
+
+    def test_p23_family_steps_include_wni_ktp_kartu_keluarga_option(self):
+        r = recommend_visa(
+            nationality="AUS",
+            purpose=Purpose.FAMILY,
+            duration_months=24,
+            budget_band=BudgetBand.UNDER_50M,
+        )
+        assert r.recommended_visa is VisaType.E31
+        assert (
+            r.pre_arrival_steps[0]
+            == "Sponsor's KTP & Kartu Keluarga (if Indonesian citizen) or KITAS/KITAP + passport copies"
+        )

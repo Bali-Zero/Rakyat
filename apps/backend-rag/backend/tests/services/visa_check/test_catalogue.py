@@ -251,3 +251,33 @@ class TestE33Notes:
         assert e33g.extensions == (1, 365)
         assert e33g.min_budget_idr == 50_000_000
         assert Purpose.WORK_REMOTE in e33g.purposes
+
+
+class TestNormativeCatalogueAlignment:
+    """Surgical fixes for P19, P20, P21, and C7 visit-visa rules."""
+
+    def test_visit_visas_forbid_work_remote(self):
+        for vt in (VisaType.C1, VisaType.C2, VisaType.D2):
+            assert Purpose.WORK_REMOTE not in VISA_META[vt].purposes, (
+                f"{vt.value} is a visit visa and must not carry Purpose.WORK_REMOTE"
+            )
+        remote_visas = {vt for vt, m in VISA_META.items() if Purpose.WORK_REMOTE in m.purposes}
+        assert remote_visas == {VisaType.E33G}
+
+    def test_d12_is_180_days_non_extendable(self):
+        d12 = VISA_META[VisaType.D12]
+        assert d12.duration_days == 180
+        assert d12.extensions == (0, 0)
+        assert DEFAULT_DURATION_DAYS[VisaType.D12] == 180
+        assert EXTENSION_POLICY[VisaType.D12] == (0, 0)
+
+    def test_c7_is_30_days_non_extendable(self):
+        c7 = VISA_META[VisaType.C7]
+        assert c7.duration_days == 30
+        assert c7.extensions == (0, 0)
+
+    def test_e30a_notes_do_not_misclaim_university_sponsorship(self):
+        e30a = VISA_META[VisaType.E30A]
+        assert "university-sponsored" not in e30a.notes.lower()
+        assert "primary & secondary" in e30a.notes.lower()
+        assert "E30B" in e30a.notes

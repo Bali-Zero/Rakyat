@@ -2,7 +2,7 @@
 Visa Oracle Router
 
 Public API for the Visa Oracle product — anonymous visa recommendations,
-contextual chat, and WhatsApp/Telegram handoff.
+contextual chat, and WhatsApp handoff.
 
 No authentication required (public product).
 """
@@ -16,11 +16,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.app.dependencies import get_database_pool
-from backend.core.env_lists import owner_telegram_chat_id
 from backend.services.common.background import spawn
 from backend.services.visa_oracle.visa_oracle_service import (
     DURATION_THRESHOLDS,
     PURPOSE_CATEGORY_MAP,
+    classify_nationality,
     get_visa_oracle_service,
 )
 
@@ -114,7 +114,7 @@ CONFIDENCE_NORMAL = "NORMAL"
 OBSOLETE_VISA_CODES: dict[str, tuple[str, str]] = {
     # B211A/B211 were the multi-purpose visit visas (tourism + light
     # business). Post-reform the tourism replacement is C1 (Visa Wisata),
-    # business is C2/C10. C1 is the most common single-intent swap.
+    # business is C2 (single-entry) / D2 (multiple-entry). C1 is the most common single-intent swap.
     "B211A": ("C1", "C1 Visa Wisata tourism C2 business visit"),
     "B211": ("C1", "C1 Visa Wisata tourism C2 business visit"),
 }
@@ -229,8 +229,11 @@ SYSTEM_PROMPT = (
     "B211A, DO NOT treat it as a valid alias for B1 or any other code. "
     "Instead: clarify that B211A was retired, then redirect based on "
     "intent. For TOURISM the current replacement is **C1 Visa Wisata** "
-    "first (multi-entry, longer stay, most common); B1 (VoA) is a "
-    "shorter-term fallback. For BUSINESS meetings: C10. For investment "
+    "first (single-entry — leaving Indonesia cancels the permit — 60 days "
+    "initial stay + up to 2 extensions of 60 days, max 180 days); B1 (VoA) "
+    "is a shorter-term fallback for VOA-eligible nationalities. For BUSINESS "
+    "meetings or factory visits: C2 (single-entry) or D2 (multiple-entry) — "
+    "NOT C10 (which is for event speakers/invitees). For investment "
     "prep: D12 (Pra-Investasi). For work: E23/E33G. For long stay: "
     "E33/E33F/E33G/E28 family.\n"
     "- Other obsolete codes to flag similarly if mentioned: any 'B211'-prefixed "
@@ -442,28 +445,29 @@ def _determine_recommend_state(
     missing_facts: list[str],
     invalid_vocabulary_reasons: list[str] = (),  # type: ignore[assignment]
     catalog_degraded: bool = False,
+    nationality: str = "",
 ) -> tuple[RecommendState, list[str]]:
     """Map VisaOracleService's raw scored output to a safe five-state outcome.
 
     PR0 safety freeze + hardening — a conservative read of the EXISTING
-    scorer's signal, no new matching logic. `visas` is expected to already
-    be completeness-filtered (`_filter_complete_visas`) by the caller;
-    `catalog_degraded` signals that the RAW (pre-filter) list was non-empty
-    but every row was dropped as incomplete.
+    scorer's signal, plus deterministic nationality safety gates. `visas` is
+    expected to already be completeness-filtered (`_filter_complete_visas`) by
+    the caller; `catalog_degraded` signals that the RAW (pre-filter) list was
+    non-empty but every row was dropped as incomplete.
 
     Precedence:
       - required facts missing (blank)        -> NEEDS_INPUT
       - purpose/duration not in the scorer's
         known vocabulary (FIX-1)               -> NEEDS_INPUT, invalid_* reasons
+      - Indonesian citizen (ID / IDN / WNI)    -> NO_SUPPORTED_PATH
+      - Calling Visa nationality               -> HUMAN_REVIEW_REQUIRED
       - raw candidates existed but ALL were
         incomplete (FIX-3)                     -> TEMPORARILY_UNAVAILABLE, catalog_degraded
       - scorer returned zero rows              -> TEMPORARILY_UNAVAILABLE, catalog_no_candidates
       - every candidate scored 0 (no real
         keyword/duration/family signal)        -> NEEDS_INPUT, low_confidence_match
       - otherwise                              -> SUPPORTED_CANDIDATES,
-                                                   nationality_not_evaluated (FIX-2,
-                                                   a declared limitation — the legacy
-                                                   scorer never evaluates nationality)
+                                                   nationality_not_evaluated
 
     Returns (state, review_reasons). Callers MUST clear `visas` to [] unless
     state == "SUPPORTED_CANDIDATES" — this function does not mutate `visas`.
@@ -473,6 +477,13 @@ def _determine_recommend_state(
 
     if invalid_vocabulary_reasons:
         return "NEEDS_INPUT", list(invalid_vocabulary_reasons)
+
+    if nationality:
+        nat_info = classify_nationality(nationality)
+        if nat_info.is_indonesian_citizen:
+            return "NO_SUPPORTED_PATH", ["indonesian_citizen_no_visa_required"]
+        if nat_info.is_calling_visa:
+            return "HUMAN_REVIEW_REQUIRED", ["calling_visa_advisor_referral"]
 
     if catalog_degraded:
         return "TEMPORARILY_UNAVAILABLE", ["catalog_degraded"]
@@ -913,7 +924,11 @@ async def recommend(
             visas = _filter_complete_visas(raw_visas)
             catalog_degraded = bool(raw_visas) and not visas
             state, review_reasons = _determine_recommend_state(
-                visas, missing_facts, invalid_vocabulary_reasons, catalog_degraded
+                visas,
+                missing_facts,
+                invalid_vocabulary_reasons,
+                catalog_degraded,
+                nationality=body.nationality,
             )
         except Exception as scoring_exc:
             # A genuine scoring/catalog outage — the frontend must still be
@@ -1284,11 +1299,11 @@ async def handoff(
     db_pool=Depends(get_database_pool),
 ) -> HandoffResponse:
     """
-    Build WhatsApp deep-link URL and send Telegram lead notification.
+    Build WhatsApp deep-link URL and record internal lead attention.
 
     PR0 safety freeze (2026-07-17, W3) + hardening (Codex red-team round):
-    the recommended visa name and price used in the WhatsApp message /
-    Telegram summary come ONLY from the session this backend itself
+    the recommended visa name and price used in the WhatsApp message and
+    internal attention record come ONLY from the session this backend itself
     persisted at /recommend time (already PricingService-derived — see
     `VisaOracleService.recommend_visas`). `HandoffRequest.recommended_visas`
     (client-posted) is still accepted on the wire for back-compat but is
@@ -1299,13 +1314,13 @@ async def handoff(
     also prefer the server-persisted snapshot over the client-posted body —
     same-session data captured by /recommend itself, before any chance for
     a later handoff POST to alter it — falling back to the client body only
-    when no snapshot (or an empty one) exists. A body-only handoff (no
-    server session backing it at all) still fires the Telegram lead —
-    leads matter commercially — but is tagged `UNVERIFIED (no server
-    session):` rather than presented as if server-verified.
-    """
-    from backend.services.integrations.telegram_bot_service import telegram_bot
+    when no snapshot (or an empty one) exists.
 
+    Outbound Telegram notifications are retired per the 2026-11-07 owner
+    order (`telegram_sent` remains `False` in `HandoffResponse` for schema
+    compatibility while internal structured attention logging and
+    `handoff_triggered` persistence stay active).
+    """
     try:
         service = get_visa_oracle_service()
 
@@ -1356,50 +1371,25 @@ async def handoff(
             price=price,
         )
 
-        # Send Telegram notification — skip empty/unknown leads
+        # Record internal structured attention (Telegram retired 2026-11-07).
         telegram_sent = False
         qa = quiz_answers or {}
         has_real_data = any(
             qa.get(k) and qa.get(k) != "Unknown" for k in ("nationality", "purpose", "duration")
         ) or bool(server_visas)
-        lead_chat_id = owner_telegram_chat_id()
-        try:
-            if not lead_chat_id:
-                logger.warning("visa-oracle /handoff: skipping Telegram — TELEGRAM_OWNER_CHAT_ID not set")
-            elif not has_real_data:
-                logger.info(
-                    "visa-oracle /handoff: skipping Telegram — no real quiz data, session=%s",
-                    body.session_id[:12],
-                )
-            else:
-                language = body.language or "en"
-                summary = service.build_telegram_summary(
-                    session_id=body.session_id,
-                    quiz_answers=quiz_answers,
-                    recommended_visas=server_visas,
-                    messages=body.messages,
-                    language=language,
-                )
-                if not session_verified:
-                    # FIX-5 + R2-B (Codex re-review): never present a
-                    # body-only lead as if server-verified. Bracket-free
-                    # plain text — no escaping needed at all, and nothing
-                    # for legacy Telegram Markdown to (mis)parse as syntax.
-                    summary = f"UNVERIFIED (no server session):\n{summary}"
-                await telegram_bot.send_message(
-                    chat_id=lead_chat_id,
-                    text=summary,
-                    parse_mode="Markdown",
-                )
-                telegram_sent = True
-                logger.info(
-                    "visa-oracle /handoff: Telegram notification sent, session=%s verified=%s",
-                    body.session_id[:12],
-                    session_verified,
-                )
-        except Exception as tg_exc:
-            # Non-fatal — still return WhatsApp URL
-            logger.warning("visa-oracle /handoff: Telegram notification failed: %s", tg_exc)
+        if not has_real_data:
+            logger.info(
+                "visa-oracle /handoff: skipping lead attention — no real quiz data, session=%s",
+                body.session_id[:12],
+            )
+        else:
+            verification_tag = "VERIFIED" if session_verified else "UNVERIFIED (no server session)"
+            logger.info(
+                "visa-oracle /handoff: lead attention recorded [%s], session=%s server_visa=%s",
+                verification_tag,
+                body.session_id[:12],
+                server_top.get("visa_name", "none"),
+            )
 
         # Mark handoff in session non-blocking
         spawn(_persist_session_handoff(db_pool, body.session_id))
