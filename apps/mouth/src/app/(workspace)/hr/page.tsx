@@ -1014,7 +1014,7 @@ function PeopleConsole() {
                     </h2>
                     <p className={`text-[14px] ${SOFT}`}>
                       {[
-                        card?.role ?? selected.role,
+                        card?.position ?? card?.role ?? selected.role,
                         card?.unit ?? selected.unit,
                         card?.employer_entity,
                       ]

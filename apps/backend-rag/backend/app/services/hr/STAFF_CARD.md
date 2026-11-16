@@ -301,7 +301,7 @@ narrowed 2026-11-13: global admin alone no longer suffices.
   import's `StaffCardPatch` unchanged (C6 validators, not loosened). `clear` is a closed list:
   `npwp`, `bpjs_kesehatan_number`, `bpjs_ketenagakerjaan_number`, `bank_name`, `bank_account`,
   `bank_account_holder`, `legal_name`, `nik`, `birth_place`, `birth_date`, `gender`, `address`,
-  `religion`, `marital_status`, `employer_entity`, `unit`, `end_date`, `contract_number`. Not
+  `religion`, `marital_status`, `employer_entity`, `unit`, `position`, `end_date`, `contract_number`. Not
   clearable: `hire_date` (a record always has one), `is_active` (a boolean you set), `ptkp_status`
   (NOT NULL with a default), documents. 422 when a key is both set and cleared, when a set key is an
   explicit `null` (a null sets nothing; name the key under `clear`), when `docs`,

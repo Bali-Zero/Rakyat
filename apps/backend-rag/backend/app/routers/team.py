@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.app.dependencies import get_database_pool, require_team_member
-from backend.app.utils.service_accounts import non_human_roles_sql_array
+from backend.app.utils.service_accounts import roster_excluded_roles_sql_array
 
 router = APIRouter(prefix="/api/team", tags=["team"])
 
@@ -83,7 +83,7 @@ async def get_team_members(
                      AND role <> ALL($2::text[])
                    ORDER BY name""",
                 visible_emails,
-                non_human_roles_sql_array(),
+                roster_excluded_roles_sql_array(),
             )
         elif user_dept in ["board", "founders", "management"] or user_role in (
             "founder",
@@ -98,7 +98,7 @@ async def get_team_members(
                    WHERE active = TRUE
                      AND role <> ALL($1::text[])
                    ORDER BY name""",
-                non_human_roles_sql_array(),
+                roster_excluded_roles_sql_array(),
             )
         else:
             # Default: see only members of same department
@@ -109,7 +109,7 @@ async def get_team_members(
                      AND role <> ALL($2::text[])
                    ORDER BY name""",
                 user_dept,
-                non_human_roles_sql_array(),
+                roster_excluded_roles_sql_array(),
             )
 
         return [

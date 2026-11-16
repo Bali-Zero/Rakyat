@@ -133,6 +133,16 @@ def test_set_clear_and_nested_keys_reach_the_service_split(make_client):
     assert args[4] == ["address", "bank_account", "end_date"]
 
 
+def test_position_is_a_profile_key_and_clearable(make_client):
+    client, hr = make_client(OWNER)
+    assert client.patch(URL, json={"card": {"profile": {"position": "Staff role"}}}).status_code == 200
+    assert hr.edit_card.await_args.args[3] == {"position": "Staff role"}
+    assert client.patch(URL, json={"clear": ["position"]}).status_code == 200
+    assert hr.edit_card.await_args.args[4] == ["position"]
+    too_long = {"card": {"profile": {"position": "x" * 101}}}
+    assert client.patch(URL, json=too_long).status_code == 422
+
+
 def test_clearing_contract_number_is_expressible(make_client):
     client, hr = make_client(OWNER)
     assert client.patch(URL, json={"clear": ["contract_number"]}).status_code == 200

@@ -171,6 +171,9 @@ def test_predicate_lists_employees_not_system_test_or_external_accounts():
         ("partner", "partner@balizero.com", "partner", True, False),
         ("partner-with-record", "partner2@balizero.com", "Partner", True, True),
         ("client-padded", "client2@balizero.com", " client ", True, True),
+        # group staff are people with an HR card: visible by the card, whatever the role
+        ("group-staff-with-card", "staff1@example.com", "group_staff", True, True),
+        ("group-staff-no-card", "staff2@example.com", "group_staff", True, False),
     ]
     assert _visible(rows) == {
         "consultant",
@@ -178,6 +181,7 @@ def test_predicate_lists_employees_not_system_test_or_external_accounts():
         "member-with-record",
         "external-with-record",
         "no-role-with-record",
+        "group-staff-with-card",
     }
 
 

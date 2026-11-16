@@ -15,8 +15,8 @@ from pydantic import BaseModel
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.service_accounts import (
-    NON_HUMAN_ROLES_SQL,
-    non_human_roles_sql_array,
+    ROSTER_EXCLUDED_ROLES_SQL,
+    roster_excluded_roles_sql_array,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ async def get_overview(
 
             # Team members count
             total_team = await conn.fetchval(
-                f"SELECT COUNT(*) FROM team_members WHERE role NOT IN ({NON_HUMAN_ROLES_SQL})",
+                f"SELECT COUNT(*) FROM team_members WHERE role NOT IN ({ROSTER_EXCLUDED_ROLES_SQL})",
             )
 
             # Active today (clocked in)
@@ -325,7 +325,7 @@ async def get_team_stats(
                       AND tm.email NOT LIKE '%example%'
                     ORDER BY COALESCE(ms.messages, 0) DESC
                 """
-                rows = await conn.fetch(query, start_date_obj, non_human_roles_sql_array())
+                rows = await conn.fetch(query, start_date_obj, roster_excluded_roles_sql_array())
                 period_info = f"from {start_date}"
             else:
                 query = """
@@ -393,7 +393,7 @@ async def get_team_stats(
                       AND tm.email NOT LIKE '%example%'
                     ORDER BY COALESCE(ms.messages, 0) DESC
                 """
-                rows = await conn.fetch(query, days, non_human_roles_sql_array())
+                rows = await conn.fetch(query, days, roster_excluded_roles_sql_array())
                 period_info = f"last {days} days"
 
         return {

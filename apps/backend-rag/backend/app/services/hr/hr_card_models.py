@@ -117,6 +117,7 @@ class StaffProfilePatch(BaseModel):
     marital_status: Text(50) | None = None
     employer_entity: Text(255) | None = None
     unit: Text(100) | None = None
+    position: Text(100) | None = None
     on_payroll: StrictBool | None = None
     contract: StaffContract = Field(default_factory=StaffContract)
     docs: dict[_Slot, _FileId] = Field(default_factory=dict)
@@ -251,6 +252,7 @@ class StaffCard(BaseModel):
     marital_status: str | None = None
     employer_entity: str | None = None
     unit: str | None = None
+    position: str | None = None
     on_payroll: bool = True
     contract: StaffContractRead | None = None
     documents: DocumentsMap
@@ -267,6 +269,7 @@ _PROFILE_STR_KEYS = (
     "marital_status",
     "employer_entity",
     "unit",
+    "position",
 )
 
 

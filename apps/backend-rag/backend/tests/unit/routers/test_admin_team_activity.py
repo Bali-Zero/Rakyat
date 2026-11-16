@@ -113,6 +113,30 @@ class TestVerifyAdmin:
 # ============================================================================
 
 
+class TestGroupStaffExcluded:
+    @pytest.mark.asyncio
+    async def test_overview_headcount_excludes_group_staff(self, mock_db_pool):
+        from backend.app.routers.admin_team_activity import get_overview
+
+        conn = mock_db_pool._mock_conn
+        conn.fetchval = AsyncMock(side_effect=[100, 500, 50, 20, 5, 3, 10])
+        conn.fetch = AsyncMock(return_value=[])
+        await get_overview(start_date=None, _admin={"email": "admin"}, db_pool=mock_db_pool)
+        team_sql = [c.args[0] for c in conn.fetchval.call_args_list if "team_members" in c.args[0]]
+        assert team_sql and "'group_staff'" in team_sql[0]
+
+    @pytest.mark.asyncio
+    async def test_team_stats_queries_receive_group_staff(self, mock_db_pool):
+        from backend.app.routers.admin_team_activity import get_team_stats
+
+        conn = mock_db_pool._mock_conn
+        conn.fetch = AsyncMock(return_value=[])
+        for kwargs in ({"start_date": None, "days": 30}, {"start_date": "2026-01-01", "days": 30}):
+            conn.fetch.reset_mock()
+            await get_team_stats(_admin={"email": "admin"}, db_pool=mock_db_pool, **kwargs)
+            assert "group_staff" in conn.fetch.call_args.args[-1]
+
+
 class TestGetOverview:
     @pytest.mark.asyncio
     async def test_overview_no_start_date(self, mock_db_pool):

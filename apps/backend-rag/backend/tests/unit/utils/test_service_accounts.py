@@ -16,15 +16,19 @@ import pytest
 from backend.app.utils.service_accounts import (
     CLIENT_ROLES,
     EXTERNAL_ROLES,
+    GROUP_STAFF_ROLES,
     NON_HUMAN_ROLES,
     NON_HUMAN_ROLES_SQL,
     NON_TEAM_ROLES,
+    ROSTER_EXCLUDED_ROLES,
+    ROSTER_EXCLUDED_ROLES_SQL,
     SERVICE_ROLES,
     TEAM_ROLES,
     _sql_literal_list,
     is_human_team_member,
     non_human_roles_sql_array,
     normalize_role,
+    roster_excluded_roles_sql_array,
 )
 
 ROUTERS = Path(__file__).resolve().parents[3] / "app" / "routers"
@@ -332,3 +336,21 @@ def test_reorganisation_2026_11_09_titles_are_human_team_roles() -> None:
 
     for role in ("Direktur", "Tax Supervisor", "Tax Responsible", "Senior Consultant", "HR & Accounting"):
         assert is_human_team_member(role), role
+
+
+class TestGroupStaffRole:
+    """Staff of a group company: an HR card, but not a colleague and not in rosters."""
+
+    def test_not_a_colleague_and_not_assignable(self) -> None:
+        from backend.services.crm_assignment_routing import ASSIGNABLE_ROLES
+
+        assert "group_staff" not in TEAM_ROLES
+        assert "group_staff" not in {r.lower() for r in ASSIGNABLE_ROLES}
+        assert is_human_team_member("group_staff") is False
+
+    def test_roster_exclusion_is_non_human_plus_group_staff(self) -> None:
+        assert ROSTER_EXCLUDED_ROLES == NON_HUMAN_ROLES | GROUP_STAFF_ROLES
+        assert "group_staff" in ROSTER_EXCLUDED_ROLES
+        assert NON_HUMAN_ROLES == frozenset({"client", "monitoring"})
+        assert roster_excluded_roles_sql_array() == sorted(ROSTER_EXCLUDED_ROLES)
+        assert ROSTER_EXCLUDED_ROLES_SQL == "'client', 'group_staff', 'monitoring'"

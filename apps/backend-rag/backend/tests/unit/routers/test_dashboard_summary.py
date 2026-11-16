@@ -299,6 +299,7 @@ class TestGetActiveTeamMembersCount:
     @pytest.mark.asyncio
     async def test_returns_count(self):
         from backend.app.routers.dashboard_summary import _get_active_team_members_count
+        from backend.app.utils.service_accounts import roster_excluded_roles_sql_array
 
         mock_conn = AsyncMock()
         mock_conn.fetchval = AsyncMock(return_value=7)
@@ -308,6 +309,9 @@ class TestGetActiveTeamMembersCount:
         sql = mock_conn.fetchval.call_args.args[0]
         assert "team_members" in sql
         assert "active = TRUE" in sql
+        # a colleague headcount: machines, clients and group staff are left out
+        assert mock_conn.fetchval.call_args.args[1] == roster_excluded_roles_sql_array()
+        assert "group_staff" in mock_conn.fetchval.call_args.args[1]
 
     @pytest.mark.asyncio
     async def test_exception_returns_zero(self):
