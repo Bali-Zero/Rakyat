@@ -901,114 +901,6 @@ async def initialize_intelligent_router(
         app.state.specialized_router = None
 
 
-async def _init_background_services(
-    app: FastAPI,
-    search_service: Any,
-    ai_client: Any,
-    db_pool: asyncpg.Pool | None,
-) -> None:
-    """
-    Initialize background services: HealthMonitor, ComplianceMonitor, Scheduler, WebSocket.
-
-    Args:
-        app: FastAPI application instance
-        search_service: SearchService instance
-        ai_client: ZantaraAIClient instance
-        db_pool: Database pool instance (may be None)
-    """
-    from backend.app.routers.websocket import redis_listener
-    from backend.services.misc.autonomous_scheduler import create_and_start_scheduler
-    from backend.services.misc.proactive_compliance_monitor import ProactiveComplianceMonitor
-    from backend.services.monitoring.alert_service import AlertService
-    from backend.services.monitoring.health_monitor import HealthMonitor
-
-    # Plugin System: Modern system available in core/plugins/
-    logger.info("🔌 Plugin System: Using HealthMonitor for monitoring")
-
-    # Health Monitor (Self-Healing Monitoring)
-    try:
-        logger.info("🏥 Initializing Health Monitor (Self-Healing System)...")
-        alert_service = getattr(app.state, "alert_service", None)
-        if alert_service is None:
-            alert_service = AlertService()
-            app.state.alert_service = alert_service
-
-        health_monitor = HealthMonitor(alert_service=alert_service, check_interval=60)
-
-        # Inject dependencies for accurate monitoring
-        health_monitor.set_services(
-            memory_service=getattr(app.state, "memory_service", None),
-            intelligent_router=getattr(app.state, "intelligent_router", None),
-            tool_executor=getattr(app.state, "tool_executor", None),
-            app_state=app.state,  # Pass app.state for dynamic lookups
-        )
-
-        await health_monitor.start()
-
-        app.state.health_monitor = health_monitor
-        service_registry.register("health_monitor", ServiceStatus.HEALTHY, critical=False)
-        logger.info("✅ Health Monitor: Active (check_interval=60s)")
-    except Exception as e:
-        service_registry.register(
-            "health_monitor",
-            ServiceStatus.DEGRADED,
-            error=str(e),
-            critical=False,
-        )
-        logger.error("❌ Failed to initialize Health Monitor: %s", e)
-
-    # WebSocket Redis Listener
-    try:
-        logger.info("🔌 Starting WebSocket Redis Listener...")
-        redis_task = asyncio.create_task(redis_listener())
-        app.state.redis_listener_task = redis_task
-        service_registry.register("websocket", ServiceStatus.HEALTHY, critical=False)
-        logger.info("✅ WebSocket Redis Listener started")
-    except Exception as e:
-        service_registry.register("websocket", ServiceStatus.DEGRADED, error=str(e), critical=False)
-        logger.error("❌ Failed to start WebSocket Redis Listener: %s", e)
-
-    # Proactive Compliance Monitor (Business Value)
-    try:
-        logger.info("⚖️ Initializing Proactive Compliance Monitor...")
-        # In production, we would pass the notification service here
-        compliance_monitor = ProactiveComplianceMonitor(search_service=search_service)
-        await compliance_monitor.start()
-
-        app.state.compliance_monitor = compliance_monitor
-        service_registry.register("compliance", ServiceStatus.HEALTHY, critical=False)
-        logger.info("✅ Proactive Compliance Monitor: Active")
-    except Exception as e:
-        service_registry.register(
-            "compliance",
-            ServiceStatus.DEGRADED,
-            error=str(e),
-            critical=False,
-        )
-        logger.error("❌ Failed to initialize Compliance Monitor: %s", e)
-
-    # Autonomous Scheduler (All Autonomous Agents)
-    try:
-        logger.info("🤖 Initializing Autonomous Scheduler...")
-
-        autonomous_scheduler = await create_and_start_scheduler(
-            db_pool=db_pool,
-        )
-        logger.info("DEBUG: Scheduler started")
-
-        app.state.autonomous_scheduler = autonomous_scheduler
-        service_registry.register("autonomous_scheduler", ServiceStatus.HEALTHY, critical=False)
-        logger.info("✅ Autonomous Scheduler: Active")
-    except Exception as e:
-        service_registry.register(
-            "autonomous_scheduler",
-            ServiceStatus.DEGRADED,
-            error=str(e),
-            critical=False,
-        )
-        logger.error("❌ Failed to initialize Autonomous Scheduler: %s", e)
-
-
 # NOTE: The Generals (CodingGeneral, IntelligenceGeneral) were removed 2026-04-03.
 # backend/generals/ directory never existed — imports always failed silently.
 # Their responsibilities are covered by:
@@ -1799,12 +1691,9 @@ async def initialize_services(app: FastAPI) -> None:
     # 9. Multi-Channel Architecture (Telegram, Web, WhatsApp, Instagram, Twitter)
     await initialize_channel_router(app, ai_client, db_pool)
 
-    # 10. Background services (DISABLED for omnichannel stabilization)
-    # await _init_background_services(app, search_service, ai_client, db_pool)
-
     # 11. The Generals — REMOVED (code dead, see note at line ~798)
 
-    # 10b. Health Monitor (extracted from _init_background_services)
+    # 10b. Health Monitor
     try:
         from backend.services.monitoring.alert_service import AlertService
         from backend.services.monitoring.health_monitor import HealthMonitor
