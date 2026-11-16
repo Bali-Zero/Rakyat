@@ -46,6 +46,7 @@ import {
 } from "./tax-deadlines";
 import { witaDateKey } from "./overview-brief";
 import { dayToInstant, resolveCardDay } from "./witaClock";
+import { TaxDocumentsSection } from "./TaxDocumentsSection";
 
 // ============================================
 // TAX CONSULTANT DROPDOWN (Bali Zero tax team)
@@ -1110,6 +1111,15 @@ export function TaxTab({
           </div>
         </LedgerSection>
       ) : null}
+
+      {/* Tax Documents — the client's and each linked company's tax folder,
+          browsed live from Drive (names as in Drive), files via the proxy. */}
+      <LedgerSection n={6} title="Tax Documents">
+        <TaxDocumentsSection
+          clientFolderId={client?.google_drive_folder_id}
+          companyLinks={companyLinks}
+        />
+      </LedgerSection>
 
       {/* The per-tab AiSummaryCard is gone: v3 drops it from every tab
           (product-visible removal, disclosed in the PR body). */}

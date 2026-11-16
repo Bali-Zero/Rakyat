@@ -35,9 +35,19 @@ function formatModified(iso?: string): string {
   });
 }
 
-export function FilesBrowserPanel({ folderId }: { folderId: string }) {
+export function FilesBrowserPanel({
+  folderId,
+  title = "Drive files",
+  rootName = "Client folder",
+}: {
+  folderId: string;
+  /** Panel heading; the Documents tab keeps the default. */
+  title?: string;
+  /** Name of the starting folder in the breadcrumb trail. */
+  rootName?: string;
+}) {
   const [trail, setTrail] = useState<Crumb[]>([
-    { id: folderId, name: "Client folder" },
+    { id: folderId, name: rootName },
   ]);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,8 +56,8 @@ export function FilesBrowserPanel({ folderId }: { folderId: string }) {
   const current = trail[trail.length - 1];
 
   useEffect(() => {
-    setTrail([{ id: folderId, name: "Client folder" }]);
-  }, [folderId]);
+    setTrail([{ id: folderId, name: rootName }]);
+  }, [folderId, rootName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,7 +92,7 @@ export function FilesBrowserPanel({ folderId }: { folderId: string }) {
   return (
     <section
       data-testid="files-browser-panel"
-      aria-label="Drive files"
+      aria-label={title}
       className="mt-6 border-t border-[var(--bz-border)] pt-4"
     >
       <div className="flex min-h-11 items-center gap-2">
@@ -97,7 +107,7 @@ export function FilesBrowserPanel({ folderId }: { folderId: string }) {
           </button>
         )}
         <h2 className="text-base font-semibold text-[var(--tx-pure)]">
-          Drive files
+          {title}
           {trail.length > 1 && (
             <span className="font-normal text-[var(--tx-secondary)]">
               {" "}
