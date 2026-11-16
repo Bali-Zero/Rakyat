@@ -6,8 +6,9 @@
 -- Date: 2026-11-16
 --
 -- Partial on ocr_status = 'done': pending/empty/error rows carry no usable
--- text and are never indexed, so the index stays small and a table whose
--- OCR is all pending (prod today) pays nothing for it.
+-- text and are never indexed, so the index stays small. Building it still
+-- scans the whole table once and holds a SHARE lock (writes wait) for the
+-- duration, even when no row qualifies (prod today: OCR all pending).
 -- 'simple' config = no stemming, multilingual safe (IT/EN/ID), same as 193.
 -- Plain CREATE INDEX (not CONCURRENTLY): the runner applies each migration
 -- in one transaction, where CONCURRENTLY is refused.
