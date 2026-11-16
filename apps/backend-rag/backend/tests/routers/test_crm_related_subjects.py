@@ -312,7 +312,12 @@ async def test_c1_batch_counters_cover_the_two_new_tables_only(conn):
         )
     finally:
         await tr.rollback()
-    touched = {r["relname"] for r in rows if r["n_tup_ins"] + r["n_tup_upd"] + r["n_tup_del"] > 0}
+    # write_log is the measuring instrument (trigger target), not a table the registry writes.
+    touched = {
+        r["relname"]
+        for r in rows
+        if r["relname"] != "write_log" and r["n_tup_ins"] + r["n_tup_upd"] + r["n_tup_del"] > 0
+    }
     assert touched == NEW_TABLES
     assert all(r["n_tup_ins"] > 0 for r in rows if r["relname"] in NEW_TABLES)
     assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 0
