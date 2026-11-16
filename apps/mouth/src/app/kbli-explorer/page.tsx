@@ -41,9 +41,11 @@ import {
 } from "@/lib/kbli-obligation-truncation";
 import KBLIInspector, {
   buildInspectorCopyLine,
+  formatLicenseScaleEn,
   getPmaBadge,
   getRiskLevel,
 } from "./components/KBLIInspector";
+import { formatTimeframe, riskLabelEn } from "@/lib/kbli-derive";
 import ThinkingIndicator from "./components/ThinkingIndicator";
 import MatchScoreRing from "./components/MatchScoreRing";
 import RiskGauge from "./components/RiskGauge";
@@ -613,11 +615,11 @@ const AIMessageContent = ({
                 <button
                   key={sqIdx}
                   onClick={() => handleSendMessage(sq)}
-                  className="group flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-full text-xs text-accent-sand bg-slate-50 border border-accent-sand/20 hover:bg-accent-sand/10 hover:border-accent-sand transition-all"
+                  className="group flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-full text-left text-xs text-accent-sand bg-slate-50 border border-accent-sand/20 hover:bg-accent-sand/10 hover:border-accent-sand transition-all"
                 >
                   <ArrowRight
                     size={10}
-                    className="opacity-100 group-hover:opacity-100"
+                    className="shrink-0 opacity-100 group-hover:opacity-100"
                   />
                   <span>{sq}</span>
                 </button>
@@ -883,20 +885,20 @@ const InspectorChoreographed = ({
                           )}
                         </span>
                         <span className="text-[11px] uppercase px-2 py-1 rounded-full bg-[#151921] text-[var(--kbli-text-muted)] border border-[var(--border)]">
-                          {lic.sla}
+                          {formatTimeframe(lic.sla) ?? lic.sla}
                         </span>
                       </div>
                       <div className="flex flex-col gap-1 text-xs text-[var(--kbli-text-muted)]">
                         <span>
                           Business Size:{" "}
                           <span className="text-[var(--kbli-text-muted)]">
-                            {lic.scale.join(", ")}
+                            {formatLicenseScaleEn(lic.scale)}
                           </span>
                         </span>
                         <span>
                           Risk Level:{" "}
                           <span className="text-[var(--kbli-text-muted)]">
-                            {lic.risk_level}
+                            {riskLabelEn(lic.risk_level) ?? lic.risk_level}
                           </span>
                         </span>
                       </div>
@@ -1253,72 +1255,56 @@ export default function KBLIExplorerPage() {
         {/* Header/Search */}
         <div className="p-4 md:p-8 pt-6 md:pt-10 relative">
           <div className="relative max-w-3xl mx-auto">
-            {/* Mobile hamburger */}
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="md:hidden absolute -left-1 top-1/2 -translate-y-1/2 p-2 rounded text-[var(--kbli-text-muted)] hover:text-white z-10 min-h-[44px] min-w-[44px] flex items-center justify-center"
-            >
-              <Menu size={20} />
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Mobile hamburger — flex sibling before form so it never overlaps the Search lens (<768px) */}
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open menu"
+                data-testid="explorer-mobile-menu-button"
+                className="md:hidden shrink-0 p-2 rounded text-[var(--kbli-text-muted)] hover:text-white z-10 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              >
+                <Menu size={20} />
+              </button>
 
-            <form onSubmit={(e) => handleSendMessage(undefined, e)}>
-              <input
-                type="text"
-                placeholder=""
-                aria-label="Ask a question about KBLI"
-                className="w-full bg-slate-50 backdrop-blur-md text-silver placeholder-zinc-400 rounded-lg py-4 md:py-5 pl-12 md:pl-14 pr-28 border border-[var(--border)] focus:border-accent-sand/30 focus:ring-1 focus:ring-[#D4B483]/30 focus:outline-none transition-all font-light tracking-wide min-h-[44px]"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              {/* Rotating placeholder overlay */}
-              {!query && (
-                <span
-                  className="absolute left-12 md:left-14 top-1/2 -translate-y-1/2 text-[var(--kbli-text-muted)] font-light tracking-wide pointer-events-none text-sm md:text-base transition-opacity duration-300"
-                  style={{ opacity: placeholderVisible ? 1 : 0 }}
-                >
-                  {currentPlaceholder}
-                </span>
-              )}
-              <Search
-                className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-[var(--kbli-text-muted)]"
-                size={18}
-                strokeWidth={1.5}
-              />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                {/* Compare toggle (Phase 4) */}
-                {!isWelcome && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCompareMode((prev) => !prev);
-                      if (compareMode) setCompareSelection([]);
-                    }}
-                    className={`p-2 rounded-md transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center ${
-                      compareMode
-                        ? "bg-accent-sand/15 text-accent-sand"
-                        : "hover:bg-surface-editorial-elevated text-[var(--kbli-text-muted)] hover:text-[#888]"
-                    }`}
-                    title={compareMode ? "Exit compare mode" : "Compare codes"}
+              <form
+                onSubmit={(e) => handleSendMessage(undefined, e)}
+                className="relative flex-1 min-w-0"
+              >
+                <input
+                  type="text"
+                  placeholder=""
+                  aria-label="Ask a question about KBLI"
+                  className={`w-full bg-slate-50 backdrop-blur-md text-silver placeholder-zinc-400 rounded-lg py-4 md:py-5 pl-10 md:pl-14 pr-14 ${
+                    !isWelcome ? "md:pr-40" : "md:pr-16"
+                  } border border-[var(--border)] focus:border-accent-sand/30 focus:ring-1 focus:ring-[#D4B483]/30 focus:outline-none transition-all font-light tracking-wide min-h-[44px]`}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                {/* Rotating placeholder overlay — bounded on the right so it never runs under Send */}
+                {!query && (
+                  <span
+                    data-testid="explorer-rotating-suggestion"
+                    className={`absolute left-10 md:left-14 right-14 ${
+                      !isWelcome ? "md:right-40" : "md:right-16"
+                    } top-1/2 -translate-y-1/2 text-[var(--kbli-text-muted)] font-light tracking-normal md:tracking-wide pointer-events-none text-sm md:text-base leading-tight md:leading-snug transition-opacity duration-300`}
+                    style={{ opacity: placeholderVisible ? 1 : 0 }}
                   >
-                    <Columns size={16} />
-                  </button>
+                    {currentPlaceholder}
+                  </span>
                 )}
-                {/* Clear conversation (3A) */}
-                {!isWelcome && (
-                  <button
-                    type="button"
-                    onClick={handleClearConversation}
-                    className="p-2 rounded-md hover:bg-surface-editorial-elevated text-[var(--kbli-text-muted)] hover:text-[#888] transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                    title="Clear conversation"
-                    aria-label="Clear conversation"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
+                <Search
+                  data-testid="explorer-search-lens"
+                  className="absolute left-3.5 md:left-5 top-1/2 -translate-y-1/2 text-[var(--kbli-text-muted)] pointer-events-none"
+                  size={18}
+                  strokeWidth={1.5}
+                />
                 {/* Send */}
                 <button
                   type="submit"
-                  className="p-2 rounded-md hover:bg-surface-editorial-elevated text-accent-sand transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                  aria-label="Send message"
+                  data-testid="explorer-send-button"
+                  className="absolute right-2 md:right-3 top-1/2 -translate-y-1/2 p-2 rounded-md hover:bg-surface-editorial-elevated text-accent-sand transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                   disabled={isChatting}
                 >
                   {isChatting ? (
@@ -1327,8 +1313,46 @@ export default function KBLIExplorerPage() {
                     <Send size={18} />
                   )}
                 </button>
+              </form>
+            </div>
+
+            {/* Conversation actions: below the search bar on <768px so an open conversation never squeezes/cuts the rotating suggestion (W3d scar), inline on md:+ */}
+            {!isWelcome && (
+              <div
+                data-testid="explorer-conversation-actions"
+                className="mt-2 flex items-center justify-end gap-1 md:mt-0 md:absolute md:right-[60px] md:top-1/2 md:-translate-y-1/2 z-10"
+              >
+                {/* Compare toggle (Phase 4) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompareMode((prev) => !prev);
+                    if (compareMode) setCompareSelection([]);
+                  }}
+                  aria-label={
+                    compareMode ? "Exit compare mode" : "Compare codes"
+                  }
+                  className={`p-2 rounded-md transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center ${
+                    compareMode
+                      ? "bg-accent-sand/15 text-accent-sand"
+                      : "hover:bg-surface-editorial-elevated text-[var(--kbli-text-muted)] hover:text-[#888]"
+                  }`}
+                  title={compareMode ? "Exit compare mode" : "Compare codes"}
+                >
+                  <Columns size={16} />
+                </button>
+                {/* Clear conversation (3A) */}
+                <button
+                  type="button"
+                  onClick={handleClearConversation}
+                  className="p-2 rounded-md hover:bg-surface-editorial-elevated text-[var(--kbli-text-muted)] hover:text-[#888] transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                  title="Clear conversation"
+                  aria-label="Clear conversation"
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
-            </form>
+            )}
 
             {/* Floating Search Results */}
             <AnimatePresence>

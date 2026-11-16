@@ -13,12 +13,27 @@ import { useRouter } from "next/navigation";
 import { logger } from "@/lib/logger";
 import { trackKBLISearch } from "@/lib/analytics";
 import { isImeComposing } from "@/lib/ime-composing";
+import { riskLabelEn } from "@/lib/kbli-derive";
+
+export function formatPmaChipLabel(label: string): string {
+  return label
+    .replace(/^TERBUKA\b/, "Open to Foreigners")
+    .replace(/^TERBATAS\b/, "Restricted")
+    .replace(/^TERTUTUP\b/, "Closed to Foreigners");
+}
+
+export const DEFAULT_SEARCH_PLACEHOLDER =
+  "Search KBLI codes (e.g. restaurant, villas, consulting)...";
+export const DEFAULT_MOBILE_SEARCH_PLACEHOLDER = "Search KBLI codes...";
+const MOBILE_PLACEHOLDER_MEDIA_QUERY = "(max-width: 767px)";
 
 interface Props {
   navigateOnSubmit?: boolean;
   autoFocus?: boolean;
   className?: string;
   placeholder?: string;
+  /** Shorter placeholder shown below 768px (`md`) so phone viewports never clip. */
+  mobilePlaceholder?: string;
   /** Pre-fill the search input from ?q= URL param (homepage → KBLI deep-link). */
   initialQuery?: string;
   /**
@@ -33,11 +48,13 @@ export function KBLISearch({
   navigateOnSubmit = true,
   autoFocus = false,
   className,
-  placeholder = "Search KBLI codes (e.g. restaurant, villas, consulting)...",
+  placeholder = DEFAULT_SEARCH_PLACEHOLDER,
+  mobilePlaceholder,
   initialQuery = "",
   quickFilters,
 }: Props) {
   const [query, setQuery] = React.useState(initialQuery);
+  const [isMobileViewport, setIsMobileViewport] = React.useState(false);
   const [results, setResults] = React.useState<KBLISearchResult[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
   const [isOpen, setIsOpen] = React.useState(false);
@@ -60,6 +77,27 @@ export function KBLISearch({
   React.useEffect(() => {
     if (initialQuery) setQuery(initialQuery);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Track `<768px` (`md`) viewport so phones receive a concise placeholder
+  // (~138px at 16px) instead of clipping the 451px desktop placeholder, while
+  // SSR initial markup and `aria-label` stay untouched.
+  React.useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return;
+    }
+    const mql = window.matchMedia(MOBILE_PLACEHOLDER_MEDIA_QUERY);
+    const syncViewport = () => setIsMobileViewport(mql.matches);
+    syncViewport();
+    if (typeof mql.addEventListener === "function") {
+      mql.addEventListener("change", syncViewport);
+      return () => mql.removeEventListener("change", syncViewport);
+    }
+    mql.addListener?.(syncViewport);
+    return () => mql.removeListener?.(syncViewport);
   }, []);
 
   // Focus after hydration instead of via the HTML autofocus attribute. The
@@ -178,6 +216,14 @@ export function KBLISearch({
   // node lives inside it in both cases — so aria-controls resolves whenever
   // aria-expanded is true.
   const isDropdownOpen = isOpen && (results.length > 0 || Boolean(searchError));
+  const resolvedMobilePlaceholder =
+    mobilePlaceholder ??
+    (placeholder === DEFAULT_SEARCH_PLACEHOLDER
+      ? DEFAULT_MOBILE_SEARCH_PLACEHOLDER
+      : placeholder);
+  const effectivePlaceholder = isMobileViewport
+    ? resolvedMobilePlaceholder
+    : placeholder;
 
   // On a phone the on-screen keyboard covers the bottom of the viewport, so a
   // fixed 400px list runs under it. Cap the list at what is still visible
@@ -207,11 +253,11 @@ export function KBLISearch({
   return (
     <div ref={containerRef} className={cn("relative w-full", className)}>
       <div className="relative group">
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-zinc-300 transition-colors">
+        <div className="absolute left-3.5 md:left-4 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-zinc-300 transition-colors">
           {isLoading ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
+            <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
           ) : (
-            <Search className="w-5 h-5" />
+            <Search className="w-4 h-4 md:w-5 md:h-5" />
           )}
         </div>
         <input
@@ -224,7 +270,7 @@ export function KBLISearch({
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          placeholder={placeholder}
+          placeholder={effectivePlaceholder}
           aria-label={placeholder || "Search KBLI"}
           role="combobox"
           aria-expanded={isDropdownOpen}
@@ -234,9 +280,9 @@ export function KBLISearch({
             activeIndex >= 0 ? optionId(activeIndex) : undefined
           }
           className={cn(
-            "w-full pl-12 pr-10 py-4 bg-[var(--kbli-bg-surface)] backdrop-blur-xl border border-[var(--border)] rounded-2xl text-white placeholder-zinc-400",
-            "",
-            "focus:outline-none focus:ring-2 focus:ring-[#dc2626] focus:border-white/[0.15] transition-all text-lg",
+            "w-full pl-11 md:pl-12 py-4 bg-[var(--kbli-bg-surface)] backdrop-blur-xl border border-[var(--border)] rounded-2xl text-white placeholder-zinc-400",
+            query ? "pr-10" : "pr-4 md:pr-10",
+            "focus:outline-none focus:ring-2 focus:ring-[#dc2626] focus:border-white/[0.15] transition-all text-base md:text-lg",
           )}
         />
         {query && (
@@ -353,10 +399,11 @@ export function KBLISearch({
                           : "bg-zinc-500/10 text-zinc-400",
                       )}
                     >
-                      {apiPmaStatusLabel(result)}
+                      {formatPmaChipLabel(apiPmaStatusLabel(result))}
                     </span>
                     <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">
-                      {result.risk_category}
+                      {riskLabelEn(result.risk_category) ??
+                        result.risk_category}
                     </span>
                   </div>
                 </div>

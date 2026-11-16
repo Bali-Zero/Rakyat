@@ -4,6 +4,12 @@ import {
   resolveLicenseType,
   formatTimeframe,
   riskLabelEn,
+  riskRank,
+  scaleLabelEn,
+  formatScalesEn,
+  summarizeRiskRange,
+  summarizeLicenseRange,
+  summarizeTimeframeRange,
 } from "./kbli-derive";
 
 describe("licenseForRisk (PP28 Pasal 124(4) — license derives from risk)", () => {
@@ -125,5 +131,94 @@ describe("riskLabelEn", () => {
     expect(riskLabelEn(null)).toBeNull();
     expect(riskLabelEn("")).toBeNull();
     expect(riskLabelEn("Sedang")).toBeNull();
+  });
+});
+
+describe("scaleLabelEn & formatScalesEn (Web ↔ macOS scale label parity)", () => {
+  it("maps the four PP 28/2025 business scales to English", () => {
+    expect(scaleLabelEn("Mikro")).toBe("Micro");
+    expect(scaleLabelEn("Kecil")).toBe("Small");
+    expect(scaleLabelEn("Menengah")).toBe("Medium");
+    expect(scaleLabelEn("Besar")).toBe("Large");
+    expect(scaleLabelEn("")).toBeNull();
+    expect(scaleLabelEn(null)).toBeNull();
+  });
+
+  it("formats scale lists cleanly and preserves unknown tokens verbatim", () => {
+    expect(formatScalesEn(["Mikro", "Kecil"])).toBe("Micro + Small");
+    expect(formatScalesEn(["Menengah", "Besar"], ", ")).toBe("Medium, Large");
+    expect(formatScalesEn(["CustomScale"])).toBe("CustomScale");
+  });
+});
+
+describe("multi-tier summary helpers (preventing Mikro understatement on Besar/PMA codes)", () => {
+  it("ranks compound Menengah tiers between Rendah and Tinggi", () => {
+    expect(riskRank("Rendah")).toBe(1);
+    expect(riskRank("Menengah Rendah")).toBe(2);
+    expect(riskRank("Menengah Tinggi")).toBe(3);
+    expect(riskRank("Tinggi")).toBe(4);
+    expect(riskRank("")).toBe(0);
+  });
+
+  it("summarizes single-tier vs multi-tier risk in both EN and EN+ID modes", () => {
+    const single = [
+      { riskCategory: "Menengah Tinggi" },
+      { riskCategory: "Menengah Tinggi" },
+    ];
+    expect(summarizeRiskRange(single, "en")).toBe("Medium-High");
+    expect(summarizeRiskRange(single, "en-with-id")).toBe(
+      "Medium-High (Menengah Tinggi)",
+    );
+
+    const multi56101 = [
+      { riskCategory: "Menengah Rendah" },
+      { riskCategory: "Menengah Tinggi" },
+    ];
+    expect(summarizeRiskRange(multi56101, "en")).toBe(
+      "Medium-Low → Medium-High",
+    );
+    expect(summarizeRiskRange(multi56101, "en-with-id")).toBe(
+      "Medium-Low → Medium-High (Menengah Rendah → Menengah Tinggi)",
+    );
+
+    expect(summarizeRiskRange([], "en")).toBeNull();
+  });
+
+  it("summarizes license range without collapsing NIB + Izin / Sertifikat Standar to Mikro NIB", () => {
+    expect(
+      summarizeLicenseRange([
+        { licenseType: "NIB + Sertifikat Standar" },
+        { licenseType: "NIB + Sertifikat Standar" },
+      ]),
+    ).toBe("NIB + Sertifikat Standar");
+
+    expect(
+      summarizeLicenseRange([
+        { licenseType: "NIB" },
+        { licenseType: "NIB + Sertifikat Standar" },
+      ]),
+    ).toBe("NIB → NIB + Sertifikat Standar");
+
+    expect(
+      summarizeLicenseRange([
+        { licenseType: "NIB + Izin" },
+        { licenseType: "NIB" },
+      ]),
+    ).toBe("NIB → NIB + Izin");
+  });
+
+  it("summarizes processing timeframe range across Instant and working-day tiers", () => {
+    expect(
+      summarizeTimeframeRange([
+        { timeframe: "Otomatis" },
+        { timeframe: "Otomatis" },
+      ]),
+    ).toBe("Instant");
+
+    expect(
+      summarizeTimeframeRange([{ timeframe: "Otomatis" }, { timeframe: "14" }]),
+    ).toBe("Instant → 14 working days");
+
+    expect(summarizeTimeframeRange([{ timeframe: "-" }])).toBeNull();
   });
 });
