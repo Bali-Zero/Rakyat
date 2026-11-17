@@ -27,11 +27,19 @@ from backend.services.accounting import (
     cashout_service,
     reconcile_service,
 )
+from backend.services.accounting.bank_parser import (
+    BankParseError,
+    build_preview_report,
+    parse_cimb_statement,
+)
 from backend.services.accounting.matcher import OpenInvoice, rank_candidates
 from backend.services.accounting.reconcile_service import ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
 _MAX_CASHOUT_PDF_BYTES = 8 * 1024 * 1024
+
+# A year of daily CIMB rows is well under 1 MB; 8 MB is a generous ceiling.
+_MAX_BANK_STATEMENT_BYTES = 8 * 1024 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +181,38 @@ async def import_cashout_pdf(
         "weeks": result["weeks"],
         "replaced": result["deleted"],
     }
+
+
+# ── Bank statement preview (CIMB OCTO Biz CSV) — read-only ───────────────────
+
+
+@router.post("/bank-statement/preview")
+async def preview_bank_statement(
+    file: UploadFile = File(..., description="CIMB OCTO Biz 'Account Statement Summary' CSV"),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Parse a CIMB statement CSV and return a summary report. Writes nothing."""
+    _require_accounting_access(current_user)
+
+    filename = file.filename or "upload.csv"
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="only .csv bank statements are accepted")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="empty file")
+    if len(data) > _MAX_BANK_STATEMENT_BYTES:
+        raise HTTPException(status_code=413, detail="file too large (max 8 MB)")
+
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="file is not valid UTF-8 text") from exc
+
+    try:
+        return build_preview_report(parse_cimb_statement(text))
+    except BankParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ── P1: reconciliation ──────────────────────────────────────────────────────

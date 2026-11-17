@@ -8,6 +8,7 @@ three read endpoints, and query-param validation.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -444,3 +445,60 @@ class TestSummaryEndpoint:
         assert data["income_idr"] == 10000000
         assert data["net_idr"] == 7000000  # 10M - 3M
         assert data["margin_total_idr"] == 5000000
+
+
+_STATEMENT_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "cimb_octo_statement_synthetic.csv"
+)
+
+
+class TestBankStatementPreview:
+    URL = "/api/crm/accounting/bank-statement/preview"
+
+    def _post(self, mock_db_pool, user, data: bytes, name: str = "statement.csv"):
+        client = TestClient(_build_app(mock_db_pool, user), raise_server_exceptions=False)
+        return client.post(self.URL, files={"file": (name, data, "text/csv")})
+
+    def test_outsider_denied(self, mock_db_pool, outsider_user) -> None:
+        resp = self._post(mock_db_pool, outsider_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 403
+
+    def test_success_returns_report_and_writes_nothing(self, mock_db_pool, asya_user) -> None:
+        pool, conn = mock_db_pool
+        # BOM-prefixed upload, as the bank's export may carry one
+        resp = self._post(mock_db_pool, asya_user, b"\xef\xbb\xbf" + _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["account"] == {"number": "700000000001", "name": "PT CONTOH UJI"}
+        assert body["row_count"] == 13
+        assert body["opening_balance"] == "10000000.00"
+        assert body["closing_balance"] == "9217400.00"
+        assert body["balance_check"] == {"ok": True, "mismatch_positions": []}
+        assert body["kinds"]["transfer_out"] == {"count": 1, "total": "2000000.00"}
+        # preview only: the database is never touched
+        assert not pool.acquire.called
+        assert not conn.execute.called
+
+    def test_tampered_row_reported(self, mock_db_pool, asya_user) -> None:
+        data = _STATEMENT_FIXTURE.read_bytes().replace(b"8997500.00", b"8997501.00")
+        resp = self._post(mock_db_pool, asya_user, data)
+        assert resp.status_code == 200
+        assert resp.json()["balance_check"] == {"ok": False, "mismatch_positions": [4, 5]}
+
+    def test_empty_file_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"")
+        assert resp.status_code == 422
+        assert "empty" in resp.json()["detail"]
+
+    def test_unparseable_file_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"a,b,c\n1,2,3\n")
+        assert resp.status_code == 422
+        assert "Post Date" in resp.json()["detail"]
+
+    def test_non_csv_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"x", name="statement.pdf")
+        assert resp.status_code == 422
+
+    def test_non_utf8_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"\xff\xfe\x00bad")
+        assert resp.status_code == 422

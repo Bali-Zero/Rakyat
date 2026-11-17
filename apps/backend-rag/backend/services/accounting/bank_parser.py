@@ -11,9 +11,10 @@ Indonesian gotchas handled:
   - separate Debit/Credit columns OR one signed amount OR amount + DB/CR flag
   - leading-apostrophe text guards ("'04/09)
 
-CIMB Niaga is the company's bank (PT BAYU BALI NOL, acct 800198149700). The
-exact column names get finalized once Asya sends a real OCTO export; until then
-CIMB_NIAGA below is a best-effort default and `auto` sniffs the header.
+CIMB Niaga (OCTO Biz "Account Statement Summary" CSV) has its own dedicated
+parser below, parse_cimb_statement(): the export is a `Key,Value` metadata
+block followed by a transaction table, newest row first, which the generic
+header-first BankConfig layout cannot express.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import io
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,12 @@ class ParsedTxn:
     direction: str  # 'credit' (money in) | 'debit' (money out)
     running_balance_idr: int | None = None
     raw_row: dict[str, str] = field(default_factory=dict)
+    # Filled by the CIMB statement parser only (exact Decimal amounts, time of day, kind).
+    posted_at: datetime | None = None
+    debit: Decimal = Decimal(0)
+    credit: Decimal = Decimal(0)
+    balance: Decimal | None = None
+    kind: str = "other"
 
 
 @dataclass
@@ -56,18 +64,6 @@ class BankConfig:
     delimiter: str = ","              # decimal-comma exports must use ';' (else comma collides)
 
 
-# Best-effort default for CIMB Niaga (OCTO). Refine column names from a real export.
-CIMB_NIAGA = BankConfig(
-    bank_code="cimb_niaga",
-    date_col="Tanggal",
-    desc_col="Keterangan",
-    debit_col="Debet",
-    credit_col="Kredit",
-    balance_col="Saldo",
-    decimal_comma=True,
-    delimiter=";",  # decimal-comma export -> semicolon-separated (comma is the decimal)
-)
-
 # A generic single-signed-amount layout (many CSV exports).
 GENERIC_SIGNED = BankConfig(
     bank_code="generic",
@@ -79,7 +75,6 @@ GENERIC_SIGNED = BankConfig(
 )
 
 _CONFIGS: dict[str, BankConfig] = {
-    "cimb_niaga": CIMB_NIAGA,
     "generic": GENERIC_SIGNED,
 }
 
@@ -149,6 +144,8 @@ def parse_csv(content: str, bank_code: str = "cimb_niaga") -> list[ParsedTxn]:
     `content` is the decoded file text. Rows that can't be parsed (header noise,
     totals) are skipped with a warning, never silently dropped from the count.
     """
+    if bank_code == "cimb_niaga":
+        return parse_cimb_statement(content).transactions
     cfg = _CONFIGS.get(bank_code)
     if cfg is None:
         raise BankParseError(f"unknown bank_code {bank_code!r}; known: {list(_CONFIGS)}")
@@ -213,3 +210,199 @@ def verify_balance(
     """
     delta = sum(t.amount_idr if t.direction == "credit" else -t.amount_idr for t in txns)
     return abs((opening_balance_idr + delta) - closing_balance_idr) <= 1
+
+
+# ── CIMB Niaga OCTO Biz "Account Statement Summary" ──────────────────────────
+
+_CIMB_HEADER_FIRST_CELL = "post date"
+_CIMB_REQUIRED_COLUMNS = (
+    "Post Date", "Payment Type", "Debit Amount", "Credit Amount", "Balance", "Description",
+)
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1
+)}
+
+KINDS = (
+    "client_credit", "government_fee", "transfer_out", "transfer_fee",
+    "cash_withdrawal", "bank_fee", "payroll", "tax", "interest", "other",
+)
+
+# Exact bank payment types. Credits into the account are matched by prefix below.
+_KIND_BY_PAYMENT_TYPE = {
+    "TR TO REMITT": "transfer_out",
+    "REMITTANCE COMMISSION": "transfer_fee",
+    "CHQ CASH WITHDRAWAL": "cash_withdrawal",
+    "CHEQUE STAMP DUTY": "bank_fee",
+    "MISCELLANEOUS CHARGES": "bank_fee",
+    "MONTHLY ADMIN FEE": "bank_fee",
+    "DIRECT DEBIT": "payroll",
+    "WITHHOLDING TAX": "tax",
+    "CREDIT INTEREST": "interest",
+}
+_CLIENT_CREDIT_PREFIXES = ("REMITTANCE CR", "OVERBOOKING CR", "OVERBOOKING FROM CA")
+
+
+@dataclass
+class ParsedStatement:
+    account_number: str
+    account_name: str
+    metadata: dict[str, str]
+    transactions: list[ParsedTxn]  # oldest first
+
+    @property
+    def opening_balance(self) -> Decimal:
+        """Balance before the oldest row (the export has no opening-balance line)."""
+        first = self.transactions[0]
+        assert first.balance is not None
+        return first.balance - first.credit + first.debit
+
+    @property
+    def closing_balance(self) -> Decimal:
+        last = self.transactions[-1].balance
+        assert last is not None
+        return last
+
+
+def classify_cimb_kind(payment_type: str, description: str) -> str:
+    """Row kind from the bank's own Payment Type / Description; unknown -> 'other'."""
+    ptype = " ".join((payment_type or "").upper().split())
+    if ptype == "BILL PAYMENT" and (description or "").strip().upper().startswith("EMPN BILLING"):
+        return "government_fee"
+    if ptype.startswith(_CLIENT_CREDIT_PREFIXES):
+        return "client_credit"
+    return _KIND_BY_PAYMENT_TYPE.get(ptype, "other")
+
+
+def _parse_cimb_timestamp(raw: str) -> datetime:
+    """'17 Nov 2026 15:31:06' -> datetime (locale-independent month names)."""
+    parts = _clean_cell(raw).split()
+    try:
+        day, mon, year = int(parts[0]), _MONTHS[parts[1][:3].lower()], int(parts[2])
+        hh, mm, ss = (int(x) for x in (parts[3] if len(parts) > 3 else "0:0:0").split(":"))
+        return datetime(year, mon, day, hh, mm, ss)
+    except (IndexError, KeyError, ValueError) as exc:
+        raise BankParseError(f"cannot parse timestamp {raw!r}") from exc
+
+
+def _parse_decimal(raw: str, what: str) -> Decimal:
+    s = _clean_cell(raw).replace(",", "")
+    if not s:
+        return Decimal(0)
+    try:
+        return Decimal(s)
+    except ArithmeticError as exc:
+        raise BankParseError(f"cannot parse {what} {raw!r}") from exc
+
+
+def parse_cimb_statement(content: str) -> ParsedStatement:
+    """Parse a CIMB OCTO Biz statement export; transactions come back oldest first."""
+    rows = list(csv.reader(io.StringIO(content.lstrip("\ufeff"))))
+    header_idx = next(
+        (i for i, r in enumerate(rows) if r and r[0].strip().lower() == _CIMB_HEADER_FIRST_CELL),
+        None,
+    )
+    if header_idx is None:
+        raise BankParseError("no 'Post Date' header row found: not a CIMB statement export")
+
+    metadata = {r[0].strip(): r[1].strip() for r in rows[:header_idx] if len(r) >= 2 and r[0].strip()}
+    header = [c.strip() for c in rows[header_idx]]
+    missing = [c for c in _CIMB_REQUIRED_COLUMNS if c not in header]
+    if missing:
+        raise BankParseError(f"statement header lacks column(s): {missing}")
+
+    txns: list[ParsedTxn] = []
+    in_footer = False
+    for offset, cells in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
+        if not any(c.strip() for c in cells):
+            in_footer = bool(txns)  # a blank line after the data closes the table
+            continue
+        if in_footer:
+            # "Generated By/On" trailer. A real data row here would be silently
+            # dropped, so refuse the file instead.
+            try:
+                _parse_cimb_timestamp(cells[0])
+            except BankParseError:
+                continue
+            raise BankParseError(f"file line {offset}: data row after a blank line")
+        row = {h: _clean_cell(cells[i]) if i < len(cells) else "" for i, h in enumerate(header)}
+        try:
+            posted_at = _parse_cimb_timestamp(row["Post Date"])
+            debit = _parse_decimal(row["Debit Amount"], "debit")
+            credit = _parse_decimal(row["Credit Amount"], "credit")
+            balance = _parse_decimal(row["Balance"], "balance")
+        except BankParseError as exc:
+            raise BankParseError(f"file line {offset}: {exc}") from exc
+        txns.append(
+            ParsedTxn(
+                txn_date=posted_at.date(),
+                description=row["Description"],
+                amount_idr=int((credit if credit > 0 else debit).to_integral_value()),
+                direction="credit" if credit > 0 else "debit",
+                running_balance_idr=int(balance.to_integral_value()),
+                raw_row=row,
+                posted_at=posted_at,
+                debit=debit,
+                credit=credit,
+                balance=balance,
+                kind=classify_cimb_kind(row["Payment Type"], row["Description"]),
+            )
+        )
+    if not txns:
+        raise BankParseError("statement header found but no transaction rows")
+
+    # The export is newest-first; flip by file order (not by sorting on the timestamp,
+    # which has one-second resolution and ties) unless it already runs oldest-first.
+    if txns[0].posted_at > txns[-1].posted_at:  # type: ignore[operator]
+        txns.reverse()
+    return ParsedStatement(
+        account_number=metadata.get("Account No.", ""),
+        account_name=metadata.get("Account Name", ""),
+        metadata=metadata,
+        transactions=txns,
+    )
+
+
+def check_running_balance(txns: list[ParsedTxn]) -> list[int]:
+    """Positions (0-based, oldest-first) whose balance != previous balance + credit - debit.
+
+    Position 0 has no predecessor (its predecessor is the derived opening balance),
+    so it is never reported. A tampered balance shows at its row and at the next one.
+    """
+    bad: list[int] = []
+    for i in range(1, len(txns)):
+        prev, cur = txns[i - 1].balance, txns[i]
+        if prev is None or cur.balance is None or prev + cur.credit - cur.debit != cur.balance:
+            bad.append(i)
+    return bad
+
+
+def _money(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.01")), "f")
+
+
+def build_preview_report(stmt: ParsedStatement) -> dict[str, object]:
+    """Read-only summary of a parsed statement (amounts as 2-decimal strings)."""
+    txns = stmt.transactions
+    mismatches = check_running_balance(txns)
+    kinds: dict[str, dict[str, object]] = {}
+    for t in txns:
+        slot = kinds.setdefault(t.kind, {"count": 0, "_total": Decimal(0)})
+        slot["count"] = int(slot["count"]) + 1  # type: ignore[call-overload]
+        slot["_total"] = slot["_total"] + t.credit + t.debit  # type: ignore[operator]
+    return {
+        "account": {"number": stmt.account_number, "name": stmt.account_name},
+        "period": {
+            "first": txns[0].posted_at.isoformat(),  # type: ignore[union-attr]
+            "last": txns[-1].posted_at.isoformat(),  # type: ignore[union-attr]
+        },
+        "row_count": len(txns),
+        "opening_balance": _money(stmt.opening_balance),
+        "closing_balance": _money(stmt.closing_balance),
+        "total_debit": _money(sum((t.debit for t in txns), Decimal(0))),
+        "total_credit": _money(sum((t.credit for t in txns), Decimal(0))),
+        "balance_check": {"ok": not mismatches, "mismatch_positions": mismatches},
+        "kinds": {
+            k: {"count": v["count"], "total": _money(v["_total"])}  # type: ignore[arg-type]
+            for k, v in sorted(kinds.items())
+        },
+    }
