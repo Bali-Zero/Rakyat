@@ -3334,13 +3334,36 @@ async def test_s2_c11_an_oversized_body_is_refused_with_a_fixed_code(writes, poo
     assert resp.status_code == 422 and resp.json()["detail"][0]["code"] == "too_long"
 
 
-def test_s2_c11_the_largest_valid_request_fits_the_cap_as_compact_utf8():
-    files = tuple(f"wordmax{n}" for n in range(8))
-    ids = tuple(("passport", f"ZZ{n:07d}") for n in range(20))
-    payload = dbody([doc(f"max-{n}", files=files) for n in range(40)], ids=ids)
+@pytest.mark.asyncio
+async def test_s2_c11_the_largest_valid_request_fits_the_cap_as_compact_utf8_and_not_as_escapes(
+    writes, pool, conn, enabled
+):
+    wide = "\U0001d400"  # four bytes as UTF-8, twelve as an ASCII escape pair
+    ids = tuple(("passport", f"ZZ{n:06d}" + wide * 54) for n in range(20))
+    docs = [
+        doc(
+            f"max-{n}",
+            mime_type="x" * 61 + "/" + "y" * 91,
+            doc_type="z" * 40,
+            drive=[{"file_id": (f"w{k}" * 100)[:80], "seen_on": DAY3} for k in range(8)],
+        )
+        for n in range(40)
+    ]
+    payload = dbody(docs, ids=ids, dry_run=True)
     compact = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     assert len(compact) <= route_module.MAX_BODY_BYTES
-    assert dreq(payload).documents and len(dreq(payload).documents) == 40
+    assert len(json.dumps(payload).encode()) > route_module.MAX_BODY_BYTES
+    await _seed(conn, ids=ids)
+    async with writes_nothing(conn):
+        resp = await postd(Stack(pool, middleware=False), compact)
+        refused = await postd(Stack(pool, middleware=False), json.dumps(payload))
+    assert resp.json() == {
+        "outcome": "would_link",
+        "subject_id": resp.json()["subject_id"],
+        "dry_run": True,
+        "counts": {"documents": 40, "sightings": 320, "links": 40, "descriptive_differences": 0},
+    }
+    assert refused.status_code == 422 and refused.json()["detail"][0]["code"] == "too_long"
 
 
 # ── item 12: auth, dry run, method scoping ───────────────────────────────────

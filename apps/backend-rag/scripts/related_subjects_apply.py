@@ -194,7 +194,9 @@ def _allowed(value: Any, allowed: frozenset[str]) -> str | None:
     return value if isinstance(value, str) and value in allowed else None
 
 
-def read_ledger(path: Path, sha256: str) -> set[str]:
+def read_ledger(
+    path: Path, sha256: str, terminal: frozenset[str] | set[str] = TERMINAL
+) -> set[str]:
     done: set[str] = set()
     if not path.exists():
         return done
@@ -203,7 +205,7 @@ def read_ledger(path: Path, sha256: str) -> set[str]:
             entry = json.loads(line)
         except ValueError:
             continue
-        if entry.get("plan_sha256") == sha256 and entry.get("outcome") in TERMINAL:
+        if entry.get("plan_sha256") == sha256 and entry.get("outcome") in terminal:
             done.add(str(entry.get("subject_ref")))
     return done
 
@@ -213,12 +215,30 @@ def append_ledger(path: Path, entry: dict[str, Any]) -> None:
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
 
 
-def send(client: Any, url: str, key: str, request: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    """POST once; one retry after a short pause on 503 or a transport error."""
+def send(
+    client: Any, url: str, key: str, request: dict[str, Any] | bytes
+) -> tuple[int, dict[str, Any]]:
+    """POST once; one retry after a short pause on 503 or a transport error.
+
+    A dict is serialized by the client (slice 1). Bytes are sent exactly as given, with only the
+    key and the content type as application headers (slice 2 measures its body before sending).
+    """
     last: tuple[int, dict[str, Any]] = (0, {})
     for attempt in range(2):
         try:
-            resp = client.post(url, json=request, headers={"X-CRM-Write-Key": key}, timeout=30.0)
+            if isinstance(request, bytes):
+                prepared = client.build_request(
+                    "POST",
+                    url,
+                    content=request,
+                    headers={"X-CRM-Write-Key": key, "Content-Type": "application/json"},
+                    timeout=30.0,
+                )
+                resp = client.send(prepared)
+            else:
+                resp = client.post(
+                    url, json=request, headers={"X-CRM-Write-Key": key}, timeout=30.0
+                )
             try:
                 body = resp.json()
             except ValueError:
