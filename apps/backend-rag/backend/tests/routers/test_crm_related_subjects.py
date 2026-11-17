@@ -2024,7 +2024,7 @@ def fid(word: str) -> str:
     return (word * 40)[:33]
 
 
-def doc(label, *, size=1234, files=(), seen=DAY3, **over):
+def doc(label, *, size=4317905, files=(), seen=DAY3, **over):
     data = {
         "sha256": dh(label), "byte_size": size, "mime_type": MIME, "doc_type": DT,
         "first_seen_on": DAY1, "first_channel": "drive" if files else "whatsapp",
@@ -2111,7 +2111,7 @@ def declare_docs(writes, *, documents=0, sightings=0, links=0, extra=()):
 
 
 # fixture-owned SQL: the only way a slice-2 test writes a registry table directly
-async def _seed_doc(conn, label, *, size=1234, mime=MIME, day=DAY1, channel="whatsapp"):
+async def _seed_doc(conn, label, *, size=4317905, mime=MIME, day=DAY1, channel="whatsapp"):
     async with unmeasured(conn):
         await conn.execute(
             "INSERT INTO related_documents (sha256, byte_size, mime_type, first_seen_on, "
@@ -2809,7 +2809,7 @@ async def _normalized(conn):
 async def test_s2_c8_the_service_sorts_and_inserts_documents_then_sightings_then_links(
     writes, conn
 ):
-    declare_docs(writes, documents=3, sightings=4, links=3)
+    declare_docs(writes, documents=3, sightings=5, links=3)
     await _seed(conn)
     docs = [
         doc("o1", files=("wordo1b", "wordo1a")), doc("o2", files=("wordo2a",)),
@@ -2837,7 +2837,7 @@ async def test_s2_c8_the_service_sorts_and_inserts_documents_then_sightings_then
     assert (
         tables
         == ["related_documents"] * 3
-        + ["related_document_sightings"] * 4
+        + ["related_document_sightings"] * 5
         + ["related_subject_documents"] * 3
     )
     documents = [a[0] for t, a in seen if t == "related_documents"]
@@ -3130,7 +3130,7 @@ async def test_s2_c9_a_forced_failure_then_success_counts_the_second_attempt_alo
             and not state["done"]
         ):
             state["done"] = True
-            await _seed_doc(conn, second)  # another request committed the second document
+            await _seed_doc(conn, second, channel="drive")  # another request committed it
             raise (
                 asyncpg.DeadlockDetectedError("deadlock detected")
                 if cause == "deadlock"
@@ -3615,10 +3615,9 @@ def test_s2_c15_migration_is_362_alone_and_the_rollback_drops_leaves_first():
     )
     order = [m.group(1) for m in re.finditer(r"DROP TABLE IF EXISTS (\w+)", rollback)]
     assert order == ["related_subject_documents", "related_document_sightings", "related_documents"]
-    assert not re.search(
-        r"REFERENCES (clients|documents|companies|client_family_members)\b", forward
-    )
-    assert "TRIGGER" not in forward.upper() and "CREATE VIEW" not in forward.upper()
+    code = "\n".join(line for line in forward.splitlines() if not line.lstrip().startswith("--"))
+    assert not re.search(r"REFERENCES (clients|documents|companies|client_family_members)\b", code)
+    assert "TRIGGER" not in code.upper() and "CREATE VIEW" not in code.upper()
 
 
 @pytest.mark.asyncio
