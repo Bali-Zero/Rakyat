@@ -8,13 +8,12 @@ Indonesian passport, phone (+62), email.
 Compliance: UU PDP No. 27/2022 Art. 35, 36, 38
 """
 
+import importlib.util
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
-from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
-from presidio_anonymizer import AnonymizerEngine
 
 from backend.middleware.correlation import get_correlation_id
 from backend.services.pii.violation_store import (
@@ -24,93 +23,123 @@ from backend.services.pii.violation_store import (
     set_app,
 )
 
+if TYPE_CHECKING:
+    from presidio_analyzer import AnalyzerEngine, PatternRecognizer
+    from presidio_anonymizer import AnonymizerEngine
+
 logger = logging.getLogger(__name__)
+
+# presidio and the spaCy stack under it are imported by the first scan, not by
+# this module: every process installs the middleware at boot, few ever scan.
+# middleware_config still relies on an ImportError from here to leave the
+# middleware out when presidio is not installed, so that is checked without
+# importing it.
+for _required in ("presidio_analyzer", "presidio_anonymizer"):
+    if importlib.util.find_spec(_required) is None:
+        raise ImportError(f"{_required} is not installed")
 
 # ============================================================================
 # Custom Indonesian PII Recognizers
 # ============================================================================
 
-# KTP / NIK — 16 digits (Indonesian national ID)
-_ktp_recognizer = PatternRecognizer(
-    supported_entity="ID_KTP",
-    name="Indonesian KTP Recognizer",
-    patterns=[
-        Pattern("KTP_16", r"\b\d{16}\b", 0.7),
-    ],
-    supported_language="en",
-)
 
-# NPWP — Old format (15 digits with dots/dashes: XX.XXX.XXX.X-XXX.XXX)
-_npwp_old_recognizer = PatternRecognizer(
-    supported_entity="ID_NPWP",
-    name="Indonesian NPWP Old Format",
-    patterns=[
-        Pattern("NPWP_OLD", r"\b\d{2}\.\d{3}\.\d{3}\.\d{1}-\d{3}\.\d{3}\b", 0.9),
-    ],
-    supported_language="en",
-)
+def _indonesian_recognizers() -> "list[PatternRecognizer]":
+    """Build the custom recognizers; called once, by the first scan."""
+    from presidio_analyzer import Pattern, PatternRecognizer
 
-# NPWP — New 16-digit format for foreigners (leading zero + old 15 digits)
-_npwp_new_recognizer = PatternRecognizer(
-    supported_entity="ID_NPWP",
-    name="Indonesian NPWP New Format (16 digits)",
-    patterns=[
-        Pattern("NPWP_NEW_16", r"\b0\d{15}\b", 0.85),
-        Pattern("NPWP_NEW_DOTS", r"\b0\d{2}\.\d{3}\.\d{3}\.\d{1}-\d{3}\.\d{3}\b", 0.9),
-    ],
-    supported_language="en",
-)
+    # KTP / NIK — 16 digits (Indonesian national ID)
+    _ktp_recognizer = PatternRecognizer(
+        supported_entity="ID_KTP",
+        name="Indonesian KTP Recognizer",
+        patterns=[
+            Pattern("KTP_16", r"\b\d{16}\b", 0.7),
+        ],
+        supported_language="en",
+    )
 
-# Indonesian Passport — 1-2 letters + 6-7 digits
-_passport_id_recognizer = PatternRecognizer(
-    supported_entity="ID_PASSPORT",
-    name="Indonesian Passport Recognizer",
-    patterns=[
-        Pattern("PASSPORT_ID", r"\b[A-Z]{1,2}\d{6,7}\b", 0.6),
-    ],
-    supported_language="en",
-)
+    # NPWP — Old format (15 digits with dots/dashes: XX.XXX.XXX.X-XXX.XXX)
+    _npwp_old_recognizer = PatternRecognizer(
+        supported_entity="ID_NPWP",
+        name="Indonesian NPWP Old Format",
+        patterns=[
+            Pattern("NPWP_OLD", r"\b\d{2}\.\d{3}\.\d{3}\.\d{1}-\d{3}\.\d{3}\b", 0.9),
+        ],
+        supported_language="en",
+    )
 
-# Indonesian Phone — +62 prefix
-_phone_id_recognizer = PatternRecognizer(
-    supported_entity="PHONE_ID",
-    name="Indonesian Phone Recognizer",
-    patterns=[
-        Pattern("PHONE_62", r"\+62\d{8,12}", 0.8),
-        Pattern("PHONE_08", r"\b08\d{8,11}\b", 0.6),
-    ],
-    supported_language="en",
-)
+    # NPWP — New 16-digit format for foreigners (leading zero + old 15 digits)
+    _npwp_new_recognizer = PatternRecognizer(
+        supported_entity="ID_NPWP",
+        name="Indonesian NPWP New Format (16 digits)",
+        patterns=[
+            Pattern("NPWP_NEW_16", r"\b0\d{15}\b", 0.85),
+            Pattern("NPWP_NEW_DOTS", r"\b0\d{2}\.\d{3}\.\d{3}\.\d{1}-\d{3}\.\d{3}\b", 0.9),
+        ],
+        supported_language="en",
+    )
+
+    # Indonesian Passport — 1-2 letters + 6-7 digits
+    _passport_id_recognizer = PatternRecognizer(
+        supported_entity="ID_PASSPORT",
+        name="Indonesian Passport Recognizer",
+        patterns=[
+            Pattern("PASSPORT_ID", r"\b[A-Z]{1,2}\d{6,7}\b", 0.6),
+        ],
+        supported_language="en",
+    )
+
+    # Indonesian Phone — +62 prefix
+    _phone_id_recognizer = PatternRecognizer(
+        supported_entity="PHONE_ID",
+        name="Indonesian Phone Recognizer",
+        patterns=[
+            Pattern("PHONE_62", r"\+62\d{8,12}", 0.8),
+            Pattern("PHONE_08", r"\b08\d{8,11}\b", 0.6),
+        ],
+        supported_language="en",
+    )
+
+    return [
+        _ktp_recognizer,
+        _npwp_old_recognizer,
+        _npwp_new_recognizer,
+        _passport_id_recognizer,
+        _phone_id_recognizer,
+    ]
 
 
 # ============================================================================
 # Scanner Engine (singleton)
 # ============================================================================
 
-_analyzer: AnalyzerEngine | None = None
-_anonymizer: AnonymizerEngine | None = None
+_analyzer: "AnalyzerEngine | None" = None
+_anonymizer: "AnonymizerEngine | None" = None
 
 
-def _get_analyzer() -> AnalyzerEngine:
+def _get_analyzer() -> "AnalyzerEngine":
     """Lazy-init analyzer with Indonesian recognizers."""
     global _analyzer
     if _analyzer is None:
-        _analyzer = AnalyzerEngine()
-        _analyzer.registry.add_recognizer(_ktp_recognizer)
-        _analyzer.registry.add_recognizer(_npwp_old_recognizer)
-        _analyzer.registry.add_recognizer(_npwp_new_recognizer)
-        _analyzer.registry.add_recognizer(_passport_id_recognizer)
-        _analyzer.registry.add_recognizer(_phone_id_recognizer)
+        from presidio_analyzer import AnalyzerEngine
+
+        # Cached only once complete: an engine cached before its recognizers
+        # were added would keep scanning without them after a failed build.
+        analyzer = AnalyzerEngine()
+        for recognizer in _indonesian_recognizers():
+            analyzer.registry.add_recognizer(recognizer)
+        _analyzer = analyzer
         logger.info(
             "PII Scanner initialized with Indonesian recognizers (KTP, NPWP, Passport, Phone)"
         )
     return _analyzer
 
 
-def _get_anonymizer() -> AnonymizerEngine:
+def _get_anonymizer() -> "AnonymizerEngine":
     """Lazy-init anonymizer."""
     global _anonymizer
     if _anonymizer is None:
+        from presidio_anonymizer import AnonymizerEngine
+
         _anonymizer = AnonymizerEngine()
     return _anonymizer
 
