@@ -43,7 +43,7 @@ export const KBLI_CONCORDANCE_2025: Record<string, ConcordanceEntry> = {
     code: "68111",
     status: "CRITICAL",
     reason:
-      "Strict separation between Long-term Real Estate and Daily Rentals (plus Bali Menengah Rendah PMA block).",
+      "Strict separation between Long-term Real Estate and Daily Rentals (plus Bali's 18-field OSS closure from the third week of May 2026).",
     impact:
       "Using this code for daily guests (Airbnb) violates licensing scope and triggers OTA delisting.",
     action:
