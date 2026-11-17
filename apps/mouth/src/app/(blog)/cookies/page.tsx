@@ -146,10 +146,11 @@ export default function CookiePage() {
             Essential cookies cannot be disabled without breaking login and
             preferences. On our client portal (my.balizero.com), analytics
             cookies are loaded only after you give consent. On balizero.com we
-            use Google Analytics to understand how visitors use the site, based
-            on our legitimate interest; analytics storage is on by default and
-            advertising storage is always off. You can revoke consent at any
-            time by clearing cookies in your browser settings or contacting us.
+            use Google Analytics to understand how visitors use the site;
+            analytics storage is on by default and advertising storage is always
+            off. You can delete these cookies at any time in your browser
+            settings or contact us; on balizero.com they will be set again on
+            your next visit.
           </p>
         </section>
 
