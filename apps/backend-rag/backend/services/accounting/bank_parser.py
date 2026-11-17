@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import csv
 import io
+import itertools
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 logger = logging.getLogger(__name__)
@@ -249,6 +250,7 @@ class ParsedStatement:
     account_name: str
     metadata: dict[str, str]
     transactions: list[ParsedTxn]  # oldest first
+    order_decided_by: str = "default"  # 'timestamps' | 'balance_chain' | 'default'
 
     @property
     def opening_balance(self) -> Decimal:
@@ -299,7 +301,8 @@ def _parse_cimb_timestamp(raw: str) -> datetime:
         hh, mm, ss = (int(x) for x in (parts[3] if len(parts) > 3 else "0:0:0").split(":"))
         return datetime(year, mon, day, hh, mm, ss)
     except (IndexError, KeyError, ValueError) as exc:
-        raise BankParseError(f"cannot parse timestamp {raw!r}") from exc
+        # fixed text: nothing read from the file may reach an error (logged in production)
+        raise BankParseError("Post Date is not a timestamp") from exc
 
 
 # No leading zeros: an unquoted thousands comma ("1,000.00") splits into "1" and "000.00".
@@ -312,8 +315,7 @@ def _parse_decimal(raw: str, what: str, allow_minus: bool = False) -> Decimal:
     s = _clean_cell(raw)
     pattern = _SIGNED_AMOUNT_RE if allow_minus else _AMOUNT_RE
     if not pattern.fullmatch(s):
-        shown = s if len(s) <= 40 else s[:40] + "..."
-        raise BankParseError(f"{what} {shown!r} is not a plain decimal amount")
+        raise BankParseError(f"{what} is not a plain decimal amount")
     return Decimal(s)
 
 
@@ -321,18 +323,30 @@ def _round_int(value: Decimal) -> int:
     return int(value.to_integral_value(rounding=ROUND_HALF_UP))
 
 
-def _orient_oldest_first(txns: list[ParsedTxn]) -> list[ParsedTxn]:
-    """Return rows oldest-first. The running-balance chain decides; the order with fewer
-    chain mismatches wins. Tie: timestamps (first later than last -> reverse, earlier ->
-    keep); still tied: reverse, because the export is documented newest-first."""
+# The bank stamps a batch of postings within the same second or one second out of order
+# (measured: inversions of exactly 1 s). Two adjacent rows this close carry no date evidence.
+_TIMESTAMP_JITTER = timedelta(seconds=2)
+
+
+def _orient_oldest_first(txns: list[ParsedTxn]) -> tuple[list[ParsedTxn], str]:
+    """Return (rows oldest-first, what decided). Timestamps decide by majority of adjacent
+    pairs further apart than the jitter window (descending D vs ascending A); the balance
+    chain is consulted only when D == A and never overrides the dates; if it is tied too,
+    reverse (the export is newest-first)."""
+    descending = ascending = 0
+    for prev, cur in itertools.pairwise(txns):
+        gap = prev.posted_at - cur.posted_at  # type: ignore[operator]
+        if gap > _TIMESTAMP_JITTER:
+            descending += 1
+        elif -gap > _TIMESTAMP_JITTER:
+            ascending += 1
+    if descending != ascending:
+        return (txns[::-1] if descending > ascending else txns), "timestamps"
     as_is = len(check_running_balance(txns))
     flipped = len(check_running_balance(txns[::-1]))
     if as_is != flipped:
-        return txns if as_is < flipped else txns[::-1]
-    first, last = txns[0].posted_at, txns[-1].posted_at
-    if first < last:  # type: ignore[operator]
-        return txns
-    return txns[::-1]
+        return (txns if as_is < flipped else txns[::-1]), "balance_chain"
+    return txns[::-1], "default"
 
 
 def _fit_cells(cells: list[str], header: list[str], line: int) -> list[str]:
@@ -362,7 +376,10 @@ def parse_cimb_statement(content: str) -> ParsedStatement:
         # default dialect one stray quote merges every following line into a single cell.
         rows = list(csv.reader(io.StringIO(content.lstrip("\ufeff")), quoting=csv.QUOTE_NONE))
     except csv.Error as exc:
-        raise BankParseError(f"statement is unreadable as CSV: {exc}") from exc
+        # the csv module's own text can quote the file: say it in fixed words
+        raise BankParseError(
+            "statement is unreadable as CSV (a field is too large or the text is malformed)"
+        ) from exc
     header_idx = next(
         (i for i, r in enumerate(rows) if r and r[0].strip().lower() == _CIMB_HEADER_FIRST_CELL),
         None,
@@ -394,9 +411,9 @@ def parse_cimb_statement(content: str) -> ParsedStatement:
         row = {h: _clean_cell(cells[i]) if i < len(cells) else "" for i, h in enumerate(header)}
         try:
             posted_at = _parse_cimb_timestamp(row["Post Date"])
-            debit = _parse_decimal(row["Debit Amount"], "debit")
-            credit = _parse_decimal(row["Credit Amount"], "credit")
-            balance = _parse_decimal(row["Balance"], "balance", allow_minus=True)
+            debit = _parse_decimal(row["Debit Amount"], "Debit Amount")
+            credit = _parse_decimal(row["Credit Amount"], "Credit Amount")
+            balance = _parse_decimal(row["Balance"], "Balance", allow_minus=True)
             if debit > 0 and credit > 0:
                 raise BankParseError("row has both a debit and a credit amount")
         except BankParseError as exc:
@@ -420,12 +437,13 @@ def parse_cimb_statement(content: str) -> ParsedStatement:
     if not txns:
         raise BankParseError("statement header found but no transaction rows")
 
-    txns = _orient_oldest_first(txns)
+    txns, decided_by = _orient_oldest_first(txns)
     return ParsedStatement(
         account_number=metadata.get("Account No.", ""),
         account_name=metadata.get("Account Name", ""),
         metadata=metadata,
         transactions=txns,
+        order_decided_by=decided_by,
     )
 
 
@@ -472,6 +490,7 @@ def build_preview_report(stmt: ParsedStatement) -> dict[str, object]:
         "total_debit": _money(sum((t.debit for t in txns), Decimal(0))),
         "total_credit": _money(sum((t.credit for t in txns), Decimal(0))),
         "balance_check": {"ok": not mismatches, "mismatch_positions": mismatches},
+        "order_decided_by": stmt.order_decided_by,
         "kinds": {
             k: {"count": v["count"], "total": _money(v["_total"])}  # type: ignore[arg-type]
             for k, v in sorted(kinds.items())

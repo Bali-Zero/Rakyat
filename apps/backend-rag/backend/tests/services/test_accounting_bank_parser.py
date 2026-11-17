@@ -306,6 +306,83 @@ def _ts_rows_equal_stamp(order: str) -> str:
     return _mini([newer, older] if order == "newest_first" else [older, newer])
 
 
+def test_cimb_gate_reproducer_dates_beat_a_corrupted_balance() -> None:
+    # S4.1: newest-first, distinct dates, the newer balance altered (700.00 -> 1000.00).
+    text = _mini([
+        ("02 Nov 2026 10:00:00", "DIRECT DEBIT", "200.00", "0.00", "1000.00"),
+        ("01 Nov 2026 10:00:00", "DIRECT DEBIT", "100.00", "0.00", "900.00"),
+    ])
+    stmt = parse_cimb_statement(text)
+    report = build_preview_report(stmt)
+    assert report["period"] == {"first": "2026-11-01T10:00:00", "last": "2026-11-02T10:00:00"}
+    assert report["balance_check"] == {"ok": False, "mismatch_positions": [1]}
+    assert report["order_decided_by"] == "timestamps"
+
+
+def test_cimb_equal_second_newest_first_is_decided_by_balance_chain() -> None:
+    # S4.2
+    stmt = parse_cimb_statement(_ts_rows_equal_stamp("newest_first"))
+    assert stmt.order_decided_by == "balance_chain"
+    assert build_preview_report(stmt)["order_decided_by"] == "balance_chain"
+    assert check_running_balance(stmt.transactions) == []
+
+
+def test_cimb_equal_second_oldest_first_gives_the_same_result() -> None:
+    # S4.3
+    stmt = parse_cimb_statement(_ts_rows_equal_stamp("oldest_first"))
+    assert stmt.order_decided_by == "balance_chain"
+    assert stmt.opening_balance == Decimal("1000.00")
+    assert check_running_balance(stmt.transactions) == []
+
+
+def test_cimb_majority_of_timestamps_beats_a_few_ascending_pairs() -> None:
+    # S4.4: the real shape. Newest-first, minutes apart, two pairs inverted by one second
+    # (a batch stamped out of order); the chain is consistent in listing order.
+    stamps = ["10:09:00", "10:08:00", "10:06:00", "10:06:01", "10:05:00",
+              "10:04:00", "10:02:00", "10:02:01", "10:01:00", "10:00:00"]
+    balance = 1000 - 10 * len(stamps)
+    rows = []
+    for hms in stamps:  # listing order is newest-first, so balances rise down the file
+        rows.append((f"01 Nov 2026 {hms}", "DIRECT DEBIT", "10.00", "0.00", f"{balance}.00"))
+        balance += 10
+    stmt = parse_cimb_statement(_mini(rows))
+    assert stmt.order_decided_by == "timestamps"
+    assert stmt.transactions[0].posted_at.minute == 0  # reversed: last listed row first
+    assert check_running_balance(stmt.transactions) == []
+
+
+@pytest.mark.parametrize("inversion_seconds", [1, 2])
+def test_cimb_pair_inverted_within_jitter_is_ordered_by_the_chain(inversion_seconds: int) -> None:
+    # S4.6: two consistent rows listed newest-first, but the row listed first is stamped
+    # EARLIER by 1-2 seconds (a batch). Dates that close carry no evidence: the chain decides.
+    newer = ("01 Nov 2026 10:00:00", "DIRECT DEBIT", "200.00", "0.00", "700.00")
+    older = (f"01 Nov 2026 10:00:0{inversion_seconds}", "DIRECT DEBIT", "100.00", "0.00", "900.00")
+    stmt = parse_cimb_statement(_mini([newer, older]))
+    assert stmt.order_decided_by == "balance_chain"
+    assert stmt.opening_balance == Decimal("1000.00")
+    assert stmt.closing_balance == Decimal("700.00")
+    assert check_running_balance(stmt.transactions) == []
+
+
+def test_cimb_dates_three_seconds_apart_still_beat_a_corrupted_balance() -> None:
+    # S4.7: just outside the jitter window the dates decide, and the alteration shows.
+    text = _mini([
+        ("01 Nov 2026 10:00:03", "DIRECT DEBIT", "200.00", "0.00", "1000.00"),  # true 700.00
+        ("01 Nov 2026 10:00:00", "DIRECT DEBIT", "100.00", "0.00", "900.00"),
+    ])
+    stmt = parse_cimb_statement(text)
+    assert stmt.order_decided_by == "timestamps"
+    assert [t.posted_at.second for t in stmt.transactions] == [0, 3]
+    assert check_running_balance(stmt.transactions) == [1]
+
+
+def test_cimb_single_row_is_default_order() -> None:
+    # S4.5
+    stmt = parse_cimb_statement(_mini([("01 Nov 2026 10:00:00", "DIRECT DEBIT", "5.00", "0.00", "95.00")]))
+    assert stmt.order_decided_by == "default"
+    assert len(stmt.transactions) == 1
+
+
 @pytest.mark.parametrize("order", ["newest_first", "oldest_first"])
 def test_cimb_equal_timestamps_orientation_decided_by_balance_chain(order: str) -> None:
     stmt = parse_cimb_statement(_ts_rows_equal_stamp(order))
@@ -466,3 +543,73 @@ def test_cimb_legacy_integer_fields_round_half_up() -> None:
     t = parse_cimb_statement(text).transactions[0]
     assert t.amount_idr == 11  # not banker's rounding (10)
     assert t.running_balance_idr == 3  # not 2
+
+
+# ── S7: no uploaded content in any error message ──
+
+SENTINEL = "SENTINEL7f3a"
+_VALID_ROW = [
+    "01 Nov 2026 10:00:00", "01 Nov 2026", "DIRECT DEBIT", "REF", "BRF",
+    "50.00", "0.00", "950.00", "desc", "123",
+]
+_ROW_COLUMNS = _HEADER.split(",")
+
+
+@pytest.mark.parametrize("col", range(10))
+def test_cimb_sentinel_in_any_column_never_reaches_the_message(col: int) -> None:
+    cells = list(_VALID_ROW)
+    cells[col] = SENTINEL
+    text = f"Company Name,X\n\n{_HEADER}\n{','.join(cells)}\n"
+    if _ROW_COLUMNS[col] in ("Post Date", "Debit Amount", "Credit Amount", "Balance"):
+        with pytest.raises(BankParseError) as info:
+            parse_cimb_statement(text)
+        assert SENTINEL not in str(info.value)
+        assert "file line 4" in str(info.value)
+        assert _ROW_COLUMNS[col] in str(info.value)
+    else:
+        assert len(parse_cimb_statement(text).transactions) == 1
+
+
+def test_cimb_sentinel_in_metadata_never_reaches_a_message() -> None:
+    text = f"Company Name,{SENTINEL}\nAccount No.,{SENTINEL}\n\n{_HEADER}\n" + ",".join(
+        [*_VALID_ROW[:5], "bad", "0.00", "950.00", "d", "1"]
+    ) + "\n"
+    with pytest.raises(BankParseError) as info:
+        parse_cimb_statement(text)
+    assert SENTINEL not in str(info.value)
+
+
+def test_cimb_sentinel_in_trailer_never_reaches_the_message() -> None:
+    row = ",".join(_VALID_ROW)
+    text = f"{_HEADER}\n{row}\n\nGenerated By,{SENTINEL}\n{_VALID_ROW[0]},{SENTINEL}\n"
+    with pytest.raises(BankParseError) as info:
+        parse_cimb_statement(text)
+    assert SENTINEL not in str(info.value)
+
+
+def test_cimb_oversized_field_message_carries_no_csv_text() -> None:
+    huge = SENTINEL + "x" * 200_000
+    with pytest.raises(BankParseError) as info:
+        parse_cimb_statement(f"{_HEADER}\n01 Nov 2026 10:00:00,,T,R,B,1.00,0.00,1.00,{huge},\n")
+    assert SENTINEL not in str(info.value)
+    assert "field larger" not in str(info.value)
+
+
+def test_cimb_error_wording_is_fixed_text() -> None:
+    with pytest.raises(BankParseError) as info:
+        parse_cimb_statement(_one_row("1e3", "0.00", "1.00"))
+    assert str(info.value) == "file line 2: Debit Amount is not a plain decimal amount"
+    with pytest.raises(BankParseError) as info:
+        parse_cimb_statement(f"{_HEADER}\nnot a date,,T,R,B,1.00,0.00,1.00,d,\n")
+    assert str(info.value) == "file line 2: Post Date is not a timestamp"
+
+
+def test_cimb_parser_logs_nothing_from_the_file(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    with caplog.at_level(logging.DEBUG):
+        parse_cimb_statement(_fixture_text())
+        with pytest.raises(BankParseError):
+            parse_cimb_statement(_one_row(SENTINEL, "0.00", "1.00"))
+    assert SENTINEL not in caplog.text
+    assert "PT CONTOH UJI" not in caplog.text

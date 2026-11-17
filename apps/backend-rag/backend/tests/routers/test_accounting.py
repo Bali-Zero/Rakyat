@@ -520,6 +520,26 @@ class TestBankStatementPreview:
         self._post(mock_db_pool, asya_user, b"x" * 1000)
         assert sizes == [65]
 
+    def test_error_body_never_echoes_uploaded_content(self, mock_db_pool, asya_user) -> None:
+        header = (
+            "Post Date,Payment Date,Payment Type,Other Reference,Bank Reference,"
+            "Debit Amount,Credit Amount,Balance,Description,Cheque Number"
+        )
+        row = "01 Nov 2026 10:00:00,,DIRECT DEBIT,R,B,SENTINEL7f3a,0.00,1.00,d,"
+        resp = self._post(mock_db_pool, asya_user, f"{header}\n{row}\n".encode())
+        assert resp.status_code == 422
+        assert "SENTINEL7f3a" not in resp.text
+        assert "file line 2" in resp.json()["detail"]
+
+    def test_filename_is_not_echoed(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"x", name="SENTINEL7f3a.pdf")
+        assert resp.status_code == 422
+        assert "SENTINEL7f3a" not in resp.text
+
+    def test_report_names_how_the_order_was_decided(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.json()["order_decided_by"] == "timestamps"
+
     def test_non_utf8_rejected_422(self, mock_db_pool, asya_user) -> None:
         resp = self._post(mock_db_pool, asya_user, b"\xff\xfe\x00bad")
         assert resp.status_code == 422
