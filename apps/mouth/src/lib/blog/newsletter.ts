@@ -15,10 +15,34 @@ import { logger } from "../logger";
 import { toError } from "../types/common";
 
 const ZANTARA_API =
-  process.env.NEXT_PUBLIC_ZANTARA_API_URL || process.env.ZANTARA_API_URL;
+  process.env.NEXT_PUBLIC_ZANTARA_API_URL || process.env.ZANTARA_API_URL || "";
 const ZANTARA_API_KEY = process.env.ZANTARA_API_KEY;
 const ZOHO_API_URL = process.env.ZOHO_MAIL_API_URL;
 const ZOHO_ACCESS_TOKEN = process.env.ZOHO_ACCESS_TOKEN;
+
+/**
+ * FastAPI error bodies carry `detail` as a string OR an object
+ * (`{ message, code }`, e.g. newsletter 409 ALREADY_SUBSCRIBED). Legacy callers
+ * sent `{ message }`. Return the first usable human message.
+ */
+export function extractNewsletterError(
+  body: unknown,
+  fallback: string,
+): string {
+  if (body && typeof body === "object") {
+    const { detail, message } = body as {
+      detail?: unknown;
+      message?: unknown;
+    };
+    if (typeof detail === "string" && detail) return detail;
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      const nested = (detail as { message?: unknown }).message;
+      if (typeof nested === "string" && nested) return nested;
+    }
+    if (typeof message === "string" && message) return message;
+  }
+  return fallback;
+}
 
 // ============================================================================
 // Newsletter Service
@@ -47,25 +71,50 @@ export class NewsletterService {
       );
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => null);
         return {
           success: false,
-          message: error.message || "Subscription failed",
+          message: extractNewsletterError(error, "Subscription failed"),
         };
       }
 
-      const { subscriber } = await response.json();
+      const data = (await response.json()) as {
+        subscriber?: NewsletterSubscriber;
+        subscriberId?: string | null;
+        message?: string;
+      };
+      const subscriber = data?.subscriber;
 
-      // 2. Sync to Zoho CRM
-      await this.syncToZoho(subscriber);
+      if (subscriber) {
+        // Legacy envelope `{ subscriber }`: sync + confirmation are client-side.
+        // 2. Sync to Zoho CRM
+        await this.syncToZoho(subscriber);
 
-      // 3. Send confirmation email
-      await this.sendConfirmationEmail(subscriber);
+        // 3. Send confirmation email
+        try {
+          await this.sendConfirmationEmail(subscriber);
+        } catch (emailError) {
+          logger.warn("Newsletter confirmation email failed", {
+            component: "NewsletterService",
+            action: "subscribe",
+            metadata: { error: toError(emailError).message },
+          });
+        }
 
+        return {
+          success: true,
+          subscriberId: subscriber.id,
+          message: "Please check your email to confirm your subscription.",
+        };
+      }
+
+      // Backend contract: `SubscribeResponse { success, message, subscriberId }`.
+      // The backend already sent the double-opt-in confirmation email.
       return {
         success: true,
-        subscriberId: subscriber.id,
-        message: "Please check your email to confirm your subscription.",
+        subscriberId: data?.subscriberId ?? undefined,
+        message:
+          data?.message || "Please check your email to confirm your subscription.",
       };
     } catch (error) {
       logger.error(
@@ -237,8 +286,8 @@ export class NewsletterService {
       await this.delay(1000);
     }
 
-    // Log send
-    await fetch(`${ZANTARA_API}/api/blog/newsletter/log`, {
+    // Log send (non-fatal: a failed audit-log write must not fail the send)
+    const logResponse = await fetch(`${ZANTARA_API}/api/blog/newsletter/log`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ZANTARA_API_KEY}`,
@@ -251,6 +300,12 @@ export class NewsletterService {
         failedCount: failed,
       }),
     });
+    if (!logResponse.ok) {
+      logger.warn("Newsletter send log was rejected by the backend", {
+        component: "NewsletterService",
+        action: "sendArticleNewsletter",
+      });
+    }
 
     return { sent, failed };
   }
@@ -387,7 +442,7 @@ export class NewsletterService {
       if (!client.whatsapp) continue;
 
       try {
-        await fetch(`${ZANTARA_API}/api/whatsapp/send`, {
+        const sendResponse = await fetch(`${ZANTARA_API}/api/whatsapp/send`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${ZANTARA_API_KEY}`,
@@ -404,6 +459,9 @@ export class NewsletterService {
             },
           }),
         });
+        if (!sendResponse.ok) {
+          throw new Error("WhatsApp notification send failed");
+        }
         notified++;
       } catch (error) {
         logger.error(
@@ -535,7 +593,7 @@ export class NewsletterService {
     html: string;
   }): Promise<void> {
     // Use Zantara's email service which wraps Zoho
-    await fetch(`${ZANTARA_API}/api/email/send`, {
+    const response = await fetch(`${ZANTARA_API}/api/email/send`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ZANTARA_API_KEY}`,
@@ -550,6 +608,13 @@ export class NewsletterService {
         contentType: "html",
       }),
     });
+
+    // A 4xx/5xx is a failed send: throw so callers count it as failed, never sent.
+    if (!response.ok) {
+      throw new Error(
+        `Email send failed${typeof response.status === "number" ? ` (HTTP ${response.status})` : ""}`,
+      );
+    }
   }
 
   private static generateArticleEmail(article: Article): string {

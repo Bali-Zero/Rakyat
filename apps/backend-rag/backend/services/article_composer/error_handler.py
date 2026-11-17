@@ -128,7 +128,7 @@ def handle_anthropic_error(
             request_id=request_id,
         )
         logger.error("DeepSeek auth error", extra=error_context)
-        return HTTPException(status_code=401, detail=api_error.model_dump())
+        return HTTPException(status_code=503, detail=api_error.model_dump())
 
     if isinstance(error, httpx.TimeoutException):
         api_error = APIError.create(

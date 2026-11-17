@@ -1008,6 +1008,15 @@ def create_api_app() -> FastAPI:
     register_middleware(api)
     include_light_routers(api)
 
+    # Setup rate limiter for article composer (must be after router inclusion, matching app_factory.py)
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+
+    from backend.app.routers import article_composer
+
+    api.state.limiter = article_composer.limiter
+    api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
     # GARUDA VOA public router (`garuda_voa_public.py`) validates `result_id`
     # by hand, never as a Pydantic path constraint, so FastAPI's automatic
     # 422-on-any-parameterized-route default documents an outcome that
