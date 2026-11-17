@@ -20,8 +20,8 @@
 --
 -- Consumer: services/crm/related_documents.py through
 -- POST /api/crm/related-subjects/documents/register (flag
--- RELATED_SUBJECT_REGISTRY_ENABLED, default off), fed by
--- scripts/related_subject_documents_apply.py.
+-- RELATED_SUBJECT_REGISTRY_ENABLED, default off), fed once by an
+-- operator tool kept outside this repository.
 -- ============================================================
 
 SET lock_timeout = '5s';
