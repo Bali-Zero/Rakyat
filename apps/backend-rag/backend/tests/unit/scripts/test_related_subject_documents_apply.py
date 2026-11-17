@@ -1237,3 +1237,40 @@ def test_no_log_record_of_third_party_code_is_emitted_during_the_run(tmp_path, c
         assert len(records) == 1
     finally:
         logger.removeHandler(handler)
+
+
+DRIVER = """
+import sys, json, httpx
+from scripts import related_subject_documents_apply as m
+def handler(request):
+    body = json.loads(request.content)
+    return httpx.Response(
+        200,
+        json={"outcome": "would_link", "dry_run": body["dry_run"]},
+        headers={"Set-Cookie": "probe=x; Max-Age"},
+    )
+client = httpx.Client(transport=httpx.MockTransport(handler))
+sys.exit(m.main(["--plan", sys.argv[1], "--pace", "0"], client=client))
+"""
+
+
+def test_the_gates_witness_in_a_real_process_a_malformed_set_cookie_leaves_stderr_empty(tmp_path):
+    """Under pytest the warning is swallowed by pytest's own capture, so the witness of gate
+    round 3 needs a fresh interpreter: without the guards this process prints a traceback."""
+    import os
+    import subprocess
+    import sys
+
+    plan = write_plan(tmp_path, [row("1"), row("2")])
+    root = Path(apply_mod.__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(root), "WA_MIRROR_CRM_WRITE_KEY": "synthetic-key-0000"}
+    done = subprocess.run(
+        [sys.executable, "-c", DRIVER, str(plan)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0 and done.stderr == ""
+    assert "would_link=2" in done.stdout and "mode=dry-run sent=2" in done.stdout
+    assert_schema(done.stdout)
