@@ -52,7 +52,6 @@ from typing import Any
 
 import asyncpg
 
-from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.logging_utils import get_logger
 from backend.services.tools.definitions import BaseTool
@@ -106,8 +105,13 @@ class TeamCrmScope:
 
 
 def _scope_peers(scope: TeamCrmScope) -> frozenset[str]:
-    """Pool peers of a resolved scope: a scope only exists for a team-resolved sender."""
-    return caller_pool_peers({"email": scope.email, "role": "team"})
+    """Owner emails a WhatsApp scope reads: its own email only, never a client pool.
+
+    The owner order for shared pools is about the kita desk. This path resolves the
+    sender from a WhatsApp number whose upstream identity lookup also admits
+    non-human roles and carries no role of its own, so it must not expand pools.
+    """
+    return frozenset({(scope.email or "").strip().lower()})
 
 
 def resolve_team_crm_scope(profile: dict[str, Any] | None) -> TeamCrmScope | None:

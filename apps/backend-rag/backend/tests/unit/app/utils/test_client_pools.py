@@ -329,3 +329,80 @@ async def test_compliance_outcome_allows_a_peer_and_refuses_a_non_member():
     with pytest.raises(HTTPException) as other:
         await post_outcome("al-1", body, user=_user(OUTSIDER), pool=_alert_pool(B))
     assert other.value.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# WhatsApp copilot tools never expand a pool                                   #
+# --------------------------------------------------------------------------- #
+
+
+def _tool_pool():
+    conn = AsyncMock()
+    conn.fetch = AsyncMock(return_value=[])
+
+    class _Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield conn
+
+    return _Pool(), conn
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["TeamMyClientsTool", "TeamMyPracticesTool"])
+async def test_whatsapp_tools_bind_only_the_senders_own_email_even_inside_a_pool(
+    tool_name, monkeypatch
+):
+    monkeypatch.setenv("WA_TEAM_CRM_TOOLS_ENABLED", "true")
+    from backend.services.rag.agentic import team_crm_tools as tcm
+
+    pool, conn = _tool_pool()
+    await getattr(tcm, tool_name)(pool).execute(
+        _caller_profile={"role": "team", "name": "Member A", "email": A.upper()}
+    )
+    bound = [p for p in conn.fetch.call_args.args[1:] if isinstance(p, list)]
+    assert bound == [[A]]
+    assert B not in str(conn.fetch.call_args.args)
+
+
+# --------------------------------------------------------------------------- #
+# direct-call identity: list_interactions(user_id=...) binds the resolved email #
+# --------------------------------------------------------------------------- #
+
+
+async def _direct_list(user_id: str | None, current_user: dict[str, str] | None):
+    from backend.app.routers.crm_interactions import list_interactions
+
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[])
+    conn.fetchval = AsyncMock(return_value=0)
+
+    class _Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield conn
+
+    await list_interactions(
+        client_id=None,
+        practice_id=None,
+        team_member=None,
+        interaction_type=None,
+        sentiment=None,
+        limit=10,
+        offset=0,
+        current_user=current_user,
+        db_pool=_Pool(),
+        user_id=user_id,
+        pool=None,
+    )
+    return conn.fetch.await_args_list[0].args[1]
+
+
+@pytest.mark.asyncio
+async def test_direct_call_by_user_id_binds_exactly_that_email_even_inside_a_pool():
+    assert await _direct_list(A, None) == [A]
+
+
+@pytest.mark.asyncio
+async def test_interactions_list_through_the_router_still_expands_for_a_human_peer():
+    assert await _direct_list(None, _user(A)) == [A, B]

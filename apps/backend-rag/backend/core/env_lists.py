@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +53,13 @@ def intake_drive_root_extra() -> frozenset[str]:
     return frozenset(item.strip() for item in env_json_str_list(ENV_INTAKE_DRIVE_ROOT_EXTRA))
 
 
+_POOL_EMAIL = re.compile(
+    r"^[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+)
+
+
 def _plausible_email(value: str) -> bool:
-    local, sep, domain = value.partition("@")
-    return bool(
-        sep
-        and local
-        and domain
-        and "@" not in domain
-        and "." in domain
-        and not any(ch.isspace() for ch in value)
-    )
+    return _POOL_EMAIL.fullmatch(value.strip().lower()) is not None
 
 
 def crm_client_pools() -> tuple[frozenset[str], ...]:

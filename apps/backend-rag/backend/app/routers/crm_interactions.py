@@ -267,6 +267,11 @@ async def list_interactions(
     else:
         user_email = (current_user.get("email") or "").lower()
         user_is_admin = is_crm_admin(current_user)
+    # Peers come from the RESOLVED identity: a direct call by user_id has no role,
+    # so it binds exactly its own email, as before pools existed.
+    resolved_peers = caller_pool_peers(
+        {"email": user_email, "role": (current_user or {}).get("role")}
+    )
     try:
         async with db_pool.acquire() as conn:
             # Build query dynamically with explicit columns
@@ -287,7 +292,7 @@ async def list_interactions(
                     f" AND (LOWER(c.assigned_to) = ANY(${param_index}::text[])"
                     f" OR LOWER(i.team_member) = ANY(${param_index}::text[]))",
                 )
-                params.append(sorted(caller_pool_peers(current_user)))
+                params.append(sorted(resolved_peers))
                 param_index += 1
 
             if client_id:

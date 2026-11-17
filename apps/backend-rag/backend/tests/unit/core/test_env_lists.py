@@ -101,3 +101,36 @@ def test_client_pools_with_one_implausible_entry_are_all_rejected(monkeypatch, r
 def test_client_pools_blank_entries_are_still_dropped(monkeypatch):
     monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, '[["a@example.test", " "]]')
     assert env_lists.crm_client_pools() == (frozenset({"a@example.test"}),)
+
+
+_GOOD_POOL = '["a@example.test", "b@example.test"]'
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "x@.",
+        "x@",
+        "@example.test",
+        "not-an-email",
+        "a@b",
+        "a@.example.test",
+        "a@example..test",
+        "a@example.test.",
+        "a b@example.test",
+        "a@exa mple.test",
+        "a@@example.test",
+    ],
+)
+def test_client_pools_one_bad_entry_in_a_second_pool_rejects_everything(monkeypatch, bad):
+    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, f'[{_GOOD_POOL}, ["{bad}"]]')
+    assert env_lists.crm_client_pools() == ()
+
+
+def test_client_pools_accept_plus_tags_subdomains_and_normalise_case(monkeypatch):
+    monkeypatch.setenv(
+        env_lists.ENV_CRM_CLIENT_POOLS, '[["First.Last+x@Example.Test", "a@sub.example.test"]]'
+    )
+    assert env_lists.crm_client_pools() == (
+        frozenset({"first.last+x@example.test", "a@sub.example.test"}),
+    )
