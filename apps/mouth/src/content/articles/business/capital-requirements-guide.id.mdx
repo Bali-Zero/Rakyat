@@ -45,9 +45,11 @@ faq:
       investment can be made gradually per your LKPM reporting schedule.
     question: Can I invest the IDR 10 billion over time?
   - answer:
-      The minimum IDR 10B total investment applies to all PT PMA regardless of
-      sector. However, certain sectors like banking, insurance, and mining have higher
-      specific capital requirements set by sector regulators.
+      The minimum >IDR 10B total investment per 5-digit KBLI per project location
+      (excluding land and buildings) and IDR 2.5B paid-up capital per company (BKPM
+      Reg. 5/2025 Art. 26) apply across PT PMA sectors. However, certain sectors like
+      banking, insurance, and mining have higher specific capital requirements set by
+      sector regulators.
     question: Does the capital requirement change based on business sector?
 featured: false
 image:
@@ -89,7 +91,7 @@ translatedFrom: en
 twitterCard: summary_large_image
 updatedAt: "2026-01-15"
 locale: "id"
-source_sha256: "053cb8bda248a3d440a0388b006666bbf20b2f88d8c0a5475574f067ea9ee191"
+source_sha256: "1fc18d4f2cea8f35d9f31e81b6507692111ea73fb4f24a573a8f1d86436fc687"
 ---
 
 import {
@@ -121,18 +123,18 @@ Keduanya memiliki persyaratan minimum untuk investasi asing.
 
 ### Minimum Standar PT PMA
 
-| Jenis Modal            | Jumlah Minimum                                              |
-| ---------------------- | ----------------------------------------------------------- |
-| **Total Investasi**    | Lebih dari IDR 10 miliar (~USD 625,000) per KBLI/lokasi     |
-| **Modal Disetor**      | IDR 2.5 miliar (diturunkan dari IDR 10 miliar pada Okt 2025) |
-| **Per Pemegang Saham** | Minimum IDR 10 juta                                         |
+| Jenis Modal            | Jumlah Minimum                                                              |
+| ---------------------- | --------------------------------------------------------------------------- |
+| **Total Investasi**    | Lebih dari IDR 10 miliar (~USD 625,000) per KBLI 5 digit / lokasi (di luar tanah & bangunan) |
+| **Modal Disetor**      | IDR 2,5 miliar **per perusahaan** (Perka BKPM 5/2025 Pasal 26)               |
+| **Per Pemegang Saham** | Minimum IDR 10 juta per investor                                            |
 
-<InfoCard variant="warning" title="2025 Changes (BKPM Regulation 5/2025)">
-**Perubahan penting:**
+<InfoCard variant="warning" title="Aturan Berlaku (Perka BKPM No. 5 Tahun 2025)">
+**Klarifikasi Penting:**
 
-Sejak Oktober 2025, BKPM Regulation 5/2025 (Pasal 26) menurunkan modal disetor minimum menjadi IDR 2.5 miliar, yang harus tetap berada di rekening perusahaan selama minimal 12 bulan. Komitmen total investasi lebih dari IDR 10 miliar per kode KBLI 5-digit per lokasi proyek (tidak termasuk tanah dan bangunan, dengan pengecualian sektor) tidak berubah.
+Berdasarkan **Perka BKPM 5/2025 (Pasal 26)**, modal disetor minimal PT PMA adalah **IDR 2,5 miliar per perusahaan** (tingkat perusahaan, tanpa memandang jumlah pemegang saham), yang harus tetap mengendap minimal 12 bulan kecuali dibelanjakan untuk kegiatan usaha sah. Komitmen total investasi **lebih dari IDR 10 miliar** per kode KBLI 5 digit per lokasi proyek **tidak termasuk nilai tanah dan bangunan** (kecuali sektor properti/kawasan tertentu).
 
-Sebelum Oktober 2025, modal disetor harus sama dengan penuh IDR 10 miliar — panduan lama masih mencantumkan angka tersebut.
+Sebelum Perka BKPM 5/2025 / aturan terdahulu, banyak panduan keliru menyamakan modal disetor dengan total investasi penuh IDR 10 miliar.
 
 </InfoCard>
 
@@ -216,70 +218,76 @@ Beberapa klasifikasi usaha (kode KBLI) memiliki persyaratan modal khusus di atas
 
 ### Apa yang Dihitung sebagai Investasi?
 
-| Dihitung              | Tidak Dihitung               |
-| --------------------- | ---------------------------- |
-| Setoran tunai         | Pendapatan masa depan        |
-| Peralatan (dinilai)   | Goodwill                     |
-| Tanah/bangunan        | Proyeksi pendapatan          |
-| Kekayaan intelektual  | Aset takberwujud yang tidak dinilai |
-| Persediaan awal       | Biaya operasional            |
+| Dihitung                     | Tidak Dihitung                                  |
+| ---------------------------- | ----------------------------------------------- |
+| Setoran tunai                | Tanah/bangunan (dikecualikan dari batas >10M*)  |
+| Peralatan (dinilai)          | Pendapatan masa depan / Goodwill                |
+| Kekayaan intelektual         | Proyeksi pendapatan                             |
+| Modal kerja & operasional    | Aset takberwujud yang tidak dinilai             |
+
+*\*Berdasarkan Perka BKPM 5/2025, batas > IDR 10 miliar per KBLI 5 digit / lokasi mengecualikan tanah & bangunan (kecuali sektor properti/kawasan industri tertentu).*
 
 ### Kalkulator
 
 <Calculator
-  title="Investment Structure"
-  description="Plan your capital allocation"
+  title="Struktur Investasi"
+  description="Rencanakan alokasi modal disetor & investasi >10M BKPM"
   fields={[
     {
       id: "cash",
-      label: "Cash Investment (IDR)",
+      label: "Modal Disetor Tunai (Min IDR 2,5M per perusahaan)",
       type: "number",
-      defaultValue: 8000000000,
+      defaultValue: 2500000000,
       min: 0
     },
     {
       id: "equipment",
-      label: "Equipment Value (IDR)",
+      label: "Nilai Peralatan & Teknologi (IDR)",
       type: "number",
-      defaultValue: 1500000000,
+      defaultValue: 4000000000,
       min: 0
     },
     {
       id: "property",
-      label: "Property/Land (IDR)",
+      label: "Properti/Tanah (Dikecualikan dari batas >10M BKPM)",
       type: "number",
       defaultValue: 0,
       min: 0
     },
     {
       id: "other",
-      label: "Other Assets (IDR)",
+      label: "Modal Kerja & Aset Non-Tanah Lainnya (IDR)",
       type: "number",
-      defaultValue: 500000000,
+      defaultValue: 4000000000,
       min: 0
     }
   ]}
   calculateResult={(values) => {
-    const total = values.cash + values.equipment + values.property + values.other;
+    const qualifyingTotal = Number(values.cash) + Number(values.equipment) + Number(values.other);
+    const property = Number(values.property);
+    const minPaidUp = 2500000000;
     const minimum = 10000000000;
-    const shortfall = Math.max(0, minimum - total);
-    const meetsRequirement = total >= minimum;
+    const shortfall = Math.max(0, minimum - qualifyingTotal);
+    const meetsPaidUp = Number(values.cash) >= minPaidUp;
+    const meetsRequirement = meetsPaidUp && qualifyingTotal > minimum;
 
     return {
-      total: total,
+      total: qualifyingTotal,
       breakdown: [
-        { label: "Cash investment", amount: values.cash },
-        { label: "Equipment value", amount: values.equipment },
-        { label: "Property/Land", amount: values.property },
-        { label: "Other assets", amount: values.other },
-        { label: "TOTAL INVESTMENT", amount: total },
-        { label: "Minimum required", amount: minimum },
-        { label: meetsRequirement ? "Above minimum by" : "SHORTFALL", amount: meetsRequirement ? total - minimum : shortfall }
+        { label: "Modal disetor tunai (min IDR 2,5M/perusahaan)", amount: Number(values.cash) },
+        { label: "Nilai peralatan", amount: Number(values.equipment) },
+        { label: "Modal kerja & aset non-tanah lain", amount: Number(values.other) },
+        { label: "Properti/Tanah (dikecualikan dari batas >10M BKPM)", amount: property },
+        { label: "INVESTASI KUALIFIKASI BKPM", amount: qualifyingTotal },
+        { label: "Minimum disyaratkan (>10M)", amount: minimum },
+        { label: meetsRequirement ? "Melebihi ambang 10M sebesar" : "KEKURANGAN menuju >10M", amount: qualifyingTotal > minimum ? qualifyingTotal - minimum : shortfall }
       ],
       currency: "IDR",
-      note: meetsRequirement
-        ? `Meets requirement (~USD ${Math.round(total / 16000).toLocaleString()})`
-        : `Need additional IDR ${shortfall.toLocaleString()} to meet minimum`
+      note: !meetsPaidUp
+        ? "Modal disetor di bawah minimal IDR 2,5M per perusahaan (Perka BKPM 5/2025 Ps. 26)"
+        : meetsRequirement
+          ? `Memenuhi ketentuan modal disetor IDR 2,5M dan investasi > IDR 10M di luar tanah/bangunan (~USD ${Math.round(qualifyingTotal / 16000).toLocaleString()})`
+          : `Diperlukan lebih dari IDR ${(shortfall + 1).toLocaleString()} investasi non-tanah tambahan agar melampaui IDR 10M`
     };
 
 }}
@@ -296,7 +304,7 @@ Beberapa klasifikasi usaha (kode KBLI) memiliki persyaratan modal khusus di atas
 
 - Peralatan (mesin, kendaraan)
 - Kekayaan intelektual (paten, merek dagang)
-- Properti (tanah, bangunan)
+- Properti (hanya untuk pengembang/kawasan properti tertentu; **dikecualikan** dari batas investasi > IDR 10M pada sektor umum)
 
 **Persyaratan:**
 
@@ -367,7 +375,7 @@ Beberapa klasifikasi usaha (kode KBLI) memiliki persyaratan modal khusus di atas
 
 **Jawaban:**
 
-- Minimum IDR 10B diperlukan untuk PT PMA standar
+- Investasi total > IDR 10B (di luar tanah & bangunan) dan modal disetor IDR 2,5B per perusahaan diperlukan untuk PT PMA standar
 - Beberapa zona khusus mungkin memiliki aturan berbeda
 - Kantor perwakilan tidak memerlukan modal tetapi tidak dapat berdagang
 - Pertimbangkan PT PMDN (perusahaan domestik) jika memenuhi syarat

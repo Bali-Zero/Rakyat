@@ -43,7 +43,7 @@ seoTitle: "PT PMA Registration Indonesia 2026 | Step by Step"
 seoDescription: "Register a PT PMA in Indonesia: complete step-by-step guide with documents, timeline (4-8 weeks), costs, and process from notary deed to NIB issuance."
 aiOptimization:
   primaryQuestion: "How do I register a PT PMA (foreign company) in Indonesia?"
-  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Total cost: IDR 15-25 million through an agent. Required: 2+ shareholders, director, commissioner."
+  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Bali Zero setup fee: IDR 25,000,000 (excl. IDR 5,000,000 Virtual Office if needed). Required: 2+ shareholders, director, commissioner."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "AHU Kemenkumham"
@@ -79,7 +79,7 @@ ogImage: "/static/insights/business/foreign-company-incorporation-steps.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "fr"
-source_sha256: "38908520a355ef56c84baf62dee217c7c890760b1f86aabc371b904492fd2f4e"
+source_sha256: "dd048ad54c39e8d0ae645492d3f4e8f04fa219bbae83b52873bc622a15b718cb"
 ---
 
 import {
@@ -112,8 +112,9 @@ d'entreprise. [Lire le mandat de conformité complet des PT PMA
 
 | Aspect                 | Détails                       |
 | ---------------------- | ----------------------------- |
-| **Délai**              | 4-8 semaines                  |
-| **Investissement Min** | IDR 10 milliards (~625 000 $) |
+| **Délai**              | 4-8 semaines                                                            |
+| **Investissement Min** | > 10 milliards IDR par KBLI 5 chiffres (hors terrains et bâtiments)     |
+| **Capital Versé Min**  | 2,5 milliards IDR par société (Règl. BKPM 5/2025 Art. 26)               |
 | **Actionnaires Min**   | 2 (peuvent être étrangers)    |
 | **Directeurs Min**     | 1 (peut être étranger)        |
 | **Commissaires Min**   | 1 (peut être étranger)        |
@@ -326,61 +327,59 @@ d'entreprise. [Lire le mandat de conformité complet des PT PMA
 
 <Calculator
   title="Estimateur de coûts d'établissement d'une PT PMA"
-  description="Estimez vos coûts d'enregistrement"
+  description="Estimez les frais de constitution Bali Zero (grille officielle 2026)"
   fields={[
     {
       id: "service",
-      label: "Type de service",
+      label: "Enregistrement de la société",
       type: "select",
       options: [
-        { value: "diy", label: "DIY (notaire uniquement)" },
-        { value: "basic", label: "Forfait agent de base" },
-        { value: "full", label: "Forfait complet" }
+        { value: "pma", label: "Création nouvelle PT PMA — SSOT Bali Zero (25M IDR)" }
       ],
-      defaultValue: "basic"
+      defaultValue: "pma"
     },
     {
       id: "vo",
-      label: "Bureau virtuel ?",
+      label: "Inclure un bureau virtuel ? (5M IDR — vérifier l'éligibilité KBLI à Bali)",
       type: "checkbox",
-      defaultValue: true
+      defaultValue: false
     },
     {
-      id: "location",
-      label: "Localisation",
+      id: "kitas",
+      label: "Investor KITAS optionnel (E28A, 2 ans, actions propres >= 10 Mrd IDR)",
       type: "select",
       options: [
-        { value: "jakarta", label: "Jakarta" },
-        { value: "bali", label: "Bali" },
-        { value: "other", label: "Autre" }
+        { value: "none", label: "Aucun / Plus tard" },
+        { value: "offshore", label: "Offshore E28A (17M IDR)" },
+        { value: "onshore", label: "Onshore E28A (19M IDR)" }
       ],
-      defaultValue: "bali"
+      defaultValue: "none"
     }
   ]}
   calculateResult={(values) => {
-    let total = 0;
-    const breakdown = [];
-
-    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
-    const service = serviceCosts[values.service];
-    total += service;
-    breakdown.push({ label: "Service d'enregistrement", amount: service });
-
-    const govFees = 5000000;
-    total += govFees;
-    breakdown.push({ label: "Frais gouvernementaux", amount: govFees });
+    let total = 25000000;
+    const breakdown = [
+      { label: "Nouvelle société (PT PMA) — Acte, AHU, NPWP, NIB/OSS", amount: 25000000 }
+    ];
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
-      total += voCost;
-      breakdown.push({ label: "Bureau virtuel (1 an)", amount: voCost });
+      total += 5000000;
+      breakdown.push({ label: "Bureau virtuel (SSOT Bali Zero)", amount: 5000000 });
+    }
+
+    if (values.kitas === "offshore") {
+      total += 17000000;
+      breakdown.push({ label: "Investor KITAS 2 ans E28A (Offshore)", amount: 17000000 });
+    } else if (values.kitas === "onshore") {
+      total += 19000000;
+      breakdown.push({ label: "Investor KITAS 2 ans E28A (Onshore)", amount: 19000000 });
     }
 
     return {
       total,
       breakdown,
       currency: "IDR",
-      note: "Exclut le capital libéré (minimum 10 milliards IDR)"
+      note: "Frais de service uniquement. Exclut le capital de la société (min 2,5 Mrd IDR libérés par société ; > 10 Mrd IDR d'investissement par code KBLI 5 chiffres hors terrains et bâtiments)."
     };
 
 }}
@@ -391,11 +390,11 @@ d'entreprise. [Lire le mandat de conformité complet des PT PMA
 ## Conseils pour le succès
 
 <InfoCard variant="tip" title="Conseils d'enregistrement">
-  1. **KBLI en premier** : Choisissez les codes avec soin avant de commencer 2.
-  **Planifiez le capital** : Sachez comment vous déployez 10 milliards IDR 3.
-  **Utilisez des professionnels** : Un secrétaire d'entreprise évite bien des
-  soucis 4. **Délai** : Prévoyez 6 à 8 semaines pour être sûr 5. **Présence du
-  directeur** : Peut être nécessaire en Indonesia pour le compte bancaire
+  1. **KBLI en premier** : Choisissez des codes KBLI ouverts aux étrangers avant de rédiger l'acte
+  2. **Planifiez le capital** : Déposez 2,5 Mrd IDR par société et structurez > 10 Mrd IDR d'investissement (hors terrains/bâtiments)
+  3. **Utilisez des professionnels** : Des contrôles KBLI et de zonage évitent des révisions coûteuses de l'Akta
+  4. **Délai** : Prévoyez 6 à 8 semaines de bout en bout
+  5. **Présence du directeur** : Peut être requise pour ouvrir le compte bancaire local de la société
 </InfoCard>
 
 ---
@@ -415,31 +414,25 @@ d'entreprise. [Lire le mandat de conformité complet des PT PMA
 
 ---
 
-## Opinioni e Discussioni in Corso
+## Contexte Réglementaire et Orientations Officielles (2025–2026)
 
 <InfoCard
   variant="note"
-  title="⚠️ Nota: Cette section contient des OPINIONS et des discussions non encore confirmées officiellement"
+  title="Mise à jour : Capital libéré & règles de zonage à Bali (2025–2026)"
 >
 
-Informations basées sur des analyses de secteur et des discussions entre
-experts. **Non confirmées par BKPM ou Kemenkumham**.
+Conformément au **Règlement BKPM n° 5/2025 (Article 26)** et aux directives actives **OSS-RBA / DPMPTSP Bali** :
 
 </InfoCard>
 
-### Possibles développements PT PMA (OPINION)
+### Points Clés sur le Capital et la Structuration PT PMA
 
-1. **Capitale réduit pour le secteur technologique** - Une discussion est en cours concernant une éventuelle réduction de l'exigence de capital minimum (actuellement 10 milliards IDR) pour les startups technologiques et les services numériques. Certains estiment qu'elle pourrait descendre à 2,5-5 milliards IDR. _Discussion seulement, aucune confirmation._
+1. **Capital libéré fixé à 2,5 milliards IDR par société** — Depuis octobre 2025 (Règl. BKPM 5/2025 Art. 26), le capital versé minimum à la création est de **2,5 milliards IDR par société** (bloqué 12 mois sauf dépenses opérationnelles documentées), tandis que l'engagement d'investissement total reste **> 10 milliards IDR par code KBLI à 5 chiffres par site, hors terrains et bâtiments**.
+2. **Codes KBLI fermés et moratoire à Bali** — Certains codes d'hébergement/services (`55203` Villas, `55201` Pondok Wisata, `55106` Hôtels non classés et `79903` Guides touristiques) sont `0 % PMA` au niveau national (Perpres 49/2021), et les codes à risque Faible / Moyen-Faible sont soumis au moratoire PMA de Bali 2026 (`Surat Gubernur B.27.000/642/PM/DPMPTSP`).
+3. **Locaux commerciaux vs. Bureau virtuel** — DPMPTSP Bali refuse les bureaux virtuels pour les KBLI soumis au moratoire ou à restrictions ; vérifiez la conformité spatiale (PKKPR) avant de louer.
+4. **Seuil Investor KITAS (E28A)** — Pour obtenir un Investor KITAS E28A sans RPTKA, chaque demandeur étranger doit détenir au moins **10 milliards IDR** d'actions propres ; les directeurs/associés en dessous de ce seuil ont besoin d'un **Working KITAS E23**.
 
-2. **Liste d'investissement négative simplifiée** - Il y a une discussion sur des ouvertures sectorielles supplémentaires pour les investisseurs étrangers, notamment dans l'éducation, la santé et la logistique. _Aucune annonce officielle._
-
-3. **Enregistrement en un seul point** - Il est question d'un processus encore plus intégré qui combinerait le notaire, Kemenkumham, NPWP et OSS en un seul flux. _Spéculation seulement._
-
-4. **Entreprise virtuelle pour les freelances** - Certains experts discutent d'une possible structure d'entreprise simplifiée pour les freelances étrangers, sans les exigences complètes d'une PT PMA. _Non confirmé._
-
-5. **Incitatifs pour les zones économiques spéciales** - Des incitatifs supplémentaires possibles (congé fiscal, capital réduit) sont discutés pour les PT PMA qui s'établissent dans les Zones Économiques Spéciales (KEK). _En cours d'évaluation._
-
-**Rappel** : Pour les décisions d'investissement, attendez les confirmations officielles de oss.go.id ou bkpm.go.id.
+**Vérifiez toujours les exigences OSS en vigueur sur oss.go.id ou bkpm.go.id avant d'engager des fonds.**
 
 ---
 

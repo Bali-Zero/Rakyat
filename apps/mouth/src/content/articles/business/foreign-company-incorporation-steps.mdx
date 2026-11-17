@@ -43,7 +43,7 @@ seoTitle: "PT PMA Registration Indonesia 2026 | Step by Step"
 seoDescription: "Register a PT PMA in Indonesia: complete step-by-step guide with documents, timeline (4-8 weeks), costs, and process from notary deed to NIB issuance."
 aiOptimization:
   primaryQuestion: "How do I register a PT PMA (foreign company) in Indonesia?"
-  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Total cost: IDR 15-25 million through an agent. Required: 2+ shareholders, director, commissioner."
+  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Bali Zero setup fee: IDR 25,000,000 (excl. IDR 5,000,000 Virtual Office if needed). Required: 2+ shareholders, director, commissioner."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "AHU Kemenkumham"
@@ -230,7 +230,7 @@ Beneficial Owner) verification is now mandatory for all corporate changes.
       ],
       tips: [
         "BCA, Mandiri, CIMB Niaga are popular",
-        "Deposit paid-up capital",
+        "Deposit paid-up capital (IDR 2.5B minimum per company under BKPM Reg 5/2025)",
         "Some banks require in-person visit",
       ],
     },
@@ -323,61 +323,59 @@ Beneficial Owner) verification is now mandatory for all corporate changes.
 
 <Calculator
   title="PT PMA Setup Cost Estimator"
-  description="Estimate your registration costs"
+  description="Estimate Bali Zero incorporation service fees (official 2026 snapshot)"
   fields={[
     {
       id: "service",
-      label: "Service Type",
+      label: "Company Registration",
       type: "select",
       options: [
-        { value: "diy", label: "DIY (notary only)" },
-        { value: "basic", label: "Basic agent package" },
-        { value: "full", label: "Full-service package" }
+        { value: "pma", label: "New PT PMA Setup — Bali Zero SSOT (IDR 25M)" }
       ],
-      defaultValue: "basic"
+      defaultValue: "pma"
     },
     {
       id: "vo",
-      label: "Virtual Office?",
+      label: "Include Virtual Office? (IDR 5M — check Bali KBLI eligibility)",
       type: "checkbox",
-      defaultValue: true
+      defaultValue: false
     },
     {
-      id: "location",
-      label: "Location",
+      id: "kitas",
+      label: "Optional Investor KITAS (E28A, 2 Years, IDR 10B+ own shares)",
       type: "select",
       options: [
-        { value: "jakarta", label: "Jakarta" },
-        { value: "bali", label: "Bali" },
-        { value: "other", label: "Other" }
+        { value: "none", label: "None / Later" },
+        { value: "offshore", label: "Offshore E28A (IDR 17M)" },
+        { value: "onshore", label: "Onshore E28A (IDR 19M)" }
       ],
-      defaultValue: "bali"
+      defaultValue: "none"
     }
   ]}
   calculateResult={(values) => {
-    let total = 0;
-    const breakdown = [];
-
-    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
-    const service = serviceCosts[values.service];
-    total += service;
-    breakdown.push({ label: "Registration service", amount: service });
-
-    const govFees = 5000000;
-    total += govFees;
-    breakdown.push({ label: "Government fees", amount: govFees });
+    let total = 25000000;
+    const breakdown = [
+      { label: "New Company (PT PMA) — Deed, AHU, NPWP, NIB/OSS", amount: 25000000 }
+    ];
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
-      total += voCost;
-      breakdown.push({ label: "Virtual office (1 year)", amount: voCost });
+      total += 5000000;
+      breakdown.push({ label: "Virtual Office (Bali Zero SSOT)", amount: 5000000 });
+    }
+
+    if (values.kitas === "offshore") {
+      total += 17000000;
+      breakdown.push({ label: "Investor KITAS 2 Years E28A (Offshore)", amount: 17000000 });
+    } else if (values.kitas === "onshore") {
+      total += 19000000;
+      breakdown.push({ label: "Investor KITAS 2 Years E28A (Onshore)", amount: 19000000 });
     }
 
     return {
       total,
       breakdown,
       currency: "IDR",
-      note: "Excludes paid-up capital (IDR 10B minimum)"
+      note: "Service fees only. Excludes corporate capital (min IDR 2.5B paid-up capital per company; >IDR 10B investment value per 5-digit KBLI excluding land & buildings)."
     };
 
 }}
@@ -388,10 +386,11 @@ Beneficial Owner) verification is now mandatory for all corporate changes.
 ## Tips for Success
 
 <InfoCard variant="tip" title="Registration Tips">
-  1. **KBLI first**: Choose codes carefully before starting 2. **Plan capital**:
-  Know how you'll deploy IDR 10B 3. **Use professionals**: Corporate secretary
-  saves headaches 4. **Timeline**: Allow 6-8 weeks to be safe 5. **Director
-  presence**: May need to be in Indonesia for bank account
+  1. **KBLI first**: Choose eligible open codes before drafting your Deed
+  2. **Plan capital**: Deposit IDR 2.5B paid-up per company and structure >IDR 10B investment (excluding land & buildings)
+  3. **Use professionals**: Proper KBLI/zoning checks prevent costly Akta revisions
+  4. **Timeline**: Allow 6–8 weeks end-to-end
+  5. **Director presence**: May be required for local corporate bank account opening
 </InfoCard>
 
 ---
@@ -403,7 +402,7 @@ Beneficial Owner) verification is now mandatory for all corporate changes.
   placeholder="Ask about PT PMA registration..."
   suggestedQuestions={[
     "Can I register PT PMA remotely?",
-    "What if I don't have IDR 10B?",
+    "What is the difference between IDR 2.5B paid-up and IDR 10B investment?",
     "How do I choose company name?",
     "Do I need to be in Indonesia?",
   ]}
@@ -411,31 +410,25 @@ Beneficial Owner) verification is now mandatory for all corporate changes.
 
 ---
 
-## Opinioni e Discussioni in Corso
+## Regulatory Context & Policy Notes
 
 <InfoCard
   variant="note"
-  title="⚠️ Nota: Questa sezione contiene OPINIONI e discussioni non ancora confermate ufficialmente"
+  title="Policy Update: Paid-Up Capital & Bali Zoning Rules (2025–2026)"
 >
 
-Informazioni basate su analisi di settore e discussioni tra esperti. **Non
-confermate da BKPM o Kemenkumham**.
+Based on **BKPM Regulation 5/2025 (Article 26)** and active **OSS-RBA / DPMPTSP Bali** guidance:
 
 </InfoCard>
 
-### Possibili sviluppi PT PMA (OPINIONE)
+### Key Corporate Capital & Structuring Realities
 
-1. **Capitale ridotto per settore tech** - Si discute di una possibile riduzione del requisito di capitale minimo (attualmente IDR 10 miliardi) per startup tecnologiche e servizi digitali. Alcuni ritengono potrebbe scendere a IDR 2.5-5 miliardi. _Solo discussione, nessuna conferma._
+1. **Paid-up capital set at IDR 2.5B per company** — Since October 2025 (BKPM Reg 5/2025 Art. 26), paid-up capital at incorporation was adjusted to **IDR 2.5 billion per company** (subject to a 12-month lock-up unless spent on verified business operations), while total investment commitment remains **> IDR 10 billion per 5-digit KBLI per location excluding land and buildings**.
+2. **Closed & restricted KBLIs in Bali** — Several accommodation/service codes (such as `55203` Villas, `55201` Pondok Wisata, `55106` Non-Star Hotels, and `79903` Tour Guides) are `0% PMA` nationwide under Perpres 49/2021, and Low/Medium-Low codes face Bali's 2026 PMA moratorium (`Surat Gubernur B.27.000/642/PM/DPMPTSP`).
+3. **Commercial premise vs. Virtual Office** — DPMPTSP Bali actively rejects Virtual Office setups for restricted/moratorium-affected KBLI filings; verify physical zoning (PKKPR) before leasing.
+4. **Investor KITAS (E28A) threshold** — To qualify for an E28A Investor KITAS without RPTKA, each foreign applicant must hold at least **IDR 10 billion** in personal shares; directors/shareholders below IDR 10B require an **E23 Working KITAS**.
 
-2. **Negative Investment List semplificata** - C'è discussione su ulteriori aperture settoriali per investitori stranieri, specialmente in educazione, sanità e logistica. _Nessun annuncio ufficiale._
-
-3. **One-stop registration** - Si discute di un processo ancora più integrato che combinerebbe notaio, Kemenkumham, NPWP e OSS in un unico flusso. _Solo speculazione._
-
-4. **Virtual company per freelancer** - Alcuni esperti discutono di una possibile struttura aziendale semplificata per freelancer stranieri, senza i requisiti completi di PT PMA. _Non confermato._
-
-5. **Incentivi zona economica speciale** - Si discute di possibili incentivi aggiuntivi (tax holiday, capitale ridotto) per PT PMA che si stabiliscono nelle Zone Economiche Speciali (KEK). _In fase di valutazione._
-
-**Ricorda**: Per decisioni di investimento, attendi conferme ufficiali da oss.go.id o bkpm.go.id.
+**Always verify current OSS requirements on oss.go.id or bkpm.go.id before committing funds.**
 
 ---
 

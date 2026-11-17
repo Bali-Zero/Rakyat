@@ -54,7 +54,7 @@ faq:
   - question: "Can I invest the IDR 10 billion over time?"
     answer: "Yes. The IDR 10 billion is a total investment commitment over your investment plan period. Paid-up capital (IDR 2.5B) must be deposited immediately, but remaining investment can be made gradually per your LKPM reporting schedule."
   - question: "Does the capital requirement change based on business sector?"
-    answer: "The minimum IDR 10B total investment applies to all PT PMA regardless of sector. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
+    answer: "The minimum >IDR 10B total investment per 5-digit KBLI per project location (excluding land and buildings) and IDR 2.5B paid-up capital per company (BKPM Reg. 5/2025 Art. 26) apply across PT PMA sectors. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
 contentStructure:
   hasHowTo: false
   hasFAQ: true
@@ -200,13 +200,15 @@ Some business classifications (KBLI codes) have specific capital requirements ab
 
 ### What Counts Toward Investment?
 
-| Counts                | Doesn't Count        |
-| --------------------- | -------------------- |
-| Cash deposits         | Future earnings      |
-| Equipment (appraised) | Goodwill             |
-| Land/buildings        | Projected revenue    |
-| Intellectual property | Unvalued intangibles |
-| Initial inventory     | Operating expenses   |
+| Counts                       | Doesn't Count                              |
+| ---------------------------- | ------------------------------------------ |
+| Cash deposits                | Land/buildings (excl. from IDR 10B min.*)  |
+| Equipment & machinery        | Future earnings                            |
+| Intellectual property        | Goodwill                                   |
+| Initial inventory / opex     | Projected revenue                          |
+| Feasibility & setup capex    | Unvalued intangibles                       |
+
+*\*Under BKPM Reg. 5/2025 (and prior BKPM Reg. 4/2021), the >IDR 10 billion investment minimum per 5-digit KBLI per project location excludes land and buildings, except for specific property/construction/industrial KBLIs.*
 
 ### Calculator
 
@@ -216,54 +218,59 @@ Some business classifications (KBLI codes) have specific capital requirements ab
   fields={[
     {
       id: "cash",
-      label: "Cash Investment (IDR)",
+      label: "Paid-Up Cash Capital (Min IDR 2.5B per company)",
       type: "number",
-      defaultValue: 8000000000,
+      defaultValue: 2500000000,
       min: 0
     },
     {
       id: "equipment",
-      label: "Equipment Value (IDR)",
+      label: "Equipment & Tech Value (IDR)",
       type: "number",
-      defaultValue: 1500000000,
+      defaultValue: 4000000000,
       min: 0
     },
     {
       id: "property",
-      label: "Property/Land (IDR)",
+      label: "Property/Land (Excluded from >10B BKPM total)",
       type: "number",
       defaultValue: 0,
       min: 0
     },
     {
       id: "other",
-      label: "Other Assets (IDR)",
+      label: "Working Capital & Other Non-Land Assets (IDR)",
       type: "number",
-      defaultValue: 500000000,
+      defaultValue: 4000000000,
       min: 0
     }
   ]}
   calculateResult={(values) => {
-    const total = values.cash + values.equipment + values.property + values.other;
+    const qualifyingTotal = Number(values.cash) + Number(values.equipment) + Number(values.other);
+    const property = Number(values.property);
+    const minPaidUp = 2500000000;
     const minimum = 10000000000;
-    const shortfall = Math.max(0, minimum - total);
-    const meetsRequirement = total >= minimum;
+    const shortfall = Math.max(0, minimum - qualifyingTotal);
+    const meetsPaidUp = Number(values.cash) >= minPaidUp;
+    const meetsRequirement = meetsPaidUp && qualifyingTotal > minimum;
 
     return {
-      total: total,
+      total: qualifyingTotal,
       breakdown: [
-        { label: "Cash investment", amount: values.cash },
-        { label: "Equipment value", amount: values.equipment },
-        { label: "Property/Land", amount: values.property },
-        { label: "Other assets", amount: values.other },
-        { label: "TOTAL INVESTMENT", amount: total },
-        { label: "Minimum required", amount: minimum },
-        { label: meetsRequirement ? "Above minimum by" : "SHORTFALL", amount: meetsRequirement ? total - minimum : shortfall }
+        { label: "Paid-up cash (min IDR 2.5B/company)", amount: Number(values.cash) },
+        { label: "Equipment value", amount: Number(values.equipment) },
+        { label: "Working capital & other non-land assets", amount: Number(values.other) },
+        { label: "Property/Land (excluded from >10B BKPM threshold)", amount: property },
+        { label: "BKPM QUALIFYING INVESTMENT", amount: qualifyingTotal },
+        { label: "Minimum required (>10B)", amount: minimum },
+        { label: meetsRequirement ? "Above IDR 10B threshold by" : "SHORTFALL to >10B", amount: qualifyingTotal > minimum ? qualifyingTotal - minimum : shortfall }
       ],
       currency: "IDR",
-      note: meetsRequirement
-        ? `Meets requirement (~USD ${Math.round(total / 16000).toLocaleString()})`
-        : `Need additional IDR ${shortfall.toLocaleString()} to meet minimum`
+      note: !meetsPaidUp
+        ? `Paid-up capital below IDR 2.5B per-company minimum (BKPM Reg 5/2025 Art. 26)`
+        : meetsRequirement
+          ? `Meets both IDR 2.5B paid-up and >IDR 10B (excl. land/buildings) rules (~USD ${Math.round(qualifyingTotal / 16000).toLocaleString()})`
+          : `Need more than IDR ${(shortfall + 1).toLocaleString()} additional non-land investment to exceed IDR 10B`
     };
 
 }}
@@ -276,11 +283,11 @@ Some business classifications (KBLI codes) have specific capital requirements ab
 ### Non-Cash Capital
 
 <InfoCard variant="tip" title="Contributing Assets">
-**You can contribute assets instead of all cash:**
+**You can contribute non-cash assets — subject to BKPM land/building exclusions:**
 
-- Equipment (machinery, vehicles)
-- Intellectual property (patents, trademarks)
-- Real property (land, buildings)
+- Equipment (machinery, vehicles) — counts toward investment
+- Intellectual property (patents, trademarks) — counts with appraisal
+- Real property (land, buildings) — can be corporate equity, **but is EXCLUDED from the > IDR 10B BKPM minimum investment test for standard sectors**
 
 **Requirements:**
 

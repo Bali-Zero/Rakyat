@@ -51,7 +51,7 @@ seoTitle: "Shareholder KITAS Requirements Indonesia 2026"
 seoDescription: "KITAS options for PT PMA foreign shareholders in Indonesia. IDR 10 billion minimum for E28A investor visa, work permits, and residency pathways."
 aiOptimization:
   primaryQuestion: "What KITAS do foreign shareholders need in Indonesia?"
-  answerSnippet: "Foreign shareholders with IDR 10 billion+ in PT PMA can get Investor KITAS (E28A) without RPTKA. Shareholders below this threshold who hold director positions need Working KITAS (E25B). Passive minority shareholders without director role may use social/business visas for short visits."
+  answerSnippet: "Foreign shareholders with at least IDR 10 billion in personal shareholding in a sponsoring PT PMA can get Investor KITAS (E28A) without RPTKA. Shareholders below IDR 10 billion who act as directors or employees need Working KITAS (E23) with RPTKA. Passive minority shareholders without director/work roles may use business visit visas (e.g., C2/D2) for periodic visits."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Imigrasi"
@@ -114,42 +114,42 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
     },
     {
       id: "passive",
-      question: "Do you meet IDR 1B+ investment?",
+      question: "Do you own at least IDR 10 billion (IDR 10B+) in personal shares?",
       options: [
-        { label: "Yes, I have IDR 1B+ invested", next: "investor-kitas" },
-        { label: "No, less than IDR 1B", next: "no-investor" },
+        { label: "Yes, my own shareholding is IDR 10B+", next: "investor-kitas" },
+        { label: "No, under IDR 10B personal shareholding", next: "no-investor" },
       ],
     },
     {
       id: "director",
       result: {
-        title: "Director KITAS with RPTKA",
+        title: "Working KITAS (E23) with RPTKA",
         description:
-          "As a working director, you need full work authorization. RPTKA + KITAS required. Company sponsors you. DKP-TKA fees apply.",
+          "Working directors (especially with < IDR 10B shareholding or salaried operational duties) need an E23 Working KITAS sponsored by the company with RPTKA and DKP-TKA levy payment.",
       },
     },
     {
       id: "worker",
       result: {
-        title: "Employee KITAS with RPTKA",
+        title: "Employee Working KITAS (E23) with RPTKA",
         description:
-          "Working in a non-director role requires employee KITAS. RPTKA based on your position. Normal qualification requirements.",
+          "Working in a non-director operational role requires an E23 Working KITAS with RPTKA and DKP-TKA based on your approved position.",
       },
     },
     {
       id: "investor-kitas",
       result: {
-        title: "Investor KITAS (C313)",
+        title: "Investor KITAS (E28A)",
         description:
-          "Passive investors with IDR 1B+ can get Investor KITAS without RPTKA. No DKP-TKA fees. Can attend board meetings and receive dividends.",
+          "Shareholders with at least IDR 10B in personal shareholding in the sponsoring PT PMA can obtain the 2-year E28A Investor KITAS (IDR 17M offshore / IDR 19M onshore) without RPTKA or DKP-TKA fees.",
       },
     },
     {
       id: "no-investor",
       result: {
-        title: "No Direct KITAS Pathway",
+        title: "No E28A Pathway — Working KITAS (E23) or Visit Visa Required",
         description:
-          "If under IDR 1B and not working, you can't get KITAS as a shareholder. Consider increasing investment to IDR 1B or taking a working role.",
+          "If your personal shareholding is below IDR 10B, you do not qualify for E28A Investor KITAS. If working as a Director or staff member, apply for E23 Working KITAS (with RPTKA); otherwise use visit visas (e.g., C2/D2) for short meetings.",
       },
     },
   ]}
@@ -161,13 +161,13 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
 
 <Calculator
   title="Shareholder Investment Calculator"
-  description="Check your KITAS eligibility"
+  description="Check your E28A Investor KITAS eligibility (IDR 10B personal shareholding rule)"
   fields={[
     {
       id: "totalCapital",
-      label: "Company Paid-Up Capital",
+      label: "Company Paid-Up / Share Capital",
       type: "number",
-      defaultValue: 5000000000,
+      defaultValue: 10000000000,
       min: 0,
       step: 500000000,
       suffix: "IDR"
@@ -176,7 +176,7 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
       id: "sharePercent",
       label: "Your Ownership Percentage",
       type: "number",
-      defaultValue: 30,
+      defaultValue: 100,
       min: 1,
       max: 100,
       suffix: "%"
@@ -186,20 +186,20 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
     const capital = Number(values.totalCapital);
     const percent = Number(values.sharePercent) / 100;
     const yourShare = capital * percent;
-    const minInvestor = 1000000000;
+    const minInvestor = 10000000000;
     const eligible = yourShare >= minInvestor;
 
     return {
       total: yourShare,
       breakdown: [
-        { label: "Total Company Capital", amount: capital },
-        { label: `Your Share (${values.sharePercent}%)`, amount: yourShare },
-        { label: "Investor KITAS Minimum", amount: minInvestor }
+        { label: "Total Company Share Capital", amount: capital },
+        { label: `Your Shareholding (${values.sharePercent}%)`, amount: yourShare },
+        { label: "E28A Investor KITAS Minimum", amount: minInvestor }
       ],
       currency: "IDR",
       note: eligible
-        ? "✅ Eligible for Investor KITAS (passive)"
-        : "❌ Below IDR 1B - need to work or increase investment"
+        ? "✅ Eligible for E28A Investor KITAS (IDR 10B+ personal shareholding met)"
+        : "❌ Below IDR 10B personal shareholding — apply for E23 Working KITAS (with RPTKA) or increase own shareholding"
     };
 
 }}
@@ -207,11 +207,11 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
 
 ### Minimum Thresholds
 
-| KITAS Type               | Investment Requirement                        |
-| ------------------------ | --------------------------------------------- |
-| Investor KITAS (passive) | IDR 1,000,000,000 minimum personal investment |
-| Director KITAS (working) | No minimum (company must meet IDR 10B)        |
-| Employee KITAS (working) | Not investment-based                          |
+| KITAS Type                   | Investment / Shareholding Requirement                      |
+| ---------------------------- | ---------------------------------------------------------- |
+| Investor KITAS (E28A)        | IDR 10,000,000,000 minimum personal shareholding in PT PMA |
+| Director / Working KITAS (E23) | No personal shareholding minimum (requires RPTKA + DKP-TKA) |
+| Employee KITAS (E23)         | Not shareholding-based (requires RPTKA + DKP-TKA)          |
 
 ---
 
@@ -219,11 +219,11 @@ Foreign shareholders in Indonesian companies have several KITAS options dependin
 
 <ComparisonTable
   title="Shareholder KITAS Paths"
-  description="Options based on role and investment"
+  description="Options based on role and personal shareholding"
   items={[
     {
-      name: "Path 1: Pure Investor",
-      subtitle: "IDR 1B+ investment, no work",
+      name: "Path 1: Investor KITAS (E28A)",
+      subtitle: "IDR 10B+ own shareholding in PT PMA",
       values: {
         RPTKA: "Not required",
         "DKP-TKA": "Not required",
@@ -296,17 +296,16 @@ Investor KITAS.
 - CV/Resume
 - Company deed showing shareholding
 
-### For Investor KITAS (Passive)
+### For Investor KITAS (E28A)
 
-- Proof of capital deposit (IDR 1B+ your share)
-- Bank statements
-- Share certificate (if available)
-- NIB and company documents
+- Proof of paid-up share ownership (IDR 10B+ own shareholding)
+- Company deed (Akta) and Kemenkumham SK showing shareholding
+- NIB and BKPM/OSS company documents
 
-### For Working Shareholder (Director/Employee)
+### For Working Shareholder / Director (E23)
 
-- All above documents
-- RPTKA application documents
+- All identity and company documents
+- RPTKA approval and DKP-TKA levy payment
 - Job description
 - Qualifications (degree, experience)
 
@@ -316,16 +315,15 @@ Investor KITAS.
 
 If your PT PMA has multiple foreign shareholders:
 
-| Shareholders | Investment per Person  | Total Company Capital |
-| ------------ | ---------------------- | --------------------- |
-| 1 foreigner  | IDR 1B+                | IDR 10B minimum       |
-| 2 foreigners | IDR 1B+ each = IDR 2B+ | IDR 10B minimum       |
-| 3 foreigners | IDR 1B+ each = IDR 3B+ | IDR 10B minimum       |
+| Foreign Shareholders Seeking E28A | Own Shareholding per Applicant | Minimum Total Share Capital |
+| --------------------------------- | ------------------------------ | --------------------------- |
+| 1 E28A applicant                  | IDR 10B+                       | Company paid-up min IDR 2.5B (E28A requires IDR 10B own shares) |
+| 2 E28A applicants                 | IDR 10B+ each = IDR 20B+       | IDR 20B+ total shares       |
+| 3 E28A applicants                 | IDR 10B+ each = IDR 30B+       | IDR 30B+ total shares       |
 
-<InfoCard variant="note" title="Each Foreigner Needs IDR 1B">
+<InfoCard variant="note" title="Each E28A Applicant Needs IDR 10B Own Shareholding">
 
-For Investor KITAS, each foreign shareholder must have at least IDR 1 billion
-invested in their name. You cannot split one IDR 1B between two people.
+For E28A Investor KITAS eligibility, each applicant must hold at least **IDR 10 billion** in personal shares in the sponsoring PT PMA (two people cannot split a single IDR 10B holding to obtain two E28A permits). Shareholders with smaller stakes who manage operations should apply for **E23 Working KITAS** instead.
 
 </InfoCard>
 

@@ -43,7 +43,7 @@ seoTitle: "PT PMA Registration Indonesia 2026 | Step by Step"
 seoDescription: "Register a PT PMA in Indonesia: complete step-by-step guide with documents, timeline (4-8 weeks), costs, and process from notary deed to NIB issuance."
 aiOptimization:
   primaryQuestion: "How do I register a PT PMA (foreign company) in Indonesia?"
-  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Total cost: IDR 15-25 million through an agent. Required: 2+ shareholders, director, commissioner."
+  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Bali Zero setup fee: IDR 25,000,000 (excl. IDR 5,000,000 Virtual Office if needed). Required: 2+ shareholders, director, commissioner."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "AHU Kemenkumham"
@@ -79,7 +79,7 @@ ogImage: "/static/insights/business/foreign-company-incorporation-steps.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "id"
-source_sha256: "38908520a355ef56c84baf62dee217c7c890760b1f86aabc371b904492fd2f4e"
+source_sha256: "dd048ad54c39e8d0ae645492d3f4e8f04fa219bbae83b52873bc622a15b718cb"
 ---
 
 # Cara Mendaftarkan PT PMA di Indonesia: Langkah demi Langkah 2026
@@ -96,17 +96,18 @@ Peraturan baru yang berlaku pada tahun 2025 membawa beberapa penyederhanaan:
 3. **LKPM triwulanan wajib** - Laporan investasi digital melalui OSS
 4. **Verifikasi modal yang diperkuat** - BKPM dapat meminta bukti penyetoran modal
 
-**Persyaratan investasi tidak berubah**: IDR 10 miliar minimum (sekitar $625.000) tetap menjadi standar untuk PT PMA.
+**Modal Disetor & Rencana Investasi (Perka BKPM 5/2025 Ps. 26):** Modal disetor minimal adalah **IDR 2,5 miliar per perusahaan** (dikunci 12 bulan), sedangkan komitmen nilai investasi tetap **> IDR 10 miliar per KBLI 5 digit / lokasi (di luar tanah dan bangunan)**.
 
 </InfoCard>
 
 ## Gambaran Cepat
 
-| Aspek                          | Detail                    |
-| ------------------------------ | ------------------------- |
-| **Jangka Waktu**               | 4-8 minggu                |
-| **Investasi Min.**             | IDR 10 miliar (~$625.000) |
-| **Jumlah Pemegang Saham Min.** | 2 (bisa asing)            |
+| Aspek                          | Detail                                                         |
+| ------------------------------ | -------------------------------------------------------------- |
+| **Jangka Waktu**               | 4-8 minggu                                                     |
+| **Investasi Min.**             | > IDR 10 miliar per KBLI 5 digit (di luar tanah & bangunan)    |
+| **Modal Disetor Min.**         | IDR 2,5 miliar per perusahaan (Perka BKPM 5/2025 Ps. 26)       |
+| **Jumlah Pemegang Saham Min.** | 2 (bisa asing)                                                 |
 | **Jumlah Direktur Min.**       | 1 (bisa asing)            |
 | **Jumlah Komisaris Min.**      | 1 (bisa asing)            |
 
@@ -317,61 +318,59 @@ Peraturan baru yang berlaku pada tahun 2025 membawa beberapa penyederhanaan:
 
 <Calculator
   title="Estimator Biaya Pendirian PT PMA"
-  description="Perkirakan biaya pendaftaran Anda"
+  description="Perkiraan biaya layanan pendirian Bali Zero (snapshot resmi 2026)"
   fields={[
     {
       id: "service",
-      label: "Jenis Layanan",
+      label: "Pendirian Perusahaan",
       type: "select",
       options: [
-        { value: "diy", label: "DIY (notaris saja)" },
-        { value: "basic", label: "Paket agen dasar" },
-        { value: "full", label: "Paket layanan penuh" }
+        { value: "pma", label: "Pendirian PT PMA Baru — SSOT Bali Zero (IDR 25 juta)" }
       ],
-      defaultValue: "basic"
+      defaultValue: "pma"
     },
     {
       id: "vo",
-      label: "Kantor Virtual?",
+      label: "Sertakan Virtual Office? (IDR 5 juta — cek kelayakan KBLI Bali)",
       type: "checkbox",
-      defaultValue: true
+      defaultValue: false
     },
     {
-      id: "location",
-      label: "Lokasi",
+      id: "kitas",
+      label: "KITAS Investor Opsional (E28A, 2 Tahun, saham pribadi IDR 10M+)",
       type: "select",
       options: [
-        { value: "jakarta", label: "Jakarta" },
-        { value: "bali", label: "Bali" },
-        { value: "other", label: "Lainnya" }
+        { value: "none", label: "Tidak Ada / Nanti" },
+        { value: "offshore", label: "Offshore E28A (IDR 17 juta)" },
+        { value: "onshore", label: "Onshore E28A (IDR 19 juta)" }
       ],
-      defaultValue: "bali"
+      defaultValue: "none"
     }
   ]}
   calculateResult={(values) => {
-    let total = 0;
-    const breakdown = [];
-
-    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
-    const service = serviceCosts[values.service];
-    total += service;
-    breakdown.push({ label: "Biaya layanan", amount: service });
-
-    const govFees = 5000000;
-    total += govFees;
-    breakdown.push({ label: "Biaya pemerintah", amount: govFees });
+    let total = 25000000;
+    const breakdown = [
+      { label: "Pendirian PT PMA Baru — Akta, AHU, NPWP, NIB/OSS", amount: 25000000 }
+    ];
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
-      total += voCost;
-      breakdown.push({ label: "Kantor virtual (1 tahun)", amount: voCost });
+      total += 5000000;
+      breakdown.push({ label: "Virtual Office (SSOT Bali Zero)", amount: 5000000 });
+    }
+
+    if (values.kitas === "offshore") {
+      total += 17000000;
+      breakdown.push({ label: "KITAS Investor 2 Tahun E28A (Offshore)", amount: 17000000 });
+    } else if (values.kitas === "onshore") {
+      total += 19000000;
+      breakdown.push({ label: "KITAS Investor 2 Tahun E28A (Onshore)", amount: 19000000 });
     }
 
     return {
       total,
       breakdown,
       currency: "IDR",
-      note: "Tidak termasuk modal disetor (minimum IDR 10 miliar)"
+      note: "Hanya biaya layanan. Tidak termasuk modal perusahaan (minimal IDR 2,5M modal disetor per perusahaan; nilai investasi > IDR 10M per KBLI 5 digit di luar tanah & bangunan)."
     };
 
 }}
@@ -382,11 +381,11 @@ Peraturan baru yang berlaku pada tahun 2025 membawa beberapa penyederhanaan:
 ## Tips untuk Sukses
 
 <InfoCard variant="tip" title="Tips Pendaftaran">
-  1. **KBLI dulu**: Pilih kode dengan hati-hati sebelum memulai 2. **Rencanakan
-  modal**: Ketahui cara Anda akan mendeploy IDR 10B 3. **Gunakan profesional**:
-  Sekretaris perusahaan menghemat sakit kepala 4. **Jangka waktu**: Sisihkan 6-8
-  minggu untuk aman 5. **Kehadiran Direktur**: Mungkin perlu berada di Indonesia
-  untuk membuka rekening bank
+  1. **KBLI dulu**: Pilih kode KBLI terbuka yang sesuai sebelum membuat Akta
+  2. **Rencanakan modal**: Setor IDR 2,5M modal disetor per perusahaan dan susun rencana investasi > IDR 10M (di luar tanah & bangunan)
+  3. **Gunakan profesional**: Verifikasi KBLI dan zonasi sejak awal mencegah biaya revisi Akta
+  4. **Jangka waktu**: Sisihkan 6–8 minggu secara keseluruhan
+  5. **Kehadiran Direktur**: Mungkin diperlukan untuk pembukaan rekening bank lokal perusahaan
 </InfoCard>
 
 ---
@@ -406,31 +405,25 @@ Peraturan baru yang berlaku pada tahun 2025 membawa beberapa penyederhanaan:
 
 ---
 
-## Opini dan Diskusi yang Sedang Berlangsung
+## Konteks Regulasi & Kebijakan Resmi (2025–2026)
 
 <InfoCard
   variant="note"
-  title="⚠️ Catatan: Bagian ini berisi OPINI dan diskusi yang belum dikonfirmasi secara resmi"
+  title="Pembaruan Kebijakan: Modal Disetor & Aturan Zonasi Bali (2025–2026)"
 >
 
-Informasi berdasarkan analisis industri dan diskusi antar pakar. **Belum
-dikonfirmasi oleh BKPM atau Kemenkumham**.
+Berdasarkan **Peraturan BKPM No. 5 Tahun 2025 (Pasal 26)** dan panduan aktif **OSS-RBA / DPMPTSP Bali**:
 
 </InfoCard>
 
-### Kemungkinan Perkembangan PT PMA (OPINIE)
+### Realitas Utama Permodalan & Penataan PT PMA
 
-1. **Modal yang lebih rendah untuk sektor teknologi** - Ada diskusi tentang kemungkinan pengurangan persyaratan modal minimum (saat ini IDR 10 miliar) untuk startup teknologi dan layanan digital. Beberapa berpendapat bahwa itu bisa turun menjadi IDR 2,5-5 miliar. _Hanya diskusi, tanpa konfirmasi._
+1. **Modal disetor IDR 2,5 miliar per perusahaan** — Sejak Oktober 2025 (Perka BKPM 5/2025 Pasal 26), modal disetor minimum saat pendirian ditetapkan **IDR 2,5 miliar per perusahaan** (tunduk pada ketentuan penguncian 12 bulan kecuali dibelanjakan untuk operasional sah), sedangkan komitmen total investasi tetap **> IDR 10 miliar per KBLI 5 digit per lokasi di luar tanah dan bangunan**.
+2. **KBLI tertutup & terdampak moratorium di Bali** — Kode akomodasi/layanan tertentu (`55203` Vila, `55201` Pondok Wisata, `55106` Hotel Non-Bintang, dan `79903` Jasa Pramuwisata) berstatus `0% PMA` secara nasional berdasarkan Perpres 49/2021, serta kode berisiko Rendah / Menengah Rendah menghadapi moratorium PMA Bali 2026 (`Surat Gubernur B.27.000/642/PM/DPMPTSP`).
+3. **Alamat komersial vs. Virtual Office** — DPMPTSP Bali menolak penggunaan Virtual Office untuk pengajuan KBLI yang terdampak moratorium/batasan; pastikan kesesuaian ruang (PKKPR) sebelum menyewa lokasi.
+4. **Ambang batas Investor KITAS (E28A)** — Untuk memperoleh Investor KITAS E28A tanpa RPTKA, setiap pemohon asing wajib memiliki saham pribadi minimal **IDR 10 miliar**; direktur/pemegang saham di bawah IDR 10 miliar memerlukan **Working KITAS E23**.
 
-2. **Daftar Investasi Negatif yang disederhanakan** - Ada diskusi tentang pembukaan sektor lebih lanjut untuk investor asing, terutama di bidang pendidikan, kesehatan, dan logistik. _Belum ada pengumuman resmi._
-
-3. **Pendaftaran satu atap** - Ada diskusi tentang proses yang lebih terintegrasi yang akan menggabungkan notaris, Kemenkumham, NPWP, dan OSS dalam satu aliran. _Hanya spekulasi._
-
-4. **Perusahaan virtual untuk freelancer** - Beberapa ahli membahas kemungkinan struktur bisnis yang disederhanakan untuk freelancer asing, tanpa persyaratan lengkap PT PMA. _Belum dikonfirmasi._
-
-5. **Insentif zona ekonomi khusus** - Ada diskusi tentang kemungkinan insentif tambahan (libur pajak, modal yang lebih rendah) untuk PT PMA yang berlokasi di Zona Ekonomi Khusus (KEK). _Sedang dievaluasi._
-
-**Ingat**: Untuk keputusan investasi, tunggu konfirmasi resmi dari oss.go.id atau bkpm.go.id.
+**Selalu verifikasi persyaratan OSS terbaru di oss.go.id atau bkpm.go.id sebelum menyetor dana.**
 
 ---
 
