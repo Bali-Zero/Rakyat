@@ -28,11 +28,15 @@ from backend.services.accounting import (
     cashout_service,
     reconcile_service,
 )
+from backend.services.accounting.bank_parser import BankParseError, preview_cimb_statement
 from backend.services.accounting.matcher import OpenInvoice, rank_candidates
 from backend.services.accounting.reconcile_service import ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
 _MAX_CASHOUT_PDF_BYTES = 8 * 1024 * 1024
+
+# A full year of the real CIMB export is under 1 MB; 2 MB is twice that (spec S8).
+_MAX_BANK_STATEMENT_BYTES = 2 * 1024 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +185,41 @@ async def import_cashout_pdf(
         "weeks": result["weeks"],
         "replaced": result["deleted"],
     }
+
+
+# ── Bank statement preview (CIMB OCTO Biz CSV) — read-only ───────────────────
+
+
+@router.post("/bank-statement/preview")
+async def preview_bank_statement(
+    file: UploadFile = File(..., description="CIMB OCTO Biz 'Account Statement Summary' CSV"),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Parse a CIMB statement CSV and return a summary report. Writes nothing."""
+    _require_accounting_access(current_user)
+
+    # No default name: an empty filename is refused like any other name without the suffix.
+    filename = file.filename or ""
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="only .csv bank statements are accepted")
+
+    # limit + 1 byte: enough to detect an oversized upload without loading it whole
+    data = await file.read(_MAX_BANK_STATEMENT_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=422, detail="empty file")
+    if len(data) > _MAX_BANK_STATEMENT_BYTES:
+        raise HTTPException(status_code=413, detail="file too large (max 2 MB)")
+
+    try:
+        text = data.decode("utf-8")  # one BOM is left in the text, the parser removes exactly one
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="file is not valid UTF-8 text") from exc
+
+    try:
+        # off the event loop: parse + report in one total call
+        return await asyncio.to_thread(preview_cimb_statement, text)
+    except BankParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ── P1: reconciliation ──────────────────────────────────────────────────────

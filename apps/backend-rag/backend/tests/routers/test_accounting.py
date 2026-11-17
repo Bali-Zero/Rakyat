@@ -8,6 +8,7 @@ three read endpoints, and query-param validation.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -444,3 +445,238 @@ class TestSummaryEndpoint:
         assert data["income_idr"] == 10000000
         assert data["net_idr"] == 7000000  # 10M - 3M
         assert data["margin_total_idr"] == 5000000
+
+
+_STATEMENT_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "cimb_octo_statement_synthetic.csv"
+)
+
+
+class TestBankStatementPreview:
+    URL = "/api/crm/accounting/bank-statement/preview"
+
+    def _post(self, mock_db_pool, user, data: bytes, name: str = "statement.csv"):
+        client = TestClient(_build_app(mock_db_pool, user), raise_server_exceptions=False)
+        return client.post(self.URL, files={"file": (name, data, "text/csv")})
+
+    def test_outsider_denied(self, mock_db_pool, outsider_user) -> None:
+        resp = self._post(mock_db_pool, outsider_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 403
+
+    def test_success_returns_report_and_writes_nothing(self, mock_db_pool, asya_user) -> None:
+        pool, conn = mock_db_pool
+        # BOM-prefixed upload, as the bank's export may carry one
+        resp = self._post(mock_db_pool, asya_user, b"\xef\xbb\xbf" + _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["account"] == {"number": "700000000001", "name": "PT CONTOH UJI"}
+        assert body["row_count"] == 13
+        assert body["opening_balance"] == "10000000.00"
+        assert body["closing_balance"] == "9217400.00"
+        assert body["balance_check"] == {"ok": True, "mismatch_positions": []}
+        assert body["kinds"]["transfer_out"] == {"count": 1, "total": "2000000.00"}
+        # preview only: the database is never touched
+        assert not pool.acquire.called
+        assert not conn.execute.called
+
+    def test_tampered_row_reported(self, mock_db_pool, asya_user) -> None:
+        data = _STATEMENT_FIXTURE.read_bytes().replace(b"8997500.00", b"8997501.00")
+        resp = self._post(mock_db_pool, asya_user, data)
+        assert resp.status_code == 200
+        assert resp.json()["balance_check"] == {"ok": False, "mismatch_positions": [4, 5]}
+
+    def test_empty_file_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"")
+        assert resp.status_code == 422
+        assert "empty" in resp.json()["detail"]
+
+    def test_unparseable_file_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"a,b,c\n1,2,3\n")
+        assert resp.status_code == 422
+        assert "Post Date" in resp.json()["detail"]
+
+    def test_non_csv_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"x", name="statement.pdf")
+        assert resp.status_code == 422
+
+    def test_oversized_upload_rejected_413(self, mock_db_pool, asya_user, monkeypatch) -> None:
+        monkeypatch.setattr(accounting_module, "_MAX_BANK_STATEMENT_BYTES", 64)
+        resp = self._post(mock_db_pool, asya_user, b"x" * 1000)
+        assert resp.status_code == 413
+        assert resp.json()["detail"] == "file too large (max 2 MB)"
+
+    def test_upload_limit_is_two_megabytes(self) -> None:
+        assert accounting_module._MAX_BANK_STATEMENT_BYTES == 2 * 1024 * 1024
+
+    def test_one_bom_is_accepted_two_are_refused(self, mock_db_pool, asya_user) -> None:
+        body = _STATEMENT_FIXTURE.read_bytes()
+        assert self._post(mock_db_pool, asya_user, b"\xef\xbb\xbf" + body).status_code == 200
+        resp = self._post(mock_db_pool, asya_user, b"\xef\xbb\xbf\xef\xbb\xbf" + body)
+        assert resp.status_code == 422
+
+    def test_too_many_lines_is_422_with_fixed_text(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"\n" * 20_001)
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "statement has too many lines"
+
+    def test_upload_read_is_bounded(self, mock_db_pool, asya_user, monkeypatch) -> None:
+        # the endpoint must ask for at most limit+1 bytes, never the whole body
+        monkeypatch.setattr(accounting_module, "_MAX_BANK_STATEMENT_BYTES", 64)
+        sizes: list[int] = []
+        from starlette.datastructures import UploadFile as StarletteUploadFile
+
+        original = StarletteUploadFile.read
+
+        async def spy(self, size: int = -1):
+            sizes.append(size)
+            return await original(self, size)
+
+        monkeypatch.setattr(StarletteUploadFile, "read", spy)
+        self._post(mock_db_pool, asya_user, b"x" * 1000)
+        assert sizes == [65]
+
+    def test_error_body_never_echoes_uploaded_content(self, mock_db_pool, asya_user) -> None:
+        header = (
+            "Post Date,Payment Date,Payment Type,Other Reference,Bank Reference,"
+            "Debit Amount,Credit Amount,Balance,Description,Cheque Number"
+        )
+        row = "01 Nov 2026 10:00:00,,DIRECT DEBIT,R,B,SENTINEL7f3a,0.00,1.00,d,"
+        resp = self._post(mock_db_pool, asya_user, f"{header}\n{row}\n".encode())
+        assert resp.status_code == 422
+        assert "SENTINEL7f3a" not in resp.text
+        assert "file line 2" in resp.json()["detail"]
+
+    def test_overflowing_post_date_is_422_not_500(self, mock_db_pool, asya_user) -> None:
+        header = (
+            "Post Date,Payment Date,Payment Type,Other Reference,Bank Reference,"
+            "Debit Amount,Credit Amount,Balance,Description,Cheque Number"
+        )
+        row = "01 Nov 99999999999999999999 10:00:00,,DIRECT DEBIT,R,B,5.00,0.00,95.00,d,1"
+        resp = self._post(mock_db_pool, asya_user, f"{header}\n{row}\n".encode())
+        assert resp.status_code == 422
+        assert "file line 2" in resp.json()["detail"]
+
+    def test_unexpected_parser_failure_is_422_with_fixed_text(
+        self, mock_db_pool, asya_user, monkeypatch
+    ) -> None:
+        import backend.services.accounting.bank_parser as bp
+
+        def boom(*_a, **_k):
+            raise RuntimeError("SENTINEL7f3a")
+
+        monkeypatch.setattr(bp, "_orient_oldest_first", boom)
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "statement could not be parsed"
+
+    def test_unexpected_report_failure_is_422_with_fixed_text(
+        self, mock_db_pool, asya_user, monkeypatch
+    ) -> None:
+        import backend.services.accounting.bank_parser as bp
+
+        def boom(*_a, **_k):
+            raise RuntimeError("SENTINEL7f3a")
+
+        monkeypatch.setattr(bp, "_money", boom)  # fails while building the report
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "statement could not be parsed"
+
+    def test_parsing_runs_off_the_event_loop(self, mock_db_pool, asya_user, monkeypatch) -> None:
+        import asyncio
+
+        calls: list[object] = []
+        original = asyncio.to_thread
+
+        async def spy(func, *args, **kwargs):
+            calls.append(func)
+            return await original(func, *args, **kwargs)
+
+        monkeypatch.setattr(accounting_module.asyncio, "to_thread", spy)
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 200
+        assert len(calls) == 1
+
+    def _post_raw(self, mock_db_pool, user, disposition: str, body: bytes, extra: bytes = b""):
+        """A hand-built multipart body: the test client cannot send `filename=""`."""
+        boundary = "XTESTBOUNDARYX"
+        payload = (
+            f"--{boundary}\r\nContent-Disposition: {disposition}\r\n"
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode() + body + b"\r\n" + extra + f"--{boundary}--\r\n".encode()
+        client = TestClient(_build_app(mock_db_pool, user), raise_server_exceptions=False)
+        return client.post(
+            self.URL,
+            content=payload,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
+    def test_empty_filename_is_refused_like_any_name_without_the_suffix(
+        self, mock_db_pool, asya_user
+    ) -> None:
+        # gate round 4: `filename=""` used to be replaced by a default ending in .csv
+        resp = self._post_raw(
+            mock_db_pool, asya_user, 'form-data; name="file"; filename=""',
+            _STATEMENT_FIXTURE.read_bytes(),
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "only .csv bank statements are accepted"
+
+    @pytest.mark.parametrize(
+        ("filename", "status"),
+        [
+            ("statement.csv", 200),
+            ("STATEMENT.CSV", 200),  # the suffix is compared case-insensitively
+            (".csv", 200),
+            ("../../statement.csv", 200),  # the name is used for the suffix test only
+            ("statement", 422),
+            ("statement.csv ", 422),  # as sent, no trimming
+            ("statement.csv.exe", 422),
+            ("statement.txt", 422),
+        ],
+    )
+    def test_filename_suffix_rule(self, mock_db_pool, asya_user, filename, status) -> None:
+        resp = self._post_raw(
+            mock_db_pool, asya_user, f'form-data; name="file"; filename="{filename}"',
+            _STATEMENT_FIXTURE.read_bytes(),
+        )
+        assert resp.status_code == status
+
+    def test_part_content_type_is_ignored(self, mock_db_pool, asya_user) -> None:
+        # _post_raw labels the part application/pdf; only the filename suffix and the bytes count
+        resp = self._post_raw(
+            mock_db_pool, asya_user, 'form-data; name="file"; filename="a.csv"',
+            _STATEMENT_FIXTURE.read_bytes(),
+        )
+        assert resp.status_code == 200
+
+    def test_with_several_file_parts_the_last_one_is_the_upload(
+        self, mock_db_pool, asya_user
+    ) -> None:
+        second = (
+            b'--XTESTBOUNDARYX\r\nContent-Disposition: form-data; name="file"; filename="b.csv"\r\n'
+            b"Content-Type: text/csv\r\n\r\nnot a statement\r\n"
+        )
+        resp = self._post_raw(
+            mock_db_pool, asya_user, 'form-data; name="file"; filename="a.csv"',
+            _STATEMENT_FIXTURE.read_bytes(), extra=second,
+        )
+        assert resp.status_code == 422
+        assert "no 'Post Date' header row found" in resp.json()["detail"]
+
+    def test_other_methods_are_not_allowed(self, mock_db_pool, asya_user) -> None:
+        client = TestClient(_build_app(mock_db_pool, asya_user), raise_server_exceptions=False)
+        assert client.get(self.URL).status_code == 405
+
+    def test_filename_is_not_echoed(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"x", name="SENTINEL7f3a.pdf")
+        assert resp.status_code == 422
+        assert "SENTINEL7f3a" not in resp.text
+
+    def test_report_names_how_the_order_was_decided(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.json()["order_decided_by"] == "timestamps"
+
+    def test_non_utf8_rejected_422(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"\xff\xfe\x00bad")
+        assert resp.status_code == 422

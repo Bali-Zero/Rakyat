@@ -4166,6 +4166,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/accounting/bank-statement/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Preview Bank Statement
+     * @description Parse a CIMB statement CSV and return a summary report. Writes nothing.
+     */
+    post: operations["preview_bank_statement_api_crm_accounting_bank_statement_preview_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/accounting/bank-transactions": {
     parameters: {
       query?: never;
@@ -20311,6 +20331,14 @@ export interface components {
       /**
        * File
        * @description Asya's GABUNGAN cashout worksheet PDF
+       */
+      file: string;
+    };
+    /** Body_preview_bank_statement_api_crm_accounting_bank_statement_preview_post */
+    Body_preview_bank_statement_api_crm_accounting_bank_statement_preview_post: {
+      /**
+       * File
+       * @description CIMB OCTO Biz 'Account Statement Summary' CSV
        */
       file: string;
     };
@@ -36641,6 +36669,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["DriveValidationSummary"];
+        };
+      };
+    };
+  };
+  preview_bank_statement_api_crm_accounting_bank_statement_preview_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_preview_bank_statement_api_crm_accounting_bank_statement_preview_post"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };
