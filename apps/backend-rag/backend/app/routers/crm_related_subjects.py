@@ -1,4 +1,5 @@
-"""POST /api/crm/related-subjects/register: registry of related people and companies.
+"""Registry of related people and companies: POST /api/crm/related-subjects/register (slice 1)
+and POST /api/crm/related-subjects/documents/register (slice 2, documents by reference).
 
 Auth: scoped ``X-CRM-Write-Key`` plus ``RELATED_SUBJECT_REGISTRY_ENABLED`` (default off, 503).
 
@@ -35,8 +36,16 @@ from pydantic_core import PydanticCustomError
 
 from backend.app.dependencies import get_database_pool
 from backend.app.deps.crm_service_write import verify_related_subject_write
+from backend.services.crm.related_documents import (
+    DocumentInput,
+    DocumentsInput,
+    DriveSighting,
+    prepare_documents,
+    register_documents,
+)
 from backend.services.crm.related_identifiers import MAX_RAW_LENGTH, InvalidIdentifier, canonicalize
 from backend.services.crm.related_subjects import (
+    IdentifierInput,
     InvalidSubject,
     RegistryUnavailable,
     SubjectInput,
@@ -186,6 +195,125 @@ class RelatedSubjectRegisterRequest(_Strict):
         )
 
 
+# ── slice 2: documents by reference ───────────────────────────────────────────
+
+MAX_DOCUMENTS = 40
+MAX_DRIVE_IDS = 8
+MAX_KEYS = 20
+MAX_BYTE_SIZE = 9_223_372_036_854_775_807
+
+# Slice 2 names more fields and has two more service codes. Its lists are its own: the slice-1
+# lists above are not widened, so the slice-1 route answers exactly as it did.
+_DOCUMENTS_LOC = _REPORTABLE_LOC | frozenset(
+    {
+        "subject",
+        "documents",
+        "sha256",
+        "byte_size",
+        "mime_type",
+        "doc_type",
+        "first_seen_on",
+        "first_channel",
+        "drive",
+        "file_id",
+        "seen_on",
+    }
+)
+_DOCUMENTS_CODE = _REPORTABLE_CODE | frozenset({"duplicate_document", "duplicate_file_id"})
+# A list index is an integer below the limit of the list it indexes, and nothing else.
+_INDEX_LIMIT = {"identifiers": MAX_KEYS, "documents": MAX_DOCUMENTS, "drive": MAX_DRIVE_IDS}
+
+
+class _KeyIn(_Strict):
+    type: Literal["passport", "permit", "nik", "npwp", "nib", "ahu"]
+    value: Annotated[str, Field(min_length=1, max_length=MAX_RAW_LENGTH)]
+
+    @model_validator(mode="after")
+    def _valid_value(self) -> _KeyIn:
+        try:
+            canonicalize(self.type, self.value)
+        except InvalidIdentifier:
+            raise PydanticCustomError("invalid_identifier", "invalid identifier") from None
+        return self
+
+
+class _SubjectKeys(_Strict):
+    kind: Literal["person", "company"]
+    identifiers: Annotated[list[_KeyIn], Field(min_length=1, max_length=MAX_KEYS)]
+
+    @model_validator(mode="after")
+    def _identifiers_fit_kind(self) -> _SubjectKeys:
+        try:
+            self.prepared()
+        except InvalidSubject as exc:
+            raise PydanticCustomError(exc.code, "invalid subject") from None
+        return self
+
+    def prepared(self) -> tuple[IdentifierInput, ...]:
+        return prepare_identifiers(self.kind, [(i.type, i.value, {}) for i in self.identifiers])
+
+
+class _DriveIn(_Strict):
+    file_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{20,80}$")]
+    seen_on: date
+
+
+class _DocumentIn(_Strict):
+    sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    byte_size: Annotated[int, Field(ge=1, le=MAX_BYTE_SIZE)]
+    mime_type: Annotated[
+        str, Field(pattern=r"^[a-z0-9][a-z0-9.+-]{0,60}/[a-z0-9][a-z0-9.+-]{0,90}$")
+    ]
+    doc_type: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,39}$")]
+    first_seen_on: date
+    first_channel: Literal["drive", "whatsapp"]
+    drive: Annotated[list[_DriveIn], Field(max_length=MAX_DRIVE_IDS)]
+
+
+class _DocumentsEvidence(_Strict):
+    plan_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    subject_ref: _Word
+
+
+class RelatedDocumentsRegisterRequest(_Strict):
+    subject: _SubjectKeys
+    documents: Annotated[list[_DocumentIn], Field(min_length=1, max_length=MAX_DOCUMENTS)]
+    evidence: _DocumentsEvidence
+    dry_run: StrictBool = True
+
+    @model_validator(mode="after")
+    def _documents_are_distinct(self) -> RelatedDocumentsRegisterRequest:
+        try:
+            self._prepared()
+        except InvalidSubject as exc:
+            raise PydanticCustomError(exc.code, "invalid documents") from None
+        return self
+
+    def _prepared(self):
+        return prepare_documents(
+            [
+                DocumentInput(
+                    d.sha256,
+                    d.byte_size,
+                    d.mime_type,
+                    d.doc_type,
+                    d.first_seen_on,
+                    d.first_channel,
+                    tuple(DriveSighting(x.file_id, x.seen_on) for x in d.drive),
+                )
+                for d in self.documents
+            ]
+        )
+
+    def to_input(self) -> DocumentsInput:
+        return DocumentsInput(
+            kind=self.subject.kind,
+            identifiers=self.subject.prepared(),
+            documents=self._prepared(),
+            evidence=self.evidence.model_dump(),
+        )
+
+
 # Fixed answers: the whole failure surface is these constants. No status, code or text taken
 # from an exception or from the request ever reaches an answer.
 _ANSWER_BODIES: dict[str, bytes] = {
@@ -233,6 +361,22 @@ def _invalid(errors: list[dict[str, Any]]) -> Response:
         ]
         code = err.get("type")
         items.append({"loc": loc, "code": code if code in _REPORTABLE_CODE else "invalid"})
+    return _fixed(422, items)
+
+
+def _invalid_documents(errors: list[dict[str, Any]]) -> Response:
+    """422 body of the documents route: closed lists of its own, never an input or a message."""
+    items = []
+    for err in errors[:50]:
+        loc: list[Any] = []
+        for part in err.get("loc", ()):
+            limit = _INDEX_LIMIT.get(loc[-1]) if loc else None
+            if isinstance(part, int) and not isinstance(part, bool):
+                loc.append(part if limit is not None and 0 <= part < limit else "_")
+            else:
+                loc.append(part if part in _DOCUMENTS_LOC else "_")
+        code = err.get("type")
+        items.append({"loc": loc, "code": code if code in _DOCUMENTS_CODE else "invalid"})
     return _fixed(422, items)
 
 
@@ -306,4 +450,25 @@ async def register_related_subject(
         return _invalid(exc.errors(include_input=False, include_context=False, include_url=False))
     async with db_pool.acquire() as conn:
         result = await register_subject(conn, payload.to_subject(), dry_run=payload.dry_run)
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.post("/documents/register", response_model=None)
+async def register_related_subject_documents(
+    request: Request,
+    _actor: str = Depends(verify_related_subject_write),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Register documents by reference for one registered subject (dry run by default)."""
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _invalid_documents([{"loc": ("body",), "type": "too_long"}])
+    try:
+        payload = RelatedDocumentsRegisterRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        return _invalid_documents(
+            exc.errors(include_input=False, include_context=False, include_url=False)
+        )
+    async with db_pool.acquire() as conn:
+        result = await register_documents(conn, payload.to_input(), dry_run=payload.dry_run)
     return JSONResponse(status_code=200, content=result)
