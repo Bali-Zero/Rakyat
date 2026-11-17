@@ -278,7 +278,7 @@ class LKPMService:
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT DISTINCT r.*, COALESCE(c.company_name, co.company_name) AS company_name
+                SELECT DISTINCT r.*, COALESCE(c.company_name, co.company_name, '') AS company_name
                 FROM lkpm_reports r
                 LEFT JOIN lkpm_client_config c ON c.client_id = r.client_id
                     AND COALESCE(r.company_id, 0) = COALESCE(c.company_id, 0)
@@ -783,7 +783,7 @@ class LKPMService:
             rows = await conn.fetch(
                 """
                 SELECT DISTINCT r.*,
-                       COALESCE(c.company_name, co.company_name) AS company_name
+                       COALESCE(c.company_name, co.company_name, '') AS company_name
                 FROM lkpm_reports r
                 LEFT JOIN lkpm_client_config c ON c.client_id = r.client_id
                     AND COALESCE(r.company_id, 0) = COALESCE(c.company_id, 0)
@@ -1115,11 +1115,15 @@ class LKPMService:
             alerts_data = row["validation_alerts"]
             if isinstance(alerts_data, str):
                 alerts_data = json.loads(alerts_data)
-            from backend.app.models.lkpm import ValidationAlert
+            from backend.app.models.lkpm import ValidationAlert, ValidationSeverity
 
+            alerts = [ValidationAlert(**a) for a in alerts_data]
             validation = LKPMValidationResult(
                 is_valid=row["validation_status"] == "valid",
-                alerts=[ValidationAlert(**a) for a in alerts_data],
+                alerts=alerts,
+                red_count=sum(1 for a in alerts if a.severity == ValidationSeverity.RED),
+                yellow_count=sum(1 for a in alerts if a.severity == ValidationSeverity.YELLOW),
+                green_count=sum(1 for a in alerts if a.severity == ValidationSeverity.GREEN),
             )
 
         return LKPMDraft(
@@ -1214,7 +1218,7 @@ class LKPMService:
             id=row["id"],
             client_id=row["client_id"],
             company_id=row.get("company_id"),
-            company_name=row["company_name"],
+            company_name=row.get("company_name") or "",
             quarter=row["quarter"],
             year=row["year"],
             status=LKPMStatus(row["status"]),

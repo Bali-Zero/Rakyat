@@ -28388,6 +28388,16 @@ export interface components {
       frequency: string;
     };
     /**
+     * SyncJurnalBody
+     * @description Optional JSON body for POST /sync-jurnal/{client_id}.
+     */
+    SyncJurnalBody: {
+      /** Quarter */
+      quarter?: string | null;
+      /** Year */
+      year?: number | null;
+    };
+    /**
      * SystemConnectionStatus
      * @description System-wide Google Drive connection status.
      */
@@ -29148,6 +29158,16 @@ export interface components {
       spreadsheet_id: string;
       /** Values */
       values: string[];
+    };
+    /**
+     * UploadReceiptBody
+     * @description Optional JSON body for POST /upload-receipt/{draft_id}.
+     */
+    UploadReceiptBody: {
+      /** Receipt File Url */
+      receipt_file_url?: string | null;
+      /** Receipt Number */
+      receipt_number?: string | null;
     };
     /**
      * UserMemoryContextResponse
@@ -55357,9 +55377,9 @@ export interface operations {
   };
   sync_jurnal_api_v1_lkpm_sync_jurnal__client_id__post: {
     parameters: {
-      query: {
-        quarter: string;
-        year: number;
+      query?: {
+        quarter?: string | null;
+        year?: number | null;
       };
       header?: never;
       path: {
@@ -55367,7 +55387,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["SyncJurnalBody"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -55393,8 +55417,8 @@ export interface operations {
   };
   upload_receipt_api_v1_lkpm_upload_receipt__draft_id__post: {
     parameters: {
-      query: {
-        receipt_number: string;
+      query?: {
+        receipt_number?: string | null;
         receipt_file_url?: string | null;
       };
       header?: never;
@@ -55403,7 +55427,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["UploadReceiptBody"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
