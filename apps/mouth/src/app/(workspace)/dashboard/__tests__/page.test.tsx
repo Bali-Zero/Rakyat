@@ -41,13 +41,6 @@ vi.mock("@/lib/realtime", () => ({
     sendDashboardUpdate: vi.fn(),
   }),
 }));
-vi.mock("@/hooks/useRoleMetrics", () => ({
-  useRoleMetrics: vi.fn(() => ({
-    data: undefined,
-    isLoading: false,
-    isError: true,
-  })),
-}));
 vi.mock("next/link", () => ({
   default: ({
     children,
@@ -56,34 +49,6 @@ vi.mock("next/link", () => ({
     children: React.ReactNode;
     href: string;
   }) => <a href={href}>{children}</a>,
-}));
-// Mock dashboard components
-vi.mock("@/components/dashboard", () => ({
-  AiPulseWidget: () => <div data-testid="ai-pulse-widget">AI Pulse</div>,
-  FinancialRealityWidget: ({
-    revenue,
-  }: {
-    revenue: { total_revenue: number };
-  }) => (
-    <div data-testid="financial-widget">Revenue: {revenue.total_revenue}</div>
-  ),
-  NusantaraHealthWidget: () => <div data-testid="nusantara-widget">Health</div>,
-  GrafanaWidget: () => <div data-testid="grafana-widget">Grafana</div>,
-  FeaturedArticlesWidget: () => (
-    <div data-testid="featured-articles-widget">Featured Articles</div>
-  ),
-  HomepagePreviewWidget: () => (
-    <div data-testid="homepage-preview-widget">Homepage Preview</div>
-  ),
-  CaseDistribution: ({ segments }: { segments: unknown[] }) => (
-    <div data-testid="case-distribution">{segments?.length ?? 0} segments</div>
-  ),
-  MiniSparkline: ({ data }: { data: unknown[] }) => (
-    <div data-testid="mini-sparkline">{data?.length ?? 0} points</div>
-  ),
-  RoleWidget: ({ role }: { role: string }) => (
-    <div data-testid="role-widget">{role}</div>
-  ),
 }));
 
 // Create a wrapper with QueryClientProvider for tests
