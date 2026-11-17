@@ -12,7 +12,6 @@ import {
   type DashboardData,
 } from "@/lib/api/dashboard/dashboard.api";
 import { useDashboardData } from "@/hooks/useDashboardData";
-import { getComplianceAlerts, getSystemPulse } from "../_lib/opsAdapters";
 import { logger } from "@/lib/logger";
 import { api } from "@/lib/api";
 
@@ -28,10 +27,6 @@ vi.mock("@/hooks/useDashboardData", () => ({
   useDashboardData: vi.fn(),
 }));
 vi.mock("@/lib/logger");
-vi.mock("../_lib/opsAdapters", () => ({
-  getSystemPulse: vi.fn(),
-  getComplianceAlerts: vi.fn(),
-}));
 vi.mock("@/lib/realtime", () => ({
   useRealtime: () => ({
     isConnected: false,
@@ -194,25 +189,6 @@ describe("DashboardPage - Unit Tests", () => {
       total: 1,
     });
     vi.mocked(useDashboardData).mockReturnValue(mockUseDashboardData());
-    // Ops panel adapters (WS2 slice 2) — default to live, healthy data
-    vi.mocked(getSystemPulse).mockResolvedValue([
-      {
-        id: "postgres",
-        label: "PostgreSQL",
-        status: "ok",
-        latencyMs: 12,
-        detail: "Connected",
-      },
-    ]);
-    vi.mocked(getComplianceAlerts).mockResolvedValue([
-      {
-        id: "a1",
-        title: "KITAS expiry < 30 days",
-        detail: "CLI-2207 · visa expiry",
-        severity: "critical",
-        timeLeft: "6d",
-      },
-    ]);
   });
 
   afterEach(() => {
