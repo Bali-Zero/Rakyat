@@ -58,6 +58,7 @@ def include_routers(api: FastAPI) -> None:
         crm_interactions,
         crm_notifications,
         crm_practices,
+        crm_related_registry_read,
         crm_related_subjects,
         crm_shared_memory,
         crm_tax_pilot,
@@ -261,6 +262,7 @@ def include_routers(api: FastAPI) -> None:
     api.include_router(crm_notifications.router)
     api.include_router(crm_practices.router)
     api.include_router(crm_related_subjects.router)
+    api.include_router(crm_related_registry_read.router)
     api.include_router(crm_shared_memory.router)
     api.include_router(crm_tax_pilot.router)
     api.include_router(crm_analytics.router)  # [NEW] CRM Analytics dashboard
@@ -562,6 +564,7 @@ def include_light_routers(api: FastAPI) -> None:
         crm_intelligence,
         crm_interactions,
         crm_notifications,
+        crm_related_registry_read,
         crm_related_subjects,
         crm_shared_memory,
         crm_tax_pilot,
@@ -732,6 +735,7 @@ def include_light_routers(api: FastAPI) -> None:
     api.include_router(crm_interactions.router)
     api.include_router(crm_notifications.router)
     api.include_router(crm_related_subjects.router)
+    api.include_router(crm_related_registry_read.router)
     api.include_router(crm_shared_memory.router)
     api.include_router(crm_tax_pilot.router)
     api.include_router(crm_analytics.router)

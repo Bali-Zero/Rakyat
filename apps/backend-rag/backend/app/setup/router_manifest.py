@@ -158,6 +158,9 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="team_invites_messaging", process_groups=_API, tags=("crm", "portal")),
     RouterEntry(name="crm_practices", process_groups=_RAG, tags=("crm", "rag")),
     RouterEntry(name="crm_related_subjects", process_groups=_API, tags=("crm",)),
+    RouterEntry(
+        name="crm_related_registry_read", process_groups=_API, tags=("crm-related-registry",)
+    ),
     RouterEntry(name="crm_shared_memory", process_groups=_API, tags=("crm",)),
     RouterEntry(name="crm_tax_pilot", process_groups=_API, tags=("crm", "pilot", "tax")),
     # ── Conversations / Memory ──
