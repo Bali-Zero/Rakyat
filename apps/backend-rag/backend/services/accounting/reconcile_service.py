@@ -19,8 +19,11 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import asyncpg
+
+from backend.services.accounting.matcher import EXACT_TOLERANCE_IDR
 
 logger = logging.getLogger(__name__)
 
@@ -269,3 +272,215 @@ async def confirm_payment(
         status_before=status_before,
         status_after=new_status,
     )
+
+
+# ── Actions that move no money: link to a recorded payment, ignore, reopen ───────────────
+#
+# Each one is one transaction that locks the bank transaction row FIRST (as confirm_payment
+# does) and checks its own preconditions on the rows it holds. None of them issues a
+# statement that writes to practices, invoices or weekly_cashout. A refusal carries fixed
+# text and ids: which precondition failed and the ids involved, nothing else of a row.
+
+LINK_NOTE = "linked to a payment already recorded; no money moved"
+REOPEN_NOTE = "reopened; no money moved"
+REASON_MIN_LEN = 3
+REASON_MAX_LEN = 200
+REASON_REFUSAL = f"reason must be {REASON_MIN_LEN} to {REASON_MAX_LEN} printable characters"
+
+
+@dataclass
+class ActionResult:
+    bank_txn_id: int
+    reconciled_status: str
+    reconciliation_log_id: int
+
+
+async def _lock_bank_row(conn: asyncpg.Connection, bank_txn_id: int) -> asyncpg.Record:
+    """First statement of every action: lock the bank transaction, refuse if it is missing."""
+    bank = await conn.fetchrow(
+        "SELECT direction, reconciled_status, amount_idr FROM bank_transactions WHERE id = $1 FOR UPDATE",
+        bank_txn_id,
+    )
+    if bank is None:
+        raise ReconcileError(f"bank transaction {bank_txn_id} not found")
+    return bank
+
+
+async def link_recorded(
+    conn: asyncpg.Connection,
+    *,
+    bank_txn_id: int,
+    practice_id: int,
+    invoice_id: int,
+    linked_by: str,
+) -> ActionResult:
+    """Link an unmatched credit to the invoice of a payment already recorded. Moves no money.
+
+    Locks the bank transaction first and the practice second (FOR UPDATE, the statement
+    confirm_payment uses), then reads the invoice under a share lock, so its amount cannot change
+    under the ceiling: two links to one invoice
+    name the same practice, and a link and a confirm queue on it instead of deadlocking.
+    """
+    async with conn.transaction():
+        bank = await _lock_bank_row(conn, bank_txn_id)
+        if bank["direction"] != "credit":
+            raise ReconcileError(f"bank transaction {bank_txn_id} is not a credit")
+        if bank["reconciled_status"] != "unmatched":
+            raise ReconcileError(f"bank transaction {bank_txn_id} is not unmatched")
+
+        prac = await conn.fetchrow(
+            "SELECT payment_status FROM practices WHERE id = $1 FOR UPDATE", practice_id
+        )
+        if prac is None:
+            raise ReconcileError(f"practice {practice_id} not found")
+        if prac["payment_status"] != "paid":
+            raise ReconcileError(f"practice {practice_id} has no recorded payment")
+
+        inv = await conn.fetchrow(
+            "SELECT practice_id, amount_idr FROM invoices WHERE id = $1 FOR SHARE", invoice_id
+        )
+        if inv is None:
+            raise ReconcileError(f"invoice {invoice_id} not found")
+        if inv["practice_id"] != practice_id:
+            raise ReconcileError(f"invoice {invoice_id} does not belong to practice {practice_id}")
+        invoice_amount = inv["amount_idr"]
+        if invoice_amount is None or not Decimal(invoice_amount).is_finite():
+            raise ReconcileError(f"invoice {invoice_id} has no usable amount")
+
+        # The ceiling: what is already attached to this invoice plus this transfer may not
+        # exceed the invoice's exact amount (cents included) by more than the matcher's
+        # tolerance. A payment confirmed without naming its invoice is attached to the
+        # invoices of its practice.
+        attached = await conn.fetchval(
+            "SELECT COALESCE(SUM(amount_idr), 0) FROM bank_transactions"
+            " WHERE reconciled_status IN ('matched', 'manual')"
+            " AND (matched_invoice_id = $1"
+            "      OR (matched_invoice_id IS NULL AND matched_practice_id = $2))",
+            invoice_id,
+            practice_id,
+        )
+        ceiling = Decimal(invoice_amount) + EXACT_TOLERANCE_IDR
+        if Decimal(bank["amount_idr"]) + Decimal(attached) > ceiling:
+            raise ReconcileError(
+                f"bank transaction {bank_txn_id} would exceed the amount of invoice {invoice_id}"
+            )
+
+        await conn.execute(
+            """
+            UPDATE bank_transactions
+            SET reconciled_status = 'manual',
+                matched_practice_id = $1,
+                matched_invoice_id = $2
+            WHERE id = $3
+            """,
+            practice_id,
+            invoice_id,
+            bank_txn_id,
+        )
+        log_id = await conn.fetchval(
+            """
+            INSERT INTO reconciliation_log
+                (bank_txn_id, invoice_ids, practice_id, confirmed_by, confirmed_at,
+                 status_before, status_after, amount_applied_idr, note)
+            VALUES ($1, $2, $3, $4, now(), 'paid', 'paid', 0, $5)
+            RETURNING id
+            """,
+            bank_txn_id,
+            json.dumps([invoice_id]),
+            practice_id,
+            linked_by,
+            LINK_NOTE,
+        )
+    logger.info(
+        "Reconcile link: bank_txn=%s practice=%s recon=%s", bank_txn_id, practice_id, log_id
+    )
+    return ActionResult(bank_txn_id, "manual", log_id)
+
+
+async def ignore_transaction(
+    conn: asyncpg.Connection,
+    *,
+    bank_txn_id: int,
+    reason: str,
+    ignored_by: str,
+) -> ActionResult:
+    """Mark an unmatched transfer (credit or debit) as not a client payment. Moves no money."""
+    # every run of whitespace becomes one space, the ends are trimmed: that text is judged and stored
+    reason = " ".join(reason.split())
+    if not REASON_MIN_LEN <= len(reason) <= REASON_MAX_LEN or not reason.isprintable():
+        raise ReconcileError(REASON_REFUSAL)
+    async with conn.transaction():
+        bank = await _lock_bank_row(conn, bank_txn_id)
+        if bank["reconciled_status"] != "unmatched":
+            raise ReconcileError(f"bank transaction {bank_txn_id} is not unmatched")
+
+        await conn.execute(
+            """
+            UPDATE bank_transactions
+            SET reconciled_status = 'ignored',
+                matched_practice_id = NULL,
+                matched_invoice_id = NULL
+            WHERE id = $1
+            """,
+            bank_txn_id,
+        )
+        log_id = await conn.fetchval(
+            """
+            INSERT INTO reconciliation_log
+                (bank_txn_id, confirmed_by, confirmed_at, amount_applied_idr, note)
+            VALUES ($1, $2, now(), 0, $3)
+            RETURNING id
+            """,
+            bank_txn_id,
+            ignored_by,
+            reason,
+        )
+    logger.info("Reconcile ignore: bank_txn=%s recon=%s", bank_txn_id, log_id)
+    return ActionResult(bank_txn_id, "ignored", log_id)
+
+
+async def reopen_transaction(
+    conn: asyncpg.Connection,
+    *,
+    bank_txn_id: int,
+    reopened_by: str,
+) -> ActionResult:
+    """Put a linked (`manual`) or `ignored` transfer back to `unmatched`.
+
+    A `matched` row is never reopened here: money was recorded for it.
+    """
+    async with conn.transaction():
+        bank = await _lock_bank_row(conn, bank_txn_id)
+        if bank["reconciled_status"] not in ("manual", "ignored"):
+            raise ReconcileError(f"bank transaction {bank_txn_id} is not manual or ignored")
+
+        # Safe to read now: every writer of this bank transaction's log rows holds its lock.
+        latest = await conn.fetchval(
+            "SELECT id FROM reconciliation_log WHERE bank_txn_id = $1 ORDER BY id DESC LIMIT 1",
+            bank_txn_id,
+        )
+        await conn.execute(
+            """
+            UPDATE bank_transactions
+            SET reconciled_status = 'unmatched',
+                matched_practice_id = NULL,
+                matched_invoice_id = NULL
+            WHERE id = $1
+            """,
+            bank_txn_id,
+        )
+        log_id = await conn.fetchval(
+            """
+            INSERT INTO reconciliation_log
+                (bank_txn_id, confirmed_by, confirmed_at, amount_applied_idr,
+                 reversal_of_id, note)
+            VALUES ($1, $2, now(), 0, $3, $4)
+            RETURNING id
+            """,
+            bank_txn_id,
+            reopened_by,
+            latest,
+            REOPEN_NOTE,
+        )
+    logger.info("Reconcile reopen: bank_txn=%s recon=%s", bank_txn_id, log_id)
+    return ActionResult(bank_txn_id, "unmatched", log_id)
