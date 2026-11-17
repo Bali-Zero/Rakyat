@@ -165,11 +165,11 @@ def test_extension_exposes_only_d10_d3_d1_internal_checkpoints() -> None:
 def test_post_coverage_issuance_is_uncovered_with_manual_warning() -> None:
     response = build_internal_preview(
         _request(
-            entry_date="2027-01-05",
-            passport_expiry_date="2028-01-05",
+            entry_date="2028-01-05",
+            passport_expiry_date="2029-01-05",
         ),
-        today=date(2026, 12, 20),
-        generated_at=datetime(2026, 12, 20, 1, 0, tzinfo=timezone.utc),
+        today=date(2027, 12, 20),
+        generated_at=datetime(2027, 12, 20, 1, 0, tzinfo=timezone.utc),
     )
 
     assert response.decision == "DECLINE"
@@ -178,6 +178,21 @@ def test_post_coverage_issuance_is_uncovered_with_manual_warning() -> None:
     assert response.calendar_status == "uncovered"
     assert response.calendar_warning
     assert "fail-closed" not in response.calendar_warning
+
+
+def test_january_2027_issuance_is_covered_with_submit_date() -> None:
+    response = build_internal_preview(
+        _request(
+            entry_date="2027-01-05",
+            passport_expiry_date="2028-01-05",
+        ),
+        today=date(2026, 12, 20),
+        generated_at=datetime(2026, 12, 20, 1, 0, tzinfo=timezone.utc),
+    )
+
+    assert response.decision == "ACCEPT"
+    assert response.calendar_status == "confirmed"
+    assert response.submit_by_date == date(2027, 1, 4)
 
 
 def test_january_2026_issuance_is_uncovered_and_has_no_submit_date() -> None:

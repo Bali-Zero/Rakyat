@@ -280,8 +280,8 @@ class TestIssuanceSubmissionGateDeclineIsCleanOnTheWire:
     def test_arrival_date_unconfirmed_decline_is_clean_on_the_wire(self) -> None:
         from backend.services.garuda_flow.operating_calendar import COVERAGE_END
 
-        today = date(2026, 12, 1)
-        entry = COVERAGE_END + timedelta(days=5)  # past the decreed 2026 calendar
+        today = COVERAGE_END - timedelta(days=30)
+        entry = COVERAGE_END + timedelta(days=5)  # past the decreed 2027 calendar
         req = VoaIntakeRequest(
             case_type=CaseType.ISSUANCE,
             nationality="USA",
