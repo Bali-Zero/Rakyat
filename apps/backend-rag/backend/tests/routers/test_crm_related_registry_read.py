@@ -577,3 +577,34 @@ def test_t11_router_is_in_the_manifest_and_its_paths_are_not_public():
     for path in (BASE, f"{BASE}/7"):
         assert not any(e.matches(path, "GET") for e in PUBLIC_ENDPOINTS), path
     assert {route.methods.__iter__().__next__() for route in route_module.router.routes} == {"GET"}
+
+
+# ── T12 ───────────────────────────────────────────────────────────────────────
+
+BOOM_VALUE = "ZZ99999X9"
+
+
+class _BoomPool:
+    """The pool the app holds for this test only: acquiring raises a database error that
+    carries a protected value in its message. The `pool` fixture's own pool is untouched."""
+
+    def acquire(self):
+        raise asyncpg.PostgresError(f"zz boom {BOOM_VALUE}")
+
+
+@pytest.mark.asyncio
+async def test_t12_database_error_is_a_fixed_503_and_nothing_leaks(
+    pool, seeded, auth_on, audit_logger, monkeypatch, caplog
+):
+    as_identity(monkeypatch, ADMIN)
+    caplog.set_level(logging.DEBUG)
+    async with make_client(_BoomPool()) as client:
+        for url in (BASE, f"{BASE}/{seeded['aaa']}"):
+            resp = await client.get(url, params={"q": BOOM_VALUE} if url == BASE else None)
+            assert resp.status_code == 503, url
+            assert resp.json() == {"detail": "registry_unavailable"}
+            assert BOOM_VALUE not in resp.text
+    records = [r for r in caplog.records if not r.name.startswith(("httpx", "httpcore"))]
+    assert any(r.name == route_module.__name__ for r in records), "capture saw no router record"
+    text = " ".join(_record_text(r) for r in records).casefold()
+    assert BOOM_VALUE.casefold() not in text and "zz boom" not in text
