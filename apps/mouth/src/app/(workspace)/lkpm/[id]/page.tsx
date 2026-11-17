@@ -244,7 +244,7 @@ export default function LKPMReadyPackPage() {
               <span
                 className="px-2 py-0.5 rounded-full text-xs font-medium"
                 style={
-                  pack.validation_summary.is_valid
+                  pack.validation_summary?.is_valid
                     ? {
                         background:
                           "color-mix(in srgb, var(--state-success) 12%, transparent)",
@@ -257,7 +257,7 @@ export default function LKPMReadyPackPage() {
                       }
                 }
               >
-                {pack.validation_summary.is_valid ? "Valid" : "Issues Found"}
+                {pack.validation_summary?.is_valid ? "Valid" : "Issues Found"}
               </span>
             </div>
 
@@ -271,7 +271,7 @@ export default function LKPMReadyPackPage() {
                   Red
                 </div>
                 <span className="font-medium">
-                  {pack.validation_summary.red_count}
+                  {pack.validation_summary?.red_count ?? 0}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -283,7 +283,7 @@ export default function LKPMReadyPackPage() {
                   Yellow
                 </div>
                 <span className="font-medium">
-                  {pack.validation_summary.yellow_count}
+                  {pack.validation_summary?.yellow_count ?? 0}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -295,7 +295,7 @@ export default function LKPMReadyPackPage() {
                   Green
                 </div>
                 <span className="font-medium">
-                  {pack.validation_summary.green_count}
+                  {pack.validation_summary?.green_count ?? 0}
                 </span>
               </div>
             </div>

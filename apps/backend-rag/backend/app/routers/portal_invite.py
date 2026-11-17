@@ -503,7 +503,7 @@ async def complete_registration(
             success=True,
             message="Registration successful! You can now log in.",
             user_id=result["user_id"],
-            redirect_to="/login",
+            redirect_to="/portal/login-upgraded",
         )
 
     except ValueError as e:
