@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -203,3 +203,57 @@ def test_practice_ownership_flags_false_for_a_non_member_on_a_pool_practice():
         _user(OUTSIDER), created_by=A, assigned_to=B
     )
     assert not created_by_match and not assigned_to_match
+
+
+# --------------------------------------------------------------------------- #
+# can_write_client + the profile's viewer_can_write                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_can_write_client_owner_peer_outsider_admin():
+    from backend.app.utils.client_pools import can_write_client
+
+    assert can_write_client(_user(A), A, None) is True
+    assert can_write_client(_user(A), B, None) is True
+    assert can_write_client(_user(A), OUTSIDER, B) is True
+    assert can_write_client(_user(A), OUTSIDER, OUTSIDER) is False
+    assert can_write_client(_user(OUTSIDER), A, B) is False
+    assert can_write_client(_user(A), None, None) is False
+    assert can_write_client(ADMIN, OUTSIDER, None) is True
+
+
+async def _profile(user: dict[str, str], assigned_to: str | None, created_by: str | None):
+    from backend.app.routers.crm_enhanced import get_client_profile
+
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "id": 1,
+            "full_name": "Fixture Client",
+            "assigned_to": assigned_to,
+            "created_by": created_by,
+        }
+    )
+    conn.fetch = AsyncMock(return_value=[])
+
+    class _Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield conn
+
+    with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
+        return await get_client_profile(client_id=1, pool=_Pool(), current_user=user)
+
+
+@pytest.mark.asyncio
+async def test_profile_viewer_can_write_true_for_owner_and_pool_peer_and_admin():
+    assert (await _profile(_user(A), A, None))["viewer_can_write"] is True
+    assert (await _profile(_user(A), B, None))["viewer_can_write"] is True
+    assert (await _profile(ADMIN, OUTSIDER, None))["viewer_can_write"] is True
+
+
+@pytest.mark.asyncio
+async def test_profile_viewer_can_write_false_for_a_non_member_and_created_by_not_leaked():
+    result = await _profile(_user(OUTSIDER), A, B)
+    assert result["viewer_can_write"] is False
+    assert "created_by" not in result["client"]

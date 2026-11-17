@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from pydantic import AfterValidator
 
 from backend.app.core.config import settings
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import can_write_client
 from backend.core.env_lists import crm_extra_admin_emails
 
 # CRM-specific admin additions on top of the global allowlist
@@ -243,12 +243,7 @@ async def verify_client_access(
         return True, assigned_to
 
     if write:
-        owner_emails = {
-            (assigned_to or "").lower().strip(),
-            (_record_value(row, "created_by") or "").lower().strip(),
-        }
-        owner_emails.discard("")
-        if owner_emails & client_pool_peers(user_email):
+        if can_write_client(current_user, assigned_to, _record_value(row, "created_by")):
             return True, assigned_to
 
         logger.warning(

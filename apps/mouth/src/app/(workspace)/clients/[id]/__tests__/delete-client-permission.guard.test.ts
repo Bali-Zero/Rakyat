@@ -125,3 +125,34 @@ describe("viewerCanDeleteClient is not the attention predicate", () => {
     ).toBe(true);
   });
 });
+
+describe("viewerCanDeleteClient — server answer (shared client pools)", () => {
+  it("offers the action when the server says the viewer can write, even if not assigned", () => {
+    expect(
+      viewerCanDeleteClient(
+        { assigned_to: OTHER, viewer_can_write: true },
+        VIEWER,
+        "staff",
+      ),
+    ).toBe(true);
+  });
+
+  it("does NOT offer the action when the server says no and the viewer is not assigned", () => {
+    expect(
+      viewerCanDeleteClient(
+        { assigned_to: OTHER, viewer_can_write: false },
+        VIEWER,
+        "staff",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps today's rule when the field is absent", () => {
+    expect(viewerCanDeleteClient({ assigned_to: VIEWER }, VIEWER, "staff")).toBe(
+      true,
+    );
+    expect(viewerCanDeleteClient({ assigned_to: OTHER }, VIEWER, "staff")).toBe(
+      false,
+    );
+  });
+});
