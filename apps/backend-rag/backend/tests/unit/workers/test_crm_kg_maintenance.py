@@ -31,38 +31,68 @@ def make_config(**overrides: Any) -> KgMaintenanceConfig:
     return KgMaintenanceConfig(**values)
 
 
+@pytest.fixture(autouse=True)
+def tiny_deadlines(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(kg, "_STEP_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(kg, "_total_budget_seconds", lambda _config: 0.2)
+
+
 class FakeConn:
-    def __init__(self, log: list[tuple[str, tuple[Any, ...]]], state: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        log: list[tuple[str, tuple[Any, ...]]],
+        state: dict[str, Any],
+        calls: list[tuple[str, dict[str, Any]]],
+    ) -> None:
         self.log = log
         self.state = state
+        self.calls = calls
 
-    async def fetchval(self, sql: str, *args: Any) -> Any:
+    async def fetchval(self, sql: str, *args: Any, **kwargs: Any) -> Any:
         self.log.append((sql, args))
+        self.calls.append(("fetchval", kwargs))
         if "pg_try_advisory_lock" in sql:
             return args[0] not in self.state.get("busy_locks", set())
         if "FROM system_settings" in sql:
+            if args[0] in self.state.get("read_timeout_keys", set()):
+                raise TimeoutError
             return self.state.get("settings", {}).get(args[0])
         return None
 
-    async def execute(self, sql: str, *args: Any) -> None:
+    async def execute(self, sql: str, *args: Any, **kwargs: Any) -> None:
         self.log.append((sql, args))
+        self.calls.append(("execute", kwargs))
+        if "INSERT INTO system_settings" in sql and args[0].endswith(
+            tuple(self.state.get("write_timeout_suffixes", ()))
+        ):
+            raise TimeoutError
 
 
 class FakePool:
     def __init__(self, state: dict[str, Any] | None = None) -> None:
         self.log: list[tuple[str, tuple[Any, ...]]] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
         self.state = state or {}
         self.released = 0
         self.closed = False
+        self.terminated = False
 
-    async def acquire(self) -> FakeConn:
-        return FakeConn(self.log, self.state)
+    async def acquire(self, **kwargs: Any) -> FakeConn:
+        self.calls.append(("acquire", kwargs))
+        return FakeConn(self.log, self.state, self.calls)
 
-    async def release(self, _conn: Any) -> None:
+    async def release(self, _conn: Any, **kwargs: Any) -> None:
+        self.calls.append(("release", kwargs))
         self.released += 1
 
-    async def close(self) -> None:
+    async def close(self, **kwargs: Any) -> None:
+        self.calls.append(("close", kwargs))
+        if self.state.get("close_hangs"):
+            await asyncio.Event().wait()
         self.closed = True
+
+    def terminate(self) -> None:
+        self.terminated = True
 
     def upserts(self) -> list[str]:
         return [args[0] for sql, args in self.log if "INSERT INTO system_settings" in sql]
@@ -204,7 +234,7 @@ async def test_job_result_not_ok_is_error_status() -> None:
 
 @pytest.mark.asyncio
 async def test_run_kg_maintenance_returns_error_when_pool_creation_fails() -> None:
-    with patch("asyncpg.create_pool", new=AsyncMock(side_effect=OSError("db down"))):
+    with patch.object(kg, "create_database_pool", new=AsyncMock(side_effect=OSError("db down"))):
         result = await run_kg_maintenance("postgresql://x/db", make_config())
     assert result == {"status": "error", "error": "db down"}
 
@@ -213,13 +243,126 @@ async def test_run_kg_maintenance_returns_error_when_pool_creation_fails() -> No
 async def test_run_kg_maintenance_runs_and_closes_pool() -> None:
     pool = FakePool()
     with (
-        patch("asyncpg.create_pool", new=AsyncMock(return_value=pool)) as create_pool,
+        patch.object(kg, "create_database_pool", new=AsyncMock(return_value=pool)) as create_pool,
         patch.object(kg, "run_due_jobs", new=AsyncMock(return_value={"x": {"status": "ok"}})),
     ):
         result = await run_kg_maintenance("postgresql://x/db", make_config())
     assert result == {"status": "ran", "jobs": {"x": {"status": "ok"}}}
-    assert create_pool.call_args.kwargs == {"min_size": 1, "max_size": 2}
+    kwargs = create_pool.call_args.kwargs
+    assert kwargs["dsn"] == "postgresql://x/db"
+    assert kwargs["normalize_dsn"] is False
+    policy = kwargs["policy"]
+    assert (policy.min_size, policy.max_size) == (1, 2)
+    assert policy.command_timeout == 30
+    assert policy.statement_timeout_seconds == 30
+    assert policy.max_inactive_connection_lifetime == 300
     assert pool.closed is True
+    assert pool.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_every_housekeeping_call_carries_a_timeout() -> None:
+    pool = FakePool()
+    build = AsyncMock(return_value={"ok": True})
+    gc = AsyncMock(return_value={"ok": True})
+    await run_with(pool, build, gc)
+    ops = {op for op, _ in pool.calls}
+    assert {"acquire", "release", "fetchval", "execute"} <= ops
+    # 2 jobs x (acquire, lock, read, stamp, result, unlock, release)
+    assert len(pool.calls) == 14
+    for op, kwargs in pool.calls:
+        assert kwargs.get("timeout") == kg._STEP_TIMEOUT_SECONDS, op
+
+
+@pytest.mark.asyncio
+async def test_last_run_read_timeout_is_error_unlocks_and_second_job_runs() -> None:
+    pool = FakePool({"read_timeout_keys": {f"{kg.BUILD_MEDIATED_JOB}_last_run_at"}})
+    build = AsyncMock(return_value={"ok": True})
+    gc = AsyncMock(return_value={"ok": True})
+    results = await run_with(pool, build, gc)
+    assert results[kg.BUILD_MEDIATED_JOB]["status"] == "error"
+    build.assert_not_called()
+    assert pool.unlocks() == [kg.BUILD_MEDIATED_LOCK_ID, kg.GARBAGE_COLLECT_LOCK_ID]
+    gc.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_result_write_timeout_keeps_result_and_unlocks() -> None:
+    pool = FakePool({"write_timeout_suffixes": ["_last_result"]})
+    build = AsyncMock(return_value={"ok": True})
+    gc = AsyncMock(return_value={"ok": True})
+    results = await run_with(pool, build, gc)
+    assert results[kg.BUILD_MEDIATED_JOB]["status"] == "ok"
+    assert pool.unlocks() == [kg.BUILD_MEDIATED_LOCK_ID, kg.GARBAGE_COLLECT_LOCK_ID]
+    gc.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_due_jobs_never_returning_hits_total_budget() -> None:
+    pool = FakePool()
+
+    async def hang(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        await asyncio.Event().wait()
+        return {}
+
+    with (
+        patch.object(kg, "create_database_pool", new=AsyncMock(return_value=pool)),
+        patch.object(kg, "run_due_jobs", new=hang),
+    ):
+        result = await asyncio.wait_for(
+            run_kg_maintenance("postgresql://x/db", make_config()), timeout=1
+        )
+    assert result == {"status": "timeout", "timeout_seconds": 0.2}
+    assert pool.closed or pool.terminated
+
+
+@pytest.mark.asyncio
+async def test_pool_close_hang_terminates_pool_and_returns() -> None:
+    pool = FakePool({"close_hangs": True})
+    with (
+        patch.object(kg, "create_database_pool", new=AsyncMock(return_value=pool)),
+        patch.object(kg, "run_due_jobs", new=AsyncMock(return_value={})),
+    ):
+        result = await asyncio.wait_for(
+            run_kg_maintenance("postgresql://x/db", make_config()), timeout=1
+        )
+    assert result == {"status": "ran", "jobs": {}}
+    assert pool.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_pool_creation_hang_returns_timeout_dict() -> None:
+    async def hang(**_kwargs: Any) -> Any:
+        await asyncio.Event().wait()
+
+    with patch.object(kg, "create_database_pool", new=hang):
+        result = await asyncio.wait_for(
+            run_kg_maintenance("postgresql://x/db", make_config()), timeout=1
+        )
+    assert result["status"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_outer_cancellation_is_not_swallowed() -> None:
+    pool = FakePool()
+    started = asyncio.Event()
+
+    async def hang(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        started.set()
+        await asyncio.Event().wait()
+        return {}
+
+    with (
+        patch.object(kg, "create_database_pool", new=AsyncMock(return_value=pool)),
+        patch.object(kg, "run_due_jobs", new=hang),
+        patch.object(kg, "_total_budget_seconds", lambda _config: 30),
+    ):
+        task = asyncio.create_task(run_kg_maintenance("postgresql://x/db", make_config()))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert pool.closed or pool.terminated
 
 
 @pytest.mark.asyncio

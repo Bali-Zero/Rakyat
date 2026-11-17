@@ -20,12 +20,19 @@ from typing import Any
 
 import asyncpg
 
+from backend.app.core.database import DatabasePoolPolicy, create_database_pool
+
 logger = logging.getLogger(__name__)
 
 BUILD_MEDIATED_JOB = "crm_kg_build_mediated"
 GARBAGE_COLLECT_JOB = "crm_kg_garbage_collect"
 BUILD_MEDIATED_LOCK_ID = 614_238_904_712
 GARBAGE_COLLECT_LOCK_ID = 614_238_904_713
+
+# Deadline for every housekeeping step (lock, settings read/write, unlock, acquire,
+# release, pool creation, pool close). Maintenance runs inline in the Drive poll loop,
+# so no single blocked database step may stall polling.
+_STEP_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -89,7 +96,9 @@ def load_kg_maintenance_config() -> KgMaintenanceConfig:
     )
 
 
-async def _upsert_setting(conn: asyncpg.Connection, key: str, value: str) -> None:
+async def _upsert_setting(
+    conn: asyncpg.Connection, key: str, value: str, *, timeout: float
+) -> None:
     await conn.execute(
         """
         INSERT INTO system_settings (key, value, updated_at)
@@ -99,7 +108,13 @@ async def _upsert_setting(conn: asyncpg.Connection, key: str, value: str) -> Non
         """,
         key,
         value,
+        timeout=timeout,
     )
+
+
+def _total_budget_seconds(config: KgMaintenanceConfig) -> float:
+    # Both jobs at full timeout, plus six bounded housekeeping steps per job.
+    return 2 * config.timeout_seconds + 12 * _STEP_TIMEOUT_SECONDS
 
 
 def _build_jobs(config: KgMaintenanceConfig) -> list[_Job]:
@@ -141,15 +156,16 @@ async def _run_job_locked(
     config: KgMaintenanceConfig,
     now: datetime,
 ) -> dict[str, Any]:
+    step = _STEP_TIMEOUT_SECONDS
     last_run_key = f"{job.name}_last_run_at"
     raw_last_run = await conn.fetchval(
-        "SELECT value FROM system_settings WHERE key = $1", last_run_key
+        "SELECT value FROM system_settings WHERE key = $1", last_run_key, timeout=step
     )
     if not _is_due(raw_last_run, job.interval_seconds, now):
         return {"status": "not_due", "last_run_at": raw_last_run}
 
     # Stamp before running so a crash or timeout does not retry every poll cycle.
-    await _upsert_setting(conn, last_run_key, now.isoformat())
+    await _upsert_setting(conn, last_run_key, now.isoformat(), timeout=step)
     try:
         job_result = await asyncio.wait_for(job.run(pool), timeout=config.timeout_seconds)
         result: dict[str, Any] = {
@@ -163,11 +179,16 @@ async def _run_job_locked(
         logger.exception("CRM KG job %s failed", job.name)
         result = {"status": "error", "error": str(exc)}
 
-    await _upsert_setting(
-        conn,
-        f"{job.name}_last_result",
-        json.dumps(result, sort_keys=True, default=str)[:1000],
-    )
+    try:
+        await _upsert_setting(
+            conn,
+            f"{job.name}_last_result",
+            json.dumps(result, sort_keys=True, default=str)[:1000],
+            timeout=step,
+        )
+    except Exception:
+        # The job already ran; a lost result row must not turn it into an error.
+        logger.warning("CRM KG job %s: failed to record result", job.name, exc_info=True)
     return result
 
 
@@ -182,7 +203,7 @@ async def run_due_jobs(
     results: dict[str, dict[str, Any]] = {}
     for job in _build_jobs(config):
         try:
-            lock_conn = await pool.acquire()
+            lock_conn = await pool.acquire(timeout=_STEP_TIMEOUT_SECONDS)
         except Exception as exc:
             logger.exception("CRM KG job %s: cannot acquire connection", job.name)
             results[job.name] = {"status": "error", "error": str(exc)}
@@ -190,7 +211,11 @@ async def run_due_jobs(
         lock_acquired = False
         try:
             lock_acquired = bool(
-                await lock_conn.fetchval("SELECT pg_try_advisory_lock($1)", job.lock_id)
+                await lock_conn.fetchval(
+                    "SELECT pg_try_advisory_lock($1)",
+                    job.lock_id,
+                    timeout=_STEP_TIMEOUT_SECONDS,
+                )
             )
             if not lock_acquired:
                 results[job.name] = {"status": "locked"}
@@ -198,22 +223,41 @@ async def run_due_jobs(
             results[job.name] = await _run_job_locked(pool, lock_conn, job, config, current)
         except Exception as exc:
             logger.exception("CRM KG job %s: maintenance step failed", job.name)
-            results[job.name] = {"status": "error", "error": str(exc)}
+            results[job.name] = {"status": "error", "error": str(exc) or type(exc).__name__}
         finally:
             if lock_acquired:
                 try:
-                    await lock_conn.execute("SELECT pg_advisory_unlock($1)", job.lock_id)
+                    await lock_conn.execute(
+                        "SELECT pg_advisory_unlock($1)",
+                        job.lock_id,
+                        timeout=_STEP_TIMEOUT_SECONDS,
+                    )
                 except Exception:
                     logger.warning(
                         "CRM KG job %s: failed to release advisory lock", job.name, exc_info=True
                     )
             try:
-                await pool.release(lock_conn)
+                await pool.release(lock_conn, timeout=_STEP_TIMEOUT_SECONDS)
             except Exception:
                 logger.warning(
                     "CRM KG job %s: failed to release connection", job.name, exc_info=True
                 )
     return results
+
+
+async def _close_pool(pool: asyncpg.Pool) -> None:
+    try:
+        await asyncio.wait_for(pool.close(), timeout=_STEP_TIMEOUT_SECONDS)
+    except BaseException as exc:
+        # terminate() closes the server sessions, so Postgres frees any session
+        # advisory lock a stuck connection still holds.
+        try:
+            pool.terminate()
+        except Exception:
+            logger.warning("CRM KG maintenance: pool terminate failed", exc_info=True)
+        if not isinstance(exc, Exception):
+            raise
+        logger.warning("CRM KG maintenance: pool close failed (%r); terminated", exc)
 
 
 async def run_kg_maintenance(database_url: str, config: KgMaintenanceConfig) -> dict[str, Any]:
@@ -222,11 +266,34 @@ async def run_kg_maintenance(database_url: str, config: KgMaintenanceConfig) -> 
         return {"status": "disabled"}
     try:
         # Two connections: the lock connection stays held while the job acquires its own.
-        pool = await asyncpg.create_pool(database_url, min_size=1, max_size=2)
+        # Statement caps match the API pool the admin endpoints ran these jobs on.
         try:
-            jobs = await run_due_jobs(pool, config)
+            pool = await asyncio.wait_for(
+                create_database_pool(
+                    dsn=database_url,
+                    normalize_dsn=False,
+                    policy=DatabasePoolPolicy(
+                        min_size=1,
+                        max_size=2,
+                        command_timeout=30,
+                        max_inactive_connection_lifetime=300,
+                        statement_timeout_seconds=30,
+                    ),
+                ),
+                timeout=_STEP_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.error("CRM KG maintenance: pool creation exceeded %ss", _STEP_TIMEOUT_SECONDS)
+            return {"status": "timeout", "timeout_seconds": _STEP_TIMEOUT_SECONDS}
+        budget = _total_budget_seconds(config)
+        try:
+            try:
+                jobs = await asyncio.wait_for(run_due_jobs(pool, config), timeout=budget)
+            except TimeoutError:
+                logger.error("CRM KG maintenance exceeded its %ss budget", budget)
+                return {"status": "timeout", "timeout_seconds": budget}
         finally:
-            await pool.close()
+            await _close_pool(pool)
         logger.info("CRM KG maintenance cycle finished: %s", jobs)
         return {"status": "ran", "jobs": jobs}
     except Exception as exc:
