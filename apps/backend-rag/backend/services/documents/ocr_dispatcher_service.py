@@ -130,6 +130,31 @@ async def _kg_link_after_ocr(
         )
 
 
+async def _ensure_doc_ocr_status(
+    db_pool: Any,
+    doc_id: int | None,
+    status: str,
+) -> None:
+    """Ensure documents.ocr_status leaves 'pending' on any exit path."""
+    if not db_pool or doc_id is None:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE documents SET ocr_status = $1, updated_at = NOW() "
+                "WHERE id = $2 AND (ocr_status IS NULL OR ocr_status = 'pending')",
+                status,
+                doc_id,
+            )
+    except Exception as exc:
+        logger.warning(
+            "OCR dispatch: failed to set ocr_status=%s on doc %s: %s",
+            status,
+            doc_id,
+            type(exc).__name__,
+        )
+
+
 async def dispatch_ocr_by_folder(
     db_pool: Any,
     client_id: int,
@@ -144,15 +169,47 @@ async def dispatch_ocr_by_folder(
       1. Subfolder name + filename keywords + explicit document_type (Tier 1)
       2. Gemini Vision content classifier as fallback (Tier 2)
 
-    On successful handler dispatch (Tier 1 or Tier 2), optionally fires the
-    crm_kg document_linker hook (controlled by CRM_KG_ENABLED env var).
-
-    Returns:
-        {"dispatched": True, "handler": "<type>", "tier": "filename"|"content",
-         "result": <ocr_result>}
-        or {"dispatched": False, "tier": "content", "classifier": <class_result>}
-        or {"dispatched": False}
+    Guarantees ``documents.ocr_status`` reaches a terminal state
+    (``completed``, ``skipped``, or ``failed``) whenever ``doc_id`` is provided.
     """
+    try:
+        result = await _dispatch_ocr_by_folder_inner(
+            db_pool=db_pool,
+            client_id=client_id,
+            file_id=file_id,
+            folder_name=folder_name,
+            filename=filename,
+            doc_id=doc_id,
+            document_type=document_type,
+        )
+    except Exception:
+        await _ensure_doc_ocr_status(db_pool, doc_id, "failed")
+        raise
+
+    if doc_id is not None:
+        if result.get("dispatched"):
+            handler_res = result.get("result")
+            if isinstance(handler_res, dict) and handler_res.get("success") is False:
+                await _ensure_doc_ocr_status(db_pool, doc_id, "failed")
+            else:
+                await _ensure_doc_ocr_status(db_pool, doc_id, "completed")
+        elif result.get("handler_error") or "error" in (result.get("classifier") or {}):
+            await _ensure_doc_ocr_status(db_pool, doc_id, "failed")
+        else:
+            await _ensure_doc_ocr_status(db_pool, doc_id, "skipped")
+
+    return result
+
+
+async def _dispatch_ocr_by_folder_inner(
+    db_pool: Any,
+    client_id: int,
+    file_id: str,
+    folder_name: str,
+    filename: str,
+    doc_id: int | None = None,
+    document_type: str | None = None,
+) -> dict:
     # Lazy import to avoid circular dependencies — handlers live in the router module
     from backend.app.routers.crm_enhanced import (
         _auto_classify_content,
@@ -172,7 +229,11 @@ async def dispatch_ocr_by_folder(
     # Passport detection
     if "passport" in fn_lower or (folder_lower.startswith("00_") and "passport" in fn_lower):
         logger.info("OCR dispatch: passport detected for client %s, file %s", client_id, filename)
-        ocr_result = await _auto_ocr_passport(db_pool, client_id, file_id)
+        ocr_result = (
+            await _auto_ocr_passport(db_pool, client_id, file_id, doc_id)
+            if doc_id is not None
+            else await _auto_ocr_passport(db_pool, client_id, file_id)
+        )
         await _kg_link_after_ocr(
             db_pool,
             file_id=file_id,
@@ -335,7 +396,14 @@ async def dispatch_ocr_by_folder(
     # classifier but produce {"dispatched": False, "classifier": ...} until
     # their handlers ship in Phase 2.
     handler_map = {
-        "passport": ("passport", lambda: _auto_ocr_passport(db_pool, client_id, file_id)),
+        "passport": (
+            "passport",
+            lambda: (
+                _auto_ocr_passport(db_pool, client_id, file_id, doc_id)
+                if doc_id is not None
+                else _auto_ocr_passport(db_pool, client_id, file_id)
+            ),
+        ),
         "visa": ("visa", lambda: _auto_ocr_visa(db_pool, client_id, file_id, doc_id)),
         "nib": ("nib", lambda: _auto_ocr_nib(db_pool, client_id, file_id, doc_id)),
         "npwp": ("npwp", lambda: _auto_ocr_npwp(db_pool, client_id, file_id, doc_id)),

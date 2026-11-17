@@ -316,7 +316,33 @@ async def _gemini_ocr(image_data: bytes, mime_type: str, prompt: str) -> str:
     return response_text
 
 
-async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict:
+async def _set_doc_ocr_status(
+    db_pool: Any,
+    doc_id: int | None,
+    status: str,
+) -> None:
+    """Best-effort update for documents.ocr_status (completed / skipped / failed)."""
+    if not db_pool or doc_id is None:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE documents SET ocr_status = $1, updated_at = NOW() WHERE id = $2",
+                status,
+                doc_id,
+            )
+    except Exception as exc:
+        logger.warning(
+            "Failed to update documents.ocr_status=%s for doc %s: %s",
+            status,
+            doc_id,
+            type(exc).__name__,
+        )
+
+
+async def _auto_ocr_passport(
+    db_pool: Any, client_id: int, file_id: str, doc_id: int | None = None
+) -> dict:
     """
     Automatically run OCR on passport image and update client record.
     Runs in background after document upload.
@@ -329,6 +355,7 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
                 "SELECT full_name FROM clients WHERE id = $1 AND deleted_at IS NULL", client_id
             )
             if not client:
+                await _set_doc_ocr_status(db_pool, doc_id, "failed")
                 return {"success": False, "error": "Client not found"}
             existing_name = client["full_name"]
 
@@ -350,6 +377,7 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
                 client_id,
                 len(response_text),
             )
+            await _set_doc_ocr_status(db_pool, doc_id, "failed")
             return {"success": False, "error": "Could not parse OCR response"}
 
         # Normalize date formats (DD-MM-YYYY → YYYY-MM-DD)
@@ -440,6 +468,17 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
             """
             await conn.execute(update_sql, *params)
 
+            if doc_id:
+                doc_ocr_data = {**ocr_data, "document_type": "passport"}
+                await conn.execute(
+                    """UPDATE documents
+                    SET ocr_status = 'completed', ocr_completed_at = NOW(),
+                        ocr_extracted_data = $1::text::jsonb, updated_at = NOW()
+                    WHERE id = $2""",
+                    to_jsonb(doc_ocr_data),
+                    doc_id,
+                )
+
         # The passport NUMBER used to be interpolated here. It is a UU PDP
         # identity document field, and a log line is not a private surface:
         # Sentry's LoggingIntegration turns every `logger.info` into a
@@ -457,6 +496,7 @@ async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict
 
     except Exception as e:
         logger.error("Auto OCR failed for client %s: %s", client_id, type(e).__name__)
+        await _set_doc_ocr_status(db_pool, doc_id, "failed")
         return {"success": False, "error": str(e)}
 
 
@@ -480,6 +520,7 @@ async def _auto_ocr_visa(
         extracted = extract_json_from_llm_response(response_text)
         if not extracted:
             logger.error("Auto OCR visa JSON parsing failed for client %s", client_id)
+            await _set_doc_ocr_status(db_pool, doc_id, "failed")
             return {"success": False, "error": "Could not parse OCR response"}
 
         # Normalize date
@@ -595,6 +636,7 @@ async def _auto_ocr_visa(
 
     except Exception as e:
         logger.error("Auto OCR visa failed for client %s: %s", client_id, type(e).__name__)
+        await _set_doc_ocr_status(db_pool, doc_id, "failed")
         return {"success": False, "error": str(e)}
 
 
@@ -618,6 +660,7 @@ async def _auto_ocr_nib(
         extracted = extract_json_from_llm_response(response_text)
         if not extracted:
             logger.error("Auto OCR NIB JSON parsing failed for client %s", client_id)
+            await _set_doc_ocr_status(db_pool, doc_id, "failed")
             return {"success": False, "error": "Could not parse OCR response"}
 
         ocr_data = {
@@ -676,6 +719,7 @@ async def _auto_ocr_nib(
 
     except Exception as e:
         logger.error("Auto OCR NIB failed for client %s: %s", client_id, type(e).__name__)
+        await _set_doc_ocr_status(db_pool, doc_id, "failed")
         return {"success": False, "error": str(e)}
 
 
@@ -699,6 +743,7 @@ async def _auto_ocr_npwp(
         extracted = extract_json_from_llm_response(response_text)
         if not extracted:
             logger.error("Auto OCR NPWP JSON parsing failed for client %s", client_id)
+            await _set_doc_ocr_status(db_pool, doc_id, "failed")
             return {"success": False, "error": "Could not parse OCR response"}
 
         ocr_data = {
@@ -761,6 +806,7 @@ async def _auto_ocr_npwp(
 
     except Exception as e:
         logger.error("Auto OCR NPWP failed for client %s: %s", client_id, type(e).__name__)
+        await _set_doc_ocr_status(db_pool, doc_id, "failed")
         return {"success": False, "error": str(e)}
 
 
@@ -800,6 +846,7 @@ async def _auto_ocr_company_profile(
         extracted = extract_json_from_llm_response(response_text)
         if not extracted:
             logger.error("Auto OCR company profile JSON parsing failed for client %s", client_id)
+            await _set_doc_ocr_status(db_pool, doc_id, "failed")
             return {"success": False, "error": "Could not parse OCR response"}
 
         # Build custom_fields update
@@ -906,6 +953,7 @@ async def _auto_ocr_company_profile(
         logger.error(
             "Auto OCR company profile failed for client %s: %s", client_id, type(e).__name__
         )
+        await _set_doc_ocr_status(db_pool, doc_id, "failed")
         return {"success": False, "error": str(e)}
 
 

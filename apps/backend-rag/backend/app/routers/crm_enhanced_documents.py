@@ -204,6 +204,12 @@ async def create_document(
                 folder_hint = "03_Tax"
             elif cat == "company":
                 folder_hint = "02_Company"
+            # Mark document as pending OCR BEFORE queuing background task so DB
+            # is consistent if task runs immediately.
+            await conn.execute(
+                "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
+                doc_id,
+            )
             background_tasks.add_task(
                 _dispatch_ocr_by_folder,
                 pool,
@@ -212,13 +218,14 @@ async def create_document(
                 folder_hint,
                 data.file_name or data.document_type,
                 doc_id,
-            )
-            # Mark document as pending OCR
-            await conn.execute(
-                "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
-                doc_id,
+                data.document_type,
             )
             ocr_triggered = True
+        else:
+            await conn.execute(
+                "UPDATE documents SET ocr_status = 'skipped' WHERE id = $1",
+                doc_id,
+            )
 
         # Notify client via portal that a new document was added
         try:
@@ -429,6 +436,10 @@ async def create_documents_bulk(
                             folder_hint = "03_Tax"
                         elif cat == "company":
                             folder_hint = "02_Company"
+                        await conn.execute(
+                            "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
+                            doc_id,
+                        )
                         background_tasks.add_task(
                             _dispatch_ocr_by_folder,
                             pool,
@@ -437,12 +448,14 @@ async def create_documents_bulk(
                             folder_hint,
                             doc.file_name or doc.document_type,
                             doc_id,
-                        )
-                        await conn.execute(
-                            "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
-                            doc_id,
+                            doc.document_type,
                         )
                         ocr_count += 1
+                    else:
+                        await conn.execute(
+                            "UPDATE documents SET ocr_status = 'skipped' WHERE id = $1",
+                            doc_id,
+                        )
 
                 except Exception as e:
                     logger.error(f"Failed to insert document {doc.file_name}: {e}")
@@ -1635,9 +1648,13 @@ async def upload_document_base64(
                     dedup_resp["company_document_id"] = company_document_id
                 return dedup_resp
 
-            # Trigger OCR via dispatcher only for newly inserted client document rows.
+            # Trigger OCR via dispatcher only when a Drive file and folder exist.
             if not deduplicated_doc_in_tx:
                 if folder_name is not None and effective_file_id is not None:
+                    await conn.execute(
+                        "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
+                        doc_id,
+                    )
                     background_tasks.add_task(
                         _dispatch_ocr_by_folder,
                         pool,
@@ -1648,10 +1665,11 @@ async def upload_document_base64(
                         doc_id,
                         data.document_type,
                     )
-                await conn.execute(
-                    "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
-                    doc_id,
-                )
+                else:
+                    await conn.execute(
+                        "UPDATE documents SET ocr_status = 'skipped' WHERE id = $1",
+                        doc_id,
+                    )
 
             await invalidate_cache("zantara:crm_clients_stats:*")
             return {
@@ -1659,7 +1677,11 @@ async def upload_document_base64(
                 "document_id": doc_id,
                 "file_id": effective_file_id,
                 "file_url": effective_file_url,
-                "ocr_triggered": not deduplicated_doc_in_tx,
+                "ocr_triggered": (
+                    not deduplicated_doc_in_tx
+                    and folder_name is not None
+                    and effective_file_id is not None
+                ),
                 "company_document_id": company_document_id,
             }
 

@@ -587,6 +587,115 @@ async def delete_client_document(
         raise HTTPException(status_code=500, detail=f"Deletion failed: {e!s}") from e
 
 
+def _infer_vision_mime_type(file_name: str | None) -> str:
+    lower = (file_name or "").lower()
+    if lower.endswith(".pdf"):
+        return "application/pdf"
+    if lower.endswith(".png"):
+        return "image/png"
+    if lower.endswith(".webp"):
+        return "image/webp"
+    return "image/jpeg"
+
+
+async def _run_vision_ocr_with_fallback(
+    *,
+    image_base64: str,
+    file_name: str | None,
+    ocr_prompt: str,
+    doc_label: str,
+    gate_site: str,
+) -> tuple[str | None, str | None]:
+    """Run Ollama Vision first and fall back to gated Gemini Cloud Vision on failure."""
+    import os
+
+    import httpx
+
+    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+    vision_model = os.environ.get("OLLAMA_VISION_MODEL", "qwen2.5vl:7b")
+    ollama_ok = False
+    response_text = ""
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as http:
+            resp = await http.post(
+                f"{ollama_url}/api/generate",
+                json={
+                    "model": vision_model,
+                    "prompt": ocr_prompt,
+                    "images": [image_base64],
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 2000},
+                },
+            )
+        if resp.status_code == 200:
+            response_text = resp.json().get("response", "") or ""
+            if response_text:
+                ollama_ok = True
+                logger.info("%s OCR via Ollama: len=%d", doc_label, len(response_text))
+            else:
+                logger.warning(
+                    "%s OCR: Ollama returned empty response, falling back to Gemini",
+                    doc_label,
+                )
+        else:
+            logger.warning(
+                "%s OCR: Ollama HTTP %d, falling back to Gemini",
+                doc_label,
+                resp.status_code,
+            )
+    except Exception as exc:
+        logger.warning(
+            "%s OCR: Ollama unreachable (%s), falling back to Gemini",
+            doc_label,
+            type(exc).__name__,
+        )
+
+    if not ollama_ok:
+        from backend.services.multimodal.cloud_vision_gate import (
+            cloud_vision_allowed,
+            note_cloud_ocr_blocked,
+        )
+
+        if not cloud_vision_allowed():
+            note_cloud_ocr_blocked(gate_site)
+            return (
+                None,
+                "Vision OCR unavailable: local Ollama down and cloud fallback "
+                "blocked for PII sovereignty (OCR_ALLOW_CLOUD_VISION=false)",
+            )
+
+        from backend.llm.genai_client import GENAI_AVAILABLE, get_genai_client
+
+        if not GENAI_AVAILABLE:
+            return None, "Vision OCR service unavailable (no Ollama or Gemini configured)"
+
+        genai_client = get_genai_client()
+        if not genai_client.is_available:
+            return None, "Vision OCR service unavailable (Gemini not configured)"
+
+        mime_type = _infer_vision_mime_type(file_name)
+        result = await genai_client.generate_content(
+            contents=[
+                ocr_prompt,
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": image_base64,
+                    }
+                },
+            ],
+            model="gemini-2.5-flash",
+            max_output_tokens=4096,
+        )
+        response_text = (result or {}).get("text", "") or ""
+        logger.info("%s OCR via Gemini API: len=%d", doc_label, len(response_text))
+
+    if not response_text:
+        return None, "Vision OCR returned empty response"
+    return response_text, None
+
+
 # ================================================
 # NPWP OCR ENDPOINT
 # ================================================
@@ -621,10 +730,7 @@ async def extract_npwp(
     - City
     """
     import base64
-    import os
     import re
-
-    import httpx
 
     try:
         # RBAC check: verify caller has access to this client
@@ -658,27 +764,19 @@ Rules:
 - Use null for fields that are not visible or unclear
 - Return ONLY valid JSON, no markdown, no explanations"""
 
-        # Call Ollama Vision (local, zero API cost)
-        ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-        vision_model = os.environ.get("OLLAMA_VISION_MODEL", "qwen2.5vl:7b")
-
-        async with httpx.AsyncClient(timeout=120.0) as http:
-            resp = await http.post(
-                f"{ollama_url}/api/generate",
-                json={
-                    "model": vision_model,
-                    "prompt": ocr_prompt,
-                    "images": [base64.b64encode(file_data).decode()],
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 2000},
-                },
+        # Try local Ollama Vision first, fall back to gated Gemini Cloud Vision
+        response_text, ocr_error = await _run_vision_ocr_with_fallback(
+            image_base64=base64.b64encode(file_data).decode(),
+            file_name=request.file_name,
+            ocr_prompt=ocr_prompt,
+            doc_label="NPWP",
+            gate_site="crm_clients_documents.extract_npwp",
+        )
+        if response_text is None:
+            return NpwpExtractResponse(
+                success=False,
+                message=ocr_error or "Vision OCR service unavailable",
             )
-
-        if resp.status_code != 200:
-            logger.error("NPWP OCR: Ollama HTTP %d", resp.status_code)
-            return NpwpExtractResponse(success=False, message="Vision OCR service unavailable")
-
-        response_text = resp.json().get("response", "")
         logger.info("NPWP OCR: response_len=%d", len(response_text))
 
         # Parse JSON response
@@ -766,10 +864,7 @@ async def extract_nib(
     - KBLI code
     """
     import base64
-    import os
     import re
-
-    import httpx
 
     try:
         # RBAC check: verify caller has access to this client
@@ -803,27 +898,19 @@ Rules:
 - Use null for fields that are not visible or unclear
 - Return ONLY valid JSON, no markdown, no explanations"""
 
-        # Call Ollama Vision (local, zero API cost)
-        ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-        vision_model = os.environ.get("OLLAMA_VISION_MODEL", "qwen2.5vl:7b")
-
-        async with httpx.AsyncClient(timeout=120.0) as http:
-            resp = await http.post(
-                f"{ollama_url}/api/generate",
-                json={
-                    "model": vision_model,
-                    "prompt": ocr_prompt,
-                    "images": [base64.b64encode(file_data).decode()],
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 2000},
-                },
+        # Try local Ollama Vision first, fall back to gated Gemini Cloud Vision
+        response_text, ocr_error = await _run_vision_ocr_with_fallback(
+            image_base64=base64.b64encode(file_data).decode(),
+            file_name=request.file_name,
+            ocr_prompt=ocr_prompt,
+            doc_label="NIB",
+            gate_site="crm_clients_documents.extract_nib",
+        )
+        if response_text is None:
+            return NibExtractResponse(
+                success=False,
+                message=ocr_error or "Vision OCR service unavailable",
             )
-
-        if resp.status_code != 200:
-            logger.error("NIB OCR: Ollama HTTP %d", resp.status_code)
-            return NibExtractResponse(success=False, message="Vision OCR service unavailable")
-
-        response_text = resp.json().get("response", "")
         logger.info("NIB OCR: response_len=%d", len(response_text))
 
         # Parse JSON response
