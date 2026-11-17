@@ -1,10 +1,12 @@
-"""The PII scanner middleware is installed at boot without importing presidio."""
+"""The PII scanner loads presidio and builds its analyzer on the first scan."""
 
 import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+import pytest
 
 _INSTALL = """
 import sys
@@ -67,3 +69,21 @@ if installed:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_failed_build_caches_no_analyzer(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.middleware import pii_scanner
+
+    def failing_build() -> list:
+        raise RuntimeError("recognizer build failed")
+
+    monkeypatch.setattr(pii_scanner, "_analyzer", None)
+    monkeypatch.setattr(pii_scanner, "_indonesian_recognizers", failing_build)
+    monkeypatch.setattr("presidio_analyzer.AnalyzerEngine", lambda: object())
+
+    with pytest.raises(RuntimeError):
+        pii_scanner._get_analyzer()
+
+    # An engine cached without the Indonesian recognizers would answer every
+    # later scan and miss KTP, NPWP, passport and phone numbers.
+    assert pii_scanner._analyzer is None

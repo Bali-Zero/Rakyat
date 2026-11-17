@@ -122,9 +122,12 @@ def _get_analyzer() -> "AnalyzerEngine":
     if _analyzer is None:
         from presidio_analyzer import AnalyzerEngine
 
-        _analyzer = AnalyzerEngine()
+        # Cached only once complete: an engine cached before its recognizers
+        # were added would keep scanning without them after a failed build.
+        analyzer = AnalyzerEngine()
         for recognizer in _indonesian_recognizers():
-            _analyzer.registry.add_recognizer(recognizer)
+            analyzer.registry.add_recognizer(recognizer)
+        _analyzer = analyzer
         logger.info(
             "PII Scanner initialized with Indonesian recognizers (KTP, NPWP, Passport, Phone)"
         )
