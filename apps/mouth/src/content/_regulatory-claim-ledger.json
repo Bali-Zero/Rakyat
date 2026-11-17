@@ -80,7 +80,7 @@
       "id": "RETIRE-NO-SPONSOR-SINGLE",
       "domain": "visa",
       "stale_pattern": "Min. USD 1,500/month income evidence",
-      "current_fact": "Retirement is two tracks (60+ / 55+ — verify active 60+ age threshold in current seed): E33F (retirement guarantor/sponsor required, 1yr, >= USD 3,000/mo income) vs E33E Silver Hair Golden Visa (no corporate sponsor required, USD 50,000 deposit in a state-owned BUMN bank AND >= USD 3,000/mo income or allowance, 5yr extendable up to 10yr). A single 'no corporate sponsor' or USD 1,500/mo rule conflates them.",
+      "current_fact": "Retirement is two tracks (55+ in E33E.json; 60+ under Kepmen M.IP-08.GR.01.01/2025): E33F (retirement guarantor/sponsor required, 1yr, >= USD 3,000/mo income) vs E33E Silver Hair Golden Visa (no corporate sponsor required, USD 50,000 deposit in a state-owned BUMN bank AND >= USD 3,000/mo income or allowance, 5yr extendable up to 10yr). A single 'no corporate sponsor' or USD 1,500/mo rule conflates them.",
       "source": "Permenkumham 22/2023 Art. 113 & 11/2024 index E33E/E33F; E33E.json; E33E (Extend) in bali_zero_official_prices_2026.json",
       "severity": "P0"
     },
