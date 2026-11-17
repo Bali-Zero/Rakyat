@@ -276,7 +276,7 @@ def test_the_widest_request_is_sent_as_those_bytes_and_not_as_a_second_serializa
     sha = hashlib.sha256(res.plan.read_bytes()).hexdigest()
     (request,) = res.rec.requests
     assert request.content == apply_mod.preflight(_widest_row(), sha, dry_run=True)[1]
-    assert res.code == 0
+    assert res.code == 0 and res.rec.refs == ["999999999"]
 
 
 def test_the_prepared_request_carries_nothing_but_the_key_the_content_type_and_client_defaults(
@@ -331,7 +331,7 @@ def test_a_cookie_set_by_an_answer_is_not_sent_with_the_next_subject(tmp_path, c
         [row(ref="1"), row(ref="2", docs=[document("b", files=("wordtwo",))])],
         lambda req, n: (*good(req), cookie),
     )
-    assert res.code == 0 and len(res.rec.requests) == 2
+    assert res.code == 0 and res.rec.refs == ["1", "2"]
     _assert_clean(res.rec.requests)
 
 
@@ -342,7 +342,7 @@ def test_a_cookie_set_by_a_503_is_not_sent_with_the_retry(tmp_path, capsys):
         return (503, {}, cookie) if n == 1 else (*good(req), cookie)
 
     res = run(tmp_path, capsys, [row(ref="1"), row(ref="2")], answer)
-    assert res.rec.refs == ["1", "1", "2"]
+    assert res.rec.refs == ["1", "1", "2"] and res.code == 0
     _assert_clean(res.rec.requests)
 
 
@@ -604,10 +604,11 @@ def test_a_run_counts_one_sent_and_one_label_per_invocation_whatever_the_retry(
 ):
     steps, final, _ = SEQUENCES[name]
     res = run(tmp_path, capsys, [row()], _scripted(steps))
-    label = apply_mod.classify(
-        final, {"outcome": "would_link", "dry_run": True} if final == 200 else {}, True
-    )
-    assert res.rec.calls == 2 and "mode=dry-run sent=1" in res.out
+    body = {"outcome": "would_link", "dry_run": True} if final == 200 else {}
+    label = apply_mod.classify(final, body, True)
+    assert res.rec.refs == ["1", "1"] and "mode=dry-run sent=1" in res.out
+    expected_code = 0 if final == 200 else 1
+    assert res.code == expected_code
     assert res.counters()[label] == 1
     assert sum(v for k, v in res.counters().items() if k in LABELS.split("|")) == 1
     _assert_clean(res.rec.requests)
@@ -676,7 +677,8 @@ def test_a_failing_label_in_the_middle_fails_the_run_and_the_later_row_is_still_
 
     res = run(tmp_path, capsys, [row("1"), row("2"), row("3")], answer, apply_=apply_)
     retried = label in ("http_503", "http_0")
-    assert res.rec.refs == ["1", "2", "2", "3"] if retried else ["1", "2", "3"]
+    expected = ["1", "2", "2", "3"] if retried else ["1", "2", "3"]
+    assert res.rec.refs == expected
     counters = res.counters()
     assert counters[ok_label(apply_)] == 2 and counters[label] == 1
     assert "sent=3" in res.out
@@ -697,7 +699,7 @@ def test_answers_of_the_registry_that_are_not_failures_exit_zero(tmp_path, capsy
         return good(req)
 
     res = run(tmp_path, capsys, [row("1"), row("2"), row("3"), row("4")], answer, apply_=apply_)
-    assert res.code == 0
+    assert res.code == 0 and res.rec.refs == ["1", "2", "3", "4"]
     counters = res.counters()
     assert (
         counters["subject_not_registered"],
@@ -732,7 +734,7 @@ def test_references_are_accepted_or_refused_as_written_and_the_evidence_carries_
 ):
     res = run(tmp_path, capsys, [row(ref=value)])
     if accepted is None:
-        assert res.code == 1 and res.rec.requests == []
+        assert res.code == 1 and res.rec.refs == []
         assert res.counters()["skipped:invalid_reference"] == 1
     else:
         assert res.code == 0 and res.rec.refs == [accepted]
@@ -1007,7 +1009,7 @@ def test_sentinels_in_answers_headers_plan_fields_and_references_never_reach_the
         return 200, {"outcome": "would_link", "dry_run": True, "detail": SENT}, {"X-Leak": SENT}
 
     res = run(tmp_path, capsys, rows, answer)
-    assert SENT not in res.out + res.err
+    assert SENT not in res.out + res.err and res.rec.refs == ["1", "4"] and res.code == 1
     assert (
         res.counters()["skipped:invalid_reference"] == 1
         and res.counters()["skipped:unknown_kind"] == 1
@@ -1032,7 +1034,7 @@ def _shared_rows():
 
 def test_the_totals_count_distinct_documents_sightings_and_links(tmp_path, capsys):
     res = run(tmp_path, capsys, _shared_rows())
-    assert res.code == 0
+    assert res.code == 0 and res.rec.refs == ["1", "2"]
     assert (
         res.counters()["plan unique documents"],
         res.counters()["plan unique sightings"],
@@ -1040,10 +1042,12 @@ def test_the_totals_count_distinct_documents_sightings_and_links(tmp_path, capsy
     ) == (3, 4, 4)
     for extra in (["--limit", "1"],):
         again = run(tmp_path, capsys, _shared_rows(), good, *extra)
+        assert again.rec.refs == ["1"] and again.code == 0
         assert {k: v for k, v in again.counters().items() if k.startswith("plan unique")} == {
             k: v for k, v in res.counters().items() if k.startswith("plan unique")
         }
     stopped = run(tmp_path, capsys, _shared_rows(), lambda req, n: (401, {}))
+    assert stopped.rec.refs == ["1"] and stopped.code == 1
     assert (
         stopped.counters()["plan unique documents"],
         stopped.counters()["plan unique links"],
@@ -1092,3 +1096,144 @@ def test_read_ledger_has_its_slice_one_signature_and_behaviour(tmp_path):
     assert not hasattr(apply_mod, "read_ledger") and not hasattr(apply_mod, "_counts")
     assert "ledger" not in " ".join(inspect.signature(apply_mod.main).parameters)
     assert itertools  # keep the import used by parametrization helpers
+
+
+# ── round 3: third-party output, recording bodies at run level, exit codes ───
+
+
+def test_a_malformed_set_cookie_in_a_good_answer_leaves_stderr_empty(tmp_path, capfd):
+    rec = Recorder(lambda req, n: (*good(req), {"Set-Cookie": "probe=x; Max-Age"}))
+    plan = write_plan(tmp_path, [row("1"), row("2")])
+    code = apply_mod.main(["--plan", str(plan), "--pace", "0"], client=rec.client)
+    captured = capfd.readouterr()
+    assert code == 0 and rec.refs == ["1", "2"]
+    assert captured.err == "" and "would_link=2" in captured.out
+    assert_schema(captured.out)
+
+
+def test_warnings_logs_and_prints_to_stderr_from_third_party_code_are_all_discarded(
+    tmp_path, capfd
+):
+    import logging
+    import sys
+    import warnings
+
+    class Noisy(httpx.Client):
+        def send(self, request, **kw):
+            warnings.warn(SENT, UserWarning, stacklevel=1)
+            logging.getLogger("noisy.third.party").error(SENT)
+            print(SENT, file=sys.stderr)
+            return super().send(request, **kw)
+
+    rec = Recorder(lambda req, n: good(req), client_class=Noisy)
+    before = (logging.root.manager.disable, sys.stderr)
+    plan = write_plan(tmp_path, [row("1")])
+    code = apply_mod.main(["--plan", str(plan), "--pace", "0"], client=rec.client)
+    captured = capfd.readouterr()
+    assert code == 0 and rec.refs == ["1"]
+    assert captured.err == "" and SENT not in captured.out
+    assert_schema(captured.out)
+    assert (logging.root.manager.disable, sys.stderr) == before
+    assert sys.stderr is before[1]
+
+
+def test_the_guards_are_also_restored_after_a_refusal_and_after_a_failure(tmp_path, capfd):
+    import logging
+    import sys
+
+    before = (logging.root.manager.disable, sys.stderr)
+    plan = write_plan(tmp_path, [row("1")])
+    assert apply_mod.main(["--plan", str(plan), "--bogus"], client=None) == 2
+    assert apply_mod.main(["--plan", str(plan), "--apply"], client=None) == 2
+    bad = write_plan(tmp_path, [row(docs=[document("a", sha256=[SENT])])])
+    assert apply_mod.main(["--plan", str(bad), "--pace", "0"], client=Recorder(good).client) == 1
+    assert (logging.root.manager.disable, sys.stderr) == before
+    assert capfd.readouterr().err == ""
+
+
+def _recording_run(tmp_path, capsys, monkeypatch, status, body):
+    recorded = Recording(body)
+    monkeypatch.setattr(apply_mod.s1, "send", lambda client, url, key, request: (status, recorded))
+    plan = write_plan(tmp_path, [row("1"), row("2")])
+    code = apply_mod.main(["--plan", str(plan), "--pace", "0"], client=object())
+    assert_schema(capsys.readouterr().out)
+    return code, recorded
+
+
+def test_the_run_reads_exactly_outcome_and_dry_run_of_a_200_answer(tmp_path, capsys, monkeypatch):
+    body = {"outcome": "would_link", "dry_run": True, **EXTRAS}
+    code, recorded = _recording_run(tmp_path, capsys, monkeypatch, 200, body)
+    assert code == 0
+    assert set(recorded.reads) == {"outcome", "dry_run"}
+
+
+@pytest.mark.parametrize("status", [401, 422, 503, 0, 500])
+def test_the_run_reads_no_key_of_a_non_200_answer(tmp_path, capsys, monkeypatch, status):
+    code, recorded = _recording_run(
+        tmp_path, capsys, monkeypatch, status, {"outcome": "linked", "dry_run": True, **EXTRAS}
+    )
+    assert code == 1 and recorded.reads == []
+
+
+def test_a_422_in_the_middle_is_sent_once_and_the_run_continues(tmp_path, capsys):
+    res = run(
+        tmp_path,
+        capsys,
+        [row("1"), row("2"), row("3")],
+        lambda req, n: (422, {}) if req["evidence"]["subject_ref"] == "2" else good(req),
+    )
+    assert res.rec.refs == ["1", "2", "3"] and res.code == 1
+    assert res.counters()["http_422"] == 1 and res.counters()["would_link"] == 2
+
+
+def test_a_single_row_whose_two_attempts_both_raise_exits_one(tmp_path, capsys):
+    res = run(tmp_path, capsys, [row("1")], lambda req, n: BOOM)
+    assert res.rec.refs == ["1", "1"] and res.code == 1 and res.counters()["http_0"] == 1
+
+
+def test_the_producers_own_filter_wins_over_a_filter_that_turns_warnings_into_errors(
+    tmp_path, capfd
+):
+    import warnings
+
+    class Noisy(httpx.Client):
+        def send(self, request, **kw):
+            warnings.warn(SENT, UserWarning, stacklevel=1)
+            return super().send(request, **kw)
+
+    rec = Recorder(lambda req, n: good(req), client_class=Noisy)
+    plan = write_plan(tmp_path, [row("1")])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        code = apply_mod.main(["--plan", str(plan), "--pace", "0"], client=rec.client)
+    assert code == 0 and rec.refs == ["1"] and capfd.readouterr().err == ""
+
+
+def test_no_log_record_of_third_party_code_is_emitted_during_the_run(tmp_path, capfd):
+    import logging
+
+    records = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("noisy.collected")
+    handler = Collect(level=logging.DEBUG)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
+    class Noisy(httpx.Client):
+        def send(self, request, **kw):
+            logger.error(SENT)
+            return super().send(request, **kw)
+
+    try:
+        rec = Recorder(lambda req, n: good(req), client_class=Noisy)
+        plan = write_plan(tmp_path, [row("1")])
+        assert apply_mod.main(["--plan", str(plan), "--pace", "0"], client=rec.client) == 0
+        assert records == [] and capfd.readouterr().err == ""
+        logger.error("after the run")  # the previous disable level is back
+        assert len(records) == 1
+    finally:
+        logger.removeHandler(handler)

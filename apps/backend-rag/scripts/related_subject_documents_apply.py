@@ -15,18 +15,25 @@ nothing else, and no value of an answer is ever printed. It prints fixed text, t
 numbers of rows and calls, the labels of ``classify`` and the plan totals. Exit 0: no failing
 label, no skipped row, nothing refused. Exit 1: otherwise. Exit 2: refused before any call.
 
+For the whole run Python warnings are discarded, logging is disabled and Python's ``sys.stderr``
+is redirected to a sink that is never read: the script's own lines go to stdout only.
+
 Env: ``WA_MIRROR_CRM_WRITE_KEY`` (scoped key), ``WA_MIRROR_BACKEND_URL`` (default Fly).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
+import logging
 import os
 import sys
 import time
+import warnings
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -288,13 +295,21 @@ def _run(argv: list[str] | None, client: Any) -> int:
 
 
 def main(argv: list[str] | None = None, *, client: Any = None) -> int:
+    previous_disable = logging.root.manager.disable
+    sink = io.StringIO()  # whatever Python-level code writes to stderr lands here and is dropped
     try:
-        return _run(argv, client)
-    except SystemExit:
-        raise
-    except Exception:
-        print("failed: unexpected producer failure")
-        return 1
+        with warnings.catch_warnings(), contextlib.redirect_stderr(sink):
+            warnings.simplefilter("ignore")
+            logging.disable(logging.CRITICAL)
+            try:
+                return _run(argv, client)
+            except SystemExit:
+                raise
+            except Exception:
+                print("failed: unexpected producer failure")
+                return 1
+    finally:
+        logging.disable(previous_disable)
 
 
 if __name__ == "__main__":
