@@ -9,7 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
 class LKPMStatus(str, Enum):
@@ -150,6 +150,7 @@ class LKPMDraft(BaseModel):
 
     # Validation
     validation: LKPMValidationResult | None = None
+    validation_alerts: list[ValidationAlert] = Field(default_factory=list)
 
     # Client approval
     client_approved: bool = False
@@ -181,6 +182,14 @@ class LKPMDraft(BaseModel):
         if v < 2020 or v > 2100:
             raise ValueError("year must be between 2020 and 2100")
         return v
+
+    @model_validator(mode="after")
+    def _sync_validation_alerts(self) -> "LKPMDraft":
+        if self.validation is not None and (
+            self.validation.alerts or not self.validation_alerts
+        ):
+            self.validation_alerts = list(self.validation.alerts)
+        return self
 
 
 class LKPMClientConfig(BaseModel):
@@ -302,7 +311,7 @@ class LKPMBatchItem(BaseModel):
     id: int
     client_id: int
     company_id: int | None = None
-    company_name: str
+    company_name: str = ""
     quarter: str
     year: int
     status: LKPMStatus
@@ -316,6 +325,11 @@ class LKPMBatchItem(BaseModel):
     lkpm_assigned_to: str | None = None
     days_to_deadline: int | None = None
     updated_at: datetime | None = None
+
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def _coalesce_company_name(cls, v: Any) -> str:
+        return "" if v is None else str(v)
 
 
 class LKPMDeadline(BaseModel):

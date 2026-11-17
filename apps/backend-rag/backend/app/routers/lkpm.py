@@ -6,12 +6,12 @@ All calculations are deterministic — no AI on numbers.
 """
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import quote
 from uuid import uuid4
 
 import asyncpg
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, field_validator
 
@@ -19,6 +19,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.models.lkpm import (
     LKPMClientConfig,
     LKPMClientSubmission,
+    LKPMValidationResult,
 )
 from backend.app.utils.crm_utils import is_crm_admin
 
@@ -237,19 +238,47 @@ async def submit_data(
         ) from e
 
 
+class SyncJurnalBody(BaseModel):
+    """Optional JSON body for POST /sync-jurnal/{client_id}."""
+
+    quarter: str | None = None
+    year: int | None = None
+
+
+class UploadReceiptBody(BaseModel):
+    """Optional JSON body for POST /upload-receipt/{draft_id}."""
+
+    receipt_number: str | None = None
+    receipt_file_url: str | None = None
+
+
 @router.post("/sync-jurnal/{client_id}", response_model=dict)
 async def sync_jurnal(
     client_id: int,
-    quarter: str,
-    year: int,
+    quarter: Annotated[str | None, Query()] = None,
+    year: Annotated[int | None, Query()] = None,
+    body: Annotated[SyncJurnalBody | None, Body()] = None,
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict:
     """Pull data from Jurnal.id and create/update LKPM draft."""
     _require_lkpm_staff(current_user)
+    resolved_quarter = (
+        quarter
+        if quarter is not None and quarter.strip()
+        else (body.quarter if isinstance(body, SyncJurnalBody) else None)
+    )
+    resolved_year = (
+        year
+        if year is not None
+        else (body.year if isinstance(body, SyncJurnalBody) else None)
+    )
+    if resolved_quarter is None or not resolved_quarter.strip() or resolved_year is None:
+        raise HTTPException(status_code=422, detail="quarter and year are required")
+
     service = _get_service(db_pool)
     try:
-        draft = await service.sync_jurnal(client_id, quarter, year)
+        draft = await service.sync_jurnal(client_id, resolved_quarter.strip(), resolved_year)
         return {
             "success": True,
             "draft_id": draft.id,
@@ -375,6 +404,14 @@ async def get_ready_pack(
     service = _get_service(db_pool)
     try:
         pack = await service.get_ready_pack(draft_id)
+        if pack.validation_summary is None:
+            pack.validation_summary = LKPMValidationResult(
+                is_valid=False,
+                alerts=[],
+                red_count=0,
+                yellow_count=0,
+                green_count=0,
+            )
 
         # Generate HTML
         from backend.services.compliance.lkpm_ready_pack import generate_ready_pack_html
@@ -472,16 +509,33 @@ async def mark_submitted(
 @router.post("/upload-receipt/{draft_id}", response_model=dict)
 async def upload_receipt(
     draft_id: int,
-    receipt_number: str,
-    receipt_file_url: str | None = None,
+    receipt_number: Annotated[str | None, Query()] = None,
+    receipt_file_url: Annotated[str | None, Query()] = None,
+    body: Annotated[UploadReceiptBody | None, Body()] = None,
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict:
     """Upload OSS receipt for a submitted LKPM."""
     _require_lkpm_staff(current_user)
+    resolved_receipt_number = (
+        receipt_number
+        if receipt_number is not None and receipt_number.strip()
+        else (body.receipt_number if isinstance(body, UploadReceiptBody) else None)
+    )
+    if resolved_receipt_number is None or not resolved_receipt_number.strip():
+        raise HTTPException(status_code=422, detail="receipt_number is required")
+    resolved_file_url = (
+        receipt_file_url
+        if receipt_file_url is not None
+        else (body.receipt_file_url if isinstance(body, UploadReceiptBody) else None)
+    )
     service = _get_service(db_pool)
     try:
-        return await service.upload_receipt(draft_id, receipt_number, receipt_file_url)
+        return await service.upload_receipt(
+            draft_id,
+            resolved_receipt_number.strip(),
+            resolved_file_url,
+        )
     except LookupError as e:
         raise HTTPException(status_code=404, detail="LKPM draft not found") from e
     except Exception as e:
