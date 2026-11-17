@@ -1069,7 +1069,12 @@ async def test_get_timeline_recent_documents_hide_archived_and_deleted() -> None
 # "Document received (<EXT>)". No stored row is rewritten.
 # ---------------------------------------------------------------------------
 
-_UUID_NAME = "3f2b9c1e-7a4d-4e8b-9f10-2c3d4e5f6a7b.png"
+# Deterministic, obviously fake keys (low entropy: no secret-scanner noise).
+_UUID_NAME = "00000000-0000-4000-8000-000000000001.png"
+_HEX32_PDF = "00000000000040008000000000000002.PDF"
+_UUID_JPEG = "00000000-0000-4000-8000-000000000003.jpeg"
+_HEX32_BARE = "00000000000040008000000000000004"
+_KEY_MARKERS = ("-0000-4000-8000-", "000040008000")
 
 
 @pytest.mark.asyncio
@@ -1092,8 +1097,7 @@ async def test_get_timeline_upload_event_never_shows_uuid_file_name() -> None:
                 "event_type": "document_received",
                 "title": "Document received",
                 "description": (
-                    "0123456789abcdef0123456789abcdef.PDF uploaded successfully"
-                    " (Expiry detected: 2030-01-01)"
+                    f"{_HEX32_PDF} uploaded successfully (Expiry detected: 2030-01-01)"
                 ),
                 "event_date": now,
             },
@@ -1132,8 +1136,7 @@ async def test_get_timeline_upload_event_never_shows_uuid_file_name() -> None:
         "Document (PNG) removed by client (recoverable for 30 days)"
     )
     blob = repr(result)
-    assert "3f2b9c1e" not in blob
-    assert "0123456789abcdef" not in blob
+    assert not any(marker in blob for marker in _KEY_MARKERS)
 
 
 @pytest.mark.asyncio
@@ -1161,14 +1164,14 @@ async def test_get_timeline_document_feed_label_wins_and_uuid_falls_back() -> No
             {  # no label, UUID name → extension fallback
                 "id": 7,
                 "document_type": "other",
-                "file_name": "9f1e2d3c-4b5a-4968-8776-5544332211aa.jpeg",
+                "file_name": _UUID_JPEG,
                 "status": "received",
                 "created_at": now,
             },
             {  # nothing usable at all
                 "id": 8,
                 "document_type": None,
-                "file_name": "9f1e2d3c4b5a49688776554433221100",
+                "file_name": _HEX32_BARE,
                 "status": "received",
                 "created_at": now,
             },
@@ -1184,5 +1187,4 @@ async def test_get_timeline_document_feed_label_wins_and_uuid_falls_back() -> No
     assert by_id["doc-7"]["title"] == "Document received (JPEG)"
     assert by_id["doc-8"]["title"] == "Document received"
     blob = repr(result)
-    assert "3f2b9c1e" not in blob
-    assert "9f1e2d3c" not in blob
+    assert not any(marker in blob for marker in _KEY_MARKERS)
