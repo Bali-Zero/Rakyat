@@ -831,6 +831,8 @@ async def test_fresh_idempotency_key_against_a_still_live_order_does_not_crash(p
     assert replayed2 is False
     assert body2["order_id"] == order_id
     assert body2["order_state"] == "awaiting_payment"
+    assert body2["checkout_url"] is None
+    assert "pending-resume:" not in str(body2)
 
     count = await pool.fetchval(
         "SELECT count(*) FROM garuda_orders WHERE result_id_ref = 'result-9-0840000000'"
@@ -897,6 +899,8 @@ async def test_concurrent_order_creation_race_falls_back_to_the_winner_not_a_cra
     )
     assert replayed is False
     assert loser_body["order_id"] == winner_order_id  # falls back to the real winner, no crash
+    assert loser_body["checkout_url"] is None
+    assert "pending-resume:" not in str(loser_body)
 
     count = await pool.fetchval(
         "SELECT count(*) FROM garuda_orders WHERE result_id_ref = 'result-10-0840000000'"
