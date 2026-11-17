@@ -34,6 +34,7 @@ from backend.app.deps.crm_access import get_crm_user_filter
 from backend.app.deps.crm_service_write import verify_crm_write_key
 from backend.app.services.crm.audit_logger import audit_change, audit_logger
 from backend.app.services.crm.metrics import metrics_collector, track_client_creation
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import (
     AvatarUrl,
     is_crm_admin,
@@ -918,7 +919,8 @@ async def list_clients(
             # every team member. Unassigned clients stay admin-only until triaged.
             if rbac_filter is not None:
                 query_parts.append(
-                    f" AND (c.assigned_to = ${param_index} OR c.tax_consultant = ${param_index})",
+                    f" AND (c.assigned_to = ANY(${param_index}::text[])"
+                    f" OR c.tax_consultant = ANY(${param_index}::text[]))",
                 )
                 params.append(rbac_filter)
                 param_index += 1
@@ -2060,6 +2062,7 @@ async def get_clients_stats(
         # new_last_30_days query).
         user_email = current_user.get("email", "").lower() if isinstance(current_user, dict) else ""
         scoped = bool(user_email) and not is_crm_admin(current_user)
+        peers = sorted(caller_pool_peers(current_user))
 
         async with db_pool.acquire() as conn:
             # Total clients by status (exclude soft-deleted)
@@ -2067,10 +2070,10 @@ async def get_clients_stats(
                 f"""
                 SELECT status, COUNT(*) as count
                 FROM clients
-                WHERE deleted_at IS NULL{" AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""}
+                WHERE deleted_at IS NULL{" AND (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))" if scoped else ""}
                 GROUP BY status
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             # Clients by assigned team member (exclude soft-deleted)
@@ -2079,12 +2082,14 @@ async def get_clients_stats(
                 SELECT assigned_to, COUNT(*) as count
                 FROM clients
                 WHERE assigned_to IS NOT NULL AND deleted_at IS NULL{
-                    " AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""
+                    " AND (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))"
+                    if scoped
+                    else ""
                 }
                 GROUP BY assigned_to
                 ORDER BY count DESC
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             # New clients last N days
@@ -2093,10 +2098,10 @@ async def get_clients_stats(
                     """
                     SELECT COUNT(*) as count
                     FROM clients
-                    WHERE (assigned_to = $1 OR tax_consultant = $1)
+                    WHERE (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))
                         AND created_at >= NOW() - INTERVAL '1 day' * $2
                     """,
-                    user_email,
+                    peers,
                     STATS_DAYS_RECENT,
                 )
             else:
@@ -2115,11 +2120,11 @@ async def get_clients_stats(
                 SELECT pt.name as practice_type, COUNT(p.id) as count
                 FROM practices p
                 JOIN practice_types pt ON p.practice_type_id = pt.id
-                {"WHERE p.assigned_to = $1" if scoped else ""}
+                {"WHERE p.assigned_to = ANY($1::text[])" if scoped else ""}
                 GROUP BY pt.name
                 ORDER BY count DESC
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             # Passport health counts
@@ -2131,9 +2136,9 @@ async def get_clients_stats(
                     COUNT(*) FILTER (WHERE last_interaction_date < NOW() - INTERVAL '30 days' OR last_interaction_date IS NULL) as silent_30d
                 FROM clients
                 WHERE deleted_at IS NULL AND status != 'inactive'
-                    AND passport_expiry IS NOT NULL{" AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""}
+                    AND passport_expiry IS NOT NULL{" AND (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))" if scoped else ""}
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             by_status = {row["status"]: row["count"] for row in by_status_rows}
@@ -2374,7 +2379,7 @@ async def get_client_ai_summary(
     start_time = time.time()
 
     # RBAC: enforce per-user filter unless admin
-    assigned_filter: str | None = None
+    assigned_filter: list[str] | None = None
     if not is_crm_admin(current_user):
         assigned_filter = get_crm_user_filter(current_user)
 
@@ -2388,7 +2393,7 @@ async def get_client_ai_summary(
                            ai_summary_schema_version, ai_summary_file_hash
                     FROM clients
                     WHERE id = $1
-                      AND (assigned_to = $2 OR tax_consultant = $2 OR assigned_to IS NULL)
+                      AND (assigned_to = ANY($2::text[]) OR tax_consultant = ANY($2::text[]) OR assigned_to IS NULL)
                     """,
                     client_id,
                     assigned_filter,

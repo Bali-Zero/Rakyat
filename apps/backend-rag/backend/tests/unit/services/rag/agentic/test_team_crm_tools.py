@@ -234,7 +234,7 @@ class TestTeamMyClientsTool:
 
         sql, params = conn.fetch.call_args.args[0], conn.fetch.call_args.args[1:]
         assert "LOWER(c.assigned_to)" in sql
-        assert TEAM_PROFILE_A["email"] in params
+        assert [TEAM_PROFILE_A["email"]] in params
 
     @pytest.mark.asyncio
     async def test_innocence_admin_scope_has_no_assigned_to_filter(self):
@@ -283,7 +283,7 @@ class TestTeamMyPracticesTool:
 
         sql, params = conn.fetch.call_args.args[0], conn.fetch.call_args.args[1:]
         assert "LOWER(c.assigned_to)" in sql
-        assert TEAM_PROFILE_A["email"] in params
+        assert [TEAM_PROFILE_A["email"]] in params
 
     @pytest.mark.asyncio
     async def test_status_filter_is_parameterized(self):
@@ -316,7 +316,7 @@ class TestTeamMyDeadlinesTool:
             sql = call.args[0]
             params = call.args[1:]
             assert "assigned_to" in sql
-            assert TEAM_PROFILE_A["email"] in params
+            assert [TEAM_PROFILE_A["email"]] in params
 
     @pytest.mark.asyncio
     async def test_admin_scope_omits_assigned_to_filter(self):
@@ -388,8 +388,8 @@ class TestTeamPracticeDetailTool:
         assert "ILIKE" in sql
         assert "LOWER(c.assigned_to)" in sql
         assert "%Client Beta%" in params
-        assert TEAM_PROFILE_A["email"] in params
-        assert TEAM_PROFILE_B["email"] not in params
+        assert [TEAM_PROFILE_A["email"]] in params
+        assert [TEAM_PROFILE_B["email"]] not in params
 
     @pytest.mark.asyncio
     async def test_admin_scope_has_no_assigned_to_filter(self):

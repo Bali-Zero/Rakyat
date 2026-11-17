@@ -141,6 +141,8 @@ export interface KBLINativeScopeView {
 
 export interface KBLIDetail extends KBLIPmaDisclosure {
   licensing_note?: string | null;
+  // KBLI-2020 ancestor codes whose licences this (new-in-2025) code carries.
+  licensing_content_inherited_from?: string[] | null;
   code: string;
   title: string;
   description: string;
@@ -780,6 +782,15 @@ export interface KBLISearchResult extends KBLIPmaDisclosure {
   description: string;
   score: number;
   risk_category: string;
+  // Flat Bali provincial verdict (backend `KBLISearchResult`). `null`/absent
+  // means the payload carried no verdict — it is NOT "open".
+  bali_status?: string | null;
+  bali_blocked?: boolean | null;
+  bali_needs_review?: boolean | null;
+  bali_reason?: string;
+  bali_closure_url?: string | null;
+  bali_closure_scope?: string | null;
+  bali_confidence?: string | null;
 }
 
 export class KBLIApi extends ApiClientBase {

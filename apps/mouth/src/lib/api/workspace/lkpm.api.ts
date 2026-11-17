@@ -16,6 +16,22 @@ import type {
   LKPMReceipt,
 } from "../portal/portal.types";
 
+/**
+ * One row per draft returned by `GET /api/v1/lkpm/alerts`
+ * (backend `LKPMService.get_alerts`): aggregated counts, NOT individual
+ * `LKPMValidationAlert` items.
+ */
+export interface LKPMAlertSummary {
+  draft_id: number;
+  client_id: number;
+  company_name: string | null;
+  quarter: string;
+  year: number;
+  red_alerts: number;
+  total_alerts: number;
+  status: string;
+}
+
 export const lkpmApi = {
   async getBatch(
     quarter: string,
@@ -70,10 +86,14 @@ export const lkpmApi = {
     return { count: r.count ?? 0, items: r.items ?? [] };
   },
 
-  async getAlerts(): Promise<LKPMValidationAlert[]> {
+  /**
+   * Backend `get_alerts` returns one row PER DRAFT with aggregated counts
+   * (not a flat list of validation alerts).
+   */
+  async getAlerts(): Promise<LKPMAlertSummary[]> {
     const r = await api.get<{
       success: boolean;
-      alerts: LKPMValidationAlert[];
+      alerts: LKPMAlertSummary[];
     }>("/api/v1/lkpm/alerts");
     return r.alerts ?? [];
   },

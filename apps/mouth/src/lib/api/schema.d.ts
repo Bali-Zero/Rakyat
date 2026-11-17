@@ -3135,6 +3135,7 @@ export interface paths {
     /**
      * Log Newsletter Send
      * @description Log a newsletter send event (admin endpoint).
+     *     Accepts legacy snake_case query parameters or JSON body (camelCase or snake_case).
      */
     post: operations["log_newsletter_send_api_blog_newsletter_log_post"];
     delete?: never;
@@ -6199,7 +6200,7 @@ export interface paths {
      *     B3 (SPEC-p0-invite.md, 2026-08-23): scoped to the caller's assignment,
      *     same pattern as `get_recent_portal_activity` below — `assigned_filter`
      *     is None for admins (no filter, full book) and the caller's lowercased
-     *     email otherwise. Applied to BOTH queries: a total count that ignored
+     *     email plus its client-pool peers otherwise. Applied to BOTH queries: a total count that ignored
      *     the filter would still leak the volume of a client the caller cannot
      *     otherwise see.
      */
@@ -20254,6 +20255,13 @@ export interface components {
       article_content?: string | null;
       /** Article Title */
       article_title?: string | null;
+      /** Context */
+      context?:
+        | {
+            [key: string]: unknown;
+          }
+        | string
+        | null;
       /** Question */
       question: string;
     };
@@ -20273,9 +20281,25 @@ export interface components {
        * Sources
        * @default []
        */
-      sources: {
-        [key: string]: unknown;
-      }[];
+      sources: components["schemas"]["BlogAskSource"][];
+    };
+    /**
+     * BlogAskSource
+     * @description Source citation model for AskZantara blog responses
+     */
+    BlogAskSource: {
+      /**
+       * Snippet
+       * @default
+       */
+      snippet: string;
+      /**
+       * Title
+       * @default Source
+       */
+      title: string;
+      /** Url */
+      url?: string | null;
     };
     /** Body_assign_thread_api_omnichannel_threads__thread_id__assign_post */
     Body_assign_thread_api_omnichannel_threads__thread_id__assign_post: {
@@ -25007,6 +25031,20 @@ export interface components {
       /** Total */
       total: number;
     };
+    /**
+     * NewsletterLogRequest
+     * @description Newsletter send log payload (supports both snake_case and camelCase).
+     */
+    NewsletterLogRequest: {
+      /** Article Id */
+      article_id?: string | null;
+      /** Failed Count */
+      failed_count?: number | null;
+      /** Recipient Count */
+      recipient_count?: number | null;
+      /** Sent Count */
+      sent_count?: number | null;
+    };
     /** NextSteps */
     NextSteps: {
       /** Expat */
@@ -28408,6 +28446,16 @@ export interface components {
       frequency: string;
     };
     /**
+     * SyncJurnalBody
+     * @description Optional JSON body for POST /sync-jurnal/{client_id}.
+     */
+    SyncJurnalBody: {
+      /** Quarter */
+      quarter?: string | null;
+      /** Year */
+      year?: number | null;
+    };
+    /**
      * SystemConnectionStatus
      * @description System-wide Google Drive connection status.
      */
@@ -29168,6 +29216,16 @@ export interface components {
       spreadsheet_id: string;
       /** Values */
       values: string[];
+    };
+    /**
+     * UploadReceiptBody
+     * @description Optional JSON body for POST /upload-receipt/{draft_id}.
+     */
+    UploadReceiptBody: {
+      /** Receipt File Url */
+      receipt_file_url?: string | null;
+      /** Receipt Number */
+      receipt_number?: string | null;
     };
     /**
      * UserMemoryContextResponse
@@ -35102,17 +35160,22 @@ export interface operations {
   };
   log_newsletter_send_api_blog_newsletter_log_post: {
     parameters: {
-      query: {
-        article_id: string;
-        recipient_count: number;
-        sent_count: number;
-        failed_count: number;
+      query?: {
+        article_id?: string | null;
+        recipient_count?: number | null;
+        sent_count?: number | null;
+        failed_count?: number | null;
       };
       header?: never;
       path?: never;
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json":
+          components["schemas"]["NewsletterLogRequest"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -55397,9 +55460,9 @@ export interface operations {
   };
   sync_jurnal_api_v1_lkpm_sync_jurnal__client_id__post: {
     parameters: {
-      query: {
-        quarter: string;
-        year: number;
+      query?: {
+        quarter?: string | null;
+        year?: number | null;
       };
       header?: never;
       path: {
@@ -55407,7 +55470,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["SyncJurnalBody"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -55433,8 +55500,8 @@ export interface operations {
   };
   upload_receipt_api_v1_lkpm_upload_receipt__draft_id__post: {
     parameters: {
-      query: {
-        receipt_number: string;
+      query?: {
+        receipt_number?: string | null;
         receipt_file_url?: string | null;
       };
       header?: never;
@@ -55443,7 +55510,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["UploadReceiptBody"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {

@@ -807,8 +807,8 @@ class TestGetPractice:
                 )
             assert exc_info.value.status_code == 404
         query = mock_db_conn.fetchrow.await_args.args[0]
-        assert "c.assigned_to = $2 OR p.created_by = $2" in query
-        assert "p.assigned_to = $2" not in query
+        assert "c.assigned_to = ANY($2::text[]) OR p.created_by = ANY($2::text[])" in query
+        assert "p.assigned_to = ANY($2::text[])" not in query
 
     @pytest.mark.asyncio
     async def test_get_practice_strips_client_contact_fields_defensively(

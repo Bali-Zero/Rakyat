@@ -141,7 +141,7 @@ export interface NewsletterSubscriber {
   email: string;
   name?: string;
   categories: ArticleCategory[]; // Interessi
-  frequency: "daily" | "weekly" | "monthly";
+  frequency: "instant" | "daily" | "weekly" | "monthly";
   language: "en" | "id" | "it" | "ru" | "fr";
   subscribedAt: Date;
   confirmed: boolean;
@@ -152,7 +152,7 @@ export interface NewsletterSubscribeRequest {
   email: string;
   name?: string;
   categories: ArticleCategory[];
-  frequency: "daily" | "weekly" | "monthly";
+  frequency: "instant" | "daily" | "weekly" | "monthly";
   language: "en" | "id" | "it" | "ru" | "fr";
 }
 

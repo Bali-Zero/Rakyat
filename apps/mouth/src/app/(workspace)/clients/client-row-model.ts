@@ -82,13 +82,13 @@ export function viewerIsNext(
  * (crm_utils.py:108-118) accepts admin|board member|ceo|founder plus email
  * allowlists the desk cannot see. Only the INTERSECTION of the two role sets
  * is offered the admin path, so an owner/board viewer the backend would 403
- * sees no button. The profile payload
- * (crm_enhanced.py:1040-1053) does NOT carry `created_by`, so this predicate
- * can only see the `assigned_to` half and is deliberately NARROWER than the
- * backend: a non-admin creator who is not also assigned sees no button, and
- * the button that IS shown never leads to a 403. Widening it needs
- * `created_by` on the profile response first — a backend change, out of scope
- * for CRM-18.
+ * sees no button. The profile payload does NOT carry `created_by` and the desk
+ * cannot see the shared client pools (server configuration), so the server
+ * answers for it: when the profile carries a boolean `viewer_can_write` it is final: the
+ * backend's own write rule (`can_write_client`) already passed and the button
+ * is offered. Without that field (older backend) the rule below applies
+ * unchanged: role path + `assigned_to` match, narrower than the backend, so
+ * the button that IS shown never leads to a 403.
  *
  * Distinct from `viewerIsNext`, which is a status-gated ATTENTION predicate:
  * permission does not lapse when a record stops moving.
@@ -96,10 +96,12 @@ export function viewerIsNext(
 const DELETE_ADMIN_ROLES: ReadonlySet<string> = new Set(["admin", "founder"]);
 
 export function viewerCanDeleteClient(
-  client: Pick<Client, "assigned_to">,
+  client: Pick<Client, "assigned_to"> & { viewer_can_write?: boolean },
   viewerEmail: string,
   viewerRole: string | undefined,
 ): boolean {
+  // The server answer is authoritative both ways when present.
+  if (typeof client.viewer_can_write === "boolean") return client.viewer_can_write;
   if (DELETE_ADMIN_ROLES.has((viewerRole ?? "").trim().toLowerCase())) {
     return true;
   }
