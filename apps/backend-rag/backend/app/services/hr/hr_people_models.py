@@ -61,3 +61,6 @@ class PeopleRoster(BaseModel):
 class PersonOverview(BaseModel):
     viewer_team_member_id: str
     person: MyHrOverview
+    # DAI-153: the person's WhatsApp number, MASKED (`62•••••1234`), and only for an HR writer
+    # (HR_WRITER_EMAILS); null for every other viewer, or when no number is stored.
+    whatsapp_masked: str | None = None

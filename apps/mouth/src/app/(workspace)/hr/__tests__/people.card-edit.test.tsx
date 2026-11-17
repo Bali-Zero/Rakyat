@@ -582,3 +582,84 @@ describe("People card edit (/hr)", () => {
     await waitFor(() => expect(call("/api/hr/people")).toHaveLength(2));
   });
 });
+
+// DAI-153: the WhatsApp number on the HR card. Synthetic numbers only.
+describe("People card WhatsApp (/hr)", () => {
+  const MASKED = "62•••••1234";
+  async function openWithWa(masked: string | null) {
+    await open("A");
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(1),
+    );
+    await act(async () =>
+      call(`/api/hr/people/${ID_A}/overview`)[0].resolve({
+        ...person("A", ID_A),
+        whatsapp_masked: masked,
+      }),
+    );
+  }
+
+  it("shows a writer the masked number and an empty edit field", async () => {
+    await openWithWa(MASKED);
+    expect(screen.getByText(`WhatsApp ${MASKED}`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    expect(screen.getByTestId("hr-wa-current")).toHaveTextContent(
+      `On file: ${MASKED}`,
+    );
+    expect(field("WhatsApp").value).toBe("");
+  });
+
+  it("masks again even if a full number ever arrived", async () => {
+    await openWithWa("6289000001234");
+    expect(screen.queryByText(/6289000001234/)).toBeNull();
+    expect(screen.getByText(`WhatsApp ${MASKED}`)).toBeInTheDocument();
+  });
+
+  it("shows no number to a viewer who may not write cards", async () => {
+    capsState.value = caps(false);
+    await openWithWa(MASKED);
+    expect(screen.queryByText(/WhatsApp/)).toBeNull();
+  });
+
+  it("sends the normalised number beside the card", async () => {
+    await openWithWa(null);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    expect(screen.getByTestId("hr-wa-current")).toHaveTextContent(
+      "No number on file",
+    );
+    type("WhatsApp", "+62 890-0000-0001");
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(1),
+    );
+    const sent = JSON.parse(
+      call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].body ?? "{}",
+    );
+    expect(sent).toEqual({ card: {}, whatsapp: "6289000000001" });
+  });
+
+  it("refuses an invalid number in the browser and sends nothing", async () => {
+    await openWithWa(null);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    type("WhatsApp", "0890000000001");
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    expect(
+      await screen.findByText("Must start with 62 and have 10 to 15 digits"),
+    ).toBeInTheDocument();
+    expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(0);
+  });
+
+  it("leaves the number unchanged when the field is empty", async () => {
+    await openWithWa(MASKED);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    type("Bank name", "Bank Baru");
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(call(`/api/hr/people/${ID_A}/card`, "PATCH")).toHaveLength(1),
+    );
+    const sent = JSON.parse(
+      call(`/api/hr/people/${ID_A}/card`, "PATCH")[0].body ?? "{}",
+    );
+    expect(sent).not.toHaveProperty("whatsapp");
+  });
+});

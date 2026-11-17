@@ -8,10 +8,11 @@ from the closed set below and a message from a fixed table.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backend.app.services.hr.hr_card_models import StaffCardPatch, StaffProfilePatch
 
@@ -45,14 +46,60 @@ _CARD_KEYS = frozenset(StaffCardPatch.model_fields) - {"profile"}
 
 
 _PROFILE_KEYS = frozenset(StaffProfilePatch.model_fields) - {"contract", "docs"}
-_FIELD_NAMES = _CARD_KEYS | _PROFILE_KEYS | {"contract_number", "clear", "docs", "contract"}
+_FIELD_NAMES = _CARD_KEYS | _PROFILE_KEYS | {
+    "contract_number",
+    "clear",
+    "docs",
+    "contract",
+    "whatsapp",
+}
 _LOC_WORDS = _FIELD_NAMES | {"card", "profile", "contract", "number", "file_id", "body"}
+
+
+# The staff member's WhatsApp number (DAI-153): `team_members.whatsapp`, not an hr_employees
+# column, so it sits beside `card` and never enters StaffCardPatch (the import cannot set it).
+# Separators a person types are dropped; what is left must be 62 + digits, 10 to 15 in all.
+_WA_SEPARATORS = re.compile(r"[ .\-()]")
+_WA_SHAPE = re.compile(r"62[0-9]{8,13}", re.ASCII)
+WHATSAPP_MESSAGE = "Must start with 62 and have 10 to 15 digits"
+
+
+def normalise_whatsapp(value: str) -> str | None:
+    """The stored form of a typed number: digits only, `62` first. None = empty (unchanged).
+
+    Raises ValueError with a FIXED message: the value never reaches an error or a log."""
+    text = _WA_SEPARATORS.sub("", value.strip())
+    if text.startswith("+"):
+        text = text[1:]
+    if not text:
+        return None
+    if not _WA_SHAPE.fullmatch(text):
+        raise ValueError(WHATSAPP_MESSAGE)
+    return text
+
+
+def mask_whatsapp(value: object) -> str | None:
+    """`62•••••1234`: the only form of a stored number an HR response carries. None when there is
+    no usable number (a non-string, or fewer than 8 digits, which would show too much)."""
+    if not isinstance(value, str):
+        return None
+    digits = re.sub(r"[^0-9]", "", value)
+    if len(digits) < 8:
+        return None
+    return f"{digits[:2]}\u2022\u2022\u2022\u2022\u2022{digits[-4:]}"
 
 
 class CardEditBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     card: StaffCardPatch = Field(default_factory=StaffCardPatch)
     clear: list[ClearKey] = Field(default_factory=list, max_length=64)
+    # Empty or null = unchanged, never a delete (there is no `clear` key for it).
+    whatsapp: str | None = Field(default=None, max_length=32)
+
+    @field_validator("whatsapp")
+    @classmethod
+    def _whatsapp(cls, value: str | None) -> str | None:
+        return None if value is None else normalise_whatsapp(value)
 
     def _set_keys(self) -> list[str]:
         patch = self.card
@@ -61,6 +108,8 @@ class CardEditBody(BaseModel):
         keys += sorted(profile.model_fields_set - {"contract", "docs"})
         if "number" in profile.contract.model_fields_set:
             keys.append("contract_number")
+        if self.whatsapp is not None:
+            keys.append("whatsapp")
         return keys
 
     @model_validator(mode="after")

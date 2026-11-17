@@ -58,6 +58,7 @@ import {
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import { maskWhatsapp } from "@/lib/hr/whatsapp";
 import { ChampionPortrait } from "@/components/workspace/ChampionPortrait";
 import { DocumentsBlock, type DocResult } from "./_components/documents-block";
 import {
@@ -864,6 +865,11 @@ function PeopleConsole() {
   const first = viewer?.name?.trim().split(/\s+/)[0];
   const person = pload.kind === "ready" ? pload.data.person : null;
   const card = person?.card;
+  // DAI-153: masked by the server and sent to HR writers only; masked again before display.
+  const whatsappShown =
+    canWriteCard && pload.kind === "ready"
+      ? maskWhatsapp(pload.data.whatsapp_masked)
+      : null;
   const since = card ? tenure(card.hire_date, "their first month") : null;
   const ends = card ? daysUntil(card.end_date) : null;
   const tone = TONE[open];
@@ -1058,6 +1064,9 @@ function PeopleConsole() {
                       {card?.on_payroll === false && (
                         <Chip tone={SOFT_TONE}>Not on payroll</Chip>
                       )}
+                      {whatsappShown && (
+                        <Chip tone={SOFT_TONE}>WhatsApp {whatsappShown}</Chip>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1099,6 +1108,7 @@ function PeopleConsole() {
                   key={`${selected.team_member_id}:edit`}
                   mode="edit"
                   card={person.card}
+                  whatsappMasked={whatsappShown}
                   onSubmit={saveCard}
                   onCancel={() => setEditing(null)}
                 />
