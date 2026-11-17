@@ -4,14 +4,21 @@ Endpoint per refresh manuale del token Google Drive.
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from backend.app.routers.admin_drive_health import require_drive_admin
 
 router = APIRouter(prefix="/api/admin/drive", tags=["admin"])
 
 
 @router.post("/refresh")
-async def drive_refresh(request: Request) -> dict[str, Any]:
+async def drive_refresh(
+    request: Request,
+    current_user: dict[str, Any] = Depends(require_drive_admin),
+) -> dict[str, Any]:
     """Force refresh del token Google Drive SYSTEM."""
+    if not isinstance(current_user, dict):
+        await require_drive_admin(request)
     pool = getattr(request.app.state, "db_pool", None)
     if not pool:
         return {"status": "error", "message": "Database pool not available"}
@@ -42,7 +49,6 @@ async def drive_refresh(request: Request) -> dict[str, Any]:
             return {
                 "status": "success",
                 "message": "Token refreshed successfully",
-                "token_preview": new_token[:30] + "...",
             }
         return {
             "status": "error",

@@ -133,6 +133,7 @@ class TestB1_NoUndocumentedPublicRoutes:
             "/api/news/uuid-1/image",  # RT-02 fix
             "/api/news/uuid-1/status",  # RT-02 fix
             "/api/integrations/google-drive/system/status",  # RT-03 fix
+            "/api/funnel/session/convert",  # RT-07 fix
         ]
         for path in sensitive:
             req = self._mock_request(path)

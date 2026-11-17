@@ -43,6 +43,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/crm/accounting", tags=["crm-accounting"])
 
 
+def _parse_cashout_pdf_bytes_sync(pdf_bytes: bytes) -> list[Any]:
+    """Write PDF bytes to a private temp file for pdfplumber and clean up."""
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = Path(tmp.name)
+        return cashout_import_service.parse_cashout_pdf_with_weeks(tmp_path)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+
 def _require_accounting_access(current_user: dict[str, Any]) -> None:
     """Gate to CRM admins (includes Asya). Raises 403 otherwise."""
     if not is_crm_admin(current_user):
@@ -129,7 +142,11 @@ async def import_cashout_pdf(
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=422, detail="only .pdf cashout worksheets are accepted")
 
-    data = await file.read()
+    raw_size = getattr(file, "size", None)
+    if isinstance(raw_size, int) and raw_size > _MAX_CASHOUT_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="file too large (max 8 MB)")
+
+    data = await file.read(_MAX_CASHOUT_PDF_BYTES + 1)
     if not data:
         raise HTTPException(status_code=422, detail="empty file")
     if len(data) > _MAX_CASHOUT_PDF_BYTES:
@@ -137,32 +154,22 @@ async def import_cashout_pdf(
 
     imported_by = (current_user.get("email") or "unknown").lower()
 
-    # pdfplumber needs a real path; write to a private temp file and clean up.
-    tmp_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(data)
-            tmp_path = Path(tmp.name)
+        rows = await asyncio.to_thread(_parse_cashout_pdf_bytes_sync, data)
+    except ValueError as exc:
+        # undated / non-cashout PDF — loud, not a silent empty import (superscar #2)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        try:
-            rows = cashout_import_service.parse_cashout_pdf_with_weeks(tmp_path)
-        except ValueError as exc:
-            # undated / non-cashout PDF — loud, not a silent empty import (superscar #2)
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not rows:
+        raise HTTPException(
+            status_code=422,
+            detail="no cashout rows found in the PDF (parsed 0 client rows)",
+        )
 
-        if not rows:
-            raise HTTPException(
-                status_code=422,
-                detail="no cashout rows found in the PDF (parsed 0 client rows)",
-            )
-
-        async with db_pool.acquire() as conn:
-            result = await cashout_import_service.persist_cashout_rows(
-                conn, rows, imported_by=imported_by, source_filename=filename
-            )
-    finally:
-        if tmp_path is not None:
-            tmp_path.unlink(missing_ok=True)
+    async with db_pool.acquire() as conn:
+        result = await cashout_import_service.persist_cashout_rows(
+            conn, rows, imported_by=imported_by, source_filename=filename
+        )
 
     # Cashout log changed → drop the same CRM caches the confirm path drops.
     try:
@@ -424,7 +431,7 @@ async def export_to_sheet(
     except FileNotFoundError as exc:
         # SA credentials not present in this environment.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — surface the Sheets API failure as 502
+    except Exception as exc:  # surface the Sheets API failure as 502
         logger.error("accounting export-sheet failed: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=502,

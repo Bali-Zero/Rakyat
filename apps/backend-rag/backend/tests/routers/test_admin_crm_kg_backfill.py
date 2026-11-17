@@ -6,11 +6,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
+
+_UNSET = object()
+_DEFAULT_ADMIN = {"role": "admin", "user_id": "admin-1"}
 
 
-def _request_with_pool(pool: object) -> SimpleNamespace:
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
+def _request_with_pool(pool: object, user: object = _UNSET) -> SimpleNamespace:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)),
+        state=SimpleNamespace(user=dict(_DEFAULT_ADMIN) if user is _UNSET else user),
+    )
 
 
 @pytest.mark.asyncio
@@ -88,3 +94,42 @@ async def test_backfill_drive_documents_live_requires_explicit_ocr_flag() -> Non
     task = background_tasks.tasks[0]
     await task.func(*task.args, **task.kwargs)
     assert mock_backfill.call_args.kwargs["allow_ocr"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "expected_status"),
+    [
+        (None, 401),
+        ({"role": "team", "user_id": "staff-1"}, 403),
+    ],
+)
+async def test_crm_kg_mutating_routes_require_admin(
+    user: object,
+    expected_status: int,
+) -> None:
+    from backend.app.routers.admin_crm_kg import (
+        trigger_backfill_drive_documents,
+        trigger_build_mediated,
+        trigger_garbage_collect,
+    )
+
+    req = _request_with_pool(object(), user=user)
+    with pytest.raises(HTTPException) as exc1:
+        await trigger_backfill_drive_documents(
+            request=req,
+            background_tasks=BackgroundTasks(),
+            limit=5,
+            dry_run=True,
+            client_id=None,
+            allow_ocr=False,
+        )
+    assert exc1.value.status_code == expected_status
+
+    with pytest.raises(HTTPException) as exc2:
+        await trigger_build_mediated(request=req, background_tasks=BackgroundTasks())
+    assert exc2.value.status_code == expected_status
+
+    with pytest.raises(HTTPException) as exc3:
+        await trigger_garbage_collect(request=req, background_tasks=BackgroundTasks())
+    assert exc3.value.status_code == expected_status

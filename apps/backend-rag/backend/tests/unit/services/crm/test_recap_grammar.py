@@ -11,6 +11,13 @@ UTC = timezone.utc
 NOT_A_VALUE = [True, False, 5.0, 0.5, {}, {"a": 1}, [], [1], None, object()]
 
 
+def _case_id(value: object) -> str:
+    # A bare object() prints its memory address, which differs in every process.
+    # xdist compares the collected ids across workers and refuses to run when
+    # they differ, so this one case gets an id that does not depend on the process.
+    return "object()" if type(value) is object else repr(value)[:24]
+
+
 # ── date ────────────────────────────────────────────────────────────────────
 
 
@@ -53,7 +60,7 @@ def test_date_accepts_exactly_three_forms(value, expected):
         "",
         *NOT_A_VALUE,
     ],
-    ids=lambda v: repr(v)[:24],
+    ids=_case_id,
 )
 def test_date_rejects_everything_else(value):
     assert g.parse_date(value) is None
@@ -124,7 +131,7 @@ def test_int_accepts(value, expected):
         " ",
         *NOT_A_VALUE,
     ],
-    ids=lambda v: repr(v)[:24],
+    ids=_case_id,
 )
 def test_int_rejects(value):
     assert g.parse_nonneg_int(value) is None
@@ -153,7 +160,7 @@ def test_kbli_accepts_exactly_five_ascii_digits():
         "",
         *NOT_A_VALUE,
     ],
-    ids=lambda v: repr(v)[:24],
+    ids=_case_id,
 )
 def test_kbli_rejects(value):
     assert g.parse_kbli_code(value) is None

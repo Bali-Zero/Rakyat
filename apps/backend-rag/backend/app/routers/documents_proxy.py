@@ -37,6 +37,69 @@ _DRIVE_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,256}$")
 # ties a file to the client folder that authorises reading it.
 _METADATA_FIELDS = "mimeType,name,size,parents"
 
+_MAX_PROXY_DOWNLOAD_BYTES = 25 * 1024 * 1024  # 25 MB memory/OOM bound
+_SAFE_INLINE_MIMES: frozenset[str] = frozenset(
+    {
+        "application/pdf",
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+    }
+)
+_SAFE_FILENAME_CHAR_RE = re.compile(r"[^A-Za-z0-9._ -]")
+
+
+def _sanitize_disposition_filename(raw_name: str | None) -> str:
+    """Return an ASCII-safe basename stripped of Content-Disposition injection chars."""
+    base = (raw_name or "").replace("\\", "/").split("/")[-1]
+    cleaned = [
+        "_" if (ord(ch) < 32 or ord(ch) == 127) else ch
+        for ch in base
+    ]
+    safe = _SAFE_FILENAME_CHAR_RE.sub("_", "".join(cleaned)).strip(" .")
+    return safe[:150] or "document"
+
+
+def _resolve_proxy_content_headers(
+    mime_type: str | None,
+    file_name: str | None,
+) -> tuple[str, dict[str, str]]:
+    """Force active/unknown MIME types to download as attachment with nosniff."""
+    essence = (
+        (mime_type or "application/octet-stream")
+        .split(";", 1)[0]
+        .strip()
+        .lower()
+        or "application/octet-stream"
+    )
+    safe_name = _sanitize_disposition_filename(file_name)
+    if essence in _SAFE_INLINE_MIMES:
+        media_type = essence
+        disposition = f'inline; filename="{safe_name}"'
+    else:
+        media_type = "application/octet-stream"
+        disposition = f'attachment; filename="{safe_name}"'
+
+    headers = {
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": disposition,
+        "X-Content-Type-Options": "nosniff",
+    }
+    return media_type, headers
+
+
+def _parse_positive_int(raw_value: Any) -> int | None:
+    """Best-effort conversion of Drive size / Content-Length header to non-negative int."""
+    if raw_value is None:
+        return None
+    try:
+        parsed = int(raw_value)
+        return parsed if parsed >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
 
 def _assert_file_id_shape(file_id: str) -> None:
     """Reject anything that is not a bare Drive file ID, before any network call."""
@@ -617,24 +680,72 @@ async def proxy_drive_file(
                     _drive_parent_fetcher(client, access_token),
                 )
 
-            # Download file content
-            download_response = await client.get(
-                f"https://www.googleapis.com/drive/v3/files/{file_id}",
-                params={"alt": "media"},
-                headers={"Authorization": f"Bearer {access_token}"},
+            meta_size = _parse_positive_int(metadata.get("size"))
+            if meta_size is not None and meta_size > _MAX_PROXY_DOWNLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="File exceeds maximum proxy size (25 MB)",
+                )
+
+            # Download file content with streaming byte bound to prevent worker OOM
+            if hasattr(type(client), "stream") and callable(type(client).stream):
+                async with client.stream(
+                    "GET",
+                    f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                    params={"alt": "media"},
+                    headers={"Authorization": f"Bearer {access_token}"},
+                ) as download_response:
+                    if download_response.status_code != 200:
+                        logger.error(f"[PROXY] Download failed: {download_response.status_code}")
+                        raise HTTPException(status_code=500, detail="Failed to download file")
+
+                    content_length = _parse_positive_int(
+                        download_response.headers.get("Content-Length")
+                    )
+                    if content_length is not None and content_length > _MAX_PROXY_DOWNLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail="File exceeds maximum proxy size (25 MB)",
+                        )
+
+                    chunks: list[bytes] = []
+                    total_bytes = 0
+                    async for chunk in download_response.aiter_bytes():
+                        if not chunk:
+                            continue
+                        total_bytes += len(chunk)
+                        if total_bytes > _MAX_PROXY_DOWNLOAD_BYTES:
+                            raise HTTPException(
+                                status_code=413,
+                                detail="File exceeds maximum proxy size (25 MB)",
+                            )
+                        chunks.append(chunk)
+                    content_bytes = b"".join(chunks)
+            else:
+                download_response = await client.get(
+                    f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                    params={"alt": "media"},
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+
+                if download_response.status_code != 200:
+                    logger.error(f"[PROXY] Download failed: {download_response.status_code}")
+                    raise HTTPException(status_code=500, detail="Failed to download file")
+
+                content_bytes = download_response.content
+                if len(content_bytes) > _MAX_PROXY_DOWNLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="File exceeds maximum proxy size (25 MB)",
+                    )
+
+            response_media_type, response_headers = _resolve_proxy_content_headers(
+                mime_type, file_name
             )
-
-            if download_response.status_code != 200:
-                logger.error(f"[PROXY] Download failed: {download_response.status_code}")
-                raise HTTPException(status_code=500, detail="Failed to download file")
-
             return Response(
-                content=download_response.content,
-                media_type=mime_type,
-                headers={
-                    "Cache-Control": "private, max-age=3600",
-                    "Content-Disposition": f'inline; filename="{file_name}"',
-                },
+                content=content_bytes,
+                media_type=response_media_type,
+                headers=response_headers,
             )
 
     except httpx.TimeoutException:
@@ -724,11 +835,18 @@ async def get_drive_thumbnail(
             if thumb_response.status_code != 200:
                 raise HTTPException(status_code=500, detail="Failed to fetch thumbnail")
 
+            if len(thumb_response.content) > _MAX_PROXY_DOWNLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Thumbnail exceeds maximum proxy size (25 MB)",
+                )
+
             return Response(
                 content=thumb_response.content,
                 media_type="image/jpeg",
                 headers={
                     "Cache-Control": "private, max-age=3600",
+                    "X-Content-Type-Options": "nosniff",
                 },
             )
 
