@@ -16,7 +16,8 @@ from typing import Any
 
 import asyncpg
 import httpx
-from fastapi import APIRouter, Query
+import orjson
+from fastapi import APIRouter, Query, Response
 
 from backend.core.embeddings import EmbeddingsGenerator, create_embeddings_generator
 from backend.services.rag.hybrid_search import HybridSearchService
@@ -893,7 +894,11 @@ async def get_zoning(
 # In-memory cache: zones don't change, no need to re-query per request.
 # =============================================================================
 
-_ZONES_GEOJSON_CACHE: dict[str, Any] | None = None
+# The cache holds the serialized response body, not the parsed FeatureCollection:
+# as Python objects the whole table costs several times its JSON size for the life
+# of the process, and returning them made every request encode them again.
+_ZONES_GEOJSON_CACHE: bytes | None = None
+_EMPTY_ZONES_GEOJSON = b'{"type":"FeatureCollection","features":[]}'
 
 _ZONE_COLORS_MAP: dict[str, str] = {
     "K-1": "#E8472A",
@@ -973,8 +978,8 @@ _ZONES_GEOJSON_QUERY = """
 """
 
 
-@router.get("/zones-geojson")
-async def get_zones_geojson() -> dict[str, Any]:
+@router.get("/zones-geojson", response_model=dict[str, Any])
+async def get_zones_geojson() -> Response:
     """
     Return a GeoJSON FeatureCollection of all zoning polygons with their
     official colors. Simplified (tolerance 0.0001) for fast frontend rendering.
@@ -982,11 +987,11 @@ async def get_zones_geojson() -> dict[str, Any]:
     """
     global _ZONES_GEOJSON_CACHE
     if _ZONES_GEOJSON_CACHE is not None:
-        return _ZONES_GEOJSON_CACHE
+        return Response(content=_ZONES_GEOJSON_CACHE, media_type="application/json")
 
     db_url = os.environ.get("DATABASE_URL", "")
     if not db_url:
-        return {"type": "FeatureCollection", "features": []}
+        return Response(content=_EMPTY_ZONES_GEOJSON, media_type="application/json")
 
     try:
         conn = await asyncpg.connect(db_url)
@@ -995,7 +1000,7 @@ async def get_zones_geojson() -> dict[str, Any]:
         finally:
             await conn.close()
 
-        features: list[dict[str, Any]] = []
+        features: list[bytes] = []
         for row in rows:
             geom_str = row["geometry"]
             if not geom_str:
@@ -1016,26 +1021,30 @@ async def get_zones_geojson() -> dict[str, Any]:
             max_height = float(row["max_height_meters"]) if row["max_height_meters"] else 15.0
             kdb = float(row["master_kdb"]) if row["master_kdb"] else 50.0
 
+            # Each feature is serialized as it is built, so the parsed geometries
+            # of the whole table are never held together.
             features.append(
-                {
-                    "type": "Feature",
-                    "geometry": geom,
-                    "properties": {
-                        "zone_code": zone_code,
-                        "zone_type": zone_type,
-                        "color": color,
-                        "max_floors": max_floors,
-                        "max_height_meters": max_height,
-                        "kdb": kdb,
+                orjson.dumps(
+                    {
+                        "type": "Feature",
+                        "geometry": geom,
+                        "properties": {
+                            "zone_code": zone_code,
+                            "zone_type": zone_type,
+                            "color": color,
+                            "max_floors": max_floors,
+                            "max_height_meters": max_height,
+                            "kdb": kdb,
+                        },
                     },
-                },
+                ),
             )
 
-        result: dict[str, Any] = {"type": "FeatureCollection", "features": features}
-        _ZONES_GEOJSON_CACHE = result
+        body = b'{"type":"FeatureCollection","features":[' + b",".join(features) + b"]}"
+        _ZONES_GEOJSON_CACHE = body
         logger.info(f"✅ [Prime/GeoJSON] Loaded {len(features)} zone polygons (cached)")
-        return result
+        return Response(content=body, media_type="application/json")
 
     except Exception as e:
         logger.error("❌ [Prime/GeoJSON] Failed to load zones: %s", e, exc_info=True)
-        return {"type": "FeatureCollection", "features": []}
+        return Response(content=_EMPTY_ZONES_GEOJSON, media_type="application/json")
