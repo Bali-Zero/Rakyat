@@ -413,6 +413,28 @@ async function proxy(req: NextRequest): Promise<Response> {
       redirectCount++;
     }
 
+    // A response still redirecting here exhausted maxRedirects: its Location
+    // was never checked against the backend origin, so it must not reach the
+    // client, which would follow it carrying its own X-CSRF-Token.
+    if (
+      upstream.status >= 300 &&
+      upstream.status < 400 &&
+      upstream.headers.get("location")
+    ) {
+      logger.warn("[Proxy] Upstream redirect chain exceeded the limit", {
+        component: "AUTO",
+        action: "redirect_limit",
+        metadata: { path: url.pathname, redirects: redirectCount },
+      });
+      upstream = new Response(
+        JSON.stringify({ detail: "Too many upstream redirects" }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
     const upstreamDuration = Date.now() - upstreamStartTime;
     const touch = logRouteTouch("proxy", url.pathname, req.method, {
       status: upstream.status,

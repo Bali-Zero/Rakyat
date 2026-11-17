@@ -895,4 +895,80 @@ describe("proxy catch-all route — manual redirect origin guard (RT-06)", () =>
     expect(sentHeaders.get("x-csrf-token")).toBe("csrf-val-123");
     expect(sentHeaders.get("cookie")).toContain("nz_csrf_token=csrf-val-123");
   });
+
+  function sameOriginRedirect(step: number): Response {
+    return new Response(null, {
+      status: 307,
+      headers: {
+        Location: `https://nuzantara-rag.fly.dev/api/crm/clients/hop-${step}`,
+      },
+    });
+  }
+
+  function csrfPost(): unknown {
+    return new MockNextRequest("http://localhost/api/crm/clients", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer active-jwt",
+        "Content-Type": "application/json",
+      },
+      cookies: { nz_csrf_token: "csrf-val-123" },
+      body: bodyArrayBuffer("{}"),
+    });
+  }
+
+  it("fails closed when the chain is still redirecting after the limit, never returning the unchecked Location", async () => {
+    const fetchMock = vi.mocked(global.fetch);
+    for (let step = 1; step <= 5; step++) {
+      fetchMock.mockResolvedValueOnce(sameOriginRedirect(step));
+    }
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 307,
+        headers: { Location: "https://attacker.invalid/collect" },
+      }),
+    );
+
+    const response = await POST(csrfPost() as never);
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("location")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    for (const [target] of fetchMock.mock.calls) {
+      expect(String(target)).not.toContain("attacker.invalid");
+    }
+  });
+
+  it("still answers when the last allowed same-origin redirect lands on content", async () => {
+    const fetchMock = vi.mocked(global.fetch);
+    for (let step = 1; step <= 5; step++) {
+      fetchMock.mockResolvedValueOnce(sameOriginRedirect(step));
+    }
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await POST(csrfPost() as never);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("passes a 304 without Location through unchanged", async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response(null, { status: 304 }),
+    );
+
+    const response = await GET(
+      new MockNextRequest("http://localhost/api/crm/clients", {
+        method: "GET",
+      }) as never,
+    );
+
+    expect(response.status).toBe(304);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 });
