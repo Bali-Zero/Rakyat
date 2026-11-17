@@ -526,7 +526,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
 #   nowhere in production (audit found the fix on the wrong router; see
 #   team.py::get_team_members for the live query). Deleted rather than kept
 #   "fixed" here, to not leave a disabled duplicate that looks handled.
-# whatsapp_chat.alias_router — legacy alias causes duplicate responses
 # audio — included separately in app_factory.py
 
 

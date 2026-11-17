@@ -1,7 +1,7 @@
 """
 Unit tests for whatsapp_chat router.
 Coverage target: GET /webhook/whatsapp (verification), POST /webhook/whatsapp (messages),
-GET /webhook/whatsapp/status, alias routes GET/POST /api/whatsapp/webhook,
+GET /webhook/whatsapp/status,
 X-Hub-Signature-256 HMAC verification.
 """
 
@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import settings as real_settings
-from backend.app.routers.whatsapp_chat import alias_router, router
+from backend.app.routers.whatsapp_chat import router
 
 # ============================================================
 # FIXTURES
@@ -29,7 +29,6 @@ from backend.app.routers.whatsapp_chat import alias_router, router
 def app():
     test_app = FastAPI()
     test_app.include_router(router)
-    test_app.include_router(alias_router)
     return test_app
 
 
@@ -446,56 +445,6 @@ def test_whatsapp_status_not_configured(client):
     data = response.json()
     assert data["configured"] is False
     assert data["phone_number_id"] is None
-
-
-# ============================================================
-# Alias routes: GET/POST /api/whatsapp/webhook
-# ============================================================
-
-
-def test_verify_webhook_alias_success(client):
-    """Alias GET /api/whatsapp/webhook should behave like primary."""
-    with patch(
-        "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-    ) as mock_settings:
-        mock_settings.whatsapp_verify_token = "test_whatsapp_verify_token"
-        response = client.get(
-            "/api/whatsapp/webhook"
-            "?hub.mode=subscribe"
-            "&hub.verify_token=test_whatsapp_verify_token"
-            "&hub.challenge=ALIAS_CHALLENGE"
-        )
-    assert response.status_code == 200
-    assert response.text == "ALIAS_CHALLENGE"
-
-
-def test_verify_webhook_alias_wrong_token(client):
-    """Alias GET should also return 403 for wrong token."""
-    with patch(
-        "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-    ) as mock_settings:
-        mock_settings.whatsapp_verify_token = "correct_token"
-        response = client.get(
-            "/api/whatsapp/webhook"
-            "?hub.mode=subscribe"
-            "&hub.verify_token=wrong_token"
-            "&hub.challenge=CHALLENGE"
-        )
-    assert response.status_code == 403
-
-
-def test_webhook_alias_post_returns_ok(client):
-    """Alias POST /api/whatsapp/webhook should return ok."""
-    with (
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
-    ):
-        mock_settings.whatsapp_app_secret = None
-        response = client.post("/api/whatsapp/webhook", json=_make_webhook_payload())
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
 
 
 # ============================================================
