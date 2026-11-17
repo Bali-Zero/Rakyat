@@ -9,7 +9,8 @@
  *   `POST /api/visa/clock/email` (`app: "visa_clock"`, `result_hash`, `payload`).
  * - VISA-3C-02 + VISA-3D-01: `POST /api/assessment/submit` translates backend
  *   HTTP 200 `{ success: false }` into HTTP 502 `{ success: false, error }`, and
- *   `assessment/page.tsx` verifies `res.ok` + `result?.success !== false` (including `submitBonus`).
+ *   `assessment/page.tsx` verifies `res.ok` + `result?.success !== false` (including `submitBonus`),
+ *   requests `/api/assessment/session` on mount and re-requests it once when a submit gets 401.
  * - VISA-3C-03: GARUDA VOA staff `[practiceId]` rotates `Idempotency-Key` when
  *   transition form fields or assignment target change after a failed attempt,
  *   while preserving key reuse on an unchanged retry.
@@ -100,6 +101,7 @@ vi.mock("@/app/(workspace)/garuda-voa/api-client", async () => {
 });
 
 import VisaClockPage from "@/app/visa/clock/page";
+import AssessmentPage from "@/app/(assessment)/assessment/page";
 import { POST as submitAssessment } from "@/app/api/assessment/submit/route";
 import {
   ASSESSMENT_COOKIE,
@@ -223,11 +225,12 @@ describe("Swarm Vertical 1 — Visa & Visa Oracle Contract Parity", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Origin: "http://localhost",
           Cookie: `${ASSESSMENT_COOKIE}=${sessionToken}`,
         },
         body: JSON.stringify({
           to: allowedRecipient,
-          subject: "Assessment Block 1",
+          subject: "[Assessment] Block 1",
           body: "<p>Answer</p>",
         }),
       });
@@ -260,11 +263,12 @@ describe("Swarm Vertical 1 — Visa & Visa Oracle Contract Parity", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Origin: "http://localhost",
           Cookie: `${ASSESSMENT_COOKIE}=${sessionToken}`,
         },
         body: JSON.stringify({
           to: allowedRecipient,
-          subject: "Assessment Block 1",
+          subject: "[Assessment] Block 1",
           body: "<p>Answer</p>",
         }),
       });
@@ -287,6 +291,82 @@ describe("Swarm Vertical 1 — Visa & Visa Oracle Contract Parity", () => {
         assessmentSrc.match(/if \(result\?\.success === false\)/g) ?? [];
       expect(okChecks.length).toBeGreaterThanOrEqual(2);
       expect(successChecks.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("assessment/page.tsx requests the session cookie on mount", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+      global.fetch = fetchMock;
+
+      render(createElement(AssessmentPage));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith("/api/assessment/session", {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+        }),
+      );
+    });
+
+    it("assessment/page.tsx submits a block, re-requesting the session once on 401", async () => {
+      const urls: string[] = [];
+      let submits = 0;
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        urls.push(url);
+        if (url === "/api/assessment/session") {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        submits += 1;
+        if (submits === 1) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
+            status: 401,
+          });
+        }
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+      global.fetch = fetchMock;
+      window.history.pushState({}, "", "/assessment?start=2");
+
+      try {
+        render(createElement(AssessmentPage));
+        const [firstAnswer] = await screen.findAllByRole("textbox");
+        fireEvent.change(firstAnswer, { target: { value: "Jawaban blok 2" } });
+        fireEvent.click(screen.getByRole("button", { name: /Kirim Blok 2/ }));
+
+        await waitFor(() =>
+          expect(urls).toEqual([
+            "/api/assessment/session",
+            "/api/assessment/submit",
+            "/api/assessment/session",
+            "/api/assessment/submit",
+          ]),
+        );
+        const submitCall = fetchMock.mock.calls.find(
+          ([url]) => url === "/api/assessment/submit",
+        );
+        const init = submitCall?.[1] as RequestInit;
+        expect(init.method).toBe("POST");
+        expect(init.credentials).toBe("same-origin");
+        const sent = JSON.parse(String(init.body)) as {
+          to: string;
+          subject: string;
+          body: string;
+        };
+        expect(sent.to).toBe(allowedRecipient);
+        expect(sent.subject.startsWith("[Assessment] ")).toBe(true);
+        expect(sent.subject.length).toBeLessThanOrEqual(200);
+        expect(sent.body).toContain("Jawaban blok 2");
+        await waitFor(() =>
+          expect(screen.queryByText(/Server tidak tersedia/)).toBeNull(),
+        );
+      } finally {
+        window.history.pushState({}, "", "/");
+      }
     });
   });
 

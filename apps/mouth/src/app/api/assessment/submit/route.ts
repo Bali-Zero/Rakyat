@@ -4,6 +4,7 @@ import {
   clientIp,
   consumeSubmitQuota,
   hasValidAssessmentSession,
+  isSameOriginRequest,
 } from "../_access";
 
 /**
@@ -11,15 +12,19 @@ import {
  *
  * Receives block answers from the assessment page and forwards them
  * as an email to zero@balizero.com via the backend notification service.
+ * Requires a same-origin Origin header and the session cookie that
+ * GET /api/assessment/session sets when the page mounts.
  *
  * This route exists so the browser never needs the backend API key.
  * Temporary — will be removed after the assessment.
  */
 
-const MAX_REQUEST_BYTES = 128 * 1024;
-const MAX_SUBJECT_CHARS = 256;
-const MAX_SUBJECT_BYTES = 1024;
-const MAX_BODY_BYTES = 100_000;
+const SUBJECT_PREFIX = "[Assessment] ";
+const MAX_SUBJECT_CHARS = 200;
+const MAX_BODY_CHARS = 65_536;
+// Outer bound on the raw JSON before parsing: a body at MAX_BODY_CHARS can
+// grow several-fold once UTF-8 encoded and JSON-escaped.
+const MAX_REQUEST_BYTES = 512 * 1024;
 
 // Read at request time, never at module scope. A module-scope read is
 // evaluated once per lambda build/boot, so a corrected secret does not reach a
@@ -77,6 +82,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!isSameOriginRequest(request)) {
+      return jsonResponse({ error: "Forbidden: cross-origin request" }, 403);
+    }
+
     if (!hasValidAssessmentSession(request)) {
       return jsonResponse(
         { error: "Unauthorized: valid assessment session required" },
@@ -123,22 +132,19 @@ export async function POST(request: NextRequest) {
 
     if (
       typeof payload.subject !== "string" ||
-      !payload.subject.trim() ||
+      !payload.subject.startsWith(SUBJECT_PREFIX) ||
       /[\r\n]/.test(payload.subject)
     ) {
       return jsonResponse({ error: "Invalid subject" }, 400);
     }
-    if (
-      payload.subject.length > MAX_SUBJECT_CHARS ||
-      Buffer.byteLength(payload.subject, "utf8") > MAX_SUBJECT_BYTES
-    ) {
+    if (payload.subject.length > MAX_SUBJECT_CHARS) {
       return jsonResponse({ error: "Subject too large" }, 413);
     }
 
     if (typeof payload.body !== "string" || !payload.body.trim()) {
       return jsonResponse({ error: "Invalid body" }, 400);
     }
-    if (Buffer.byteLength(payload.body, "utf8") > MAX_BODY_BYTES) {
+    if (payload.body.length > MAX_BODY_CHARS) {
       return jsonResponse({ error: "Body too large" }, 413);
     }
 

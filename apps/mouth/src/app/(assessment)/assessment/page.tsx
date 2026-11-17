@@ -117,6 +117,36 @@ function formatTimestamp(): string {
   });
 }
 
+// ── Submit relay ───────────────────────────────────────────────────
+// /api/assessment/submit only accepts a request carrying the signed,
+// same-site cookie that /api/assessment/session sets. The page asks for it on
+// mount, and once more if a submit is refused for a missing or expired session.
+function requestAssessmentSession(): Promise<Response> {
+  return fetch("/api/assessment/session", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+}
+
+async function postAssessment(payload: {
+  to: string;
+  subject: string;
+  body: string;
+}): Promise<Response> {
+  const send = () =>
+    fetch("/api/assessment/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(payload),
+    });
+  const res = await send();
+  if (res.status !== 401) return res;
+  await requestAssessmentSession().catch(() => undefined);
+  return send();
+}
+
 // ── Component ──────────────────────────────────────────────────────
 export default function AssessmentPage() {
   const [phase, setPhase] = useState<Phase>("intro");
@@ -132,6 +162,10 @@ export default function AssessmentPage() {
   const [bonusAnswer, setBonusAnswer] = useState("");
   const [bonusSubmitted, setBonusSubmitted] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    requestAssessmentSession().catch(() => undefined);
+  }, []);
 
   // Resume support: ?start=N skips to block N with prior blocks marked as submitted.
   // Used when the candidate has already completed earlier blocks and needs to continue.
@@ -253,14 +287,10 @@ export default function AssessmentPage() {
       }
 
       try {
-        const res = await fetch("/api/assessment/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: "zero@balizero.com",
-            subject: `[Assessment] ${CANDIDATE_NAME} — ${BLOCK_TITLES[index]} (${durationMin}m ${durationSec}s)`,
-            body,
-          }),
+        const res = await postAssessment({
+          to: "zero@balizero.com",
+          subject: `[Assessment] ${CANDIDATE_NAME} — ${BLOCK_TITLES[index]} (${durationMin}m ${durationSec}s)`,
+          body,
         });
 
         if (!res.ok) {
@@ -333,14 +363,10 @@ export default function AssessmentPage() {
       <p style="white-space: pre-wrap; font-family: monospace; background: #f5f5f5; padding: 12px; border-radius: 6px;">${bonusAnswer.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`;
 
     try {
-      const res = await fetch("/api/assessment/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: "zero@balizero.com",
-          subject: `[Assessment] ${CANDIDATE_NAME} — BONUS Visi`,
-          body,
-        }),
+      const res = await postAssessment({
+        to: "zero@balizero.com",
+        subject: `[Assessment] ${CANDIDATE_NAME} — BONUS Visi`,
+        body,
       });
       // fetch() only rejects on network failure: a 4xx/5xx (or a relayed
       // `success: false`) resolved silently and marked the bonus as sent.
