@@ -391,7 +391,7 @@ async def get_portal_preview(
 @router.get("/messages/unread-count")
 async def get_unread_messages_count(
     _current_user: dict = Depends(require_team_auth),
-    assigned_filter: str | None = Depends(get_crm_user_filter),
+    assigned_filter: list[str] | None = Depends(get_crm_user_filter),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """
@@ -402,7 +402,7 @@ async def get_unread_messages_count(
     B3 (SPEC-p0-invite.md, 2026-08-23): scoped to the caller's assignment,
     same pattern as `get_recent_portal_activity` below — `assigned_filter`
     is None for admins (no filter, full book) and the caller's lowercased
-    email otherwise. Applied to BOTH queries: a total count that ignored
+    email plus its client-pool peers otherwise. Applied to BOTH queries: a total count that ignored
     the filter would still leak the volume of a client the caller cannot
     otherwise see.
     """
@@ -416,10 +416,10 @@ async def get_unread_messages_count(
               AND pm.read_at IS NULL
               AND c.deleted_at IS NULL
         """
-        total_params: list[str] = []
+        total_params: list[list[str]] = []
 
         if assigned_filter is not None:
-            total_query += " AND LOWER(c.assigned_to) = $1"
+            total_query += " AND LOWER(c.assigned_to) = ANY($1::text[])"
             total_params.append(assigned_filter)
 
         total = await conn.fetchval(total_query, *total_params)
@@ -436,10 +436,10 @@ async def get_unread_messages_count(
               AND pm.read_at IS NULL
               AND c.deleted_at IS NULL
         """
-        by_client_params: list[str] = []
+        by_client_params: list[list[str]] = []
 
         if assigned_filter is not None:
-            by_client_query += " AND LOWER(c.assigned_to) = $1"
+            by_client_query += " AND LOWER(c.assigned_to) = ANY($1::text[])"
             by_client_params.append(assigned_filter)
 
         by_client_query += """
@@ -625,7 +625,7 @@ async def mark_client_message_read(
 async def get_recent_portal_activity(
     limit: int = Query(10, ge=1, le=50),
     _current_user: dict = Depends(require_team_auth),
-    assigned_filter: str | None = Depends(get_crm_user_filter),
+    assigned_filter: list[str] | None = Depends(get_crm_user_filter),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """
@@ -651,10 +651,10 @@ async def get_recent_portal_activity(
             JOIN clients c ON c.id = pm.client_id
             WHERE pm.direction = 'client_to_team'
         """
-        params: list[int | str] = [limit]
+        params: list[int | list[str]] = [limit]
 
         if assigned_filter is not None:
-            query += " AND LOWER(c.assigned_to) = $2"
+            query += " AND LOWER(c.assigned_to) = ANY($2::text[])"
             params.append(assigned_filter)
 
         query += " ORDER BY pm.created_at DESC LIMIT $1"

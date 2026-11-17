@@ -3,6 +3,7 @@
 The query uses SQL common to SQLite and Postgres; migration rollout is verified separately.
 """
 
+import json
 import sqlite3
 
 import pytest
@@ -27,8 +28,10 @@ def db():
 
 
 def pending(db, owner="owner@example.test"):
-    query, params = pending_reply_query(owner)
-    return [dict(row) for row in db.execute(query, {"1": params[0]} if params else {})]
+    query, params = pending_reply_query([owner] if owner else None)
+    # SQLite has no ANY(array): the same membership test through json_each.
+    query = query.replace("= ANY($1::text[])", "IN (SELECT value FROM json_each($1))")
+    return [dict(row) for row in db.execute(query, {"1": json.dumps(params[0])} if params else {})]
 
 
 def test_read_message_remains_pending_and_assignment_scopes_total(db):

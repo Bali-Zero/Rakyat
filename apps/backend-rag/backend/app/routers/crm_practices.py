@@ -19,6 +19,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_practices_user_filter
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
 from backend.app.services.internal_email import send_internal_email
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
@@ -155,9 +156,9 @@ def _practice_ownership_flags(
     client-contact-field scrub, never a *write* pathway.
     """
     user_is_admin = is_crm_admin(current_user)
-    user_email_lower = (current_user.get("email") or "").lower()
-    created_by_match = bool(created_by and created_by.lower() == user_email_lower)
-    assigned_to_match = bool(assigned_to and assigned_to.lower() == user_email_lower)
+    peers = caller_pool_peers(current_user)
+    created_by_match = bool(created_by and created_by.lower() in peers)
+    assigned_to_match = bool(assigned_to and assigned_to.lower() in peers)
     return user_is_admin, created_by_match, assigned_to_match
 
 
@@ -989,7 +990,7 @@ async def list_practices(
             if current_user:
                 practices_filter = get_practices_user_filter(current_user)
                 if practices_filter:
-                    query_parts.append(f" AND p.assigned_to = ${param_index}")
+                    query_parts.append(f" AND p.assigned_to = ANY(${param_index}::text[])")
                     params.append(practices_filter)
                     param_index += 1
                     logger.info("RBAC: Filtering practices by p.assigned_to")
@@ -1087,17 +1088,18 @@ async def get_active_practices(
     try:
         # RBAC: non-admin users can only see their own practices
         practices_filter = get_practices_user_filter(current_user)
-        if practices_filter and not assigned_to:
-            assigned_to = practices_filter
+        owners = practices_filter if practices_filter and not assigned_to else None
+        if owners is None and assigned_to:
+            owners = [assigned_to]
 
         async with db_pool.acquire() as conn:
             query_parts = ["SELECT * FROM active_practices_view WHERE 1=1"]
             params: list[Any] = []
             param_index = 1
 
-            if assigned_to:
-                query_parts.append(f" AND assigned_to = ${param_index}")
-                params.append(assigned_to)
+            if owners:
+                query_parts.append(f" AND assigned_to = ANY(${param_index}::text[])")
+                params.append(owners)
 
             query_parts.append(" ORDER BY priority DESC, start_date ASC")
             query = " ".join(query_parts)
@@ -1138,7 +1140,7 @@ async def get_upcoming_renewals(
             query = "SELECT * FROM upcoming_renewals_view WHERE days_until_expiry <= $1"
             params: list[Any] = [days]
             if practices_filter:
-                query += " AND assigned_to = $2"
+                query += " AND assigned_to = ANY($2::text[])"
                 params.append(practices_filter)
             rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
@@ -1236,9 +1238,9 @@ async def _require_visible_client(
     filter_email = get_practices_user_filter(current_user)
     if filter_email:
         visible = await conn.fetchval(
-            "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = $2"
+            "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = ANY($2::text[])"
             " OR EXISTS (SELECT 1 FROM practices WHERE client_id = $1"
-            " AND (created_by = $2 OR LOWER(assigned_to) = $2)))",
+            " AND (created_by = ANY($2::text[]) OR LOWER(assigned_to) = ANY($2::text[]))))",
             client_id,
             filter_email,
         )
@@ -1343,7 +1345,8 @@ async def get_practice(
             """
             if practices_filter:
                 base_query += (
-                    " AND (c.assigned_to = $2 OR p.created_by = $2 OR LOWER(p.assigned_to) = $2)"
+                    " AND (c.assigned_to = ANY($2::text[]) OR p.created_by = ANY($2::text[])"
+                    " OR LOWER(p.assigned_to) = ANY($2::text[]))"
                 )
                 row = await conn.fetchrow(base_query, practice_id, practices_filter)
                 if not row:
@@ -1357,9 +1360,10 @@ async def get_practice(
             practice = dict(row)
             await _attach_invoice_company_name(conn, practice)
             if practices_filter:
-                user_email = str(current_user.get("email") or "").lower()
-                created_by_match = str(practice.get("created_by") or "").lower() == user_email
-                client_lead_match = str(practice.get("client_lead") or "").lower() == user_email
+                created_by_match = str(practice.get("created_by") or "").lower() in practices_filter
+                client_lead_match = (
+                    str(practice.get("client_lead") or "").lower() in practices_filter
+                )
                 if not (created_by_match or client_lead_match):
                     for field in PRACTICE_CLIENT_CONTACT_FIELDS:
                         practice.pop(field, None)
@@ -1480,17 +1484,17 @@ async def update_practice(
 
             # RBAC: Check ownership or admin status
             user_is_admin = is_crm_admin(current_user)
-            user_email_lower = user_email.lower()
+            user_peers = caller_pool_peers(current_user)
             created_by_match = bool(
-                practice_created_by and practice_created_by.lower() == user_email_lower
+                practice_created_by and practice_created_by.lower() in user_peers
             )
             client_lead_match = bool(
-                practice_client_lead and practice_client_lead.lower() == user_email_lower
+                practice_client_lead and practice_client_lead.lower() in user_peers
             )
             if not user_is_admin:
                 # Check if user is creator or assigned to this practice
                 assigned_to_match = (
-                    practice_assigned_to and practice_assigned_to.lower() == user_email_lower
+                    practice_assigned_to and practice_assigned_to.lower() in user_peers
                 )
                 if not (created_by_match or assigned_to_match):
                     raise HTTPException(
@@ -2076,8 +2080,9 @@ async def delete_practice(
             if not user_is_admin:
                 created_by = (practice_row.get("created_by") or "").lower()
                 assigned_to = (practice_row.get("assigned_to") or "").lower()
-                created_by_match = created_by == user_email
-                assigned_to_match = assigned_to == user_email
+                peers = caller_pool_peers(current_user)
+                created_by_match = created_by in peers
+                assigned_to_match = assigned_to in peers
                 if not (created_by_match or assigned_to_match):
                     raise HTTPException(
                         status_code=403,
@@ -2251,8 +2256,9 @@ async def get_practices_stats(
         rbac_where = ""
         rbac_params: list[Any] = []
         if not is_admin and effective_user:
-            rbac_where = " AND assigned_to = $1"
-            rbac_params = [effective_user]
+            rbac_where = " AND assigned_to = ANY($1::text[])"
+            # An explicit user_id is an internal caller naming one owner: no pool expansion.
+            rbac_params = [[effective_user] if user_id else sorted(caller_pool_peers(current_user))]
 
         async with db_pool.acquire() as conn:
             # By status (filtered by user for non-admins)
@@ -2350,7 +2356,7 @@ async def get_practices_revenue_growth(
     Performance: cached for 5 minutes (CACHE_TTL_STATS_SECONDS).
     """
     try:
-        # RBAC: None for admins (full view), else the user's email.
+        # RBAC: None for admins (full view), else the user's email plus client-pool peers.
         user_filter = get_practices_user_filter(current_user)
 
         # Build the optional RBAC clause; placeholder indices are DERIVED from
@@ -2361,7 +2367,7 @@ async def get_practices_revenue_growth(
         rbac_where = ""
         if user_filter:
             params.append(user_filter)
-            rbac_where = f" AND assigned_to = ${len(params)}"
+            rbac_where = f" AND assigned_to = ANY(${len(params)}::text[])"
 
         # Month boundaries (UTC), computed in Python so the SQL only binds dates.
         now = datetime.now(timezone.utc)
