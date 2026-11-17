@@ -12,11 +12,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from backend.app.deps.auth import get_current_user
 from backend.app.deps.database import get_database_pool
 from backend.app.routers.funnel import router
 
 
-def make_app() -> FastAPI:
+def make_app(user: dict | None = None) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
 
@@ -36,6 +37,8 @@ def make_app() -> FastAPI:
         return mock_pool
 
     app.dependency_overrides[get_database_pool] = fake_pool
+    if user is not None:
+        app.dependency_overrides[get_current_user] = lambda: user
     return app
 
 
@@ -84,8 +87,22 @@ async def test_touch_rejects_short_session_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_convert_session_no_match_returns_ok() -> None:
-    """convert endpoint should return ok=True even when session_id not found (no-op)."""
+async def test_touch_rejects_oversized_payload() -> None:
+    app = make_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/funnel/session/touch",
+            json={
+                "session_id": "22222222-2222-4222-8222-222222222222",
+                "funnel": "visa",
+                "step_state": {"blob": "x" * 9000},
+            },
+        )
+    assert r.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_convert_session_requires_auth() -> None:
     app = make_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         r = await client.post(
@@ -93,6 +110,36 @@ async def test_convert_session_no_match_returns_ok() -> None:
             json={
                 "session_id": "33333333-3333-4333-8333-333333333333",
                 "client_id": "44444444-4444-4444-8444-444444444444",
+            },
+        )
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_convert_session_rejects_foreign_client_id() -> None:
+    app = make_app(user={"user_id": "client-user-1", "role": "client", "client_id": "own-client-id"})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/funnel/session/convert",
+            json={
+                "session_id": "33333333-3333-4333-8333-333333333333",
+                "client_id": "44444444-4444-4444-8444-444444444444",
+            },
+        )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_convert_session_no_match_returns_ok() -> None:
+    """convert endpoint should return ok=True even when session_id not found (no-op)."""
+    client_id = "44444444-4444-4444-8444-444444444444"
+    app = make_app(user={"user_id": "client-user-2", "role": "client", "client_id": client_id})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/funnel/session/convert",
+            json={
+                "session_id": "33333333-3333-4333-8333-333333333333",
+                "client_id": client_id,
             },
         )
     assert r.status_code == 200, r.text

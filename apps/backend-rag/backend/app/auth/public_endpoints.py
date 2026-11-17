@@ -692,11 +692,7 @@ _FUNNEL = (
         Category.FUNNEL,
         "Pre-auth lead cookie bz_session touch — anonymous UUID, no PII. "
         "Required for cross-funnel session attribution.",
-    ),
-    PublicEndpoint(
-        "/api/funnel/session/convert",
-        Category.FUNNEL,
-        "Lead→client conversion bridge called by portal login flow. Takes session_id + client_id.",
+        match="exact",
     ),
     PublicEndpoint(
         "/api/analytics/funnel-event",

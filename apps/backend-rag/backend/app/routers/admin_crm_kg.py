@@ -21,9 +21,16 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request
 
+from backend.app.routers.admin_drive_health import require_drive_admin
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin/crm-kg", tags=["admin"])
+
+
+async def _require_kg_admin(request: Request) -> dict[str, Any]:
+    """Gate mutating CRM KG endpoints to CRM admins."""
+    return await require_drive_admin(request)
 
 
 @router.post("/backfill-drive-documents")
@@ -40,6 +47,7 @@ async def trigger_backfill_drive_documents(
     Dry-run returns the candidate summary immediately. Live mode runs in a
     background task. OCR/Gemini dispatch is disabled unless allow_ocr=true.
     """
+    await _require_kg_admin(request)
     pool = getattr(request.app.state, "db_pool", None)
     if not pool:
         return {"status": "error", "message": "Database pool not available"}
@@ -89,6 +97,7 @@ async def trigger_build_mediated(
     actual work happens in the background task. Errors are logged but
     do not propagate to the caller (best-effort cron pattern).
     """
+    await _require_kg_admin(request)
     pool = getattr(request.app.state, "db_pool", None)
     if not pool:
         return {"status": "error", "message": "Database pool not available"}
@@ -117,6 +126,7 @@ async def trigger_garbage_collect(
 
     Cron-friendly: returns HTTP 200 immediately. Best-effort behavior.
     """
+    await _require_kg_admin(request)
     pool = getattr(request.app.state, "db_pool", None)
     if not pool:
         return {"status": "error", "message": "Database pool not available"}
