@@ -18,6 +18,8 @@ from backend.workers.crm_kg_maintenance import (
 )
 
 NOW = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+BUILD_RUN_KEY = f"{kg.BUILD_MEDIATED_JOB}_last_run_at"
+GC_RUN_KEY = f"{kg.GARBAGE_COLLECT_JOB}_last_run_at"
 
 
 def make_config(**overrides: Any) -> KgMaintenanceConfig:
@@ -38,40 +40,31 @@ def tiny_deadlines(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeConn:
-    def __init__(
-        self,
-        log: list[tuple[str, tuple[Any, ...]]],
-        state: dict[str, Any],
-        calls: list[tuple[str, dict[str, Any]]],
-    ) -> None:
-        self.log = log
-        self.state = state
-        self.calls = calls
+    def __init__(self, pool: FakePool) -> None:
+        self.pool = pool
 
     async def fetchval(self, sql: str, *args: Any, **kwargs: Any) -> Any:
-        self.log.append((sql, args))
-        self.calls.append(("fetchval", kwargs))
-        if "pg_try_advisory_lock" in sql:
-            return args[0] not in self.state.get("busy_locks", set())
-        if "FROM system_settings" in sql:
-            if args[0] in self.state.get("read_timeout_keys", set()):
-                raise TimeoutError
-            return self.state.get("settings", {}).get(args[0])
-        return None
+        self.pool.calls.append(("fetchval", kwargs))
+        self.pool.claims.append((sql, args, kwargs))
+        key = args[0]
+        if key in self.pool.state.get("claim_error_keys", set()):
+            raise TimeoutError
+        if key in self.pool.state.get("not_claimed_keys", set()):
+            return None
+        return key
 
     async def execute(self, sql: str, *args: Any, **kwargs: Any) -> None:
-        self.log.append((sql, args))
-        self.calls.append(("execute", kwargs))
-        if "INSERT INTO system_settings" in sql and args[0].endswith(
-            tuple(self.state.get("write_timeout_suffixes", ()))
-        ):
+        self.pool.calls.append(("execute", kwargs))
+        self.pool.writes.append((sql, args))
+        if args[0].endswith(tuple(self.pool.state.get("write_error_suffixes", ()))):
             raise TimeoutError
 
 
 class FakePool:
     def __init__(self, state: dict[str, Any] | None = None) -> None:
-        self.log: list[tuple[str, tuple[Any, ...]]] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.claims: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+        self.writes: list[tuple[str, tuple[Any, ...]]] = []
         self.state = state or {}
         self.released = 0
         self.closed = False
@@ -79,7 +72,7 @@ class FakePool:
 
     async def acquire(self, **kwargs: Any) -> FakeConn:
         self.calls.append(("acquire", kwargs))
-        return FakeConn(self.log, self.state, self.calls)
+        return FakeConn(self)
 
     async def release(self, _conn: Any, **kwargs: Any) -> None:
         self.calls.append(("release", kwargs))
@@ -94,11 +87,8 @@ class FakePool:
     def terminate(self) -> None:
         self.terminated = True
 
-    def upserts(self) -> list[str]:
-        return [args[0] for sql, args in self.log if "INSERT INTO system_settings" in sql]
-
-    def unlocks(self) -> list[int]:
-        return [args[0] for sql, args in self.log if "pg_advisory_unlock" in sql]
+    def result_keys(self) -> list[str]:
+        return [args[0] for _sql, args in self.writes]
 
 
 def patch_jobs(build: Any, gc: Any):
@@ -125,79 +115,62 @@ async def test_disabled_never_creates_pool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lock_busy_skips_job() -> None:
-    pool = FakePool({"busy_locks": {kg.BUILD_MEDIATED_LOCK_ID}})
-    build = AsyncMock(return_value={"ok": True})
-    gc = AsyncMock(return_value={"ok": True})
-    results = await run_with(pool, build, gc)
-    assert results[kg.BUILD_MEDIATED_JOB] == {"status": "locked"}
-    build.assert_not_called()
-    gc.assert_called_once()
-    assert kg.BUILD_MEDIATED_LOCK_ID not in pool.unlocks()
-    assert pool.unlocks() == [kg.GARBAGE_COLLECT_LOCK_ID]
-
-
-@pytest.mark.asyncio
-async def test_not_due_skips_job() -> None:
-    recent = (NOW - timedelta(seconds=60)).isoformat()
-    pool = FakePool(
-        {
-            "settings": {
-                f"{kg.BUILD_MEDIATED_JOB}_last_run_at": recent,
-                f"{kg.GARBAGE_COLLECT_JOB}_last_run_at": recent,
-            }
-        }
-    )
-    build = AsyncMock(return_value={"ok": True})
-    gc = AsyncMock(return_value={"ok": True})
-    results = await run_with(pool, build, gc)
-    assert results[kg.BUILD_MEDIATED_JOB] == {"status": "not_due", "last_run_at": recent}
-    build.assert_not_called()
-    gc.assert_not_called()
-    assert pool.upserts() == []
-    assert len(pool.unlocks()) == 2
-
-
-@pytest.mark.asyncio
-async def test_due_stamps_before_run_and_records_result() -> None:
+async def test_claimed_runs_job_and_writes_result() -> None:
     pool = FakePool()
-    order: list[str] = []
-
-    async def build(_pool: Any) -> dict[str, Any]:
-        order.append("job")
-        order.append(f"upserts_at_job={len(pool.upserts())}")
-        return {"ok": True, "edges": 3}
-
+    build = AsyncMock(return_value={"ok": True, "edges": 3})
     gc = AsyncMock(return_value={"ok": True})
     results = await run_with(pool, build, gc)
 
     assert results[kg.BUILD_MEDIATED_JOB]["status"] == "ok"
-    assert order == ["job", "upserts_at_job=1"]
-    upserts = pool.upserts()
-    assert upserts[0] == f"{kg.BUILD_MEDIATED_JOB}_last_run_at"
-    assert upserts[1] == f"{kg.BUILD_MEDIATED_JOB}_last_result"
-    stamp = next(
-        args[1]
-        for sql, args in pool.log
-        if "INSERT INTO system_settings" in sql and args[0].endswith("_last_run_at")
-    )
-    assert stamp == NOW.isoformat()
+    build.assert_called_once_with(pool)
     gc.assert_called_once()
-    assert pool.unlocks() == [kg.BUILD_MEDIATED_LOCK_ID, kg.GARBAGE_COLLECT_LOCK_ID]
-    assert pool.released == 2
+    assert pool.result_keys() == [
+        f"{kg.BUILD_MEDIATED_JOB}_last_result",
+        f"{kg.GARBAGE_COLLECT_JOB}_last_result",
+    ]
+    assert pool.released == pool.calls.count(("acquire", {"timeout": 0.05}))
 
 
 @pytest.mark.asyncio
-async def test_unparseable_last_run_is_due() -> None:
-    pool = FakePool({"settings": {f"{kg.BUILD_MEDIATED_JOB}_last_run_at": "not-a-date"}})
+async def test_not_claimed_skips_job() -> None:
+    pool = FakePool({"not_claimed_keys": {BUILD_RUN_KEY}})
     build = AsyncMock(return_value={"ok": True})
     gc = AsyncMock(return_value={"ok": True})
-    await run_with(pool, build, gc)
-    build.assert_called_once()
+    results = await run_with(pool, build, gc)
+    assert results[kg.BUILD_MEDIATED_JOB] == {"status": "not_due"}
+    build.assert_not_called()
+    gc.assert_called_once()
+    assert pool.result_keys() == [f"{kg.GARBAGE_COLLECT_JOB}_last_result"]
 
 
 @pytest.mark.asyncio
-async def test_job_timeout_reports_timeout_and_unlocks() -> None:
+async def test_claim_call_carries_timeout_and_atomic_sql() -> None:
+    pool = FakePool()
+    await run_with(pool, AsyncMock(return_value={}), AsyncMock(return_value={}))
+    sql, args, kwargs = pool.claims[0]
+    assert kwargs == {"timeout": kg._STEP_TIMEOUT_SECONDS}
+    assert "ON CONFLICT" in sql
+    assert "RETURNING" in sql
+    assert "pg_advisory" not in sql
+    assert args[0] == BUILD_RUN_KEY
+    assert args[1] == NOW.isoformat()
+    assert args[2] == NOW - timedelta(seconds=21_600)
+
+
+@pytest.mark.asyncio
+async def test_claim_error_is_error_and_second_job_runs() -> None:
+    pool = FakePool({"claim_error_keys": {BUILD_RUN_KEY}})
+    build = AsyncMock(return_value={"ok": True})
+    gc = AsyncMock(return_value={"ok": True})
+    results = await run_with(pool, build, gc)
+    assert results[kg.BUILD_MEDIATED_JOB]["status"] == "error"
+    build.assert_not_called()
+    gc.assert_called_once()
+    assert pool.released == 3
+
+
+@pytest.mark.asyncio
+async def test_job_timeout_reports_timeout() -> None:
     pool = FakePool()
 
     async def slow(_pool: Any) -> dict[str, Any]:
@@ -207,7 +180,6 @@ async def test_job_timeout_reports_timeout_and_unlocks() -> None:
     gc = AsyncMock(return_value={"ok": True})
     results = await run_with(pool, slow, gc, make_config(timeout_seconds=0.01))  # type: ignore[arg-type]
     assert results[kg.BUILD_MEDIATED_JOB]["status"] == "timeout"
-    assert kg.BUILD_MEDIATED_LOCK_ID in pool.unlocks()
     gc.assert_called_once()
 
 
@@ -219,7 +191,6 @@ async def test_job_error_does_not_stop_second_job() -> None:
     results = await run_with(pool, build, gc)
     assert results[kg.BUILD_MEDIATED_JOB] == {"status": "error", "error": "boom"}
     assert results[kg.GARBAGE_COLLECT_JOB]["status"] == "ok"
-    assert pool.unlocks() == [kg.BUILD_MEDIATED_LOCK_ID, kg.GARBAGE_COLLECT_LOCK_ID]
     gc.assert_called_once()
 
 
@@ -230,6 +201,28 @@ async def test_job_result_not_ok_is_error_status() -> None:
     gc = AsyncMock(return_value={"ok": True})
     results = await run_with(pool, build, gc)
     assert results[kg.BUILD_MEDIATED_JOB]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_result_write_failure_keeps_result_and_second_job_runs() -> None:
+    pool = FakePool({"write_error_suffixes": ["_last_result"]})
+    build = AsyncMock(return_value={"ok": True})
+    gc = AsyncMock(return_value={"ok": True})
+    results = await run_with(pool, build, gc)
+    assert results[kg.BUILD_MEDIATED_JOB]["status"] == "ok"
+    gc.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_every_housekeeping_call_carries_a_timeout() -> None:
+    pool = FakePool()
+    await run_with(pool, AsyncMock(return_value={"ok": True}), AsyncMock(return_value={"ok": True}))
+    ops = {op for op, _ in pool.calls}
+    assert {"acquire", "release", "fetchval", "execute"} <= ops
+    # 2 jobs x (acquire, claim, release, acquire, result write, release)
+    assert len(pool.calls) == 12
+    for op, kwargs in pool.calls:
+        assert kwargs.get("timeout") == kg._STEP_TIMEOUT_SECONDS, op
 
 
 @pytest.mark.asyncio
@@ -258,43 +251,6 @@ async def test_run_kg_maintenance_runs_and_closes_pool() -> None:
     assert policy.max_inactive_connection_lifetime == 300
     assert pool.closed is True
     assert pool.terminated is False
-
-
-@pytest.mark.asyncio
-async def test_every_housekeeping_call_carries_a_timeout() -> None:
-    pool = FakePool()
-    build = AsyncMock(return_value={"ok": True})
-    gc = AsyncMock(return_value={"ok": True})
-    await run_with(pool, build, gc)
-    ops = {op for op, _ in pool.calls}
-    assert {"acquire", "release", "fetchval", "execute"} <= ops
-    # 2 jobs x (acquire, lock, read, stamp, result, unlock, release)
-    assert len(pool.calls) == 14
-    for op, kwargs in pool.calls:
-        assert kwargs.get("timeout") == kg._STEP_TIMEOUT_SECONDS, op
-
-
-@pytest.mark.asyncio
-async def test_last_run_read_timeout_is_error_unlocks_and_second_job_runs() -> None:
-    pool = FakePool({"read_timeout_keys": {f"{kg.BUILD_MEDIATED_JOB}_last_run_at"}})
-    build = AsyncMock(return_value={"ok": True})
-    gc = AsyncMock(return_value={"ok": True})
-    results = await run_with(pool, build, gc)
-    assert results[kg.BUILD_MEDIATED_JOB]["status"] == "error"
-    build.assert_not_called()
-    assert pool.unlocks() == [kg.BUILD_MEDIATED_LOCK_ID, kg.GARBAGE_COLLECT_LOCK_ID]
-    gc.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_result_write_timeout_keeps_result_and_unlocks() -> None:
-    pool = FakePool({"write_timeout_suffixes": ["_last_result"]})
-    build = AsyncMock(return_value={"ok": True})
-    gc = AsyncMock(return_value={"ok": True})
-    results = await run_with(pool, build, gc)
-    assert results[kg.BUILD_MEDIATED_JOB]["status"] == "ok"
-    assert pool.unlocks() == [kg.BUILD_MEDIATED_LOCK_ID, kg.GARBAGE_COLLECT_LOCK_ID]
-    gc.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -363,36 +319,6 @@ async def test_outer_cancellation_is_not_swallowed() -> None:
         with pytest.raises(asyncio.CancelledError):
             await task
     assert pool.closed or pool.terminated
-
-
-@pytest.mark.asyncio
-async def test_run_forever_once_runs_kg_maintenance_after_poll() -> None:
-    from backend.workers import drive_poll_worker as worker
-
-    calls: list[str] = []
-
-    async def fake_once(_config: Any) -> dict[str, Any]:
-        calls.append("run_once")
-        return {}
-
-    async def fake_kg(_url: str, _config: Any) -> dict[str, Any]:
-        calls.append("kg")
-        return {"status": "disabled"}
-
-    config = worker.DrivePollWorkerConfig(
-        database_url="postgresql://x/db",
-        interval_seconds=30,
-        jitter_seconds=0,
-        timeout_seconds=60,
-        inline_ocr=False,
-        once=True,
-    )
-    with (
-        patch.object(worker, "run_once", new=fake_once),
-        patch.object(worker, "run_kg_maintenance", new=fake_kg),
-    ):
-        assert await worker.run_forever(config) == 0
-    assert calls == ["run_once", "kg"]
 
 
 def test_env_defaults_and_clamping() -> None:

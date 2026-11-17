@@ -3,7 +3,8 @@
 The HTTP API owns status and manual control only. This worker owns the periodic
 Drive poll loop so Drive/DB/OCR import chains do not compete with user-facing
 API requests inside the same Fly Machine. The worker also runs the CRM
-knowledge-graph maintenance jobs (build-mediated and garbage-collect).
+knowledge-graph maintenance jobs (build-mediated and garbage-collect) as a
+background task of the long-running loop, never inline and never with --once.
 """
 
 from __future__ import annotations
@@ -205,22 +206,52 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
             signal.signal(sig, lambda *_args: _request_stop())
 
     kg_config = load_kg_maintenance_config()
+    kg_task: asyncio.Task[dict[str, Any]] | None = None
 
-    while not stop_event.is_set():
-        await run_once(config)
-        await run_kg_maintenance(config.database_url, kg_config)
-        if config.once:
-            return 0
+    try:
+        while not stop_event.is_set():
+            await run_once(config)
+            if config.once:
+                # CRM KG maintenance belongs to the long-running loop, not --once.
+                return 0
 
-        sleep_seconds = config.interval_seconds
-        if config.jitter_seconds:
-            sleep_seconds += random.randint(0, config.jitter_seconds)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=sleep_seconds)
-        except TimeoutError:
-            continue
+            # Maintenance runs as a background task: the loop never awaits it, so a
+            # stuck database step there cannot stop Drive polling.
+            if kg_task is None or kg_task.done():
+                _reap_task(kg_task)
+                kg_task = asyncio.create_task(
+                    run_kg_maintenance(config.database_url, kg_config),
+                    name="crm-kg-maintenance",
+                )
+            else:
+                logger.info("Previous CRM KG maintenance is still running; skipping this cycle")
+
+            sleep_seconds = config.interval_seconds
+            if config.jitter_seconds:
+                sleep_seconds += random.randint(0, config.jitter_seconds)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=sleep_seconds)
+            except TimeoutError:
+                continue
+    finally:
+        if kg_task is not None:
+            if kg_task.done():
+                _reap_task(kg_task)
+            else:
+                kg_task.cancel()
+                # Never block shutdown on maintenance cleanup.
+                await asyncio.wait({kg_task}, timeout=10)
 
     return 0
+
+
+def _reap_task(task: asyncio.Task[dict[str, Any]] | None) -> None:
+    """Retrieve a finished maintenance task's outcome so nothing stays unretrieved."""
+    if task is None or not task.done() or task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("CRM KG maintenance task failed: %r", exc)
 
 
 def main(argv: list[str] | None = None) -> int:
