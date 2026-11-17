@@ -3,16 +3,16 @@ import Link from "next/link";
 import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
 
 export const metadata: Metadata = {
-  title: "Property Services in Bali — Leasehold, Freehold & Investment",
+  title: "Property Services in Bali — Leasehold, HGB Structuring & Investment",
   description:
-    "Expert property services in Bali. Leasehold advisory, freehold structuring, investment analysis. Powered by AI zoning intelligence. Trusted by 5000+ clients.",
+    "Expert property services in Bali. Leasehold advisory, PT PMA HGB & Hak Pakai structuring, investment analysis. Powered by AI zoning intelligence. Trusted by 5000+ clients.",
   alternates: {
     canonical: "https://balizero.com/property",
   },
   openGraph: {
     title: "Property Services in Bali | Bali Zero",
     description:
-      "Expert property advisory for foreigners in Bali. Leasehold, freehold, investment guidance with AI-powered zoning intelligence.",
+      "Expert property advisory for foreigners in Bali. Leasehold, PT PMA HGB & Hak Pakai structuring, investment guidance with AI-powered zoning intelligence.",
     url: "https://balizero.com/property",
   },
 };
@@ -46,7 +46,7 @@ const services = [
     ],
   },
   {
-    title: "Freehold Structuring",
+    title: "PT PMA & HGB Structuring",
     icon: (
       <svg
         width="32"
@@ -65,8 +65,8 @@ const services = [
     ),
     points: [
       "PT PMA property holding structures",
-      "Nominee arrangement compliance",
-      "Land use permit (IMB/PBG) advisory",
+      "HGB (30+20+30 yr) & Hak Pakai title structuring",
+      "PKKPR spatial conformity & PBG/SLF building permits",
       "Tax optimization for property ownership",
     ],
   },

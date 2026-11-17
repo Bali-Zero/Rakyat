@@ -281,3 +281,14 @@ class TestNormativeCatalogueAlignment:
         assert "university-sponsored" not in e30a.notes.lower()
         assert "primary & secondary" in e30a.notes.lower()
         assert "E30B" in e30a.notes
+
+    def test_e33e_is_extendable_and_uses_income_or_allowance(self):
+        e33e = VISA_META[VisaType.E33E]
+        assert e33e.extensions == (1, 365 * 5)
+        assert EXTENSION_POLICY[VisaType.E33E] == (1, 365 * 5)
+        assert "income or allowance" in e33e.notes.lower()
+        assert "passive income" not in e33e.notes.lower()
+
+        e33f = VISA_META[VisaType.E33F]
+        assert "income or allowance" in e33f.notes.lower()
+        assert "passive income" not in e33f.notes.lower()

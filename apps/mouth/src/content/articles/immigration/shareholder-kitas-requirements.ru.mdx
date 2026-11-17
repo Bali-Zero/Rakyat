@@ -51,7 +51,7 @@ seoTitle: "Shareholder KITAS Requirements Indonesia 2026"
 seoDescription: "KITAS options for PT PMA foreign shareholders in Indonesia. IDR 10 billion minimum for E28A investor visa, work permits, and residency pathways."
 aiOptimization:
   primaryQuestion: "What KITAS do foreign shareholders need in Indonesia?"
-  answerSnippet: "Foreign shareholders with IDR 10 billion+ in PT PMA can get Investor KITAS (E28A) without RPTKA. Shareholders below this threshold who hold director positions need Working KITAS (E25B). Passive minority shareholders without director role may use social/business visas for short visits."
+  answerSnippet: "Foreign shareholders with at least IDR 10 billion in personal shareholding in a sponsoring PT PMA can get Investor KITAS (E28A) without RPTKA. Shareholders below IDR 10 billion who act as directors or employees need Working KITAS (E23) with RPTKA. Passive minority shareholders without director/work roles may use business visit visas (e.g., C2/D2) for periodic visits."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Imigrasi"
@@ -77,7 +77,7 @@ canonicalUrl: "https://balizero.com/immigration/shareholder-kitas-requirements"
 ogImage: "/static/insights/immigration/shareholder.jpg"
 twitterCard: "summary_large_image"
 locale: "ru"
-source_sha256: "9614c75b99562c4fadbbb3274329a52fd41bc19c5aedda893d3ebd2bf92f957a"
+source_sha256: "9cc123649d3cc60f508004d17e93a254afa1a3488247f2e9467f0e9608565955"
 ---
 
 import {
@@ -119,42 +119,42 @@ import {
     },
     {
       id: "passive",
-      question: "Соответствуете ли вы инвестициям в 1 млрд+ IDR?",
+      question: "Достигает ли ваша личная доля в уставном капитале 10 млрд+ IDR?",
       options: [
-        { label: "Да, я инвестировал 1 млрд+ IDR", next: "investor-kitas" },
-        { label: "Нет, менее 1 млрд IDR", next: "no-investor" },
+        { label: "Да, моя личная доля акций составляет 10 млрд+ IDR", next: "investor-kitas" },
+        { label: "Нет, менее 10 млрд IDR", next: "no-investor" },
       ],
     },
     {
       id: "director",
       result: {
-        title: "KITAS директора с RPTKA",
+        title: "KITAS директора (E23) с RPTKA",
         description:
-          "Как работающий директор, вам требуется полное разрешение на работу. Требуются RPTKA + KITAS. Компания является вашим спонсором. Применяются сборы DKP-TKA.",
+          "Как работающему директору, вам требуется полное разрешение на работу E23. Требуются RPTKA + KITAS. Компания выступает спонсором. Применяются сборы DKP-TKA.",
       },
     },
     {
       id: "worker",
       result: {
-        title: "KITAS сотрудника с RPTKA",
+        title: "KITAS сотрудника (E23) с RPTKA",
         description:
-          "Работа на должности, не связанной с директором, требует KITAS сотрудника. RPTKA зависит от вашей должности. Обычные квалификационные требования.",
+          "Работа на должности, не связанной с директором, требует рабочего KITAS E23. RPTKA зависит от вашей должности. Обычные квалификационные требования.",
       },
     },
     {
       id: "investor-kitas",
       result: {
-        title: "KITAS инвестора (C313)",
+        title: "KITAS инвестора (E28A)",
         description:
-          "Пассивные инвесторы с 1 млрд+ IDR могут получить Investor KITAS без RPTKA. Сборы DKP-TKA не применяются. Могут посещать заседания совета директоров и получать дивиденды.",
+          "Пассивные инвесторы с личной долей 10 млрд+ IDR в PT PMA могут получить Investor KITAS E28A без RPTKA. Сборы DKP-TKA не применяются. Могут посещать заседания совета и получать дивиденды.",
       },
     },
     {
       id: "no-investor",
       result: {
-        title: "Отсутствие прямого пути к KITAS",
+        title: "Отсутствие прямого пути к E28A Investor KITAS",
         description:
-          "Если у вас менее 1 млрд IDR и вы не работаете, вы не можете получить KITAS как акционер. Рассмотрите возможность увеличения инвестиций до 1 млрд IDR или принятия рабочей роли.",
+          "Если ваша личная доля менее 10 млрд IDR и вы не оформляете RPTKA, получить Investor KITAS E28A нельзя. Увеличьте личную долю до 10 млрд+ IDR или подайте на рабочий KITAS E23 с RPTKA.",
       },
     },
   ]}
@@ -170,9 +170,9 @@ import {
   fields={[
     {
       id: "totalCapital",
-      label: "Оплаченный капитал компании",
+      label: "Уставный / оплаченный капитал компании",
       type: "number",
-      defaultValue: 5000000000,
+      defaultValue: 10000000000,
       min: 0,
       step: 500000000,
       suffix: "IDR"
@@ -181,7 +181,7 @@ import {
       id: "sharePercent",
       label: "Ваша доля владения",
       type: "number",
-      defaultValue: 30,
+      defaultValue: 100,
       min: 1,
       max: 100,
       suffix: "%"
@@ -191,20 +191,20 @@ import {
     const capital = Number(values.totalCapital);
     const percent = Number(values.sharePercent) / 100;
     const yourShare = capital * percent;
-    const minInvestor = 1000000000;
+    const minInvestor = 10000000000;
     const eligible = yourShare >= minInvestor;
 
     return {
       total: yourShare,
       breakdown: [
-        { label: "Общий капитал компании", amount: capital },
+        { label: "Общий уставный капитал компании", amount: capital },
         { label: `Ваша доля (${values.sharePercent}%)`, amount: yourShare },
-        { label: "Минимальный размер инвестиций для KITAS инвестора", amount: minInvestor }
+        { label: "Минимум для E28A Investor KITAS", amount: minInvestor }
       ],
       currency: "IDR",
       note: eligible
-        ? "✅ Подходит для Investor KITAS (пассивный)"
-        : "❌ Менее 1 млрд IDR - необходимо работать или увеличить инвестиции"
+        ? "✅ Подходит для E28A Investor KITAS (личная доля 10 млрд+ IDR)"
+        : "❌ Личная доля менее 10 млрд IDR — подавайте на рабочий KITAS E23 (с RPTKA) или увеличьте свою долю"
     };
 
 }}
@@ -212,11 +212,11 @@ import {
 
 ### Минимальные пороги
 
-| Тип KITAS                  | Требования к инвестициям                                   |
-| -------------------------- | ---------------------------------------------------------- |
-| Investor KITAS (пассивный) | Минимум 1 000 000 000 IDR личных инвестиций                |
-| Director KITAS (рабочий)   | Нет минимума (компания должна соответствовать 10 млрд IDR) |
-| Employee KITAS (рабочий)   | Не зависит от инвестиций                                   |
+| Тип KITAS                             | Требования к инвестициям / доле в уставном капитале      |
+| ------------------------------------- | -------------------------------------------------------- |
+| Investor KITAS (E28A, пассивный)      | Минимум 10 000 000 000 IDR личных акций в PT PMA         |
+| Director / Working KITAS (E23)        | Нет личного порога акций (требуется RPTKA + DKP-TKA)     |
+| Employee KITAS (E23, рабочий)         | Не зависит от акций (требуется RPTKA + DKP-TKA)          |
 
 ---
 
@@ -224,11 +224,11 @@ import {
 
 <ComparisonTable
   title="Пути к KITAS для акционеров"
-  description="Варианты на основе роли и инвестиций"
+  description="Варианты на основе роли и личного участия в капитале"
   items={[
     {
-      name: "Путь 1: Чистый инвестор",
-      subtitle: "Инвестиции 1 млрд+ IDR, без работы",
+      name: "Путь 1: Investor KITAS (E28A)",
+      subtitle: "Личная доля 10 млрд+ IDR, без наемной работы",
       values: {
         RPTKA: "Не требуется",
         "DKP-TKA": "Не требуется",
@@ -300,9 +300,9 @@ import {
 - CV/Резюме
 - Учредительный договор компании, подтверждающий владение акциями
 
-### Для Investor KITAS (пассивный)
+### Для Investor KITAS (E28A, пассивный)
 
-- Доказательство внесения капитала (1 млрд+ IDR ваша доля)
+- Доказательство личной доли акций не менее **10 млрд+ IDR** в акте PT PMA / NIB
 - Выписки из банка
 - Сертификат акций (если доступен)
 - NIB и документы компании
@@ -320,16 +320,16 @@ import {
 
 Если у вашей PT PMA несколько иностранных акционеров:
 
-| Акционеры    | Инвестиции на человека           | Общий капитал компании |
-| ------------ | -------------------------------- | ---------------------- |
-| 1 иностранец | 1 млрд+ IDR                      | Минимум 10 млрд IDR    |
-| 2 иностранца | 1 млрд+ IDR каждый = 2 млрд+ IDR | Минимум 10 млрд IDR    |
-| 3 иностранца | 1 млрд+ IDR каждый = 3 млрд+ IDR | Минимум 10 млрд IDR    |
+| Акционеры    | Личная доля на держателя E28A         | Общий капитал PT PMA (на KBLI)           |
+| ------------ | ------------------------------------- | ---------------------------------------- |
+| 1 иностранец | 10 млрд+ IDR                          | > 10 млрд IDR (без земли и зданий)       |
+| 2 иностранца | 10 млрд+ IDR каждый = 20 млрд+ IDR    | 20 млрд+ IDR для 2 E28A (или путь E23)   |
+| 3 иностранца | 10 млрд+ IDR каждый = 30 млрд+ IDR    | 30 млрд+ IDR для 3 E28A (или путь E23)   |
 
-<InfoCard variant="note" title="Каждому иностранцу требуется 1 млрд IDR">
-  Для Investor KITAS каждый иностранный акционер должен иметь не менее 1
-  миллиарда IDR, инвестированных на его имя. Вы не можете разделить один 1
-  миллиард IDR между двумя людьми.
+<InfoCard variant="note" title="Каждому держателю E28A требуется 10 млрд IDR">
+  Для Investor KITAS (E28A) каждый иностранный акционер должен иметь не менее
+  10 миллиардов IDR акций на свое имя в уставе компании. Нельзя разделить одну
+  долю в 10 млрд IDR между двумя держателями E28A (акционеры с меньшей долей, работающие в компании, оформляют E23 Working KITAS с RPTKA).
 
 </InfoCard>
 

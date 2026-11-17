@@ -59,7 +59,7 @@ canonicalUrl: "https://balizero.com/tax-legal/pph-25-monthly-installments-guide"
 ogImage: "/static/insights/tax/pph-25-monthly-installments-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
-source_sha256: "82801dbd1448776deef577055b05eee6ed9d835638d30ee9f2b0acaf4610d3e0"
+source_sha256: "5c8e041b9054468b0e12238cfe73c6edc2c2f2564f0a48415e6c92f98821f74b"
 ---
 
 ## Cos'è il PPh 25?
@@ -205,19 +205,19 @@ Il mancato rispetto delle scadenze PPh 25 comporta due tipi di sanzioni:
 
 | Violazione                    | Sanzione                                                                |
 | ---------------------------- | ---------------------------------------------------------------------- |
-| Ritardato pagamento (oltre il 15) | 2% al mese sull'importo non versato (max 24 mesi)                       |
+| Ritardato pagamento (oltre il 15) | Tasso di interesse mensile variabile KMK ai sensi della legge UU HPP (max 24 mesi) |
 | Ritardata dichiarazione (oltre il 20)  | IDR 100,000 al mese (persona fisica) o IDR 1,000,000 al mese (società) |
 | Omessa dichiarazione                   | IDR 1,000,000 per ogni mese non dichiarato + possibile controllo fiscale              |
 
 ### Esempio di calcolo delle sanzioni
 
-PT Indo Pacific Trading manca la scadenza di pagamento del 15 febbraio per il PPh 25 di gennaio 2026:
+PT Indo Pacific Trading manca la scadenza di pagamento del 15 febbraio per il PPh 25 di gennaio 2026 (esempio con tasso di interesse mensile KMK ~0,95%/mese ai sensi della UU HPP):
 
 - Importo PPh 25: IDR 24,583,000
 - Pagato il 5 marzo (18 giorni di ritardo = 1 mese ai fini del calcolo della sanzione)
-- Sanzione per ritardato pagamento: IDR 24,583,000 x 2% x 1 mese = IDR 491,660
+- Interessi di mora indicativi (tasso KMK ~0,95%): IDR 24,583,000 x 0,95% x 1 mese = IDR 233,539 (il tasso effettivo segue il decreto KMK mensile del Ministero delle Finanze)
 - Sanzione per ritardata dichiarazione (se omessa anche la dichiarazione): IDR 1,000,000
-- Totale sanzioni: IDR 1,491,660
+- Totale sanzioni indicative: IDR 1,233,539
 
 ## PPh 25 per diverse situazioni aziendali
 
@@ -229,16 +229,13 @@ Per le società PT PMA di nuova costituzione senza SPT Tahunan dell'anno precede
 - **Eccezione**: Se DJP ritiene che il reddito previsto giustifichi gli acconti, può fissare un importo stimato basato su attività simili
 - **Buona pratica**: Anche con PPh 25 pari a zero, presenta il SPT Masa PPh 25 come "nihil" (nullo) ogni mese per evitare sanzioni per omessa dichiarazione
 
-### Società che applicano l'aliquota UMKM (PP 55/2022)
+### PT PMA e aliquota finale UMKM 0,5% (PP 55/2022 jo. PP 20/2026)
 
-Se la tua PT PMA ha diritto all'aliquota finale UMKM dello 0,5% (ricavi lordi inferiori a IDR 4,8 miliardi/anno):
+**Le società PT PMA NON sono ammissibili** all'aliquota fiscale finale UMKM dello 0,5% ai sensi del PP 55/2022 e del PP 20/2026 (che esclude ulteriormente anche le PT/CV ordinarie, riservando il regime finale 0,5% entro i limiti temporali di legge — 3 anni PT / 4 anni CV / 7 anni persone fisiche — solo alle micro/piccole imprese domestiche idonee):
 
-- Le rate PPh 25 **non sono applicabili**
-- Invece, paghi lo 0,5% dei ricavi lordi mensili come PPh Final
-- Il pagamento va effettuato entro il 15 del mese successivo
-- L'aliquota UMKM è disponibile per i primi 3 anni di attività di una PT (o 4 anni per una CV)
-
-**Nota**: Le società PT PMA sono diventate ammissibili all'aliquota UMKM ai sensi della Legge HPP (UU 7/2021), ma la soglia dei ricavi lordi non deve superare IDR 4,8 miliardi all'anno.
+- Una PT PMA è soggetta all'**IRES ordinaria** (aliquota standard del 22%, oppure alla **riduzione del 50% ex Art. 31E -> aliquota effettiva dell'11%** sulla quota di reddito imponibile proporzionale ai primi IDR 4,8 miliardi di ricavi se il fatturato totale è fino a IDR 50 miliardi)
+- Di conseguenza, **gli acconti mensili PPh 25 SI APPLICANO** a una PT PMA una volta che la prima SPT Tahunan annuale evidenzi un'imposta dovuta
+- Solo le PMI **domestiche** ammesse al regime PP 55/2022 jo. PP 20/2026 versano lo 0,5% mensile entro il 15 in sostituzione del PPh 25
 
 ### Società con forti fluttuazioni dei ricavi
 
@@ -289,7 +286,7 @@ Puoi richiedere una riduzione del PPh 25 se:
 
 ### Avvertenza importante
 
-Se riduci il tuo PPh 25 ma il tuo debito fiscale effettivo di fine anno risulta superiore al previsto, DJP applicherà una sanzione del 2% mensile sulla differenza tra quanto hai versato e quanto avresti dovuto versare. Richiedi una riduzione solo se sei sicuro del calo previsto.
+Se riduci il tuo PPh 25 ma il tuo debito fiscale effettivo di fine anno risulta superiore al previsto, DJP applicherà gli interessi sanzionatori mensili variabili stabiliti dal KMK (ai sensi della legge UU HPP) sulla differenza tra quanto hai versato e quanto avresti dovuto versare. Richiedi una riduzione solo se sei sicuro del calo previsto.
 
 ## PPh 25 e l'aliquota dell'imposta societaria
 
@@ -371,6 +368,6 @@ Il PPh 25 non è un'imposta separata. È un acconto mensile sulla tua imposta an
 
 Gestire correttamente il PPh 25 richiede calcoli accurati, pagamenti puntuali e dichiarazioni CoreTax adeguate ogni singolo mese. Per le società PT PMA, errori in questo ambito comportano sanzioni cumulative e potenziali controlli fiscali.
 
-Il pacchetto Accounting Basic di Bali Zero a IDR 1,500,000/mese include calcolo mensile del PPh 25, generazione del codice di fatturazione, gestione dei pagamenti e presentazione del SPT Masa tramite CoreTax. Il pacchetto Accounting Premium a IDR 3,000,000/mese aggiunge pianificazione fiscale completa, strategie di ottimizzazione del PPh 25 e richieste di riduzione proattive ove applicabili.
+Il servizio Monthly Tax Report di Bali Zero (0–50 transazioni, esclusi LKPM e dichiarazione annuale) parte da IDR 1.800.000–2.000.000/mese (fino a IDR 5.000.000/mese per oltre 200 transazioni) e include calcolo mensile del PPh 25, codici di pagamento Coretax e presentazione SPT Masa. Il pacchetto Monthly Tax Report Bundled (con LKPM e SPT Tahunan aziendale inclusi) parte da IDR 2.500.000/mese per 0–50 transazioni (fino a IDR 6.500.000/mese per 200+ transazioni), affiancato dal Compliance Core Retainer a IDR 9.500.000/mese.
 
 Contatta Bali Zero a info@balizero.com o WhatsApp +62 821 3454 721 per la gestione della conformità fiscale mensile.

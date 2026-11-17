@@ -360,12 +360,12 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             category="KITAS/Limited Stay",
             purposes=frozenset({Purpose.RETIREMENT}),
             duration_days=365 * 5,
-            extensions=(0, 0),
+            extensions=(1, 365 * 5),
             min_budget_idr=500_000_000,
             budget_gate_is_ranking_only=True,
             notes=(
                 "Golden visa for 55+ retirees (USD 50,000 state-owned BUMN bank deposit "
-                "and >= USD 3,000/mo passive income). 5-year single block."
+                "and >= USD 3,000/mo income or allowance). 5-year initial stay, extendable."
             ),
             seed_source=SEED,
             duration_source=NB2,
@@ -379,7 +379,7 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             duration_days=365,
             extensions=(1, 365),
             min_budget_idr=None,
-            notes="Standard 55+ retirement. >= USD 3,000/mo passive income.",
+            notes="Standard 55+ retirement (sponsor required). >= USD 3,000/mo income or allowance.",
             seed_source=SEED,
             duration_source=NB2,
         ),

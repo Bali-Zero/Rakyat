@@ -75,7 +75,7 @@ ogImage: "/static/insights/business/pt-pma-capital-requirements.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "id"
-source_sha256: "e6010e09de6373b5491a13b22ec5329a5ed7db8acf658a59ca50a69ed33e9fcc"
+source_sha256: "2fc8ab494a6a3674b9608fd2f03f61cafd29d70b92f71926b1473d337e35a30d"
 ---
 
 # Kebutuhan Modal PT PMA: Apa yang Anda Butuhkan untuk Berinvestasi 2026
@@ -84,14 +84,14 @@ Kebutuhan investasi minimum **IDR 10 miliar** (~$625.000 USD) untuk PT PMA adala
 
 ## Dua Angka Kunci
 
-| Kebutuhan          | Jumlah             | Artinya                                     |
-| ------------------ | ------------------ | ------------------------------------------ |
-| **Total Investasi** | IDR 10 miliar min  | Total investasi direncanakan selama masa hidup perusahaan |
-| **Modal Disetor**   | IDR 10 miliar min  | Uang tunai yang disetor ke rekening bank perusahaan     |
+| Kebutuhan            | Jumlah                           | Artinya                                                                                |
+| -------------------- | -------------------------------- | -------------------------------------------------------------------------------------- |
+| **Total Investasi**  | **> IDR 10 miliar**              | Rencana investasi di luar tanah & bangunan per KBLI 5 digit / lokasi (Perka BKPM 5/2025) |
+| **Modal Disetor**    | **IDR 2,5 miliar per perusahaan** | Setoran modal minimal pada tingkat perusahaan saat pendirian (Perka BKPM 5/2025 Ps. 26) |
 
-<InfoCard variant="important" title="Keduanya Harus Dipenuhi">
+<InfoCard variant="important" title="Aturan Terpisah (Perka BKPM 5/2025)">
 
-Sesuai regulasi saat ini, **keduanya** rencana total investasi DAN modal disetor harus minimal IDR 10 miliar. Ini berbeda dari aturan sebelumnya di mana modal disetor bisa lebih rendah.
+Sesuai **Perka BKPM No. 5 Tahun 2025**, **modal disetor minimal** adalah **IDR 2,5 miliar per perusahaan** (berlaku untuk seluruh perusahaan tanpa melihat jumlah pemegang saham, terkunci 12 bulan kecuali dibelanjakan untuk kegiatan operasional sah), sedangkan **total rencana investasi** tetap **> IDR 10 miliar** (tidak termasuk nilai tanah dan bangunan untuk sebagian besar sektor).
 
 </InfoCard>
 
@@ -144,11 +144,11 @@ Rencana investasi Anda sebesar IDR 10 miliar dapat mencakup:
     },
     {
       name: "Tanah & Bangunan",
-      subtitle: "Jika dimiliki perusahaan",
+      subtitle: "Pembelian properti atau bangunan",
       values: {
-        Type: "Aset",
-        "Dihitung?": "Ya",
-        Dokumentasi: "Perjanjian pembelian, penilaian",
+        Type: "Properti",
+        "Dihitung?": "Tidak (dikecualikan dari hitungan >10M untuk sektor umum)",
+        Dokumentasi: "Dicatat terpisah di LKPM (kecuali sektor properti/kawasan tertentu)",
       },
     },
   ]}
@@ -160,38 +160,38 @@ Rencana investasi Anda sebesar IDR 10 miliar dapat mencakup:
 
 <Calculator
   title="Perencana Struktur Investasi"
-  description="Rencanakan cara mencapai investasi IDR 10B"
+  description="Rencanakan modal disetor IDR 2,5M dan rencana investasi > IDR 10M BKPM (di luar tanah/bangunan)"
   fields={[
     {
       id: "cash",
-      label: "Tunai untuk Disetor (Modal Sah)",
+      label: "Modal Disetor / Tunai (Min IDR 2,5M per perusahaan)",
       type: "number",
-      defaultValue: 10000000000,
+      defaultValue: 2500000000,
       min: 0,
       step: 500000000,
       suffix: "IDR"
     },
     {
       id: "equipment",
-      label: "Peralatan & Mesin",
+      label: "Peralatan, Teknologi & Mesin",
       type: "number",
-      defaultValue: 0,
+      defaultValue: 4000000000,
       min: 0,
       step: 100000000,
       suffix: "IDR"
     },
     {
       id: "working",
-      label: "Modal Kerja (Tahun 1)",
+      label: "Modal Kerja & Operasional (Tahun 1+)",
       type: "number",
-      defaultValue: 0,
+      defaultValue: 4000000000,
       min: 0,
       step: 100000000,
       suffix: "IDR"
     },
     {
       id: "property",
-      label: "Tanah & Bangunan",
+      label: "Tanah & Bangunan (Dikecualikan dari batas >10M BKPM)",
       type: "number",
       defaultValue: 0,
       min: 0,
@@ -205,30 +205,33 @@ Rencana investasi Anda sebesar IDR 10 miliar dapat mencakup:
     const working = Number(values.working);
     const property = Number(values.property);
 
-    const total = cash + equipment + working + property;
-    const required = 10000000000;
-    const shortage = Math.max(0, required - total);
-    const paidUpShortage = Math.max(0, required - cash);
+    const qualifyingInvestment = cash + equipment + working;
+    const minInvestment = 10000000000;
+    const minPaidUp = 2500000000;
+    const shortage = Math.max(0, minInvestment - qualifyingInvestment);
+    const paidUpShortage = Math.max(0, minPaidUp - cash);
 
     const breakdown = [
-      { label: "Modal Sah (Tunai)", amount: cash },
+      { label: "Modal Disetor (Tunai)", amount: cash },
       { label: "Peralatan & Mesin", amount: equipment },
       { label: "Modal Kerja", amount: working },
-      { label: "Tanah & Bangunan", amount: property },
-      { label: "Total Rencana Investasi", amount: total }
+      { label: "Investasi Kualifikasi BKPM (di luar tanah/bangunan)", amount: qualifyingInvestment },
+      { label: "Tanah & Bangunan (Dikecualikan dari batas >10M)", amount: property }
     ];
 
     let note = "";
-    if (total >= required && cash >= required) {
-      note = "Persyaratan terpenuhi!";
-    } else if (cash < required) {
-      note = `Modal disetor kurang sebesar IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Harus menyetor minimal IDR 10B.`;
-    } else if (total < required) {
-      note = `Total investasi kurang sebesar IDR ${(shortage/1000000000).toFixed(1)}B`;
+    if (cash < minPaidUp) {
+      note = `Modal disetor kurang IDR ${(paidUpShortage/1000000000).toFixed(2)}M. Minimal IDR 2,5M per perusahaan (Perka BKPM 5/2025 Ps. 26).`;
+    } else if (qualifyingInvestment <= minInvestment) {
+      note = qualifyingInvestment === minInvestment
+        ? "Tambahkan > IDR 0 di atas IDR 10M (BKPM mensyaratkan LEBIH DARI IDR 10M di luar tanah & bangunan)."
+        : `Investasi kualifikasi BKPM (di luar tanah/bangunan) kurang > IDR ${(shortage/1000000000).toFixed(2)}M.`;
+    } else {
+      note = "Modal disetor (>= IDR 2,5M) dan rencana investasi > IDR 10M (di luar tanah/bangunan) terpenuhi!";
     }
 
     return {
-      total,
+      total: qualifyingInvestment,
       breakdown,
       currency: "IDR",
       note
@@ -242,21 +245,21 @@ Rencana investasi Anda sebesar IDR 10 miliar dapat mencakup:
 ## Pertanyaan Umum Tentang Modal
 
 <InfoCard variant="note" title="FAQ">
-**Q: Apakah saya perlu memiliki IDR 10B di rekening bank pada hari pertama?**
-A: Ya, modal disetor sebesar IDR 10B harus disetor untuk membuka rekening bank perusahaan dan menyelesaikan pendaftaran.
+**Q: Apakah saya perlu menyetor IDR 10M tunai di rekening bank pada hari pertama?**
+A: Tidak. Berdasarkan Perka BKPM 5/2025 Pasal 26, modal disetor minimal adalah **IDR 2,5 miliar per perusahaan** (terkunci 12 bulan kecuali dibelanjakan untuk aset/operasional sah perusahaan). Sisa rencana investasi hingga > IDR 10 miliar (di luar tanah & bangunan) dapat dipenuhi bertahap melalui peralatan, modal kerja, dan biaya operasional sesuai pelaporan LKPM.
 
-**Q: Bisakah saya menggunakannya setelah disetor?**
-A: Ya, sekali disetor sebagai modal saham, dana ini digunakan untuk operasional bisnis.
+**Q: Bisakah modal disetor digunakan setelah disetor?**
+A: Modal disetor tunduk pada ketentuan pengendapan 12 bulan kecuali dicairkan untuk aset atau operasional bisnis PT PMA yang terdokumentasi sah.
 
-**Q: Bagaimana jika saya tidak bisa memenuhi IDR 10B?**
+**Q: Bagaimana jika saya tidak bisa memenuhi investasi > IDR 10M?**
 A: Pilihan meliputi:
 
-- Kemitraan dengan mitra lokal
-- Struktur bisnis yang berbeda (kantor perwakilan, dll.)
-- Menunggu hingga memiliki modal yang cukup
+- Kemitraan / PT PMDN dengan mitra lokal sesuai ketentuan kepemilikan nasional
+- Kantor Perwakilan (KPPA — non-komersial)
+- Menunggu hingga rencana investasi > IDR 10M layak dijalankan
 
 **Q: Apakah ada cara untuk menghindari minimum ini?**
-A: Tidak ada cara yang sah. Regulasi jelas mengenai minimal IDR 10B untuk PT PMA.
+A: Tidak ada cara yang sah. Regulasi jelas mengenai modal disetor IDR 2,5M per perusahaan dan rencana investasi > IDR 10M (di luar tanah/bangunan) untuk PT PMA.
 
 </InfoCard>
 

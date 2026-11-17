@@ -43,7 +43,7 @@ seoTitle: "PT PMA Registration Indonesia 2026 | Step by Step"
 seoDescription: "Register a PT PMA in Indonesia: complete step-by-step guide with documents, timeline (4-8 weeks), costs, and process from notary deed to NIB issuance."
 aiOptimization:
   primaryQuestion: "How do I register a PT PMA (foreign company) in Indonesia?"
-  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Total cost: IDR 15-25 million through an agent. Required: 2+ shareholders, director, commissioner."
+  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Bali Zero setup fee: IDR 25,000,000 (excl. IDR 5,000,000 Virtual Office if needed). Required: 2+ shareholders, director, commissioner."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "AHU Kemenkumham"
@@ -79,7 +79,7 @@ ogImage: "/static/insights/business/foreign-company-incorporation-steps.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "ru"
-source_sha256: "38908520a355ef56c84baf62dee217c7c890760b1f86aabc371b904492fd2f4e"
+source_sha256: "4a6c242fdfb5156fc6e29001eeaeefa13af82a1da9ad284521a21a9b04484d31"
 ---
 
 import {
@@ -113,8 +113,9 @@ import {
 
 | Аспект              | Детали                        |
 | ------------------- | ----------------------------- |
-| **Сроки**           | 4-8 недель                    |
-| **Мин. инвестиции** | IDR 10 миллиардов (~$625,000) |
+| **Сроки**                  | 4-8 недель                                                                 |
+| **Мин. инвестиции**        | > 10 млрд IDR на 5-значный KBLI / локацию (без земли и зданий)             |
+| **Мин. оплаченный капитал**| 2,5 млрд IDR на компанию (Регл. BKPM 5/2025 ст. 26)                        |
 | **Мин. акционеров** | 2 (могут быть иностранцами)   |
 | **Мин. директоров** | 1 (может быть иностранцем)    |
 | **Мин. комиссаров** | 1 (может быть иностранцем)    |
@@ -327,61 +328,59 @@ import {
 
 <Calculator
   title="Калькулятор стоимости создания PT PMA"
-  description="Оцените свои расходы на регистрацию"
+  description="Оцените стоимость услуг регистрации в Bali Zero (официальный прайс 2026)"
   fields={[
     {
       id: "service",
-      label: "Тип услуги",
+      label: "Регистрация компании",
       type: "select",
       options: [
-        { value: "diy", label: "Самостоятельно (только нотариус)" },
-        { value: "basic", label: "Базовый пакет агента" },
-        { value: "full", label: "Полный пакет услуг" }
+        { value: "pma", label: "Регистрация новой PT PMA — SSOT Bali Zero (25 млн IDR)" }
       ],
-      defaultValue: "basic"
+      defaultValue: "pma"
     },
     {
       id: "vo",
-      label: "Виртуальный офис?",
+      label: "Добавить виртуальный офис? (5 млн IDR — проверьте допустимость KBLI на Бали)",
       type: "checkbox",
-      defaultValue: true
+      defaultValue: false
     },
     {
-      id: "location",
-      label: "Местоположение",
+      id: "kitas",
+      label: "Опционально Investor KITAS (E28A, 2 года, личная доля >= 10 млрд IDR)",
       type: "select",
       options: [
-        { value: "jakarta", label: "Jakarta" },
-        { value: "bali", label: "Bali" },
-        { value: "other", label: "Другое" }
+        { value: "none", label: "Не требуется / Позже" },
+        { value: "offshore", label: "Offshore E28A (17 млн IDR)" },
+        { value: "onshore", label: "Onshore E28A (19 млн IDR)" }
       ],
-      defaultValue: "bali"
+      defaultValue: "none"
     }
   ]}
   calculateResult={(values) => {
-    let total = 0;
-    const breakdown = [];
-
-    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
-    const service = serviceCosts[values.service];
-    total += service;
-    breakdown.push({ label: "Регистрационные услуги", amount: service });
-
-    const govFees = 5000000;
-    total += govFees;
-    breakdown.push({ label: "Государственные пошлины", amount: govFees });
+    let total = 25000000;
+    const breakdown = [
+      { label: "Новая PT PMA — Акт, AHU, NPWP, NIB/OSS", amount: 25000000 }
+    ];
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
-      total += voCost;
-      breakdown.push({ label: "Виртуальный офис (1 год)", amount: voCost });
+      total += 5000000;
+      breakdown.push({ label: "Виртуальный офис (SSOT Bali Zero)", amount: 5000000 });
+    }
+
+    if (values.kitas === "offshore") {
+      total += 17000000;
+      breakdown.push({ label: "Investor KITAS 2 года E28A (Offshore)", amount: 17000000 });
+    } else if (values.kitas === "onshore") {
+      total += 19000000;
+      breakdown.push({ label: "Investor KITAS 2 года E28A (Onshore)", amount: 19000000 });
     }
 
     return {
       total,
       breakdown,
       currency: "IDR",
-      note: "Исключая оплаченный капитал (минимум 10 млрд IDR)"
+      note: "Только стоимость услуг. Без учета капитала компании (мин. 2,5 млрд IDR оплаченного капитала на компанию; инвестиции > 10 млрд IDR на 5-значный KBLI без учета земли и зданий)."
     };
 
 }}
@@ -392,12 +391,11 @@ import {
 ## Советы для успеха
 
 <InfoCard variant="tip" title="Советы по регистрации">
-  1. **KBLI в первую очередь**: Тщательно выбирайте коды перед началом 2.
-  **Планируйте капитал**: Знайте, как вы будете размещать 10 млрд IDR 3.
-  **Используйте профессионалов**: Корпоративный секретарь избавит от головной
-  боли 4. **Сроки**: Заложите 6-8 недель на всякий случай 5. **Присутствие
-  директора**: Возможно, потребуется находиться в Индонезии для открытия
-  банковского счета
+  1. **KBLI в первую очередь**: Выберите открытые для иностранцев коды KBLI до оформления акта у нотариуса
+  2. **Планируйте капитал**: Внесите 2,5 млрд IDR на компанию и структурируйте > 10 млрд IDR инвестиций (без земли и зданий)
+  3. **Используйте профессионалов**: Проверка KBLI и зонирования предотвратит дорогостоящее переоформление Akta
+  4. **Сроки**: Закладывайте 6–8 недель на весь процесс
+  5. **Присутствие директора**: Может потребоваться для открытия корпоративного счета в индонезийском банке
 </InfoCard>
 
 ---
@@ -417,29 +415,25 @@ import {
 
 ---
 
-## Текущие мнения и обсуждения
+## Нормативный контекст и официальная политика (2025–2026)
 
 <InfoCard
   variant="note"
-  title="⚠️ Примечание: Этот раздел содержит МНЕНИЯ и обсуждения, еще не подтвержденные официально"
+  title="Обновление политики: оплаченный капитал и правила зонирования Бали (2025–2026)"
 >
-  Информация основана на отраслевом анализе и обсуждениях среди экспертов. **Не
-  подтверждена BKPM или Kemenkumham**.
+
+На основании **Регламента BKPM № 5/2025 (ст. 26)** и действующих правил **OSS-RBA / DPMPTSP Bali**:
+
 </InfoCard>
 
-### Возможные изменения PT PMA (МНЕНИЕ)
+### Ключевые правила по капиталу и структуре PT PMA
 
-1.  **Снижение капитала для технологического сектора** — Обсуждается возможное снижение требования к минимальному капиталу (в настоящее время 10 миллиардов IDR) для технологических стартапов и цифровых услуг. Некоторые считают, что он может снизиться до 2,5-5 миллиардов IDR. _Только обсуждение, без подтверждения._
+1. **Оплаченный капитал — 2,5 млрд IDR на компанию** — С октября 2025 года (Регл. BKPM 5/2025 ст. 26) минимальный оплаченный капитал при регистрации составляет **2,5 миллиарда IDR на компанию** (с удержанием 12 месяцев, если средства не расходуются на подтвержденную деятельность), тогда как общие инвестиционные обязательства остаются **> 10 миллиардов IDR на 5-значный код KBLI и локацию без учета земли и зданий**.
+2. **Закрытые коды KBLI и ограничения лицензирования на Бали** — `55203` виллы, `55201` Pondok Wisata, `55106` незвездные отели и `79903` гиды имеют статус `0% PMA` по всей стране согласно Perpres 49/2021. Отдельно Бали закрыл OSS для выдачи новых лицензий PT PMA по **18 перечисленным видам деятельности с нумерацией KBLI 2020** с третьей недели мая 2026 года (пресс-релиз Правительства провинции Бали от 24 июля 2026 года, после письма-запроса Губернатора от 28 января 2026 года `B.27.000/642/PM/DPMPTSP`).
+3. **Коммерческий офис против виртуального офиса** — Для операционных/гостиничных кодов KBLI требуется соответствие физического объекта зонированию (`PKKPR`). Письмо-запрос Губернатора от 28 января 2026 года (`B.27.000/642/PM/DPMPTSP`) также предлагало ограничить виртуальные офисы PMA на Бали, однако применение этого ограничения не подтверждено — проверьте актуальные правила OSS/DPMPTSP для вашего конкретного KBLI до аренды.
+4. **Порог для Investor KITAS (E28A)** — Для получения Investor KITAS E28A без RPTKA каждый иностранный заявитель должен лично владеть акциями на сумму не менее **10 миллиардов IDR**; директорам и акционерам с долей ниже 10 млрд требуется **Working KITAS E23**.
 
-2.  **Упрощенный Negative Investment List** — Обсуждается дальнейшее открытие секторов для иностранных инвесторов, особенно в образовании, здравоохранении и логистике. _Официальных объявлений нет._
-
-3.  **Единая регистрация** — Обсуждается еще более интегрированный процесс, который объединит нотариуса, Kemenkumham, NPWP и OSS в единый поток. _Только спекуляции._
-
-4.  **Виртуальная компания для фрилансеров** — Некоторые эксперты обсуждают возможную упрощенную структуру компании для иностранных фрилансеров, без полных требований PT PMA. _Не подтверждено._
-
-5.  **Стимулы для особых экономических зон** — Обсуждаются возможные дополнительные стимулы (налоговые льготы, сниженный капитал) для PT PMA, которые создаются в особых экономических зонах (KEK). _На стадии оценки._
-
-**Помните**: Для инвестиционных решений ждите официальных подтверждений от oss.go.id или bkpm.go.id.
+**Всегда проверяйте актуальные требования OSS на oss.go.id или bkpm.go.id до перечисления средств.**
 
 ---
 

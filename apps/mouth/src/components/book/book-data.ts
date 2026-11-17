@@ -721,7 +721,7 @@ export const SERVICES: Service[] = [
     features: [
       "Due diligence",
       "Title verification",
-      "Nominee structure",
+      "PT PMA HGB & leasehold structuring",
       "Legal protection",
     ],
     waMessage:

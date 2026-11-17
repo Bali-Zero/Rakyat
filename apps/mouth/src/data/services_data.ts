@@ -213,6 +213,8 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
         name: "Alcohol License (NPBBKC)",
         description: "Golongan A+B+C for alcohol sales",
         price: "Check live pricing",
+        livePriceKey: "Alcohol License — Golongan A + B + C",
+        livePriceCategory: "company_services",
         features: [
           "Restaurant/bar alcohol permit",
           "Golongan A (≤5%), B (5-20%), C (>20%)",
@@ -223,9 +225,11 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
         popular: false,
       },
       {
-        name: "PT PMA/PMDN Setup",
-        description: "Full company establishment",
+        name: "PT PMA Setup",
+        description: "Foreign-owned company establishment",
         price: "Check live pricing",
+        livePriceKey: "New Company (PT PMA)",
+        livePriceCategory: "company_services",
         features: [
           "Company registration",
           "Deed of establishment",
@@ -480,7 +484,7 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
       {
         question: "When is the tax filing deadline?",
         answer:
-          "Personal tax (SPT) is due March 31. Corporate tax is due April 30. Monthly taxes are due by the 15th of the following month.",
+          "Annual personal income tax (SPT Tahunan OP) is due March 31, and corporate income tax (SPT Tahunan Badan) is due April 30. Under PMK 81/2024, monthly PPh payments are due by the 15th of the following month, unified monthly PPh returns (SPT Masa) by the 20th, and VAT (PPN) payment and filing by the end of the following month.",
       },
       {
         question: "Do expats need to file Indonesian taxes?",
@@ -539,14 +543,14 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
         popular: true,
       },
       {
-        name: "IMB & Building Permits",
-        description: "Construction permits",
+        name: "PBG, SLF & PKKPR Permits",
+        description: "Construction & spatial conformity permits",
         price: "Contact",
         features: [
-          "Building permit application (IMB/PBG)",
-          "Site plan approval",
+          "Building approval (PBG) & occupancy certificate (SLF) via SIMBG",
+          "Spatial conformity (PKKPR) & site plan approval",
           "Environmental compliance (AMDAL/UKL-UPL)",
-          "Occupancy certificate (SLF)",
+          "Function worthiness renewal (SLF)",
           "Renovation permits",
         ],
         popular: false,
@@ -580,7 +584,7 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
         "Property certificate copy (SHM/HGB/SHGB)",
         "Owner ID/company documents",
         "Tax payment receipts (PBB)",
-        "Building permit (IMB/PBG)",
+        "Building approval (PBG) & SLF via SIMBG",
         "Site plan & location permit",
         "Buyer identification (passport/KTP)",
       ],
@@ -600,7 +604,7 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
       {
         question: "What is Hak Guna Bangunan (HGB)?",
         answer:
-          "HGB is a right to build and own structures on land. PT PMA companies can hold HGB for 30+20+20 years (70 years total), renewable.",
+          "HGB is a right to build and own structures on land. Under PP 18/2021 Art. 37, PT PMA companies can hold HGB for up to 80 years total (30 years initial grant + 20-year extension + 30-year renewal).",
       },
       {
         question: "Is nominee ownership safe?",
@@ -610,7 +614,7 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
       {
         question: "What is the difference between IMB and PBG?",
         answer:
-          "IMB (Izin Mendirikan Bangunan) is the old building permit system. PBG (Persetujuan Bangunan Gedung) is the new system under OSS. We handle both.",
+          "IMB (Izin Mendirikan Bangunan) was abolished and replaced under PP 16/2021 by PBG (Persetujuan Bangunan Gedung) for construction approval and SLF (Sertifikat Laik Fungsi) for occupancy, processed via SIMBG alongside PKKPR spatial conformity.",
       },
     ],
   },

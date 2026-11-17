@@ -35,10 +35,10 @@ relatedArticles:
   - "withholding-tax-guide"
 tableOfContents: true
 seoTitle: "Imposta sul reddito delle società Indonesia 2026 | Guida CIT"
-seoDescription: "Guida completa all'imposta sul reddito delle società (PPh Badan) in Indonesia. Aliquota standard del 22%, incentivi per le PMI, deduzioni e requisiti di conformità per le società PT PMA."
+seoDescription: "Guida completa all'imposta sul reddito delle società (PPh Badan) in Indonesia. Aliquota standard del 22%, agevolazione Art. 31E (11% effettivo), esclusione PT PMA dal regime 0,5% ex PP 20/2026, deduzioni e conformità."
 aiOptimization:
   primaryQuestion: "Qual è l'aliquota dell'imposta sul reddito delle società in Indonesia per il 2026?"
-  answerSnippet: "L'aliquota standard dell'imposta sul reddito delle società in Indonesia è del 22% per la maggior parte delle aziende. Le PMI con un fatturato lordo inferiore a 4,8 miliardi di IDR beneficiano di un'imposta finale dello 0,5%. Le società quotate con una quota di flottante superiore al 40% ricevono uno sconto del 3% (aliquota effettiva del 19%). Le società PT PMA seguono le stesse aliquote delle entità nazionali."
+  answerSnippet: "L'aliquota standard dell'imposta sul reddito delle società (PPh Badan) è del 22% (l'Art. 31E riconosce alle imprese con ricavi fino a 50 miliardi di IDR una riduzione del 50% — 11% effettivo — sulla quota di reddito corrispondente a 4,8 miliardi di IDR di fatturato). Ai sensi del PP 20/2026 (in vigore dal 22 aprile 2026), le PT PMA e le nuove PT/CV a più soci sono escluse dal regime finale 0,5% PP 55/2022; le entità domestiche preesistenti completano solo la finestra di 3 anni (PT) / 4 anni (CV)."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Pajak"
@@ -48,7 +48,7 @@ aiOptimization:
       sameAs: "https://pajak.go.id/id/uu-hpp"
 faq:
   - question: "Qual è l'aliquota fiscale per le società in Indonesia per il 2026?"
-    answer: "L'aliquota standard dell'imposta sul reddito delle società (PPh Badan) è del 22%. Le PMI con un fatturato annuo inferiore a 4,8 miliardi di IDR possono beneficiare di un'aliquota finale dello 0,5%. Le società quotate in borsa con almeno il 40% di flottante ottengono una riduzione del 3%, scendendo al 19%."
+    answer: "L'aliquota standard dell'imposta sul reddito delle società (PPh Badan) è del 22%. Le società con ricavi lordi fino a 50 miliardi di IDR accedono ai sensi dell'Art. 31E alla riduzione del 50% (11% effettivo) sulla quota proporzionale ai primi 4,8 miliardi di fatturato. Ai sensi del PP 20/2026 (dal 22 aprile 2026), PT PMA e nuove PT/CV con più soci sono escluse dal regime finale PMI 0,5% PP 55/2022 (le PT/CV domestiche preesistenti completano solo il periodo di 3 anni PT / 4 anni CV). Le quotate con flottante 40%+ pagano il 19%."
   - question: "Quali spese possono dedurre le società indonesiane dal reddito imponibile?"
     answer: "Le spese deducibili includono stipendi e benefit per i dipendenti, affitto dell'ufficio e utenze, ammortamento dei beni, viaggi d'affari, spese professionali, crediti inesigibili (a certe condizioni) e contributi CSR fino al 5% del reddito netto. Le spese di rappresentanza richiedono una lista nominativa."
   - question: "Quando scade la dichiarazione dei redditi delle società in Indonesia?"
@@ -73,7 +73,7 @@ canonicalUrl: "https://balizero.com/tax/corporate-income-tax"
 ogImage: "/static/insights/tax/corporate-tax.jpg"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "8b776716086ca2926c92109a9ba3ef7f77286a434d6b96b135723071c26b07d1"
+source_sha256: "86ffc480f741e825b5ac813e821df363e6177c04ef797db1e32d6d6bbcd9d9ce"
 ---
 
 # Guida Completa alle Imposte sul Reddito d'Impresa in Indonesia 2026
@@ -106,12 +106,21 @@ L'imposta sul reddito d'impresa (PPh Badan) è una considerazione significativa 
       },
     },
     {
-      name: "Aliquota PMI",
-      subtitle: "Piccole imprese",
+      name: "Aliquota Finale UMKM",
+      subtitle: "Solo PMI domestiche (PP 55/2022)",
       values: {
         Rate: "0,5% del fatturato",
-        "Applies To": "Fatturato < 4,8 miliardi di Rupiah",
-        "Entity Type": "CV, PT con basso ricavo",
+        "Applies To": "Fatturato < 4,8 mld IDR (3 anni PT / 4 anni CV / 7 anni OP)",
+        "Entity Type": "PMI domestiche (PT PMA e PT/CV ordinarie escluse ex PP 20/2026)",
+      },
+    },
+    {
+      name: "Agevolazione Art. 31E",
+      subtitle: "PT & PT PMA piccole/medie",
+      values: {
+        Rate: "11% effettivo (quota <=4,8 mld)",
+        "Applies To": "Fatturato lordo fino a 50 mld IDR",
+        "Entity Type": "PT domestiche e PT PMA",
       },
     },
     {
@@ -154,42 +163,49 @@ L'imposta sul reddito d'impresa (PPh Badan) è una considerazione significativa 
     },
     {
       id: "type",
-      label: "Tipo di Azienda",
+      label: "Regime Fiscale / Tipo di Società",
       type: "select",
       options: [
-        { value: "standard", label: "PT/PT PMA Standard" },
-        { value: "public", label: "Società Quotata" },
-        { value: "sme", label: "PMI (< 4,8 miliardi di IDR)" }
+        { value: "art31e", label: "PT / PT PMA Fatturato <= 50 mld IDR (Art. 31E: 11% / 22%)" },
+        { value: "standard", label: "PT / PT PMA Standard > 50 mld IDR (22%)" },
+        { value: "public", label: "Società Quotata (40%+ flottante: 19%)" },
+        { value: "umkm_eligible", label: "PMI Domestica Ammessa < 4,8 mld IDR (Transitorio / OP 0,5%)" }
       ],
-      defaultValue: "standard"
+      defaultValue: "art31e"
     }
   ]}
   calculateResult={(values) => {
     const revenue = Number(values.revenue);
     const expenses = Number(values.expenses);
-    const profit = revenue - expenses;
+    const profit = Math.max(0, revenue - expenses);
 
-    let tax;
-    let rate;
+    let tax = 0;
+    let rate = "22%";
 
-    if (values.type === "sme" && revenue <= 4800000000) {
+    if (values.type === "umkm_eligible" && revenue <= 4800000000) {
       tax = revenue * 0.005;
-      rate = "0,5% del fatturato";
+      rate = "0,5% del fatturato (PT PMA e nuove PT/CV escluse ex PP 20/2026)";
+    } else if (values.type === "art31e" && revenue > 0 && revenue <= 50000000000) {
+      const discountedShare = Math.min(1, 4800000000 / revenue);
+      const discountedProfit = profit * discountedShare;
+      const regularProfit = profit - discountedProfit;
+      tax = discountedProfit * 0.11 + regularProfit * 0.22;
+      rate = revenue <= 4800000000 ? "11% (Sconto pieno 50% Art. 31E)" : "Aliquota mista Art. 31E (11% + 22%)";
     } else if (values.type === "public") {
-      tax = profit > 0 ? profit * 0.19 : 0;
+      tax = profit * 0.19;
       rate = "19%";
     } else {
-      tax = profit > 0 ? profit * 0.22 : 0;
+      tax = profit * 0.22;
       rate = "22%";
     }
 
     return {
-      total: tax,
+      total: Math.round(tax),
       breakdown: [
         { label: "Ricavo", amount: revenue },
         { label: "Spese", amount: expenses },
-        { label: "Utilizzo Imponibile", amount: profit > 0 ? profit : 0 },
-        { label: "Imposta Dovuta", amount: tax }
+        { label: "Utile Imponibile", amount: profit },
+        { label: "Imposta Dovuta", amount: Math.round(tax) }
       ],
       currency: "IDR",
       note: `Aliquota applicata: ${rate}`
@@ -200,22 +216,20 @@ L'imposta sul reddito d'impresa (PPh Badan) è una considerazione significativa 
 
 ---
 
-## Imposta Definitiva per PMI (PP 55/2022)
+## Imposta Definitiva per PMI (PP 55/2022 & Esclusione PP 20/2026)
 
-<InfoCard variant="tip" title="Semplificato per Piccole Imprese">
-Le imprese con un fatturato lordo inferiore a **4,8 miliardi di Rupiah/anno** possono utilizzare l'imposta definitiva semplificata:
+<InfoCard variant="warning" title="AGGIORNAMENTO CRITICO — PP 20/2026 (In vigore dal 22 aprile 2026)">
+Ai sensi del **PP 55/2022**, i contribuenti con fatturato lordo inferiore a **4,8 miliardi di IDR/anno** potevano accedere all'imposta sostitutiva dello 0,5% entro i seguenti limiti temporali massimi:
 
-- **Aliquota**: 0,5% del fatturato lordo
-- **Nessun calcolo complesso**
-- **Pagamento mensile**
-- **Si applica a**: PT, CV, individui con attività commerciale
-- **Durata**: Massimo 7 anni per PT, 4 anni per CV/individui
+- **3 anni** per società per azioni ordinarie (**PT**)
+- **4 anni** per **CV, Firma e Koperasi**
+- **7 anni** per persone fisiche (**Orang Pribadi**)
 
-Dopo il periodo massimo, si applicano le aliquote regolari.
+**Aggiornamento PP 20/2026 (in vigore dal 22 aprile 2026):** le società **PT ordinarie, PT PMA, CV e Firma** a più soci sono **escluse** dal nuovo accesso al regime finale 0,5%. Le PT/CV domestiche preesistenti già nel regime PP 55/2022 completano solo la finestra residua di 3 anni/4 anni; le PT PMA con fatturato fino a **50 miliardi di IDR** applicano invece l'**Art. 31E UU HPP** (11% effettivo sulla quota proporzionale ai 4,8 miliardi di ricavi, 22% sulla parte eccedente).
 
 </InfoCard>
 
-### Esempio Imposta PMI
+### Esempio Regime Finale 0,5% (Transitorio / Persone Fisiche)
 
 | Ricavo Mensile | Imposta Dovuta |
 | --------------- | -------- |
@@ -340,13 +354,13 @@ Dopo il periodo massimo, si applicano le aliquote regolari.
 
 ### Obblighi Mensili
 
-| Obbligo | Scadenza                | Descrizione             |
-| ---------- | ----------------------- | ----------------------- |
-| PPh 21     | 10 del mese successivo | Trattenuta dipendenti    |
-| PPh 23     | 10 del mese successivo | Trattenuta servizi       |
-| PPh 25     | 15 del mese successivo | Rate anticipate ICI      |
-| PPh 4(2)   | 10 del mese successivo | Elementi imposta definitiva |
-| IVA (PPN)  | Fine mese successivo    | Se registrato per l'IVA  |
+| Obbligo    | Scadenza (PMK 81/2024 Coretax)                    | Descrizione                  |
+| ---------- | ------------------------------------------------- | ---------------------------- |
+| PPh 21     | Versamento entro il 15 / Invio SPT entro il 20    | Trattenuta dipendenti        |
+| PPh 23     | Versamento entro il 15 / Invio SPT entro il 20    | Trattenuta servizi           |
+| PPh 25     | Versamento entro il 15 del mese successivo        | Acconti IRES societari       |
+| PPh 4(2)   | Versamento entro il 15 / Invio SPT entro il 20    | Elementi imposta definitiva  |
+| IVA (PPN)  | Versamento e invio fine mese successivo           | Se registrato come PKP       |
 
 ---
 
@@ -414,11 +428,11 @@ Collabora con consulenti fiscali qualificati per le operazioni tra parti correla
 
 ## Sanzioni
 
-| Violazione    | Sanzione                       |
-| ------------ | ----------------------------- |
-| Presentazione tardiva  | 1 milione di IDR/mese (max 24 mesi)  |
-| Pagamento tardivo | 2% al mese                  |
-| Sottopagamento | 2% al mese + potenziale 200% |
+| Violazione            | Sanzione                                                             |
+| --------------------- | -------------------------------------------------------------------- |
+| Presentazione tardiva | 1 milione di IDR (SPT Badan) / 100.000 IDR (PPh) / 500.000 IDR (PPN) |
+| Pagamento tardivo     | Interessi mensili variabili KMK (UU HPP, max 24 mesi)                |
+| Sottopagamento        | Interessi mensili variabili KMK + sanzione amministrativa UU HPP     |
 | Frode fiscale    | Possibili sanzioni penali   |
 
 ---
