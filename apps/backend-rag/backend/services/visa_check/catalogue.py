@@ -38,7 +38,7 @@ class VisaType(str, Enum):
     C22A = "C22A"  # Internship 60d
     # ── Multiple Entry (D-series) ────────────────────────────
     D2 = "D2"  # Multiple-entry business
-    D12 = "D12"  # Business investigation 1–2y
+    D12 = "D12"  # Pre-investment multiple-entry (180d per stay, non-extendable)
     # ── KITAS (E-series) ─────────────────────────────────────
     E23 = "E23"  # Working KITAS
     E23_FREELANCE = "E23-FREELANCE"  # Impresariat KITAS (E23, 180 days, temporary RPTKA)
@@ -121,7 +121,7 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             name_en="Visit Visa Tourism",
             name_id="Visa Kunjungan Wisata",
             category="Visit Visa",
-            purposes=frozenset({Purpose.LONG_TOURISM, Purpose.WORK_REMOTE}),
+            purposes=frozenset({Purpose.LONG_TOURISM}),
             duration_days=60,
             extensions=(2, 60),  # 60 + 2×60 = 180 max
             min_budget_idr=None,
@@ -135,7 +135,7 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             name_en="Visit Visa Business",
             name_id="Visa Kunjungan Bisnis",
             category="Visit Visa",
-            purposes=frozenset({Purpose.LONG_TOURISM, Purpose.WORK_REMOTE}),
+            purposes=frozenset({Purpose.LONG_TOURISM}),
             duration_days=60,
             extensions=(2, 60),
             min_budget_idr=None,
@@ -162,10 +162,10 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             name_id="Visa Kunjungan Penampilan Seni dan Budaya",
             category="Visit Visa",
             purposes=frozenset({Purpose.WORK_EMPLOYEE}),
-            duration_days=60,
-            extensions=(2, 60),
+            duration_days=30,
+            extensions=(0, 0),
             min_budget_idr=None,
-            notes="Art / cultural performance. Paid per-event.",
+            notes="Art / cultural performance. Single event, non-extendable.",
             seed_source=SEED,
             duration_source=C_RULES,
         ),
@@ -223,7 +223,7 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             name_en="Visit Visa Business",
             name_id="Visa Kunjungan Bisnis",
             category="Multiple Entry",
-            purposes=frozenset({Purpose.WORK_REMOTE, Purpose.INVESTOR}),
+            purposes=frozenset({Purpose.INVESTOR}),
             duration_days=60,  # per entry
             extensions=(0, 0),  # re-enter instead of extending
             min_budget_idr=None,
@@ -237,13 +237,13 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             name_id="Visa Kunjungan Pra-Investasi",
             category="Multiple Entry",
             purposes=frozenset({Purpose.INVESTOR}),
-            duration_days=365,
-            extensions=(1, 365),  # 1 + 1 year = 2 years total
+            duration_days=180,
+            extensions=(0, 0),  # 180 days per entry, non-extendable (ruling 2026-10-19)
             min_budget_idr=None,
-            notes="Scouting visa: evaluate market before committing to PT PMA.",
+            notes="Scouting visa: evaluate market before committing to PT PMA. Up to 180 days per entry (non-extendable).",
             seed_source=SEED_NB2,
             duration_source=NB2,
-            fit_tags=frozenset({FitTag.PRE_PMA}),
+            fit_tags=frozenset({FitTag.PRE_PMA, FitTag.MULTI_ENTRY}),
         ),
         # ── E-series (KITAS / Limited Stay) ───────────────────
         VisaType.E23: VisaMeta(
@@ -311,7 +311,10 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             duration_days=365,
             extensions=(1, 365),
             min_budget_idr=None,
-            notes="University-sponsored. Valid for programme duration.",
+            notes=(
+                "School-sponsored primary & secondary education "
+                "(for university higher education, E30B applies). Valid for programme duration."
+            ),
             seed_source=SEED,
             duration_source=NB2,
         ),
@@ -359,7 +362,11 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             duration_days=365 * 5,
             extensions=(0, 0),
             min_budget_idr=500_000_000,
-            notes="Golden visa for 55+ retirees. 5-year single block.",
+            budget_gate_is_ranking_only=True,
+            notes=(
+                "Golden visa for 55+ retirees (USD 50,000 state-owned BUMN bank deposit "
+                "and >= USD 3,000/mo passive income). 5-year single block."
+            ),
             seed_source=SEED,
             duration_source=NB2,
             fit_tags=frozenset({FitTag.GOLDEN_VISA}),

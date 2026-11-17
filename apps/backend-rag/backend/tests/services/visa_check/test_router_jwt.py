@@ -174,3 +174,37 @@ async def test_submit_clock_returns_valid_jwt_with_check_hash_claim(monkeypatch)
     assert claims["sub"] == "clock8400001000"
     assert claims["type"] == "visa_funnel"
     assert claims["exp"] - claims["iat"] == 3600
+
+
+def test_clock_request_allows_5_year_e33_entry_and_rejects_over_6_years():
+    from datetime import date, timedelta
+
+    from pydantic import ValidationError
+
+    from backend.app.routers.visa_check import ClockRequest, VisaType
+
+    today = date.today()
+    # 4.5-year-old entry (e.g. 5-year E33 / E33E holder) must be accepted.
+    valid_req = ClockRequest(
+        visa_type=VisaType.E33E,
+        entry_date=today - timedelta(days=365 * 4 + 180),
+        in_country_now=True,
+    )
+    assert valid_req.visa_type is VisaType.E33E
+
+    # >6 years ago must still be rejected with ValidationError -> HTTP 422.
+    with pytest.raises(ValidationError):
+        ClockRequest(
+            visa_type=VisaType.E33E,
+            entry_date=today - timedelta(days=365 * 6 + 2),
+            in_country_now=True,
+        )
+
+
+def test_processing_days_b1_voa_is_fast_not_25_days():
+    from backend.app.routers.visa_check import VisaType, _processing_days
+
+    assert _processing_days(VisaType.B1) in {1, 2}
+    assert _processing_days("A1") in {1, 2}  # type: ignore[arg-type]
+    assert _processing_days(VisaType.C1) == 10
+    assert _processing_days(VisaType.E23) == 25

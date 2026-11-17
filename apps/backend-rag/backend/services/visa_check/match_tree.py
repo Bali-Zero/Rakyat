@@ -30,6 +30,228 @@ from enum import Enum
 from backend.services.visa_check.catalogue import FitTag, VisaMeta, VisaType
 
 
+def _get_voa_eligible_iso3() -> frozenset[str]:
+    # Lazy import breaks the module-init cycle:
+    # catalogue._build_meta() -> match_tree -> garuda_flow -> safe_clock -> catalogue.VISA_META
+    from backend.services.garuda_flow.nationality_eligibility import (
+        VOA_ELIGIBLE_NATIONALITIES,
+    )
+
+    return VOA_ELIGIBLE_NATIONALITIES
+
+
+# ── Canonical Nationality Safety Tables (ISO-2 / ISO-3 / Name) ───────────
+# Sourced from RulePack seq-33 (`hf.citizen`, `hf.calling-visa-nationality`,
+# `hf.a1.not-bvk-nationality`, `hf.b1.not-voa-nationality`) and
+# `garuda_flow.nationality_eligibility.VOA_ELIGIBLE_NATIONALITIES` (97 ISO-3).
+
+CALLING_VISA_ISO3: frozenset[str] = frozenset(
+    {
+        "AFG",  # Afghanistan (AF)
+        "ISR",  # Israel (IL)
+        "PRK",  # North Korea / DPRK (KP)
+        "LBR",  # Liberia (LR)
+        "NGA",  # Nigeria (NG)
+        "SOM",  # Somalia (SO)
+    }
+)
+
+CALLING_VISA_LABELS: dict[str, str] = {
+    "AFG": "Afghanistan (AFG)",
+    "ISR": "Israel (ISR)",
+    "PRK": "North Korea (PRK)",
+    "LBR": "Liberia (LBR)",
+    "NGA": "Nigeria (NGA)",
+    "SOM": "Somalia (SOM)",
+}
+
+BVK_VISA_FREE_ISO3: frozenset[str] = frozenset(
+    {
+        "BRN",  # Brunei Darussalam (BN)
+        "MYS",  # Malaysia (MY)
+        "THA",  # Thailand (TH)
+        "SGP",  # Singapore (SG)
+        "PHL",  # Philippines (PH)
+        "KHM",  # Cambodia (KH)
+        "LAO",  # Laos (LA)
+        "MMR",  # Myanmar (MM)
+        "VNM",  # Vietnam (VN)
+        "TLS",  # Timor-Leste (TL)
+        "SUR",  # Suriname (SR)
+        "COL",  # Colombia (CO)
+        "HKG",  # Hong Kong SAR (HK)
+        "TUR",  # Turkey (TR)
+        "BRA",  # Brazil (BR)
+        "PER",  # Peru (PE)
+        "MAC",  # Macao SAR (MO)
+        "KAZ",  # Kazakhstan (KZ)
+        "BLR",  # Belarus (BY)
+    }
+)
+
+_ISO2_TO_ISO3: dict[str, str] = {
+    "AD": "AND", "AE": "ARE", "AF": "AFG", "AG": "ATG", "AI": "AIA", "AL": "ALB",
+    "AM": "ARM", "AO": "AGO", "AR": "ARG", "AS": "ASM", "AT": "AUT", "AU": "AUS",
+    "AW": "ABW", "AZ": "AZE", "BA": "BIH", "BB": "BRB", "BD": "BGD", "BE": "BEL",
+    "BF": "BFA", "BG": "BGR", "BH": "BHR", "BI": "BDI", "BJ": "BEN", "BM": "BMU",
+    "BN": "BRN", "BO": "BOL", "BR": "BRA", "BS": "BHS", "BT": "BTN", "BW": "BWA",
+    "BY": "BLR", "BZ": "BLZ", "CA": "CAN", "CD": "COD", "CF": "CAF", "CG": "COG",
+    "CH": "CHE", "CI": "CIV", "CL": "CHL", "CM": "CMR", "CN": "CHN", "CO": "COL",
+    "CR": "CRI", "CU": "CUB", "CV": "CPV", "CW": "CUW", "CY": "CYP", "CZ": "CZE",
+    "DE": "DEU", "DJ": "DJI", "DK": "DNK", "DM": "DMA", "DO": "DOM", "DZ": "DZA",
+    "EC": "ECU", "EE": "EST", "EG": "EGY", "ER": "ERI", "ES": "ESP", "ET": "ETH",
+    "FI": "FIN", "FJ": "FJI", "FM": "FSM", "FO": "FRO", "FR": "FRA", "GA": "GAB",
+    "GB": "GBR", "GD": "GRD", "GE": "GEO", "GF": "GUF", "GG": "GGY", "GH": "GHA",
+    "GI": "GIB", "GL": "GRL", "GM": "GMB", "GN": "GIN", "GP": "GLP", "GQ": "GNQ",
+    "GR": "GRC", "GT": "GTM", "GU": "GUM", "GW": "GNB", "GY": "GUY", "HK": "HKG",
+    "HN": "HND", "HR": "HRV", "HT": "HTI", "HU": "HUN", "ID": "IDN", "IE": "IRL",
+    "IL": "ISR", "IM": "IMN", "IN": "IND", "IQ": "IRQ", "IR": "IRN", "IS": "ISL",
+    "IT": "ITA", "JE": "JEY", "JM": "JAM", "JO": "JOR", "JP": "JPN", "KE": "KEN",
+    "KG": "KGZ", "KH": "KHM", "KI": "KIR", "KM": "COM", "KN": "KNA", "KP": "PRK",
+    "KR": "KOR", "KW": "KWT", "KY": "CYM", "KZ": "KAZ", "LA": "LAO", "LB": "LBN",
+    "LC": "LCA", "LI": "LIE", "LK": "LKA", "LR": "LBR", "LS": "LSO", "LT": "LTU",
+    "LU": "LUX", "LV": "LVA", "LY": "LBY", "MA": "MAR", "MC": "MCO", "MD": "MDA",
+    "ME": "MNE", "MG": "MDG", "MH": "MHL", "MK": "MKD", "ML": "MLI", "MM": "MMR",
+    "MN": "MNG", "MO": "MAC", "MQ": "MTQ", "MR": "MRT", "MT": "MLT", "MU": "MUS",
+    "MV": "MDV", "MW": "MWI", "MX": "MEX", "MY": "MYS", "MZ": "MOZ", "NA": "NAM",
+    "NC": "NCL", "NE": "NER", "NG": "NGA", "NI": "NIC", "NL": "NLD", "NO": "NOR",
+    "NP": "NPL", "NR": "NRU", "NZ": "NZL", "OM": "OMN", "PA": "PAN", "PE": "PER",
+    "PF": "PYF", "PG": "PNG", "PH": "PHL", "PK": "PAK", "PL": "POL", "PR": "PRI",
+    "PS": "PSE", "PT": "PRT", "PW": "PLW", "PY": "PRY", "QA": "QAT", "RE": "REU",
+    "RO": "ROU", "RS": "SRB", "RU": "RUS", "RW": "RWA", "SA": "SAU", "SB": "SLB",
+    "SC": "SYC", "SD": "SDN", "SE": "SWE", "SG": "SGP", "SI": "SVN", "SK": "SVK",
+    "SL": "SLE", "SM": "SMR", "SN": "SEN", "SO": "SOM", "SR": "SUR", "SS": "SSD",
+    "ST": "STP", "SV": "SLV", "SX": "SXM", "SY": "SYR", "SZ": "SWZ", "TD": "TCD",
+    "TG": "TGO", "TH": "THA", "TJ": "TJK", "TL": "TLS", "TM": "TKM", "TN": "TUN",
+    "TO": "TON", "TR": "TUR", "TT": "TTO", "TV": "TUV", "TW": "TWN", "TZ": "TZA",
+    "UA": "UKR", "UG": "UGA", "UK": "GBR", "US": "USA", "UY": "URY", "UZ": "UZB",
+    "VA": "VAT", "VC": "VCT", "VE": "VEN", "VI": "VIR", "VN": "VNM", "VU": "VUT",
+    "WS": "WSM", "XK": "XKX", "YE": "YEM", "ZA": "ZAF", "ZM": "ZMB", "ZW": "ZWE",
+}
+
+_NAME_OR_DEMONYM_TO_ISO3: dict[str, str] = {
+    "INDONESIA": "IDN", "INDONESIAN": "IDN", "WNI": "IDN",
+    "AFGHANISTAN": "AFG", "AFGHAN": "AFG",
+    "ISRAEL": "ISR", "ISRAELI": "ISR",
+    "NORTH KOREA": "PRK", "NORTH KOREAN": "PRK", "DPRK": "PRK",
+    "LIBERIA": "LBR", "LIBERIAN": "LBR",
+    "NIGERIA": "NGA", "NIGERIAN": "NGA",
+    "SOMALIA": "SOM", "SOMALI": "SOM", "SOMALIAN": "SOM",
+    "PAKISTAN": "PAK", "PAKISTANI": "PAK",
+    "AUSTRALIA": "AUS", "AUSTRALIAN": "AUS",
+    "UNITED STATES": "USA", "UNITED STATES OF AMERICA": "USA", "AMERICAN": "USA",
+    "UNITED KINGDOM": "GBR", "GREAT BRITAIN": "GBR", "BRITISH": "GBR", "ENGLISH": "GBR",
+    "GERMANY": "DEU", "GERMAN": "DEU",
+    "FRANCE": "FRA", "FRENCH": "FRA",
+    "ITALY": "ITA", "ITALIAN": "ITA",
+    "SPAIN": "ESP", "SPANISH": "ESP",
+    "NETHERLANDS": "NLD", "DUTCH": "NLD",
+    "CANADA": "CAN", "CANADIAN": "CAN",
+    "JAPAN": "JPN", "JAPANESE": "JPN",
+    "SOUTH KOREA": "KOR", "SOUTH KOREAN": "KOR", "KOREAN": "KOR",
+    "CHINA": "CHN", "CHINESE": "CHN",
+    "INDIA": "IND", "INDIAN": "IND",
+    "RUSSIA": "RUS", "RUSSIAN": "RUS",
+    "SINGAPORE": "SGP", "SINGAPOREAN": "SGP",
+    "MALAYSIA": "MYS", "MALAYSIAN": "MYS",
+    "THAILAND": "THA", "THAI": "THA",
+    "VIETNAM": "VNM", "VIETNAMESE": "VNM",
+    "PHILIPPINES": "PHL", "FILIPINO": "PHL",
+    "BRUNEI": "BRN", "CAMBODIA": "KHM", "CAMBODIAN": "KHM",
+    "LAOS": "LAO", "LAOTIAN": "LAO", "MYANMAR": "MMR", "BURMESE": "MMR",
+    "TIMOR-LESTE": "TLS", "TIMOR LESTE": "TLS",
+    "BRAZIL": "BRA", "BRAZILIAN": "BRA",
+    "SWITZERLAND": "CHE", "SWISS": "CHE",
+    "SWEDEN": "SWE", "SWEDISH": "SWE",
+    "NORWAY": "NOR", "NORWEGIAN": "NOR",
+    "DENMARK": "DNK", "DANISH": "DNK",
+    "FINLAND": "FIN", "FINNISH": "FIN",
+    "POLAND": "POL", "POLISH": "POL",
+    "PORTUGAL": "PRT", "PORTUGUESE": "PRT",
+    "IRELAND": "IRL", "IRISH": "IRL",
+    "AUSTRIA": "AUT", "AUSTRIAN": "AUT",
+    "BELGIUM": "BEL", "BELGIAN": "BEL",
+    "NEW ZEALAND": "NZL", "NEW ZEALANDER": "NZL",
+    "SOUTH AFRICA": "ZAF", "SOUTH AFRICAN": "ZAF",
+    "MEXICO": "MEX", "MEXICAN": "MEX",
+    "ARGENTINA": "ARG", "ARGENTINE": "ARG",
+    "CHILE": "CHL", "CHILEAN": "CHL",
+    "COLOMBIA": "COL", "COLOMBIAN": "COL",
+    "PERU": "PER", "PERUVIAN": "PER",
+    "TURKEY": "TUR", "TURKISH": "TUR",
+    "UAE": "ARE", "UNITED ARAB EMIRATES": "ARE", "EMIRATI": "ARE",
+    "SAUDI ARABIA": "SAU", "SAUDI": "SAU",
+    "QATAR": "QAT", "QATARI": "QAT",
+    "UKRAINE": "UKR", "UKRAINIAN": "UKR",
+    "BELARUS": "BLR", "BELARUSIAN": "BLR",
+    "KAZAKHSTAN": "KAZ", "KAZAKH": "KAZ",
+    "HONG KONG": "HKG", "MACAU": "MAC", "MACAO": "MAC", "TAIWAN": "TWN", "TAIWANESE": "TWN",
+    "BANGLADESH": "BGD", "BANGLADESHI": "BGD",
+    "SRI LANKA": "LKA", "SRI LANKAN": "LKA",
+    "NEPAL": "NPL", "NEPALESE": "NPL",
+    "IRAN": "IRN", "IRANIAN": "IRN",
+    "IRAQ": "IRQ", "IRAQI": "IRQ",
+    "CAMEROON": "CMR", "CAMEROONIAN": "CMR",
+    "GUINEA": "GIN", "GUINEAN": "GIN",
+}
+
+
+@dataclass(frozen=True)
+class NationalityClassification:
+    iso3_codes: tuple[str, ...]
+    is_indonesian_citizen: bool
+    is_calling_visa: bool
+    calling_visa_code: str | None
+    is_voa_eligible: bool
+    is_bvk_eligible: bool
+
+
+def _token_to_iso3(token: str) -> str | None:
+    cleaned = " ".join(token.strip().upper().split())
+    if not cleaned:
+        return None
+    if cleaned in _NAME_OR_DEMONYM_TO_ISO3:
+        return _NAME_OR_DEMONYM_TO_ISO3[cleaned]
+    if len(cleaned) == 2 and cleaned.isalpha():
+        return _ISO2_TO_ISO3.get(cleaned)
+    if len(cleaned) == 3 and cleaned.isalpha():
+        return cleaned
+    return None
+
+
+def classify_nationality(nationality: str) -> NationalityClassification:
+    """Resolve ISO-2, ISO-3, country name/demonym, or comma-separated dual codes."""
+    raw_tokens = [
+        part
+        for chunk in (nationality or "").replace("/", ",").split(",")
+        for part in (chunk.strip(),)
+        if part
+    ]
+    resolved = tuple(code for tok in raw_tokens if (code := _token_to_iso3(tok)) is not None)
+    is_wni = "IDN" in resolved
+    calling_code = next((c for c in resolved if c in CALLING_VISA_ISO3), None)
+    is_calling = (not is_wni) and (calling_code is not None)
+    voa_set = _get_voa_eligible_iso3()
+    is_voa = (
+        (not is_wni)
+        and (not is_calling)
+        and any(c in voa_set for c in resolved)
+    )
+    is_bvk = (
+        (not is_wni)
+        and (not is_calling)
+        and any(c in BVK_VISA_FREE_ISO3 for c in resolved)
+    )
+    return NationalityClassification(
+        iso3_codes=resolved,
+        is_indonesian_citizen=is_wni,
+        is_calling_visa=is_calling,
+        calling_visa_code=calling_code,
+        is_voa_eligible=is_voa,
+        is_bvk_eligible=is_bvk,
+    )
+
+
 # VISA_META is imported lazily inside _rank_for_purpose() to break the
 # circular import: catalogue._build_meta() imports Purpose from this module,
 # so importing VISA_META here at module-load time would create a cycle.
@@ -175,15 +397,15 @@ _STEPS_RETIREMENT: list[str] = [
 ]
 
 _STEPS_FAMILY: list[str] = [
-    "Sponsor's KITAS/KITAP + passport copies",
+    "Sponsor's KTP & Kartu Keluarga (if Indonesian citizen) or KITAS/KITAP + passport copies",
     "Marriage or birth certificate (notarised + translated)",
     "Passport valid ≥ 18 months",
     "Proof of joint household (photos + rental/ownership docs)",
 ]
 
 _STEPS_STUDENT: list[str] = [
-    "Acceptance letter from an accredited Indonesian university",
-    "Sponsor letter (university or direct bursary)",
+    "Acceptance letter from an accredited Indonesian school or educational institution (E30B applies for university higher education)",
+    "Sponsor letter from the accredited educational institution",
     "Passport valid ≥ the full study programme",
     "Health insurance valid in Indonesia",
 ]
@@ -342,15 +564,39 @@ def _reason(meta: VisaMeta, purpose: Purpose, months: int, band: BudgetBand) -> 
 # ── Branch dispatch ──────────────────────────────────────────────
 
 
+_ARTS_EVENT_VISIT_VISAS: frozenset[VisaType] = frozenset(
+    {
+        VisaType.C7,
+        VisaType.C7A,
+        VisaType.C7B,
+    }
+)
+
+
 def _rank_for_purpose(
     purpose: Purpose,
     months: int,
     band: BudgetBand,
     max_results: int,
+    *,
+    voa_eligible: bool = True,
+    bvk_eligible: bool = False,
+    activity: WorkActivity | None = None,
 ) -> list[RankedVisa]:
     candidates: list[RankedVisa] = []
     for visa_type, meta in _get_visa_meta().items():
         if purpose not in meta.purposes:
+            continue
+        if visa_type is VisaType.B1 and not voa_eligible:
+            continue
+        if visa_type.value == "A1" and not bvk_eligible:
+            continue
+        if (
+            visa_type in _ARTS_EVENT_VISIT_VISAS
+            and activity is not WorkActivity.SEMI_INDEPENDENT_ARTS_SPORTS
+        ):
+            # Event performance visit visas (C7/C7A/C7B) must never outrank E23
+            # for salaried employees (e.g. software engineers).
             continue
         if meta.min_budget_idr is not None and not _budget_fits(meta, band):
             # Hard-exclude visas whose minimum budget the user cannot meet.
@@ -471,8 +717,41 @@ def recommend_visa(
     Enforced across the whole input space by
     `tests/services/visa_check/test_match_tree_referral_reasons.py`.
     """
-    del nationality  # reserved for future visa-waiver rules
     months = max(1, min(60, int(duration_months)))
+    nat = classify_nationality(nationality)
+
+    if nat.is_indonesian_citizen:
+        return MatchResult(
+            ranking=[],
+            pre_arrival_steps=[],
+            referral_mode=True,
+            referral_reason=(
+                "Indonesian citizens (WNI) enter and reside in Indonesia on an "
+                "Indonesian passport and do not require a foreigner visa for a "
+                f"{months}-month {_PURPOSE_LABEL[purpose]} stay. If you hold dual "
+                "nationality (such as a dual-passport child under UU 12/2006) or "
+                "are checking options for a foreign family member, message a Bali "
+                "Zero advisor on WhatsApp so we can review the exact status."
+            ),
+        )
+
+    if nat.is_calling_visa:
+        country_label = CALLING_VISA_LABELS.get(
+            nat.calling_visa_code or "", nat.calling_visa_code or nationality.strip().upper()
+        )
+        return MatchResult(
+            ranking=[],
+            pre_arrival_steps=[],
+            referral_mode=True,
+            referral_reason=(
+                f"Passports from {country_label} require Directorate General of "
+                "Immigration (Ditjen Imigrasi) Calling Visa clearance and are not "
+                "eligible for Visa on Arrival (B1) or standard self-service e-Visas "
+                f"for a {months}-month {_PURPOSE_LABEL[purpose]} stay. Message a "
+                "Bali Zero advisor on WhatsApp so we can assess sponsor eligibility "
+                "and the Calling Visa clearance process before you book travel."
+            ),
+        )
 
     if purpose == Purpose.OTHER:
         return MatchResult(
@@ -571,6 +850,9 @@ def recommend_visa(
         months,
         budget_band,
         max_results=_MAX_RESULTS.get(purpose, 3),
+        voa_eligible=nat.is_voa_eligible,
+        bvk_eligible=nat.is_bvk_eligible,
+        activity=activity,
     )
 
     if impresariat_first is not None:
