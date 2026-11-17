@@ -6,12 +6,15 @@ Uses the same pattern as test_hr_owner_cashout.py:
 - AsyncClient + ASGITransport
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock
 
+import jwt
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
+from backend.app.core.config import settings
 from backend.app.deps.auth import get_current_user
 from backend.app.deps.database import get_database_pool
 from backend.app.routers.funnel import router
@@ -113,6 +116,47 @@ async def test_convert_session_requires_auth() -> None:
             },
         )
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_convert_session_ignores_client_id_of_a_second_bearer_credential() -> None:
+    # The request authenticated as an API-key identity with no client_id; a
+    # validly signed Bearer token on the same request must not lend it one.
+    client_id = "44444444-4444-4444-8444-444444444444"
+    app = make_app()
+
+    @app.middleware("http")
+    async def api_key_identity(request: Request, call_next):
+        request.state.user = {
+            "id": "api-key-user",
+            "email": "api-key@example.invalid",
+            "role": "user",
+            "auth_method": "api_key",
+        }
+        return await call_next(request)
+
+    bearer = jwt.encode(
+        {
+            "sub": "portal-user",
+            "email": "portal@example.invalid",
+            "role": "client",
+            "client_id": client_id,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 600,
+        },
+        settings.jwt_secret_key,
+        algorithm="HS256",
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/funnel/session/convert",
+            headers={"Authorization": f"Bearer {bearer}"},
+            json={
+                "session_id": "33333333-3333-4333-8333-333333333333",
+                "client_id": client_id,
+            },
+        )
+    assert r.status_code == 403
 
 
 @pytest.mark.asyncio

@@ -68,21 +68,9 @@ async def require_convert_caller(request: Request) -> dict[str, Any]:
             auth_req = SimpleNamespace(state=SimpleNamespace(user=None))
         resolved = get_current_user(auth_req, credentials=creds)
 
-    if resolved.get("client_id") is None and creds is not None:
-        try:
-            from backend.app.core.config import settings
-            from backend.app.utils.jwt_decode import decode_jwt
-
-            jwt_payload = decode_jwt(
-                creds.credentials,
-                settings.jwt_secret_key,
-                algorithms=["HS256"],
-            )
-            if jwt_payload.get("client_id") is not None:
-                resolved["client_id"] = jwt_payload["client_id"]
-        except Exception:
-            pass
-
+    # client_id comes only from the identity that authenticated this request.
+    # Never read it from another credential on the same request: a Bearer token
+    # decoded here is neither bound to that identity nor checked for revocation.
     return resolved
 
 
