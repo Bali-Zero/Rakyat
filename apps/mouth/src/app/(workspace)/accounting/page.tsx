@@ -31,6 +31,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
+import { BankStatementUpload } from "./_components/BankStatementUpload";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
 import {
@@ -355,24 +356,37 @@ function ReconciliationInbox({ onConfirmed }: { onConfirmed: () => void }) {
     }
   };
 
+  // The upload card stays mounted while the list reloads (it holds the result).
+  const frame = (content: React.ReactNode) => (
+    <div className="space-y-4">
+      <BankStatementUpload
+        onImported={() => {
+          void load();
+          onConfirmed();
+        }}
+      />
+      {content}
+    </div>
+  );
+
   if (loading) {
-    return (
+    return frame(
       <div className="flex items-center justify-center p-10 text-muted-foreground">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading inbox…
-      </div>
+      </div>,
     );
   }
 
   if (txns.length === 0) {
-    return (
+    return frame(
       <div className="rounded-lg border p-10 text-center text-muted-foreground">
         <Inbox className="mx-auto mb-2 h-8 w-8 opacity-50" />
         No unmatched incoming transfers. Inbox zero.
-      </div>
+      </div>,
     );
   }
 
-  return (
+  return frame(
     <>
       <div className="space-y-2">
         {txns.map((txn) => (
@@ -452,7 +466,7 @@ function ReconciliationInbox({ onConfirmed }: { onConfirmed: () => void }) {
           }}
         />
       )}
-    </>
+    </>,
   );
 }
 
