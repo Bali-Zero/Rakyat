@@ -30,16 +30,16 @@ _PENDING_QUERY = """
 """
 
 
-def pending_reply_query(assigned_filter: str | None) -> tuple[str, tuple[str, ...]]:
+def pending_reply_query(assigned_filter: list[str] | None) -> tuple[str, tuple[list[str], ...]]:
     """Keep the total and visible rows under the same assignment restriction."""
-    assignment = "AND LOWER(c.assigned_to) = $1" if assigned_filter is not None else ""
+    assignment = "AND LOWER(c.assigned_to) = ANY($1::text[])" if assigned_filter is not None else ""
     return _PENDING_QUERY.format(assignment=assignment), (
         () if assigned_filter is None else (assigned_filter,)
     )
 
 
 async def get_pending_replies(
-    conn: asyncpg.Connection, assigned_filter: str | None
+    conn: asyncpg.Connection, assigned_filter: list[str] | None
 ) -> dict[str, Any]:
     query, params = pending_reply_query(assigned_filter)
     rows = await conn.fetch(query, *params)

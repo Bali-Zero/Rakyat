@@ -615,6 +615,10 @@ export interface ClientProfile {
    *  derives every document date from this one value; absent on an older
    *  backend. */
   as_of?: string;
+  /** The server's answer for this viewer: may they write (edit/delete) this
+   *  client? True for an admin, an owner or a member of an owner's shared
+   *  client pool; absent on an older backend. */
+  viewer_can_write?: boolean;
   stats: {
     family_count: number;
     documents_count: number;

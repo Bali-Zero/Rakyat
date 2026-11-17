@@ -81,7 +81,7 @@ async def search_shared_memory(
 
     Returns relevant results from clients, practices, and interactions
     """
-    assigned_filter: str | None = get_crm_user_filter(current_user)
+    assigned_filter: list[str] | None = get_crm_user_filter(current_user)
     try:
         async with db_pool.acquire() as conn:
             query_lower = q.lower()
@@ -120,7 +120,7 @@ async def search_shared_memory(
                 """
                 params: list = [limit, DEFAULT_EXPIRY_WARNING_DAYS]
                 if assigned_filter is not None:
-                    base_sql += " AND LOWER(c.assigned_to) = $3"
+                    base_sql += " AND LOWER(c.assigned_to) = ANY($3::text[])"
                     params.append(assigned_filter)
                 base_sql += " ORDER BY p.expiry_date ASC LIMIT $1"
                 rows = await conn.fetch(base_sql, *params)
@@ -152,7 +152,7 @@ async def search_shared_memory(
                     """
                     client_params: list = [search_pattern, search_pattern, limit]
                     if assigned_filter is not None:
-                        client_sql += " AND LOWER(c.assigned_to) = $4"
+                        client_sql += " AND LOWER(c.assigned_to) = ANY($4::text[])"
                         client_params.append(assigned_filter)
                     client_sql += " GROUP BY c.id LIMIT $3"
                     client_rows = await conn.fetch(client_sql, *client_params)
@@ -231,7 +231,7 @@ async def search_shared_memory(
                 """
                 practice_params: list = [detected_practice_type, status_filter, limit]
                 if assigned_filter is not None:
-                    practice_sql += " AND LOWER(c.assigned_to) = $4"
+                    practice_sql += " AND LOWER(c.assigned_to) = ANY($4::text[])"
                     practice_params.append(assigned_filter)
                 practice_sql += " ORDER BY p.created_at DESC LIMIT $3"
                 practice_rows = await conn.fetch(practice_sql, *practice_params)
@@ -256,7 +256,7 @@ async def search_shared_memory(
                 """
                 urgency_params: list = [limit]
                 if assigned_filter is not None:
-                    urgency_sql += " AND LOWER(c.assigned_to) = $2"
+                    urgency_sql += " AND LOWER(c.assigned_to) = ANY($2::text[])"
                     urgency_params.append(assigned_filter)
                 urgency_sql += """
                     ORDER BY
@@ -299,9 +299,7 @@ async def search_shared_memory(
                 """
                 interaction_params: list = [days, limit]
                 if assigned_filter is not None:
-                    interaction_sql += (
-                        " AND (LOWER(c.assigned_to) = $3 OR LOWER(i.team_member) = $3)"
-                    )
+                    interaction_sql += " AND (LOWER(c.assigned_to) = ANY($3::text[]) OR LOWER(i.team_member) = ANY($3::text[]))"
                     interaction_params.append(assigned_filter)
                 interaction_sql += " ORDER BY i.interaction_date DESC LIMIT $2"
                 interaction_rows = await conn.fetch(interaction_sql, *interaction_params)
@@ -342,7 +340,7 @@ async def get_upcoming_renewals(
 
     Performance: Cached for 10 minutes to reduce database load.
     """
-    assigned_filter: str | None = get_crm_user_filter(current_user)
+    assigned_filter: list[str] | None = get_crm_user_filter(current_user)
     try:
         async with db_pool.acquire() as conn:
             renewal_sql = """
@@ -367,7 +365,7 @@ async def get_upcoming_renewals(
             """
             params: list = [days]
             if assigned_filter is not None:
-                renewal_sql += " AND LOWER(c.assigned_to) = $2"
+                renewal_sql += " AND LOWER(c.assigned_to) = ANY($2::text[])"
                 params.append(assigned_filter)
             renewal_sql += " ORDER BY p.expiry_date ASC"
             rows = await conn.fetch(renewal_sql, *params)
@@ -399,7 +397,7 @@ async def get_client_full_context(
     - Upcoming renewals
     - Action items
     """
-    assigned_filter: str | None = get_crm_user_filter(current_user)
+    assigned_filter: list[str] | None = get_crm_user_filter(current_user)
     try:
         async with db_pool.acquire() as conn:
             # Client info
@@ -418,7 +416,7 @@ async def get_client_full_context(
             # RBAC Check
             if (
                 assigned_filter is not None
-                and (client["assigned_to"] or "").lower() != assigned_filter
+                and (client["assigned_to"] or "").lower() not in assigned_filter
             ):
                 raise HTTPException(status_code=403, detail="You don't have access to this client")
 
@@ -525,7 +523,7 @@ async def get_team_overview(
 
     Performance: Cached for 5 minutes to reduce database load.
     """
-    assigned_filter: str | None = get_crm_user_filter(current_user)
+    assigned_filter: list[str] | None = get_crm_user_filter(current_user)
     try:
         async with db_pool.acquire() as conn:
             overview = {}
@@ -546,7 +544,7 @@ async def get_team_overview(
             """
             params = []
             if assigned_filter is not None:
-                status_query += " WHERE LOWER(c.assigned_to) = $1"
+                status_query += " WHERE LOWER(c.assigned_to) = ANY($1::text[])"
                 params.append(assigned_filter)
 
             status_query += " GROUP BY p.status"

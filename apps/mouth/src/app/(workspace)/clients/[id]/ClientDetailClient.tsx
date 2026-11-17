@@ -513,7 +513,7 @@ export function ClientDetailClient({
   }
 
   const {
-    client,
+    client: profileClient,
     family_members,
     documents,
     practices,
@@ -521,6 +521,9 @@ export function ClientDetailClient({
     stats,
     attention_stats: attentionStats,
   } = profile;
+  // `viewer_can_write` is the server's answer for THIS viewer (it knows the
+  // shared client pools); it rides on `client` so the delete predicate sees it.
+  const client = { ...profileClient, viewer_can_write: profile.viewer_can_write };
   const setupOption = client.assigned_to
     ? teamMemberOptions.find(
         (m) => m.value === client.assigned_to!.toLowerCase(),

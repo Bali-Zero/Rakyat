@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import Depends, HTTPException
 
 from backend.app.deps.auth import get_current_user
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import (
     _practices_full_view_emails,
     can_view_all_practices,
@@ -75,13 +76,16 @@ def require_super_admin(
 
 def get_crm_user_filter(
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> str | None:
-    """Return the user's email for filtering, or None if they can see everything.
+) -> list[str] | None:
+    """Return the owner emails the user may act as, or None if they can see everything.
+
+    The list is the caller's own email plus every member of a shared client pool
+    (``CRM_CLIENT_POOLS_JSON``) the caller belongs to; with no pool it is just ``[email]``.
 
     Usage in routers:
         assigned_filter = Depends(get_crm_user_filter)
         # assigned_filter is None → show all
-        # assigned_filter is "user@email.com" → WHERE assigned_to = $N
+        # assigned_filter is ["a@x", "b@x"] → WHERE assigned_to = ANY($N::text[])
     """
     # RBAC: admins see the whole book (None = no filter). Non-admins are scoped to
     # their own assigned clients. NB: this is gated on is_crm_admin, NOT on
@@ -94,13 +98,13 @@ def get_crm_user_filter(
     email = (current_user.get("email") or "").lower().strip()
     if email in _clients_full_view_emails():
         return None
-    return email
+    return sorted(caller_pool_peers(current_user))
 
 
 def get_practices_user_filter(
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> str | None:
-    """Return the user's email for practice filtering, or None for full view."""
+) -> list[str] | None:
+    """Return the owner emails (own + client-pool peers) for practice filtering, None for full view."""
     if can_view_all_practices(current_user):
         return None
-    return current_user.get("email", "").lower()
+    return sorted(caller_pool_peers(current_user))

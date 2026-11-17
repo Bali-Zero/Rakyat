@@ -803,6 +803,10 @@ async def lifespan_light(app: FastAPI):
             app.state.db_pool = None
             return
 
+        from backend.app.utils.client_pools import validate_client_pools_on_pool
+
+        await validate_client_pools_on_pool(app.state.db_pool)
+
         # Background workers kill switch — see service_initializer.py note (2026-04-12 incident)
         if os.getenv("DISABLE_BACKGROUND_WORKERS") == "1":
             logger.warning(

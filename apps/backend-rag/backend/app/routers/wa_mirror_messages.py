@@ -194,9 +194,9 @@ async def _ensure_practice_visible(
              LEFT JOIN clients c ON c.id = p.client_id
                  WHERE p.id = $1
                    AND (
-                        p.assigned_to = $2
-                     OR p.created_by = $2
-                     OR c.assigned_to = $2
+                        p.assigned_to = ANY($2::text[])
+                     OR p.created_by = ANY($2::text[])
+                     OR c.assigned_to = ANY($2::text[])
                    )
             )
             """,

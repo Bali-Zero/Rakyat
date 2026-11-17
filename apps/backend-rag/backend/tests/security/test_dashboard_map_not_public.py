@@ -98,13 +98,14 @@ class TestClientsGeoScopesToTheCaller:
         request = MagicMock()
         request.app.state.db_pool = pool
 
-        await get_clients_geo(request, current_user={"email": "Team.Member@balizero.com"})
+        caller = {"email": "Team.Member@balizero.com"}
+        await get_clients_geo(request, current_user=caller)
 
-        assert "assigned_to = $1" in captured["sql"], (
+        assert "assigned_to = ANY($1::text[])" in captured["sql"], (
             "a non-admin caller received an unscoped client query — the CRM "
             f"ownership filter is not applied. SQL: {captured['sql']}"
         )
-        assert captured["params"] == ("team.member@balizero.com",)
+        assert captured["params"] == ([caller["email"].lower()],)
 
     @pytest.mark.asyncio
     async def test_admin_query_is_not_scoped(self) -> None:
