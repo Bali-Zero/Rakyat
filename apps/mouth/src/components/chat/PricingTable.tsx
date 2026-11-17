@@ -153,6 +153,12 @@ export const PricingTable: React.FC<PricingTableProps> = ({ data }) => {
         )}
         {renderCategory("Company Services", data.company_services)}
         {renderCategory("Consultant Services", data.consultant_services)}
+        {renderCategory(
+          "Compliance Retainers",
+          (
+            data as unknown as Record<string, PricingCategory | undefined>
+          ).compliance_retainers,
+        )}
         {renderCategory("Other Processes", data.other_process)}
         {renderCategory("Urgent Processing", data.urgent_processing)}
         {/* Legacy 2025 keys — preserved so cached payloads still render */}

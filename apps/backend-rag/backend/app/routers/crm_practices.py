@@ -1693,6 +1693,22 @@ async def update_practice(
                 params.append(value)
                 param_index += 1
 
+            # Sync paid_amount when payment_status changes without an explicit amount
+            # so Portal billing summary stays consistent with the practice badge.
+            if "payment_status" in update_set and "paid_amount" not in update_set:
+                if update_set["payment_status"] == "paid":
+                    update_fields.append(
+                        "paid_amount = CASE "
+                        "WHEN COALESCE(paid_amount, 0) > 0 THEN paid_amount "
+                        "ELSE COALESCE("
+                        "NULLIF((SELECT SUM(amount_idr) FROM invoices WHERE practice_id = practices.id), 0), "
+                        "actual_price, "
+                        "GREATEST(COALESCE(quoted_price, 0) - COALESCE(discount_amount, 0), 0)"
+                        ") END"
+                    )
+                elif update_set["payment_status"] == "unpaid":
+                    update_fields.append("paid_amount = 0")
+
             if service_base_price is not None:
                 update_fields.append(f"quoted_price = COALESCE(quoted_price, ${param_index})")
                 params.append(service_base_price)
@@ -1818,6 +1834,29 @@ async def update_practice(
                     raise HTTPException(status_code=404, detail="Practice not found")
 
                 updated_practice = dict(row)
+
+                # Keep invoices.paid_amount_idr aligned when payment_status is toggled
+                # between 'paid' and 'unpaid' inside the same transaction.
+                payment_status_in = update_set.get("payment_status")
+                if payment_status_in in {"paid", "unpaid"}:
+                    try:
+                        if payment_status_in == "paid":
+                            await conn.execute(
+                                "UPDATE invoices SET paid_amount_idr = amount_idr "
+                                "WHERE practice_id = $1 "
+                                "AND COALESCE(paid_amount_idr, 0) < COALESCE(amount_idr, 0)",
+                                practice_id,
+                            )
+                        elif float(update_set.get("paid_amount") or 0) == 0:
+                            await conn.execute(
+                                "UPDATE invoices SET paid_amount_idr = 0 "
+                                "WHERE practice_id = $1 AND COALESCE(paid_amount_idr, 0) > 0",
+                                practice_id,
+                            )
+                    except Exception as inv_exc:
+                        if getattr(inv_exc, "sqlstate", None) not in ("42P01", "42703"):
+                            raise
+
                 await _attach_invoice_company_name(conn, updated_practice)
                 response_practice = dict(updated_practice)
                 can_view_client_details = user_is_admin or created_by_match or client_lead_match

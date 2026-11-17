@@ -538,17 +538,57 @@ export default function PratichePage() {
     setUpdatingId(practiceId);
     try {
       const user = await api.getProfile();
-      await api.crm.updatePractice(practiceId, {
+      const targetPractice = practices.find((p) => p.id === practiceId);
+      const targetAmount = Number(
+        targetPractice?.actual_price ?? targetPractice?.quoted_price ?? 0,
+      );
+      const payload: Record<string, unknown> = {
         payment_status: newPaymentStatus,
-      });
+      };
+      if (
+        newPaymentStatus === "paid" &&
+        (Number(targetPractice?.paid_amount) || 0) <= 0 &&
+        targetAmount > 0
+      ) {
+        payload.paid_amount = targetAmount;
+      } else if (
+        newPaymentStatus === "unpaid" &&
+        (Number(targetPractice?.paid_amount) || 0) > 0
+      ) {
+        payload.paid_amount = 0;
+      }
+      const updatedPractice = await api.crm.updatePractice(
+        practiceId,
+        payload,
+      );
+      const syncedStatus = updatedPractice?.payment_status ?? newPaymentStatus;
+      const syncedPaidAmount =
+        updatedPractice?.paid_amount ??
+        (payload.paid_amount !== undefined
+          ? Number(payload.paid_amount)
+          : undefined);
       setPractices((prev) =>
         prev.map((p) =>
-          p.id === practiceId ? { ...p, payment_status: newPaymentStatus } : p,
+          p.id === practiceId
+            ? {
+                ...p,
+                payment_status: syncedStatus,
+                ...(syncedPaidAmount !== undefined
+                  ? { paid_amount: syncedPaidAmount }
+                  : {}),
+              }
+            : p,
         ),
       );
       setSelectedPractice((prev) =>
         prev?.id === practiceId
-          ? { ...prev, payment_status: newPaymentStatus }
+          ? {
+              ...prev,
+              payment_status: syncedStatus,
+              ...(syncedPaidAmount !== undefined
+                ? { paid_amount: syncedPaidAmount }
+                : {}),
+            }
           : prev,
       );
       toast.success("Payment Updated", `→ ${newPaymentStatus}`);
@@ -870,7 +910,14 @@ export default function PratichePage() {
             Number(p.actual_price ?? p.quoted_price ?? 0);
           const totalRevenue = filteredPractices
             .filter((p) => p.payment_status === "paid")
-            .reduce((s, p) => s + Number(p.paid_amount ?? amountOf(p)), 0);
+            .reduce(
+              (s, p) =>
+                s +
+                (Number(p.paid_amount) > 0
+                  ? Number(p.paid_amount)
+                  : amountOf(p)),
+              0,
+            );
           return (
             <div className="flex flex-wrap gap-2 text-xs">
               <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--surface-raised)] border border-[var(--bz-border)] text-[var(--bz-text-2)]">

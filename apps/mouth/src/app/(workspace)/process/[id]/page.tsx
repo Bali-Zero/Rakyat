@@ -316,9 +316,23 @@ export default function CaseDetailPage() {
     setIsUpdatingPayment(true);
     try {
       const user = await api.getProfile();
-      const updatedPractice = await api.crm.updatePractice(caseId, {
-        payment_status: nextStatus,
-      });
+      const payload: Record<string, unknown> = { payment_status: nextStatus };
+      const targetAmount = Number(
+        practice.actual_price ?? practice.quoted_price ?? 0,
+      );
+      if (
+        nextStatus === "paid" &&
+        (Number(practice.paid_amount) || 0) <= 0 &&
+        targetAmount > 0
+      ) {
+        payload.paid_amount = targetAmount;
+      } else if (
+        nextStatus === "unpaid" &&
+        (Number(practice.paid_amount) || 0) > 0
+      ) {
+        payload.paid_amount = 0;
+      }
+      const updatedPractice = await api.crm.updatePractice(caseId, payload);
       applyPracticeUpdate(updatedPractice);
       await invalidateClient();
       toast.success("Payment status updated", `→ ${nextStatus}`);

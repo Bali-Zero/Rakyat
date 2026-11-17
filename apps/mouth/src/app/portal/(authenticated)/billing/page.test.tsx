@@ -4,11 +4,17 @@ import { describe, expect, it, vi } from "vitest";
 const {
   mockUsePortalBilling,
   mockGetInvoicePdfUrl,
+  mockGetToken,
+  mockGetBaseUrl,
+  mockGetPortalImpersonation,
   mockToastError,
   mockRefetch,
 } = vi.hoisted(() => ({
   mockUsePortalBilling: vi.fn(),
   mockGetInvoicePdfUrl: vi.fn(),
+  mockGetToken: vi.fn(() => "test-bearer-token"),
+  mockGetBaseUrl: vi.fn(() => "https://api.example.test"),
+  mockGetPortalImpersonation: vi.fn(() => null as number | null),
   mockToastError: vi.fn(),
   mockRefetch: vi.fn(),
 }));
@@ -19,6 +25,9 @@ vi.mock("@/hooks/usePortalBilling", () => ({
 
 vi.mock("@/lib/api", () => ({
   api: {
+    getToken: mockGetToken,
+    getBaseUrl: mockGetBaseUrl,
+    getPortalImpersonation: mockGetPortalImpersonation,
     portal: {
       getInvoicePdfUrl: mockGetInvoicePdfUrl,
     },
@@ -161,11 +170,28 @@ describe("BillingPage", () => {
     expect(container.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 
-  it("downloads through a same-origin anchor after resolving the proxy URL", async () => {
+  it("downloads PDF via authenticated fetch preserving Bearer token and as_client impersonation", async () => {
     mockState({ data: BILLING });
     mockGetInvoicePdfUrl.mockResolvedValue({
       download_url: "/api/portal/billing/1/pdf",
     });
+    mockGetPortalImpersonation.mockReturnValue(77);
+
+    const blob = new Blob(["%PDF-1.4"], { type: "application/pdf" });
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        blob: async () => blob,
+      } as unknown as Response);
+    const createUrlSpy = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:https://portal.example.test/pdf-1");
+    const revokeUrlSpy = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => {});
+
     let clickedLink: HTMLAnchorElement | undefined;
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
@@ -180,11 +206,29 @@ describe("BillingPage", () => {
 
     await waitFor(() => expect(clickSpy).toHaveBeenCalledOnce());
     expect(mockGetInvoicePdfUrl).toHaveBeenCalledWith(1);
-    expect(clickedLink?.getAttribute("href")).toBe("/api/portal/billing/1/pdf");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://api.example.test/api/portal/billing/1/pdf?as_client=77",
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+        headers: { Authorization: "Bearer test-bearer-token" },
+      }),
+    );
+    expect(clickedLink?.getAttribute("href")).toBe(
+      "blob:https://portal.example.test/pdf-1",
+    );
     expect(clickedLink?.download).toBe("INV-2026-001.pdf");
     expect(clickedLink?.rel).toBe("noopener noreferrer");
     expect(clickedLink?.isConnected).toBe(false);
+    expect(revokeUrlSpy).toHaveBeenCalledWith(
+      "blob:https://portal.example.test/pdf-1",
+    );
+
     clickSpy.mockRestore();
+    fetchSpy.mockRestore();
+    createUrlSpy.mockRestore();
+    revokeUrlSpy.mockRestore();
+    mockGetPortalImpersonation.mockReturnValue(null);
   });
 
   it("keeps zero outstanding on the success state color", () => {

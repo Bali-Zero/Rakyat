@@ -67,13 +67,45 @@ export default function BillingPage() {
     try {
       const result = await api.portal.getInvoicePdfUrl(invoice.id);
       if (result.download_url) {
-        const link = document.createElement("a");
-        link.href = result.download_url;
-        link.download = `${invoice.invoice_number}.pdf`;
-        link.rel = "noopener noreferrer";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+        const baseUrl =
+          typeof api.getBaseUrl === "function" ? api.getBaseUrl() : "";
+        let targetUrl = result.download_url.startsWith("/")
+          ? `${baseUrl}${result.download_url}`
+          : result.download_url;
+        const impId =
+          typeof api.getPortalImpersonation === "function"
+            ? api.getPortalImpersonation()
+            : null;
+        if (impId && !targetUrl.includes("as_client=")) {
+          const sep = targetUrl.includes("?") ? "&" : "?";
+          targetUrl = `${targetUrl}${sep}as_client=${encodeURIComponent(String(impId))}`;
+        }
+        const token = typeof api.getToken === "function" ? api.getToken() : null;
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+        const response = await fetch(targetUrl, {
+          method: "GET",
+          credentials: "include",
+          headers: Object.keys(headers).length > 0 ? headers : undefined,
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        try {
+          const link = document.createElement("a");
+          link.href = objectUrl;
+          link.download = `${invoice.invoice_number}.pdf`;
+          link.rel = "noopener noreferrer";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
       }
     } catch (err) {
       toastError("Download failed", "Could not get invoice PDF");

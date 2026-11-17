@@ -100,17 +100,66 @@ class PortalBillingMixin:
         # invoicing must not make Outstanding negative. Nothing is hidden by the
         # cap — the raw per-invoice figure is returned as `paid_amount_idr`.
         invoiced_by_practice: dict[int, float] = {}
-        paid_by_practice: dict[int, float] = {}
+        invoice_paid_sum_by_practice: dict[int, float] = {}
+        raw_paid_by_practice: dict[int, float] = {}
+        status_by_practice: dict[int, str] = {}
 
         for row in rows:
             amount = float(row["amount_idr"] or 0)
             # "unpaid", not "pending": pending is not a state this system emits.
-            payment_status = row["payment_status"] or "unpaid"
+            practice_status = row["payment_status"] or "unpaid"
             total_invoiced += amount
 
             practice_id = row["practice_id"]
             invoiced_by_practice[practice_id] = invoiced_by_practice.get(practice_id, 0.0) + amount
-            paid_by_practice[practice_id] = float(row["paid_amount"] or 0)
+            invoice_paid_sum_by_practice[practice_id] = (
+                invoice_paid_sum_by_practice.get(practice_id, 0.0)
+                + float(row["paid_amount_idr"] or 0)
+            )
+            raw_paid_by_practice[practice_id] = max(
+                raw_paid_by_practice.get(practice_id, 0.0),
+                float(row["paid_amount"] or 0),
+            )
+            status_by_practice[practice_id] = practice_status
+
+        effective_paid_by_practice: dict[int, float] = {}
+        for practice_id, prac_invoiced in invoiced_by_practice.items():
+            eff = max(
+                raw_paid_by_practice.get(practice_id, 0.0),
+                invoice_paid_sum_by_practice.get(practice_id, 0.0),
+            )
+            if status_by_practice.get(practice_id) == "paid" and eff <= 0:
+                eff = prac_invoiced
+            effective_paid_by_practice[practice_id] = eff
+
+        for row in rows:
+            amount = float(row["amount_idr"] or 0)
+            practice_id = row["practice_id"]
+            prac_invoiced = invoiced_by_practice[practice_id]
+            eff = effective_paid_by_practice[practice_id]
+            practice_status = status_by_practice[practice_id]
+            inv_paid_sum = invoice_paid_sum_by_practice[practice_id]
+
+            if prac_invoiced > 0 and eff >= prac_invoiced:
+                inv_payment_status = "paid"
+            elif eff <= 0:
+                inv_payment_status = (
+                    practice_status
+                    if (prac_invoiced == 0 and practice_status in {"paid", "partial"})
+                    else "unpaid"
+                )
+            elif row["paid_amount_idr"] is not None:
+                inv_paid = float(row["paid_amount_idr"])
+                if amount > 0 and inv_paid >= amount:
+                    inv_payment_status = "paid"
+                elif inv_paid > 0:
+                    inv_payment_status = "partial"
+                else:
+                    inv_payment_status = "unpaid"
+            elif inv_paid_sum >= eff:
+                inv_payment_status = "unpaid"
+            else:
+                inv_payment_status = "partial"
 
             invoices.append(
                 {
@@ -128,7 +177,7 @@ class PortalBillingMixin:
                     "practice_id": row["practice_id"],
                     "practice_name": row["practice_name"],
                     "practice_category": row["practice_category"],
-                    "payment_status": payment_status,
+                    "payment_status": inv_payment_status,
                     "paid_amount_idr": float(row["paid_amount_idr"])
                     if row["paid_amount_idr"] is not None
                     else None,
@@ -136,8 +185,8 @@ class PortalBillingMixin:
             )
 
         total_paid = sum(
-            min(paid, invoiced_by_practice[practice_id])
-            for practice_id, paid in paid_by_practice.items()
+            min(eff, invoiced_by_practice[practice_id])
+            for practice_id, eff in effective_paid_by_practice.items()
         )
 
         return {

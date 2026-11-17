@@ -39,6 +39,7 @@ _FLAT_CATEGORIES = (
     "kitap_permits",
     "company_services",
     "consultant_services",
+    "compliance_retainers",
     "other_process",
     "urgent_processing",
 )
