@@ -1,23 +1,19 @@
 """Send the documents of registered subjects to POST /api/crm/related-subjects/documents/register.
 
-Dry run by default: every subject is sent with ``dry_run: true`` and the script prints the plan
-sha256, the outcome counts and the sums of the answers' counts. ``--apply`` writes, and requires
-the plan sha256 that the dry run printed. Re-runnable: the registry is idempotent and the ledger
-skips what already ended in ``linked`` or ``already_linked`` for the same plan.
+Dry run by default; ``--apply`` writes and needs the plan's sha256 as the dry run printed it. The
+plan is read once: its sha256 and its rows come from the same bytes. There is no ledger: a re-run
+sends every row again and the registry (insert-only, first write wins) answers ``already_linked``
+for what is already written. What was written is proved on the database, never from this output.
 
-Plan: one JSON object per line with ``subject_ref``, ``kind``, ``identifiers`` (list of
-``{type, value}``, mapped exactly as the slice-1 script maps them, so the keys are the registered
-set) and ``documents`` (list of ``{sha256, byte_size, mime_type, doc_type, first_seen_on,
-first_channel, drive: [{file_id, seen_on}]}``).
+Each plan row is one subject: ``subject_ref`` (an int from 0 to 999999999 or a string of 1 to 9
+ASCII digits), ``kind``, ``identifiers`` and ``documents``. A row that preflight refuses (limits of
+the route, body over 65,536 bytes) is never sent, is counted as ``skipped:<reason>`` and fails
+the run.
 
-Preflight, before any call: a row with more than 40 documents, a document with more than 8 file
-ids, or a body over 65,536 bytes is never sent; it is counted under a skip reason. The body is
-measured as the exact bytes transmitted (compact UTF-8, no ASCII escaping) and those bytes, not a
-second serialization, are what is sent.
-
-Never prints or logs a hash, a file id or an identifier value: output is counts, plan ids and
-codes. Sends only ``X-CRM-Write-Key`` and the content type: no query string, no cookie, no session
-or user header, nothing derived from the plan in a header.
+From an answer the script reads the status and, for status 200 only, ``outcome`` and ``dry_run``;
+nothing else, and no value of an answer is ever printed. It prints fixed text, the plan sha256,
+numbers of rows and calls, the labels of ``classify`` and the plan totals. Exit 0: no failing
+label, no skipped row, nothing refused. Exit 1: otherwise. Exit 2: refused before any call.
 
 Env: ``WA_MIRROR_CRM_WRITE_KEY`` (scoped key), ``WA_MIRROR_BACKEND_URL`` (default Fly).
 """
@@ -25,6 +21,7 @@ Env: ``WA_MIRROR_CRM_WRITE_KEY`` (scoped key), ``WA_MIRROR_BACKEND_URL`` (defaul
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -45,21 +42,11 @@ ENDPOINT = "/api/crm/related-subjects/documents/register"
 MAX_BODY_BYTES = 65536
 MAX_DOCUMENTS = 40
 MAX_DRIVE_IDS = 8
-TERMINAL = frozenset({"linked", "already_linked"})
 OUTCOMES = frozenset(
     {"subject_not_registered", "conflict", "would_link", "linked", "already_linked"}
 )
-REASONS = frozenset(
-    {
-        "none_owned",
-        "set_differs",
-        "partial_overlap",
-        "two_owners",
-        "kind_differs",
-        "document_differs",
-    }
-)
-COUNT_KEYS = ("documents", "sightings", "links", "descriptive_differences")
+HTTP_LABELS = {401: "http_401", 422: "http_422", 503: "http_503", 0: "http_0"}
+FAILING = frozenset({"http_401", "http_422", "http_503", "http_0", "http_other", "malformed"})
 DOCUMENT_FIELDS = (
     "sha256",
     "byte_size",
@@ -68,18 +55,33 @@ DOCUMENT_FIELDS = (
     "first_seen_on",
     "first_channel",
 )
-DRY_RUN_NOTE = (
-    "note: in a dry run the sum of documents counts a hash once per subject that submits it, "
-    "so on an empty registry it equals the number of pairs, not of hashes"
-)
-
-plan_sha256 = s1.plan_sha256
-load_plan = s1.load_plan
-append_ledger = s1.append_ledger
+MAX_REFERENCE = 999_999_999
 
 
-def read_ledger(path: Path, sha256: str) -> set[str]:
-    return s1.read_ledger(path, sha256, TERMINAL)
+def classify(status: Any, body: Any, dry_run_sent: bool) -> str:
+    """The label of an answer: exactly one of eleven, by the first rule that applies."""
+    if type(status) is not int:
+        return "http_other"
+    if status != 200:
+        return HTTP_LABELS.get(status, "http_other")
+    outcome = body.get("outcome") if isinstance(body, dict) else None
+    if type(outcome) is not str or outcome not in OUTCOMES:
+        return "malformed"
+    dry_run = body.get("dry_run")
+    if type(dry_run) is not bool or dry_run != dry_run_sent:
+        return "malformed"
+    if (outcome == "would_link" and not dry_run_sent) or (outcome == "linked" and dry_run_sent):
+        return "malformed"
+    return outcome
+
+
+def reference(value: Any) -> str | None:
+    """A plan reference as the string the request carries, or None when it is not acceptable."""
+    if type(value) is int:
+        return str(value) if 0 <= value <= MAX_REFERENCE else None
+    if type(value) is str and 1 <= len(value) <= 9 and value.isascii() and value.isdigit():
+        return value
+    return None
 
 
 def _document(raw: Any) -> dict[str, Any] | None:
@@ -107,8 +109,8 @@ def row_to_request(
         return None, "no_key"
     if len(items) > s1.MAX_IDENTIFIERS:
         return None, "too_many_keys"
-    ref = str(row.get("subject_ref"))
-    if not s1._SAFE_REF.fullmatch(ref):
+    ref = reference(row.get("subject_ref"))
+    if ref is None:
         return None, "invalid_reference"
     documents = row.get("documents")
     if not isinstance(documents, list) or not documents:
@@ -153,13 +155,14 @@ def preflight(
     return request, body, None
 
 
-def unique_totals(rows: list[dict[str, Any]]) -> dict[str, int]:
-    """Distinct documents, sightings and (subject, document) links of the plan's sendable rows."""
+def unique_totals(rows: list[dict[str, Any]], sha256: str, *, dry_run: bool) -> dict[str, int]:
+    """Distinct documents, (file id, hash) pairs and (reference, hash) pairs of the rows that pass
+    preflight with this plan sha256 and this run's mode. Creates no counter and no failure."""
     hashes: set[str] = set()
     sightings: set[tuple[str, str]] = set()
     links: set[tuple[str, str]] = set()
     for row in rows:
-        request, _body, _skip = preflight(row, "0" * 64, dry_run=True)
+        request, _body, _skip = preflight(row, sha256, dry_run=dry_run)
         if request is None:
             continue
         ref = request["evidence"]["subject_ref"]
@@ -170,142 +173,128 @@ def unique_totals(rows: list[dict[str, Any]]) -> dict[str, int]:
     return {"documents": len(hashes), "sightings": len(sightings), "links": len(links)}
 
 
-def _allowed(value: Any, allowed: frozenset[str]) -> str | None:
-    return value if isinstance(value, str) and value in allowed else None
+class PlanError(Exception):
+    pass
 
 
-COUNT_OUTCOMES = frozenset({"would_link", "linked", "already_linked"})
+def read_plan(path: Path) -> tuple[str, list[dict[str, Any]]]:
+    """Read the plan's bytes ONCE; the sha256 and the rows come from those bytes."""
+    try:
+        raw = path.read_bytes()
+        text = raw.decode("utf-8")
+        rows = []
+        for line in text.split("\n"):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise PlanError
+            rows.append(row)
+    except (OSError, ValueError, PlanError):
+        raise PlanError from None
+    return hashlib.sha256(raw).hexdigest(), rows
 
 
-def _counts(body: dict[str, Any], request: dict[str, Any]) -> dict[str, int] | None:
-    """The answer's counts when every one is an int within what THIS request submitted, else None.
-
-    documents and links: at most the documents of the request; sightings: at most its (file id,
-    hash) pairs; descriptive_differences: at most 2 x documents + sightings. A missing object, a
-    missing key, a bool or any out-of-range value makes the whole answer malformed.
-    """
-    raw = body.get("counts")
-    if not isinstance(raw, dict):
-        return None
-    documents = len(request["documents"])
-    pairs = sum(len(d["drive"]) for d in request["documents"])
-    limits = {
-        "documents": documents,
-        "sightings": pairs,
-        "links": documents,
-        "descriptive_differences": 2 * documents + pairs,
-    }
-    out: dict[str, int] = {}
-    for key in COUNT_KEYS:
-        value = raw.get(key)
-        if type(value) is not int or not 0 <= value <= limits[key]:
-            return None
-        out[key] = value
-    return out
+class _BadArguments(Exception):
+    pass
 
 
-def main(argv: list[str] | None = None, *, client: Any = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str):  # never echoes a value
+        raise _BadArguments
+
+
+def _limit(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise ValueError
+    return number
+
+
+def _run(argv: list[str] | None, client: Any) -> int:
+    parser = _Parser(add_help=False, allow_abbrev=False)
     parser.add_argument("--plan", required=True, type=Path)
-    parser.add_argument("--apply", action="store_true", help="write (default is a dry run)")
-    parser.add_argument(
-        "--plan-sha256", help="sha256 printed by the dry run (required with --apply)"
-    )
-    parser.add_argument("--ledger", type=Path, help="default: <plan>.docs-apply-ledger.jsonl")
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--plan-sha256")
     parser.add_argument(
         "--base-url", default=os.environ.get("WA_MIRROR_BACKEND_URL", s1.DEFAULT_BASE_URL)
     )
-    parser.add_argument("--pace", type=float, default=0.2, help="seconds between calls")
-    parser.add_argument("--limit", type=int, default=0, help="send at most N subjects (0 = all)")
-    args = parser.parse_args(argv)
+    parser.add_argument("--pace", type=float, default=0.2)
+    parser.add_argument("--limit", type=_limit, default=0)
+    try:
+        args = parser.parse_args(argv)
+    except _BadArguments:
+        print("refused: invalid command line")
+        return 2
 
-    sha = plan_sha256(args.plan)
+    try:
+        sha, rows = read_plan(args.plan)
+    except PlanError:
+        print("refused: the plan cannot be read as a plan")
+        return 2
     print(f"plan_sha256={sha}")
     if args.apply and args.plan_sha256 != sha:
-        print("refused: --apply needs --plan-sha256 equal to the plan's sha256 above")
+        print("refused: --apply needs the plan's sha256 as printed by the dry run")
         return 2
     key = os.environ.get("WA_MIRROR_CRM_WRITE_KEY", "").strip()
     if not key:
-        print("refused: WA_MIRROR_CRM_WRITE_KEY is not set")
+        print("refused: the write key is not set")
         return 2
 
-    ledger = args.ledger or args.plan.with_name(args.plan.name + ".docs-apply-ledger.jsonl")
-    done = read_ledger(ledger, sha) if args.apply else set()
     dry_run = not args.apply
+    totals = unique_totals(rows, sha, dry_run=dry_run)
     url = args.base_url.rstrip("/") + ENDPOINT
     if client is None:
         import httpx
 
         client = httpx.Client()
 
-    rows = load_plan(args.plan)
-    plan_totals = unique_totals(rows)
-    counts: Counter[str] = Counter()
-    reasons: Counter[str] = Counter()
-    sums: Counter[str] = Counter()
+    labels: Counter[str] = Counter()
+    skipped: Counter[str] = Counter()
     sent = 0
     for row in rows:
-        request, body, skip = preflight(row, sha, dry_run=dry_run)
-        if request is None or body is None:
-            counts[f"skipped:{skip}"] += 1
-            continue
-        ref = request["evidence"]["subject_ref"]
-        if ref in done:
-            counts["skipped:ledger_done"] += 1
-            continue
         if args.limit and sent >= args.limit:
             break
+        request, body, skip = preflight(row, sha, dry_run=dry_run)
+        if request is None or body is None:
+            skipped[str(skip)] += 1
+            continue
         try:
             status, answer = s1.send(client, url, key, body)
         except s1.UnsafeRequest:
             print("stopped: a prepared request was refused before sending")
             return 1
         sent += 1
-        if status == 200:
-            outcome = _allowed(answer.get("outcome"), OUTCOMES) or s1.UNKNOWN
-            raw_reason = answer.get("reason")
-            reason = _allowed(raw_reason, REASONS) or (
-                s1.UNKNOWN if raw_reason is not None else None
+        label = classify(status, answer, dry_run)
+        labels[label] += 1
+        if sent == 1 and label in ("http_401", "http_503"):
+            print(
+                "stopped: the first call was refused as unauthorized"
+                if label == "http_401"
+                else "stopped: the first call found the registry unavailable"
             )
-            if outcome in COUNT_OUTCOMES:
-                checked = _counts(answer, request)
-                if checked is None:
-                    counts["malformed_counts"] += 1
-                else:
-                    for name, number in checked.items():
-                        sums[f"{outcome}:{name}"] += number
-        else:
-            outcome = f"http_{status}" if isinstance(status, int) else s1.UNKNOWN
-            raw_detail = answer.get("detail")
-            reason = _allowed(raw_detail, s1.FAILURE_CODES) or (
-                s1.UNKNOWN if isinstance(raw_detail, str) else None
-            )
-        counts[outcome] += 1
-        if reason:
-            reasons[f"{outcome}:{reason}"] += 1
-        if args.apply:
-            append_ledger(
-                ledger,
-                {"plan_sha256": sha, "subject_ref": ref, "outcome": outcome, "reason": reason},
-            )
-        if status in (401, 503) and sent == 1:
-            print(f"stopped: first call answered {status}")
             break
         time.sleep(max(args.pace, 0.0))
 
     print(f"mode={'apply' if args.apply else 'dry-run'} sent={sent}")
-    for name, number in plan_totals.items():
+    for name, number in totals.items():
         print(f"plan unique {name}={number}")
-    for name, number in sorted(counts.items()):
+    for name, number in sorted(labels.items()):
         print(f"{name}={number}")
-    for name, number in sorted(reasons.items()):
-        print(f"reason {name}={number}")
-    for name, number in sorted(sums.items()):
-        print(f"sum {name}={number}")
-    if dry_run:
-        print(DRY_RUN_NOTE)
-    bad = any(k.startswith("http_") for k in counts) or counts["malformed_counts"]
-    return 1 if bad else 0
+    for name, number in sorted(skipped.items()):
+        print(f"skipped:{name}={number}")
+    failed = any(name in FAILING for name in labels) or bool(skipped)
+    return 1 if failed else 0
+
+
+def main(argv: list[str] | None = None, *, client: Any = None) -> int:
+    try:
+        return _run(argv, client)
+    except SystemExit:
+        raise
+    except Exception:
+        print("failed: unexpected producer failure")
+        return 1
 
 
 if __name__ == "__main__":

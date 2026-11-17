@@ -194,9 +194,7 @@ def _allowed(value: Any, allowed: frozenset[str]) -> str | None:
     return value if isinstance(value, str) and value in allowed else None
 
 
-def read_ledger(
-    path: Path, sha256: str, terminal: frozenset[str] | set[str] = TERMINAL
-) -> set[str]:
+def read_ledger(path: Path, sha256: str) -> set[str]:
     done: set[str] = set()
     if not path.exists():
         return done
@@ -205,7 +203,7 @@ def read_ledger(
             entry = json.loads(line)
         except ValueError:
             continue
-        if entry.get("plan_sha256") == sha256 and entry.get("outcome") in terminal:
+        if entry.get("plan_sha256") == sha256 and entry.get("outcome") in TERMINAL:
             done.add(str(entry.get("subject_ref")))
     return done
 

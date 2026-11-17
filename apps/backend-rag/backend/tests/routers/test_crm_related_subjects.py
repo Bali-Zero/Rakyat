@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import backend.app.routers.crm_related_subjects as route_module
+import backend.services.crm.related_documents as docs_module
 from backend.app.core.config import settings
 from backend.app.dependencies import get_database_pool
 from backend.db.migration_base import split_migration_sql
@@ -2764,9 +2765,47 @@ async def test_s2_c7_a_known_hash_with_another_size_is_a_conflict_and_nothing_is
 # ── item 8: order ────────────────────────────────────────────────────────────
 
 
+FORBIDDEN_WORDS = re.compile(r"\b(UPDATE|DELETE|TRUNCATE|MERGE)\b", re.IGNORECASE)
+
+
+def strip_sql_comments(sql):
+    return re.sub(r"--[^\n]*", " ", re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL))
+
+
 def no_update_or_delete(sql):
-    """Every statement of every attempt, abandoned ones included, is a read or an INSERT."""
-    assert not sql.lstrip().upper().startswith(("UPDATE", "DELETE", "TRUNCATE")), sql[:40]
+    """Every statement of every attempt, abandoned ones included, is a read or an INSERT.
+
+    A conservative check over the service's known statements, not a SQL parser: comments are
+    stripped, then any whole word UPDATE, DELETE, TRUNCATE or MERGE (any case, a CTE included)
+    is refused."""
+    assert not FORBIDDEN_WORDS.search(strip_sql_comments(sql)), sql[:40]
+
+
+@pytest.mark.parametrize("word", ["UPDATE", "DELETE", "TRUNCATE", "MERGE"])
+def test_s2_statement_check_refuses_each_forbidden_word_in_any_case_and_position(word):
+    for variant in (word, word.lower(), word.capitalize(), word[:2] + word[2:].lower()):
+        with pytest.raises(AssertionError):
+            no_update_or_delete(f"{variant} related_documents SET x = 1")
+        with pytest.raises(AssertionError):
+            no_update_or_delete(f"/* ok */ -- fine\n  {variant} FROM t")
+        with pytest.raises(AssertionError):  # a CTE
+            no_update_or_delete(f"WITH gone AS ({variant} FROM t RETURNING *) SELECT * FROM gone")
+    with pytest.raises(AssertionError):  # after a leading comment on the same line
+        no_update_or_delete(f"-- a comment\n{word} t")
+
+
+def test_s2_statement_check_ignores_comments_and_partial_words_and_passes_the_services_own_statements():
+    no_update_or_delete("SELECT 1 /* UPDATE */ -- DELETE\n")
+    no_update_or_delete("SELECT updated_at, deleted_at, merged_into FROM t")
+    for name in (
+        "_DOCS_SQL", "_SIGHTINGS_SQL", "_LINKS_SQL", "_INSERT_DOC_SQL", "_INSERT_SIGHTING_SQL",
+        "_INSERT_LINK_SQL",
+    ):  # fmt: skip
+        no_update_or_delete(getattr(docs_module, name))
+    from backend.services.crm import related_subjects as slice_one_service
+
+    for name in ("_OWNERS_SQL", "_OWNER_KEYS_SQL", "_OWNER_ROW_SQL"):
+        no_update_or_delete(getattr(slice_one_service, name))
 
 
 class _ArgsConn(_Conn):
@@ -3190,7 +3229,15 @@ async def test_s2_c10_a_failure_at_each_stage_leaves_none_of_the_rows(writes, co
         if stage == "after-sightings" and sql.startswith("INSERT INTO related_subject_documents"):
             raise _Stage
 
-    target = _CommitConn(conn, 1, _Stage) if stage == "before-commit" else _ArgsConn(conn, hook)
+    if stage == "before-commit":
+        target = _CommitConn(conn, 1, _Stage)
+
+        async def statement_hook(sql):
+            no_update_or_delete(sql)
+
+        target._hook = statement_hook
+    else:
+        target = _ArgsConn(conn, hook)
     async with writes_nothing(conn):
         with pytest.raises(_Stage):
             await regd(target, payload)
