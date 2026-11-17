@@ -147,6 +147,26 @@ describe("viewerCanDeleteClient — server answer (shared client pools)", () => 
     ).toBe(false);
   });
 
+  it("does NOT offer the action when the server says no, even to the assigned viewer", () => {
+    expect(
+      viewerCanDeleteClient(
+        { assigned_to: VIEWER, viewer_can_write: false },
+        VIEWER,
+        "staff",
+      ),
+    ).toBe(false);
+  });
+
+  it("does NOT offer the action when the server says no, even to an admin role", () => {
+    expect(
+      viewerCanDeleteClient(
+        { assigned_to: OTHER, viewer_can_write: false },
+        VIEWER,
+        "admin",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps today's rule when the field is absent", () => {
     expect(viewerCanDeleteClient({ assigned_to: VIEWER }, VIEWER, "staff")).toBe(
       true,

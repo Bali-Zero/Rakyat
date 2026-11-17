@@ -84,7 +84,7 @@ export function viewerIsNext(
  * is offered the admin path, so an owner/board viewer the backend would 403
  * sees no button. The profile payload does NOT carry `created_by` and the desk
  * cannot see the shared client pools (server configuration), so the server
- * answers for it: when the profile says `viewer_can_write === true` the
+ * answers for it: when the profile carries a boolean `viewer_can_write` it is final: the
  * backend's own write rule (`can_write_client`) already passed and the button
  * is offered. Without that field (older backend) the rule below applies
  * unchanged: role path + `assigned_to` match, narrower than the backend, so
@@ -100,7 +100,8 @@ export function viewerCanDeleteClient(
   viewerEmail: string,
   viewerRole: string | undefined,
 ): boolean {
-  if (client.viewer_can_write === true) return true;
+  // The server answer is authoritative both ways when present.
+  if (typeof client.viewer_can_write === "boolean") return client.viewer_can_write;
   if (DELETE_ADMIN_ROLES.has((viewerRole ?? "").trim().toLowerCase())) {
     return true;
   }

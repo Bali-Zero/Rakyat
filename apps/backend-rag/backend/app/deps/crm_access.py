@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import Depends, HTTPException
 
 from backend.app.deps.auth import get_current_user
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import (
     _practices_full_view_emails,
     can_view_all_practices,
@@ -98,7 +98,7 @@ def get_crm_user_filter(
     email = (current_user.get("email") or "").lower().strip()
     if email in _clients_full_view_emails():
         return None
-    return sorted(client_pool_peers(email))
+    return sorted(caller_pool_peers(current_user))
 
 
 def get_practices_user_filter(
@@ -107,4 +107,4 @@ def get_practices_user_filter(
     """Return the owner emails (own + client-pool peers) for practice filtering, None for full view."""
     if can_view_all_practices(current_user):
         return None
-    return sorted(client_pool_peers(current_user.get("email")))
+    return sorted(caller_pool_peers(current_user))

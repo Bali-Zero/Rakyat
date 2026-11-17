@@ -15,7 +15,7 @@ from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.auth import require_team_member
 from backend.app.deps.crm_access import get_practices_user_filter
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import can_view_all_practices, is_crm_admin
 from backend.app.utils.logging_utils import get_logger
 from backend.services.crm.practice_state_machine import (
@@ -130,7 +130,7 @@ async def get_member_obligations(
     owner = (assigned_to or "").strip().lower() or None
     if scope == "team" and not can_view_team:
         raise HTTPException(status_code=403, detail="Team overview access required")
-    peers = client_pool_peers(email)
+    peers = caller_pool_peers(current_user)
     if scope == "mine" and owner and owner not in peers:
         raise HTTPException(
             status_code=403, detail="Personal obligations are limited to your assignments"

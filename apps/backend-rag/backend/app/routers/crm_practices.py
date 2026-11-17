@@ -19,7 +19,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_practices_user_filter
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
 from backend.app.services.internal_email import send_internal_email
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
@@ -156,7 +156,7 @@ def _practice_ownership_flags(
     client-contact-field scrub, never a *write* pathway.
     """
     user_is_admin = is_crm_admin(current_user)
-    peers = client_pool_peers(current_user.get("email"))
+    peers = caller_pool_peers(current_user)
     created_by_match = bool(created_by and created_by.lower() in peers)
     assigned_to_match = bool(assigned_to and assigned_to.lower() in peers)
     return user_is_admin, created_by_match, assigned_to_match
@@ -1484,7 +1484,7 @@ async def update_practice(
 
             # RBAC: Check ownership or admin status
             user_is_admin = is_crm_admin(current_user)
-            user_peers = client_pool_peers(user_email)
+            user_peers = caller_pool_peers(current_user)
             created_by_match = bool(
                 practice_created_by and practice_created_by.lower() in user_peers
             )
@@ -2080,7 +2080,7 @@ async def delete_practice(
             if not user_is_admin:
                 created_by = (practice_row.get("created_by") or "").lower()
                 assigned_to = (practice_row.get("assigned_to") or "").lower()
-                peers = client_pool_peers(user_email)
+                peers = caller_pool_peers(current_user)
                 created_by_match = created_by in peers
                 assigned_to_match = assigned_to in peers
                 if not (created_by_match or assigned_to_match):
@@ -2257,7 +2257,8 @@ async def get_practices_stats(
         rbac_params: list[Any] = []
         if not is_admin and effective_user:
             rbac_where = " AND assigned_to = ANY($1::text[])"
-            rbac_params = [sorted(client_pool_peers(effective_user))]
+            # An explicit user_id is an internal caller naming one owner: no pool expansion.
+            rbac_params = [[effective_user] if user_id else sorted(caller_pool_peers(current_user))]
 
         async with db_pool.acquire() as conn:
             # By status (filtered by user for non-admins)

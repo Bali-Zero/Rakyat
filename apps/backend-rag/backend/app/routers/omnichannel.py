@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from backend.app.dependencies import get_current_user
 from backend.app.deps.auth import reject_portal_roles
 from backend.app.deps.crm_access import can_view_all_clients
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.core.cache import invalidate_cache
 from backend.core.telegram_retirement import telegram_is_retired
 from backend.security.pii_log_identifier import redact_identifier_for_log
@@ -140,8 +140,7 @@ async def get_thread(
     # RBAC: non-admin can only see assigned threads
     if not can_view_all_clients(user):
         assigned = row["assigned_to"]
-        user_email = user.get("email", "").lower()
-        if assigned and assigned != user_email:
+        if assigned and assigned not in caller_pool_peers(user):
             raise HTTPException(status_code=403, detail="Not authorized")
 
     # Fetch messages
@@ -207,8 +206,7 @@ async def update_thread(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Thread not found")
-        user_email = user.get("email", "").lower()
-        if row["assigned_to"] and row["assigned_to"] not in client_pool_peers(user_email):
+        if row["assigned_to"] and row["assigned_to"] not in caller_pool_peers(user):
             raise HTTPException(status_code=403, detail="Not authorized to update this thread")
 
     tm = _get_thread_manager(db_pool)

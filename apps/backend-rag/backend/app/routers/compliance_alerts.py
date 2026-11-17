@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from backend.app.dependencies import get_current_user, get_database_pool
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.services.compliance.alert_feedback import AlertFeedback
 from backend.services.compliance.alert_metrics import (
     compute_metrics,
@@ -181,7 +181,7 @@ async def list_alerts(
         clauses.append(
             f"client_id IN (SELECT id FROM clients WHERE LOWER(assigned_to) = ANY(${len(params) + 1}::text[]))"
         )
-        params.append(sorted(client_pool_peers(user.get("email"))))
+        params.append(sorted(caller_pool_peers(user)))
 
     if client_id is not None:
         clauses.append(f"client_id = ${len(params) + 1}")
@@ -258,8 +258,7 @@ async def post_outcome(
             assigned = await conn.fetchval(
                 "SELECT assigned_to FROM clients WHERE id = $1", alert_row["client_id"]
             )
-        user_email = (user.get("email") or "").lower()
-        if not assigned or assigned.lower() != user_email:
+        if not assigned or assigned.lower() not in caller_pool_peers(user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not your client")
 
     # acted → resolved; acknowledged / dismissed → acknowledged (both leave the
@@ -325,8 +324,7 @@ async def get_alert(
             assigned = await conn.fetchval(
                 "SELECT assigned_to FROM clients WHERE id = $1", alert["client_id"]
             )
-            user_email = (user.get("email") or "").lower()
-            if not assigned or assigned.lower() != user_email:
+            if not assigned or assigned.lower() not in caller_pool_peers(user):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not your client")
 
         outcomes = await conn.fetch(

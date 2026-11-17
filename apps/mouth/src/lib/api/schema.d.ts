@@ -6199,7 +6199,7 @@ export interface paths {
      *     B3 (SPEC-p0-invite.md, 2026-08-23): scoped to the caller's assignment,
      *     same pattern as `get_recent_portal_activity` below — `assigned_filter`
      *     is None for admins (no filter, full book) and the caller's lowercased
-     *     email otherwise. Applied to BOTH queries: a total count that ignored
+     *     email plus its client-pool peers otherwise. Applied to BOTH queries: a total count that ignored
      *     the filter would still leak the volume of a client the caller cannot
      *     otherwise see.
      */

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.app.utils.service_accounts import is_human_team_member
 from backend.core.env_lists import crm_client_pools
 
 
@@ -18,6 +19,14 @@ def client_pool_peers(email: str | None) -> frozenset[str]:
     return frozenset(peers)
 
 
+def caller_pool_peers(current_user: dict[str, Any] | None) -> frozenset[str]:
+    """Peers of the caller: pools expand only for a human team member; machines keep {own}."""
+    user = current_user or {}
+    if is_human_team_member(user.get("role")):
+        return client_pool_peers(user.get("email"))
+    return frozenset({(user.get("email") or "").strip().lower()})
+
+
 def can_write_client(
     current_user: dict[str, Any], assigned_to: str | None, created_by: str | None
 ) -> bool:
@@ -28,4 +37,4 @@ def can_write_client(
         return True
     owners = {(assigned_to or "").strip().lower(), (created_by or "").strip().lower()}
     owners.discard("")
-    return bool(owners & client_pool_peers(current_user.get("email")))
+    return bool(owners & caller_pool_peers(current_user))

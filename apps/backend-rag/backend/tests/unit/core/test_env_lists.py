@@ -78,3 +78,24 @@ def test_malformed_client_pools_are_not_echoed_in_the_log(monkeypatch, caplog):
     env_lists.crm_client_pools()
     assert "SECRET-PAYLOAD" not in caplog.text
     assert env_lists.ENV_CRM_CLIENT_POOLS in caplog.text
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '[["a@example.test", "b@example.test"], ["not-an-email"]]',
+        '[["a@example.test", "a b@example.test"]]',
+        '[["@example.test"]]',
+        '[["a@"]]',
+        '[["a@example"]]',
+        '[["a@@example.test"]]',
+    ],
+)
+def test_client_pools_with_one_implausible_entry_are_all_rejected(monkeypatch, raw):
+    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, raw)
+    assert env_lists.crm_client_pools() == ()
+
+
+def test_client_pools_blank_entries_are_still_dropped(monkeypatch):
+    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, '[["a@example.test", " "]]')
+    assert env_lists.crm_client_pools() == (frozenset({"a@example.test"}),)

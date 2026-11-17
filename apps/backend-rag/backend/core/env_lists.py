@@ -52,6 +52,18 @@ def intake_drive_root_extra() -> frozenset[str]:
     return frozenset(item.strip() for item in env_json_str_list(ENV_INTAKE_DRIVE_ROOT_EXTRA))
 
 
+def _plausible_email(value: str) -> bool:
+    local, sep, domain = value.partition("@")
+    return bool(
+        sep
+        and local
+        and domain
+        and "@" not in domain
+        and "." in domain
+        and not any(ch.isspace() for ch in value)
+    )
+
+
 def crm_client_pools() -> tuple[frozenset[str], ...]:
     """Groups of staff emails that share client ownership; unset/blank/malformed = no pools."""
     raw = os.environ.get(ENV_CRM_CLIENT_POOLS)
@@ -69,7 +81,12 @@ def crm_client_pools() -> tuple[frozenset[str], ...]:
             "%s is not a JSON list of lists of strings - treated as empty", ENV_CRM_CLIENT_POOLS
         )
         return ()
-    pools = (frozenset(item.strip().lower() for item in group if item.strip()) for group in data)
+    pools = [frozenset(item.strip().lower() for item in group if item.strip()) for group in data]
+    if not all(_plausible_email(item) for pool in pools for item in pool):
+        logger.warning(
+            "%s holds an entry that is not an email - treated as empty", ENV_CRM_CLIENT_POOLS
+        )
+        return ()
     return tuple(pool for pool in pools if pool)
 
 

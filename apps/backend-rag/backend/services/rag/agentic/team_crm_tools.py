@@ -52,7 +52,7 @@ from typing import Any
 
 import asyncpg
 
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.logging_utils import get_logger
 from backend.services.tools.definitions import BaseTool
@@ -103,6 +103,11 @@ class TeamCrmScope:
 
     is_admin: bool
     email: str | None
+
+
+def _scope_peers(scope: TeamCrmScope) -> frozenset[str]:
+    """Pool peers of a resolved scope: a scope only exists for a team-resolved sender."""
+    return caller_pool_peers({"email": scope.email, "role": "team"})
 
 
 def resolve_team_crm_scope(profile: dict[str, Any] | None) -> TeamCrmScope | None:
@@ -322,7 +327,7 @@ class TeamMyClientsTool(BaseTool):
         params: list[Any] = []
         if not scope.is_admin:
             sql += " WHERE LOWER(c.assigned_to) = ANY($1::text[])"
-            params.append(sorted(client_pool_peers(scope.email)))
+            params.append(sorted(_scope_peers(scope)))
         sql += f" GROUP BY c.id, c.full_name ORDER BY c.full_name LIMIT ${len(params) + 1}"
         params.append(limit)
 
@@ -411,7 +416,7 @@ class TeamMyPracticesTool(BaseTool):
         """
         params: list[Any] = []
         if not scope.is_admin:
-            params.append(sorted(client_pool_peers(scope.email)))
+            params.append(sorted(_scope_peers(scope)))
             sql += f" AND LOWER(c.assigned_to) = ANY(${len(params)}::text[])"
         if status:
             params.append(status)
@@ -529,7 +534,7 @@ class TeamMyDeadlinesTool(BaseTool):
         expiry_params: list[Any] = [days_ahead]
         alerts_params: list[Any] = [days_ahead]
         if not scope.is_admin:
-            peers = sorted(client_pool_peers(scope.email))
+            peers = sorted(_scope_peers(scope))
             expiry_sql += f" AND LOWER(assigned_to) = ANY(${len(expiry_params) + 1}::text[])"
             expiry_params.append(peers)
             alerts_sql += f" AND LOWER(c.assigned_to) = ANY(${len(alerts_params) + 1}::text[])"
@@ -641,7 +646,7 @@ class TeamPracticeDetailTool(BaseTool):
         """
         params: list[Any] = [pattern]
         if not scope.is_admin:
-            params.append(sorted(client_pool_peers(scope.email)))
+            params.append(sorted(_scope_peers(scope)))
             sql += f" AND LOWER(c.assigned_to) = ANY(${len(params)}::text[])"
         params.append(limit)
         sql += f" ORDER BY p.created_at DESC LIMIT ${len(params)}"

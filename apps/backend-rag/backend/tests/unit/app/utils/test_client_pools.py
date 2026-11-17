@@ -28,7 +28,7 @@ ADMIN = {"email": "director@example.test", "role": "admin"}
 
 
 def _user(email: str) -> dict[str, str]:
-    return {"email": email, "role": "agent"}
+    return {"email": email, "role": "team"}
 
 
 @pytest.fixture(autouse=True)
@@ -257,3 +257,75 @@ async def test_profile_viewer_can_write_false_for_a_non_member_and_created_by_no
     result = await _profile(_user(OUTSIDER), A, B)
     assert result["viewer_can_write"] is False
     assert "created_by" not in result["client"]
+
+
+# --------------------------------------------------------------------------- #
+# machine principals never expand into a pool                                  #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("role", ["internal", "user", "monitoring", "client", "partner", None])
+def test_machine_or_foreign_role_in_a_pool_keeps_only_its_own_email(role):
+    from backend.app.utils.client_pools import caller_pool_peers
+
+    assert caller_pool_peers({"email": A, "role": role}) == frozenset({A})
+    assert crm_access.get_crm_user_filter({"email": A, "role": role}) == [A]
+
+
+def test_human_role_in_the_same_pool_expands():
+    from backend.app.utils.client_pools import caller_pool_peers
+
+    assert caller_pool_peers({"email": A, "role": "team"}) == frozenset({A, B})
+    assert caller_pool_peers({"email": A, "role": "Tax Lead"}) == frozenset({A, B})
+
+
+@pytest.mark.asyncio
+async def test_machine_role_in_a_pool_is_denied_write_on_a_peers_client():
+    with pytest.raises(HTTPException) as exc:
+        await verify_client_access(1, {"email": A, "role": "internal"}, _conn(B, None), write=True)
+    assert exc.value.status_code == 403
+    allowed, _ = await verify_client_access(1, _user(A), _conn(B, None), write=True)
+    assert allowed is True
+
+
+# --------------------------------------------------------------------------- #
+# compliance alert detail / outcome: peers allowed, non-members refused        #
+# --------------------------------------------------------------------------- #
+
+
+def _alert_pool(assigned_to: str | None):
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value={"alert_id": "al-1", "client_id": 7, "status": "open"})
+    conn.fetchval = AsyncMock(side_effect=[assigned_to, None])
+    conn.fetch = AsyncMock(return_value=[])
+
+    class _Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield conn
+
+    return _Pool()
+
+
+@pytest.mark.asyncio
+async def test_compliance_detail_allows_a_peer_and_refuses_a_non_member():
+    from backend.app.routers.compliance_alerts import get_alert
+
+    result = await get_alert("al-1", user=_user(A), pool=_alert_pool(B))
+    assert result["alert"]["alert_id"] == "al-1"
+    with pytest.raises(HTTPException) as exc:
+        await get_alert("al-1", user=_user(OUTSIDER), pool=_alert_pool(B))
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_compliance_outcome_allows_a_peer_and_refuses_a_non_member():
+    from backend.app.routers.compliance_alerts import OutcomeBody, post_outcome
+
+    body = OutcomeBody(outcome="acted")
+    with pytest.raises(HTTPException) as peer:
+        await post_outcome("al-1", body, user=_user(A), pool=_alert_pool(B))
+    assert peer.value.status_code == 404  # past the RBAC fence: the lock read finds nothing
+    with pytest.raises(HTTPException) as other:
+        await post_outcome("al-1", body, user=_user(OUTSIDER), pool=_alert_pool(B))
+    assert other.value.status_code == 403

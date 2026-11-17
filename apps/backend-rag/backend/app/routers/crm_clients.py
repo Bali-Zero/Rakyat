@@ -34,7 +34,7 @@ from backend.app.deps.crm_access import get_crm_user_filter
 from backend.app.deps.crm_service_write import verify_crm_write_key
 from backend.app.services.crm.audit_logger import audit_change, audit_logger
 from backend.app.services.crm.metrics import metrics_collector, track_client_creation
-from backend.app.utils.client_pools import client_pool_peers
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import (
     AvatarUrl,
     is_crm_admin,
@@ -2062,7 +2062,7 @@ async def get_clients_stats(
         # new_last_30_days query).
         user_email = current_user.get("email", "").lower() if isinstance(current_user, dict) else ""
         scoped = bool(user_email) and not is_crm_admin(current_user)
-        peers = sorted(client_pool_peers(user_email))
+        peers = sorted(caller_pool_peers(current_user))
 
         async with db_pool.acquire() as conn:
             # Total clients by status (exclude soft-deleted)
