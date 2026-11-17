@@ -17,8 +17,10 @@ spending it. No wall-clock cost, no hang risk.
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from backend.app import main_api
@@ -638,55 +640,55 @@ async def test_a_delivered_page_DOES_start_the_suppression_window(monkeypatch) -
 
 
 @pytest.mark.parametrize(
-    ("token", "chat_id", "notifier_result", "expected"),
+    ("api_key", "recipient", "status_code", "boom", "expected", "expect_requests"),
     [
-        ("tok", "chat", (True, None), True),
-        ("tok", "chat", (False, "HTTP 400 non-retryable: can't parse entities"), False),
-        ("tok", "chat", (False, "connection reset"), False),
-        ("", "chat", None, False),
-        ("tok", "", None, False),
+        ("test-nuz-key", "ops-dest-alpha", 200, None, True, 1),
+        ("test-nuz-key", "ops-dest-alpha", 400, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 500, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", None, httpx.ConnectError("connection reset"), False, 1),
+        ("", "ops-dest-alpha", 200, None, False, 0),
+        ("test-nuz-key", "   ", 200, None, False, 0),
     ],
 )
 async def test_the_real_sender_reports_delivery_truthfully(
-    monkeypatch, token, chat_id, notifier_result, expected
+    monkeypatch, api_key, recipient, status_code, boom, expected, expect_requests
 ) -> None:
     """RED IF `_send_quarantine_alarm` ever reports success it did not have.
 
     The two wiring tests above monkeypatch this function OUT, so they prove the
     scheduler HONOURS its answer but prove nothing about the answer itself — a
-    regression returning True on a Telegram refusal would leave both of them
-    green while an undelivered page silently consumed the suppression hour
-    again (raised by codex-gpt-5.6-sol on the cross-family council). This test
-    is the other half: the real helper, with only the notifier replaced.
-
-    The 400 case is not hypothetical. `send_telegram_message` treats 4xx as
-    NON-retryable, so a page whose text the parser rejects is dropped for good
-    — which is exactly what an unescaped `quarantine_reason` used to cause.
+    regression returning True on a delivery refusal or missing configuration
+    would leave both green while an undelivered page silently consumed the
+    suppression hour again.
     """
 
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
-    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", chat_id)
+    monkeypatch.setenv("NUZANTARA_API_KEY", api_key)
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", recipient)
 
-    called: list[str] = []
+    requests_seen: list[httpx.Request] = []
 
-    async def fake_notifier(client, bot_token, target, text):
-        called.append(text)
-        return notifier_result
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request)
+        if boom is not None:
+            raise boom
+        return httpx.Response(status_code or 200, json={"ok": status_code == 200})
 
-    monkeypatch.setattr(
-        "backend.services.wa_copilot.telegram_notifier.send_telegram_message",
-        fake_notifier,
-    )
-
-    delivered = await main_api._send_quarantine_alarm(object(), "GARUDA page body")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        delivered = await main_api._send_quarantine_alarm(
+            client, "GARUDA page body <count=2 & reason=bad_sig>"
+        )
 
     assert delivered is expected
-    if not token or not chat_id:
-        assert called == [], (
-            "the sender tried to transmit with no destination configured — the "
-            "log line is the only record in that state, and it must say so "
-            "rather than pretend a send happened"
-        )
+    assert len(requests_seen) == expect_requests
+    if expected:
+        req = requests_seen[0]
+        assert req.method == "POST"
+        assert req.headers["X-API-Key"] == "test-nuz-key"
+        payload = json.loads(req.read().decode())
+        assert payload["to"] == "ops-dest-alpha"
+        assert payload["subject"] == "[GARUDA] Payment quarantine alarm"
+        body_html = payload.get("body") or payload.get("html_body") or ""
+        assert "<pre>GARUDA page body &lt;count=2 &amp; reason=bad_sig&gt;</pre>" in body_html
 
 
 async def _drive_two_outbox_ticks(monkeypatch, *, sender) -> list[str]:
@@ -788,66 +790,107 @@ async def test_a_delivered_OUTBOX_page_DOES_start_the_suppression_window(
 
 
 @pytest.mark.parametrize(
-    ("token", "chat_id", "notifier_result", "expected"),
+    ("api_key", "recipient", "status_code", "boom", "expected", "expect_requests"),
     [
-        ("tok", "chat", (True, None), True),
-        ("tok", "chat", (False, "HTTP 400 non-retryable: can't parse entities"), False),
-        ("tok", "chat", (False, "connection reset"), False),
-        ("", "chat", None, False),
-        ("tok", "", None, False),
+        ("test-nuz-key", "ops-dest-alpha", 200, None, True, 1),
+        ("test-nuz-key", "ops-dest-alpha", 400, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 500, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", None, httpx.ConnectError("connection reset"), False, 1),
+        ("", "ops-dest-alpha", 200, None, False, 0),
+        ("test-nuz-key", "", 200, None, False, 0),
     ],
 )
 async def test_the_real_OUTBOX_sender_reports_delivery_truthfully(
-    monkeypatch, token, chat_id, notifier_result, expected
+    monkeypatch, api_key, recipient, status_code, boom, expected, expect_requests
 ) -> None:
     """RED IF `_send_outbox_alarm` ever reports success it did not have.
 
-    The other half of the outbox pair, and NOT an inherited gap. Before this
-    PR the function was `-> None` and its return value was load-bearing for
-    nothing, so having no test cost nothing. This diff made an HOUR of alarm
-    suppression on a live money-page depend on its answer — the contract is
-    new, so the coverage is this diff's to carry.
-
-    The two wiring tests above monkeypatch this function OUT, so they prove
-    the scheduler HONOURS the answer and prove nothing about the answer: a
-    regression returning True on a Telegram refusal leaves both of them green
-    while an undelivered page silently consumes the suppression hour again.
-    That is the same gap codex-gpt-5.6-sol raised for the quarantine twin and
-    this lane closed there — the fix did not travel with the cure, which is
-    the whole shape of this PR repeating itself one function over.
-
-    The 400 case is not hypothetical HERE either, and is the sharper of the
-    two instances: `send_telegram_message` treats 4xx as NON-retryable, and
-    `outbox_alarm._compose` still interpolates job-type names with no
-    Markdown escaping — so a page naming an ODD number of underscore-bearing
-    types (`practice_release` alone) is rejected by the parser and dropped
-    for good, while two of them parse and deliver. That defect is ledgered,
-    not fixed here; this test pins the SENDER's honesty about it.
+    Verifies the post-Telegram Brevo email delivery path: HTTP 2xx returns True
+    only after the request succeeds, 4xx/5xx/transport failures return False,
+    and missing `NUZANTARA_API_KEY` or blank `ADMIN_NOTIFICATION_EMAIL` returns
+    False with zero wire calls so `confirm_sent` is never falsely armed.
     """
 
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
-    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", chat_id)
+    monkeypatch.setenv("NUZANTARA_API_KEY", api_key)
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", recipient)
 
-    called: list[str] = []
+    requests_seen: list[httpx.Request] = []
 
-    async def fake_notifier(client, bot_token, target, text):
-        called.append(text)
-        return notifier_result
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request)
+        if boom is not None:
+            raise boom
+        return httpx.Response(status_code or 200, json={"ok": status_code == 200})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        delivered = await main_api._send_outbox_alarm(
+            client, "GARUDA outbox page body <practice_release & count=3>"
+        )
+
+    assert delivered is expected
+    assert len(requests_seen) == expect_requests
+    if expected:
+        req = requests_seen[0]
+        assert req.method == "POST"
+        assert req.headers["X-API-Key"] == "test-nuz-key"
+        payload = json.loads(req.read().decode())
+        assert payload["to"] == "ops-dest-alpha"
+        assert payload["subject"] == "[GARUDA] Outbox backlog alarm"
+        body_html = payload.get("body") or payload.get("html_body") or ""
+        assert (
+            "<pre>GARUDA outbox page body &lt;practice_release &amp; count=3&gt;</pre>"
+            in body_html
+        )
+
+
+async def test_garuda_alarms_respect_telegram_retirement_even_with_legacy_env(
+    monkeypatch,
+) -> None:
+    """Owner order 2026-11-07: Telegram is retired permanently. Even if legacy
+    `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_CHAT_ID` vars are still present in
+    env, neither alarm helper calls Telegram; both use the internal email channel."""
+
+    from backend.app.core.config import settings
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-unused-tok")
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "legacy-unused-chat")
+    monkeypatch.setenv("NUZANTARA_API_KEY", "test-nuz-key")
+    monkeypatch.delenv("ADMIN_NOTIFICATION_EMAIL", raising=False)
+
+    telegram_calls: list[tuple] = []
+
+    async def forbidden_telegram(*args, **kwargs):
+        telegram_calls.append((args, kwargs))
+        raise AssertionError("Telegram notifier must never be called after retirement")
 
     monkeypatch.setattr(
         "backend.services.wa_copilot.telegram_notifier.send_telegram_message",
-        fake_notifier,
+        forbidden_telegram,
     )
 
-    delivered = await main_api._send_outbox_alarm(object(), "GARUDA outbox page body")
+    sent_payloads: list[dict] = []
 
-    assert delivered is expected
-    if not token or not chat_id:
-        assert called == [], (
-            "the outbox sender tried to transmit with no destination "
-            "configured — in that state the log line is the only record, and "
-            "it must say so rather than pretend a send happened"
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent_payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        outbox_ok = await main_api._send_outbox_alarm(client, "GARUDA outbox summary")
+        quarantine_ok = await main_api._send_quarantine_alarm(
+            client, "GARUDA quarantine summary"
         )
+
+    assert telegram_calls == []
+    assert outbox_ok is True
+    assert quarantine_ok is True
+    assert [p["subject"] for p in sent_payloads] == [
+        "[GARUDA] Outbox backlog alarm",
+        "[GARUDA] Payment quarantine alarm",
+    ]
+    assert [p["to"] for p in sent_payloads] == [
+        settings.admin_notification_email.strip(),
+        settings.admin_notification_email.strip(),
+    ]
 
 
 async def test_the_sweep_is_skipped_while_the_order_lane_answers_503(monkeypatch) -> None:
