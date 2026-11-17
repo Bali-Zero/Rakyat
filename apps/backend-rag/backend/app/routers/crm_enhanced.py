@@ -21,6 +21,7 @@ from pydantic import BaseModel, field_validator
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.utils.client_pools import can_write_client
 from backend.app.utils.crm_utils import (
     AvatarUrl,
     extract_json_from_llm_response,
@@ -1148,7 +1149,7 @@ async def get_client_profile(
                 assigned_to, tax_consultant, address, notes, tags, custom_fields,
                 first_contact_date, last_interaction_date,
                 birthplace, npwp, nib, lead_source,
-                created_at, updated_at
+                created_at, updated_at, created_by
             FROM clients
             WHERE id = $1 AND deleted_at IS NULL
             """,
@@ -1157,6 +1158,11 @@ async def get_client_profile(
 
         if not client:
             raise HTTPException(status_code=404, detail="Client not found")
+
+        viewer_can_write = can_write_client(
+            current_user, client.get("assigned_to"), client.get("created_by")
+        )
+        client = {k: v for k, v in dict(client).items() if k != "created_by"}
 
         # Get family members
         family_members = await conn.fetch(
@@ -1394,6 +1400,7 @@ async def get_client_profile(
 
         return {
             "client": dict(client),
+            "viewer_can_write": viewer_can_write,
             "family_members": [dict(fm) for fm in family_members],
             "documents": documents_out,
             "expiry_alerts": [dict(a) for a in expiry_alerts],

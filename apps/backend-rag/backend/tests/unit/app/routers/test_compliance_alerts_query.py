@@ -82,7 +82,7 @@ async def test_active_only_preserves_team_scope_and_parameter_indexes() -> None:
     )
 
     query = " ".join(pool.connection.query.split())
-    assert "LOWER(assigned_to) = $1" in query
+    assert "LOWER(assigned_to) = ANY($1::text[])" in query
     assert "status IN ('pending','sent','acknowledged')" in query
     assert "LIMIT $2 OFFSET $3" in query
-    assert pool.connection.args == ("member@example.test", 6, 0)
+    assert pool.connection.args == (["member@example.test"], 6, 0)

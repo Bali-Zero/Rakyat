@@ -61,7 +61,7 @@ async def get_crm_notifications(
         idx = 2
 
         if assigned_filter:
-            query += f" AND LOWER(c.assigned_to) = ${idx}"
+            query += f" AND LOWER(c.assigned_to) = ANY(${idx}::text[])"
             params.append(assigned_filter)
             idx += 1
 
@@ -133,7 +133,7 @@ async def get_unread_notifications_count(
         """
         params: list = [list(BELL_ALERT_TYPES)]
         if assigned_filter:
-            query += " AND LOWER(c.assigned_to) = $2"
+            query += " AND LOWER(c.assigned_to) = ANY($2::text[])"
             params.append(assigned_filter)
 
         count = await conn.fetchval(query, *params)

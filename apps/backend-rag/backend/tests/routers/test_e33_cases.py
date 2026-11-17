@@ -538,7 +538,7 @@ class TestListCases:
         query = conn.fetch.call_args.args[0]
         params = conn.fetch.call_args.args[1:]
         assert "assigned_to" in query
-        assert team_user["email"].lower() in params
+        assert [team_user["email"].lower()] in params
 
     @pytest.mark.integration
     def test_list_returns_case_summary_rows(self, mock_db_pool, admin_user) -> None:

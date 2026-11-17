@@ -175,6 +175,10 @@ async def lifespan(app: FastAPI):
             app.state.startup_error = str(e)
             return  # Stop background init, health check will report 503
 
+        from backend.app.utils.client_pools import validate_client_pools_on_pool
+
+        await validate_client_pools_on_pool(getattr(app.state, "db_pool", None))
+
         try:
             from backend.app.setup.plugin_initializer import initialize_plugins
 

@@ -28,17 +28,17 @@ def test_admin_by_role_gets_no_filter():
 def test_non_admin_scoped_to_own_email():
     # Sahira: real role from prod, NOT an admin -> filtered to her own email
     sahira = {"email": "Sahira@balizero.com", "role": "Marketing & Accounting"}
-    assert crm_access.get_crm_user_filter(sahira) == "sahira@balizero.com"
+    assert crm_access.get_crm_user_filter(sahira) == [sahira["email"].lower()]
 
 
 def test_non_admin_junior_consultant_scoped():
     damar = {"email": "damar@balizero.com", "role": "Junior Consultant"}
-    assert crm_access.get_crm_user_filter(damar) == "damar@balizero.com"
+    assert crm_access.get_crm_user_filter(damar) == [damar["email"].lower()]
 
 
 def test_empty_user_is_filtered_not_full_view():
     # defense: an empty/anon user must NOT get the full book
-    assert crm_access.get_crm_user_filter({}) == ""
+    assert crm_access.get_crm_user_filter({}) == [""]
 
 
 def test_accounting_full_view_gets_no_filter_without_being_crm_admin():
