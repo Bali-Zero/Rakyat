@@ -2,7 +2,8 @@
 
 The HTTP API owns status and manual control only. This worker owns the periodic
 Drive poll loop so Drive/DB/OCR import chains do not compete with user-facing
-API requests inside the same Fly Machine.
+API requests inside the same Fly Machine. The worker also runs the CRM
+knowledge-graph maintenance jobs (build-mediated and garbage-collect).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from typing import Any
 import asyncpg
 
 from backend.services.crm.drive_poll_service import poll_drive_changes
+from backend.workers.crm_kg_maintenance import load_kg_maintenance_config, run_kg_maintenance
 
 logger = logging.getLogger(__name__)
 
@@ -202,8 +204,11 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
         except NotImplementedError:
             signal.signal(sig, lambda *_args: _request_stop())
 
+    kg_config = load_kg_maintenance_config()
+
     while not stop_event.is_set():
         await run_once(config)
+        await run_kg_maintenance(config.database_url, kg_config)
         if config.once:
             return 0
 
