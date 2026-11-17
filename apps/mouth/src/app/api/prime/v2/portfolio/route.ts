@@ -6,6 +6,8 @@ const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "https://nuzantara-rag.fly.dev";
 
+const NO_STORE_HEADERS = { "Cache-Control": "no-store, private" };
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
@@ -14,7 +16,7 @@ export async function GET(request: NextRequest) {
     if (!client_id) {
       return NextResponse.json(
         { error: "client_id is required" },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -35,6 +37,7 @@ export async function GET(request: NextRequest) {
       `${BACKEND_URL}/api/prime/v2/portfolio?${params.toString()}`,
       {
         headers,
+        cache: "no-store",
       },
     );
 
@@ -47,7 +50,7 @@ export async function GET(request: NextRequest) {
           suggestions: [],
           overall_health: 0,
         },
-        { status: response.status },
+        { status: response.status, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -63,12 +66,12 @@ export async function GET(request: NextRequest) {
           suggestions: [],
           overall_health: 0,
         },
-        { status: response.status },
+        { status: response.status, headers: NO_STORE_HEADERS },
       );
     }
 
     const data = await response.json();
-    return NextResponse.json(data);
+    return NextResponse.json(data, { headers: NO_STORE_HEADERS });
   } catch (error) {
     logger.error(
       "Prime v2 portfolio API error",
@@ -83,7 +86,7 @@ export async function GET(request: NextRequest) {
         suggestions: [],
         overall_health: 0,
       },
-      { status: 502 },
+      { status: 502, headers: NO_STORE_HEADERS },
     );
   }
 }

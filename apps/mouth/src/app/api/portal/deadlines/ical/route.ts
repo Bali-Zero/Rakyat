@@ -27,7 +27,10 @@ interface SummaryDeadline {
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const jwt = req.cookies.get("nz_access_token")?.value;
   if (!jwt) {
-    return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    return NextResponse.json(
+      { error: "unauthenticated" },
+      { status: 401, headers: { "Cache-Control": "no-store, private" } },
+    );
   }
 
   const upstream = await fetch(
@@ -40,7 +43,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!upstream.ok) {
     return NextResponse.json(
       { error: "upstream_failed", status: upstream.status },
-      { status: upstream.status },
+      {
+        status: upstream.status,
+        headers: { "Cache-Control": "no-store, private" },
+      },
     );
   }
   const data = (await upstream.json()) as {
@@ -68,6 +74,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   return new NextResponse(ics, {
     headers: {
+      "Cache-Control": "no-store, private",
       "Content-Type": "text/calendar; charset=utf-8",
       "Content-Disposition": 'attachment; filename="balizero-deadlines.ics"',
     },
