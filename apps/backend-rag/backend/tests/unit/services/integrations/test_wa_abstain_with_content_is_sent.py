@@ -258,7 +258,7 @@ async def test_generate_bot_reply_sends_the_answer_with_the_note(monkeypatch) ->
     monkeypatch.setenv("WA_INBOX_BOT_AUTOREPLY", "true")
     _mock_rag(monkeypatch, _payload(REAL_ANSWER))
 
-    with patch(f"{BOT}.notify_human_telegram", new=AsyncMock(return_value=True)):
+    with patch(f"{BOT}.notify_human_handoff", new=AsyncMock(return_value=True)):
         answer = await wa_inbox_bot.generate_bot_reply(_Pool(_ROWS_NEWEST_FIRST), _thread())
 
     assert "PT PMA" in answer, "the answer itself must reach the client"
@@ -272,7 +272,7 @@ async def test_generate_bot_reply_still_stubs_when_there_is_no_answer(monkeypatc
     _mock_rag(monkeypatch, _payload("Je suis prêt pour votre prochaine question."))
     notifier = AsyncMock(return_value=True)
 
-    with patch(f"{BOT}.notify_human_telegram", new=notifier):
+    with patch(f"{BOT}.notify_human_handoff", new=notifier):
         answer = await wa_inbox_bot.generate_bot_reply(_Pool(_ROWS_NEWEST_FIRST), _thread())
 
     assert "PT PMA" not in answer

@@ -81,7 +81,7 @@ async def _run_expecting_silence(
         patch(f"{BOT}.is_bot_autoreply_enabled", return_value=True),
         patch(f"{BOT}._load_thread_context", AsyncMock(return_value=(query, []))),
         patch(f"{BOT}._get_rag_client", AsyncMock(return_value=client)),
-        patch(f"{BOT}.notify_human_telegram", notifier),
+        patch(f"{BOT}.notify_human_handoff", notifier),
         pytest.raises(RuntimeError) as excinfo,
     ):
         await wa_inbox_bot.generate_bot_reply(None, _thread())
@@ -103,7 +103,7 @@ async def _run(payload: dict, *, query: str = "What documents do I need for a KI
         patch(f"{BOT}.is_bot_autoreply_enabled", return_value=True),
         patch(f"{BOT}._load_thread_context", AsyncMock(return_value=(query, []))),
         patch(f"{BOT}._get_rag_client", AsyncMock(return_value=client)),
-        patch(f"{BOT}.notify_human_telegram", notifier),
+        patch(f"{BOT}.notify_human_handoff", notifier),
     ):
         reply = await wa_inbox_bot.generate_bot_reply(None, _thread())
     return reply, notifier
@@ -119,7 +119,7 @@ class TestGuiltAHumanIsTold:
         notifier.assert_awaited_once()
         kwargs = notifier.await_args.kwargs
         assert kwargs["reason"] == "rag_abstain"
-        assert kwargs["thread_ref"] == "42"
+        assert kwargs["thread_id"] == 42
         # Main's client-facing choice, unchanged by this PR.
         assert reply == get_localized_stub("abstain", "ENGLISH")
 
@@ -194,18 +194,14 @@ class TestGuiltAHumanIsTold:
 class TestPIIThePayloadIsNotWidened:
     @pytest.mark.asyncio
     async def test_the_client_message_is_not_shipped_to_telegram(self) -> None:
-        """The router's own call still sends the body; that is unchanged and
-        lives in its own test. This asserts only that the trigger added HERE
-        passes None, because routing a new trigger through the cleartext
-        payload is exactly the §14 widening the design refused.
-        """
-        secret = "my passport number is very much not for telegram"
+        """notify_human_handoff carries zero free-form client text or message_text."""
+        secret = "my passport number is very much not for external egress"
         _, notifier = await _run(
             {"abstain": True, "abstain_reason": "no_relevant_context"}, query=secret
         )
 
         kwargs = notifier.await_args.kwargs
-        assert kwargs["message_text"] is None
+        assert "message_text" not in kwargs
         assert secret not in repr(notifier.await_args)
 
 
@@ -270,7 +266,7 @@ class TestGuiltSilenceAlsoTellsAHuman:
 
         notifier.assert_awaited_once()
         assert notifier.await_args.kwargs["reason"] == "empty_rag_answer"
-        assert notifier.await_args.kwargs["thread_ref"] == "42"
+        assert notifier.await_args.kwargs["thread_id"] == 42
         assert "empty RAG answer" in str(exc)
 
     @pytest.mark.asyncio
@@ -311,12 +307,12 @@ class TestInnocenceTheNotifierCannotMakeThingsWORSE:
     async def test_a_failing_notifier_does_not_replace_the_real_cause(self) -> None:
         """The cause an operator debugs must stay the cause.
 
-        The notification now runs immediately before the raise, so a Telegram
+        The notification now runs immediately before the raise, so an escalation
         outage sits directly in the path of the real error. It must not turn
         "empty RAG answer" into a connection stack trace — `pytest.raises`
         inside the helper is the assertion: a leaked ConnectionError fails here.
         """
-        boom = AsyncMock(side_effect=ConnectionError("telegram down"))
+        boom = AsyncMock(side_effect=ConnectionError("handoff down"))
         _, exc = await _run_expecting_silence({"abstain": False, "answer": "   "}, notifier=boom)
 
         assert isinstance(exc, RuntimeError)
@@ -324,11 +320,11 @@ class TestInnocenceTheNotifierCannotMakeThingsWORSE:
 
     @pytest.mark.asyncio
     async def test_the_silent_paths_withhold_the_client_message_too(self) -> None:
-        """The §14 rule is not weaker on the paths added here."""
-        secret = "my passport number is very much not for telegram"
+        """Zero client-text PII reaches the handoff notifier on silent paths."""
+        secret = "my passport number is very much not for external egress"
         notifier, _ = await _run_expecting_silence(
             {"abstain": False, "answer": "   "}, query=secret
         )
 
-        assert notifier.await_args.kwargs["message_text"] is None
+        assert "message_text" not in notifier.await_args.kwargs
         assert secret not in repr(notifier.await_args)

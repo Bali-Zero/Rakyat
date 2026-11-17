@@ -71,10 +71,12 @@ import logging
 import re
 import time
 import unicodedata
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from backend.app.services.internal_email import send_internal_email
+from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.integrations.human_escalation_notifier import (
     _already_escalated,
     _recent_escalations,
@@ -287,15 +289,58 @@ _DEFAULT_REASON = "human_request"
 _INAPP_MESSAGES: dict[str, str] = {
     _DEFAULT_REASON: "Client asked to speak to a person on WhatsApp",
     "media_attachment_no_caption": "Client sent an attachment with no caption on WhatsApp",
+    "rag_abstain": "WhatsApp bot abstained — human follow-up needed",
+    "persona_escalate_marker": "WhatsApp bot triggered escalation marker — human follow-up needed",
+    "ai_escalation": "WhatsApp AI flagged conversation for human escalation",
+    "personal_contact": "Client mentioned a specific consultant on WhatsApp",
+    "explicit_request": "Client explicitly requested a human on WhatsApp",
+    "personal_context": "Client shared personal case context requiring human review on WhatsApp",
+    "empty_rag_answer": "WhatsApp bot returned an empty answer — human follow-up needed",
+    "internal_monologue_leak": "WhatsApp bot withheld unsafe draft — human follow-up needed",
+    "workflow_only_output": "WhatsApp bot withheld tool draft — human follow-up needed",
+    "empty_after_channel_format": "WhatsApp bot reply emptied after formatting — human follow-up needed",
+    "support_no_visible_query": "WhatsApp support turn had no text query — human follow-up needed",
+    "terminal_apology": "WhatsApp outbox sent terminal apology — human follow-up needed",
 }
 _INAPP_SUBJECT_TEMPLATES: dict[str, str] = {
     _DEFAULT_REASON: "[WA] Client asked for a human — thread {thread_id}",
     "media_attachment_no_caption": "[WA] Client sent an attachment with no caption — thread {thread_id}",
+    "rag_abstain": "[WA] Bot abstained — thread {thread_id}",
+    "persona_escalate_marker": "[WA] Bot escalation marker — thread {thread_id}",
+    "ai_escalation": "[WA] AI escalation — thread {thread_id}",
+    "personal_contact": "[WA] Client asked for team member — thread {thread_id}",
+    "explicit_request": "[WA] Explicit human request — thread {thread_id}",
+    "personal_context": "[WA] Personal case context — thread {thread_id}",
+    "empty_rag_answer": "[WA] Empty bot answer — thread {thread_id}",
+    "internal_monologue_leak": "[WA] Reply withheld (safety) — thread {thread_id}",
+    "workflow_only_output": "[WA] Reply withheld (tool output) — thread {thread_id}",
+    "empty_after_channel_format": "[WA] Empty formatted reply — thread {thread_id}",
+    "support_no_visible_query": "[WA] Support turn without query — thread {thread_id}",
+    "terminal_apology": "[WA] Terminal apology sent — thread {thread_id}",
 }
 
 
+def _normalize_reason(reason: str) -> str:
+    if reason.startswith("terminal_apology"):
+        return "terminal_apology"
+    return reason
+
+
+@asynccontextmanager
+async def _acquire_conn(pool_or_conn: Any):
+    if hasattr(pool_or_conn, "acquire"):
+        async with pool_or_conn.acquire() as conn:
+            yield conn
+    else:
+        yield pool_or_conn
+
+
 async def _record_inapp_alert(
-    pool: asyncpg.Pool, client_id: int, thread_id: int, *, reason: str = _DEFAULT_REASON
+    pool: Any | None,
+    client_id: int,
+    thread_label: str | int,
+    *,
+    reason: str = _DEFAULT_REASON,
 ) -> bool:
     """Raise the kita bell for the consultant who owns this client.
 
@@ -307,38 +352,45 @@ async def _record_inapp_alert(
     find the assignee. An unfamiliar number therefore has no in-app row and is
     carried by the email alone — which is why the email is never conditional.
     """
-    message = _INAPP_MESSAGES.get(reason, _INAPP_MESSAGES[_DEFAULT_REASON])
-    subject = _INAPP_SUBJECT_TEMPLATES.get(reason, _INAPP_SUBJECT_TEMPLATES[_DEFAULT_REASON])
+    if pool is None:
+        return False
+    reason_key = _normalize_reason(reason)
+    message = _INAPP_MESSAGES.get(reason_key, _INAPP_MESSAGES[_DEFAULT_REASON])
+    subject = _INAPP_SUBJECT_TEMPLATES.get(reason_key, _INAPP_SUBJECT_TEMPLATES[_DEFAULT_REASON])
     try:
-        async with pool.acquire() as conn:
+        async with _acquire_conn(pool) as conn:
             await conn.execute(
                 _INAPP_ALERT_SQL,
                 client_id,
                 ALERT_TYPE,
                 message,
-                subject.format(thread_id=thread_id),
+                subject.format(thread_id=thread_label),
             )
     except Exception as exc:
         logger.warning(
-            "wa_human_handoff: in-app alert failed thread=%s: %s", thread_id, type(exc).__name__
+            "wa_human_handoff: in-app alert failed thread=%s: %s",
+            thread_label,
+            type(exc).__name__,
         )
         return False
     return True
 
 
 async def _resolve_assignee(
-    pool: asyncpg.Pool, counterpart_phone: str | None
+    pool: Any | None, counterpart_phone: str | None
 ) -> tuple[int | None, str | None]:
     """thread's phone -> clients row -> (client_id, assigned_to email).
 
     Best-effort: any DB error resolves to (None, None) so the caller falls
     back to the fixed recipient rather than losing the notification.
     """
+    if pool is None:
+        return None, None
     normalized = normalize_phone(counterpart_phone)
     if not normalized:
         return None, None
     try:
-        async with pool.acquire() as conn:
+        async with _acquire_conn(pool) as conn:
             row = await conn.fetchrow(_ASSIGNEE_LOOKUP_SQL, normalized)
     except Exception as exc:
         logger.warning("wa_human_handoff: assignee lookup failed: %s", type(exc).__name__)
@@ -358,21 +410,45 @@ _EMAIL_INTROS: dict[str, str] = {
     "media_attachment_no_caption": (
         "Klien mengirim lampiran (foto/dokumen/audio/video) tanpa keterangan melalui WhatsApp."
     ),
+    "rag_abstain": "Bot WhatsApp tidak dapat menjawab pertanyaan klien dan membutuhkan tindak lanjut manusia.",
+    "persona_escalate_marker": "Bot WhatsApp memicu eskalasi ke konsultan untuk menindaklanjuti klien.",
+    "ai_escalation": "Asisten AI menandai percakapan WhatsApp ini untuk tindak lanjut manusia.",
+    "personal_contact": "Klien menyebut anggota tim/konsultan tertentu di WhatsApp.",
+    "explicit_request": "Klien secara eksplisit meminta bantuan kolega manusia di WhatsApp.",
+    "personal_context": "Klien menyampaikan konteks kasus pribadi yang memerlukan tinjauan konsultan.",
+    "empty_rag_answer": "Bot WhatsApp tidak menghasilkan jawaban — perlu tindak lanjut konsultan.",
+    "internal_monologue_leak": "Draf jawaban bot ditahan oleh filter keamanan — perlu tindak lanjut konsultan.",
+    "workflow_only_output": "Draf jawaban bot ditahan (internal workflow) — perlu tindak lanjut konsultan.",
+    "empty_after_channel_format": "Jawaban bot kosong setelah pemformatan kanal — perlu tindak lanjut konsultan.",
+    "support_no_visible_query": "Pesan dukungan WhatsApp tidak berisi teks pertanyaan — perlu tinjauan konsultan.",
+    "terminal_apology": "Outbox WhatsApp mengirim permintaan maaf akhir — perlu tindak lanjut konsultan.",
 }
 _EMAIL_SUBJECT_TEMPLATES: dict[str, str] = {
     _DEFAULT_REASON: "[WA] Klien minta bicara dengan manusia — thread {thread_id}",
     "media_attachment_no_caption": (
         "[WA] Klien kirim lampiran tanpa keterangan — thread {thread_id}"
     ),
+    "rag_abstain": "[WA] Bot abstain — thread {thread_id}",
+    "persona_escalate_marker": "[WA] Eskalasi bot — thread {thread_id}",
+    "ai_escalation": "[WA] Eskalasi AI — thread {thread_id}",
+    "personal_contact": "[WA] Klien menyebut anggota tim — thread {thread_id}",
+    "explicit_request": "[WA] Permintaan eksplisit ke manusia — thread {thread_id}",
+    "personal_context": "[WA] Konteks kasus pribadi — thread {thread_id}",
+    "empty_rag_answer": "[WA] Jawaban bot kosong — thread {thread_id}",
+    "internal_monologue_leak": "[WA] Jawaban bot ditahan — thread {thread_id}",
+    "workflow_only_output": "[WA] Draf workflow ditahan — thread {thread_id}",
+    "empty_after_channel_format": "[WA] Format balasan kosong — thread {thread_id}",
+    "support_no_visible_query": "[WA] Pesan tanpa teks — thread {thread_id}",
+    "terminal_apology": "[WA] Outbox terminal apology — thread {thread_id}",
 }
 
 
 async def notify_human_handoff(
-    pool: asyncpg.Pool,
+    pool: asyncpg.Pool | Any | None,
     *,
-    thread_id: int,
+    thread_id: int | str | None = None,
     counterpart_phone: str | None,
-    language: str,
+    language: str = "en",
     reason: str = _DEFAULT_REASON,
 ) -> bool:
     """Tell a human this thread's client needs one. Never raises.
@@ -425,7 +501,24 @@ async def notify_human_handoff(
     a client_id the log line should not repeat) and counted as a failed
     send, same as any other email failure.
     """
-    dedup_key = f"human_handoff:{thread_id}"
+    if isinstance(thread_id, int) and not isinstance(thread_id, bool):
+        thread_label: str = str(thread_id)
+        dedup_key = f"human_handoff:{thread_label}"
+    elif isinstance(thread_id, str) and thread_id.strip().isdigit():
+        thread_label = str(int(thread_id.strip()))
+        dedup_key = f"human_handoff:{thread_label}"
+    else:
+        redacted = redact_identifier_for_log(
+            counterpart_phone or (str(thread_id) if thread_id is not None else "unknown")
+        )
+        thread_label = f"direct-{redacted}"
+        dedup_key = f"human_handoff:direct:{redacted}"
+
+    lang = (language or "").strip()
+    if not lang or lang in {"?", "auto", "unknown"}:
+        lang = _FALLBACK_LANG
+    reason_key = _normalize_reason(reason)
+
     if _already_escalated(dedup_key):
         # A colleague WAS reached — by an earlier call, still inside the
         # dedup window — so this is True, not False (S1, round 3: the
@@ -433,14 +526,14 @@ async def notify_human_handoff(
         # which told the client nobody was told even though someone was).
         logger.info(
             "wa_human_handoff: suppressed thread=%s (dedup window, already delivered)",
-            thread_id,
+            thread_label,
         )
         return True
 
     if _recently_failed(dedup_key):
         logger.info(
             "wa_human_handoff: suppressed thread=%s (failed-attempt cooldown, %ss)",
-            thread_id,
+            thread_label,
             _FAILED_ATTEMPT_COOLDOWN_S,
         )
         return False
@@ -450,34 +543,36 @@ async def notify_human_handoff(
 
     in_app = False
     if client_id is not None:
-        in_app = await _record_inapp_alert(pool, client_id, thread_id, reason=reason)
+        in_app = await _record_inapp_alert(pool, client_id, thread_label, reason=reason)
     logger.info(
         "wa_human_handoff: notifying thread=%s reason=%s in_app=%s assignee_known=%s",
-        thread_id,
+        thread_label,
         reason,
         in_app,
         assignee is not None,
     )
 
     body_lines = [
-        _EMAIL_INTROS.get(reason, _EMAIL_INTROS[_DEFAULT_REASON]),
+        _EMAIL_INTROS.get(reason_key, _EMAIL_INTROS[_DEFAULT_REASON]),
         "",
-        f"Thread: {thread_id}",
+        f"Thread: {thread_label}",
     ]
     if client_id is not None:
         body_lines.append(f"Client ID: {client_id}")
-    body_lines.append(f"Bahasa klien: {language}")
+    body_lines.append(f"Bahasa klien: {lang}")
     body_lines.append("")
     body_lines.append("Silakan buka thread di konsol operator untuk membaca detailnya.")
 
-    subject = _EMAIL_SUBJECT_TEMPLATES.get(reason, _EMAIL_SUBJECT_TEMPLATES[_DEFAULT_REASON])
+    subject = _EMAIL_SUBJECT_TEMPLATES.get(reason_key, _EMAIL_SUBJECT_TEMPLATES[_DEFAULT_REASON])
+    is_bare_conn = pool is not None and not hasattr(pool, "acquire") and hasattr(pool, "execute")
+    audit_pool = None if is_bare_conn else pool
     try:
         email_sent = await send_internal_email(
             to=to_email,
-            subject=subject.format(thread_id=thread_id),
+            subject=subject.format(thread_id=thread_label),
             body="\n".join(body_lines),
             email_type=_EMAIL_TYPE,
-            pool=pool,
+            pool=audit_pool,
             client_id=client_id,
         )
     except Exception as exc:
@@ -488,7 +583,7 @@ async def notify_human_handoff(
         # on it. Type only, never the message — see the docstring note.
         logger.error(
             "wa_human_handoff: email leg raised unexpectedly thread=%s reason=%s: %s",
-            thread_id,
+            thread_label,
             reason,
             type(exc).__name__,
         )
@@ -511,7 +606,7 @@ async def notify_human_handoff(
         logger.warning(
             "wa_human_handoff: no channel delivered thread=%s reason=%s "
             "(email_sent=%s in_app=%s)",
-            thread_id,
+            thread_label,
             reason,
             email_sent,
             in_app,

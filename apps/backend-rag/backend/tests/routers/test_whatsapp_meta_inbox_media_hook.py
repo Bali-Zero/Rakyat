@@ -164,3 +164,27 @@ async def test_skipped_when_no_pool(monkeypatch):
         _media_payload(META_INBOX_PHONE_NUMBER_ID), _StubRequest()
     )
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_recovery_schedules_media_ingest_on_meta_inbox_payload(monkeypatch):
+    """Recovery path triggers _ingest_meta_inbox_media for Meta Inbox media webhooks."""
+    from unittest.mock import AsyncMock
+
+    calls = _capture_publish(monkeypatch)
+    monkeypatch.setattr(wc, "process_meta_inbox_payload", AsyncMock(return_value=True))
+    monkeypatch.setattr(wc, "META_INBOX_PHONE_NUMBER_IDS", {META_INBOX_PHONE_NUMBER_ID})
+
+    payload = _media_payload(META_INBOX_PHONE_NUMBER_ID)
+    payload["object"] = "whatsapp_business_account"
+    payload["entry"][0]["id"] = "entry-1"
+    payload["entry"][0]["changes"][0]["field"] = "messages"
+    payload["entry"][0]["changes"][0]["value"]["messages"][0]["timestamp"] = "1712000000"
+
+    await wc.route_whatsapp_recovery(
+        payload, db_pool=_StubPool(), legacy_route=AsyncMock()
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == "whatsapp_media_pending"
+    assert calls[0][1]["media_id"] == "media-1"

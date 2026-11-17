@@ -228,7 +228,7 @@ def _wire_stubs(
     monkeypatch.setattr(wa_codex_leg, "finalize_wa_answer", fin)
 
     tell = AsyncMock(return_value=True)
-    monkeypatch.setattr(wa_codex_leg, "_tell_a_human", tell)
+    monkeypatch.setattr(wa_codex_leg, "notify_human_handoff", tell)
 
     stub = SimpleNamespace(
         OfferOutcome=OfferOutcome,

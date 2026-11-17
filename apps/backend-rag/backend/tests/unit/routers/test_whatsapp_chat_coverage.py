@@ -645,13 +645,9 @@ async def test_process_whatsapp_message_escalate_to_human():
             "backend.app.routers.whatsapp_chat.get_onboarding_detector",
             return_value=mock_onboarding,
         ),
-        patch("backend.app.routers.whatsapp_chat.notify_human_telegram", new=AsyncMock()),
+        patch("backend.app.routers.whatsapp_chat.notify_human_handoff", new=AsyncMock()),
         patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
     ):
-        mock_settings.admin_telegram_chat_id = "123456"
         await process_whatsapp_message(
             phone="621234567890",
             message_text="This is personal",
@@ -727,8 +723,6 @@ async def test_process_whatsapp_message_onboarding_triggered():
     )
 
     mock_audit = AsyncMock()
-    mock_telegram = MagicMock()
-    mock_telegram.send_message = AsyncMock()
 
     with (
         patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
@@ -737,14 +731,9 @@ async def test_process_whatsapp_message_onboarding_triggered():
             "backend.app.routers.whatsapp_chat.get_onboarding_detector",
             return_value=mock_onboarding,
         ),
-        patch("backend.app.routers.whatsapp_chat.telegram_bot", mock_telegram),
         patch("backend.app.routers.whatsapp_chat._persist_audit_messages", mock_audit),
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
         patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
     ):
-        mock_settings.admin_telegram_chat_id = "synthetic-admin-chat"
         await process_whatsapp_message(
             phone="621234567890",
             message_text="I want to set up a company",
@@ -753,10 +742,9 @@ async def test_process_whatsapp_message_onboarding_triggered():
             request=mock_request,
         )
 
-    # Should send onboarding confirmation to client
+    # Should send onboarding confirmation to client without Telegram
     mock_wa_service.send_message.assert_awaited_once()
     mock_audit.assert_awaited_once()
-    mock_telegram.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -891,133 +879,105 @@ async def test_save_conversation_appends_from_legacy_jsonb_string_messages():
 
 
 # ============================================================
-# notify_zero_conversation_log — unit test
+# notify_zero_conversation_log — compatibility no-op (Telegram retired)
 # ============================================================
 
 
 @pytest.mark.asyncio
-async def test_notify_zero_conversation_log_no_chat_id():
-    """Should return early when no admin_telegram_chat_id configured."""
-    from backend.app.routers.whatsapp_chat import notify_zero_conversation_log
+async def test_notify_zero_conversation_log_is_noop():
+    """Compatibility helper returns None without touching Telegram."""
+    from backend.app.routers import whatsapp_chat
 
-    with (
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch(
-            "backend.app.routers.whatsapp_chat.telegram_bot.send_message",
-            new_callable=AsyncMock,
-        ) as mock_send,
-    ):
-        mock_settings.admin_telegram_chat_id = None
-        # Should not raise, and must return before ever reaching the
-        # Telegram send call (no chat_id to send to).
-        result = await notify_zero_conversation_log(
-            phone="621234567890",
-            sender_name="Client",
-            client_message="Hello",
-            bot_response="Hi!",
-            language="en",
-        )
+    assert not hasattr(whatsapp_chat, "telegram_bot")
+    result = await whatsapp_chat.notify_zero_conversation_log(
+        phone="621234567890",
+        sender_name="Client",
+        client_message="Hello",
+        bot_response="Hi!",
+        language="en",
+    )
     assert result is None
-    mock_send.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_notify_zero_conversation_log_sends_message():
-    """Should send Telegram message when chat_id is configured."""
-    from backend.app.routers.whatsapp_chat import notify_zero_conversation_log
-
-    mock_telegram = MagicMock()
-    mock_telegram.send_message = AsyncMock()
-
-    with (
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.telegram_bot", mock_telegram),
-    ):
-        mock_settings.admin_telegram_chat_id = "8847435604"
-        await notify_zero_conversation_log(
-            phone="621234567890",
-            sender_name="Test",
-            client_message="What is a PT PMA?",
-            bot_response="PT PMA is a foreign investment company...",
-            language="en",
-        )
-
-    mock_telegram.send_message.assert_called_once()
 
 
 # ============================================================
-# notify_human_telegram — unit test
+# notify_human_telegram — compatibility wrapper (delegates to wa_human_handoff)
 # ============================================================
 
 
 @pytest.mark.asyncio
-async def test_notify_human_telegram_no_chat_id():
-    """Should return early when no admin_telegram_chat_id."""
-    # The function moved to `human_escalation_notifier` (2026-08-11) so the WA
-    # inbox bot can reach it too. It is still importable from the router, but it
-    # now reads `settings`/`telegram_bot` from ITS OWN module — patching the
-    # router's globals no longer reaches them, so the patch target moved with it.
-    from backend.app.routers.whatsapp_chat import notify_human_telegram
+async def test_notify_human_telegram_delegates_to_wa_human_handoff():
+    """Compatibility wrapper delegates without sending Telegram or leaking body PII."""
+    from backend.services.integrations.human_escalation_notifier import notify_human_telegram
 
-    mock_telegram = MagicMock()
-    mock_telegram.send_message = AsyncMock()
-
-    with (
-        patch("backend.services.integrations.human_escalation_notifier.settings") as mock_settings,
-        patch(
-            "backend.services.integrations.human_escalation_notifier.telegram_bot",
-            mock_telegram,
-        ),
-    ):
-        mock_settings.admin_telegram_chat_id = None
-        await notify_human_telegram(phone="62123", message_text="Help!")
-
-    # "Should return early" was the docstring's whole claim and nothing checked
-    # it: with no telegram patched and nothing asserted, this test passed on a
-    # function that sent. Surviving the call is not the property.
-    mock_telegram.send_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_notify_human_telegram_with_context():
-    """Should format and send message with client profile and history."""
-    from backend.app.routers.whatsapp_chat import notify_human_telegram
-
-    mock_telegram = MagicMock()
-    mock_telegram.send_message = AsyncMock()
-
-    with (
-        patch("backend.services.integrations.human_escalation_notifier.settings") as mock_settings,
-        patch(
-            "backend.services.integrations.human_escalation_notifier.telegram_bot",
-            mock_telegram,
-        ),
-    ):
-        mock_settings.admin_telegram_chat_id = "8847435604"
-        await notify_human_telegram(
+    mock_handoff = AsyncMock(return_value=True)
+    with patch("backend.services.integrations.wa_human_handoff.notify_human_handoff", mock_handoff):
+        delivered = await notify_human_telegram(
             phone="621234567890",
             message_text="I need help personally",
-            sender_name="Marco",
+            sender_name="Synthetic Sender",
             reason="personal_contact",
-            client_profile={
-                "detected_language": "it",
-                "interests": ["visa", "company"],
-                "visa_discussed": ["KITAS"],
-                "client_type": "prospect",
-                "message_count": 5,
-                "first_contact": "2026-04-01",
-            },
-            conversation_history=[
-                {"role": "user", "content": "ciao"},
-                {"role": "assistant", "content": "Ciao! Come posso aiutarti?"},
-            ],
+            client_profile={"detected_language": "it"},
+            conversation_history=[{"role": "user", "content": "ciao"}],
         )
 
-    mock_telegram.send_message.assert_called_once()
+    assert delivered is True
+    mock_handoff.assert_awaited_once_with(
+        None,
+        thread_id=None,
+        counterpart_phone="621234567890",
+        language="it",
+        reason="personal_contact",
+    )
+
+
+def test_extract_meta_inbox_body_handles_captions_interactive_and_buttons():
+    """_extract_meta_inbox_body extracts text, captions, interactive replies and buttons."""
+    from backend.app.routers.whatsapp_chat import _extract_meta_inbox_body
+
+    assert _extract_meta_inbox_body({"type": "text", "text": {"body": "Hi"}}) == "Hi"
+    assert (
+        _extract_meta_inbox_body({"type": "image", "image": {"id": "m1", "caption": "Cost?"}})
+        == "Cost?"
+    )
+    assert (
+        _extract_meta_inbox_body({"type": "document", "document": {"id": "d1", "caption": "KTP"}})
+        == "KTP"
+    )
+    assert (
+        _extract_meta_inbox_body({"type": "video", "video": {"id": "v1", "caption": "Tour"}})
+        == "Tour"
+    )
+    assert (
+        _extract_meta_inbox_body(
+            {
+                "type": "interactive",
+                "interactive": {
+                    "type": "button_reply",
+                    "button_reply": {"id": "btn_1", "title": "Yes, continue"},
+                },
+            }
+        )
+        == "Yes, continue"
+    )
+    assert (
+        _extract_meta_inbox_body(
+            {
+                "type": "interactive",
+                "interactive": {
+                    "type": "list_reply",
+                    "list_reply": {"id": "opt_2", "title": "KITAS Investor"},
+                },
+            }
+        )
+        == "KITAS Investor"
+    )
+    assert (
+        _extract_meta_inbox_body(
+            {"type": "button", "button": {"text": "Confirm", "payload": "YES"}}
+        )
+        == "Confirm"
+    )
+    assert _extract_meta_inbox_body({"type": "audio", "audio": {"id": "a1"}}) == ""
 
 
 # ============================================================
@@ -1131,11 +1091,9 @@ class TestRawPhoneNeverInLogsGuilt:
                 "backend.app.routers.whatsapp_chat.get_onboarding_detector",
                 return_value=mock_onboarding,
             ),
-            patch("backend.app.routers.whatsapp_chat.notify_human_telegram", new=AsyncMock()),
+            patch("backend.app.routers.whatsapp_chat.notify_human_handoff", new=AsyncMock()),
             patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-            patch("backend.app.routers.whatsapp_chat.settings") as mock_settings,
         ):
-            mock_settings.admin_telegram_chat_id = "123456"
             await process_whatsapp_message(
                 phone=_SYNTHETIC_PHONE,
                 message_text="This is personal",
@@ -1302,7 +1260,7 @@ async def test_r4_legacy_branches_keep_effects_without_private_logs(branch, monk
     monkeypatch.setattr(wa, "_persist_audit_messages", audit)
     monkeypatch.setattr(wa, "_save_conversation", save)
     monkeypatch.setattr(wa, "notify_zero_conversation_log", AsyncMock())
-    monkeypatch.setattr(wa, "notify_human_telegram", notify)
+    monkeypatch.setattr(wa, "notify_human_handoff", notify)
     context = {
         "_wa_user_id": "synthetic",
         "_session_id": "synthetic",
@@ -1354,9 +1312,10 @@ async def test_r4_legacy_branches_keep_effects_without_private_logs(branch, monk
         audit.assert_awaited_once()
         _r4_assert_logs(caplog, "Auto-triggered onboarding")
     elif branch == "context":
-        # Preserve the existing None-context fallback, including its outer error response.
-        assert service.send_message.await_count == 2
-        notify.assert_not_awaited()
+        # Even when build_context raises and ctx falls back to None,
+        # notify_human_handoff must still run without crashing.
+        service.send_message.assert_awaited_once()
+        notify.assert_awaited_once()
         _r4_assert_logs(caplog, "Error building context")
     elif branch == "ack":
         service.send_message.assert_awaited_once()
@@ -1391,19 +1350,13 @@ async def test_r4_auxiliary_failures_keep_fallbacks(branch, monkeypatch, caplog)
 
     caplog.set_level(logging.DEBUG)
     if branch == "notify":
-        settings = _seeded_settings_mock()
-        settings.admin_telegram_chat_id = "synthetic-chat"
-        monkeypatch.setattr(wa, "settings", settings)
-        sender = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
-        monkeypatch.setattr(wa.telegram_bot, "send_message", sender)
         assert (
             await wa.notify_zero_conversation_log(
                 _R4_PRIVATE, "Synthetic", "Synthetic question", "Synthetic answer", "en"
             )
             is None
         )
-        sender.assert_awaited_once()
-        expected = "Failed to send conversation log"
+        return
     elif branch == "database":
         getter = MagicMock(side_effect=RuntimeError(_R4_PRIVATE))
         monkeypatch.setattr(dependencies, "get_database", getter)

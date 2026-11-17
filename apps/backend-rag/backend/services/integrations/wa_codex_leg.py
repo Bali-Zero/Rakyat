@@ -144,7 +144,6 @@ from backend.services.integrations.wa_identity import match_identity_question
 from backend.services.integrations.wa_inbox_bot import (
     _get_rag_client,
     _load_bound_thread_context,
-    _tell_a_human,
     is_bot_autoreply_enabled,
 )
 from backend.services.rag.agentic._support_signal import (
@@ -1037,7 +1036,22 @@ async def _attempt(
     phone = str(thread["counterpart_phone"])
 
     async def _tell(reason: str) -> bool:
-        return await _tell_a_human(phone=phone, reason=reason, thread_id=thread_id)
+        try:
+            return await notify_human_handoff(
+                pool,
+                thread_id=thread_id,
+                counterpart_phone=phone,
+                language=_media_ack_language(history),
+                reason=reason,
+            )
+        except Exception as exc:
+            logger.error(
+                "wa_codex_leg: human handoff failed (thread=%s reason=%s): %s",
+                thread_id,
+                reason,
+                type(exc).__name__,
+            )
+            return False
 
     # B2.4 PR-2, named residual V4 (design B2-4-design.md §2 item B): the
     # builder no longer judges (support_verdict is always None now — see

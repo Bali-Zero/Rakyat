@@ -522,7 +522,7 @@ async def _maybe_send_apology(
     """
     try:
         from backend.services.communication import detect_language
-        from backend.services.integrations.wa_inbox_bot import _tell_a_human
+        from backend.services.integrations.wa_human_handoff import notify_human_handoff
 
         if not _terminal_apology_enabled():
             return
@@ -534,21 +534,15 @@ async def _maybe_send_apology(
         if human_handling_now:
             return
 
-        # Tell a human BEFORE the Meta-window check (2026-08-27 Kimi K3
-        # adversarial finding, MAGGIORE): Telegram is an internal alert, not
-        # a WhatsApp send — it is not bound by the 24h customer-care window
-        # at all. The previous ordering put this call after the window
-        # check, so a row that sat unanswered long enough to exhaust its
-        # retries AND close the window got no client apology (unavoidable —
-        # nothing can be sent) AND no human alert (avoidable, and exactly
-        # the case a human is needed most: nobody else will ever see it).
-        # _tell_a_human never raises and carries its own 30-min per-thread
-        # dedup, so calling it here — independent of the client-send claim
-        # below — is safe even across multiple rows in the same thread.
-        await _tell_a_human(
-            phone=thread["counterpart_phone"],
-            reason=f"terminal_apology:{reason}",
+        # notify_human_handoff runs BEFORE the Meta-window check because email +
+        # kita bell are internal alerts and not bound by the 24h customer-care
+        # window; it never raises and carries a 30-min per-thread dedup.
+        await notify_human_handoff(
+            conn,
             thread_id=thread["thread_id"],
+            counterpart_phone=thread["counterpart_phone"],
+            language="en",
+            reason=f"terminal_apology:{reason}",
         )
 
         # Successor suppression (2026-09-15, B2.5 successor): a newer row of

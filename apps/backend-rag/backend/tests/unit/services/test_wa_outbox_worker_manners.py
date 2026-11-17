@@ -35,7 +35,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from backend.services import whatsapp_ack
-from backend.services.integrations import wa_inbox_bot as _wa_inbox_bot_module
+from backend.services.integrations import wa_human_handoff as _wa_human_handoff_module
 from backend.services.integrations import wa_outbox_worker
 from backend.tests.unit.services.test_wa_outbox_worker import (
     ScriptedConn,
@@ -64,7 +64,7 @@ def _clean_ack_state(monkeypatch):
     monkeypatch.delenv("WHATSAPP_ACK_ENABLED", raising=False)
     monkeypatch.setenv("WA_OUTBOX_MANNERS_ENABLED", "true")
     monkeypatch.setattr(
-        _wa_inbox_bot_module, "notify_human_telegram", AsyncMock(return_value=True)
+        _wa_human_handoff_module, "notify_human_handoff", AsyncMock(return_value=True)
     )
     yield
     whatsapp_ack._reset_for_testing()
@@ -369,7 +369,7 @@ async def test_apology_skipped_when_window_closed_but_a_human_is_still_told(
     (unavoidable) AND no human alert (avoidable). `_tell_a_human` must
     still fire even though nothing can be sent to the client."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_human_handoff_module, "notify_human_handoff", notify_spy)
     thread = _closed_window_thread()
     conn = ScriptedConn(fetchval_results=[False])  # human_handling_now only
     svc = _wa_service()
@@ -425,7 +425,7 @@ async def test_apology_tells_a_human_on_the_way_out(monkeypatch) -> None:
     TRUE — `_tell_a_human` (Telegram) fires with the right phone/reason,
     exactly once per row, before the client-facing send."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_human_handoff_module, "notify_human_handoff", notify_spy)
     thread = _open_window_thread()
     conn = ScriptedConn(fetchval_results=[False, False, None, _NON_TRIVIAL_TEXT])
     svc = _wa_service()
@@ -436,8 +436,8 @@ async def test_apology_tells_a_human_on_the_way_out(monkeypatch) -> None:
 
     notify_spy.assert_awaited_once()
     kwargs = notify_spy.await_args.kwargs
-    assert kwargs["phone"] == "628111"
-    assert kwargs["thread_ref"] == "7"
+    assert kwargs["counterpart_phone"] == "628111"
+    assert kwargs["thread_id"] == 7
     assert "bot_generation_exhausted" in kwargs["reason"]
 
 
@@ -555,7 +555,7 @@ async def test_apology_suppressed_when_a_newer_row_of_the_same_thread_is_still_p
     it is deliberately decoupled from the client-facing suppression (see
     the call-site comment in `_maybe_send_apology`)."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_human_handoff_module, "notify_human_handoff", notify_spy)
     thread = _open_window_thread()
     conn = ScriptedConn(fetchval_results=[False, True])  # human_handling_now, has_live_successor
     svc = _wa_service()
@@ -578,7 +578,7 @@ async def test_apology_fires_exactly_once_for_a_fully_failed_burst_and_it_is_the
     whole burst, and it is the last row's — not three, which is what
     removing `_coalesce_thread_bursts` would otherwise produce."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_human_handoff_module, "notify_human_handoff", notify_spy)
     thread = _open_window_thread(thread_id=7)
     conn = ScriptedConn(
         fetchval_results=[
@@ -757,7 +757,7 @@ async def test_silent_standing_conditions_get_no_apology_and_no_telegram(
     the Gemini-cut PR inverted that contract by firing the apology for
     EVERY standing condition, including these two."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_human_handoff_module, "notify_human_handoff", notify_spy)
 
     for reason in ("autoreply_disabled", "no_customer_message"):
         monkeypatch.setenv("WA_GENERATION_PROVIDER", "codex")

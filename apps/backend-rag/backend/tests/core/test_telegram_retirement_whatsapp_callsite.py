@@ -32,7 +32,7 @@ async def _run_onboarding_case(
     from backend.services.integrations.whatsapp_triage_service import TriageDecision
 
     assert telegram_is_retired() is True
-    assert route.telegram_bot is telegram_bot
+    assert not hasattr(route, "telegram_bot")
     if stale_token is None:
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     else:
@@ -107,7 +107,7 @@ async def _run_onboarding_case(
         "sanitize_whatsapp_kbli_reply",
         lambda **kwargs: SimpleNamespace(corrected=False, reply=kwargs["reply"]),
     )
-    monkeypatch.setattr(route, "notify_human_telegram", escalation)
+    monkeypatch.setattr(route, "notify_human_handoff", escalation)
     conversation_log = AsyncMock()
     monkeypatch.setattr(route, "notify_zero_conversation_log", conversation_log)
 

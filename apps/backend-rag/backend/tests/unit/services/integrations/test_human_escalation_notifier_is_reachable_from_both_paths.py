@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -55,69 +55,64 @@ def test_importing_the_notifier_does_not_drag_in_the_router() -> None:
 
 
 def test_the_router_still_exposes_the_same_function_object() -> None:
-    """The re-export is the SAME object, not a lookalike.
-
-    Two callables with one name is how the drift this fixes began.
-    """
+    """The router uses the exact wa_human_handoff notifier, not a fork."""
     from backend.app.routers import whatsapp_chat
-    from backend.services.integrations import human_escalation_notifier
+    from backend.services.integrations import wa_human_handoff
 
-    assert whatsapp_chat.notify_human_telegram is human_escalation_notifier.notify_human_telegram
+    assert whatsapp_chat.notify_human_handoff is wa_human_handoff.notify_human_handoff
 
 
 @pytest.mark.asyncio
-async def test_it_sends_and_masks_the_phone_but_not_the_body() -> None:
-    """Guilt: it notifies — and the payload is what it was before the move.
-
-    The masking is asserted because it is a live PII property, not decoration:
-    the identifier is reduced, the message body is not. Any future caller that
-    wants a narrower payload has to change the CALL, and this pins what today's
-    call actually ships.
-    """
-    telegram = MagicMock()
-    telegram.send_message = AsyncMock()
-
-    with (
-        patch(f"{NOTIFIER}.settings") as settings,
-        patch(f"{NOTIFIER}.telegram_bot", telegram),
+async def test_compat_notifier_delegates_to_wa_human_handoff_without_forwarding_pii() -> None:
+    """Legacy wrapper forwards escalation to wa_human_handoff and drops PII text."""
+    mock_handoff = AsyncMock(return_value=True)
+    with patch(
+        "backend.services.integrations.wa_human_handoff.notify_human_handoff",
+        mock_handoff,
     ):
-        settings.admin_telegram_chat_id = "8847435604"
         from backend.services.integrations.human_escalation_notifier import (
             notify_human_telegram,
         )
 
-        await notify_human_telegram(
-            phone="621234567890",
-            message_text="I need help with my visa renewal",
-            sender_name="Test Sender",
+        delivered = await notify_human_telegram(
+            phone="628000000123",
+            message_text="Synthetic confidential draft text",
+            sender_name="Synthetic Sender",
             reason="ai_escalation",
+            client_profile={"detected_language": "it"},
+            conversation_history=[{"role": "user", "content": "Synthetic msg"}],
+            thread_ref="77",
         )
 
-    telegram.send_message.assert_called_once()
-    text = telegram.send_message.call_args.kwargs["text"]
-    assert "6212***90" in text, "the phone mask changed shape"
-    assert "621234567890" not in text, "the full phone leaked into the notification"
-    assert "I need help with my visa renewal" in text, (
-        "the body is NOT masked today — if this ever starts passing for the "
-        "opposite reason, the payload narrowed and the callers must be re-read"
+    assert delivered is True
+    mock_handoff.assert_awaited_once_with(
+        None,
+        thread_id="77",
+        counterpart_phone="628000000123",
+        language="it",
+        reason="ai_escalation",
     )
 
 
 @pytest.mark.asyncio
-async def test_it_stays_quiet_when_no_admin_chat_is_configured() -> None:
-    """Innocence: unset chat id → no send, and no exception either."""
-    telegram = MagicMock()
-    telegram.send_message = AsyncMock()
-
-    with (
-        patch(f"{NOTIFIER}.settings") as settings,
-        patch(f"{NOTIFIER}.telegram_bot", telegram),
+async def test_compat_notifier_defaults_missing_language_and_thread_ref() -> None:
+    """Wrapper safely handles missing client_profile/thread_ref without Telegram."""
+    mock_handoff = AsyncMock(return_value=False)
+    with patch(
+        "backend.services.integrations.wa_human_handoff.notify_human_handoff",
+        mock_handoff,
     ):
-        settings.admin_telegram_chat_id = None
         from backend.services.integrations.human_escalation_notifier import (
             notify_human_telegram,
         )
 
-        await notify_human_telegram(phone="62123", message_text="Help")
+        delivered = await notify_human_telegram(phone="62123", message_text="Help")
 
-    telegram.send_message.assert_not_called()
+    assert delivered is False
+    mock_handoff.assert_awaited_once_with(
+        None,
+        thread_id=None,
+        counterpart_phone="62123",
+        language="en",
+        reason="personal_contact",
+    )

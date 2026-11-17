@@ -58,7 +58,6 @@ import httpx
 
 from backend.app.core.config import settings
 from backend.app.rag_proxy import get_rag_worker_url
-from backend.services.integrations.human_escalation_notifier import notify_human_telegram
 from backend.services.integrations.wa_bot_outcomes import BotStandingCondition
 from backend.services.integrations.wa_finalize import (
     # Re-exported for existing importers (tests exercise these through this
@@ -73,70 +72,45 @@ from backend.services.integrations.wa_finalize import (
 from backend.services.integrations.wa_finalize import (
     _abstain_answer_worth_sending as _abstain_answer_worth_sending,
 )
+from backend.services.integrations.wa_human_handoff import notify_human_handoff
 
 logger = logging.getLogger("zantara.backend")
 
 
-async def _tell_a_human(*, phone: str, reason: str, thread_id: Any) -> bool:
-    """Tell a human this thread needs them. Never raises.
+async def _tell_a_human(
+    *,
+    phone: str,
+    reason: str,
+    thread_id: Any,
+    pool: Any | None = None,
+    language: str = "en",
+) -> bool:
+    """Tell a human this thread needs them via Brevo + kita bell. Never raises.
 
-    Extracted so the SILENT exits can reach it. The notification used to live
-    only at the very bottom of ``generate_bot_reply`` — which every ``raise``
-    in that function jumps straight over. So the paths that leave the client
-    with NOTHING were exactly the paths that told nobody, while every path
-    that produced a reply did notify. That is the contract inverted: silence
-    is the outcome that most needs a person, and one of those raises sits two
-    statements after ``human_reason = "persona_escalate_marker"`` — the client
-    asked for a human and the request died with the message.
-
-    Swallows its own failures on purpose: on the silent paths this runs
-    immediately before a ``raise``, and a notifier error must not replace the
-    real cause with a Telegram stack trace.
-
-    Returns whether Telegram accepted THIS call (see ``notify_human_telegram``).
-    ``False`` also covers "suppressed by the 30-minute per-thread dedup", so it
-    never means "nobody was ever told about this thread" — which is also why
-    the outbox worker's five retries produce one alert, not five.
-
-    **Scope, declared rather than left to be inferred: 3 of the 5 exits that
-    raise out of ``generate_bot_reply`` call this.** The three are the
-    ``RuntimeError`` ones — "we tried and produced nothing". The two
-    ``BotStandingCondition`` exits (feature flag off; no customer message in
-    the loaded window) deliberately do NOT, because that exception class
-    exists precisely to say "standing condition, not an incident": the
-    flag-off branch alone accounts for 44 of the give-ups recorded in
-    ``meta_inbox_messages`` (3-19 June, the bot simply switched off), and
-    alerting on those is the noise the per-thread dedup exists to prevent.
-    If that judgement is ever revisited, revisit it here — do not add a
-    fourth call site and leave this paragraph saying three.
-
-    Why this is worth having at all, measured on the live tables rather than
-    argued: 40 threads, **32** with at least one bot give-up, and **4** ever
-    touched by a human (``handling_version > 0``, max 1) in the whole history.
-    The five threads silenced on 2026-07-28 — the team-beta day — carry 34
-    give-ups between them and ``handling_version = 0`` on every one. The
-    module docstring's "the operator can take over the thread" was never
-    honoured on the threads that invoked it.
+    Extracted so the SILENT exits can reach it. Swallows its own failures on
+    purpose: on the silent paths this runs immediately before a ``raise``, and
+    a notifier error must not replace the real cause.
     """
     try:
-        accepted = await notify_human_telegram(
-            phone=phone,
-            message_text=None,
+        accepted = await notify_human_handoff(
+            pool,
+            thread_id=thread_id,
+            counterpart_phone=phone,
+            language=language,
             reason=reason,
-            thread_ref=str(thread_id),
         )
     # Broad on purpose — see docstring: a notifier failure must never replace
-    # the real cause the caller is about to raise.
+    # the real cause the caller is about to raise. Log type only (no PII).
     except Exception as exc:
         logger.error(
             "wa-inbox bot: escalation for thread %s (reason=%s) raised: %s",
             thread_id,
             reason,
-            exc,
+            type(exc).__name__,
         )
         return False
     logger.info(
-        "wa-inbox bot: thread %s needs a human (reason=%s), telegram accepted=%s",
+        "wa-inbox bot: thread %s needs a human (reason=%s), handoff notified=%s",
         thread_id,
         reason,
         accepted,
@@ -517,7 +491,12 @@ async def generate_bot_reply(pool: asyncpg.Pool, thread: Any) -> str:
     # extraction, so the worker's retry ladder and the ledger vocabulary are
     # unchanged.
     async def _tell(reason: str) -> bool:
-        return await _tell_a_human(phone=phone, reason=reason, thread_id=thread_id)
+        return await _tell_a_human(
+            phone=phone,
+            reason=reason,
+            thread_id=thread_id,
+            pool=pool,
+        )
 
     result = await finalize_wa_answer(
         data=data,

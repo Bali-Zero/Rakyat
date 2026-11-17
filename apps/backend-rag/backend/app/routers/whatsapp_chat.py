@@ -42,17 +42,8 @@ from backend.security.webhook_verifier import WebhookVerificationError, verify_m
 # `wa_inbox_bot.py` ended up stripping `[ESCALATE]` and telling nobody.
 #
 # Re-exported here under its original name, so the two call sites below and any
-# `patch("backend.app.routers.whatsapp_chat.notify_human_telegram")` still work.
-# What does NOT survive the move — measured, an earlier version of this comment
-# claimed otherwise and the suite disproved it: the function now reads
-# `settings` and `telegram_bot` from ITS OWN module, so patching THIS module's
-# globals no longer reaches its dependencies. Patch
-# `...human_escalation_notifier.settings` instead.
-from backend.services.integrations.human_escalation_notifier import (
-    notify_human_telegram,
-)
 from backend.services.integrations.openclaw_whatsapp_bridge import ask_openclaw_whatsapp
-from backend.services.integrations.telegram_bot_service import telegram_bot
+from backend.services.integrations.wa_human_handoff import notify_human_handoff
 from backend.services.integrations.wa_outbox_worker import (
     META_INBOX_PHONE_NUMBER_IDS,
     _manners_enabled,
@@ -170,49 +161,9 @@ async def notify_zero_conversation_log(
     bot_response: str,
     language: str | None = None,
 ) -> Any:
-    """
-    Log EVERY bot conversation to Zero via Telegram.
-
-    Args:
-        phone: Client phone
-        sender_name: Client name
-        client_message: What the client asked
-        bot_response: What Zan replied
-        language: Detected language
-    """
-    if not settings.admin_telegram_chat_id:
-        return
-
-    display_name = sender_name or "Unknown"
-    lang_flag = {"it": "🇮🇹", "en": "🇬🇧", "de": "🇩🇪", "id": "🇮🇩"}.get(language or "?", "🌐")
-
-    # Keep it short for Zero
-    client_msg_preview = client_message[:200] + ("..." if len(client_message) > 200 else "")
-    bot_response_preview = bot_response[:300] + ("..." if len(bot_response) > 300 else "")
-
-    log_text = f"""💬 **WhatsApp Bot Conversation Log**
-
-**Cliente:** {display_name} (+{phone[:4]}***{phone[-2:] if len(phone) > 4 else ""}) {lang_flag}
-
-**Domanda:**
-_{client_msg_preview}_
-
-**Risposta Zan:**
-_{bot_response_preview}_
-
----
-_Log automatico - ogni conversazione viene tracciata_
-"""
-
-    try:
-        await telegram_bot.send_message(
-            chat_id=settings.admin_telegram_chat_id,
-            text=log_text,
-            parse_mode="Markdown",
-            disable_notification=True,  # Silent notification
-        )
-    except Exception as e:
-        logger.error("Failed to send conversation log to Zero: %s", type(e).__name__)
+    """Compatibility no-op: Telegram conversation logging is retired (2026-11-07)."""
+    del phone, sender_name, client_message, bot_response, language
+    return None
 
 
 async def process_whatsapp_message(
@@ -355,9 +306,10 @@ async def process_whatsapp_message(
                 reply_to_message_id=message_id,
             )
 
-            # Get context for richer Telegram notification
+            # Resolve client context for detected language (handoff channel uses
+            # Brevo + kita bell without forwarding free-form PII).
             db_pool = _get_db_pool(request)
-            ctx = {}
+            ctx: dict[str, Any] | None = {}
             if db_pool:
                 from backend.services.whatsapp_context_builder import build_context
 
@@ -367,13 +319,14 @@ async def process_whatsapp_message(
                     logger.error("Error building context for WhatsApp: %s", type(e).__name__)
                     ctx = None
 
-            await notify_human_telegram(
-                phone=phone,
-                message_text=message_text,
-                sender_name=sender_name,
+            ctx_dict = ctx if isinstance(ctx, dict) else {}
+            language = ctx_dict.get("detected_language") or "en"
+            await notify_human_handoff(
+                db_pool,
+                thread_id=None,
+                counterpart_phone=phone,
+                language=language,
                 reason=reason,
-                client_profile=ctx.get("client_profile"),
-                conversation_history=ctx.get("conversation_history"),
             )
 
             await _persist_audit_messages(
@@ -658,15 +611,14 @@ async def process_whatsapp_message(
                 language=ctx.get("detected_language"),
             )
 
-            # If AI flagged escalation, notify team with full context
+            # If AI flagged escalation, notify team via Brevo + kita bell
             if needs_escalation:
-                await notify_human_telegram(
-                    phone=phone,
-                    message_text=message_text,
-                    sender_name=sender_name,
+                await notify_human_handoff(
+                    db_pool,
+                    thread_id=None,
+                    counterpart_phone=phone,
+                    language=(ctx or {}).get("detected_language") or "en",
                     reason="ai_escalation",
-                    client_profile=ctx["client_profile"],
-                    conversation_history=ctx["conversation_history"],
                 )
                 logger.info("🔔 AI escalation triggered for %s", redact_identifier_for_log(phone))
 
@@ -1220,6 +1172,25 @@ async def _apply_status_callback(conn: Any, status_obj: dict[str, Any]) -> None:
         )
 
 
+def _extract_meta_inbox_body(msg: dict[str, Any]) -> str:
+    """Extract customer-visible text/caption/button payload from a Meta message."""
+    media_type = msg.get("type")
+    if media_type == "text":
+        return str((msg.get("text") or {}).get("body") or "")
+    if media_type in ("image", "document", "video"):
+        return str((msg.get(media_type) or {}).get("caption") or "")
+    if media_type == "interactive":
+        interactive = msg.get("interactive") or {}
+        itype = interactive.get("type")
+        if itype in ("button_reply", "list_reply"):
+            reply_obj = interactive.get(itype) or {}
+            return str(reply_obj.get("title") or reply_obj.get("id") or "")
+    if media_type == "button":
+        btn = msg.get("button") or {}
+        return str(btn.get("text") or btn.get("payload") or "")
+    return ""
+
+
 async def _handle_meta_inbox_message(
     conn: Any, msg: dict[str, Any], sender_name: str | None, webhook_id: int | None
 ) -> None:
@@ -1249,10 +1220,8 @@ async def _handle_meta_inbox_message(
     if not wamid or not phone:
         return
 
-    body = ""
     media_type = msg.get("type")
-    if media_type == "text":
-        body = (msg.get("text") or {}).get("body", "")
+    body = _extract_meta_inbox_body(msg)
 
     # Meta timestamp is unix seconds (string).
     ts_raw = msg.get("timestamp")
@@ -1389,7 +1358,12 @@ async def _resolve_webhook_id(conn: Any, wamid: str) -> int | None:
 _WA_MEDIA_PENDING_CHANNEL = "whatsapp_media_pending"
 
 
-async def _ingest_meta_inbox_media(raw_payload: dict[str, Any], request: Request) -> None:
+async def _ingest_meta_inbox_media(
+    raw_payload: dict[str, Any],
+    request: Request | None = None,
+    *,
+    db_pool: Any | None = None,
+) -> None:
     """Background task: hand off official-line media to the sovereign Pro worker.
 
     PULL architecture (Law 2 — PII never leaves the Pro): Fly does NOT download
@@ -1414,7 +1388,7 @@ async def _ingest_meta_inbox_media(raw_payload: dict[str, Any], request: Request
     if not official:
         return
 
-    pool = _get_db_pool(request)
+    pool = db_pool if db_pool is not None else (_get_db_pool(request) if request is not None else None)
     if pool is None:
         logger.warning("meta-inbox media: no db pool, skipping %d media", len(official))
         return
@@ -1662,6 +1636,7 @@ async def route_whatsapp_recovery(
                 "handler failure — re-raising so the WebhookProcessor's own "
                 "retry ladder applies"
             )
+        await _ingest_meta_inbox_media(raw_payload=payload, request=None, db_pool=db_pool)
         return
 
     await legacy_route(payload)
