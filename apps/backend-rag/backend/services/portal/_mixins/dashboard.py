@@ -17,6 +17,7 @@ from backend.app.utils.logging_utils import get_logger
 from backend.services.common.cache import cache_invalidating
 from backend.services.portal._document_visibility import document_visibility_clause
 from backend.services.portal._rbac import ClientContext, require_client_access
+from backend.services.portal._timeline_display import document_title, event_description
 
 logger = get_logger(__name__)
 
@@ -1129,7 +1130,7 @@ class PortalDashboardMixin:
                             if occurred_at
                             else now.isoformat(),
                             "title": ev["title"],
-                            "description": ev["description"],
+                            "description": event_description(ev["description"]),
                             "status": event_type,
                             "unread": False,
                             "isFuture": is_future,
@@ -1195,7 +1196,7 @@ class PortalDashboardMixin:
                             "id": f"doc-{doc['id']}",
                             "type": "document",
                             "occurredAt": doc["created_at"].isoformat(),
-                            "title": f"Document: {doc['file_name']}",
+                            "title": document_title(doc["document_type"], doc["file_name"]),
                             "description": f"Type: {doc['document_type']}",
                             "status": doc["status"],
                             "unread": False,
