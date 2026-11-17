@@ -73,8 +73,10 @@ def crm_client_pools() -> tuple[frozenset[str], ...]:
             "%s is not a JSON list of lists of strings - treated as empty", ENV_CRM_CLIENT_POOLS
         )
         return ()
-    pools = [frozenset(item.strip().lower() for item in group if item.strip()) for group in data]
-    return tuple(pool for pool in pools if pool)
+    if not all(group and all(item.strip() for item in group) for group in data):
+        logger.warning("%s holds an empty group or entry - treated as empty", ENV_CRM_CLIENT_POOLS)
+        return ()
+    return tuple(frozenset(item.strip().lower() for item in group) for group in data)
 
 
 def owner_telegram_chat_id() -> str:

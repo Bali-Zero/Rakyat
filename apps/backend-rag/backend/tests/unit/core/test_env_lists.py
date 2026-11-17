@@ -60,7 +60,7 @@ def test_client_pools_unset_or_malformed_is_no_pools(monkeypatch, raw):
 def test_client_pools_are_normalised(monkeypatch):
     monkeypatch.setenv(
         env_lists.ENV_CRM_CLIENT_POOLS,
-        '[[" A@Example.test", "b@example.test", " "], [], ["c@example.test"]]',
+        '[[" A@Example.test", "b@example.test"], ["c@example.test"]]',
     )
     assert env_lists.crm_client_pools() == (
         frozenset({"a@example.test", "b@example.test"}),
@@ -82,9 +82,18 @@ def test_malformed_client_pools_are_not_echoed_in_the_log(monkeypatch, caplog):
     assert env_lists.ENV_CRM_CLIENT_POOLS in caplog.text
 
 
-def test_client_pools_blank_entries_are_still_dropped(monkeypatch):
-    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, '[["a@example.test", " "]]')
-    assert env_lists.crm_client_pools() == (frozenset({"a@example.test"}),)
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '[["a@example.test", "b@example.test", ""]]',
+        '[["a@example.test", " "]]',
+        '[["a@example.test", "b@example.test"], [" "]]',
+        '[["a@example.test", "b@example.test"], []]',
+    ],
+)
+def test_client_pools_a_blank_entry_or_empty_group_refuses_the_whole_config(monkeypatch, raw):
+    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, raw)
+    assert env_lists.crm_client_pools() == ()
 
 
 def test_client_pools_parsing_does_not_judge_how_an_entry_is_spelled(monkeypatch):
