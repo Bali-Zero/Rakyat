@@ -9,6 +9,7 @@ via is_crm_admin(). Money is IDR. See migration 238_accounting_asya.sql.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -27,19 +28,15 @@ from backend.services.accounting import (
     cashout_service,
     reconcile_service,
 )
-from backend.services.accounting.bank_parser import (
-    BankParseError,
-    build_preview_report,
-    parse_cimb_statement,
-)
+from backend.services.accounting.bank_parser import BankParseError, preview_cimb_statement
 from backend.services.accounting.matcher import OpenInvoice, rank_candidates
 from backend.services.accounting.reconcile_service import ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
 _MAX_CASHOUT_PDF_BYTES = 8 * 1024 * 1024
 
-# A year of daily CIMB rows is well under 1 MB; 8 MB is a generous ceiling.
-_MAX_BANK_STATEMENT_BYTES = 8 * 1024 * 1024
+# A full year of the real CIMB export is under 1 MB; 2 MB is twice that (spec S8).
+_MAX_BANK_STATEMENT_BYTES = 2 * 1024 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -203,15 +200,16 @@ async def preview_bank_statement(
     if not data:
         raise HTTPException(status_code=422, detail="empty file")
     if len(data) > _MAX_BANK_STATEMENT_BYTES:
-        raise HTTPException(status_code=413, detail="file too large (max 8 MB)")
+        raise HTTPException(status_code=413, detail="file too large (max 2 MB)")
 
     try:
-        text = data.decode("utf-8-sig")
+        text = data.decode("utf-8")  # one BOM is left in the text, the parser removes exactly one
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=422, detail="file is not valid UTF-8 text") from exc
 
     try:
-        return build_preview_report(parse_cimb_statement(text))
+        # off the event loop: parse + report in one total call
+        return await asyncio.to_thread(preview_cimb_statement, text)
     except BankParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

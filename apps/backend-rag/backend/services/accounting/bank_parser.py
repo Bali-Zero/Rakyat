@@ -24,11 +24,15 @@ import io
 import itertools
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 @dataclass
@@ -216,10 +220,26 @@ def verify_balance(
 
 # ── CIMB Niaga OCTO Biz "Account Statement Summary" ──────────────────────────
 
-_CIMB_HEADER_FIRST_CELL = "post date"
-_CIMB_REQUIRED_COLUMNS = (
-    "Post Date", "Payment Type", "Debit Amount", "Credit Amount", "Balance", "Description",
+# The export's header exactly as the bank writes it (spec S1). Any other layout is refused:
+# a changed export is a reason to stop and look, not to guess.
+_CIMB_HEADER = (
+    "Post Date", "Payment Date", "Payment Type", "Other Reference", "Bank Reference",
+    "Debit Amount", "Credit Amount", "Balance", "Description", "Cheque Number",
 )
+_CIMB_HEADER_FIRST_CELL = _CIMB_HEADER[0]
+_MAX_STATEMENT_LINES = 20_000  # spec S1/S8: more refuses the file before any csv parsing
+_HEADER_SEARCH_LINES = 64  # spec S1: the header must sit within the first 64 lines
+
+
+def _trim(value: str) -> str:
+    """Spec S1: 'trimmed' is spaces and tabs only; no other Unicode whitespace, no apostrophe."""
+    return value.strip(" \t")
+
+
+def _is_blank(cells: list[str]) -> bool:
+    """A row is blank when every cell is empty after trimming, however many cells it has."""
+    return all(not _trim(c) for c in cells)
+
 _MONTHS = {m: i for i, m in enumerate(
     ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1
 )}
@@ -241,7 +261,8 @@ _KIND_BY_PAYMENT_TYPE = {
     "WITHHOLDING TAX": "tax",
     "CREDIT INTEREST": "interest",
 }
-_CLIENT_CREDIT_PREFIXES = ("REMITTANCE CR", "OVERBOOKING CR", "OVERBOOKING FROM CA")
+_CLIENT_CREDIT_PREFIX = "REMITTANCE CR - "  # any channel
+_CLIENT_CREDIT_EXACT = frozenset({"OVERBOOKING CR", "OVERBOOKING FROM CA"})
 
 
 @dataclass
@@ -279,10 +300,12 @@ def classify_cimb_kind(payment_type: str, description: str, direction: str | Non
     money went (a debit typed as a client credit, a credit typed as a transfer out)
     is 'other'.
     """
-    ptype = " ".join((payment_type or "").upper().split())
-    if ptype == "BILL PAYMENT" and (description or "").strip().upper().startswith("EMPN BILLING"):
+    # Exact after trimming: the bank writes its types upper-case with single spaces. No case
+    # folding (Unicode upper-casing maps look-alikes onto a known type), no space collapsing.
+    ptype = _trim(payment_type or "")
+    if ptype == "BILL PAYMENT" and _trim(description or "").startswith("EMPN BILLING"):
         kind = "government_fee"
-    elif ptype.startswith(_CLIENT_CREDIT_PREFIXES):
+    elif ptype.startswith(_CLIENT_CREDIT_PREFIX) or ptype in _CLIENT_CREDIT_EXACT:
         kind = "client_credit"
     else:
         kind = _KIND_BY_PAYMENT_TYPE.get(ptype, "other")
@@ -293,16 +316,23 @@ def classify_cimb_kind(payment_type: str, description: str, direction: str | Non
     return kind
 
 
+_TIMESTAMP_RE = re.compile(r"[0-9]{2} [A-Z][a-z]{2} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}")
+
+
 def _parse_cimb_timestamp(raw: str) -> datetime:
-    """'17 Nov 2026 15:31:06' -> datetime (locale-independent month names)."""
-    parts = _clean_cell(raw).split()
-    try:
-        day, mon, year = int(parts[0]), _MONTHS[parts[1][:3].lower()], int(parts[2])
-        hh, mm, ss = (int(x) for x in (parts[3] if len(parts) > 3 else "0:0:0").split(":"))
-        return datetime(year, mon, day, hh, mm, ss)
-    except (IndexError, KeyError, ValueError) as exc:
+    """'17 Nov 2026 15:31:06' (trimmed cell, exact pattern checked BEFORE any conversion,
+    English month table, real calendar date and time)."""
+    s = _trim(raw)
+    if not _TIMESTAMP_RE.fullmatch(s):
         # fixed text: nothing read from the file may reach an error (logged in production)
-        raise BankParseError("Post Date is not a timestamp") from exc
+        raise BankParseError("Post Date is not a timestamp")
+    try:
+        return datetime(
+            int(s[7:11]), _MONTHS[s[3:6].lower()], int(s[0:2]),
+            int(s[12:14]), int(s[15:17]), int(s[18:20]),
+        )
+    except (KeyError, ValueError):
+        raise BankParseError("Post Date is not a timestamp") from None
 
 
 # No leading zeros: an unquoted thousands comma ("1,000.00") splits into "1" and "000.00".
@@ -312,7 +342,7 @@ _SIGNED_AMOUNT_RE = re.compile(r"-?(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,2})?")
 
 def _parse_decimal(raw: str, what: str, allow_minus: bool = False) -> Decimal:
     """Strict plain decimal; the pattern is checked BEFORE any numeric conversion."""
-    s = _clean_cell(raw)
+    s = _trim(raw)  # trim only: no apostrophe or other character is stripped
     pattern = _SIGNED_AMOUNT_RE if allow_minus else _AMOUNT_RE
     if not pattern.fullmatch(s):
         raise BankParseError(f"{what} is not a plain decimal amount")
@@ -360,7 +390,7 @@ def _fit_cells(cells: list[str], header: list[str], line: int) -> list[str]:
         surplus = len(cells) - len(header)
         d = header.index("Description")
         cells = cells[:d] + [",".join(cells[d : d + surplus + 1])] + cells[d + surplus + 1 :]
-    needed = max(header.index(c) for c in _CIMB_REQUIRED_COLUMNS if c != "Description") + 1
+    needed = header.index("Balance") + 1
     if len(cells) < needed:
         raise BankParseError(
             f"file line {line}: row has {len(cells)} cells, needs at least {needed} "
@@ -369,46 +399,109 @@ def _fit_cells(cells: list[str], header: list[str], line: int) -> list[str]:
     return cells
 
 
-def parse_cimb_statement(content: str) -> ParsedStatement:
-    """Parse a CIMB OCTO Biz statement export; transactions come back oldest first."""
+def _total(fn: Callable[[], _T]) -> _T:
+    """Spec S9: run `fn`; a BankParseError passes through; any other exception is logged
+    once by its type name only and becomes a fixed-text BankParseError with no cause chain."""
+    failure: str | None = None
     try:
-        # QUOTE_NONE: the bank never quotes, so a quote character is plain text. With the
-        # default dialect one stray quote merges every following line into a single cell.
-        rows = list(csv.reader(io.StringIO(content.lstrip("\ufeff")), quoting=csv.QUOTE_NONE))
-    except csv.Error as exc:
+        return fn()
+    except BankParseError:
+        raise
+    except Exception as exc:  # the net: nothing else may leave the parser
+        failure = type(exc).__name__
+    logger.error("bank_parser: unexpected error while parsing a CIMB statement (%s)", failure)
+    raise BankParseError("statement could not be parsed")
+
+
+def parse_cimb_statement(content: str) -> ParsedStatement:
+    """Parse a CIMB OCTO Biz statement export; transactions come back oldest first.
+
+    Total by construction (spec S9): returns a ParsedStatement or raises BankParseError,
+    never another exception type.
+    """
+    return _total(lambda: _parse_cimb_statement(content))
+
+
+def preview_cimb_statement(content: str) -> dict[str, object]:
+    """Parse and summarise in one total call: what the preview endpoint runs (spec S8, S9)."""
+    return _total(lambda: build_preview_report(_parse_cimb_statement(content)))
+
+
+def _read_rows(content: str) -> list[list[str]]:
+    """Text -> csv rows with fixed-text, line-numbered errors (spec S1)."""
+    text = content.removeprefix("\ufeff")  # exactly one BOM is tolerated
+    if text.startswith("\ufeff"):
+        raise BankParseError("file line 1: more than one byte order mark")
+    # a line is a run of characters ended by a newline, plus a final unterminated one
+    lines = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+    if lines > _MAX_STATEMENT_LINES:
+        raise BankParseError("statement has too many lines")
+    unreadable = "unreadable as CSV (a field is too large or the text is malformed)"
+    # A NUL or a lone CR refuses the file, whatever the csv module does: the earliest one.
+    flat = text.replace("\r\n", "\n")
+    found = [at for at in (flat.find("\x00"), flat.find("\r")) if at >= 0]
+    if found:
+        raise BankParseError(f"file line {flat.count(chr(10), 0, min(found)) + 1}: {unreadable}")
+    # QUOTE_NONE: the bank never quotes, so a quote character is plain text. With the
+    # default dialect one stray quote merges every following line into a single cell.
+    reader = csv.reader(io.StringIO(text), quoting=csv.QUOTE_NONE)
+    rows: list[list[str]] = []
+    try:
+        for row in reader:
+            rows.append(row)
+    except csv.Error:
         # the csv module's own text can quote the file: say it in fixed words
-        raise BankParseError(
-            "statement is unreadable as CSV (a field is too large or the text is malformed)"
-        ) from exc
+        raise BankParseError(f"file line {reader.line_num}: {unreadable}") from None
+    return rows
+
+
+def _parse_cimb_statement(content: str) -> ParsedStatement:
+    rows = _read_rows(content)
     header_idx = next(
-        (i for i, r in enumerate(rows) if r and r[0].strip().lower() == _CIMB_HEADER_FIRST_CELL),
+        (
+            i
+            for i, r in enumerate(rows[:_HEADER_SEARCH_LINES])
+            if r and _trim(r[0]) == _CIMB_HEADER_FIRST_CELL
+        ),
         None,
     )
     if header_idx is None:
         raise BankParseError("no 'Post Date' header row found: not a CIMB statement export")
 
-    metadata = {r[0].strip(): r[1].strip() for r in rows[:header_idx] if len(r) >= 2 and r[0].strip()}
-    header = [c.strip() for c in rows[header_idx]]
-    missing = [c for c in _CIMB_REQUIRED_COLUMNS if c not in header]
-    if missing:
-        raise BankParseError(f"statement header lacks column(s): {missing}")
+    header = [_trim(c) for c in rows[header_idx]]
+    if tuple(header) != _CIMB_HEADER:
+        raise BankParseError("statement header is not the CIMB Account Statement Summary layout")
+    balance_needed = header.index("Balance") + 1
+
+    # Rows before the header are metadata (two cells in the export). A non-blank one long
+    # enough to reach the Balance column is a data row that would vanish silently: refuse.
+    for line, r in enumerate(rows[:header_idx], start=1):
+        if not _is_blank(r) and len(r) >= balance_needed:
+            raise BankParseError(f"file line {line}: data row before the header")
+    # `Key,Value`: the value is everything after the first comma (the bank never quotes).
+    metadata = {
+        _trim(r[0]): _trim(",".join(r[1:]))
+        for r in rows[:header_idx]
+        if len(r) >= 2 and _trim(r[0])
+    }
 
     txns: list[ParsedTxn] = []
     in_footer = False
     for offset, cells in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
-        if not any(c.strip() for c in cells):
-            in_footer = bool(txns)  # a blank line after the data closes the table
+        if _is_blank(cells):
+            # the table ends at the FIRST blank row, even if no data row was read yet
+            if not txns:
+                raise BankParseError("statement header found but no transaction rows")
+            in_footer = True
             continue
         if in_footer:
-            # "Generated By/On" trailer. A real data row here would be silently
-            # dropped, so refuse the file instead.
-            try:
-                _parse_cimb_timestamp(cells[0])
-            except BankParseError:
-                continue
-            raise BankParseError(f"file line {offset}: data row after a blank line")
+            # Trailer ("Generated By/On"): short rows. A row long enough to reach the
+            # Balance column is data-shaped and would be silently dropped: refuse the file.
+            if len(cells) >= balance_needed:
+                raise BankParseError(f"file line {offset}: data row after a blank line")
+            continue
         cells = _fit_cells(cells, header, offset)
-        row = {h: _clean_cell(cells[i]) if i < len(cells) else "" for i, h in enumerate(header)}
+        row = {h: _trim(cells[i]) if i < len(cells) else "" for i, h in enumerate(header)}
         try:
             posted_at = _parse_cimb_timestamp(row["Post Date"])
             debit = _parse_decimal(row["Debit Amount"], "Debit Amount")
@@ -431,7 +524,12 @@ def parse_cimb_statement(content: str) -> ParsedStatement:
                 debit=debit,
                 credit=credit,
                 balance=balance,
-                kind=classify_cimb_kind(row["Payment Type"], row["Description"], direction),
+                # a row that moves no money has no kind to speak of (spec S3, S5)
+                kind=(
+                    classify_cimb_kind(row["Payment Type"], row["Description"], direction)
+                    if debit > 0 or credit > 0
+                    else "other"
+                ),
             )
         )
     if not txns:
@@ -481,8 +579,8 @@ def build_preview_report(stmt: ParsedStatement) -> dict[str, object]:
     return {
         "account": {"number": stmt.account_number, "name": stmt.account_name},
         "period": {
-            "first": txns[0].posted_at.isoformat(),  # type: ignore[union-attr]
-            "last": txns[-1].posted_at.isoformat(),  # type: ignore[union-attr]
+            "first": min(t.posted_at for t in txns).isoformat(),  # type: ignore[type-var,union-attr]
+            "last": max(t.posted_at for t in txns).isoformat(),  # type: ignore[type-var,union-attr]
         },
         "row_count": len(txns),
         "opening_balance": _money(stmt.opening_balance),

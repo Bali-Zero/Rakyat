@@ -503,6 +503,21 @@ class TestBankStatementPreview:
         monkeypatch.setattr(accounting_module, "_MAX_BANK_STATEMENT_BYTES", 64)
         resp = self._post(mock_db_pool, asya_user, b"x" * 1000)
         assert resp.status_code == 413
+        assert resp.json()["detail"] == "file too large (max 2 MB)"
+
+    def test_upload_limit_is_two_megabytes(self) -> None:
+        assert accounting_module._MAX_BANK_STATEMENT_BYTES == 2 * 1024 * 1024
+
+    def test_one_bom_is_accepted_two_are_refused(self, mock_db_pool, asya_user) -> None:
+        body = _STATEMENT_FIXTURE.read_bytes()
+        assert self._post(mock_db_pool, asya_user, b"\xef\xbb\xbf" + body).status_code == 200
+        resp = self._post(mock_db_pool, asya_user, b"\xef\xbb\xbf\xef\xbb\xbf" + body)
+        assert resp.status_code == 422
+
+    def test_too_many_lines_is_422_with_fixed_text(self, mock_db_pool, asya_user) -> None:
+        resp = self._post(mock_db_pool, asya_user, b"\n" * 20_001)
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "statement has too many lines"
 
     def test_upload_read_is_bounded(self, mock_db_pool, asya_user, monkeypatch) -> None:
         # the endpoint must ask for at most limit+1 bytes, never the whole body
@@ -530,6 +545,57 @@ class TestBankStatementPreview:
         assert resp.status_code == 422
         assert "SENTINEL7f3a" not in resp.text
         assert "file line 2" in resp.json()["detail"]
+
+    def test_overflowing_post_date_is_422_not_500(self, mock_db_pool, asya_user) -> None:
+        header = (
+            "Post Date,Payment Date,Payment Type,Other Reference,Bank Reference,"
+            "Debit Amount,Credit Amount,Balance,Description,Cheque Number"
+        )
+        row = "01 Nov 99999999999999999999 10:00:00,,DIRECT DEBIT,R,B,5.00,0.00,95.00,d,1"
+        resp = self._post(mock_db_pool, asya_user, f"{header}\n{row}\n".encode())
+        assert resp.status_code == 422
+        assert "file line 2" in resp.json()["detail"]
+
+    def test_unexpected_parser_failure_is_422_with_fixed_text(
+        self, mock_db_pool, asya_user, monkeypatch
+    ) -> None:
+        import backend.services.accounting.bank_parser as bp
+
+        def boom(*_a, **_k):
+            raise RuntimeError("SENTINEL7f3a")
+
+        monkeypatch.setattr(bp, "_orient_oldest_first", boom)
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "statement could not be parsed"
+
+    def test_unexpected_report_failure_is_422_with_fixed_text(
+        self, mock_db_pool, asya_user, monkeypatch
+    ) -> None:
+        import backend.services.accounting.bank_parser as bp
+
+        def boom(*_a, **_k):
+            raise RuntimeError("SENTINEL7f3a")
+
+        monkeypatch.setattr(bp, "_money", boom)  # fails while building the report
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "statement could not be parsed"
+
+    def test_parsing_runs_off_the_event_loop(self, mock_db_pool, asya_user, monkeypatch) -> None:
+        import asyncio
+
+        calls: list[object] = []
+        original = asyncio.to_thread
+
+        async def spy(func, *args, **kwargs):
+            calls.append(func)
+            return await original(func, *args, **kwargs)
+
+        monkeypatch.setattr(accounting_module.asyncio, "to_thread", spy)
+        resp = self._post(mock_db_pool, asya_user, _STATEMENT_FIXTURE.read_bytes())
+        assert resp.status_code == 200
+        assert len(calls) == 1
 
     def test_filename_is_not_echoed(self, mock_db_pool, asya_user) -> None:
         resp = self._post(mock_db_pool, asya_user, b"x", name="SENTINEL7f3a.pdf")
