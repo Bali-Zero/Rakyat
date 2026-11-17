@@ -1,0 +1,41 @@
+/**
+ * Related-subjects registry (read-only, CRM admins) — typed wrapper.
+ *
+ * Backend: apps/backend-rag/backend/app/routers/crm_related_registry_read.py.
+ * The search text travels only as the query key `q`; detail paths are built
+ * from numeric subject ids and nothing else.
+ */
+
+import { api } from "@/lib/api";
+import type { components } from "@/lib/api/schema";
+
+export type RegistryKind = "person" | "company";
+export type RegistryList = components["schemas"]["RelatedRegistryListOut"];
+export type RegistryRow = components["schemas"]["RelatedRegistrySubjectRow"];
+export type RegistryDetail =
+  components["schemas"]["RelatedRegistrySubjectDetail"];
+export type RegistryDocument = components["schemas"]["RelatedRegistryDocument"];
+export type RegistryIdentifier =
+  components["schemas"]["RelatedRegistryIdentifier"];
+
+export interface RegistryListParams {
+  q?: string;
+  kind?: RegistryKind;
+  limit?: number;
+  offset?: number;
+}
+
+const BASE = "/api/crm/related-registry";
+
+export const listRegistry = (params: RegistryListParams = {}) => {
+  const query = new URLSearchParams();
+  if (params.q) query.set("q", params.q);
+  if (params.kind) query.set("kind", params.kind);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.offset !== undefined) query.set("offset", String(params.offset));
+  const text = query.toString();
+  return api.get<RegistryList>(text ? `${BASE}?${text}` : BASE);
+};
+
+export const getRegistrySubject = (subjectId: number) =>
+  api.get<RegistryDetail>(`${BASE}/${Math.trunc(subjectId)}`);
