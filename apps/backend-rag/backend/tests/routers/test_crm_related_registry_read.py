@@ -393,8 +393,9 @@ async def test_t5_identifier_search_uses_canonical_prefixes(admin, seeded):
     resp = await admin.get(BASE, params={"q": ZZ_AHU_RAW})
     assert ids_of(resp) == [seeded["unnamed_company"]]
     assert names(resp) == [None]
-    # fewer than three canonical characters never searches identifiers
-    assert (await admin.get(BASE, params={"q": "ZZ"})).json()["total"] == 9
+    # fewer than three canonical characters never searches identifiers: only the named subjects
+    short = await admin.get(BASE, params={"q": "ZZ", "limit": 100})
+    assert seeded["unnamed_person"] not in ids_of(short) and short.json()["total"] == 7
     assert (await admin.get(BASE, params={"q": "q" * 1})).status_code == 422
     assert (await admin.get(BASE, params={"q": "q" * 65})).status_code == 422
     assert (await admin.get(BASE, params={"q": "q" * 64})).status_code == 200
@@ -525,12 +526,19 @@ def _sql_constants(module) -> list[str]:
 
 
 def test_t10_every_sql_text_of_the_service_is_a_plain_select():
-    statements = _sql_constants(service_module)
-    assert len(statements) >= 6
-    for sql in statements:
-        assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
+    constants = _sql_constants(service_module)
+    assert len(constants) >= 7
+    for sql in constants:
         assert not FORBIDDEN_SQL.search(sql), sql[:60]
         assert not re.search(r"\bWITH\b", sql, re.I), sql[:60]
+    statements = [
+        value
+        for attr, value in vars(service_module).items()
+        if attr.endswith("_SQL") and attr != "_MATCH_SQL"
+    ]
+    assert len(statements) == 7
+    for sql in statements:
+        assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
     # the executed statements are exactly the module's constants (no inline SQL in a call)
     source = Path(service_module.__file__).read_text()
     assert not re.search(r"\.(execute|executemany|fetch|fetchrow|fetchval)\(\s*f?[\"']", source)
