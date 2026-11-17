@@ -6,8 +6,6 @@ const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "https://nuzantara-rag.fly.dev";
 
-const NO_STORE_HEADERS = { "Cache-Control": "no-store, private" };
-
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
@@ -19,7 +17,7 @@ export async function GET(request: NextRequest) {
     if (!sw_lat || !sw_lng || !ne_lat || !ne_lng) {
       return NextResponse.json(
         { error: "sw_lat, sw_lng, ne_lat, ne_lng are required" },
-        { status: 400, headers: NO_STORE_HEADERS },
+        { status: 400 },
       );
     }
 
@@ -40,14 +38,13 @@ export async function GET(request: NextRequest) {
       `${BACKEND_URL}/api/prime/v2/intelligence?${params.toString()}`,
       {
         headers,
-        cache: "no-store",
       },
     );
 
     if (response.status === 401 || response.status === 403) {
       return NextResponse.json(
         { type: "FeatureCollection", features: [], stats: { auth_error: 1 } },
-        { status: response.status, headers: NO_STORE_HEADERS },
+        { status: response.status },
       );
     }
 
@@ -57,12 +54,12 @@ export async function GET(request: NextRequest) {
       });
       return NextResponse.json(
         { type: "FeatureCollection", features: [], stats: {} },
-        { status: response.status, headers: NO_STORE_HEADERS },
+        { status: response.status },
       );
     }
 
     const data = await response.json();
-    return NextResponse.json(data, { headers: NO_STORE_HEADERS });
+    return NextResponse.json(data);
   } catch (error) {
     logger.error(
       "Prime v2 intelligence API error",
@@ -71,7 +68,7 @@ export async function GET(request: NextRequest) {
     );
     return NextResponse.json(
       { type: "FeatureCollection", features: [], stats: {} },
-      { status: 502, headers: NO_STORE_HEADERS },
+      { status: 502 },
     );
   }
 }

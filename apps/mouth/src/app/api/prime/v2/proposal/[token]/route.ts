@@ -12,12 +12,9 @@ export async function GET(
 ) {
   try {
     const { token } = await params;
-    if (!token || !token.trim() || token === "." || token === "..") {
-      return NextResponse.json({ error: "not_found" }, { status: 400 });
-    }
 
     const response = await fetch(
-      `${BACKEND_URL}/api/prime/v2/proposal/${encodeURIComponent(token)}`,
+      `${BACKEND_URL}/api/prime/v2/proposal/${token}`,
     );
 
     if (!response.ok) {
