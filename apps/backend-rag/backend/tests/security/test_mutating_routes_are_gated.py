@@ -456,6 +456,12 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
     ),
     IntentionalPublicMutation(
         "POST",
+        "/api/visa/clock/email",
+        "Clock email opt-in — schedules up to 5 checkpoint drip reminders "
+        "for an existing Clock result_hash (bounded 4KB payload, zero PII logged).",
+    ),
+    IntentionalPublicMutation(
+        "POST",
         "/api/visa/match",
         "Match submission — anonymous visa-recommendation insert "
         "(nationality/purpose/duration/budget only, no PII).",

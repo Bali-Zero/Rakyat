@@ -268,6 +268,16 @@ export default function AssessmentPage() {
           throw new Error(`Server error ${res.status}`);
         }
 
+        // The BFF turns a backend `success: false` into a 502, but a relay in
+        // between could still hand back a 200 whose body says the mail was
+        // dropped. Never retire a block on an email that did not go out.
+        const result = (await res.json().catch(() => null)) as {
+          success?: boolean;
+        } | null;
+        if (result?.success === false) {
+          throw new Error("Email delivery failed");
+        }
+
         setBlocks((prev) => {
           const next = [...prev];
           next[index] = {
@@ -323,7 +333,7 @@ export default function AssessmentPage() {
       <p style="white-space: pre-wrap; font-family: monospace; background: #f5f5f5; padding: 12px; border-radius: 6px;">${bonusAnswer.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`;
 
     try {
-      await fetch("/api/assessment/submit", {
+      const res = await fetch("/api/assessment/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -332,6 +342,17 @@ export default function AssessmentPage() {
           body,
         }),
       });
+      // fetch() only rejects on network failure: a 4xx/5xx (or a relayed
+      // `success: false`) resolved silently and marked the bonus as sent.
+      if (!res.ok) {
+        throw new Error(`Server error ${res.status}`);
+      }
+      const result = (await res.json().catch(() => null)) as {
+        success?: boolean;
+      } | null;
+      if (result?.success === false) {
+        throw new Error("Email delivery failed");
+      }
       setBonusSubmitted(true);
     } catch {
       setError("Gagal mengirim bonus. Screenshot dan kirim manual.");

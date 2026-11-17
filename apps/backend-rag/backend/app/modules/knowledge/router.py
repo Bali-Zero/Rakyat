@@ -10,9 +10,8 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
-from backend.app.dependencies import get_current_user
 from backend.app.models import ChunkMetadata, SearchQuery, SearchResponse, SearchResult, TierLevel
 from backend.app.modules.knowledge.service import KnowledgeService
 
@@ -245,47 +244,3 @@ async def get_parent_documents_debug(document_id: str) -> dict[str, Any]:
             status_code=500,
             detail=f"Failed to fetch parent documents: {e!s}",
         ) from e
-
-
-# PUBLIC ENDPOINT - Requires authentication
-router_public = APIRouter(prefix="/api/public", tags=["public"])
-
-
-@router_public.get("/bab/{document_id}")
-async def get_bab_public(
-    document_id: str,
-    current_user: dict = Depends(get_current_user),
-) -> dict[str, Any]:
-    """
-    Get BAB (Buku Acuan Bali) document by ID.
-
-    SECURITY: Requires authentication. Public prefix is for API organization only.
-    """
-    import asyncpg
-
-    from backend.app.core.config import settings
-
-    try:
-        conn = await asyncpg.connect(settings.database_url, timeout=30)
-
-        records = await conn.fetch(
-            """
-            SELECT id, title, pasal_count, char_count,
-                   LEFT(full_text, 2000) as text_preview,
-                   LENGTH(full_text) as full_text_length
-            FROM parent_documents
-            WHERE document_id = $1
-            ORDER BY id
-        """,
-            document_id,
-        )
-
-        await conn.close()
-
-        bab_list = [dict(r) for r in records]
-
-        return {"document_id": document_id, "total_bab": len(bab_list), "bab": bab_list}
-
-    except Exception as e:
-        logger.error("Error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) from e

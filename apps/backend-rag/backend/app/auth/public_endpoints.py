@@ -710,6 +710,12 @@ _FUNNEL = (
         "Prime Intelligence geospatial zoning API — public map intelligence layer",
     ),
     PublicEndpoint(
+        "/api/prime/search-kbli",
+        Category.FUNNEL,
+        "Prime Intelligence KBLI business activity search — public map intelligence layer",
+        match="exact",
+    ),
+    PublicEndpoint(
         "/api/prime/zones-geojson",
         Category.FUNNEL,
         "Zone polygon GeoJSON for 3D map rendering (public)",
@@ -814,6 +820,12 @@ _VISA_ORACLE = (
         "/api/visa/clock",
         Category.VISA_ORACLE,
         "Visa Check Clock submission — anonymous overstay-timeline wizard, no PII",
+        match="exact",
+    ),
+    PublicEndpoint(
+        "/api/visa/clock/email",
+        Category.VISA_ORACLE,
+        "Visa Check Clock email reminder opt-in — schedules up to 5 checkpoint drip reminders",
         match="exact",
     ),
     PublicEndpoint(
