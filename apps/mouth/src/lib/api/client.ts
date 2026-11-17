@@ -525,7 +525,9 @@ export class ApiClientBase implements IApiClient {
           const loginPath = isPortal ? "/portal/login-upgraded" : "/login";
           const alreadyOnLogin =
             currentPath === loginPath ||
-            (isPortal && currentPath === "/portal/login");
+            (isPortal &&
+              (currentPath === "/portal/login" ||
+                currentPath === "/portal/magic"));
           // A background call on a public page opts out of the navigation
           // entirely (see ApiRequestOptions.redirectOnUnauthorized).
           const mayRedirect = options.redirectOnUnauthorized !== false;
@@ -576,8 +578,12 @@ export class ApiClientBase implements IApiClient {
         // Messages below are unchanged on purpose: ApiError extends Error, so
         // every existing `instanceof Error` / `.message` consumer keeps working.
         // What is new is `statusCode` — the thing callers actually need.
+        const fallback401 =
+          typeof error.message === "string" && error.message
+            ? error.message
+            : "Session expired. Please login again.";
         throw new ApiError(
-          error.detail || "Session expired. Please login again.",
+          detailToMessage(error.detail, fallback401),
           response.status,
           error,
         );
@@ -609,8 +615,14 @@ export class ApiClientBase implements IApiClient {
           throw new ApiError("INVALID_METHOD", response.status, error);
         }
 
+        const fallbackError =
+          error.detail === undefined &&
+          typeof error.message === "string" &&
+          error.message
+            ? error.message
+            : `HTTP ${response.status}`;
         throw new ApiError(
-          detailToMessage(error.detail, `HTTP ${response.status}`),
+          detailToMessage(error.detail, fallbackError),
           response.status,
           error,
         );

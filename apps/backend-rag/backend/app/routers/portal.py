@@ -692,9 +692,23 @@ async def upload_document(
             ),
         ) from e
     except ValueError as e:
-        # Client soft-deleted / gone -> not-found, not a 500 (see get_dashboard).
-        logger.warning(f"Client not found in upload_document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
-        raise HTTPException(status_code=404, detail="Client not found") from e
+        msg = str(e)
+        msg_lower = msg.lower()
+        if "client" in msg_lower and "not found" in msg_lower:
+            # Client soft-deleted / gone -> not-found, not a 500 (see get_dashboard).
+            logger.warning(
+                f"Client not found in upload_document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}"
+            )
+            raise HTTPException(status_code=404, detail="Client not found") from e
+        if "rate limit" in msg_lower:
+            logger.warning(
+                f"Upload rate limit in upload_document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}"
+            )
+            raise HTTPException(status_code=429, detail=msg) from e
+        logger.warning(
+            f"Upload validation rejected in upload_document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}"
+        )
+        raise HTTPException(status_code=400, detail=msg) from e
     except Exception as e:
         logger.error(f"Failed to upload document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
         raise HTTPException(
