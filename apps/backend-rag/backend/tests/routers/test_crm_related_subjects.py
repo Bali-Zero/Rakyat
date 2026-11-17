@@ -2293,8 +2293,9 @@ async def test_s2_guard_a_same_value_update_of_a_document_row_is_a_recorded_writ
 
 
 @pytest.mark.asyncio
-async def test_s2_c1_batch_counters_cover_the_three_document_tables_only(writes, conn):
-    await _seed(conn)
+async def test_s2_c1_batch_counters_cover_the_three_document_tables_only(writes, pool, conn):
+    async with pool.acquire() as other:  # another session: this one's counters start at zero
+        await _seed(other)
     tr = conn.transaction()
     await tr.start()
     try:
