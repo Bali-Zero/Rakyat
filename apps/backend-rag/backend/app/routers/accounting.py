@@ -24,11 +24,17 @@ from pydantic import BaseModel, Field
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.accounting import (
+    bank_import_service,
     cashout_import_service,
     cashout_service,
     reconcile_service,
 )
-from backend.services.accounting.bank_parser import BankParseError, preview_cimb_statement
+from backend.services.accounting.bank_import_service import BankImportError
+from backend.services.accounting.bank_parser import (
+    BankParseError,
+    parse_and_preview_cimb_statement,
+    preview_cimb_statement,
+)
 from backend.services.accounting.matcher import OpenInvoice, rank_candidates
 from backend.services.accounting.reconcile_service import ReconcileError
 
@@ -190,14 +196,10 @@ async def import_cashout_pdf(
 # ── Bank statement preview (CIMB OCTO Biz CSV) — read-only ───────────────────
 
 
-@router.post("/bank-statement/preview")
-async def preview_bank_statement(
-    file: UploadFile = File(..., description="CIMB OCTO Biz 'Account Statement Summary' CSV"),
-    current_user: dict[str, Any] = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Parse a CIMB statement CSV and return a summary report. Writes nothing."""
-    _require_accounting_access(current_user)
-
+async def _read_statement_upload(file: UploadFile) -> str:
+    """The upload checks shared by the preview and the import handler (spec I8), in order:
+    `.csv` filename, read up to the limit plus one byte, empty, 413 over the limit, UTF-8.
+    Nothing of the file or its name goes into an error."""
     # No default name: an empty filename is refused like any other name without the suffix.
     filename = file.filename or ""
     if not filename.lower().endswith(".csv"):
@@ -211,15 +213,70 @@ async def preview_bank_statement(
         raise HTTPException(status_code=413, detail="file too large (max 2 MB)")
 
     try:
-        text = data.decode("utf-8")  # one BOM is left in the text, the parser removes exactly one
+        return data.decode("utf-8")  # one BOM is left in the text, the parser removes exactly one
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=422, detail="file is not valid UTF-8 text") from exc
+
+
+@router.post("/bank-statement/preview")
+async def preview_bank_statement(
+    file: UploadFile = File(..., description="CIMB OCTO Biz 'Account Statement Summary' CSV"),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Parse a CIMB statement CSV and return a summary report. Writes nothing."""
+    _require_accounting_access(current_user)
+    text = await _read_statement_upload(file)
 
     try:
         # off the event loop: parse + report in one total call
         return await asyncio.to_thread(preview_cimb_statement, text)
     except BankParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/bank-statement/import")
+async def import_bank_statement(
+    file: UploadFile = File(..., description="CIMB OCTO Biz 'Account Statement Summary' CSV"),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Store a CIMB statement: the preview report plus the import result.
+
+    All or nothing, and a transaction is never stored twice (see bank_import_service).
+    The only database write goes through `import_statement`.
+    """
+    _require_accounting_access(current_user)
+    text = await _read_statement_upload(file)
+
+    try:
+        statement, report = await asyncio.to_thread(parse_and_preview_cimb_statement, text)
+    except BankParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        async with db_pool.acquire() as conn:
+            result = await bank_import_service.import_statement(
+                conn,
+                statement,
+                uploaded_by=(current_user.get("email") or "unknown").lower(),
+                source_filename=file.filename,
+            )
+    except BankImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # total: the driver's own text can quote the statement's values
+        logger.error("accounting bank import: storing failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="bank statement could not be stored") from None
+
+    return {
+        **report,
+        "import": {
+            "statement_id": result.statement_id,
+            "rows_inserted": result.rows_inserted,
+            "rows_duplicate": result.rows_duplicate,
+            "history_segments": result.history_segments,
+            "nothing_new": result.nothing_new,
+        },
+    }
 
 
 # ── P1: reconciliation ──────────────────────────────────────────────────────

@@ -355,7 +355,7 @@ def _round_int(value: Decimal) -> int:
 
 # The bank stamps a batch of postings within the same second or one second out of order
 # (measured: inversions of exactly 1 s). Two adjacent rows this close carry no date evidence.
-_TIMESTAMP_JITTER = timedelta(seconds=2)
+TIMESTAMP_JITTER = timedelta(seconds=2)
 
 
 def _orient_oldest_first(txns: list[ParsedTxn]) -> tuple[list[ParsedTxn], str]:
@@ -366,9 +366,9 @@ def _orient_oldest_first(txns: list[ParsedTxn]) -> tuple[list[ParsedTxn], str]:
     descending = ascending = 0
     for prev, cur in itertools.pairwise(txns):
         gap = prev.posted_at - cur.posted_at  # type: ignore[operator]
-        if gap > _TIMESTAMP_JITTER:
+        if gap > TIMESTAMP_JITTER:
             descending += 1
-        elif -gap > _TIMESTAMP_JITTER:
+        elif -gap > TIMESTAMP_JITTER:
             ascending += 1
     if descending != ascending:
         return (txns[::-1] if descending > ascending else txns), "timestamps"
@@ -453,6 +453,16 @@ def _read_rows(content: str) -> list[list[str]]:
         # the csv module's own text can quote the file: say it in fixed words
         raise BankParseError(f"file line {reader.line_num}: {unreadable}") from None
     return rows
+
+
+def parse_and_preview_cimb_statement(content: str) -> tuple[ParsedStatement, dict[str, object]]:
+    """Parse and summarise in one total call, keeping the statement for the importer."""
+
+    def run() -> tuple[ParsedStatement, dict[str, object]]:
+        stmt = _parse_cimb_statement(content)
+        return stmt, build_preview_report(stmt)
+
+    return _total(run)
 
 
 def _parse_cimb_statement(content: str) -> ParsedStatement:
