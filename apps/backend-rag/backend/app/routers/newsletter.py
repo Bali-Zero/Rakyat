@@ -18,8 +18,8 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, EmailStr, field_validator
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from backend.app.dependencies import get_database_pool
 from backend.app.deps.auth import get_current_user_optional
@@ -161,7 +161,7 @@ class SubscribeRequest(BaseModel):
     @field_validator("frequency")
     @classmethod
     def validate_frequency(cls, v: str) -> str:
-        allowed = ["instant", "daily", "weekly"]
+        allowed = ["instant", "daily", "weekly", "monthly"]
         if v not in allowed:
             raise ValueError(f"frequency must be one of: {allowed}")
         return v
@@ -660,28 +660,84 @@ async def list_subscribers(
         }
 
 
+class NewsletterLogRequest(BaseModel):
+    """Newsletter send log payload (supports both snake_case and camelCase)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    article_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("article_id", "articleId"),
+    )
+    recipient_count: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("recipient_count", "recipientCount"),
+    )
+    sent_count: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sent_count", "sentCount"),
+    )
+    failed_count: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("failed_count", "failedCount"),
+    )
+
+
 @router.post("/log")
 async def log_newsletter_send(
-    article_id: str,
-    recipient_count: int,
-    sent_count: int,
-    failed_count: int,
+    article_id: str | None = Query(default=None),
+    recipient_count: int | None = Query(default=None),
+    sent_count: int | None = Query(default=None),
+    failed_count: int | None = Query(default=None),
+    payload: NewsletterLogRequest | None = Body(default=None),
     _admin: dict[str, Any] = Depends(get_admin_user),
     pool=Depends(get_database_pool),
 ) -> dict[str, Any]:
     """
     Log a newsletter send event (admin endpoint).
+    Accepts legacy snake_case query parameters or JSON body (camelCase or snake_case).
     """
+    resolved_article_id = (
+        article_id if article_id is not None else (payload.article_id if payload else None)
+    )
+    resolved_recipient_count = (
+        recipient_count
+        if recipient_count is not None
+        else (payload.recipient_count if payload else None)
+    )
+    resolved_sent_count = (
+        sent_count if sent_count is not None else (payload.sent_count if payload else None)
+    )
+    resolved_failed_count = (
+        failed_count if failed_count is not None else (payload.failed_count if payload else None)
+    )
+
+    missing = [
+        name
+        for name, val in (
+            ("article_id", resolved_article_id),
+            ("recipient_count", resolved_recipient_count),
+            ("sent_count", resolved_sent_count),
+            ("failed_count", resolved_failed_count),
+        )
+        if val is None or (name == "article_id" and not str(val).strip())
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Missing required newsletter log fields: {', '.join(missing)}",
+        )
+
     async with pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO newsletter_send_log (article_id, recipient_count, sent_count, failed_count)
             VALUES ($1, $2, $3, $4)
             """,
-            article_id,
-            recipient_count,
-            sent_count,
-            failed_count,
+            resolved_article_id,
+            resolved_recipient_count,
+            resolved_sent_count,
+            resolved_failed_count,
         )
 
         await invalidate_cache("zantara:newsletter:*")

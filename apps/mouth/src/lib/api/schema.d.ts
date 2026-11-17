@@ -3135,6 +3135,7 @@ export interface paths {
     /**
      * Log Newsletter Send
      * @description Log a newsletter send event (admin endpoint).
+     *     Accepts legacy snake_case query parameters or JSON body (camelCase or snake_case).
      */
     post: operations["log_newsletter_send_api_blog_newsletter_log_post"];
     delete?: never;
@@ -20234,6 +20235,13 @@ export interface components {
       article_content?: string | null;
       /** Article Title */
       article_title?: string | null;
+      /** Context */
+      context?:
+        | {
+            [key: string]: unknown;
+          }
+        | string
+        | null;
       /** Question */
       question: string;
     };
@@ -20253,9 +20261,25 @@ export interface components {
        * Sources
        * @default []
        */
-      sources: {
-        [key: string]: unknown;
-      }[];
+      sources: components["schemas"]["BlogAskSource"][];
+    };
+    /**
+     * BlogAskSource
+     * @description Source citation model for AskZantara blog responses
+     */
+    BlogAskSource: {
+      /**
+       * Snippet
+       * @default
+       */
+      snippet: string;
+      /**
+       * Title
+       * @default Source
+       */
+      title: string;
+      /** Url */
+      url?: string | null;
     };
     /** Body_assign_thread_api_omnichannel_threads__thread_id__assign_post */
     Body_assign_thread_api_omnichannel_threads__thread_id__assign_post: {
@@ -24986,6 +25010,20 @@ export interface components {
       success: boolean;
       /** Total */
       total: number;
+    };
+    /**
+     * NewsletterLogRequest
+     * @description Newsletter send log payload (supports both snake_case and camelCase).
+     */
+    NewsletterLogRequest: {
+      /** Article Id */
+      article_id?: string | null;
+      /** Failed Count */
+      failed_count?: number | null;
+      /** Recipient Count */
+      recipient_count?: number | null;
+      /** Sent Count */
+      sent_count?: number | null;
     };
     /** NextSteps */
     NextSteps: {
@@ -35102,17 +35140,22 @@ export interface operations {
   };
   log_newsletter_send_api_blog_newsletter_log_post: {
     parameters: {
-      query: {
-        article_id: string;
-        recipient_count: number;
-        sent_count: number;
-        failed_count: number;
+      query?: {
+        article_id?: string | null;
+        recipient_count?: number | null;
+        sent_count?: number | null;
+        failed_count?: number | null;
       };
       header?: never;
       path?: never;
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json":
+          components["schemas"]["NewsletterLogRequest"] | null;
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {

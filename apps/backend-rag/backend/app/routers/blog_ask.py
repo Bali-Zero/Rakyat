@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from backend.services.rag.agentic import AgenticRAGOrchestrator, create_agentic_rag
 
@@ -35,13 +35,46 @@ class BlogAskRequest(BaseModel):
     article_title: str | None = None
     article_category: str | None = None
     article_content: str | None = None  # Optional context from article
+    context: dict[str, Any] | str | None = None
+
+    @model_validator(mode="after")
+    def _populate_article_fallbacks_from_context(self) -> "BlogAskRequest":
+        if isinstance(self.context, dict):
+            if not self.article_title:
+                raw_title = (
+                    self.context.get("article_title")
+                    or self.context.get("title")
+                    or self.context.get("topic")
+                )
+                if isinstance(raw_title, str) and raw_title.strip():
+                    self.article_title = raw_title.strip()
+            if not self.article_category:
+                raw_category = self.context.get("article_category") or self.context.get("category")
+                if isinstance(raw_category, str) and raw_category.strip():
+                    self.article_category = raw_category.strip()
+            if not self.article_content:
+                raw_content = self.context.get("article_content") or self.context.get("content")
+                if isinstance(raw_content, str) and raw_content.strip():
+                    self.article_content = raw_content.strip()
+        elif isinstance(self.context, str) and self.context.strip():
+            if not self.article_title:
+                self.article_title = self.context.strip()
+        return self
+
+
+class BlogAskSource(BaseModel):
+    """Source citation model for AskZantara blog responses"""
+
+    title: str = "Source"
+    snippet: str = ""
+    url: str | None = None
 
 
 class BlogAskResponse(BaseModel):
     """Response model for blog article questions"""
 
     answer: str
-    sources: list[dict[str, Any]] = []
+    sources: list[BlogAskSource] = []
     confidence: float = 0.0
 
 
@@ -79,26 +112,37 @@ async def ask_zantara(request: Request, body: BlogAskRequest) -> BlogAskResponse
         )
 
         # Format sources for response
-        sources = []
+        sources: list[BlogAskSource] = []
         if result.sources:
             for source in result.sources[:5]:  # Limit to 5 sources
                 if isinstance(source, dict):
+                    metadata = source.get("metadata")
+                    raw_url = (
+                        source.get("url")
+                        or source.get("source_url")
+                        or (metadata.get("url") if isinstance(metadata, dict) else None)
+                    )
+                    raw_text = source.get("snippet") or source.get("content") or ""
                     sources.append(
-                        {
-                            "title": source.get("title", "Source"),
-                            "snippet": source.get("content", "")[:200]
-                            if source.get("content")
-                            else "",
-                        },
+                        BlogAskSource(
+                            title=str(source.get("title") or "Source"),
+                            snippet=str(raw_text)[:200] if raw_text else "",
+                            url=raw_url.strip()
+                            if isinstance(raw_url, str) and raw_url.strip()
+                            else None,
+                        ),
                     )
                 elif hasattr(source, "title"):
+                    raw_url = getattr(source, "url", None) or getattr(source, "source_url", None)
+                    raw_text = getattr(source, "snippet", None) or getattr(source, "content", "")
                     sources.append(
-                        {
-                            "title": getattr(source, "title", "Source"),
-                            "snippet": getattr(source, "content", "")[:200]
-                            if hasattr(source, "content")
-                            else "",
-                        },
+                        BlogAskSource(
+                            title=str(getattr(source, "title", None) or "Source"),
+                            snippet=str(raw_text)[:200] if raw_text else "",
+                            url=raw_url.strip()
+                            if isinstance(raw_url, str) and raw_url.strip()
+                            else None,
+                        ),
                     )
 
         # Calculate confidence from evidence score if available

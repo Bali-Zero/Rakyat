@@ -703,15 +703,19 @@ def generate_mdx_content(article: EnrichedArticle, slug: str, cover_image_path: 
     """Generate MDX file content from enriched article"""
     import json as json_module
 
-    # Map category to URL-friendly format
+    # Map category to URL-friendly format (including legacy frontend category names)
     category_map = {
         "immigration": "immigration",
+        "visas": "immigration",
         "business": "business",
         "tax": "tax-legal",
+        "taxes": "tax-legal",
         "tax-legal": "tax-legal",
         "property": "property",
         "lifestyle": "lifestyle",
+        "living": "lifestyle",
         "tech": "tech",
+        "trends": "tech",
         "legal": "tax-legal",
     }
     category_slug = category_map.get(article.category, article.category)
@@ -1032,15 +1036,19 @@ async def publish_article_internal(request: PublishRequest) -> PublishResponse:
         # Generate slug
         slug = request.slug or generate_slug(request.article.headline)
 
-        # Map category to folder
+        # Map category to folder (including legacy frontend category names)
         category_map = {
             "immigration": "immigration",
+            "visas": "immigration",
             "business": "business",
             "tax": "tax-legal",
+            "taxes": "tax-legal",
             "tax-legal": "tax-legal",
             "property": "property",
             "lifestyle": "lifestyle",
+            "living": "lifestyle",
             "tech": "tech",
+            "trends": "tech",
             "legal": "tax-legal",
         }
         category_folder = category_map.get(request.article.category, request.article.category)
