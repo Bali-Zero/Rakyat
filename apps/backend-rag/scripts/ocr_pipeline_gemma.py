@@ -48,7 +48,7 @@ RPM_LIMIT = 28  # stay under 30
 RPM_WINDOW: list[float] = []
 
 # OAuth credentials
-# OAuth credentials from rclone gdrive remote (antonellosiano@gmail.com)
+# OAuth credentials from rclone gdrive remote (the owner's personal Google account)
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.

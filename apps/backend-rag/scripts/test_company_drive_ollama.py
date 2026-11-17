@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 # Configurazione Drive
-# OAuth credentials from rclone gdrive remote (antonellosiano@gmail.com)
+# OAuth credentials from rclone gdrive remote (the owner's personal Google account)
 # These can access folders owned by all team members.
 # IMPORTANT: set GOOGLE_OAUTH_CLIENT_ID_RCLONE, GOOGLE_OAUTH_CLIENT_SECRET_RCLONE,
 # and GOOGLE_OAUTH_REFRESH_TOKEN as env vars.
