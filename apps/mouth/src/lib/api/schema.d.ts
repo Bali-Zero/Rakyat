@@ -20748,6 +20748,8 @@ export interface components {
         | "end_date"
         | "contract_number"
       )[];
+      /** Whatsapp */
+      whatsapp?: string | null;
     };
     /** CaseCreateBody */
     CaseCreateBody: {
@@ -25773,6 +25775,8 @@ export interface components {
       person: components["schemas"]["MyHrOverview"];
       /** Viewer Team Member Id */
       viewer_team_member_id: string;
+      /** Whatsapp Masked */
+      whatsapp_masked?: string | null;
     };
     /** PersonRow */
     PersonRow: {

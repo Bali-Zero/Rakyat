@@ -73,6 +73,13 @@ _MEMBER_EMAIL_SQL = f"""
     WHERE tm.id = $1 AND {VISIBLE_PERSON_PREDICATE}
 """
 
+_MEMBER_WHATSAPP_SQL = f"""
+    SELECT tm.whatsapp
+    FROM team_members tm
+    LEFT JOIN hr_employees e ON e.team_member_id = tm.id
+    WHERE tm.id = $1 AND {VISIBLE_PERSON_PREDICATE}
+"""
+
 _PULSE_SQL = """
     SELECT
       (SELECT COUNT(*) FROM hr_bonus_ledger WHERE status = 'pending') AS bonus_n,
@@ -99,6 +106,12 @@ class HRPeopleService:
         """The email of an active staff member by primary key; None if no such staff row."""
         async with self.db_pool.acquire() as conn:
             return await conn.fetchval(_MEMBER_EMAIL_SQL, team_member_id)
+
+    async def member_whatsapp(self, team_member_id: str) -> str | None:
+        """The stored WhatsApp number of a VISIBLE staff member (never a client row); None if
+        there is none. Callers mask it before it leaves the backend (DAI-153)."""
+        async with self.db_pool.acquire() as conn:
+            return await conn.fetchval(_MEMBER_WHATSAPP_SQL, team_member_id)
 
     async def roster(self, emails: list[str] | None) -> list[dict[str, Any]]:
         """Visible staff, each with its flags. `emails` None = everyone, else only those."""

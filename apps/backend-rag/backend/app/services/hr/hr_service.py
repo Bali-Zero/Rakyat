@@ -488,6 +488,14 @@ class HRService:
             raise HRCardError(HRCardCode.DB_ERROR) from None
         return found is not None
 
+    _EMPLOYEE_ID_SQL = "SELECT id FROM hr_employees WHERE team_member_id = $1"
+    # Staff only, in the statement itself: team_members also holds the portal client rows.
+    _WHATSAPP_UPDATE_SQL = """
+        UPDATE team_members SET whatsapp = $2, updated_at = NOW()
+        WHERE id = $1 AND lower(trim(COALESCE(role, ''))) <> 'client'
+        RETURNING id
+    """
+
     async def edit_card(
         self,
         team_member_id: str,
@@ -495,6 +503,8 @@ class HRService:
         fields: dict[str, Any],
         profile_patch: dict[str, Any],
         clear: Sequence[str],
+        *,
+        whatsapp: str | None = None,
     ) -> int | None:
         """One HR admin edit of one card (C11): lock the member, merge and clear, one transaction.
 
@@ -502,6 +512,11 @@ class HRService:
         People visibility predicate, so a member deactivated or turned monitoring/partner after
         the route's lookup is not written. Returns the row id, or None when the person no longer
         qualifies. Failures are HRCardError codes; no value reaches any message or log.
+
+        `whatsapp` (DAI-153), already normalised by the route's body model, is written to
+        `team_members.whatsapp` in the same transaction, on a staff row only (`role <> 'client'`
+        in the UPDATE itself, beside the visibility lock). A WhatsApp-only edit needs an existing
+        HR row and leaves hr_employees untouched.
         """
         try:
             async with self.db_pool.acquire() as conn, conn.transaction():
@@ -514,7 +529,22 @@ class HRService:
                 )
                 if not await self.lock_visible_person(conn, team_member_id, email):
                     return None
-                return await self.merge_card_on(conn, team_member_id, fields, profile_patch, clear)
+                if whatsapp is None:
+                    return await self.merge_card_on(
+                        conn, team_member_id, fields, profile_patch, clear
+                    )
+                if fields or profile_patch or clear:
+                    row_id = await self.merge_card_on(
+                        conn, team_member_id, fields, profile_patch, clear
+                    )
+                else:
+                    row_id = await conn.fetchval(self._EMPLOYEE_ID_SQL, team_member_id)
+                if row_id is None:
+                    return None
+                written = await conn.fetchval(self._WHATSAPP_UPDATE_SQL, team_member_id, whatsapp)
+                if written is None:  # a client row, or gone: undo the card write too
+                    raise HRCardError(HRCardCode.DB_ERROR)
+                return row_id
         except HRCardError:
             raise
         except _LOCK_ERRORS:

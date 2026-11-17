@@ -26,7 +26,11 @@ from starlette.formparsers import MultiPartParser
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers.hr import _get_user_id
-from backend.app.services.hr.hr_card_edit import CardEditBody, safe_validation_errors
+from backend.app.services.hr.hr_card_edit import (
+    CardEditBody,
+    mask_whatsapp,
+    safe_validation_errors,
+)
 from backend.app.services.hr.hr_card_models import DocumentChangeResult
 from backend.app.services.hr.hr_documents import (
     ALL_SLOTS,
@@ -94,6 +98,21 @@ async def list_people(
     )
 
 
+async def _whatsapp_for(
+    current_user: dict[str, Any], db_pool: asyncpg.Pool, member_id: str
+) -> str | None:
+    """The member's WhatsApp number, masked, for an HR writer; None for anyone else (DAI-153).
+
+    Best effort: a failed read shows no number rather than failing the card. Never logs it."""
+    if not can_write_hr_card(current_user):
+        return None
+    try:
+        return mask_whatsapp(await _get_people_service(db_pool).member_whatsapp(member_id))
+    except Exception as exc:
+        logger.warning("hr whatsapp read failed (%s)", type(exc).__name__)
+        return None
+
+
 @router.get("/{team_member_id}/overview", response_model=PersonOverview)
 async def get_person_overview(
     team_member_id: uuid.UUID,
@@ -122,7 +141,11 @@ async def get_person_overview(
         raise HTTPException(status_code=500, detail="Overview read failed") from None
     if person is None:
         raise HTTPException(status_code=404, detail="No HR employee record for this person")
-    return PersonOverview(viewer_team_member_id=str(viewer_id), person=person)
+    return PersonOverview(
+        viewer_team_member_id=str(viewer_id),
+        person=person,
+        whatsapp_masked=await _whatsapp_for(current_user, db_pool, member_id),
+    )
 
 
 # ─── card edit (C11) ───
@@ -196,7 +219,9 @@ async def edit_person_card(
     fields, profile, cleared, set_keys = body.to_write()
     service = _get_hr_service(db_pool)
     try:
-        row_id = await service.edit_card(member_id, member_email, fields, profile, cleared)
+        # The number only as a keyword, and only when one was sent (DAI-153).
+        extra = {"whatsapp": body.whatsapp} if body.whatsapp is not None else {}
+        row_id = await service.edit_card(member_id, member_email, fields, profile, cleared, **extra)
     except HRCardError as exc:
         logger.warning(
             "hr card edit refused actor=%s target=%s code=%s", actor_id, member_id, exc.code.value
@@ -213,7 +238,11 @@ async def edit_person_card(
         raise HTTPException(status_code=500, detail="Overview read failed") from None
     if person is None:
         raise HTTPException(status_code=404, detail="No HR employee record for this person")
-    return PersonOverview(viewer_team_member_id=str(actor_id), person=person)
+    return PersonOverview(
+        viewer_team_member_id=str(actor_id),
+        person=person,
+        whatsapp_masked=await _whatsapp_for(current_user, db_pool, member_id),
+    )
 
 
 router.add_api_route(

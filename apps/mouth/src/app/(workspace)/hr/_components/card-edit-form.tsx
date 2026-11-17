@@ -19,6 +19,7 @@ import type {
   CardEditFieldError,
   HrStaffCard,
 } from "@/lib/api/hr/hr";
+import { checkWhatsapp, maskWhatsapp } from "@/lib/hr/whatsapp";
 import { CARD, HAIR, INK, SOFT, TONE } from "./hr-panels";
 
 export type CardEditMode = "edit" | "create";
@@ -149,15 +150,21 @@ const INPUT_CLS = `w-full rounded-xl border ${HAIR} bg-transparent px-3 py-2 tex
 export function CardEditForm({
   mode,
   card,
+  whatsappMasked = null,
   onSubmit,
   onCancel,
 }: {
   mode: CardEditMode;
   card: HrStaffCard | null;
+  /** The stored WhatsApp number, masked by the server (DAI-153); the full one never comes here. */
+  whatsappMasked?: string | null;
   onSubmit: (body: CardEditBody) => Promise<CardEditResult>;
   onCancel: () => void;
 }) {
   const refs = useRef<Record<string, El | null>>({});
+  // Starts empty and stays uncontrolled like every field: empty = keep the stored number.
+  const waRef = useRef<HTMLInputElement | null>(null);
+  const shownWa = maskWhatsapp(whatsappMasked);
   const activeRef = useRef<HTMLInputElement | null>(null);
   const payrollRef = useRef<HTMLInputElement | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -227,16 +234,20 @@ export function CardEditForm({
     }
     if (profile["contract"] === undefined) delete profile["contract"];
     if (Object.keys(profile).length) cardPatch["profile"] = profile;
+    const wa = checkWhatsapp(waRef.current?.value ?? "");
+    if (!wa.ok) next["whatsapp"] = wa.message;
+    const whatsapp = wa.ok ? wa.value : null;
 
     setErrors(next);
     setGeneral(null);
     if (Object.keys(next).length) return;
-    if (!Object.keys(cardPatch).length && !clear.length) {
+    if (!Object.keys(cardPatch).length && !clear.length && whatsapp === null) {
       setGeneral("Nothing changed.");
       return;
     }
     const body: CardEditBody = { card: cardPatch as CardEditBody["card"] };
     if (clear.length) body.clear = clear as CardEditBody["clear"];
+    if (whatsapp !== null) body.whatsapp = whatsapp;
     setSaving(true);
     const res = await onSubmit(body).catch((): CardEditResult => ({
       ok: false,
@@ -248,7 +259,11 @@ export function CardEditForm({
     const byField: Record<string, string> = {};
     let rest: string | null = res.general ?? null;
     for (const err of res.errors) {
-      if (err.field && ALL_FIELDS.some((d) => d.key === err.field))
+      if (
+        err.field &&
+        (err.field === "whatsapp" ||
+          ALL_FIELDS.some((d) => d.key === err.field))
+      )
         byField[err.field] ??= err.message;
       else rest ??= err.message;
     }
@@ -349,6 +364,38 @@ export function CardEditForm({
           </div>
         </fieldset>
       ))}
+      <fieldset className="mt-6">
+        <legend
+          className={`mb-3 text-[12px] font-bold uppercase tracking-wider ${SOFT}`}
+        >
+          Contact
+        </legend>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span className={`text-[13px] font-medium ${INK}`}>WhatsApp</span>
+            <span className={`text-[12px] ${SOFT}`} data-testid="hr-wa-current">
+              {shownWa ? `On file: ${shownWa}` : "No number on file"}
+            </span>
+            <input
+              ref={waRef}
+              type="tel"
+              inputMode="tel"
+              maxLength={32}
+              autoComplete="off"
+              spellCheck={false}
+              className={INPUT_CLS}
+            />
+            <span className={`text-[12px] ${SOFT}`}>
+              New number, starting with 62. Leave empty to keep the current one.
+            </span>
+            {errors["whatsapp"] && (
+              <span role="alert" className="text-[12px] text-red-600">
+                {errors["whatsapp"]}
+              </span>
+            )}
+          </label>
+        </div>
+      </fieldset>
       {general && (
         <p role="alert" className="mt-4 text-[13px] text-red-600">
           {general}
