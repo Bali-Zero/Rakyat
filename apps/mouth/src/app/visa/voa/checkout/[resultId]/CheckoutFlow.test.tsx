@@ -278,6 +278,40 @@ describe("CheckoutFlow", () => {
     );
   });
 
+  it.each([
+    ["null", null],
+    ["pending-resume placeholder", "pending-resume:sess-order-1"],
+    ["empty string", ""],
+    ["non-https http URL", "http://pay.example.com/session/abc"],
+  ])(
+    "routes awaiting_payment resume with %s checkout_url to the order tracker instead of setting window.location.href",
+    async (_label, badCheckoutUrl) => {
+      writeCheckoutHandoff("result-1", {
+        full_name: "Jane Doe",
+        passport_number: "X1234567",
+      });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, {
+          order_id: "order-1",
+          order_state: "awaiting_payment",
+          price_idr: 850000,
+          checkout_url: badCheckoutUrl,
+        }),
+      );
+
+      const user = userEvent.setup();
+      render(<CheckoutFlow resultId="result-1" paymentsLive={true} />);
+      await screen.findByText(/Jane Doe/i);
+      await fillAndSubmit(user);
+
+      await waitFor(() =>
+        expect(mocks.replace).toHaveBeenCalledWith("/visa/voa/orders/order-1"),
+      );
+      expect(window.location.href).toBe("");
+      expect(mocks.push).not.toHaveBeenCalled();
+    },
+  );
+
   it("never places the applicant's email or passport number into a URL", async () => {
     writeCheckoutHandoff("result-1", {
       full_name: "Jane Doe",

@@ -334,8 +334,9 @@ class GarudaOrderRepository:
                 # Idempotency-Keys are allowed to reference the same order
                 # (no uniqueness on garuda_order_idempotency.order_id), and
                 # this also means a live `created` order gets a REAL
-                # checkout_url below (the CREATED branch calls the provider)
-                # instead of ever reaching the `pending-resume:` placeholder.
+                # checkout_url below (the CREATED branch calls the provider),
+                # while an already `awaiting_payment` order cleanly returns
+                # `checkout_url=None` for the tracker redirect.
                 existing = await conn.fetchrow(
                     """
                     SELECT order_id FROM garuda_orders
@@ -480,22 +481,14 @@ class GarudaOrderRepository:
             # offer a checkout action ONLY while the order is genuinely
             # still awaiting payment.
             final_state = row["state"]
-            if final_state == OrderState.AWAITING_PAYMENT.value:
-                checkout_row = await self._pool.fetchrow(
-                    "SELECT provider_session_id FROM garuda_orders WHERE order_id = $1", order_id
-                )
-                # Sandbox-safe placeholder: the real checkout_url isn't
-                # persisted (it's a provider capability, never journal/DB
-                # content per SM-G03) -- a genuine resume-after-crash
-                # re-fetches it from the provider by provider_session_id.
-                # Kept minimal here; flagged in the PR report as a
-                # follow-up rather than guessed (scoped to the orchestrator
-                # per the standing "returning customer" spec).
-                checkout_url = (
-                    f"pending-resume:{checkout_row['provider_session_id']}" if checkout_row else ""
-                )
-            else:
-                checkout_url = None
+            # Provider checkout URLs are one-time capabilities never persisted on
+            # `garuda_orders` (SM-G03), and `PaymentProvider` exposes no
+            # session-URL lookup. Returning `None` on a fresh-key resume
+            # (including while still `awaiting_payment`) never fabricates a
+            # non-navigable `pending-resume:` scheme or leaks
+            # `provider_session_id`, and lets CheckoutFlow route cleanly to
+            # `/visa/voa/orders/{order_id}`.
+            checkout_url = None
 
         response_body = {
             "order_id": order_id,
