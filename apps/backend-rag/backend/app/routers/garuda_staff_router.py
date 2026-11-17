@@ -421,28 +421,31 @@ async def assign_practice(
             conn, assigned_to
         ):
             raise HTTPException(status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False})
-        try:
-            outcome = await idempotency.reserve(
-                conn, key_sha256=key_digest, payload_sha256=payload_digest
-            )
-        except IdempotencyConflict as exc:
-            raise HTTPException(
-                status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "retryable": False}
-            ) from exc
-        if outcome.replayed:
-            assert outcome.response_body is not None
-            response.headers["Idempotency-Replayed"] = "true"
-            return outcome.response_body
-
-        # Cross-family refuter (Codex) MAJOR finding #5: `idempotency.
-        # complete()` used to run as a SEPARATE statement AFTER this
-        # `async with conn.transaction():` block had already committed --
-        # a crash between the two left the business write committed but the
-        # idempotency row permanently "reserved, never completed", so a
-        # retry re-ran the UPDATE and got a spurious conflict instead of the
-        # committed outcome. Completion now runs INSIDE the same
-        # transaction: either both commit, or neither does.
+        # SWARM-VISA-3C-03: the reservation lives INSIDE the business
+        # transaction (it used to be committed on its own BEFORE it). The
+        # `garuda_order_idempotency` guard trigger makes an unexpired row
+        # undeletable, so a reservation committed ahead of a rolled-back
+        # domain error (404 PRACTICE_NOT_FOUND here) stayed bound to the
+        # failed payload for 30 days and every corrected retry under the same
+        # key answered 409 IDEMPOTENCY_CONFLICT. Reserved and rolled back
+        # together, a failed attempt leaves nothing behind; a committed one
+        # still replays (same key + body) or conflicts (same key, other body).
+        # Completion shares this transaction (Codex MAJOR #5): either the
+        # business write AND its idempotency row commit, or neither does.
         async with conn.transaction():
+            try:
+                outcome = await idempotency.reserve(
+                    conn, key_sha256=key_digest, payload_sha256=payload_digest
+                )
+            except IdempotencyConflict as exc:
+                raise HTTPException(
+                    status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "retryable": False}
+                ) from exc
+            if outcome.replayed:
+                assert outcome.response_body is not None
+                response.headers["Idempotency-Replayed"] = "true"
+                return outcome.response_body
+
             row = await conn.fetchrow(
                 """
                 UPDATE garuda_practices
@@ -536,26 +539,28 @@ async def transition_practice(
     )
 
     async with pool.acquire() as conn:
-        try:
-            outcome = await idempotency.reserve(
-                conn, key_sha256=key_digest, payload_sha256=payload_digest
-            )
-        except IdempotencyConflict as exc:
-            raise HTTPException(
-                status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "retryable": False}
-            ) from exc
-        if outcome.replayed:
-            assert outcome.response_body is not None
-            response.headers["Idempotency-Replayed"] = "true"
-            return outcome.response_body
-
-        # Cross-family refuter (Codex) MAJOR finding #5: same atomicity fix
-        # as assign_practice above -- idempotency completion now runs
-        # INSIDE the same transaction as apply_transition's state/journal/
-        # outbox writes, so a crash between them can never leave a
-        # committed business effect with a permanently-unresolved
-        # idempotency reservation.
+        # SWARM-VISA-3C-03: reserve + business write + completion share ONE
+        # transaction (see assign_practice). A rolled-back 409
+        # INVALID_STATE_TRANSITION / 422 INVALID_REQUEST must not leave the
+        # key bound to the failed payload: the guard trigger on
+        # `garuda_order_idempotency` forbids deleting an unexpired row, so a
+        # separately-committed reservation turned every corrected retry under
+        # the same key into 409 IDEMPOTENCY_CONFLICT. A committed command
+        # still replays / conflicts exactly as before.
         async with conn.transaction():
+            try:
+                outcome = await idempotency.reserve(
+                    conn, key_sha256=key_digest, payload_sha256=payload_digest
+                )
+            except IdempotencyConflict as exc:
+                raise HTTPException(
+                    status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT", "retryable": False}
+                ) from exc
+            if outcome.replayed:
+                assert outcome.response_body is not None
+                response.headers["Idempotency-Replayed"] = "true"
+                return outcome.response_body
+
             updated = await apply_transition(
                 conn,
                 practice_id=practice_id,

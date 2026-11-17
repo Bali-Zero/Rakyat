@@ -94,6 +94,29 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await res.json();
+
+    // The backend answers HTTP 200 with `{ success: false, message }` when no
+    // mail provider is configured or every provider failed (see
+    // notifications/router.py send_email). Relaying that as a 200 told the
+    // browser the panel received an email nobody got, and the candidate's
+    // exercise was retired as "submitted". A dropped email is a failed
+    // delivery: surface it as 502 so the client's `res.ok` check holds.
+    if (data && typeof data === "object" && data.success === false) {
+      const reason =
+        typeof data.message === "string" && data.message
+          ? data.message
+          : "Email delivery failed";
+      logger.error(`[assessment/submit] Backend reported delivery failure`, {
+        component: "assessment",
+        action: "submit",
+        metadata: { reason },
+      });
+      return NextResponse.json(
+        { success: false, error: reason },
+        { status: 502 },
+      );
+    }
+
     return NextResponse.json(data);
   } catch (error) {
     logger.error("[assessment/submit] Error:", {
