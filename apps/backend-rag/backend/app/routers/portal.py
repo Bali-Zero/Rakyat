@@ -691,6 +691,12 @@ async def upload_document(
                 "Rename the file or wait before uploading it again."
             ),
         ) from e
+    except asyncpg.PostgresError as e:
+        logger.error(f"Database error uploading document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to upload document",
+        ) from e
     except ValueError as e:
         msg = str(e)
         msg_lower = msg.lower()
@@ -704,11 +710,11 @@ async def upload_document(
             logger.warning(
                 f"Upload rate limit in upload_document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}"
             )
-            raise HTTPException(status_code=429, detail=msg) from e
+            raise HTTPException(status_code=429, detail="Upload rate limit exceeded. Please try again later.") from e
         logger.warning(
             f"Upload validation rejected in upload_document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}"
         )
-        raise HTTPException(status_code=400, detail=msg) from e
+        raise HTTPException(status_code=400, detail="Document rejected by upload validation") from e
     except Exception as e:
         logger.error(f"Failed to upload document for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
         raise HTTPException(

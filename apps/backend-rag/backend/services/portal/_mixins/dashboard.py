@@ -437,8 +437,6 @@ class PortalDashboardMixin:
                 if not stripped:
                     missing_docs: list[str] = []
                 elif stripped.startswith("["):
-                    import json
-
                     try:
                         parsed = json.loads(stripped)
                         missing_docs = (

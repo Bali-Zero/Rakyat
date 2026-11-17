@@ -1,4 +1,5 @@
-import { NextRequest } from "next/server";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthApi } from "../../auth/auth.api";
 import { ApiClientBase } from "../../client";
@@ -12,7 +13,8 @@ import type {
   ProcessTimeline,
 } from "../portal.types";
 import { ProcessTimelineData } from "../../../schemas/process";
-import { PENDING_COOKIE } from "../../../../app/visa/voa/auth/contract";
+
+const SRC_ROOT = resolve(__dirname, "../../../..");
 
 function makeApi(response: unknown) {
   const request = vi.fn().mockResolvedValue(response);
@@ -24,41 +26,6 @@ describe("swarm portal-auth contracts", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-  });
-
-  it("PORTAL-3A-01: uploadPaymentProof posts multipart form data and unwraps envelope or fallback", async () => {
-    const wrapped = makeApi({
-      success: true,
-      message: "Payment proof uploaded",
-      data: {
-        id: 901,
-        status: "received",
-        note: null,
-        created_at: "2026-11-16T08:00:00Z",
-      },
-    });
-    const file = new File(["%PDF-1.4"], "receipt.pdf", {
-      type: "application/pdf",
-    });
-    const res = await wrapped.api.uploadPaymentProof(55, file);
-    expect(wrapped.request).toHaveBeenCalledWith(
-      "/api/portal/billing/55/payment-proof",
-      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
-    );
-    expect(res).toEqual({
-      id: 901,
-      status: "received",
-      note: null,
-      created_at: "2026-11-16T08:00:00Z",
-    });
-
-    const minimal = makeApi({
-      success: true,
-      message: "Payment proof uploaded",
-    });
-    const fallbackRes = await minimal.api.uploadPaymentProof(55, file);
-    expect(fallbackRes.id).toBe(55);
-    expect(fallbackRes.status).toBe("received");
   });
 
   it("PORTAL-3C-01: validateInviteToken & completeRegistration normalize snake_case and camelCase", async () => {
@@ -130,7 +97,7 @@ describe("swarm portal-auth contracts", () => {
     expect(out.history[1].status).toBe("expired");
   });
 
-  it("PORTAL-3C-03: process schema accepts under_review, rejected, and nullable fields", () => {
+  it("PORTAL-3C-03: process schema accepts under_review, rejected, nullable fields, and ignores prototype keys", () => {
     const base = { practice_id: 1, steps: [] };
     const nullStatus = ProcessTimelineData.safeParse({
       ...base,
@@ -139,6 +106,12 @@ describe("swarm portal-auth contracts", () => {
       current_status: null,
     });
     expect(nullStatus.success).toBe(true);
+
+    const protoCheck = ProcessTimelineData.safeParse({
+      ...base,
+      current_status: "constructor",
+    });
+    expect(protoCheck.success).toBe(false);
 
     const parsed = ProcessTimelineData.parse({
       practice_id: 2,
@@ -242,56 +215,7 @@ describe("swarm portal-auth contracts", () => {
     });
   });
 
-  it("PORTAL-3D-04: VOA magic exchange preserves pending cookie on 429/5xx/network error and clears on 401", async () => {
-    const prevFlag = process.env.GARUDA_PUBLIC_ENABLED;
-    process.env.GARUDA_PUBLIC_ENABLED = "true";
-    try {
-      const pendingVal = `${"R".repeat(24)}.${"t".repeat(40)}`;
-      const makeReq = () =>
-        new NextRequest("https://balizero.com/visa/voa/auth/exchange", {
-          method: "POST",
-          headers: {
-            "content-type": "application/x-www-form-urlencoded",
-            cookie: `${PENDING_COOKIE}=${pendingVal}`,
-            "sec-fetch-site": "same-origin",
-          },
-        });
-      const hasClear = (res: Response) =>
-        res.headers
-          .getSetCookie()
-          .some(
-            (c) => c.startsWith(`${PENDING_COOKIE}=`) && c.includes("Max-Age=0"),
-          );
-
-      const { POST } = await import("../../../../app/visa/voa/auth/exchange/route");
-
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
-      );
-      expect(hasClear(await POST(makeReq()))).toBe(false);
-
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(new Response(null, { status: 429 })),
-      );
-      expect(hasClear(await POST(makeReq()))).toBe(false);
-
-      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNRESET")));
-      expect(hasClear(await POST(makeReq()))).toBe(false);
-
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(new Response(null, { status: 401 })),
-      );
-      expect(hasClear(await POST(makeReq()))).toBe(true);
-    } finally {
-      if (prevFlag === undefined) delete process.env.GARUDA_PUBLIC_ENABLED;
-      else process.env.GARUDA_PUBLIC_ENABLED = prevFlag;
-    }
-  });
-
-  it("KBLI-3A-03 / 3C-01 / 3C-02 / 3C-10: LKPM portal client and nullable types align with backend", async () => {
+  it("KBLI-3A-03 / 3C-01 / 3C-02 / 3C-10: LKPM portal client, lkpm/[id] null guards, and nullable types align with backend", async () => {
     const flat = makeApi({
       items: [
         {
@@ -312,6 +236,13 @@ describe("swarm portal-auth contracts", () => {
 
     const approved = makeApi({ status: "approved" });
     expect(await approved.api.approveLKPMDraft(10)).toEqual({ success: true });
+
+    const readyPackPage = readFileSync(
+      resolve(SRC_ROOT, "app/(workspace)/lkpm/[id]/page.tsx"),
+      "utf-8",
+    );
+    expect(readyPackPage).toContain("pack.validation_summary?.is_valid");
+    expect(readyPackPage).toContain("pack.validation_summary?.red_count ?? 0");
 
     const zeroRealization = {
       equipment_domestic: 0,

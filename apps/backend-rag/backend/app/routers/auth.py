@@ -174,10 +174,8 @@ async def _revoke_request_session(request: Request) -> None:
 def _extract_auth_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None,
-    *,
-    allow_refresh_cookie: bool = False,
 ) -> str | None:
-    """Resolve JWT from Bearer credentials, nz_access_token cookie, or nz_refresh_token cookie."""
+    """Resolve JWT from Bearer credentials or nz_access_token httpOnly cookie."""
     if credentials is not None and credentials.credentials:
         token = credentials.credentials.strip()
         if token:
@@ -185,10 +183,6 @@ def _extract_auth_token(
     access_token = _get_request_access_token(request)
     if access_token:
         return access_token
-    if allow_refresh_cookie:
-        refresh_token = (request.cookies.get("nz_refresh_token") or "").strip()
-        if refresh_token:
-            return refresh_token
     return None
 
 
@@ -204,11 +198,7 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    raw_token = _extract_auth_token(
-        request,
-        credentials,
-        allow_refresh_cookie=request.url.path.endswith("/refresh"),
-    )
+    raw_token = _extract_auth_token(request, credentials)
     if not raw_token:
         raise credentials_exception
 

@@ -13710,26 +13710,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/portal/billing/{invoice_id}/payment-proof": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Upload Payment Proof
-     * @description Upload a payment proof file for an owned client invoice.
-     */
-    post: operations["upload_payment_proof_api_portal_billing__invoice_id__payment_proof_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/portal/billing/{invoice_id}/pdf": {
     parameters: {
       query?: never;
@@ -20372,11 +20352,6 @@ export interface components {
       tier?: string | null;
       /** Title */
       title?: string | null;
-    };
-    /** Body_upload_payment_proof_api_portal_billing__invoice_id__payment_proof_post */
-    Body_upload_payment_proof_api_portal_billing__invoice_id__payment_proof_post: {
-      /** File */
-      file: string;
     };
     /** Body_upload_slide_api_war_room_upload_slide_post */
     Body_upload_slide_api_war_room_upload_slide_post: {
@@ -50841,43 +50816,6 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
-        };
-      };
-    };
-  };
-  upload_payment_proof_api_portal_billing__invoice_id__payment_proof_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        invoice_id: number;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "multipart/form-data": components["schemas"]["Body_upload_payment_proof_api_portal_billing__invoice_id__payment_proof_post"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

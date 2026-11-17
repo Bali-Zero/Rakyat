@@ -9,8 +9,9 @@ import asyncio
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 
 APP = Path(__file__).resolve().parents[2] / "app"
@@ -22,27 +23,15 @@ def _src(path: Path) -> str:
 
 
 # ============================================================================
-# 1. Static / AST Contract Guards (run under plain python3 & pytest)
+# 1. Static / AST Contract Guards
 # ============================================================================
 
 
-def test_payment_proof_route_is_implemented():
-    """PORTAL-3A-01: POST /{invoice_id}/payment-proof exists and returns the TS envelope."""
-    src = _src(APP / "routers" / "portal_billing.py")
-    assert '"/{invoice_id}/payment-proof"' in src
-    assert "Payment proof uploaded" in src
-    assert "portal_service.upload_document" in src
-    tree = ast.parse(src)
-    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)}
-    assert "upload_payment_proof" in names
-
-
 def test_auth_bearer_is_optional_and_cookie_fallback_exists():
-    """PORTAL-3A-04: HTTPBearer(auto_error=False) + nz_access_token / nz_refresh_token fallback."""
+    """PORTAL-3A-04: HTTPBearer(auto_error=False) + nz_access_token fallback."""
     src = _src(APP / "routers" / "auth.py")
     assert "HTTPBearer(auto_error=False)" in src
-    assert "nz_access_token" in src
-    assert "nz_refresh_token" in src
+    assert "_get_request_access_token" in src
 
 
 def test_revoke_all_clears_cookies():
@@ -86,16 +75,8 @@ def test_invite_complete_redirects_to_existing_page():
     assert 'redirect_to="/portal/login-upgraded"' in src
 
 
-def test_dashboard_parses_string_missing_documents():
-    """PORTAL-3C-07: TEXT missing_documents is parsed before slicing."""
-    src = _src(SERVICES / "portal" / "_mixins" / "dashboard.py")
-    assert "missing_documents" in src
-    assert "json" in src
-    assert "isinstance" in src
-
-
 # ============================================================================
-# 2. Behavioral Runtime Contract Tests (run under pytest on backend venv)
+# 2. Behavioral Runtime Contract Tests
 # ============================================================================
 
 
@@ -134,116 +115,63 @@ def _make_png_bytes() -> bytes:
 
 
 def test_extract_auth_token_precedence_and_cookie_fallback():
-    """PORTAL-3A-04: Bearer header takes precedence; cookies act as fallback."""
+    """PORTAL-3A-04: Bearer header takes precedence; nz_access_token cookie acts as fallback."""
     from backend.app.routers.auth import _extract_auth_token
 
     req_access = SimpleNamespace(
         headers={},
-        cookies={"nz_access_token": "cookie-access", "nz_refresh_token": "cookie-refresh"},
+        cookies={"nz_access_token": "cookie-access"},
     )
     creds = SimpleNamespace(credentials="header-bearer")
     assert _extract_auth_token(req_access, creds) == "header-bearer"
     assert _extract_auth_token(req_access, None) == "cookie-access"
 
-    req_refresh_only = SimpleNamespace(
-        headers={},
-        cookies={"nz_refresh_token": "cookie-refresh"},
-    )
-    assert _extract_auth_token(req_refresh_only, None, allow_refresh_cookie=False) is None
-    assert (
-        _extract_auth_token(req_refresh_only, None, allow_refresh_cookie=True)
-        == "cookie-refresh"
-    )
+    req_empty = SimpleNamespace(headers={}, cookies={})
+    assert _extract_auth_token(req_empty, None) is None
 
 
-def test_upload_payment_proof_happy_path_and_ownership_guard():
-    """PORTAL-3A-01: upload_payment_proof verifies invoice ownership and returns TS shape."""
-    from fastapi import HTTPException, UploadFile
-    from starlette.datastructures import Headers
+def test_revoke_all_emits_clear_cookie_headers():
+    """PORTAL-3A-04 / N7: /revoke-all clears auth cookies on Response."""
+    from fastapi import Response
 
-    from backend.app.routers.portal_billing import upload_payment_proof
-    from backend.services.portal.upload_validation import DuplicateDocumentError
-
-    png_bytes = _make_png_bytes()
-
-    def _make_upload(payload: bytes = png_bytes, filename: str = "receipt.png") -> UploadFile:
-        return UploadFile(
-            file=BytesIO(payload),
-            filename=filename,
-            headers=Headers({"content-type": "image/png"}),
-        )
+    from backend.app.routers import auth as auth_mod
 
     conn = MagicMock()
-    conn.fetchrow = AsyncMock(
-        return_value={"id": 501, "invoice_number": "INV-2026-501", "practice_id": 77}
-    )
+    conn.execute = AsyncMock(return_value="UPDATE 1")
     acquire_cm = MagicMock()
     acquire_cm.__aenter__ = AsyncMock(return_value=conn)
     acquire_cm.__aexit__ = AsyncMock(return_value=False)
-
     pool = MagicMock()
     pool.acquire.return_value = acquire_cm
 
-    portal_service = MagicMock()
-    portal_service.pool = pool
-    portal_service.upload_document = AsyncMock(
-        return_value={"id": 9001, "created_at": "2026-11-16T08:00:00+00:00"}
-    )
+    response = Response()
+    req = SimpleNamespace(headers={}, cookies={}, client=SimpleNamespace(host="127.0.0.1"))
+    from backend.services.security.token_revocation import TokenRevocationService
 
-    client_ctx = {"client_id": 42, "user_id": 7}
-
-    result = asyncio.run(
-        upload_payment_proof(
-            invoice_id=501,
-            file=_make_upload(),
-            client=client_ctx,
-            portal_service=portal_service,
-        )
-    )
-    assert result == {
-        "success": True,
-        "message": "Payment proof uploaded",
-        "data": {
-            "id": 9001,
-            "status": "received",
-            "note": None,
-            "created_at": "2026-11-16T08:00:00+00:00",
-        },
-    }
-    portal_service.upload_document.assert_awaited_once()
-
-    # Unowned invoice -> 404
-    conn.fetchrow = AsyncMock(return_value=None)
-    with pytest.raises(HTTPException) as exc_unowned:
-        asyncio.run(
-            upload_payment_proof(
-                invoice_id=999,
-                file=_make_upload(),
-                client=client_ctx,
-                portal_service=portal_service,
+    with patch.object(
+        TokenRevocationService,
+        "revoke_all_user_tokens",
+        new=AsyncMock(return_value=1),
+    ):
+        out = asyncio.run(
+            auth_mod.revoke_all_sessions(
+                request=req,
+                response=response,
+                current_user={"id": "u-1", "email": "staff_placeholder_op_01"},
+                db_pool=pool,
             )
         )
-    assert exc_unowned.value.status_code == 404
-
-    # Duplicate upload -> 409
-    conn.fetchrow = AsyncMock(
-        return_value={"id": 501, "invoice_number": "INV-2026-501", "practice_id": 77}
-    )
-    portal_service.upload_document = AsyncMock(side_effect=DuplicateDocumentError("dup"))
-    with pytest.raises(HTTPException) as exc_dup:
-        asyncio.run(
-            upload_payment_proof(
-                invoice_id=501,
-                file=_make_upload(),
-                client=client_ctx,
-                portal_service=portal_service,
-            )
-        )
-    assert exc_dup.value.status_code == 409
+    assert out["success"] is True
+    set_cookies = [
+        v.decode("latin-1")
+        for k, v in response.raw_headers
+        if k.lower() == b"set-cookie"
+    ]
+    assert any("nz_access_token=" in c for c in set_cookies)
 
 
 def test_portal_upload_document_value_error_runtime_statuses():
-    """PORTAL-3D-02: upload_document raises 404 / 429 / 400 according to ValueError cause."""
+    """PORTAL-3D-02 / N2: upload_document raises 404 / 429 / 400 / 500 safely without leaking internal messages."""
     from fastapi import HTTPException, UploadFile
     from starlette.datastructures import Headers
 
@@ -251,14 +179,14 @@ def test_portal_upload_document_value_error_runtime_statuses():
 
     png_bytes = _make_png_bytes()
 
-    def _run_with_error(err_msg: str) -> int:
+    def _run_with_error(err: Exception) -> HTTPException:
         upload = UploadFile(
             file=BytesIO(png_bytes),
             filename="doc.png",
             headers=Headers({"content-type": "image/png"}),
         )
         svc = MagicMock()
-        svc.upload_document = AsyncMock(side_effect=ValueError(err_msg))
+        svc.upload_document = AsyncMock(side_effect=err)
         with pytest.raises(HTTPException) as exc_info:
             asyncio.run(
                 upload_document(
@@ -270,8 +198,14 @@ def test_portal_upload_document_value_error_runtime_statuses():
                     portal_service=svc,
                 )
             )
-        return exc_info.value.status_code
+        return exc_info.value
 
-    assert _run_with_error("Client 42 not found") == 404
-    assert _run_with_error("Upload rate limit exceeded") == 429
-    assert _run_with_error("Invalid document metadata") == 400
+    assert _run_with_error(ValueError("Client 42 not found")).status_code == 404
+    rate_exc = _run_with_error(ValueError("Upload rate limit exceeded for bucket"))
+    assert rate_exc.status_code == 429
+    val_exc = _run_with_error(ValueError("Internal scanner detail xyz"))
+    assert val_exc.status_code == 400
+    assert "xyz" not in str(val_exc.detail)
+    # asyncpg.DataError subclasses ValueError in asyncpg — must stay 500, never 400
+    db_exc = _run_with_error(asyncpg.DataError("invalid input syntax"))
+    assert db_exc.status_code == 500

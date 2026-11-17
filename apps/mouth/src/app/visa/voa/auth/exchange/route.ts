@@ -132,13 +132,12 @@ export async function POST(request: NextRequest): Promise<Response> {
       cache: "no-store",
     });
   } catch {
-    // Never log the token or the URL that carries it. Preserve pending cookie
-    // on transient transport errors since the single-use token was not consumed.
+    // Never log the token or the URL that carries it.
     logger.error("[garuda-voa-auth] magic-link exchange transport failure", {
       component: "AUTO",
       action: "error",
     });
-    return seeOther(FAILURE_LOCATION, []);
+    return seeOther(FAILURE_LOCATION, [clear]);
   }
 
   if (upstream.status !== 204) {
@@ -147,9 +146,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       action: "denied",
       metadata: { status: upstream.status },
     });
-    const isTransientUpstream =
-      upstream.status === 429 || upstream.status >= 500;
-    return seeOther(FAILURE_LOCATION, isTransientUpstream ? [] : [clear]);
+    return seeOther(FAILURE_LOCATION, [clear]);
   }
 
   // `getSetCookie()` — NOT `get("set-cookie")`. A single-value read folds

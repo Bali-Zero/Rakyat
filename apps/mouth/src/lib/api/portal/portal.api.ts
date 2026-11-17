@@ -722,14 +722,7 @@ export class PortalApi {
       `/api/portal/billing/${invoiceId}/payment-proof`,
       { method: "POST", body: formData },
     );
-    return (
-      response.data ?? {
-        id: invoiceId,
-        status: "received",
-        note: null,
-        created_at: new Date().toISOString(),
-      }
-    );
+    return response.data!;
   }
 
   // ============================================================================

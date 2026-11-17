@@ -84,7 +84,8 @@ const LEGACY_API_STEP_STATE_MAP: Record<
 
 export const ProcessStepStateInput = z.preprocess(
   (val) =>
-    typeof val === "string" && val in LEGACY_API_STEP_STATE_MAP
+    typeof val === "string" &&
+    Object.prototype.hasOwnProperty.call(LEGACY_API_STEP_STATE_MAP, val)
       ? LEGACY_API_STEP_STATE_MAP[val]
       : val,
   ProcessStepState,
