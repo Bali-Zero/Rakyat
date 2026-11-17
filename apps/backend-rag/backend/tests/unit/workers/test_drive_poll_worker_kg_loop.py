@@ -1,4 +1,4 @@
-"""run_forever starts CRM KG maintenance as a background task, never inline."""
+"""run_forever starts the CRM KG maintenance loop once, in its own task."""
 
 from __future__ import annotations
 
@@ -23,14 +23,12 @@ def make_config(*, once: bool = False) -> worker.DrivePollWorkerConfig:
 
 
 class Harness:
-    """Counts run_once calls and stops the loop after `stop_after` of them."""
-
     def __init__(self, stop_after: int) -> None:
         self.stop_after = stop_after
         self.run_once_calls = 0
-        self.kg_calls = 0
-        self.kg_cancelled = 0
-        self.kg_release = asyncio.Event()
+        self.loop_starts = 0
+        self.loop_cancelled = 0
+        self.stop_seen_by_loop: asyncio.Event | None = None
         self.stop_requested = asyncio.Event()
 
     async def run_once(self, _config: Any) -> dict[str, Any]:
@@ -41,31 +39,19 @@ class Harness:
         return {}
 
 
-def install(harness: Harness, kg: Any):
-    return (
-        patch.object(worker, "run_once", new=harness.run_once),
-        patch.object(worker, "run_kg_maintenance", new=kg),
-    )
-
-
-async def drive(config: worker.DrivePollWorkerConfig, harness: Harness, kg: Any) -> int:
-    p1, p2 = install(harness, kg)
-    # interval 0 makes wait_for time out immediately, so the loop spins per iteration;
-    # a stop request flips the real stop_event through the SIGTERM handler.
+async def drive(config: worker.DrivePollWorkerConfig, harness: Harness, loop_fn: Any) -> int:
     loop = asyncio.get_running_loop()
-    handlers: dict[Any, Any] = {}
+    handlers: list[Any] = []
     with (
-        p1,
-        p2,
-        patch.object(loop, "add_signal_handler", new=lambda sig, cb: handlers.setdefault(sig, cb)),
+        patch.object(worker, "run_once", new=harness.run_once),
+        patch.object(worker, "run_maintenance_loop", new=loop_fn),
+        patch.object(loop, "add_signal_handler", new=lambda _sig, cb: handlers.append(cb)),
     ):
         task = asyncio.create_task(worker.run_forever(config))
 
         async def stopper() -> None:
             await harness.stop_requested.wait()
-            for cb in handlers.values():
-                cb()
-                break
+            handlers[0]()
 
         stop_task = asyncio.create_task(stopper())
         try:
@@ -75,60 +61,54 @@ async def drive(config: worker.DrivePollWorkerConfig, harness: Harness, kg: Any)
 
 
 @pytest.mark.asyncio
-async def test_loop_keeps_polling_while_maintenance_never_completes() -> None:
+async def test_loop_started_once_and_polling_continues_while_it_hangs() -> None:
     harness = Harness(stop_after=5)
 
-    async def never(_url: str, _config: Any) -> dict[str, Any]:
-        harness.kg_calls += 1
+    async def hang(_url: str, _config: Any, stop_event: asyncio.Event) -> None:
+        harness.loop_starts += 1
+        harness.stop_seen_by_loop = stop_event
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            harness.kg_cancelled += 1
+            harness.loop_cancelled += 1
             raise
-        return {}
 
-    assert await drive(make_config(), harness, never) == 0
+    assert await drive(make_config(), harness, hang) == 0
     assert harness.run_once_calls >= 5
-    # one task started, later iterations skipped, shutdown cancelled the pending one
-    assert harness.kg_calls == 1
-    assert harness.kg_cancelled == 1
+    assert harness.loop_starts == 1
+    # stop cancelled the pending maintenance task and the worker returned
+    assert harness.loop_cancelled == 1
+    assert harness.stop_seen_by_loop is not None
+    assert harness.stop_seen_by_loop.is_set()
 
 
 @pytest.mark.asyncio
-async def test_new_task_starts_after_previous_completes() -> None:
-    harness = Harness(stop_after=4)
+async def test_unexpected_maintenance_exception_is_logged_and_polling_continues(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    harness = Harness(stop_after=3)
 
-    async def quick(_url: str, _config: Any) -> dict[str, Any]:
-        harness.kg_calls += 1
-        return {"status": "ran"}
-
-    assert await drive(make_config(), harness, quick) == 0
-    assert harness.kg_calls >= 2
-
-
-@pytest.mark.asyncio
-async def test_failed_maintenance_task_is_reaped_and_loop_continues() -> None:
-    harness = Harness(stop_after=4)
-
-    async def boom(_url: str, _config: Any) -> dict[str, Any]:
-        harness.kg_calls += 1
+    async def boom(_url: str, _config: Any, _stop: asyncio.Event) -> None:
         raise RuntimeError("kg boom")
 
-    assert await drive(make_config(), harness, boom) == 0
-    assert harness.kg_calls >= 2
+    with caplog.at_level("ERROR"):
+        assert await drive(make_config(), harness, boom) == 0
+    assert harness.run_once_calls >= 3
+    assert any("ended unexpectedly" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_once_never_runs_maintenance() -> None:
+async def test_once_never_starts_maintenance() -> None:
     harness = Harness(stop_after=99)
-    calls: list[str] = []
+    started: list[str] = []
 
-    async def kg(_url: str, _config: Any) -> dict[str, Any]:
-        calls.append("kg")
-        return {}
+    async def loop_fn(_url: str, _config: Any, _stop: asyncio.Event) -> None:
+        started.append("kg")
 
-    p1, p2 = install(harness, kg)
-    with p1, p2:
+    with (
+        patch.object(worker, "run_once", new=harness.run_once),
+        patch.object(worker, "run_maintenance_loop", new=loop_fn),
+    ):
         assert await worker.run_forever(make_config(once=True)) == 0
     assert harness.run_once_calls == 1
-    assert calls == []
+    assert started == []

@@ -3,8 +3,8 @@
 The HTTP API owns status and manual control only. This worker owns the periodic
 Drive poll loop so Drive/DB/OCR import chains do not compete with user-facing
 API requests inside the same Fly Machine. The worker also runs the CRM
-knowledge-graph maintenance jobs (build-mediated and garbage-collect) as a
-background task of the long-running loop, never inline and never with --once.
+knowledge-graph maintenance jobs (build-mediated and garbage-collect) in
+its own task next to the long-running poll loop, never inline and never with --once.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import Any
 import asyncpg
 
 from backend.services.crm.drive_poll_service import poll_drive_changes
-from backend.workers.crm_kg_maintenance import load_kg_maintenance_config, run_kg_maintenance
+from backend.workers.crm_kg_maintenance import load_kg_maintenance_config, run_maintenance_loop
 
 logger = logging.getLogger(__name__)
 
@@ -206,25 +206,22 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
             signal.signal(sig, lambda *_args: _request_stop())
 
     kg_config = load_kg_maintenance_config()
-    kg_task: asyncio.Task[dict[str, Any]] | None = None
+    kg_task: asyncio.Task[None] | None = None
+    if not config.once:
+        # CRM KG maintenance belongs to the long-running worker, not --once. It runs in
+        # its own task and the poll loop never awaits it, so a stuck maintenance call
+        # stalls maintenance only, until the worker restarts.
+        kg_task = asyncio.create_task(
+            run_maintenance_loop(config.database_url, kg_config, stop_event),
+            name="crm-kg-maintenance",
+        )
+        kg_task.add_done_callback(_log_maintenance_task_end)
 
     try:
         while not stop_event.is_set():
             await run_once(config)
             if config.once:
-                # CRM KG maintenance belongs to the long-running loop, not --once.
                 return 0
-
-            # Maintenance runs as a background task: the loop never awaits it, so a
-            # stuck database step there cannot stop Drive polling.
-            if kg_task is None or kg_task.done():
-                _reap_task(kg_task)
-                kg_task = asyncio.create_task(
-                    run_kg_maintenance(config.database_url, kg_config),
-                    name="crm-kg-maintenance",
-                )
-            else:
-                logger.info("Previous CRM KG maintenance is still running; skipping this cycle")
 
             sleep_seconds = config.interval_seconds
             if config.jitter_seconds:
@@ -234,24 +231,22 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
             except TimeoutError:
                 continue
     finally:
-        if kg_task is not None:
-            if kg_task.done():
-                _reap_task(kg_task)
-            else:
-                kg_task.cancel()
-                # Never block shutdown on maintenance cleanup.
-                await asyncio.wait({kg_task}, timeout=10)
+        stop_event.set()
+        if kg_task is not None and not kg_task.done():
+            kg_task.cancel()
+            # Best effort: wait briefly for the task's cleanup. This does not bound
+            # process exit; Fly's kill_timeout does.
+            await asyncio.wait({kg_task}, timeout=10)
 
     return 0
 
 
-def _reap_task(task: asyncio.Task[dict[str, Any]] | None) -> None:
-    """Retrieve a finished maintenance task's outcome so nothing stays unretrieved."""
-    if task is None or not task.done() or task.cancelled():
+def _log_maintenance_task_end(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
         return
     exc = task.exception()
     if exc is not None:
-        logger.warning("CRM KG maintenance task failed: %r", exc)
+        logger.error("CRM KG maintenance task ended unexpectedly: %r", exc)
 
 
 def main(argv: list[str] | None = None) -> int:
