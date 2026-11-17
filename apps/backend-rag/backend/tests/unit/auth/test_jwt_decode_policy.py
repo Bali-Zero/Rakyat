@@ -227,7 +227,7 @@ def test_every_decode_call_site_pins_algorithms_and_uses_the_shared_decoder():
             checked += 1
             assert "algorithms=" in body, f"{path}: decode without algorithms"
             assert "none" not in body.lower(), f"{path}: decode admits alg none"
-    assert checked == 11
+    assert checked == 12
 
 
 def test_shared_options_are_explicit_and_use_pyjwt_spelling():
