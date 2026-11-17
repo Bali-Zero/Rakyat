@@ -61,9 +61,9 @@ class UpdateRowRequest(BaseModel):
 
 
 def _get_sheets_service() -> Any:
-    from backend.services.integrations.sheets_service import SheetsService
+    from backend.services.integrations.sheets_service import get_sheets_service
 
-    return SheetsService()
+    return get_sheets_service()
 
 
 # ---- Endpoints ----

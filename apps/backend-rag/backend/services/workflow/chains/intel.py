@@ -21,6 +21,7 @@ Pointer State Pattern:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, TypedDict
 
@@ -97,6 +98,43 @@ async def _fetch_pending(state: IntelReviewState, app_state: Any) -> IntelReview
     return state
 
 
+def _score_item_with_gemini_sync(title: str, gemini_key: str) -> dict[str, Any]:
+    """Synchronously score an intel item with Gemini Flash without blocking the loop."""
+    import json as _json
+    import urllib.request as _ur
+
+    prompt = (
+        "Is this news/regulation significant for foreign investors or expats in Bali?\n"
+        f"Title: {title}\n\n"
+        "Reply ONLY with JSON: "
+        '{"significant": true/false, "confidence": 0.0-1.0, "reason": "one sentence"}'
+    )
+    req = _ur.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
+        data=_json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    resp = _ur.urlopen(req, timeout=15)
+    try:
+        raw_body = resp.read()
+    finally:
+        close_fn = getattr(resp, "close", None)
+        if callable(close_fn):
+            close_fn()
+    data = _json.loads(raw_body)
+    text = (
+        data.get("candidates", [{}])[0]
+        .get("content", {})
+        .get("parts", [{}])[0]
+        .get("text", "")
+        .strip()
+        .strip("`")
+    )
+    if text.startswith("json"):
+        text = text[4:].strip()
+    return _json.loads(text)
+
+
 async def _assess_items(state: IntelReviewState, _app_state: Any) -> IntelReviewState:
     """Score each item's significance using Gemini Flash — cheap, fast."""
     import os
@@ -128,33 +166,7 @@ async def _assess_items(state: IntelReviewState, _app_state: Any) -> IntelReview
             continue
 
         try:
-            import json as _json
-            import urllib.request as _ur
-
-            prompt = (
-                "Is this news/regulation significant for foreign investors or expats in Bali?\n"
-                f"Title: {title}\n\n"
-                "Reply ONLY with JSON: "
-                '{"significant": true/false, "confidence": 0.0-1.0, "reason": "one sentence"}'
-            )
-            req = _ur.Request(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
-                data=_json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode(),
-                headers={"Content-Type": "application/json"},
-            )
-            resp = _ur.urlopen(req, timeout=15)
-            data = _json.loads(resp.read())
-            text = (
-                data.get("candidates", [{}])[0]
-                .get("content", {})
-                .get("parts", [{}])[0]
-                .get("text", "")
-                .strip()
-                .strip("`")
-            )
-            if text.startswith("json"):
-                text = text[4:].strip()
-            result = _json.loads(text)
+            result = await asyncio.to_thread(_score_item_with_gemini_sync, title, gemini_key)
             assessments.append(
                 {
                     "id": item_id,
@@ -214,7 +226,7 @@ async def _notify_team(state: IntelReviewState, _app_state: Any) -> IntelReviewS
         item_type = item["type"]
 
         try:
-            data = staging_svc.load_staging_item(item_type, item_id)
+            data = await asyncio.to_thread(staging_svc.load_staging_item, item_type, item_id)
             if data:
                 await approval_svc.send_approval_notification(item_type, item_id, data, None, None)
                 notified.append(item_id)

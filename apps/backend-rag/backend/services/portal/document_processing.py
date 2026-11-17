@@ -9,6 +9,7 @@ Extracted from portal_service.py (Wave 1 refactor, PR #?):
 All three classes are stateless (classmethod-only) and safe to import directly.
 """
 
+import asyncio
 import io
 import re
 from typing import Any
@@ -173,6 +174,45 @@ class DocumentOCR:
         return mime or "application/octet-stream"
 
     @classmethod
+    def _extract_pdf_pymupdf_sync(cls, file_content: bytes) -> tuple[int, str]:
+        doc = fitz.open(stream=file_content, filetype="pdf")
+        try:
+            pages = len(doc)
+            texts = [page.get_text() for page in doc]
+            return pages, "\n".join(texts)
+        finally:
+            doc.close()
+
+    @classmethod
+    def _get_pdf_page_count_sync(cls, pdf_content: bytes) -> int:
+        doc = fitz.open(stream=pdf_content, filetype="pdf")
+        try:
+            return len(doc)
+        finally:
+            doc.close()
+
+    @classmethod
+    def _render_pdf_page_base64_sync(cls, pdf_content: bytes, page_num: int) -> str:
+        from PIL import Image
+
+        doc = fitz.open(stream=pdf_content, filetype="pdf")
+        try:
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom
+            img_data = pix.tobytes("png")
+            image = Image.open(io.BytesIO(img_data))
+            return cls._image_to_base64(image)
+        finally:
+            doc.close()
+
+    @classmethod
+    def _encode_image_bytes_base64_sync(cls, file_content: bytes) -> str:
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(file_content))
+        return cls._image_to_base64(image)
+
+    @classmethod
     async def _extract_from_pdf(cls, file_content: bytes) -> dict[str, Any]:
         """Extract text from PDF using Gemini Vision (same as passport box)."""
         result = {"text": "", "pages": 0, "success": False, "error": None}
@@ -181,14 +221,12 @@ class DocumentOCR:
             # Fallback to PyMuPDF basic extraction
             if PYMUPDF_AVAILABLE:
                 try:
-                    doc = fitz.open(stream=file_content, filetype="pdf")
-                    result["pages"] = len(doc)
-                    texts = []
-                    for page in doc:
-                        texts.append(page.get_text())
-                    result["text"] = "\n".join(texts)
+                    pages, extracted_text = await asyncio.to_thread(
+                        cls._extract_pdf_pymupdf_sync, file_content
+                    )
+                    result["pages"] = pages
+                    result["text"] = extracted_text
                     result["success"] = True
-                    doc.close()
                     return result
                 except Exception as e:
                     result["error"] = f"PyMuPDF extraction failed: {e}"
@@ -231,26 +269,20 @@ class DocumentOCR:
             return result
 
         try:
-            from PIL import Image
-
-            doc = fitz.open(stream=pdf_content, filetype="pdf")
-            result["pages"] = len(doc)
+            page_count = await asyncio.to_thread(cls._get_pdf_page_count_sync, pdf_content)
+            result["pages"] = page_count
             texts = []
 
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom
-                img_data = pix.tobytes("png")
-                image = Image.open(io.BytesIO(img_data))
-
+            for page_num in range(page_count):
                 # Use Gemini Vision for OCR
-                img_base64 = cls._image_to_base64(image)
+                img_base64 = await asyncio.to_thread(
+                    cls._render_pdf_page_base64_sync, pdf_content, page_num
+                )
                 page_text = await cls._gemini_vision_ocr(img_base64, vision_service)
 
                 if page_text:
                     texts.append(page_text)
 
-            doc.close()
             result["text"] = "\n".join(texts)
             result["success"] = True
 
@@ -269,10 +301,7 @@ class DocumentOCR:
             return result
 
         try:
-            from PIL import Image
-
-            image = Image.open(io.BytesIO(file_content))
-            img_base64 = cls._image_to_base64(image)
+            img_base64 = await asyncio.to_thread(cls._encode_image_bytes_base64_sync, file_content)
 
             vision_service = PDFVisionService()
             text = await cls._gemini_vision_ocr(img_base64, vision_service)

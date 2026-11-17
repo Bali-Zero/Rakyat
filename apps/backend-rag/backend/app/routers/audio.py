@@ -11,6 +11,7 @@ from backend.app.utils.internal_api_auth import verify_internal_api_key
 
 router = APIRouter(prefix="/audio", tags=["Audio"])
 logger = logging.getLogger(__name__)
+_MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB OOM bound
 
 
 class SpeechRequest(BaseModel):
@@ -30,13 +31,26 @@ async def transcribe_audio(
     Transcribe uploaded audio file to text.
     """
     try:
-        # Read file into memory
-        content = await file.read()
+        raw_size = getattr(file, "size", None)
+        if isinstance(raw_size, int) and raw_size > _MAX_AUDIO_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Audio file exceeds maximum size (25 MB)",
+            )
+        # Read file into memory up to limit
+        content = await file.read(_MAX_AUDIO_UPLOAD_BYTES + 1)
+        if len(content) > _MAX_AUDIO_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Audio file exceeds maximum size (25 MB)",
+            )
         file_obj = io.BytesIO(content)
         file_obj.name = file.filename  # helper for openai client to guess format
 
         text = await audio_service.transcribe_audio(file_obj, language=language)
         return {"text": text}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Transcribe endpoint error: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e
