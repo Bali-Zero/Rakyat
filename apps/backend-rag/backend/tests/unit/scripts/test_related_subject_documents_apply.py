@@ -744,6 +744,64 @@ def test_two_rows_with_the_same_reference_are_two_independent_rows(tmp_path, cap
     assert res.rec.refs == ["5", "5"] and res.counters()["would_link"] == 2
 
 
+def test_a_repeated_normalized_reference_sends_both_rows_and_suppresses_nothing(tmp_path, capsys):
+    rows = [
+        row(7, docs=[document("rep-a", files=("wordrepa",))]),
+        row(
+            "7",
+            identifiers=[{"type": "passport", "value": "ZZ0000002"}],
+            docs=[document("rep-b", files=("wordrepb",))],
+        ),
+    ]
+    res = run(tmp_path, capsys, rows)
+    assert res.code == 0 and res.rec.refs == ["7", "7"]
+    assert res.counters()["would_link"] == 2 and "skipped" not in res.out
+    assert [json.loads(r.content)["documents"][0]["sha256"] for r in res.rec.requests] == [
+        dh("rep-a"),
+        dh("rep-b"),
+    ]
+
+
+class StatefulRegistry:
+    """A fake registry that remembers what it was sent: `linked` first, `already_linked` after."""
+
+    def __init__(self):
+        self.seen: set[str] = set()
+
+    def __call__(self, req, n):
+        key = (
+            json.dumps(req["documents"], sort_keys=True) + req["subject"]["identifiers"][0]["value"]
+        )
+        outcome = "already_linked" if key in self.seen else "linked"
+        self.seen.add(key)
+        return 200, {"outcome": outcome, "dry_run": req["dry_run"]}
+
+
+def test_two_complete_apply_runs_send_every_row_again_and_the_second_answers_already_linked(
+    tmp_path, capsys
+):
+    rows = [
+        row("1"),
+        row(
+            "2",
+            identifiers=[{"type": "passport", "value": "ZZ0000002"}],
+            docs=[document("b", files=("wordtwo",))],
+        ),
+        row("3", identifiers=[{"type": "passport", "value": "ZZ0000003"}], docs=[document("c")]),
+    ]
+    registry = StatefulRegistry()
+    plan = write_plan(tmp_path, rows)
+    first = run(tmp_path, capsys, rows, registry, apply_=True, plan=plan)
+    second = run(tmp_path, capsys, rows, registry, apply_=True, plan=plan)
+    assert (first.code, second.code) == (0, 0)
+    assert first.counters()["linked"] == 3 and "already_linked" not in first.out
+    assert second.counters()["already_linked"] == 3 and "linked=" not in second.out.replace(
+        "already_linked=", ""
+    )
+    assert len(first.rec.requests) == len(second.rec.requests) == 3
+    assert [r.content for r in first.rec.requests] == [r.content for r in second.rec.requests]
+
+
 def test_an_empty_plan_exits_zero_and_sends_nothing(tmp_path, capsys):
     for content in ("", "\n\n  \n"):
         (tmp_path / "plan.jsonl").write_text(content)
