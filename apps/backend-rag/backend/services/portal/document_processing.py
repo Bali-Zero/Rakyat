@@ -173,37 +173,9 @@ class DocumentOCR:
         mime, _ = mimetypes.guess_type(file_name)
         return mime or "application/octet-stream"
 
-    @classmethod
-    def _extract_pdf_pymupdf_sync(cls, file_content: bytes) -> tuple[int, str]:
-        doc = fitz.open(stream=file_content, filetype="pdf")
-        try:
-            pages = len(doc)
-            texts = [page.get_text() for page in doc]
-            return pages, "\n".join(texts)
-        finally:
-            doc.close()
-
-    @classmethod
-    def _get_pdf_page_count_sync(cls, pdf_content: bytes) -> int:
-        doc = fitz.open(stream=pdf_content, filetype="pdf")
-        try:
-            return len(doc)
-        finally:
-            doc.close()
-
-    @classmethod
-    def _render_pdf_page_base64_sync(cls, pdf_content: bytes, page_num: int) -> str:
-        from PIL import Image
-
-        doc = fitz.open(stream=pdf_content, filetype="pdf")
-        try:
-            page = doc.load_page(page_num)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom
-            img_data = pix.tobytes("png")
-            image = Image.open(io.BytesIO(img_data))
-            return cls._image_to_base64(image)
-        finally:
-            doc.close()
+    # PyMuPDF (fitz) is not thread-safe: concurrent use from several threads can
+    # return wrong results or crash the process. Every fitz call in this class
+    # stays on the event-loop thread and is never handed to asyncio.to_thread.
 
     @classmethod
     def _encode_image_bytes_base64_sync(cls, file_content: bytes) -> str:
@@ -221,12 +193,14 @@ class DocumentOCR:
             # Fallback to PyMuPDF basic extraction
             if PYMUPDF_AVAILABLE:
                 try:
-                    pages, extracted_text = await asyncio.to_thread(
-                        cls._extract_pdf_pymupdf_sync, file_content
-                    )
-                    result["pages"] = pages
-                    result["text"] = extracted_text
+                    doc = fitz.open(stream=file_content, filetype="pdf")
+                    result["pages"] = len(doc)
+                    texts = []
+                    for page in doc:
+                        texts.append(page.get_text())
+                    result["text"] = "\n".join(texts)
                     result["success"] = True
+                    doc.close()
                     return result
                 except Exception as e:
                     result["error"] = f"PyMuPDF extraction failed: {e}"
@@ -269,20 +243,26 @@ class DocumentOCR:
             return result
 
         try:
-            page_count = await asyncio.to_thread(cls._get_pdf_page_count_sync, pdf_content)
-            result["pages"] = page_count
+            from PIL import Image
+
+            doc = fitz.open(stream=pdf_content, filetype="pdf")
+            result["pages"] = len(doc)
             texts = []
 
-            for page_num in range(page_count):
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom
+                img_data = pix.tobytes("png")
+                image = Image.open(io.BytesIO(img_data))
+
                 # Use Gemini Vision for OCR
-                img_base64 = await asyncio.to_thread(
-                    cls._render_pdf_page_base64_sync, pdf_content, page_num
-                )
+                img_base64 = cls._image_to_base64(image)
                 page_text = await cls._gemini_vision_ocr(img_base64, vision_service)
 
                 if page_text:
                     texts.append(page_text)
 
+            doc.close()
             result["text"] = "\n".join(texts)
             result["success"] = True
 

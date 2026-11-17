@@ -7,6 +7,7 @@ import base64
 import inspect
 import io
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -434,23 +435,70 @@ async def test_runtime_intel_and_document_processing_and_accounting_offload_to_t
     mock_score.assert_called_once()
     spy_intel_thread.assert_awaited_once()
 
-    # 2. DocumentOCR PyMuPDF fallback offloads via asyncio.to_thread
+    # 2. DocumentOCR keeps every PyMuPDF (fitz) call on the event-loop thread:
+    #    fitz is not thread-safe, so it must never be handed to asyncio.to_thread.
+    loop_thread = threading.get_ident()
+    fitz_threads: list[int] = []
+
     fake_page = MagicMock()
     fake_page.get_text.return_value = "Visa text"
     fake_doc = MagicMock()
     fake_doc.__len__.return_value = 1
     fake_doc.__iter__.return_value = iter([fake_page])
+
+    def _open_text_doc(*_args: Any, **_kwargs: Any) -> MagicMock:
+        fitz_threads.append(threading.get_ident())
+        return fake_doc
+
     with (
         patch.object(document_processing_module, "PDF_VISION_AVAILABLE", False),
         patch.object(document_processing_module, "PYMUPDF_AVAILABLE", True),
         patch.object(document_processing_module, "fitz", create=True) as mock_fitz,
         patch.object(document_processing_module.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_ocr_thread,
     ):
-        mock_fitz.open.return_value = fake_doc
+        mock_fitz.open.side_effect = _open_text_doc
         ocr_res = await document_processing_module.DocumentOCR._extract_from_pdf(b"%PDF")
     assert ocr_res["success"] is True
     assert ocr_res["text"] == "Visa text"
-    spy_ocr_thread.assert_awaited_once()
+    spy_ocr_thread.assert_not_awaited()
+
+    from PIL import Image
+
+    png = io.BytesIO()
+    Image.new("RGB", (2, 2), "white").save(png, format="PNG")
+    fake_pix = MagicMock()
+    fake_pix.tobytes.return_value = png.getvalue()
+    render_page = MagicMock()
+    render_page.get_pixmap.return_value = fake_pix
+    render_doc = MagicMock()
+    render_doc.__len__.return_value = 2
+    render_doc.load_page.return_value = render_page
+
+    def _open_render_doc(*_args: Any, **_kwargs: Any) -> MagicMock:
+        fitz_threads.append(threading.get_ident())
+        return render_doc
+
+    with (
+        patch.object(document_processing_module, "PYMUPDF_AVAILABLE", True),
+        patch.object(document_processing_module, "fitz", create=True) as mock_fitz,
+        patch.object(
+            document_processing_module.DocumentOCR,
+            "_gemini_vision_ocr",
+            new_callable=AsyncMock,
+            return_value="Page text",
+        ),
+        patch.object(document_processing_module.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_render_thread,
+    ):
+        mock_fitz.open.side_effect = _open_render_doc
+        vision_res = await document_processing_module.DocumentOCR._extract_pdf_via_vision(
+            b"%PDF", MagicMock()
+        )
+    assert vision_res["success"] is True
+    assert vision_res["pages"] == 2
+    assert vision_res["text"] == "Page text\nPage text"
+    assert render_doc.load_page.call_count == 2
+    spy_render_thread.assert_not_awaited()
+    assert fitz_threads == [loop_thread, loop_thread]
 
     # 3. accounting.import_cashout_pdf rejects >8 MB with 413 and offloads parse_cashout_pdf_with_weeks
     oversized_pdf = _FakeUpload(
