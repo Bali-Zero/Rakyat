@@ -74,8 +74,25 @@ export type ProcessStepState = z.infer<typeof ProcessStepState>;
  * (practice_status_log's actor) — this is a client-facing portal payload
  * and that field is a staff email address. Do not reintroduce it here.
  */
+const LEGACY_API_STEP_STATE_MAP: Record<
+  string,
+  z.infer<typeof ProcessStepState>
+> = {
+  under_review: "on_process",
+  rejected: "cancelled",
+};
+
+export const ProcessStepStateInput = z.preprocess(
+  (val) =>
+    typeof val === "string" &&
+    Object.prototype.hasOwnProperty.call(LEGACY_API_STEP_STATE_MAP, val)
+      ? LEGACY_API_STEP_STATE_MAP[val]
+      : val,
+  ProcessStepState,
+);
+
 export const ProcessStep = z.object({
-  status: ProcessStepState,
+  status: ProcessStepStateInput,
   label: z.string(),
   completed: z.boolean(),
   is_current: z.boolean(),
@@ -99,7 +116,7 @@ export const ProcessTimelineData = z.object({
   practice_id: z.number().int().nonnegative(),
   practice_name: z.string().nullable().optional(),
   practice_category: z.string().nullable().optional(),
-  current_status: ProcessStepState,
+  current_status: ProcessStepStateInput.nullable(),
   start_date: z.string().nullable().optional(),
   completion_date: z.string().nullable().optional(),
   expiry_date: z.string().nullable().optional(),

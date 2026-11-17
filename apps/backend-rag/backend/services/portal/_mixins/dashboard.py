@@ -431,7 +431,27 @@ class PortalDashboardMixin:
 
         # Add missing documents actions
         for item in action_items:
-            missing_docs = item["missing_documents"] or []
+            raw_missing = item["missing_documents"]
+            if isinstance(raw_missing, str):
+                stripped = raw_missing.strip()
+                if not stripped:
+                    missing_docs: list[str] = []
+                elif stripped.startswith("["):
+                    try:
+                        parsed = json.loads(stripped)
+                        missing_docs = (
+                            [str(d).strip() for d in parsed if str(d).strip()]
+                            if isinstance(parsed, list)
+                            else [p.strip() for p in stripped.split(",") if p.strip()]
+                        )
+                    except (ValueError, TypeError):
+                        missing_docs = [p.strip() for p in stripped.split(",") if p.strip()]
+                else:
+                    missing_docs = [p.strip() for p in stripped.split(",") if p.strip()]
+            elif isinstance(raw_missing, (list, tuple)):
+                missing_docs = [str(d).strip() for d in raw_missing if str(d).strip()]
+            else:
+                missing_docs = []
             if missing_docs:
                 actions.append(
                     {
