@@ -597,6 +597,77 @@ class TestBankStatementPreview:
         assert resp.status_code == 200
         assert len(calls) == 1
 
+    def _post_raw(self, mock_db_pool, user, disposition: str, body: bytes, extra: bytes = b""):
+        """A hand-built multipart body: the test client cannot send `filename=""`."""
+        boundary = "XTESTBOUNDARYX"
+        payload = (
+            f"--{boundary}\r\nContent-Disposition: {disposition}\r\n"
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode() + body + b"\r\n" + extra + f"--{boundary}--\r\n".encode()
+        client = TestClient(_build_app(mock_db_pool, user), raise_server_exceptions=False)
+        return client.post(
+            self.URL,
+            content=payload,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
+    def test_empty_filename_is_refused_like_any_name_without_the_suffix(
+        self, mock_db_pool, asya_user
+    ) -> None:
+        # gate round 4: `filename=""` used to be replaced by a default ending in .csv
+        resp = self._post_raw(
+            mock_db_pool, asya_user, 'form-data; name="file"; filename=""',
+            _STATEMENT_FIXTURE.read_bytes(),
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "only .csv bank statements are accepted"
+
+    @pytest.mark.parametrize(
+        ("filename", "status"),
+        [
+            ("statement.csv", 200),
+            ("STATEMENT.CSV", 200),  # the suffix is compared case-insensitively
+            (".csv", 200),
+            ("../../statement.csv", 200),  # the name is used for the suffix test only
+            ("statement", 422),
+            ("statement.csv ", 422),  # as sent, no trimming
+            ("statement.csv.exe", 422),
+            ("statement.txt", 422),
+        ],
+    )
+    def test_filename_suffix_rule(self, mock_db_pool, asya_user, filename, status) -> None:
+        resp = self._post_raw(
+            mock_db_pool, asya_user, f'form-data; name="file"; filename="{filename}"',
+            _STATEMENT_FIXTURE.read_bytes(),
+        )
+        assert resp.status_code == status
+
+    def test_part_content_type_is_ignored(self, mock_db_pool, asya_user) -> None:
+        # _post_raw labels the part application/pdf; only the filename suffix and the bytes count
+        resp = self._post_raw(
+            mock_db_pool, asya_user, 'form-data; name="file"; filename="a.csv"',
+            _STATEMENT_FIXTURE.read_bytes(),
+        )
+        assert resp.status_code == 200
+
+    def test_with_several_file_parts_the_last_one_is_the_upload(
+        self, mock_db_pool, asya_user
+    ) -> None:
+        second = (
+            b'--XTESTBOUNDARYX\r\nContent-Disposition: form-data; name="file"; filename="b.csv"\r\n'
+            b"Content-Type: text/csv\r\n\r\nnot a statement\r\n"
+        )
+        resp = self._post_raw(
+            mock_db_pool, asya_user, 'form-data; name="file"; filename="a.csv"',
+            _STATEMENT_FIXTURE.read_bytes(), extra=second,
+        )
+        assert resp.status_code == 422
+        assert "no 'Post Date' header row found" in resp.json()["detail"]
+
+    def test_other_methods_are_not_allowed(self, mock_db_pool, asya_user) -> None:
+        client = TestClient(_build_app(mock_db_pool, asya_user), raise_server_exceptions=False)
+        assert client.get(self.URL).status_code == 405
+
     def test_filename_is_not_echoed(self, mock_db_pool, asya_user) -> None:
         resp = self._post(mock_db_pool, asya_user, b"x", name="SENTINEL7f3a.pdf")
         assert resp.status_code == 422

@@ -191,7 +191,8 @@ async def preview_bank_statement(
     """Parse a CIMB statement CSV and return a summary report. Writes nothing."""
     _require_accounting_access(current_user)
 
-    filename = file.filename or "upload.csv"
+    # No default name: an empty filename is refused like any other name without the suffix.
+    filename = file.filename or ""
     if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=422, detail="only .csv bank statements are accepted")
 
