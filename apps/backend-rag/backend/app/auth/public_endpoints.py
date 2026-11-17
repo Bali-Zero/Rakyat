@@ -327,6 +327,16 @@ _INFRA = (
         "related-subject registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
         match="exact",
     ),
+    # Slice 2 (documents by reference): the same flag and key, checked by the same in-router
+    # dependency. Scoped to POST, so a GET on this path is not public. The slice-1 entry above
+    # is unchanged and still matches every method.
+    PublicEndpoint(
+        "/api/crm/related-subjects/documents/register",
+        Category.INFRA,
+        "related-subject documents registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
     PublicEndpoint(
         "/api/crm/internal/clients/{client_id}/documents/upload",
         Category.INFRA,
