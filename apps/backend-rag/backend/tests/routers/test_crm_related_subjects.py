@@ -2060,7 +2060,7 @@ def assert_answer_shape_docs(resp):
         assert isinstance(data.get("subject_id", 0), int)
         if "counts" in data:
             assert set(data["counts"]) == CLOSED_COUNT_KEYS
-            assert all(isinstance(n, int) and 0 <= n <= 1000 for n in data["counts"].values())
+            assert all(type(n) is int and 0 <= n <= 1000 for n in data["counts"].values())
         if data["outcome"] in ("linked", "would_link", "already_linked"):
             assert "subject_id" in data and "counts" in data
         else:
@@ -2764,6 +2764,11 @@ async def test_s2_c7_a_known_hash_with_another_size_is_a_conflict_and_nothing_is
 # ── item 8: order ────────────────────────────────────────────────────────────
 
 
+def no_update_or_delete(sql):
+    """Every statement of every attempt, abandoned ones included, is a read or an INSERT."""
+    assert not sql.lstrip().upper().startswith(("UPDATE", "DELETE", "TRUNCATE")), sql[:40]
+
+
 class _ArgsConn(_Conn):
     """_Conn whose hook sees (sql, args) and which counts the transactions (attempts) it opens."""
 
@@ -3015,6 +3020,7 @@ async def test_s2_c9_a_lost_insert_abandons_the_attempt_and_the_second_one_answe
     state = {"done": False}
 
     async def hook(sql, args):
+        no_update_or_delete(sql)
         if sql.startswith(LOST[lost][0]) and not state["done"]:
             state["done"] = True
             async with pool.acquire() as side:
@@ -3178,6 +3184,7 @@ async def test_s2_c10_a_failure_at_each_stage_leaves_none_of_the_rows(writes, co
     payload = dbody([doc("rb-a", files=("wordrba",)), doc("rb-b", files=("wordrbb",))])
 
     async def hook(sql, args):
+        no_update_or_delete(sql)
         if stage == "after-documents" and sql.startswith("INSERT INTO related_document_sightings"):
             raise _Stage
         if stage == "after-sightings" and sql.startswith("INSERT INTO related_subject_documents"):
@@ -3232,6 +3239,9 @@ INVALID_DOC_BODIES = {
         lambda p: p["documents"][0]["drive"].append(dict(p["documents"][0]["drive"][0]))
     ),
     "forty_one_documents": dbody([doc(f"many-{n}") for n in range(41)]),
+    "twenty_one_identifiers": dbody(
+        [doc("val")], ids=tuple(("passport", f"ZZ{n:07d}") for n in range(21))
+    ),
     "nine_file_ids": dbody([doc("nine", files=tuple(f"wordnine{n}" for n in range(9)))]),
     "no_documents": dbody([]),
     "unknown_top_field": {**dbody([doc("val")]), SENT_TYPE: SENT_FILE},
@@ -3294,6 +3304,9 @@ async def test_s2_c11_the_new_codes_and_the_location_rules_are_produced_by_the_r
     assert codes["size_zero"] == ("greater_than_equal", ["documents", 0, "byte_size"])
     assert codes["unknown_channel"] == ("literal_error", ["documents", 0, "first_channel"])
     assert codes["forty_one_documents"] == ("too_long", ["documents"])
+    resp = await postd(stack, INVALID_DOC_BODIES["twenty_one_identifiers"])
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == [{"loc": ["subject", "identifiers"], "code": "too_long"}]
     assert codes["nine_file_ids"] == ("too_long", ["documents", 0, "drive"])
     assert codes["size_as_string"][0] == "int_type"
     assert codes["bad_first_seen_date"][0] in ("date_parsing", "date_type")
@@ -3353,13 +3366,14 @@ async def test_s2_c11_the_largest_valid_request_fits_the_cap_as_compact_utf8_and
     compact = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     assert len(compact) <= route_module.MAX_BODY_BYTES
     assert len(json.dumps(payload).encode()) > route_module.MAX_BODY_BYTES
-    await _seed(conn, ids=ids)
+    sid = await _seed(conn, ids=ids)
+    assert sid == await conn.fetchval("SELECT max(id) FROM related_subjects")
     async with writes_nothing(conn):
         resp = await postd(Stack(pool, middleware=False), compact)
         refused = await postd(Stack(pool, middleware=False), json.dumps(payload))
     assert resp.json() == {
         "outcome": "would_link",
-        "subject_id": resp.json()["subject_id"],
+        "subject_id": sid,
         "dry_run": True,
         "counts": {"documents": 40, "sightings": 320, "links": 40, "descriptive_differences": 0},
     }
@@ -3657,3 +3671,68 @@ async def test_s2_c15_the_slice_two_rollback_alone_leaves_slice_one_working(writ
     writes(*NEW_TABLES)
     writes.counts(related_subjects=1, related_subject_identifiers=1)
     assert (await reg(conn, subj(), dry_run=False))["outcome"] == "created"
+
+
+# ── round-1 hardening: the database CHECKs themselves, evidence per request ──
+
+_DOC_INSERT = (
+    "INSERT INTO related_documents (sha256, byte_size, mime_type, first_seen_on, first_channel, "
+    "evidence, created_by) VALUES ($1, 1, $2, now(), $3, '{}', 'x')"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("table", "args"),
+    [
+        ("sha256", ("not-a-hash", MIME, "drive")),
+        ("mime_type", (dh("chk"), "NoSlash", "drive")),
+        ("first_channel", (dh("chk"), MIME, "pigeon")),
+    ],
+)
+async def test_s2_db_checks_refuse_a_malformed_document_row_by_themselves(
+    writes, conn, table, args
+):
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute(_DOC_INSERT, *args)
+
+
+@pytest.mark.asyncio
+async def test_s2_db_checks_refuse_a_malformed_doc_type_and_sighting_ref(writes, conn):
+    s1 = await _seed(conn)
+    await _seed_doc(conn, "chk-doc")
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute(
+            "INSERT INTO related_subject_documents (subject_id, sha256, doc_type, evidence, "
+            "created_by) VALUES ($1, $2, 'Bad Type', '{}', 'x')",
+            s1,
+            dh("chk-doc"),
+        )
+    with pytest.raises(asyncpg.CheckViolationError):
+        await conn.execute(
+            "INSERT INTO related_document_sightings (kind, ref, sha256, seen_on, created_by) "
+            "VALUES ('drive', 'bad ref with spaces!!!!', $1, now(), 'x')",
+            dh("chk-doc"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_s2_evidence_belongs_to_the_request_that_inserted_the_row(writes, conn):
+    declare_docs(writes, documents=2, sightings=3, links=2)
+    await _seed(conn)
+    first = dbody([doc("ev-a", files=("wordeva",))])
+    second = dbody([doc("ev-a", files=("wordeva", "wordevb")), doc("ev-b", files=("wordevc",))])
+    second["evidence"] = {"plan_sha256": dh("other-plan"), "subject_ref": "REF-OTHER"}
+    await regd(conn, first)
+    rows_a = await registry_rows(conn)
+    await regd(conn, second)
+    rows = {r["sha256"]: r for r in await conn.fetch("SELECT * FROM related_documents")}
+    links = {r["sha256"]: r for r in await conn.fetch("SELECT * FROM related_subject_documents")}
+    assert json.loads(rows[dh("ev-a")]["evidence"]) == {"plan_sha256": PLAN2}
+    assert json.loads(rows[dh("ev-b")]["evidence"]) == {"plan_sha256": dh("other-plan")}
+    assert json.loads(links[dh("ev-a")]["evidence"]) == {"plan_sha256": PLAN2, "subject_ref": REF}
+    assert json.loads(links[dh("ev-b")]["evidence"]) == {
+        "plan_sha256": dh("other-plan"),
+        "subject_ref": "REF-OTHER",
+    }
+    assert set(rows_a["related_documents"]) <= set((await registry_rows(conn))["related_documents"])

@@ -73,8 +73,8 @@ class Recorder:
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        status, body = self.answer(json.loads(request.content))
-        return httpx.Response(status, json=body)
+        status, body, *extra = self.answer(json.loads(request.content))
+        return httpx.Response(status, json=body, headers=extra[0] if extra else None)
 
 
 def _counts(documents=0, sightings=0, links=0, differences=0):
@@ -408,3 +408,168 @@ def test_known_codes_pass_through_unchanged(tmp_path, capsys):
     busy = Recorder(lambda req: (503, {"detail": "registry_busy"}))
     apply_mod.main(["--plan", str(plan)], client=busy.client)
     assert "reason http_503:registry_busy=1" in capsys.readouterr().out
+
+
+# ── B1: counts are bounded by what the request submitted ─────────────────────
+
+NIK = "3201234567890123"  # a synthetic identifier value that is also all digits
+
+
+def _one_doc_row():
+    return row(
+        identifiers=[{"type": "nik", "value": NIK}],
+        docs=[document("bound", files=("wordbound",))],
+    )
+
+
+def _answer(counts, outcome="would_link"):
+    body = {"outcome": outcome, "subject_id": 7, "dry_run": True}
+    if counts is not None:
+        body["counts"] = counts
+    return lambda req: (200, body)
+
+
+@pytest.mark.parametrize(
+    ("counts", "leak"),
+    [
+        ({**_counts(1, 1, 1), "documents": int(NIK)}, NIK),
+        ({**_counts(1, 1, 1), "sightings": int("7" * 33)}, "7" * 33),
+        ({**_counts(1, 1, 1), "documents": 2}, None),  # one above the request's own number
+        ({**_counts(1, 1, 1), "sightings": 2}, None),
+        ({**_counts(1, 1, 1), "links": 2}, None),
+        ({**_counts(1, 1, 1), "descriptive_differences": 4}, None),  # 2 x 1 + 1 = 3 is the bound
+        ({**_counts(1, 1, 1), "documents": True}, None),
+        ({**_counts(1, 1, 1), "links": -1}, None),
+        ({**_counts(1, 1, 1), "sightings": 1.0}, None),
+        ({"documents": 1, "sightings": 1, "links": 1}, None),  # a key missing
+        (None, None),  # the object missing
+        ("not-an-object", None),
+    ],
+)
+def test_a_malformed_counts_answer_adds_nothing_prints_nothing_and_fails_the_run(
+    tmp_path, capsys, counts, leak
+):
+    plan = _plan(tmp_path, [_one_doc_row()])
+    seen = Recorder(_answer(counts))
+    code = apply_mod.main(["--plan", str(plan)], client=seen.client)
+    out = capsys.readouterr().out
+    assert code == 1 and "malformed_counts=1" in out and "would_link=1" in out
+    assert "sum would_link" not in out
+    if leak:
+        assert leak not in out
+    assert not any(line.startswith("sum ") for line in out.splitlines())
+
+
+def test_counts_within_the_requests_own_bounds_are_summed(tmp_path, capsys):
+    plan = _plan(tmp_path, [_one_doc_row()])
+    seen = Recorder(_answer(_counts(1, 1, 1, 3)))
+    assert apply_mod.main(["--plan", str(plan)], client=seen.client) == 0
+    out = capsys.readouterr().out
+    assert "sum would_link:descriptive_differences=3" in out and "malformed_counts" not in out
+
+
+def test_an_outcome_that_carries_no_counts_ignores_a_counts_object(tmp_path, capsys):
+    plan = _plan(tmp_path, [_one_doc_row()])
+    seen = Recorder(
+        lambda req: (
+            200,
+            {
+                "outcome": "conflict",
+                "reason": "document_differs",
+                "counts": {"documents": int(NIK)},
+            },
+        )
+    )
+    assert apply_mod.main(["--plan", str(plan)], client=seen.client) == 0
+    out = capsys.readouterr().out
+    assert NIK not in out and "malformed_counts" not in out
+
+
+# ── B2: no cookie ever rides along ───────────────────────────────────────────
+
+ALLOWED_NAMES = {"x-crm-write-key", "content-type"} | TRANSPORT_DEFAULTS
+
+
+def _assert_clean(requests):
+    assert requests
+    for request in requests:
+        names = {k.lower() for k in request.headers.keys()}
+        assert "cookie" not in names
+        assert {"x-crm-write-key", "content-type"} <= names and names <= ALLOWED_NAMES
+
+
+def test_a_cookie_set_by_an_answer_is_not_sent_with_the_next_subject(tmp_path):
+    cookie = {"Set-Cookie": f"probe={fid('wordcookie')}; Path=/"}
+    seen = Recorder(lambda req: (*would_link(req), cookie))
+    rows = [row(ref="REF-1"), row(ref="REF-2", docs=[document("b", files=("wordtwo",))])]
+    assert apply_mod.main(["--plan", str(_plan(tmp_path, rows))], client=seen.client) == 0
+    assert len(seen.requests) == 2
+    _assert_clean(seen.requests)
+    assert "cookie" not in {k.lower() for k in seen.requests[1].headers.keys()}
+
+
+def test_a_cookie_set_by_a_503_is_not_sent_with_the_retry(tmp_path):
+    cookie = {"Set-Cookie": f"probe={fid('wordcookie')}; Path=/"}
+    calls = []
+
+    def answer(req):
+        calls.append(1)
+        if len(calls) == 1:
+            return 503, {"detail": "registry_busy"}, cookie
+        return (*would_link(req), cookie)
+
+    seen = Recorder(answer)
+    apply_mod.main(
+        ["--plan", str(_plan(tmp_path, [row(ref="REF-1"), row(ref="REF-2")]))], client=seen.client
+    )
+    assert len(seen.requests) >= 3  # first call, its retry, the second subject
+    _assert_clean(seen.requests)
+
+
+def test_a_prepared_request_that_is_not_the_intended_one_is_never_sent(tmp_path, capsys):
+    sent = []
+
+    class Tampered(httpx.Client):
+        def build_request(self, *a, **kw):
+            request = super().build_request(*a, **kw)
+            request.headers["X-Plan-Ref"] = "REF-1"
+            return request
+
+        def send(self, request, **kw):
+            sent.append(request)
+            return super().send(request, **kw)
+
+    client = Tampered(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    assert apply_mod.main(["--plan", str(_plan(tmp_path, [row()]))], client=client) == 1
+    out = capsys.readouterr().out
+    assert sent == [] and "prepared request was refused" in out and "REF-1" not in out
+    with pytest.raises(slice_one.UnsafeRequest):
+        slice_one.check_prepared(
+            httpx.Request(
+                "POST",
+                "https://x.test/",
+                headers={
+                    "Cookie": "a=b",
+                    "X-CRM-Write-Key": "k",
+                    "Content-Type": "application/json",
+                },
+            )
+        )
+
+
+# ── M1: the printed totals count what preflight would send ───────────────────
+
+
+def test_the_plan_totals_leave_out_a_row_that_preflight_refuses_for_size(monkeypatch):
+    small, big = (
+        row(ref="REF-1"),
+        row(
+            ref="REF-2",
+            identifiers=[{"type": "passport", "value": "ZZ0000002"}],
+            docs=[document(f"big{n}", files=("wordbig",)) for n in range(10)],
+        ),
+    )
+    cap = len(apply_mod.encode(apply_mod.row_to_request(small, "0" * 64, dry_run=True)[0])) + 50
+    monkeypatch.setattr(apply_mod, "MAX_BODY_BYTES", cap)
+    assert apply_mod.preflight(big, PLAN_SHA, dry_run=True)[2] == "body_too_large"
+    assert apply_mod.unique_totals([small, big]) == {"documents": 1, "sightings": 1, "links": 1}

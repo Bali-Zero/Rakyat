@@ -215,6 +215,24 @@ def append_ledger(path: Path, entry: dict[str, Any]) -> None:
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
 
 
+class UnsafeRequest(Exception):
+    """A prepared request is not the one that was meant to leave. The message holds no value."""
+
+
+_APP_HEADERS = frozenset({"x-crm-write-key", "content-type"})
+_TRANSPORT_HEADERS = frozenset(
+    {"host", "content-length", "accept", "accept-encoding", "connection", "user-agent"}
+)
+
+
+def check_prepared(prepared: Any) -> None:
+    """Refuse a prepared request with a cookie, or any header beyond the key, the content type
+    and the transport defaults. Raises ``UnsafeRequest`` with a fixed message."""
+    names = {name.lower() for name in prepared.headers.keys()}
+    if "cookie" in names or not _APP_HEADERS <= names or names - _APP_HEADERS - _TRANSPORT_HEADERS:
+        raise UnsafeRequest("prepared request refused: unexpected headers")
+
+
 def send(
     client: Any, url: str, key: str, request: dict[str, Any] | bytes
 ) -> tuple[int, dict[str, Any]]:
@@ -227,6 +245,9 @@ def send(
     for attempt in range(2):
         try:
             if isinstance(request, bytes):
+                jar = getattr(client, "cookies", None)
+                if jar is not None:
+                    jar.clear()  # a Set-Cookie of an earlier answer must never ride along
                 prepared = client.build_request(
                     "POST",
                     url,
@@ -234,6 +255,7 @@ def send(
                     headers={"X-CRM-Write-Key": key, "Content-Type": "application/json"},
                     timeout=30.0,
                 )
+                check_prepared(prepared)
                 resp = client.send(prepared)
             else:
                 resp = client.post(
@@ -246,6 +268,8 @@ def send(
             last = (resp.status_code, body if isinstance(body, dict) else {})
             if resp.status_code != 503:
                 return last
+        except UnsafeRequest:
+            raise
         except Exception:
             last = (0, {})
         if attempt == 0:

@@ -159,7 +159,7 @@ def unique_totals(rows: list[dict[str, Any]]) -> dict[str, int]:
     sightings: set[tuple[str, str]] = set()
     links: set[tuple[str, str]] = set()
     for row in rows:
-        request, _ = row_to_request(row, "0" * 64, dry_run=True)
+        request, _body, _skip = preflight(row, "0" * 64, dry_run=True)
         if request is None:
             continue
         ref = request["evidence"]["subject_ref"]
@@ -174,15 +174,34 @@ def _allowed(value: Any, allowed: frozenset[str]) -> str | None:
     return value if isinstance(value, str) and value in allowed else None
 
 
-def _counts(body: dict[str, Any]) -> dict[str, int]:
+COUNT_OUTCOMES = frozenset({"would_link", "linked", "already_linked"})
+
+
+def _counts(body: dict[str, Any], request: dict[str, Any]) -> dict[str, int] | None:
+    """The answer's counts when every one is an int within what THIS request submitted, else None.
+
+    documents and links: at most the documents of the request; sightings: at most its (file id,
+    hash) pairs; descriptive_differences: at most 2 x documents + sightings. A missing object, a
+    missing key, a bool or any out-of-range value makes the whole answer malformed.
+    """
     raw = body.get("counts")
     if not isinstance(raw, dict):
-        return {}
-    return {
-        key: raw[key]
-        for key in COUNT_KEYS
-        if isinstance(raw.get(key), int) and not isinstance(raw.get(key), bool) and raw[key] >= 0
+        return None
+    documents = len(request["documents"])
+    pairs = sum(len(d["drive"]) for d in request["documents"])
+    limits = {
+        "documents": documents,
+        "sightings": pairs,
+        "links": documents,
+        "descriptive_differences": 2 * documents + pairs,
     }
+    out: dict[str, int] = {}
+    for key in COUNT_KEYS:
+        value = raw.get(key)
+        if type(value) is not int or not 0 <= value <= limits[key]:
+            return None
+        out[key] = value
+    return out
 
 
 def main(argv: list[str] | None = None, *, client: Any = None) -> int:
@@ -236,7 +255,11 @@ def main(argv: list[str] | None = None, *, client: Any = None) -> int:
             continue
         if args.limit and sent >= args.limit:
             break
-        status, answer = s1.send(client, url, key, body)
+        try:
+            status, answer = s1.send(client, url, key, body)
+        except s1.UnsafeRequest:
+            print("stopped: a prepared request was refused before sending")
+            return 1
         sent += 1
         if status == 200:
             outcome = _allowed(answer.get("outcome"), OUTCOMES) or s1.UNKNOWN
@@ -244,8 +267,13 @@ def main(argv: list[str] | None = None, *, client: Any = None) -> int:
             reason = _allowed(raw_reason, REASONS) or (
                 s1.UNKNOWN if raw_reason is not None else None
             )
-            for name, number in _counts(answer).items():
-                sums[f"{outcome}:{name}"] += number
+            if outcome in COUNT_OUTCOMES:
+                checked = _counts(answer, request)
+                if checked is None:
+                    counts["malformed_counts"] += 1
+                else:
+                    for name, number in checked.items():
+                        sums[f"{outcome}:{name}"] += number
         else:
             outcome = f"http_{status}" if isinstance(status, int) else s1.UNKNOWN
             raw_detail = answer.get("detail")
@@ -276,7 +304,8 @@ def main(argv: list[str] | None = None, *, client: Any = None) -> int:
         print(f"sum {name}={number}")
     if dry_run:
         print(DRY_RUN_NOTE)
-    return 0 if not any(k.startswith("http_") for k in counts) else 1
+    bad = any(k.startswith("http_") for k in counts) or counts["malformed_counts"]
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
