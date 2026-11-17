@@ -945,6 +945,63 @@ function propertyTitleDisqualifies(facts: OracleFacts): boolean {
   );
 }
 
+/**
+ * All 38 product codes declared by `rulepack-prod-033.source.json`. Kept as a
+ * closed tuple so an explicit `requested_product_code` override validates
+ * through `enumFact` (never an unchecked string).
+ */
+export const PRODUCT_CODES = [
+  "A1",
+  "B1",
+  "BRIDGING",
+  "C1",
+  "C2",
+  "C6",
+  "D1",
+  "D2",
+  "D12",
+  ...STAY_PERMIT_CODES,
+] as const;
+
+/**
+ * Derive `intent.requested_product_code` when the selected onshore conversion /
+ * status-bridging path determines it on `seq-33` (unblocking
+ * `hf.visit.not-e28a-conversion`, `review.e28a.bridging-origin`, and the four
+ * `el.bridging.*` rules), while keeping `UNKNOWN(NOT_ASKED)` otherwise so the
+ * interview still never asks which visa the applicant wants when undecided.
+ */
+export function mapRequestedProductCode(facts: OracleFacts): FactValue<string> {
+  if (facts.requested_product_code !== undefined) {
+    return enumFact(facts.requested_product_code, PRODUCT_CODES);
+  }
+  if (facts.in_indonesia !== "yes") {
+    return unknownFact(NOT_ASKED);
+  }
+  const purposes = mapPurposes(facts);
+  if (purposes.status !== "KNOWN") {
+    return unknownFact(NOT_ASKED);
+  }
+  if (
+    (facts.application_channel === "ONSHORE_CONVERSION" ||
+      facts.application_channel === "STATUS_BRIDGING") &&
+    purposes.value.includes("INVESTMENT") &&
+    facts.investment_pt_pma === "yes"
+  ) {
+    return known("E28A");
+  }
+  if (
+    facts.application_channel === "STATUS_BRIDGING" &&
+    purposes.value.includes("OTHER") &&
+    facts.stay_permit_code !== undefined
+  ) {
+    const stayPermit = enumFact(facts.stay_permit_code, STAY_PERMIT_CODES);
+    if (stayPermit.status === "KNOWN") {
+      return stayPermit;
+    }
+  }
+  return unknownFact(NOT_ASKED);
+}
+
 export interface MapFactsOptions {
   assessmentId: string;
   /** One frozen clock shared by evaluation, dedupe and presentation. */
@@ -998,7 +1055,7 @@ export function mapOracleFactsToApplicantFacts(
     "intent.stay_days": mapStayDays(facts),
     "intent.desired_entry_date": unknownFact(NOT_ASKED),
     "intent.entry_pattern": enumFact(facts.entry_pattern, ENTRY_PATTERNS),
-    "intent.requested_product_code": unknownFact(NOT_ASKED),
+    "intent.requested_product_code": mapRequestedProductCode(facts),
     "work.employer_country_code": countryCodeFact(
       facts.remote_employer_country,
     ),
@@ -1110,8 +1167,9 @@ export function mapOracleFactsToApplicantFacts(
     // answered (FACTS-FOR-THE-TREE.md, "the trap to avoid"). A question the
     // branch never asked stays UNKNOWN(NOT_ASKED), and every such rule is
     // already false on its purpose or sponsor premise for that walk.
-    // `intent.requested_product_code` stays NOT_ASKED: no seq-21 rule for
-    // these nine products reads it.
+    // `intent.requested_product_code` is now mapped via
+    // `mapRequestedProductCode(facts)` above (unblocking seq-33's
+    // E28A conversion/bridging and BRIDGING eligibility rules).
     "sponsor.government_invitation": booleanFact(
       facts.sponsor_government_invitation,
     ),

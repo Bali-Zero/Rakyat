@@ -49,10 +49,7 @@
     "intent.stay_days": { "status": "KNOWN", "value": 121 },
     "intent.desired_entry_date": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
     "intent.entry_pattern": { "status": "UNKNOWN", "reason": "NOT_ASKED" },
-    "intent.requested_product_code": {
-      "status": "UNKNOWN",
-      "reason": "NOT_ASKED"
-    },
+    "intent.requested_product_code": { "status": "KNOWN", "value": "E28A" },
     "work.employer_country_code": {
       "status": "UNKNOWN",
       "reason": "NOT_ASKED"

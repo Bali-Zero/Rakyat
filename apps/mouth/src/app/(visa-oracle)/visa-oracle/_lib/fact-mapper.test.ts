@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 import {
   CATEGORY_TO_PURPOSE,
+  PRODUCT_CODES,
   SCHEMA_VERSION,
   SPONSOR_TYPES,
   mapCurrentStatusExpiry,
@@ -18,6 +19,7 @@ import {
   mapOracleFactsToApplicantFacts,
   mapPurposes,
   mapRemoteClientsDerived,
+  mapRequestedProductCode,
   mapSponsorType,
   mapStayDays,
   mapViolationHistory,
@@ -2457,5 +2459,110 @@ describe("E28A sponsoring company", () => {
         investment_sponsoring_company_confirmed: "yes",
       }).facts[path],
     ).toEqual({ status: "UNKNOWN", reason: "CONFLICTING" });
+  });
+});
+
+describe("mapRequestedProductCode (seq-33 reachability)", () => {
+  const PATH = "intent.requested_product_code";
+
+  it("maps explicit requested_product_code overrides through the closed seq-33 catalogue", () => {
+    expect(
+      mapRequestedProductCode({ requested_product_code: "E28A" }),
+    ).toEqual({ status: "KNOWN", value: "E28A" });
+    expect(
+      mapRequestedProductCode({ requested_product_code: "BRIDGING" }),
+    ).toEqual({ status: "KNOWN", value: "BRIDGING" });
+    expect(
+      mapRequestedProductCode({ requested_product_code: "unsure" }),
+    ).toEqual({ status: "UNKNOWN", reason: "UNVERIFIED" });
+    expect(
+      mapRequestedProductCode({ requested_product_code: "ZZ99" }),
+    ).toEqual({ status: "UNKNOWN", reason: "NOT_PROVIDED" });
+  });
+
+  it.each(["ONSHORE_CONVERSION", "STATUS_BRIDGING"] as const)(
+    "derives E28A for onshore %s + PT PMA INVESTMENT walks (unblocking hf.visit.not-e28a-conversion & review.e28a.bridging-origin)",
+    (channel) => {
+      const wire = mapFacts({
+        in_indonesia: "yes",
+        application_channel: channel,
+        category: "invest",
+        investment_vehicle: "pt_pma",
+        investment_pt_pma: "yes",
+      });
+      expect(wire.facts[PATH]).toEqual({ status: "KNOWN", value: "E28A" });
+    },
+  );
+
+  it("derives the current stay_permit_code for onshore STATUS_BRIDGING + OTHER walks (unblocking the 4 el.bridging.* rules)", () => {
+    const wire = mapFacts({
+      in_indonesia: "yes",
+      application_channel: "STATUS_BRIDGING",
+      holds_stay_permit: "yes",
+      stay_permit_code: "E23",
+      category: "other",
+      other_paid_activity: "no",
+    });
+    expect(wire.facts[PATH]).toEqual({ status: "KNOWN", value: "E23" });
+  });
+
+  it("stays UNKNOWN(NOT_ASKED) when offshore, non-PT-PMA, re-routed to SECOND_HOME/EMPLOYMENT, or without stay_permit_code", () => {
+    const cases: OracleFacts[] = [
+      {
+        in_indonesia: "no",
+        application_channel: "ONSHORE_CONVERSION",
+        category: "invest",
+        investment_vehicle: "pt_pma",
+        investment_pt_pma: "yes",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "ONSHORE_CONVERSION",
+        category: "invest",
+        investment_vehicle: "capital_market",
+        investment_pt_pma: "no",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "ONSHORE_CONVERSION",
+        category: "invest",
+        investment_vehicle: "property",
+        investment_pt_pma: "yes",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "STATUS_BRIDGING",
+        holds_stay_permit: "yes",
+        stay_permit_code: "E23",
+        category: "other",
+        other_paid_activity: "yes",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "STATUS_BRIDGING",
+        holds_stay_permit: "no",
+        current_status_code: "C1",
+        category: "other",
+        other_paid_activity: "no",
+      },
+    ];
+    for (const facts of cases) {
+      expect(mapFacts(facts).facts[PATH]).toEqual({
+        status: "UNKNOWN",
+        reason: "NOT_ASKED",
+      });
+    }
+  });
+
+  it("PRODUCT_CODES stays in exact parity with rulepack-prod-033.source.json", () => {
+    const seq33Path = path.join(
+      REPO_ROOT,
+      "apps/backend-rag/backend/services/visa_engine/contracts/packs/rulepack-prod-033.source.json",
+    );
+    const seq33 = JSON.parse(fs.readFileSync(seq33Path, "utf-8")) as {
+      products: { product_code: string }[];
+    };
+    const expectedCodes = seq33.products.map((p) => p.product_code).sort();
+    expect([...PRODUCT_CODES].sort()).toEqual(expectedCodes);
   });
 });
