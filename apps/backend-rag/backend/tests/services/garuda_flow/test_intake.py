@@ -293,12 +293,12 @@ class TestIssuanceSubmissionWindowGate:
     def test_departure_past_coverage_end_fails_closed_and_hands_off_to_a_human(
         self,
     ) -> None:
-        # A 2027 arrival date -- the 2027 SKB does not exist yet, so the
+        # A 2028 arrival date -- the 2028 SKB does not exist yet, so the
         # cutoff cannot be computed without guessing. Must NEVER silently
         # guess a date, and must decline distinctly from "too soon".
         # today is chosen so the date is still INSIDE the eVOA usability
         # window: only the calendar-coverage gate may fire here.
-        today = date(2026, 12, 1)
+        today = COVERAGE_END - timedelta(days=30)
         req = _issuance(entry_date=COVERAGE_END + timedelta(days=5))
         assert (req.entry_date - today).days < EVOA_USABILITY_WINDOW_DAYS
         verdict = build_verdict(req, today=today)
@@ -307,6 +307,14 @@ class TestIssuanceSubmissionWindowGate:
         assert "ARRIVAL_TOO_SOON" not in verdict.decline_codes
         assert "ARRIVAL_TOO_FAR" not in verdict.decline_codes
         assert verdict.submit_by_date is None
+
+    def test_january_2027_arrival_inside_coverage_is_accepted(self) -> None:
+        today = date(2026, 12, 20)
+        req = _issuance(entry_date=date(2027, 1, 5))
+        verdict = build_verdict(req, today=today)
+        assert verdict.accepted is True
+        assert "ARRIVAL_DATE_UNCONFIRMED" not in verdict.decline_codes
+        assert verdict.submit_by_date == date(2027, 1, 4)
 
     def test_extension_path_is_completely_unaffected_by_this_gate(self) -> None:
         # An extension's entry_date is the ORIGINAL entry (always in the
