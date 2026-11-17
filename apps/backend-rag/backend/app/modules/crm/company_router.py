@@ -829,11 +829,11 @@ async def sync_company_drive_folder(
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """
-    _require_crm_admin(current_user)
     Scan the company's Google Drive folder and upsert files into company_documents.
     Files already tracked (by google_drive_file_id) are skipped.
     Returns a summary: {added, skipped, total, docs}.
     """
+    _require_crm_admin(current_user)
     async with db.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, company_name, google_drive_folder_id FROM companies WHERE id = $1",

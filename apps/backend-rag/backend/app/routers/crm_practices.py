@@ -162,6 +162,33 @@ def _practice_ownership_flags(
     return user_is_admin, created_by_match, assigned_to_match
 
 
+def _row_val(row: Any, key: str) -> Any:
+    """Safely extract a field from an asyncpg Record, dict, or test double."""
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _intersect_owners_filter(
+    practices_filter: Any, assigned_to: str | None
+) -> list[str] | None:
+    """Intersect optional ?assigned_to= with the caller's RBAC practices_filter."""
+    if practices_filter is None:
+        return [assigned_to.strip()] if assigned_to and assigned_to.strip() else None
+    allowed = (
+        [practices_filter]
+        if isinstance(practices_filter, str)
+        else [u for u in practices_filter if u]
+    )
+    if not assigned_to or not assigned_to.strip():
+        return allowed
+    target = assigned_to.strip().lower()
+    return [u for u in allowed if u.strip().lower() == target]
+
+
 def _deny_practice_mutation(practice_id: int, current_user: dict[str, Any], detail: str) -> None:
     """Log + raise 403 for a scope-denied practice mutation.
 
@@ -1086,11 +1113,12 @@ async def get_active_practices(
     - Team members: Can only view practices assigned to them
     """
     try:
-        # RBAC: non-admin users can only see their own practices
+        # RBAC: non-admin users can only see their own practices; ?assigned_to=
+        # intersects with RBAC scope rather than overriding it.
         practices_filter = get_practices_user_filter(current_user)
-        owners = practices_filter if practices_filter and not assigned_to else None
-        if owners is None and assigned_to:
-            owners = [assigned_to]
+        owners = _intersect_owners_filter(practices_filter, assigned_to)
+        if owners == []:
+            return []
 
         async with db_pool.acquire() as conn:
             query_parts = ["SELECT * FROM active_practices_view WHERE 1=1"]
@@ -1098,8 +1126,8 @@ async def get_active_practices(
             param_index = 1
 
             if owners:
-                query_parts.append(f" AND assigned_to = ANY(${param_index}::text[])")
-                params.append(owners)
+                query_parts.append(f" AND LOWER(assigned_to) = ANY(${param_index}::text[])")
+                params.append([o.lower() for o in owners])
 
             query_parts.append(" ORDER BY priority DESC, start_date ASC")
             query = " ".join(query_parts)
@@ -2507,15 +2535,27 @@ async def regenerate_invoice(
     try:
         user_email = current_user.get("email", "").lower()
 
-        # Verify practice exists and check status
+        # Verify practice exists, caller has scope (#402 pool/owner/admin), and status
         async with db_pool.acquire() as conn:
             practice_row = await conn.fetchrow(
-                "SELECT status FROM practices WHERE id = $1",
+                "SELECT status, created_by, assigned_to FROM practices WHERE id = $1",
                 practice_id,
             )
 
             if not practice_row:
                 raise HTTPException(status_code=404, detail="Practice not found")
+
+            user_is_admin, created_by_match, assigned_to_match = _practice_ownership_flags(
+                current_user,
+                _row_val(practice_row, "created_by"),
+                _row_val(practice_row, "assigned_to"),
+            )
+            if not (user_is_admin or created_by_match or assigned_to_match):
+                _deny_practice_mutation(
+                    practice_id,
+                    current_user,
+                    "You are not authorized to regenerate invoices for this practice",
+                )
 
             if practice_row["status"] != "sending_invoice":
                 raise HTTPException(
@@ -2615,7 +2655,35 @@ async def get_required_documents(
 ) -> list[Any]:
     """Get all required documents for a practice (for team members)."""
     try:
+        practices_filter = get_practices_user_filter(current_user)
         async with db_pool.acquire() as conn:
+            if practices_filter is not None:
+                allowed_set = (
+                    {practices_filter.strip().lower()}
+                    if isinstance(practices_filter, str)
+                    else {u.strip().lower() for u in practices_filter if u}
+                )
+                practice_row = await conn.fetchrow(
+                    """
+                    SELECT p.assigned_to, p.created_by, c.assigned_to AS client_lead
+                    FROM practices p
+                    LEFT JOIN clients c ON p.client_id = c.id
+                    WHERE p.id = $1
+                    """,
+                    practice_id,
+                )
+                if not practice_row:
+                    raise HTTPException(status_code=404, detail="Practice not found")
+                if not any(
+                    (val or "").strip().lower() in allowed_set
+                    for val in (
+                        _row_val(practice_row, "assigned_to"),
+                        _row_val(practice_row, "created_by"),
+                        _row_val(practice_row, "client_lead"),
+                    )
+                ):
+                    raise HTTPException(status_code=403, detail="Access denied to this practice")
+
             rows = await conn.fetch(
                 """
                 SELECT
@@ -2648,6 +2716,8 @@ async def get_required_documents(
                 }
                 for row in rows
             ]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to get required documents: %s", type(e).__name__)
         raise handle_database_error(e)
@@ -2928,10 +2998,13 @@ async def upload_client_document(
     """Client uploads a document for a required field."""
     try:
         async with db_pool.acquire() as conn:
-            # Get required document info
+            # Get required document info and practice/client ownership fields
             req_doc = await conn.fetchrow(
                 """
-                SELECT prd.*, p.client_id, c.full_name as client_name
+                SELECT prd.*, p.client_id, c.full_name as client_name,
+                       p.created_by AS practice_created_by,
+                       p.assigned_to AS practice_assigned_to,
+                       c.assigned_to AS client_assigned_to
                 FROM practice_required_documents prd
                 JOIN practices p ON prd.practice_id = p.id
                 JOIN clients c ON p.client_id = c.id
@@ -2944,16 +3017,31 @@ async def upload_client_document(
             if not req_doc:
                 raise HTTPException(status_code=404, detail="Required document not found")
 
-            # Verify client is uploading their own document
+            # Verify client is uploading their own document (linked_client_id first, case-insensitive)
             client = await conn.fetchrow(
-                "SELECT id FROM clients WHERE email = $1",
+                """
+                SELECT COALESCE(
+                    (SELECT tm.linked_client_id FROM team_members tm
+                     WHERE LOWER(tm.email) = LOWER($1)
+                       AND tm.deleted_at IS NULL
+                       AND tm.linked_client_id IS NOT NULL
+                     LIMIT 1),
+                    (SELECT cl.id FROM clients cl WHERE LOWER(cl.email) = LOWER($1) LIMIT 1)
+                ) AS id
+                """,
                 current_user.get("email"),
             )
 
-            owns_client = bool(client) and client["id"] == req_doc["client_id"]
+            client_resolved_id = _row_val(client, "id") if client else None
+            owns_client = client_resolved_id is not None and client_resolved_id == req_doc["client_id"]
             if not owns_client:
-                # Allow team members to upload on behalf of client
-                if not is_crm_admin(current_user):
+                # Allow CRM admins, practice owners, and #402 pool peers to upload for client
+                user_is_admin, created_by_match, assigned_to_match = _practice_ownership_flags(
+                    current_user,
+                    _row_val(req_doc, "practice_created_by"),
+                    _row_val(req_doc, "practice_assigned_to") or _row_val(req_doc, "client_assigned_to"),
+                )
+                if not (user_is_admin or created_by_match or assigned_to_match):
                     raise HTTPException(status_code=403, detail="Not authorized")
 
         # Champion Round 2 scores uploaded_source='client': only a portal client

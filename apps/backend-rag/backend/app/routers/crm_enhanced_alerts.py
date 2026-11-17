@@ -200,13 +200,26 @@ async def get_all_expiry_alerts(
     Get all expiry alerts across all clients (for team dashboard).
     Non-admin users see only alerts for their assigned clients.
     """
-    async with pool.acquire() as conn:
-        # RBAC: non-admin users only see their own assigned alerts
-        user_filter = get_practices_user_filter(current_user)
-        owners = user_filter if user_filter and not assigned_to else None
-        if owners is None and assigned_to:
-            owners = [assigned_to]
+    # RBAC: non-admin users only see their own assigned alerts; explicit
+    # ?assigned_to= must intersect with the RBAC scope rather than override it.
+    user_filter = get_practices_user_filter(current_user)
+    if user_filter is None:
+        owners = [assigned_to.strip()] if assigned_to and assigned_to.strip() else None
+    else:
+        allowed = (
+            [user_filter]
+            if isinstance(user_filter, str)
+            else [u for u in user_filter if u]
+        )
+        if assigned_to and assigned_to.strip():
+            target = assigned_to.strip().lower()
+            owners = [u for u in allowed if u.strip().lower() == target]
+        else:
+            owners = allowed
+    if owners == []:
+        return []
 
+    async with pool.acquire() as conn:
         query = """
             SELECT
                 entity_type, entity_id, entity_name, client_id, client_name,
@@ -214,13 +227,12 @@ async def get_all_expiry_alerts(
             FROM client_expiry_alerts_view
             WHERE 1=1
         """
-        params = []
+        params: list[Any] = []
         param_num = 1
 
-        # Optional filter by assigned_to (user choice, not RBAC enforcement)
         if owners:
-            query += f" AND assigned_to = ANY(${param_num}::text[])"
-            params.append(owners)
+            query += f" AND LOWER(assigned_to) = ANY(${param_num}::text[])"
+            params.append([o.lower() for o in owners])
             param_num += 1
 
         query += f"""
