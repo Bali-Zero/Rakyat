@@ -186,3 +186,24 @@ def test_split_forward_and_rollback_of_real_file() -> None:
     assert "DROP CONSTRAINT" not in forward
     assert rollback.count("DROP CONSTRAINT IF EXISTS") == 4
     assert "UPDATE" not in rollback
+
+
+async def test_ci_shaped_clients_without_visa_and_kitas_columns(db: asyncpg.Connection) -> None:
+    """The CI bootstrap schema has no visa/kitas columns on clients: guard per column."""
+    await db.execute("ALTER TABLE clients DROP COLUMN visa_expiry_date")
+    await db.execute("ALTER TABLE clients DROP COLUMN kitas_expiry_date")
+    await db.execute("INSERT INTO clients (id, passport_expiry) VALUES (1, '-infinity')")
+    await db.execute(
+        "INSERT INTO documents (id, client_id, document_type, expiry_date) "
+        "VALUES (10, 1, 'passport', '2028-02-02')"
+    )
+    await db.execute(_forward())
+    assert await db.fetchval("SELECT passport_expiry FROM clients WHERE id = 1") == date(2028, 2, 2)
+    names = {
+        r["conname"]
+        for r in await db.fetch(
+            "SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[]) AND convalidated",
+            sorted(CONSTRAINTS),
+        )
+    }
+    assert names == {"clients_passport_expiry_range_chk", "documents_expiry_date_range_chk"}
