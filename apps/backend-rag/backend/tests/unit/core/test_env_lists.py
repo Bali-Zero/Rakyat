@@ -46,7 +46,9 @@ def test_malformed_value_is_not_echoed_in_the_log(monkeypatch, caplog):
     assert "SECRET-PAYLOAD" not in caplog.text
 
 
-@pytest.mark.parametrize("raw", [None, "", "  ", "{bad", '{"a": 1}', '["a@example.test"]', "[[1]]", "[[], [1]]"])
+@pytest.mark.parametrize(
+    "raw", [None, "", "  ", "{bad", '{"a": 1}', '["a@example.test"]', "[[1]]", "[[], [1]]"]
+)
 def test_client_pools_unset_or_malformed_is_no_pools(monkeypatch, raw):
     if raw is None:
         monkeypatch.delenv(env_lists.ENV_CRM_CLIENT_POOLS, raising=False)
