@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +52,12 @@ def intake_drive_root_extra() -> frozenset[str]:
     return frozenset(item.strip() for item in env_json_str_list(ENV_INTAKE_DRIVE_ROOT_EXTRA))
 
 
-_POOL_EMAIL = re.compile(
-    r"^[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
-)
-
-
-def _plausible_email(value: str) -> bool:
-    return _POOL_EMAIL.fullmatch(value.strip().lower()) is not None
-
-
 def crm_client_pools() -> tuple[frozenset[str], ...]:
-    """Groups of staff emails that share client ownership; unset/blank/malformed = no pools."""
+    """Parsed pool structure (a JSON list of lists of strings); unset/blank/malformed = no pools.
+
+    Whether each entry is an active human staff member is decided against ``team_members`` by
+    ``client_pools.validate_client_pools``, never by how the entry is spelled.
+    """
     raw = os.environ.get(ENV_CRM_CLIENT_POOLS)
     if raw is None or not raw.strip():
         return ()
@@ -80,11 +74,6 @@ def crm_client_pools() -> tuple[frozenset[str], ...]:
         )
         return ()
     pools = [frozenset(item.strip().lower() for item in group if item.strip()) for group in data]
-    if not all(_plausible_email(item) for pool in pools for item in pool):
-        logger.warning(
-            "%s holds an entry that is not an email - treated as empty", ENV_CRM_CLIENT_POOLS
-        )
-        return ()
     return tuple(pool for pool in pools if pool)
 
 

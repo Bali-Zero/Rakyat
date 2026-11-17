@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps import crm_access
 from backend.app.routers import crm_practices
+from backend.app.utils import client_pools
 from backend.app.utils.client_pools import client_pool_peers
 from backend.app.utils.crm_utils import verify_client_access
 
@@ -31,9 +32,47 @@ def _user(email: str) -> dict[str, str]:
     return {"email": email, "role": "team"}
 
 
+class _TeamMembers:
+    """team_members double: ``fetch`` applies the same active/email filter as the SQL."""
+
+    def __init__(self, rows: dict[str, tuple[str, bool]] | None = None, *, fail: bool = False):
+        self.rows = rows if rows is not None else {A: ("team", True), B: ("team", True)}
+        self.fail = fail
+        self.calls = 0
+
+    async def fetch(self, sql: str, entries: list[str]) -> list[dict[str, str]]:
+        self.calls += 1
+        if self.fail:
+            raise OSError("db down")
+        assert "active" in sql and "ANY($1::text[])" in sql
+        return [
+            {"email": e, "role": self.rows[e][0]}
+            for e in entries
+            if e in self.rows and self.rows[e][1]
+        ]
+
+
+def _run(coro) -> None:
+    """Drive a coroutine that never truly suspends (the doubles above are immediate)."""
+    try:
+        coro.send(None)
+    except StopIteration:
+        return
+    raise AssertionError("coroutine suspended")
+
+
+def _validate(rows=None, *, fail=False) -> _TeamMembers:
+    conn = _TeamMembers(rows, fail=fail)
+    _run(client_pools.validate_client_pools(conn))
+    return conn
+
+
 @pytest.fixture(autouse=True)
 def pool_ab(monkeypatch):
     monkeypatch.setenv("CRM_CLIENT_POOLS_JSON", f'[["{A}", "{B.upper()}"]]')
+    monkeypatch.setattr(client_pools, "_VALIDATED", None)
+    monkeypatch.setattr(client_pools, "_LAST_ATTEMPT", None)
+    _validate()
 
 
 def test_peers_of_a_member_are_the_whole_pool():
@@ -52,6 +91,7 @@ def test_peers_of_an_empty_email_match_no_owner(empty):
 
 def test_no_pools_configured_is_todays_behaviour(monkeypatch):
     monkeypatch.delenv("CRM_CLIENT_POOLS_JSON")
+    _validate()
     assert client_pool_peers(A) == frozenset({A})
 
 
@@ -116,6 +156,7 @@ def test_crm_filter_is_own_email_for_a_non_member():
 
 def test_crm_filter_is_none_for_an_admin_even_inside_a_pool(monkeypatch):
     monkeypatch.setenv("CRM_CLIENT_POOLS_JSON", f'[["{ADMIN["email"]}", "{A}"]]')
+    _validate({ADMIN["email"]: ("admin", True), A: ("team", True)})
     assert crm_access.get_crm_user_filter(ADMIN) is None
 
 
@@ -406,3 +447,94 @@ async def test_direct_call_by_user_id_binds_exactly_that_email_even_inside_a_poo
 @pytest.mark.asyncio
 async def test_interactions_list_through_the_router_still_expands_for_a_human_peer():
     assert await _direct_list(None, _user(A)) == [A, B]
+
+
+# --------------------------------------------------------------------------- #
+# pool entries are validated as ENTITIES (active human team_members rows)      #
+# --------------------------------------------------------------------------- #
+
+
+def _set_pools(monkeypatch, raw: str) -> None:
+    monkeypatch.setenv("CRM_CLIENT_POOLS_JSON", raw)
+    monkeypatch.setattr(client_pools, "_VALIDATED", None)
+
+
+def test_before_validation_there_are_no_pools(monkeypatch):
+    monkeypatch.setattr(client_pools, "_VALIDATED", None)
+    assert client_pool_peers(A) == frozenset({A})
+
+
+def test_all_entries_active_and_human_activates_the_pools():
+    assert client_pool_peers(A) == frozenset({A, B})
+
+
+def test_an_unknown_email_in_a_pool_refuses_every_pool():
+    _validate({A: ("team", True)})
+    assert client_pool_peers(A) == frozenset({A})
+    assert client_pool_peers(B) == frozenset({B})
+
+
+def test_an_inactive_row_refuses_every_pool():
+    _validate({A: ("team", True), B: ("team", False)})
+    assert client_pool_peers(A) == frozenset({A})
+
+
+@pytest.mark.parametrize("role", ["internal", "user", "monitoring", "client", "partner"])
+def test_a_machine_or_foreign_role_row_refuses_every_pool(role):
+    _validate({A: ("team", True), B: (role, True)})
+    assert client_pool_peers(A) == frozenset({A})
+
+
+def test_one_bad_entry_in_a_second_pool_refuses_the_valid_first_pool(monkeypatch):
+    _set_pools(monkeypatch, f'[["{A}", "{B}"], ["{C}"]]')
+    _validate({A: ("team", True), B: ("team", True)})
+    assert client_pool_peers(A) == frozenset({A})
+
+
+@pytest.mark.parametrize("spelling", ["x@.", ".@example.test", "not-an-email", "a..b@example.test"])
+def test_the_gate_strings_fail_by_entity_not_by_spelling(monkeypatch, spelling):
+    _set_pools(monkeypatch, f'[["{A}", "{B}"], ["{spelling}"]]')
+    _validate()
+    assert client_pool_peers(A) == frozenset({A})
+    assert not hasattr(client_pools, "_plausible_email")
+
+
+def test_a_db_error_during_validation_leaves_no_pools(monkeypatch):
+    _set_pools(monkeypatch, f'[["{A}", "{B}"]]')
+    _validate(fail=True)
+    assert client_pools._VALIDATED is None
+    assert client_pool_peers(A) == frozenset({A})
+
+
+def test_validation_warning_names_the_variable_and_a_count_never_a_value(monkeypatch, caplog):
+    _validate({A: ("team", True)})
+    assert "CRM_CLIENT_POOLS_JSON" in caplog.text and "1 entries" in caplog.text
+    assert B not in caplog.text and A not in caplog.text
+
+
+def test_lazy_retry_runs_at_most_once_per_sixty_seconds(monkeypatch):
+    _set_pools(monkeypatch, f'[["{A}", "{B}"]]')
+    monkeypatch.setattr(client_pools, "_LAST_ATTEMPT", None)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(client_pools.time, "monotonic", lambda: clock["t"])
+    conn = _TeamMembers(fail=True)
+    _run(client_pools.ensure_client_pools_validated(conn))
+    _run(client_pools.ensure_client_pools_validated(conn))
+    assert conn.calls == 1
+    clock["t"] += 61
+    ok = _TeamMembers()
+    _run(client_pools.ensure_client_pools_validated(ok))
+    assert ok.calls == 1 and client_pool_peers(A) == frozenset({A, B})
+    _run(client_pools.ensure_client_pools_validated(ok))
+    assert ok.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_verify_client_access_triggers_the_lazy_validation(monkeypatch):
+    _set_pools(monkeypatch, f'[["{A}", "{B}"]]')
+    monkeypatch.setattr(client_pools, "_LAST_ATTEMPT", None)
+    members = _TeamMembers()
+    conn = _conn(B, None)
+    conn.fetch = members.fetch
+    allowed, _ = await verify_client_access(1, _user(A), conn, write=True)
+    assert allowed is True and members.calls == 1

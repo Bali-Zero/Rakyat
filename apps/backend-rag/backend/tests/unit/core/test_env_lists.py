@@ -82,55 +82,12 @@ def test_malformed_client_pools_are_not_echoed_in_the_log(monkeypatch, caplog):
     assert env_lists.ENV_CRM_CLIENT_POOLS in caplog.text
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [
-        '[["a@example.test", "b@example.test"], ["not-an-email"]]',
-        '[["a@example.test", "a b@example.test"]]',
-        '[["@example.test"]]',
-        '[["a@"]]',
-        '[["a@example"]]',
-        '[["a@@example.test"]]',
-    ],
-)
-def test_client_pools_with_one_implausible_entry_are_all_rejected(monkeypatch, raw):
-    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, raw)
-    assert env_lists.crm_client_pools() == ()
-
-
 def test_client_pools_blank_entries_are_still_dropped(monkeypatch):
     monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, '[["a@example.test", " "]]')
     assert env_lists.crm_client_pools() == (frozenset({"a@example.test"}),)
 
 
-_GOOD_POOL = '["a@example.test", "b@example.test"]'
-
-
-@pytest.mark.parametrize(
-    "bad",
-    [
-        "x@.",
-        "x@",
-        "@example.test",
-        "not-an-email",
-        "a@b",
-        "a@.example.test",
-        "a@example..test",
-        "a@example.test.",
-        "a b@example.test",
-        "a@exa mple.test",
-        "a@@example.test",
-    ],
-)
-def test_client_pools_one_bad_entry_in_a_second_pool_rejects_everything(monkeypatch, bad):
-    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, f'[{_GOOD_POOL}, ["{bad}"]]')
-    assert env_lists.crm_client_pools() == ()
-
-
-def test_client_pools_accept_plus_tags_subdomains_and_normalise_case(monkeypatch):
-    monkeypatch.setenv(
-        env_lists.ENV_CRM_CLIENT_POOLS, '[["First.Last+x@Example.Test", "a@sub.example.test"]]'
-    )
-    assert env_lists.crm_client_pools() == (
-        frozenset({"first.last+x@example.test", "a@sub.example.test"}),
-    )
+def test_client_pools_parsing_does_not_judge_how_an_entry_is_spelled(monkeypatch):
+    """Validity is an entity question (team_members), answered by validate_client_pools."""
+    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, '[["x@.", "not-an-email"]]')
+    assert env_lists.crm_client_pools() == (frozenset({"x@.", "not-an-email"}),)

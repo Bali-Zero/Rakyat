@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from pydantic import AfterValidator
 
 from backend.app.core.config import settings
-from backend.app.utils.client_pools import can_write_client
+from backend.app.utils.client_pools import can_write_client, ensure_client_pools_validated
 from backend.core.env_lists import crm_extra_admin_emails
 
 # CRM-specific admin additions on top of the global allowlist
@@ -227,6 +227,8 @@ async def verify_client_access(
     from fastapi import HTTPException
 
     user_email = (current_user.get("email") or "").lower().strip()
+
+    await ensure_client_pools_validated(conn)
 
     row = await conn.fetchrow(
         "SELECT id, assigned_to, created_by FROM clients WHERE id = $1 AND deleted_at IS NULL",
