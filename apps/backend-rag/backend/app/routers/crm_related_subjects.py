@@ -45,6 +45,7 @@ from backend.services.crm.related_documents import (
 )
 from backend.services.crm.related_identifiers import MAX_RAW_LENGTH, InvalidIdentifier, canonicalize
 from backend.services.crm.related_subjects import (
+    IdentifierInput,
     InvalidSubject,
     RegistryUnavailable,
     SubjectInput,
@@ -248,7 +249,7 @@ class _SubjectKeys(_Strict):
             raise PydanticCustomError(exc.code, "invalid subject") from None
         return self
 
-    def prepared(self):
+    def prepared(self) -> tuple[IdentifierInput, ...]:
         return prepare_identifiers(self.kind, [(i.type, i.value, {}) for i in self.identifiers])
 
 
