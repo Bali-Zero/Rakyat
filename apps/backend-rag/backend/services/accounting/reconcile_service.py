@@ -100,6 +100,20 @@ async def confirm_payment(
         )
 
     async with conn.transaction():
+        # 0. A bank transaction is confirmed as a payment at most once: lock its row FIRST,
+        #    so a concurrent confirmation of the same row waits and then sees it matched.
+        if bank_txn_id is not None:
+            bank = await conn.fetchrow(
+                "SELECT direction, reconciled_status FROM bank_transactions WHERE id = $1 FOR UPDATE",
+                bank_txn_id,
+            )
+            if bank is None:
+                raise ReconcileError(f"bank transaction {bank_txn_id} not found")
+            if bank["direction"] != "credit":
+                raise ReconcileError(f"bank transaction {bank_txn_id} is not a credit")
+            if bank["reconciled_status"] != "unmatched":
+                raise ReconcileError(f"bank transaction {bank_txn_id} is not unmatched")
+
         # 1. Read current practice state (lock the row) — verify it exists.
         prac = await conn.fetchrow(
             "SELECT id, payment_status, paid_amount FROM practices WHERE id = $1 FOR UPDATE",
