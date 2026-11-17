@@ -44,3 +44,37 @@ def test_malformed_value_is_not_echoed_in_the_log(monkeypatch, caplog):
     monkeypatch.setenv("X_LIST", "SECRET-PAYLOAD-{")
     env_lists.env_json_str_list("X_LIST")
     assert "SECRET-PAYLOAD" not in caplog.text
+
+
+@pytest.mark.parametrize("raw", [None, "", "  ", "{bad", '{"a": 1}', '["a@example.test"]', "[[1]]", "[[], [1]]"])
+def test_client_pools_unset_or_malformed_is_no_pools(monkeypatch, raw):
+    if raw is None:
+        monkeypatch.delenv(env_lists.ENV_CRM_CLIENT_POOLS, raising=False)
+    else:
+        monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, raw)
+    assert env_lists.crm_client_pools() == ()
+
+
+def test_client_pools_are_normalised(monkeypatch):
+    monkeypatch.setenv(
+        env_lists.ENV_CRM_CLIENT_POOLS,
+        '[[" A@Example.test", "b@example.test", " "], [], ["c@example.test"]]',
+    )
+    assert env_lists.crm_client_pools() == (
+        frozenset({"a@example.test", "b@example.test"}),
+        frozenset({"c@example.test"}),
+    )
+
+
+def test_client_pools_are_read_at_call_time(monkeypatch):
+    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, '[["a@example.test"]]')
+    assert len(env_lists.crm_client_pools()) == 1
+    monkeypatch.delenv(env_lists.ENV_CRM_CLIENT_POOLS)
+    assert env_lists.crm_client_pools() == ()
+
+
+def test_malformed_client_pools_are_not_echoed_in_the_log(monkeypatch, caplog):
+    monkeypatch.setenv(env_lists.ENV_CRM_CLIENT_POOLS, "SECRET-PAYLOAD-{")
+    env_lists.crm_client_pools()
+    assert "SECRET-PAYLOAD" not in caplog.text
+    assert env_lists.ENV_CRM_CLIENT_POOLS in caplog.text

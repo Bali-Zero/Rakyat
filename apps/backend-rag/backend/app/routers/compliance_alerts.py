@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.utils.client_pools import client_pool_peers
 from backend.services.compliance.alert_feedback import AlertFeedback
 from backend.services.compliance.alert_metrics import (
     compute_metrics,
@@ -178,9 +179,9 @@ async def list_alerts(
     if not _is_admin(user):
         # team: restrict to rows where the owning client is assigned to this user
         clauses.append(
-            f"client_id IN (SELECT id FROM clients WHERE LOWER(assigned_to) = ${len(params) + 1})"
+            f"client_id IN (SELECT id FROM clients WHERE LOWER(assigned_to) = ANY(${len(params) + 1}::text[]))"
         )
-        params.append((user.get("email") or "").lower())
+        params.append(sorted(client_pool_peers(user.get("email"))))
 
     if client_id is not None:
         clauses.append(f"client_id = ${len(params) + 1}")

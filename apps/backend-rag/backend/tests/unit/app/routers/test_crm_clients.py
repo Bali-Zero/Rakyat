@@ -460,22 +460,22 @@ class TestGetClientsStats:
         assert len(fetch_calls) == 3
         fetch_sqls = [c.args[0] for c in fetch_calls]
         # by_status + by_team_member scoped on clients.assigned_to.
-        assert all("assigned_to = $1" in sql for sql in fetch_sqls[:2]), fetch_sqls[:2]
+        assert all("assigned_to = ANY($1::text[])" in sql for sql in fetch_sqls[:2]), fetch_sqls[:2]
         # Practices-by-type is scoped on the practices table alias.
-        assert "p.assigned_to = $1" in fetch_sqls[2], fetch_sqls[2]
+        assert "p.assigned_to = ANY($1::text[])" in fetch_sqls[2], fetch_sqls[2]
         # The bound param is the caller's lowercased email.
-        assert all(c.args[1:] == (team_email,) for c in fetch_calls)
+        assert all(c.args[1:] == ([team_email],) for c in fetch_calls)
 
         fetchrow_calls = conn.fetchrow.call_args_list
         assert len(fetchrow_calls) == 2
         fetchrow_sqls = [c.args[0] for c in fetchrow_calls]
         # new_last_30_days: scoped, STATS_DAYS_RECENT shifts to $2.
-        assert "assigned_to = $1" in fetchrow_sqls[0], fetchrow_sqls[0]
+        assert "assigned_to = ANY($1::text[])" in fetchrow_sqls[0], fetchrow_sqls[0]
         assert "$2" in fetchrow_sqls[0], fetchrow_sqls[0]
-        assert fetchrow_calls[0].args[1:] == (team_email, 30)
+        assert fetchrow_calls[0].args[1:] == ([team_email], 30)
         # passport_health: scoped.
-        assert "assigned_to = $1" in fetchrow_sqls[1], fetchrow_sqls[1]
-        assert fetchrow_calls[1].args[1:] == (team_email,)
+        assert "assigned_to = ANY($1::text[])" in fetchrow_sqls[1], fetchrow_sqls[1]
+        assert fetchrow_calls[1].args[1:] == ([team_email],)
 
     def test_get_clients_stats_admin_sees_unfiltered_totals(self, mock_db_pool):
         """Admin user receives unfiltered global stats (no assigned_to scope)."""

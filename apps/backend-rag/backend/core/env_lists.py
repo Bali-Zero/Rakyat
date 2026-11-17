@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 ENV_TEAM_NAME_ALIASES = "TEAM_NAME_ALIASES_JSON"
 ENV_CRM_EXTRA_ADMIN_EMAILS = "CRM_EXTRA_ADMIN_EMAILS_JSON"
 ENV_INTAKE_DRIVE_ROOT_EXTRA = "INTAKE_DRIVE_ROOT_EXTRA_JSON"
+ENV_CRM_CLIENT_POOLS = "CRM_CLIENT_POOLS_JSON"
 ENV_OWNER_TELEGRAM_CHAT_ID = "TELEGRAM_OWNER_CHAT_ID"
 
 
@@ -49,6 +50,27 @@ def crm_extra_admin_emails() -> frozenset[str]:
 def intake_drive_root_extra() -> frozenset[str]:
     """Drive root folder names added to the intake allowlist; empty = no extra roots."""
     return frozenset(item.strip() for item in env_json_str_list(ENV_INTAKE_DRIVE_ROOT_EXTRA))
+
+
+def crm_client_pools() -> tuple[frozenset[str], ...]:
+    """Groups of staff emails that share client ownership; unset/blank/malformed = no pools."""
+    raw = os.environ.get(ENV_CRM_CLIENT_POOLS)
+    if raw is None or not raw.strip():
+        return ()
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        logger.warning("%s is not valid JSON - treated as empty", ENV_CRM_CLIENT_POOLS)
+        return ()
+    if not isinstance(data, list) or not all(
+        isinstance(group, list) and all(isinstance(item, str) for item in group) for group in data
+    ):
+        logger.warning(
+            "%s is not a JSON list of lists of strings - treated as empty", ENV_CRM_CLIENT_POOLS
+        )
+        return ()
+    pools = (frozenset(item.strip().lower() for item in group if item.strip()) for group in data)
+    return tuple(pool for pool in pools if pool)
 
 
 def owner_telegram_chat_id() -> str:

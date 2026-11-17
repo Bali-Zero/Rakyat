@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, field_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.utils.client_pools import client_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
@@ -283,9 +284,10 @@ async def list_interactions(
             # RBAC: Non-admins can only see interactions for their assigned clients or their own interactions
             if not user_is_admin:
                 query_parts.append(
-                    f" AND (LOWER(c.assigned_to) = ${param_index} OR LOWER(i.team_member) = ${param_index})",
+                    f" AND (LOWER(c.assigned_to) = ANY(${param_index}::text[])"
+                    f" OR LOWER(i.team_member) = ANY(${param_index}::text[]))",
                 )
-                params.append(user_email)
+                params.append(sorted(client_pool_peers(user_email)))
                 param_index += 1
 
             if client_id:
@@ -358,9 +360,10 @@ async def get_interaction(
 
             # RBAC check
             if not user_is_admin:
-                if (row["assigned_to"] or "").lower() != user_email and (
+                peers = client_pool_peers(user_email)
+                if (row["assigned_to"] or "").lower() not in peers and (
                     row["team_member"] or ""
-                ).lower() != user_email:
+                ).lower() not in peers:
                     raise HTTPException(
                         status_code=403,
                         detail="You don't have access to this interaction",
@@ -517,13 +520,16 @@ async def get_interactions_stats(
             # RBAC: Non-admins only see their own interactions or those for their assigned clients
             # This requires a JOIN or a subquery. For stats, let's keep it simple: just their own team_member or assigned clients
             if not user_is_admin:
-                base_where += f" AND (LOWER(team_member) = ${param_index} OR client_id IN (SELECT id FROM clients WHERE LOWER(assigned_to) = ${param_index}))"
-                params.append(user_email)
+                base_where += (
+                    f" AND (LOWER(team_member) = ANY(${param_index}::text[]) OR client_id IN"
+                    f" (SELECT id FROM clients WHERE LOWER(assigned_to) = ANY(${param_index}::text[])))"
+                )
+                params.append(sorted(client_pool_peers(user_email)))
                 param_index += 1
 
             if team_member:
                 # If non-admin tries to see someone else's stats, limit to what they can see
-                if not user_is_admin and team_member.lower() != user_email:
+                if not user_is_admin and team_member.lower() not in client_pool_peers(user_email):
                     base_where += (
                         f" AND LOWER(team_member) = ${param_index} AND FALSE"  # Effectively denied
                     )
@@ -780,7 +786,7 @@ async def delete_interaction(
             # RBAC: Non-admins can only delete their own interactions
             if not user_is_admin:
                 created_by = (existing.get("created_by") or "").lower()
-                if created_by != user_email:
+                if created_by not in client_pool_peers(user_email):
                     raise HTTPException(
                         status_code=403,
                         detail="You can only delete interactions you created",

@@ -15,6 +15,7 @@ from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.auth import require_team_member
 from backend.app.deps.crm_access import get_practices_user_filter
+from backend.app.utils.client_pools import client_pool_peers
 from backend.app.utils.crm_utils import can_view_all_practices, is_crm_admin
 from backend.app.utils.logging_utils import get_logger
 from backend.services.crm.practice_state_machine import (
@@ -91,8 +92,9 @@ WITH duties AS (
            p.id, pt.name, p.status,
            p.created_at, EXTRACT(DAY FROM (CURRENT_TIMESTAMP - p.created_at))::integer,
            NULL::date, NULL::integer, NULLIF(LOWER(p.assigned_to), ''),
-           COALESCE($2::boolean OR c.assigned_to = $1 OR p.created_by = $1
-                    OR LOWER(p.assigned_to) = $1, FALSE),
+           COALESCE($2::boolean OR c.assigned_to = ANY($1::text[])
+                    OR p.created_by = ANY($1::text[])
+                    OR LOWER(p.assigned_to) = ANY($1::text[]), FALSE),
            (p.created_at + INTERVAL '14 days')::date
       FROM practices p
       JOIN clients c ON c.id = p.client_id
@@ -101,7 +103,7 @@ WITH duties AS (
        AND isfinite(p.created_at)
        AND p.created_at < CURRENT_TIMESTAMP - INTERVAL '14 days'
 ), visible AS (
-    SELECT * FROM duties WHERE ($3::text IS NULL OR assigned_to = $3)
+    SELECT * FROM duties WHERE ($3::text[] IS NULL OR assigned_to = ANY($3::text[]))
 ), filtered AS (
     SELECT * FROM visible
      WHERE ($4::text IS NULL OR assigned_to = $4
@@ -128,12 +130,19 @@ async def get_member_obligations(
     owner = (assigned_to or "").strip().lower() or None
     if scope == "team" and not can_view_team:
         raise HTTPException(status_code=403, detail="Team overview access required")
-    if scope == "mine" and owner and owner != email:
+    peers = client_pool_peers(email)
+    if scope == "mine" and owner and owner not in peers:
         raise HTTPException(
             status_code=403, detail="Personal obligations are limited to your assignments"
         )
 
-    args = (email, full_view, None if scope == "team" else email, owner, _ACTIVE_PRACTICE_STATES)
+    args = (
+        sorted(peers),
+        full_view,
+        None if scope == "team" else sorted(peers),
+        owner,
+        _ACTIVE_PRACTICE_STATES,
+    )
     async with pool.acquire() as conn:
         counts = await conn.fetchrow(
             _MEMBER_OBLIGATIONS_CTE
@@ -194,8 +203,9 @@ async def get_all_expiry_alerts(
     async with pool.acquire() as conn:
         # RBAC: non-admin users only see their own assigned alerts
         user_filter = get_practices_user_filter(current_user)
-        if user_filter and not assigned_to:
-            assigned_to = user_filter
+        owners = user_filter if user_filter and not assigned_to else None
+        if owners is None and assigned_to:
+            owners = [assigned_to]
 
         query = """
             SELECT
@@ -208,9 +218,9 @@ async def get_all_expiry_alerts(
         param_num = 1
 
         # Optional filter by assigned_to (user choice, not RBAC enforcement)
-        if assigned_to:
-            query += f" AND assigned_to = ${param_num}"
-            params.append(assigned_to)
+        if owners:
+            query += f" AND assigned_to = ANY(${param_num}::text[])"
+            params.append(owners)
             param_num += 1
 
         query += f"""
@@ -241,7 +251,7 @@ async def get_expiry_alerts_summary(
         rbac_clause = ""
         params: list = []
         if user_filter:
-            rbac_clause = "WHERE LOWER(assigned_to) = $1"
+            rbac_clause = "WHERE LOWER(assigned_to) = ANY($1::text[])"
             params.append(user_filter)
 
         summary = await conn.fetchrow(
@@ -260,7 +270,7 @@ async def get_expiry_alerts_summary(
         # Get top 5 urgent alerts
         urgent_where = "WHERE alert_color IN ('expired', 'red')"
         if user_filter:
-            urgent_where += " AND LOWER(assigned_to) = $1"
+            urgent_where += " AND LOWER(assigned_to) = ANY($1::text[])"
 
         urgent = await conn.fetch(
             f"""

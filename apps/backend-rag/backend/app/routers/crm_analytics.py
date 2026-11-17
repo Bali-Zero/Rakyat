@@ -135,7 +135,7 @@ async def get_client_overview(
             where_clause = ""
             params = []
             if assigned_filter:
-                where_clause = "WHERE assigned_to = $1"
+                where_clause = "WHERE assigned_to = ANY($1::text[])"
                 params = [assigned_filter]
 
             # Total clients
@@ -231,7 +231,7 @@ async def get_team_performance(
 
             # RBAC: non-admin sees only their own row; admin sees all members.
             if assigned_filter:
-                where_clause = "WHERE c.assigned_to = $1"
+                where_clause = "WHERE c.assigned_to = ANY($1::text[])"
                 params: list[Any] = [assigned_filter]
             else:
                 where_clause = ""
@@ -300,7 +300,7 @@ async def get_revenue_summary(
             where_clause = ""
             params = []
             if assigned_filter:
-                where_clause = "WHERE c.assigned_to = $1"
+                where_clause = "WHERE c.assigned_to = ANY($1::text[])"
                 params = [assigned_filter]
 
             # Total metrics
@@ -394,7 +394,7 @@ async def get_processes_by_type(
             where_clause = ""
             params = []
             if assigned_filter:
-                where_clause = "WHERE c.assigned_to = $1"
+                where_clause = "WHERE c.assigned_to = ANY($1::text[])"
                 params = [assigned_filter]
 
             query = f"""
@@ -459,7 +459,7 @@ async def get_client_trend(
             practice_params = []
 
             if assigned_filter:
-                where_clause = "WHERE assigned_to = $1"
+                where_clause = "WHERE assigned_to = ANY($1::text[])"
                 client_params = [assigned_filter]
                 practice_params = [assigned_filter]
 

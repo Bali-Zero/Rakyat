@@ -10,6 +10,7 @@ from typing import Annotated, Any
 from pydantic import AfterValidator
 
 from backend.app.core.config import settings
+from backend.app.utils.client_pools import client_pool_peers
 from backend.core.env_lists import crm_extra_admin_emails
 
 # CRM-specific admin additions on top of the global allowlist
@@ -247,7 +248,7 @@ async def verify_client_access(
             (_record_value(row, "created_by") or "").lower().strip(),
         }
         owner_emails.discard("")
-        if user_email in owner_emails:
+        if owner_emails & client_pool_peers(user_email):
             return True, assigned_to
 
         logger.warning(

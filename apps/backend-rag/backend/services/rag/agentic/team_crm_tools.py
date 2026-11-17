@@ -52,6 +52,7 @@ from typing import Any
 
 import asyncpg
 
+from backend.app.utils.client_pools import client_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.logging_utils import get_logger
 from backend.services.tools.definitions import BaseTool
@@ -320,8 +321,8 @@ class TeamMyClientsTool(BaseTool):
         """
         params: list[Any] = []
         if not scope.is_admin:
-            sql += " WHERE LOWER(c.assigned_to) = $1"
-            params.append(scope.email)
+            sql += " WHERE LOWER(c.assigned_to) = ANY($1::text[])"
+            params.append(sorted(client_pool_peers(scope.email)))
         sql += f" GROUP BY c.id, c.full_name ORDER BY c.full_name LIMIT ${len(params) + 1}"
         params.append(limit)
 
@@ -410,8 +411,8 @@ class TeamMyPracticesTool(BaseTool):
         """
         params: list[Any] = []
         if not scope.is_admin:
-            params.append(scope.email)
-            sql += f" AND LOWER(c.assigned_to) = ${len(params)}"
+            params.append(sorted(client_pool_peers(scope.email)))
+            sql += f" AND LOWER(c.assigned_to) = ANY(${len(params)}::text[])"
         if status:
             params.append(status)
             sql += f" AND p.status = ${len(params)}"
@@ -528,10 +529,11 @@ class TeamMyDeadlinesTool(BaseTool):
         expiry_params: list[Any] = [days_ahead]
         alerts_params: list[Any] = [days_ahead]
         if not scope.is_admin:
-            expiry_sql += f" AND LOWER(assigned_to) = ${len(expiry_params) + 1}"
-            expiry_params.append(scope.email)
-            alerts_sql += f" AND LOWER(c.assigned_to) = ${len(alerts_params) + 1}"
-            alerts_params.append(scope.email)
+            peers = sorted(client_pool_peers(scope.email))
+            expiry_sql += f" AND LOWER(assigned_to) = ANY(${len(expiry_params) + 1}::text[])"
+            expiry_params.append(peers)
+            alerts_sql += f" AND LOWER(c.assigned_to) = ANY(${len(alerts_params) + 1}::text[])"
+            alerts_params.append(peers)
         expiry_sql += f" ORDER BY expiry_date ASC LIMIT ${len(expiry_params) + 1}"
         expiry_params.append(limit)
         alerts_sql += f" ORDER BY ca.deadline ASC LIMIT ${len(alerts_params) + 1}"
@@ -639,8 +641,8 @@ class TeamPracticeDetailTool(BaseTool):
         """
         params: list[Any] = [pattern]
         if not scope.is_admin:
-            params.append(scope.email)
-            sql += f" AND LOWER(c.assigned_to) = ${len(params)}"
+            params.append(sorted(client_pool_peers(scope.email)))
+            sql += f" AND LOWER(c.assigned_to) = ANY(${len(params)}::text[])"
         params.append(limit)
         sql += f" ORDER BY p.created_at DESC LIMIT ${len(params)}"
 
