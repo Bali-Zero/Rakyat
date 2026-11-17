@@ -76,8 +76,9 @@ export default function PrivacyPolicyPage() {
             <li>Communication history (messages across all channels)</li>
             <li>
               Usage data (pages visited, device and browser type, traffic
-              source) collected through Google Analytics with anonymized IP,
-              only after you accept analytics cookies
+              source) collected through Google Analytics with anonymized IP — on
+              our client portal only after you accept analytics cookies; on
+              balizero.com analytics is on by default (see our Cookie Policy)
             </li>
           </ul>
 
@@ -261,7 +262,9 @@ export default function PrivacyPolicyPage() {
         <Section title="10. Cookies">
           <p className="text-sm">
             We use essential cookies for authentication and preferences.
-            Analytics cookies (Google Analytics) are opt-in. See our{" "}
+            Analytics cookies (Google Analytics) are opt-in on our client portal
+            (my.balizero.com) and on by default on balizero.com; advertising
+            cookies are always off. See our{" "}
             <Link
               href="/cookies"
               className="underline"
