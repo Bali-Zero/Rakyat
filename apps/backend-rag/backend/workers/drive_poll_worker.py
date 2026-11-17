@@ -2,7 +2,9 @@
 
 The HTTP API owns status and manual control only. This worker owns the periodic
 Drive poll loop so Drive/DB/OCR import chains do not compete with user-facing
-API requests inside the same Fly Machine.
+API requests inside the same Fly Machine. The worker also runs the CRM
+knowledge-graph maintenance jobs (build-mediated and garbage-collect) in
+its own task next to the long-running poll loop, never inline and never with --once.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import Any
 import asyncpg
 
 from backend.services.crm.drive_poll_service import poll_drive_changes
+from backend.workers.crm_kg_maintenance import load_kg_maintenance_config, run_maintenance_loop
 
 logger = logging.getLogger(__name__)
 
@@ -202,20 +205,48 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
         except NotImplementedError:
             signal.signal(sig, lambda *_args: _request_stop())
 
-    while not stop_event.is_set():
-        await run_once(config)
-        if config.once:
-            return 0
+    kg_config = load_kg_maintenance_config()
+    kg_task: asyncio.Task[None] | None = None
+    if not config.once:
+        # CRM KG maintenance belongs to the long-running worker, not --once. It runs in
+        # its own task and the poll loop never awaits it, so a stuck maintenance call
+        # stalls maintenance only, until the worker restarts.
+        kg_task = asyncio.create_task(
+            run_maintenance_loop(config.database_url, kg_config, stop_event),
+            name="crm-kg-maintenance",
+        )
+        kg_task.add_done_callback(_log_maintenance_task_end)
 
-        sleep_seconds = config.interval_seconds
-        if config.jitter_seconds:
-            sleep_seconds += random.randint(0, config.jitter_seconds)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=sleep_seconds)
-        except TimeoutError:
-            continue
+    try:
+        while not stop_event.is_set():
+            await run_once(config)
+            if config.once:
+                return 0
+
+            sleep_seconds = config.interval_seconds
+            if config.jitter_seconds:
+                sleep_seconds += random.randint(0, config.jitter_seconds)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=sleep_seconds)
+            except TimeoutError:
+                continue
+    finally:
+        stop_event.set()
+        if kg_task is not None and not kg_task.done():
+            kg_task.cancel()
+            # Best effort: wait briefly for the task's cleanup. This does not bound
+            # process exit; Fly's kill_timeout does.
+            await asyncio.wait({kg_task}, timeout=10)
 
     return 0
+
+
+def _log_maintenance_task_end(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("CRM KG maintenance task ended unexpectedly: %r", exc)
 
 
 def main(argv: list[str] | None = None) -> int:
