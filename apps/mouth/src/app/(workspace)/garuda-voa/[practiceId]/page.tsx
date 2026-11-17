@@ -174,6 +174,11 @@ export default function GarudaVoaStaffDetailPage() {
 
   const [isAssigning, setIsAssigning] = useState(false);
   const assignmentIdempotencyKeyRef = useRef<string>(newIdempotencyKey());
+  // The assignee the current assignment key was minted for. Retrying the SAME
+  // assignee reuses the key (safe replay); picking a different assignee is a
+  // different command and must not reuse a key the server has already bound
+  // to another payload (409 IDEMPOTENCY_CONFLICT).
+  const assignmentTargetRef = useRef<string | null>(null);
 
   const loadPractice = useCallback(async () => {
     if (!practiceId) return;
@@ -221,6 +226,10 @@ export default function GarudaVoaStaffDetailPage() {
     value: string,
   ) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    // A changed field is a different command. The server binds an
+    // Idempotency-Key to the payload of its first use, so re-sending the
+    // edited payload under the old key answers 409 IDEMPOTENCY_CONFLICT.
+    idempotencyKeyRef.current = newIdempotencyKey();
   };
 
   const submitTransition = async () => {
@@ -265,6 +274,10 @@ export default function GarudaVoaStaffDetailPage() {
 
   const handleAssign = async (assignedTo: string) => {
     if (!practiceId) return;
+    if (assignmentTargetRef.current !== assignedTo) {
+      assignmentIdempotencyKeyRef.current = newIdempotencyKey();
+      assignmentTargetRef.current = assignedTo;
+    }
     setIsAssigning(true);
     try {
       // assignPractice returns the thin StaffPracticeListItem shape (no

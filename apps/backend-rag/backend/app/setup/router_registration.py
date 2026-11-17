@@ -367,7 +367,6 @@ def include_routers(api: FastAPI) -> None:
     api.include_router(
         whatsapp_chat.router,
     )  # WhatsApp Cloud API with intelligent triage (Gemini 3 Flash + Zan v2)
-    # api.include_router(whatsapp_chat.alias_router)  # ❌ DISABLED - Legacy alias causes duplicate responses
     api.include_router(
         whatsapp_conversations.router,
     )  # Omnichannel WhatsApp conversations API (dashboard only)

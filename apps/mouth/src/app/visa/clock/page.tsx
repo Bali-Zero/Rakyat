@@ -9,6 +9,12 @@ import {
   useFunnelApp,
 } from "@balizero/core";
 
+// Every `code` MUST be a member of the backend `VisaType` enum
+// (apps/backend-rag/backend/services/visa_check/catalogue.py) — an unknown
+// code is rejected by `ClockRequest` with 422 before any timeline is built.
+// The retired "B211A" tourism code was removed for that reason: C1 (Tourism)
+// is its current equivalent, and the backend still maps a cached "B211A"
+// submission to C1 for old bookmarks.
 const VISA_OPTIONS = [
   { code: "B1", label: "B1 Visa on Arrival (VOA)" },
   { code: "C1", label: "C1 Tourism" },
@@ -24,6 +30,21 @@ const VISA_OPTIONS = [
   { code: "E31", label: "E31 Family KITAS" },
   { code: "E30A", label: "E30A Student KITAS (Primary & Secondary)" },
 ];
+
+// Mirrors `ClockRequest._entry_date_reasonable` (visa_check.py): an entry date
+// more than 6 years (365 * 6 days, supporting 5-year E33/E33E stay permits) in
+// the past or more than 31 days in the future is rejected with 422, so the
+// picker must not offer it.
+const ENTRY_DATE_MAX_PAST_DAYS = 365 * 6;
+const ENTRY_DATE_MAX_FUTURE_DAYS = 31;
+
+function isoDateOffset(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
 
 const fieldStyle: React.CSSProperties = {
   padding: "0.45rem 0.7rem",
@@ -113,6 +134,8 @@ export default function VisaClockPage() {
             <input
               type="date"
               required
+              min={isoDateOffset(-ENTRY_DATE_MAX_PAST_DAYS)}
+              max={isoDateOffset(ENTRY_DATE_MAX_FUTURE_DAYS)}
               value={entryDate}
               onChange={(e) => {
                 setEntryDate(e.target.value);

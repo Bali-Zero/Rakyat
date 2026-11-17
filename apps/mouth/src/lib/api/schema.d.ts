@@ -17199,6 +17199,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/visa/clock/email": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Subscribe Clock Email
+     * @description Schedule up to 5 checkpoint drip reminders (D-60/30/14/7/1) for an existing Clock result.
+     */
+    post: operations["subscribe_clock_email_api_visa_clock_email_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/visa/clock/{hash}": {
     parameters: {
       query?: never;
@@ -21304,6 +21324,36 @@ export interface components {
       label: string;
       /** Title */
       title: string;
+    };
+    /** ClockEmailOptInRequest */
+    ClockEmailOptInRequest: {
+      /**
+       * App
+       * @default visa_clock
+       * @enum {string}
+       */
+      app: "visa_clock" | "clock";
+      /**
+       * Email
+       * Format: email
+       */
+      email: string;
+      /** Payload */
+      payload?: {
+        [key: string]: unknown;
+      };
+      /** Result Hash */
+      result_hash: string;
+    };
+    /** ClockEmailOptInResponse */
+    ClockEmailOptInResponse: {
+      /**
+       * Ok
+       * @default true
+       */
+      ok: boolean;
+      /** Scheduled Count */
+      scheduled_count: number;
     };
     /**
      * ClockInRequest
@@ -56032,6 +56082,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["backend__app__routers__visa_check__ClockResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  subscribe_clock_email_api_visa_clock_email_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ClockEmailOptInRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ClockEmailOptInResponse"];
         };
       };
       /** @description Validation Error */

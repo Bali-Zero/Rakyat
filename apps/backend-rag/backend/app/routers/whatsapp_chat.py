@@ -1965,24 +1965,3 @@ async def whatsapp_status() -> dict[str, Any]:
         "ai_autonomy_mode": settings.whatsapp_openclaw_autonomy_mode,
         "persona": settings.whatsapp_openclaw_persona,
     }
-
-
-# ============================================================
-# ALIAS ROUTER: /api/whatsapp/webhook (Meta Dashboard legacy URL)
-# ============================================================
-alias_router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
-
-
-@alias_router.get("/webhook")
-async def verify_webhook_alias(request: Request) -> Any:
-    """Alias for /webhook/whatsapp (GET) — Meta webhook verification."""
-    return await verify_webhook(request)
-
-
-@alias_router.post("/webhook")
-async def whatsapp_webhook_alias(
-    background_tasks: BackgroundTasks,
-    request: Request,
-) -> Any:
-    """Alias for /webhook/whatsapp (POST) — Meta webhook messages."""
-    return await whatsapp_webhook(background_tasks, request)
