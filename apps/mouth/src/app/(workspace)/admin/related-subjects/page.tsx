@@ -100,6 +100,13 @@ export default function RelatedRegistryPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailRef = useRef<HTMLElement | null>(null);
+
+  // Selecting a subject brings its detail section into view.
+  useEffect(() => {
+    if (selectedId === null) return;
+    detailRef.current?.scrollIntoView?.({ block: "start" });
+  }, [selectedId]);
 
   // Debounce: the effective search follows the input 300 ms after the last
   // keystroke, only for an empty or 2+ character trimmed text. One character
@@ -325,6 +332,7 @@ export default function RelatedRegistryPage() {
 
       {selectedId !== null && (
         <section
+          ref={detailRef}
           className="mt-8 border-t border-[var(--bz-border)] pt-4"
           aria-label="Subject detail"
         >

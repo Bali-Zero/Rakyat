@@ -200,6 +200,18 @@ describe("related subjects registry page", () => {
   });
 
   it("F6 a row click asks the detail and a later click wins on reverse answers", async () => {
+    const original = Element.prototype.scrollIntoView;
+    const scrollMock = vi.fn();
+    Element.prototype.scrollIntoView = scrollMock;
+    try {
+      await f6();
+      expect(scrollMock).toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  async function f6() {
     defaults(page([ROW_A, ROW_B]));
     render(<RelatedRegistryPage />);
     await settle();
@@ -226,7 +238,7 @@ describe("related subjects registry page", () => {
     const after = screen.getByLabelText("Subject detail");
     expect(within(after).getByText("ZzAaa Person")).toBeTruthy();
     expect(within(after).queryByText("ZzBbb Person")).toBeNull();
-  });
+  }
 
   it("F7 a Drive id is a link to the Drive viewer in a new tab", async () => {
     defaults();
