@@ -9558,13 +9558,11 @@ The moratorium was the Governor's direct response to Alfamart/Indomaret saturati
   "55202": {
     whatItMeans:
       "Youth hostel (Hostel Remaja) — budget accommodation providing dormitory-style or shared-room lodging, primarily targeting backpackers and budget travelers. Includes common areas, shared kitchens, and social spaces.",
-    whatYouNeed: `**Risk Level:** Medium-Low (Menengah Rendah) for Mikro/Kecil/Menengah scale.
+    whatYouNeed: `**Risk Level:** Medium-Low (Menengah Rendah) — OSS currently publishes rows only at Mikro/Kecil/Menengah scale (no Skala Besar row, whereas a PT PMA is Usaha Besar by law).
 
-**Foreign Ownership:** 100% Open (TERBUKA).
+**CRITICAL WARNING — Perda No. 4/2026:** Bali's regional law now formally criminalizes nominee land ownership and business licensing. Penalties: up to 5 years imprisonment + IDR 1 Billion fine. Any foreign involvement through nominee structures is now a criminal matter. Use compliant structures ONLY.
 
-**CRITICAL WARNING — Perda No. 4/2026:** Bali's regional law now formally criminalizes nominee land ownership and business licensing. Penalties: up to 5 years imprisonment + IDR 1 Billion fine. Any foreign involvement through nominee structures is now a criminal matter. Use proper PT PMA structure ONLY.
-
-**PMA:** Fully open — 100% foreign ownership.`,
+**PMA:** Nationally **TERBUKA (100% foreign ownership)** (no Perpres 49/2021 reservation cap located), **but provisionally flagged in Bali (CHIUSO_MORATORIA_BALI)** — following the 28 January 2026 Governor request on Rendah/Menengah Rendah tiers (though 55202 is NOT among the 18 fields closed from the third week of May 2026) and pending OSS Skala Besar confirmation.`,
     whatChanged:
       "The old 55130 (Pondok Wisata/Homestay) code no longer exists as an accommodation catch-all in KBLI 2025. Budget accommodation has been separated: 55202 covers youth hostels (hostel remaja), while 55201 (Homestay) and 55203 (Villa) remain reserved exclusively for Koperasi & UMKM (0% PMA) under Perpres 49/2021 Lampiran II.",
     baliContext:
@@ -9572,7 +9570,7 @@ The moratorium was the Governor's direct response to Alfamart/Indomaret saturati
     youllAlsoNeed:
       "- 55204 — Serviced Apartment / Aparthotel (open to 100% PMA)\n- 56101 — Restaurant (if including food service)\n- 68292 — Property Management (if managing real estate on behalf of owners)",
     zantaraOpener:
-      "Running a hostel in Bali? 55202 is the legal path for foreign operators. WARNING: nominee structures are now criminal under Perda 4/2026. Let me explain the compliant PT PMA approach.",
+      "Looking at Youth Hostels (55202) in Bali? Nationally 55202 has no Perpres 49/2021 foreign cap, but OSS lists no Skala Besar row and Bali flags it provisionally (CHIUSO_MORATORIA_BALI) — and nominee structures are criminal under Perda 4/2026. Let me walk you through what to verify in OSS and compliant alternatives like 55204.",
     tkaInfo: {
       categoryId: 8,
       categoryName: "Akomodasi & Makan/Minum",
@@ -9623,7 +9621,7 @@ The moratorium was the Governor's direct response to Alfamart/Indomaret saturati
   "55209": {
     whatItMeans:
       "Catch-all for short-stay accommodation NOT classified elsewhere. Explicitly includes: bungalows, cottages without daily cleaning, mountain lodges, hostels, capsule hotels, tree houses, cabins, glamping. Does NOT include daily/weekly hotel services.",
-    whatYouNeed: `**Mikro/Kecil/Menengah.** Medium-Low, automatic. Sertifikat Laik Sehat required.\n\n**PMA:** Nationally **TERBUKA (100% foreign ownership)**, EXCEPT the specifically named 'Guest House' sub-activity reserved for Koperasi/UMKM under Perpres 10/2021 Pasal 5(5) (scope-dependent check required). **In Bali**, Menengah Rendah accommodation filings face the 2026 provincial PMA block — verify OSS availability before incorporating.`,
+    whatYouNeed: `**Mikro/Kecil/Menengah.** Medium-Low, automatic. Sertifikat Laik Sehat required.\n\n**PMA:** Nationally **TERBUKA (100% foreign ownership)**, EXCEPT the specifically named 'Guest House' sub-activity reserved for Koperasi/UMKM under Perpres 10/2021 Pasal 5(5) jo. Perpres 49/2021 Lampiran II (scope-dependent: **BLOCCATO_DIPENDE_SCOPE**). **Scale & Bali status:** OSS currently publishes rows only at Mikro/Kecil/Menengah (no Skala Besar row, while a PT PMA is Usaha Besar by law). Note that 55209 (ex-KBLI 2020 55199) is NOT among the 18 fields closed by Bali from the third week of May 2026 — confirm live OSS Large-scale licensing and non-Guest-House scope before incorporating.`,
     whatChanged:
       "CODICE_RINUMERATO from 55199. IMPORTANT: this code now explicitly lists 'glamping' in its definition, partially overlapping with 55300 (Camping Grounds). The distinction: 55209 covers the accommodation STRUCTURE (the glamping unit itself), while 55300 covers the SITE (the camping ground as a managed area).",
     baliContext:
