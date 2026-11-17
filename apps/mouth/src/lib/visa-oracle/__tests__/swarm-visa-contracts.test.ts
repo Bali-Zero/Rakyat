@@ -101,6 +101,11 @@ vi.mock("@/app/(workspace)/garuda-voa/api-client", async () => {
 
 import VisaClockPage from "@/app/visa/clock/page";
 import { POST as submitAssessment } from "@/app/api/assessment/submit/route";
+import {
+  ASSESSMENT_COOKIE,
+  mintAssessmentToken,
+  resetAssessmentRateLimitForTests,
+} from "@/app/api/assessment/_access";
 import GarudaVoaStaffDetailPage from "@/app/(workspace)/garuda-voa/[practiceId]/page";
 import { GarudaStaffError } from "@/app/(workspace)/garuda-voa/api-client";
 
@@ -198,8 +203,10 @@ describe("Swarm Vertical 1 — Visa & Visa Oracle Contract Parity", () => {
     const allowedRecipient = allowedRecipientMatch?.[1] ?? "";
 
     it("returns HTTP 502 { success: false, error } when backend responds HTTP 200 with success: false", async () => {
+      resetAssessmentRateLimitForTests();
       vi.stubEnv("NUZANTARA_API_URL", "https://backend.invalid");
       vi.stubEnv("API_KEY", "test-relay-token"); // pragma: allowlist secret
+      const sessionToken = mintAssessmentToken();
 
       global.fetch = vi.fn().mockResolvedValue(
         new Response(
@@ -214,7 +221,10 @@ describe("Swarm Vertical 1 — Visa & Visa Oracle Contract Parity", () => {
 
       const req = new NextRequest("http://localhost/api/assessment/submit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${ASSESSMENT_COOKIE}=${sessionToken}`,
+        },
         body: JSON.stringify({
           to: allowedRecipient,
           subject: "Assessment Block 1",
@@ -230,8 +240,10 @@ describe("Swarm Vertical 1 — Visa & Visa Oracle Contract Parity", () => {
     });
 
     it("passes through HTTP 200 when backend confirms success: true", async () => {
+      resetAssessmentRateLimitForTests();
       vi.stubEnv("NUZANTARA_API_URL", "https://backend.invalid");
       vi.stubEnv("API_KEY", "test-relay-token"); // pragma: allowlist secret
+      const sessionToken = mintAssessmentToken();
 
       global.fetch = vi.fn().mockResolvedValue(
         new Response(
@@ -246,7 +258,10 @@ describe("Swarm Vertical 1 — Visa & Visa Oracle Contract Parity", () => {
 
       const req = new NextRequest("http://localhost/api/assessment/submit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${ASSESSMENT_COOKIE}=${sessionToken}`,
+        },
         body: JSON.stringify({
           to: allowedRecipient,
           subject: "Assessment Block 1",

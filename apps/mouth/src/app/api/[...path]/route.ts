@@ -95,6 +95,7 @@ const SLASH_ONLY_UPSTREAM_PATHS = new Set(["/api/crm/interactions"]);
 
 async function proxy(req: NextRequest): Promise<Response> {
   const backendBase = getBackendBaseUrl();
+  const backendBaseUrl = new URL(backendBase);
   const url = new URL(req.url);
   const upstreamPath = SLASH_ONLY_UPSTREAM_PATHS.has(url.pathname)
     ? `${url.pathname}/`
@@ -338,10 +339,56 @@ async function proxy(req: NextRequest): Promise<Response> {
       const location = upstream.headers.get("location");
       if (!location) break;
 
-      // Resolve relative URLs against the backend base
-      const redirectUrl = location.startsWith("http")
-        ? location.replace(/^http:/, "https:") // Force HTTPS
-        : `${backendBase}${location.startsWith("/") ? "" : "/"}${location}`;
+      // Resolve relative URLs against the backend base and refuse any redirect
+      // that leaves backendBaseUrl.origin or carries userinfo, so Authorization,
+      // Cookie, X-CSRF-Token and X-API-Key never leak off-origin.
+      let resolvedRedirect: URL;
+      try {
+        resolvedRedirect = new URL(location, backendBase);
+      } catch {
+        upstream = new Response(
+          JSON.stringify({ detail: "Invalid upstream redirect" }),
+          {
+            status: 502,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+        break;
+      }
+
+      if (
+        backendBaseUrl.protocol === "https:" &&
+        resolvedRedirect.protocol === "http:" &&
+        resolvedRedirect.hostname === backendBaseUrl.hostname &&
+        resolvedRedirect.port === backendBaseUrl.port
+      ) {
+        resolvedRedirect.protocol = "https:";
+      }
+
+      if (
+        resolvedRedirect.origin !== backendBaseUrl.origin ||
+        resolvedRedirect.username !== "" ||
+        resolvedRedirect.password !== ""
+      ) {
+        logger.warn("[Proxy] Refusing cross-origin upstream redirect", {
+          component: "AUTO",
+          action: "redirect_refused",
+          metadata: {
+            path: url.pathname,
+            redirectOrigin: resolvedRedirect.origin,
+          },
+        });
+        upstream = new Response(
+          JSON.stringify({ detail: "Cross-origin upstream redirect refused" }),
+          {
+            status: 502,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+        break;
+      }
+
+      const redirectUrl = resolvedRedirect.toString();
 
       // HTTP 307 and 308 preserve the original method (including POST/DELETE body)
       // HTTP 301, 302, 303 convert POST to GET (standard browser behavior)

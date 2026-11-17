@@ -185,4 +185,65 @@ describe("Prime v2 BFF routes", () => {
     } as unknown as NextRequest;
     expect((await proposalPost(proposalReq)).status).toBe(502);
   });
+
+  it("sets Cache-Control: no-store, private on intelligence and portfolio responses", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ type: "FeatureCollection", features: [], stats: {} }),
+    );
+    const intelOk = await intelligenceGet(
+      makeGetRequest(
+        "http://localhost/api/prime/v2/intelligence?sw_lat=-8.7&sw_lng=115.1&ne_lat=-8.6&ne_lng=115.2",
+      ),
+    );
+    expect(intelOk.status).toBe(200);
+    expect(intelOk.headers.get("cache-control")).toBe("no-store, private");
+
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ detail: "Unauthorized" }, { status: 401 }),
+    );
+    const intel401 = await intelligenceGet(
+      makeGetRequest(
+        "http://localhost/api/prime/v2/intelligence?sw_lat=-8.7&sw_lng=115.1&ne_lat=-8.6&ne_lng=115.2",
+      ),
+    );
+    expect(intel401.status).toBe(401);
+    expect(intel401.headers.get("cache-control")).toBe("no-store, private");
+
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ client_id: 42, entities: [] }),
+    );
+    const portOk = await portfolioGet(
+      makeGetRequest("http://localhost/api/prime/v2/portfolio?client_id=42"),
+    );
+    expect(portOk.status).toBe(200);
+    expect(portOk.headers.get("cache-control")).toBe("no-store, private");
+
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ detail: "Forbidden" }, { status: 403 }),
+    );
+    const port403 = await portfolioGet(
+      makeGetRequest("http://localhost/api/prime/v2/portfolio?client_id=42"),
+    );
+    expect(port403.status).toBe(403);
+    expect(port403.headers.get("cache-control")).toBe("no-store, private");
+  });
+
+  it("URL-encodes proposal token path segments and rejects dot traversal", async () => {
+    const dotRes = await proposalTokenGet(
+      makeGetRequest("http://localhost/api/prime/v2/proposal/.."),
+      { params: Promise.resolve({ token: ".." }) },
+    );
+    expect(dotRes.status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "prop-1" }));
+    const specialRes = await proposalTokenGet(
+      makeGetRequest("http://localhost/api/prime/v2/proposal/encoded"),
+      { params: Promise.resolve({ token: "tok/1?x=1#frag" }) },
+    );
+    expect(specialRes.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/prime/v2/proposal/tok%2F1%3Fx%3D1%23frag"),
+    );
+  });
 });
