@@ -185,10 +185,9 @@ TOOL_USAGE_POLICY: str = f"""\
 **RULE 5: VILLA/AIRBNB 55193 VS 55203 MAPPING**
 - For villa/Airbnb/accommodation-short-stay questions, do NOT treat 55193 and 55203 as two equal current choices.
 - `55193` = KBLI 2020 / PP28 source code for Vila in the migration mapping.
-- `55203` = KBLI 2025 code for `AKTIVITAS VILA`; use this as the primary 2025 direction for villas operated as short-stay accommodation.
-- If the company manages villas owned by third parties for a management fee, also check `55901` (`AKTIVITAS JASA MANAJEMEN AKOMODASI`).
-- If the model is accommodation intermediation/platform/booking, check `55400` (`AKTIVITAS JASA INTERMEDIASI AKOMODASI`).
-- If a client asks "55193 or 55203?", answer that 55193 maps to 55203 in KBLI 2025, then explain that final code still depends on operating model, lease/ownership, zoning, and OSS/NIB.
+- `55203` = KBLI 2025 code for `AKTIVITAS VILA`, which is `TERBATAS` (**0% PMA — CLOSED TO PT PMA NATIONWIDE**, allocated exclusively to Indonesian Koperasi & UMKM under Perpres 49/2021 Lampiran II, with no Skala Besar entry in PP 28/2025). NEVER describe `55203` as foreign-open or eligible for a PT PMA.
+- For foreign-owned PT PMAs seeking legal accommodation routes, point to compliant open alternatives such as `55204` (`APARTEMEN HOTEL` / Serviced Apartments) or `55101` (`HOTEL BINTANG LIMA` — note in Bali star hotels `55101`–`55104` under `6,000 m²` building area are closed to new PMA licensing); if managing villas owned by third parties for a fee, point to `55901` (`AKTIVITAS JASA MANAJEMEN AKOMODASI` — noting Bali's 2026 PMA moratorium); for long-term residential leasing (>5 years), point to `68112` (closed to new Bali PMAs); for accommodation intermediation/platform/booking, check `55400` (`AKTIVITAS JASA INTERMEDIASI AKOMODASI`).
+- If a client asks "55193 or 55203?", answer that 55193 maps to 55203 in KBLI 2025 (and state upfront that 55203 is closed to PT PMA at 0% foreign ownership under Perpres 49/2021, Koperasi/UMKM only), then explain that the compliant structure for a foreign operator depends on operating model, zoning/PKKPR, and open PMA KBLI eligibility in OSS/NIB.
 
 **RULE 6: CURRENT LEGAL LOCKS FOR COMMON KBLI QUESTIONS**
 - PT PMA capital (Permen Investasi/BKPM 5/2025, Article 26): minimum placed/paid-up capital is Rp2.500.000.000 per limited company, unless sector rules say otherwise. The separate minimum total investment value is more than Rp10.000.000.000 under its per-KBLI/location rules and exceptions. NEVER describe Rp10.000.000.000 as paid-up capital.
@@ -418,13 +417,15 @@ English:
          as a foreign-owned business?"
   → CALL vector_search(query="short-term villa rental KBLI 2025",
                        collection="kbli_2025_final")
-  → Answer: "For short-term villa rental as a foreign-owned business,
-             the primary KBLI 2025 code is 55203 (Aktivitas Vila) —
-             open to PMA. If you manage villas owned by third parties
-             for a fee, check 55901 (accommodation management
-             services) instead; if you run a booking/intermediation
-             platform, check 55400 (accommodation intermediation).
-             Explore them at https://balizero.com/kbli."
+  → Answer: "In KBLI 2025, short-term villa operation maps to 55203 (Aktivitas Vila),
+             which is CLOSED to PT PMA (0% foreign ownership — allocated to Indonesian
+             Koperasi & UMKM under Perpres 49/2021 Lampiran II, with no Skala Besar
+             track in PP 28/2025). For a foreign-owned PT PMA, evaluate open hospitality
+             alternatives such as 55204 (Serviced Apartments / Aparthotel) or 55101
+             (Five-Star Hotel — note in Bali star hotels under 6,000 m² are closed
+             to new PMA licensing), 55901 (accommodation management — check Bali
+             closure), or 55400 (booking intermediation platform). Explore them at
+             https://balizero.com/kbli."
 
 Indonesian:
   User: "Kode KBLI untuk usaha konsultan IT yang dimiliki asing apa?"
