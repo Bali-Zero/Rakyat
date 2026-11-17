@@ -1,7 +1,8 @@
-"""Visa Check homepage app — 5 endpoints.
+"""Visa Check homepage app — 6 endpoints.
 
 POST /api/visa/check/start    → returns which branch the UI should show
 POST /api/visa/clock          → persist Clock submission, return hash + timeline
+POST /api/visa/clock/email    → schedule up to 5 checkpoint drip reminder emails for a Clock result
 POST /api/visa/match          → persist Match submission, return hash + recommendation
 GET  /api/visa/clock/{hash}   → render Clock result
 GET  /api/visa/match/{hash}   → render Match result
@@ -12,16 +13,21 @@ Nothing here recommends visas by ML — the decision tree is in
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
+from typing import Any, Literal
 
 import asyncpg
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_database_pool
 from backend.app.utils.logging_utils import get_logger
+from backend.services.lead_capture.source import LeadSource
+from backend.services.lead_capture.whatsapp_deeplink import build_whatsapp_url
+from backend.services.notifications.funnel_email.scheduler import subscribe_visa_clock
 from backend.services.pricing.pricing_service import PricingService
 from backend.services.visa_check import (
     VisaCheckRepository,
@@ -79,6 +85,15 @@ class ClockRequest(BaseModel):
     in_country_now: bool = True
     client_fingerprint: str | None = Field(default=None, max_length=32)
 
+    @field_validator("visa_type", mode="before")
+    @classmethod
+    def _normalize_legacy_visa_type(cls, v: Any) -> Any:
+        # Backwards compatibility for cached clients/bookmarks still submitting
+        # the retired pre-2024 "B211A" tourism code (replaced by C1).
+        if isinstance(v, str) and v.strip().upper() == "B211A":
+            return VisaType.C1.value
+        return v
+
     @field_validator("entry_date")
     @classmethod
     def _entry_date_reasonable(cls, v: date) -> date:
@@ -90,6 +105,25 @@ class ClockRequest(BaseModel):
         if (v - today).days > 31:
             raise ValueError("entry_date cannot be more than 1 month in the future")
         return v
+
+
+class ClockEmailOptInRequest(BaseModel):
+    email: EmailStr = Field(..., max_length=320)
+    app: Literal["visa_clock", "clock"] = "visa_clock"
+    result_hash: str = Field(..., min_length=8, max_length=20, pattern=r"^[A-Za-z0-9_-]+$")
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("payload")
+    @classmethod
+    def _cap_payload_size(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(v, default=str)) > 4096:
+            raise ValueError("payload too large (>4KB)")
+        return v
+
+
+class ClockEmailOptInResponse(BaseModel):
+    ok: bool = True
+    scheduled_count: int
 
 
 class ClockCheckpointPayload(BaseModel):
@@ -304,6 +338,55 @@ async def submit_match(
         budget_band=saved.budget_band,
         session_jwt=_issue_visa_funnel_jwt(saved.hash),
     )
+
+
+@router.post("/clock/email", response_model=ClockEmailOptInResponse)
+async def subscribe_clock_email(
+    payload: ClockEmailOptInRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> ClockEmailOptInResponse:
+    """Schedule up to 5 checkpoint drip reminders (D-60/30/14/7/1) for an existing Clock result."""
+    repo = VisaCheckRepository(db_pool)
+    try:
+        saved = await repo.load_clock(payload.result_hash)
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+        logger.exception("visa_clock_email: DB lookup failed")
+        raise HTTPException(status_code=500, detail="Could not schedule reminders")
+
+    if not saved:
+        raise HTTPException(status_code=404, detail="Visa check not found")
+
+    # Recompute from inclusive Day-1 timeline (matching get_clock) so pre-deploy rows
+    # stay consistent with their checkpoints.
+    timeline = clock_timeline(visa_type=saved.visa_type, entry_date=saved.entry_date)
+
+    whatsapp_url = build_whatsapp_url(
+        source=LeadSource.VISA_CLOCK,
+        context_lines=[
+            ("Visa", saved.visa_type.value),
+            ("Entry date", saved.entry_date.isoformat()),
+            ("Expiry date", timeline.expiry_date.isoformat()),
+        ],
+        result_hash=saved.hash,
+        lead_intent_id=f"clock_{saved.hash}",
+    )
+
+    try:
+        scheduled = await subscribe_visa_clock(
+            email=str(payload.email),
+            visa_type=saved.visa_type.value,
+            entry_date=saved.entry_date,
+            expiry_date=timeline.expiry_date,
+            result_hash=saved.hash,
+            whatsapp_url=whatsapp_url,
+            pool=db_pool,
+        )
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+        # Law 2: never log email or request payload values.
+        logger.exception("visa_clock_email: DB upsert failed")
+        raise HTTPException(status_code=500, detail="Could not schedule reminders")
+
+    return ClockEmailOptInResponse(ok=True, scheduled_count=len(scheduled))
 
 
 @router.get("/clock/{hash}", response_model=ClockResponse)
