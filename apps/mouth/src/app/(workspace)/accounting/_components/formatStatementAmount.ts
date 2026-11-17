@@ -10,6 +10,5 @@ export function formatStatementAmount(raw: string): string {
   const grouped = whole
     .replace(/^0+(?=\d)/, "")
     .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  const isZero = /^0*$/.test(whole) && cents === "00";
-  return `${isZero ? "" : sign}Rp ${grouped}${cents === "00" ? "" : `,${cents}`}`;
+  return `${sign}Rp ${grouped}${cents === "00" ? "" : `,${cents}`}`;
 }
