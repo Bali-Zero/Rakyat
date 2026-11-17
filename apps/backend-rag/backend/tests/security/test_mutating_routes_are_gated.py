@@ -396,12 +396,6 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
     ),
     IntentionalPublicMutation(
         "POST",
-        "/api/funnel/session/convert",
-        "Lead->client conversion bridge invoked by the portal login flow "
-        "itself (session_id + client_id only).",
-    ),
-    IntentionalPublicMutation(
-        "POST",
         "/api/analytics/funnel-event",
         "11 whitelisted funnel events (packages/core/analytics/funnel-view.ts) "
         "— session_id only, no PII.",

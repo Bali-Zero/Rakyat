@@ -1,6 +1,7 @@
 """Tests for admin Drive health and poll endpoints."""
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -30,12 +31,19 @@ class FakePool:
         return FakeAcquire(self.conn)
 
 
-def _request_with_pool(pool: Any | None) -> MagicMock:
+_UNSET = object()
+_DEFAULT_ADMIN = {"role": "admin", "user_id": "admin-1"}
+
+
+def _request_with_pool(pool: Any | None, user: Any = _UNSET) -> MagicMock:
     request = MagicMock()
     if pool is None:
         request.app.state.db_pool = None
     else:
         request.app.state.db_pool = pool
+    request.state = SimpleNamespace(
+        user=dict(_DEFAULT_ADMIN) if user is _UNSET else user,
+    )
     return request
 
 
@@ -201,7 +209,7 @@ async def test_trigger_drive_poll_disables_inline_ocr_by_default() -> None:
             clear=False,
         ),
     ):
-        result = await trigger_drive_poll(MagicMock())
+        result = await trigger_drive_poll(_request_with_pool(None))
 
     poll_drive_changes.assert_awaited_once_with(inline_ocr=False)
     assert result["status"] == "ok"
@@ -228,7 +236,7 @@ async def test_trigger_drive_poll_can_enable_inline_ocr_by_env() -> None:
             clear=False,
         ),
     ):
-        result = await trigger_drive_poll(MagicMock())
+        result = await trigger_drive_poll(_request_with_pool(None))
 
     poll_drive_changes.assert_awaited_once_with(inline_ocr=True)
     assert result["inline_ocr"] is True
@@ -250,8 +258,26 @@ async def test_trigger_drive_poll_timeout_raises_504() -> None:
         ),
         pytest.raises(HTTPException) as exc_info,
     ):
-        await trigger_drive_poll(MagicMock())
+        await trigger_drive_poll(_request_with_pool(None))
 
     assert exc_info.value.status_code == 504
     assert exc_info.value.detail["status"] == "timeout"
     assert exc_info.value.detail["inline_ocr"] is False
+
+
+@pytest.mark.asyncio
+async def test_trigger_drive_poll_rejects_anonymous_401() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await trigger_drive_poll(_request_with_pool(None, user=None))
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_trigger_drive_poll_rejects_non_admin_403() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await trigger_drive_poll(
+            _request_with_pool(None, user={"role": "team", "user_id": "staff-1"})
+        )
+
+    assert exc_info.value.status_code == 403

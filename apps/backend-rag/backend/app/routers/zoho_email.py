@@ -26,6 +26,7 @@ from backend.services.integrations.zoho_email_service import ZohoEmailService
 from backend.services.integrations.zoho_oauth_service import ZohoOAuthService
 
 logger = get_logger(__name__)
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # 25 MB OOM bound
 
 router = APIRouter(prefix="/api/integrations/zoho", tags=["zoho-email"])
 
@@ -691,7 +692,18 @@ async def upload_attachment(
         user_id = _get_user_id(current_user)
         email_service = _get_email_service(db_pool)
 
-        content = await file.read()
+        raw_size = getattr(file, "size", None)
+        if isinstance(raw_size, int) and raw_size > _MAX_ATTACHMENT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Attachment exceeds maximum size (25 MB)",
+            )
+        content = await file.read(_MAX_ATTACHMENT_BYTES + 1)
+        if len(content) > _MAX_ATTACHMENT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Attachment exceeds maximum size (25 MB)",
+            )
         result = await email_service.upload_attachment(
             user_id=user_id,
             filename=file.filename or "unnamed",
@@ -701,6 +713,8 @@ async def upload_attachment(
         await invalidate_cache("zantara:zoho_email:*")
         return result
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

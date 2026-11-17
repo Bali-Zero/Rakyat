@@ -9,6 +9,7 @@ Extracted from portal_service.py (Wave 1 refactor, PR #?):
 All three classes are stateless (classmethod-only) and safe to import directly.
 """
 
+import asyncio
 import io
 import re
 from typing import Any
@@ -172,6 +173,17 @@ class DocumentOCR:
         mime, _ = mimetypes.guess_type(file_name)
         return mime or "application/octet-stream"
 
+    # PyMuPDF (fitz) is not thread-safe: concurrent use from several threads can
+    # return wrong results or crash the process. Every fitz call in this class
+    # stays on the event-loop thread and is never handed to asyncio.to_thread.
+
+    @classmethod
+    def _encode_image_bytes_base64_sync(cls, file_content: bytes) -> str:
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(file_content))
+        return cls._image_to_base64(image)
+
     @classmethod
     async def _extract_from_pdf(cls, file_content: bytes) -> dict[str, Any]:
         """Extract text from PDF using Gemini Vision (same as passport box)."""
@@ -269,10 +281,7 @@ class DocumentOCR:
             return result
 
         try:
-            from PIL import Image
-
-            image = Image.open(io.BytesIO(file_content))
-            img_base64 = cls._image_to_base64(image)
+            img_base64 = await asyncio.to_thread(cls._encode_image_bytes_base64_sync, file_content)
 
             vision_service = PDFVisionService()
             text = await cls._gemini_vision_ocr(img_base64, vision_service)
