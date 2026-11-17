@@ -734,16 +734,21 @@ UNREACHABLE_BY_RULING: dict[str, RuledUnreachable] = {
             "All four BRIDGING SUPPORT rules (`el.bridging.destination-stated`, "
             "`.t3-window-manual`, `.overstay-shield-payment`, "
             "`.source-status-verify`) require `intent.requested_product_code` to "
-            "be KNOWN — the permit the applicant wants to switch TO. "
-            "`fact-mapper.ts` hard-codes that fact to UNKNOWN(NOT_ASKED), and the "
-            "owner's D4 ruling quoted in `tree.ts` is explicit: the Oracle says "
-            "the product, it never asks which visa the applicant wants. Asking it "
-            "is the ONLY route to this product, so the row is a ruling and not an "
-            "omission — verified 2026-09-13 by supplying the fact on an onshore "
-            "OTHER-purpose walk whose `immigration.current_status_code` is "
-            "outside `hf.bridging.from-visit-itk`'s visit-class list: the engine "
-            "answers SUPPORTED_CANDIDATES [BRIDGING, C6]. BRIDGING is also one of "
-            "the two products in this pack with `public_catalog: false` (the "
+            "be KNOWN — the permit the applicant wants to switch TO. Since seq-33, "
+            "`mapRequestedProductCode` in `fact-mapper.ts` derives it on "
+            "onshore PT PMA `INVESTMENT` flows (`E28A`) and on onshore "
+            "`STATUS_BRIDGING` + `OTHER` when an active `stay_permit_code` is "
+            "answered, while the owner's D4 ruling quoted in `tree.ts` still "
+            "holds: the Oracle says the product, it never asks which visa the "
+            "applicant wants. No walk in the 183-walk census sets "
+            "`application_channel=STATUS_BRIDGING` + `other_paid_activity=no` "
+            "with an active stay permit, so BRIDGING remains named by zero "
+            "census walks — verified 2026-09-13 (and in `test_seq33_pack.py`) by "
+            "supplying the fact on an onshore OTHER-purpose walk whose "
+            "`immigration.current_status_code` is outside "
+            "`hf.bridging.from-visit-itk`'s visit-class list: the engine answers "
+            "SUPPORTED_CANDIDATES [BRIDGING, C6]. BRIDGING is also one of the "
+            "two products in this pack with `public_catalog: false` (the "
             "other, E30, the funnel already names), so surfacing it publicly is "
             "Zero's call twice over."
         ),
@@ -1637,7 +1642,12 @@ def _t06_visit_outcomes(sequence: int) -> dict[str, tuple[str, tuple[str, ...]]]
     return _T06_VISIT_OUTCOMES_SEQ32 if sequence >= 32 else _T06_VISIT_OUTCOMES
 
 
-EXPECTED_OUTCOME_BY_SEQUENCE[33] = dict(EXPECTED_OUTCOME_BY_SEQUENCE[32])
+EXPECTED_OUTCOME_BY_SEQUENCE[33] = {
+    **EXPECTED_OUTCOME_BY_SEQUENCE[32],
+    # `mapRequestedProductCode` now emits `KNOWN("E28A")` for onshore PT PMA
+    # conversion walks, so seq-33's `hf.visit.not-e28a-conversion` excludes C2.
+    "onshore/invest": ("SUPPORTED_CANDIDATES", ("E28B", "E28D", "E28F")),
+}
 
 EXPECTED_OUTCOME_BY_SEQUENCE = {
     _seq: {
