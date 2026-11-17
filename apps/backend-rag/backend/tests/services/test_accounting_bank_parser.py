@@ -105,6 +105,18 @@ def test_verify_balance_ok_and_fail() -> None:
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "cimb_octo_statement_synthetic.csv"
 
 
+_HEADER = (
+    "Post Date,Payment Date,Payment Type,Other Reference,Bank Reference,"
+    "Debit Amount,Credit Amount,Balance,Description,Cheque Number"
+)
+
+
+def _mini(rows: list[tuple[str, str, str, str, str]]) -> str:
+    """Tiny statement text: rows are (post date, type, debit, credit, balance), as listed."""
+    body = "\n".join(f"{ts},,{pt},R,B,{d},{c},{b},desc," for ts, pt, d, c, b in rows)
+    return f"Account No.,1\nAccount Name,X\n\n{_HEADER}\n{body}\n"
+
+
 def _fixture_text() -> str:
     return FIXTURE.read_text(encoding="utf-8")
 
@@ -155,8 +167,19 @@ def test_cimb_newest_first_input_returned_oldest_first() -> None:
     txns = parse_cimb_statement(_fixture_text()).transactions
     stamps = [t.posted_at for t in txns]
     assert stamps == sorted(stamps)
-    # same-second-adjacent rows keep their true order: transfer, then its commission
+    # adjacent rows keep their true order: transfer, then its commission
     assert [t.raw_row["Payment Type"] for t in txns[2:4]] == ["TR TO REMITT", "REMITTANCE COMMISSION"]
+
+
+def test_cimb_same_second_rows_keep_true_order() -> None:
+    # Same timestamp to the second: only the balance chain can tell the order.
+    newest_first = _mini([
+        ("04 Nov 2026 11:00:00", "REMITTANCE COMMISSION", "2500.00", "0.00", "9497500.00"),
+        ("04 Nov 2026 11:00:00", "TR TO REMITT", "500000.00", "0.00", "9500000.00"),
+    ])
+    txns = parse_cimb_statement(newest_first).transactions
+    assert [t.raw_row["Payment Type"] for t in txns] == ["TR TO REMITT", "REMITTANCE COMMISSION"]
+    assert check_running_balance(txns) == []
 
 
 def test_cimb_oldest_first_input_is_not_reversed() -> None:
@@ -176,7 +199,7 @@ def test_cimb_row_fields_carried() -> None:
     assert cash.direction == "debit"
     assert cash.debit == Decimal("3000000.00")
     assert cash.amount_idr == 3_000_000
-    # a quoted description containing a comma survives
+    # an unquoted description containing a comma survives (the bank never quotes)
     assert any(t.description == "Invoice 11, sample client" for t in txns)
 
 
@@ -272,3 +295,174 @@ def test_cimb_preview_report_shape() -> None:
     assert report["kinds"]["bank_fee"] == {"count": 3, "total": "31000.00"}
     assert report["kinds"]["client_credit"] == {"count": 2, "total": "5750000.00"}
     assert report["kinds"]["other"] == {"count": 1, "total": "100.00"}
+
+
+# ── correction round: orientation, row shape, strict amounts, kind vs direction ──
+
+
+def _ts_rows_equal_stamp(order: str) -> str:
+    older = ("01 Nov 2026 10:00:00", "DIRECT DEBIT", "100.00", "0.00", "900.00")
+    newer = ("01 Nov 2026 10:00:00", "DIRECT DEBIT", "200.00", "0.00", "700.00")
+    return _mini([newer, older] if order == "newest_first" else [older, newer])
+
+
+@pytest.mark.parametrize("order", ["newest_first", "oldest_first"])
+def test_cimb_equal_timestamps_orientation_decided_by_balance_chain(order: str) -> None:
+    stmt = parse_cimb_statement(_ts_rows_equal_stamp(order))
+    assert stmt.opening_balance == Decimal("1000.00")
+    assert stmt.closing_balance == Decimal("700.00")
+    assert check_running_balance(stmt.transactions) == []
+
+
+@pytest.mark.parametrize("newest_first", [True, False])
+def test_cimb_chain_tie_resolved_by_timestamps(newest_first: bool) -> None:
+    older = ("01 Nov 2026 10:00:00", "REMITTANCE CR - BIFAST", "0.00", "100.00", "1100.00")
+    newer = ("02 Nov 2026 10:00:00", "TR TO REMITT", "100.00", "0.00", "1000.00")
+    text = _mini([newer, older] if newest_first else [older, newer])
+    txns = parse_cimb_statement(text).transactions
+    assert [t.posted_at.day for t in txns] == [1, 2]
+
+
+def test_cimb_comma_in_description_keeps_description_cheque_and_amounts() -> None:
+    row = "01 Nov 2026 10:00:00,,BILL PAYMENT,R,B,50.00,0.00,950.00,EMPN BILLING A, B, C,000777"
+    txns = parse_cimb_statement(f"{_HEADER}\n{row}\n").transactions
+    assert txns[0].description == "EMPN BILLING A, B, C"
+    assert txns[0].raw_row["Cheque Number"] == "000777"
+    assert txns[0].debit == Decimal("50.00")
+    assert txns[0].balance == Decimal("950.00")
+    assert txns[0].kind == "government_fee"
+
+
+def test_cimb_row_without_optional_trailing_cells_is_accepted() -> None:
+    row = "01 Nov 2026 10:00:00,,DIRECT DEBIT,R,B,50.00,0.00,950.00"
+    txns = parse_cimb_statement(f"{_HEADER}\n{row}\n").transactions
+    assert txns[0].raw_row["Description"] == ""
+    assert txns[0].raw_row["Cheque Number"] == ""
+
+
+def test_cimb_truncated_row_refused_with_line_number() -> None:
+    text = _fixture_text().replace(
+        "03 Nov 2026 10:15:00,03 Nov 2026,BILL PAYMENT,REF-002,BR-002,1000000.00,0.00,14000000.00,"
+        "EMPN BILLING 0000000001,",
+        "03 Nov 2026 10:15:00,03 Nov 2026,BILL PAYMENT,REF-002,BR-002,1000000.00",
+    )
+    with pytest.raises(BankParseError, match=r"file line 23"):
+        parse_cimb_statement(text)
+
+
+def test_cimb_single_truncated_row_refused() -> None:
+    row = "01 Nov 2026 10:00:00,,DIRECT DEBIT,R,B"
+    with pytest.raises(BankParseError, match="file line 2"):
+        parse_cimb_statement(f"{_HEADER}\n{row}\n")
+
+
+def _one_row(debit: str, credit: str, balance: str) -> str:
+    return f"{_HEADER}\n01 Nov 2026 10:00:00,,DIRECT DEBIT,R,B,{debit},{credit},{balance},d,\n"
+
+
+@pytest.mark.parametrize(
+    ("debit", "credit", "balance"),
+    [
+        ("", "0.00", "1.00"),             # empty debit
+        ("1.00", "", "1.00"),             # empty credit
+        ("1.00", "0.00", ""),             # empty balance
+        ("1e3", "0.00", "1.00"),          # exponent
+        ("NaN", "0.00", "1.00"),
+        ("1.00", "Infinity", "1.00"),
+        ("0.00", "0.00", "inf"),
+        ("-1.00", "0.00", "1.00"),        # sign on debit
+        ("0.00", "+1.00", "1.00"),        # sign on credit
+        ("1.000", "0.00", "1.00"),        # three decimals
+        ("1.", "0.00", "1.00"),
+        ("1234567890123456", "0.00", "1.00"),  # 16 digits
+        ("1.00", "0.00", "1.5.0"),
+        ("1.00", "0.00", "+1.00"),        # plus on balance
+        ("1.00", "0.00", "\u0661.00"),    # non-ASCII digit
+        ("007.00", "0.00", "1.00"),       # leading zeros
+        ("1.00", "0.00", "00.50"),
+    ],
+)
+def test_cimb_strict_amounts_refused_with_line(debit: str, credit: str, balance: str) -> None:
+    with pytest.raises(BankParseError, match="file line 2"):
+        parse_cimb_statement(_one_row(debit, credit, balance))
+
+
+def test_cimb_negative_balance_allowed_and_plain_amounts_accepted() -> None:
+    txns = parse_cimb_statement(_one_row("5", "0.00", "-1234567890123.5")).transactions
+    assert txns[0].balance == Decimal("-1234567890123.5")
+
+
+def test_cimb_both_sides_positive_refused() -> None:
+    with pytest.raises(BankParseError, match="file line 2"):
+        parse_cimb_statement(_one_row("1.00", "2.00", "1.00"))
+
+
+def test_cimb_huge_exponent_refused_fast() -> None:
+    import time
+
+    start = time.perf_counter()
+    with pytest.raises(BankParseError, match="file line 2"):
+        parse_cimb_statement(_one_row("1e1000000", "0.00", "1.00"))
+    assert time.perf_counter() - start < 1.0
+
+
+def test_cimb_thousands_comma_in_an_amount_is_refused() -> None:
+    # "1,000.00" in an unquoted cell splits into "1" and "000.00": refused, never read as 1 or 1000.
+    row = "01 Nov 2026 10:00:00,,DIRECT DEBIT,R,B,1,000.00,0.00,1.00,d,"
+    with pytest.raises(BankParseError, match="file line 2"):
+        parse_cimb_statement(f"{_HEADER}\n{row}\n")
+
+
+def test_cimb_quote_characters_are_plain_text_and_swallow_no_rows() -> None:
+    # The bank never quotes fields: a stray quote must not merge the lines that follow it.
+    lines = [
+        "03 Nov 2026 10:00:00,,OVERBOOKING CR,R,B,0.00,100.00,1300.00,c,",
+        '02 Nov 2026 10:00:00,,OVERBOOKING CR,R,B,0.00,100.00,1200.00,"TOKO unbalanced,',
+        "01 Nov 2026 10:00:00,,OVERBOOKING CR,R,B,0.00,100.00,1100.00,a,",
+    ]
+    stmt = parse_cimb_statement(_HEADER + "\n" + "\n".join(lines) + "\n")
+    assert len(stmt.transactions) == 3
+    assert stmt.opening_balance == Decimal("1000.00")
+    assert stmt.transactions[1].description == '"TOKO unbalanced'
+
+
+def test_cimb_oversized_field_wrapped_in_parse_error() -> None:
+    huge = "x" * 200_000
+    with pytest.raises(BankParseError, match="unreadable"):
+        parse_cimb_statement(f"{_HEADER}\n01 Nov 2026 10:00:00,,T,R,B,1.00,0.00,1.00,{huge},\n")
+
+
+def test_cimb_kind_must_agree_with_direction() -> None:
+    assert classify_cimb_kind("REMITTANCE CR - BIFAST", "x", "debit") == "other"
+    assert classify_cimb_kind("TR TO REMITT", "x", "credit") == "other"
+    assert classify_cimb_kind("CREDIT INTEREST", "x", "debit") == "other"
+    assert classify_cimb_kind("BILL PAYMENT", "EMPN BILLING 1", "credit") == "other"
+    assert classify_cimb_kind("WITHHOLDING TAX", "x", "credit") == "other"
+    # unchanged normal mappings
+    assert classify_cimb_kind("REMITTANCE CR - BIFAST", "x", "credit") == "client_credit"
+    assert classify_cimb_kind("CREDIT INTEREST", "x", "credit") == "interest"
+    assert classify_cimb_kind("TR TO REMITT", "x", "debit") == "transfer_out"
+
+
+def test_cimb_kind_contradiction_through_the_parser() -> None:
+    text = _mini([
+        ("02 Nov 2026 10:00:00", "TR TO REMITT", "0.00", "50.00", "150.00"),
+        ("01 Nov 2026 10:00:00", "REMITTANCE CR - BIFAST", "50.00", "0.00", "100.00"),
+    ])
+    assert [t.kind for t in parse_cimb_statement(text).transactions] == ["other", "other"]
+
+
+def test_cimb_trailer_line_holding_a_single_space_is_ignored() -> None:
+    text = _fixture_text() + "\n \n"
+    assert len(parse_cimb_statement(text).transactions) == 13
+
+
+def test_cimb_fixture_has_no_whitespace_only_line() -> None:
+    assert all(line == "" or line.strip() for line in _fixture_text().split("\n"))
+
+
+def test_cimb_legacy_integer_fields_round_half_up() -> None:
+    text = _mini([("01 Nov 2026 10:00:00", "DIRECT DEBIT", "10.50", "0.00", "2.50")])
+    t = parse_cimb_statement(text).transactions[0]
+    assert t.amount_idr == 11  # not banker's rounding (10)
+    assert t.running_balance_idr == 3  # not 2

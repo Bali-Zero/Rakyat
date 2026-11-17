@@ -499,6 +499,27 @@ class TestBankStatementPreview:
         resp = self._post(mock_db_pool, asya_user, b"x", name="statement.pdf")
         assert resp.status_code == 422
 
+    def test_oversized_upload_rejected_413(self, mock_db_pool, asya_user, monkeypatch) -> None:
+        monkeypatch.setattr(accounting_module, "_MAX_BANK_STATEMENT_BYTES", 64)
+        resp = self._post(mock_db_pool, asya_user, b"x" * 1000)
+        assert resp.status_code == 413
+
+    def test_upload_read_is_bounded(self, mock_db_pool, asya_user, monkeypatch) -> None:
+        # the endpoint must ask for at most limit+1 bytes, never the whole body
+        monkeypatch.setattr(accounting_module, "_MAX_BANK_STATEMENT_BYTES", 64)
+        sizes: list[int] = []
+        from starlette.datastructures import UploadFile as StarletteUploadFile
+
+        original = StarletteUploadFile.read
+
+        async def spy(self, size: int = -1):
+            sizes.append(size)
+            return await original(self, size)
+
+        monkeypatch.setattr(StarletteUploadFile, "read", spy)
+        self._post(mock_db_pool, asya_user, b"x" * 1000)
+        assert sizes == [65]
+
     def test_non_utf8_rejected_422(self, mock_db_pool, asya_user) -> None:
         resp = self._post(mock_db_pool, asya_user, b"\xff\xfe\x00bad")
         assert resp.status_code == 422

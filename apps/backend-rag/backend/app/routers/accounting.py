@@ -198,7 +198,8 @@ async def preview_bank_statement(
     if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=422, detail="only .csv bank statements are accepted")
 
-    data = await file.read()
+    # limit + 1 byte: enough to detect an oversized upload without loading it whole
+    data = await file.read(_MAX_BANK_STATEMENT_BYTES + 1)
     if not data:
         raise HTTPException(status_code=422, detail="empty file")
     if len(data) > _MAX_BANK_STATEMENT_BYTES:

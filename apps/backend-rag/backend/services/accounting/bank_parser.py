@@ -22,9 +22,10 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -263,14 +264,31 @@ class ParsedStatement:
         return last
 
 
-def classify_cimb_kind(payment_type: str, description: str) -> str:
-    """Row kind from the bank's own Payment Type / Description; unknown -> 'other'."""
+_CREDIT_ONLY_KINDS = frozenset({"client_credit", "interest"})
+_DEBIT_ONLY_KINDS = frozenset(
+    {"government_fee", "transfer_out", "transfer_fee", "cash_withdrawal", "bank_fee", "payroll", "tax"}
+)
+
+
+def classify_cimb_kind(payment_type: str, description: str, direction: str | None = None) -> str:
+    """Row kind from the bank's own Payment Type / Description; unknown -> 'other'.
+
+    When `direction` ('credit' | 'debit') is given, a kind that contradicts where the
+    money went (a debit typed as a client credit, a credit typed as a transfer out)
+    is 'other'.
+    """
     ptype = " ".join((payment_type or "").upper().split())
     if ptype == "BILL PAYMENT" and (description or "").strip().upper().startswith("EMPN BILLING"):
-        return "government_fee"
-    if ptype.startswith(_CLIENT_CREDIT_PREFIXES):
-        return "client_credit"
-    return _KIND_BY_PAYMENT_TYPE.get(ptype, "other")
+        kind = "government_fee"
+    elif ptype.startswith(_CLIENT_CREDIT_PREFIXES):
+        kind = "client_credit"
+    else:
+        kind = _KIND_BY_PAYMENT_TYPE.get(ptype, "other")
+    if direction == "debit" and kind in _CREDIT_ONLY_KINDS:
+        return "other"
+    if direction == "credit" and kind in _DEBIT_ONLY_KINDS:
+        return "other"
+    return kind
 
 
 def _parse_cimb_timestamp(raw: str) -> datetime:
@@ -284,19 +302,67 @@ def _parse_cimb_timestamp(raw: str) -> datetime:
         raise BankParseError(f"cannot parse timestamp {raw!r}") from exc
 
 
-def _parse_decimal(raw: str, what: str) -> Decimal:
-    s = _clean_cell(raw).replace(",", "")
-    if not s:
-        return Decimal(0)
-    try:
-        return Decimal(s)
-    except ArithmeticError as exc:
-        raise BankParseError(f"cannot parse {what} {raw!r}") from exc
+# No leading zeros: an unquoted thousands comma ("1,000.00") splits into "1" and "000.00".
+_AMOUNT_RE = re.compile(r"(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,2})?")
+_SIGNED_AMOUNT_RE = re.compile(r"-?(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,2})?")
+
+
+def _parse_decimal(raw: str, what: str, allow_minus: bool = False) -> Decimal:
+    """Strict plain decimal; the pattern is checked BEFORE any numeric conversion."""
+    s = _clean_cell(raw)
+    pattern = _SIGNED_AMOUNT_RE if allow_minus else _AMOUNT_RE
+    if not pattern.fullmatch(s):
+        shown = s if len(s) <= 40 else s[:40] + "..."
+        raise BankParseError(f"{what} {shown!r} is not a plain decimal amount")
+    return Decimal(s)
+
+
+def _round_int(value: Decimal) -> int:
+    return int(value.to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def _orient_oldest_first(txns: list[ParsedTxn]) -> list[ParsedTxn]:
+    """Return rows oldest-first. The running-balance chain decides; the order with fewer
+    chain mismatches wins. Tie: timestamps (first later than last -> reverse, earlier ->
+    keep); still tied: reverse, because the export is documented newest-first."""
+    as_is = len(check_running_balance(txns))
+    flipped = len(check_running_balance(txns[::-1]))
+    if as_is != flipped:
+        return txns if as_is < flipped else txns[::-1]
+    first, last = txns[0].posted_at, txns[-1].posted_at
+    if first < last:  # type: ignore[operator]
+        return txns
+    return txns[::-1]
+
+
+def _fit_cells(cells: list[str], header: list[str], line: int) -> list[str]:
+    """Align one data row to the header.
+
+    The bank never quotes fields, so a Description containing commas spills into extra
+    cells: the surplus is rejoined into Description and the columns after it shift back.
+    A row too short to reach every required column is refused.
+    """
+    if len(cells) > len(header):
+        surplus = len(cells) - len(header)
+        d = header.index("Description")
+        cells = cells[:d] + [",".join(cells[d : d + surplus + 1])] + cells[d + surplus + 1 :]
+    needed = max(header.index(c) for c in _CIMB_REQUIRED_COLUMNS if c != "Description") + 1
+    if len(cells) < needed:
+        raise BankParseError(
+            f"file line {line}: row has {len(cells)} cells, needs at least {needed} "
+            "(through the Balance column)"
+        )
+    return cells
 
 
 def parse_cimb_statement(content: str) -> ParsedStatement:
     """Parse a CIMB OCTO Biz statement export; transactions come back oldest first."""
-    rows = list(csv.reader(io.StringIO(content.lstrip("\ufeff"))))
+    try:
+        # QUOTE_NONE: the bank never quotes, so a quote character is plain text. With the
+        # default dialect one stray quote merges every following line into a single cell.
+        rows = list(csv.reader(io.StringIO(content.lstrip("\ufeff")), quoting=csv.QUOTE_NONE))
+    except csv.Error as exc:
+        raise BankParseError(f"statement is unreadable as CSV: {exc}") from exc
     header_idx = next(
         (i for i, r in enumerate(rows) if r and r[0].strip().lower() == _CIMB_HEADER_FIRST_CELL),
         None,
@@ -324,36 +390,37 @@ def parse_cimb_statement(content: str) -> ParsedStatement:
             except BankParseError:
                 continue
             raise BankParseError(f"file line {offset}: data row after a blank line")
+        cells = _fit_cells(cells, header, offset)
         row = {h: _clean_cell(cells[i]) if i < len(cells) else "" for i, h in enumerate(header)}
         try:
             posted_at = _parse_cimb_timestamp(row["Post Date"])
             debit = _parse_decimal(row["Debit Amount"], "debit")
             credit = _parse_decimal(row["Credit Amount"], "credit")
-            balance = _parse_decimal(row["Balance"], "balance")
+            balance = _parse_decimal(row["Balance"], "balance", allow_minus=True)
+            if debit > 0 and credit > 0:
+                raise BankParseError("row has both a debit and a credit amount")
         except BankParseError as exc:
             raise BankParseError(f"file line {offset}: {exc}") from exc
+        direction = "credit" if credit > 0 else "debit"
         txns.append(
             ParsedTxn(
                 txn_date=posted_at.date(),
                 description=row["Description"],
-                amount_idr=int((credit if credit > 0 else debit).to_integral_value()),
-                direction="credit" if credit > 0 else "debit",
-                running_balance_idr=int(balance.to_integral_value()),
+                amount_idr=_round_int(credit if credit > 0 else debit),
+                direction=direction,
+                running_balance_idr=_round_int(balance),
                 raw_row=row,
                 posted_at=posted_at,
                 debit=debit,
                 credit=credit,
                 balance=balance,
-                kind=classify_cimb_kind(row["Payment Type"], row["Description"]),
+                kind=classify_cimb_kind(row["Payment Type"], row["Description"], direction),
             )
         )
     if not txns:
         raise BankParseError("statement header found but no transaction rows")
 
-    # The export is newest-first; flip by file order (not by sorting on the timestamp,
-    # which has one-second resolution and ties) unless it already runs oldest-first.
-    if txns[0].posted_at > txns[-1].posted_at:  # type: ignore[operator]
-        txns.reverse()
+    txns = _orient_oldest_first(txns)
     return ParsedStatement(
         account_number=metadata.get("Account No.", ""),
         account_name=metadata.get("Account Name", ""),
@@ -367,6 +434,10 @@ def check_running_balance(txns: list[ParsedTxn]) -> list[int]:
 
     Position 0 has no predecessor (its predecessor is the derived opening balance),
     so it is never reported. A tampered balance shows at its row and at the next one.
+
+    This checks that the chain is INTERNALLY consistent, not that the figures are
+    authentic: a changed oldest amount, or a coordinated change of amount and balance,
+    passes.
     """
     bad: list[int] = []
     for i in range(1, len(txns)):
