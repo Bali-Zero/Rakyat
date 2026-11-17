@@ -11,6 +11,7 @@ router; this test is the real-DB belt-and-braces for the single writer).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import uuid
@@ -22,7 +23,7 @@ import pytest
 from asyncpg.exceptions import CheckViolationError
 
 from backend.services.accounting.cashout_service import cashbook_summary
-from backend.services.accounting.reconcile_service import confirm_payment
+from backend.services.accounting.reconcile_service import ReconcileError, confirm_payment
 
 MIGRATION_238 = (
     Path(__file__).resolve().parents[2]
@@ -308,5 +309,193 @@ async def test_cashout_worksheet_type_accepted_by_constraint() -> None:
                 "VALUES ($1, 'in', 'bogus_type', 100)",
                 date(2026, 3, 6),
             )
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+# ── a bank transaction is confirmed as a payment at most once (C1 to C4) ─────
+
+
+async def _world(conn, *, direction: str = "credit", status: str = "unmatched", practices: int = 1):
+    """Invented rows: `practices` practices each with an invoice, and one bank transaction."""
+    cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Contoh Klien') RETURNING id")
+    pids, iids = [], []
+    for n in range(practices):
+        pid = await conn.fetchval(
+            "INSERT INTO practices (client_id, payment_status) VALUES ($1, 'unpaid') RETURNING id", cid
+        )
+        iid = await conn.fetchval(
+            "INSERT INTO invoices (practice_id, invoice_number, amount_idr) VALUES ($1, $2, 4000000) RETURNING id",
+            pid, f"INV-C{n}",
+        )
+        pids.append(pid)
+        iids.append(iid)
+    sid = await conn.fetchval("INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id")
+    txid = await conn.fetchval(
+        "INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction, reconciled_status)"
+        " VALUES ($1, $2, 4000000, $3, $4) RETURNING id",
+        sid, date(2026, 6, 25), direction, status,
+    )
+    return pids, iids, txid
+
+
+async def _snapshot(conn):
+    return (
+        [tuple(r) for r in await conn.fetch("SELECT id, payment_status, paid_amount FROM practices ORDER BY id")],
+        [tuple(r) for r in await conn.fetch("SELECT id, paid_date, payment_reference, paid_amount_idr FROM invoices ORDER BY id")],
+        await conn.fetchval("SELECT count(*) FROM weekly_cashout"),
+        await conn.fetchval("SELECT count(*) FROM reconciliation_log"),
+        [tuple(r) for r in await conn.fetch(
+            "SELECT id, reconciled_status, matched_practice_id, matched_invoice_id FROM bank_transactions ORDER BY id")],
+    )
+
+
+def _confirm(conn, txid, pid, iid, **kw):
+    return confirm_payment(
+        conn, bank_txn_id=txid, practice_id=pid, invoice_id=iid, amount_applied_idr=4_000_000,
+        new_status="paid", confirmed_by="accountant@example.test", payment_reference="REF-ONCE",
+        margin_idr=4_000_000, movement_date=date(2026, 6, 25), **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_c1_the_second_confirmation_of_one_bank_transaction_is_refused_and_changes_nothing() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        await _confirm(conn, txid, pid, iid)
+        after_first = await _snapshot(conn)
+        assert after_first[0][0][2] == 4_000_000 and after_first[2] == 1 and after_first[3] == 1
+        with pytest.raises(ReconcileError, match=f"bank transaction {txid} is not unmatched"):
+            await _confirm(conn, txid, pid, iid)  # a double click, a retry, a second tab
+        assert await _snapshot(conn) == after_first  # amounts, cashout count and log count unchanged
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["matched", "manual", "ignored"])
+async def test_c1_every_status_but_unmatched_is_refused(status: str) -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn, status=status)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match=f"bank transaction {txid} is not unmatched"):
+            await _confirm(conn, txid, pid, iid)
+        assert await _snapshot(conn) == before  # C3
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c2_an_unknown_bank_transaction_is_refused_and_nothing_is_written() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match=r"bank transaction 987654 not found"):
+            await _confirm(conn, 987654, pid, iid)
+        assert await _snapshot(conn) == before
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c2_a_debit_is_refused_and_nothing_is_written() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn, direction="debit")
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match=f"bank transaction {txid} is not a credit"):
+            await _confirm(conn, txid, pid, iid)
+        assert await _snapshot(conn) == before
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c1_the_bank_transaction_is_checked_before_anything_else_is_read() -> None:
+    """First statement of the block: with BOTH ids unknown, the bank transaction is the one named."""
+    conn, dbname, user = await _fresh_db()
+    try:
+        await _world(conn)
+        with pytest.raises(ReconcileError, match=r"bank transaction 555555 not found"):
+            await _confirm(conn, 555555, 777777, None)
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c1_two_concurrent_confirmations_of_one_bank_transaction_succeed_exactly_once() -> None:
+    """Deterministic interleaving: A is parked on its practice's row lock AFTER it has taken the
+    bank transaction's lock; B (another practice) then arrives. With the lock B must wait and
+    then be refused; without it B would finish first and both would pay."""
+    conn, dbname, user = await _fresh_db()
+    holder = await asyncpg.connect(_base_dsn(), database=dbname)
+    conn_a = await asyncpg.connect(_base_dsn(), database=dbname)
+    conn_b = await asyncpg.connect(_base_dsn(), database=dbname)
+    try:
+        (pa, pb), (ia, ib), txid = await _world(conn, practices=2)
+        tx = holder.transaction()
+        await tx.start()
+        await holder.execute("SELECT 1 FROM practices WHERE id = $1 FOR UPDATE", pa)
+
+        async def waiting() -> int:
+            return await holder.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+                "AND datname = current_database()"
+            )
+
+        task_a = asyncio.create_task(_confirm(conn_a, txid, pa, ia))
+        for _ in range(150):
+            if await waiting() >= 1:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            pytest.fail("A never reached its practice lock")
+        task_b = asyncio.create_task(_confirm(conn_b, txid, pb, ib))
+        await asyncio.sleep(0.5)  # B either waits on the bank row (lock) or has already finished (no lock)
+        await tx.rollback()
+        got = await asyncio.gather(task_a, task_b, return_exceptions=True)
+        assert not isinstance(got[0], BaseException), got[0]  # A took the bank transaction first and won
+        assert isinstance(got[1], ReconcileError), got[1]
+        snap = await _snapshot(conn)
+        assert [row[2] for row in snap[0]] == [4_000_000, 0]  # one payment, on A's practice
+        assert snap[2] == 1 and snap[3] == 1  # one cashout row, one log row
+        assert snap[4] == [(txid, "matched", pa, ia)]
+    finally:
+        await asyncio.gather(holder.close(), conn_a.close(), conn_b.close())
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c4_a_first_confirmation_of_an_unmatched_credit_still_performs_every_side_effect() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        result = await _confirm(conn, txid, pid, iid)
+        snap = await _snapshot(conn)
+        assert snap[0] == [(pid, "paid", 4_000_000)]
+        assert snap[1][0][2] == "REF-ONCE" and snap[1][0][3] == 4_000_000 and snap[1][0][1] is not None
+        assert snap[4] == [(txid, "matched", pid, iid)]
+        co = await conn.fetchrow("SELECT * FROM weekly_cashout WHERE id = $1", result.cashout_id)
+        assert (co["type"], co["direction"], co["linked_bank_txn_id"]) == ("invoice_payment", "in", txid)
+        rl = await conn.fetchrow("SELECT * FROM reconciliation_log WHERE id = $1", result.reconciliation_log_id)
+        assert (rl["status_before"], rl["status_after"], rl["bank_txn_id"]) == ("unpaid", "paid", txid)
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c4_a_confirmation_without_a_bank_transaction_is_unchanged() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        first = await _confirm(conn, None, pid, iid)
+        second = await _confirm(conn, None, pid, iid)  # no bank row to protect: both are recorded, as before
+        assert first.cashout_id != second.cashout_id
+        snap = await _snapshot(conn)
+        assert snap[0] == [(pid, "paid", 8_000_000)] and snap[2] == 2 and snap[3] == 2
+        assert snap[4] == [(txid, "unmatched", None, None)]  # the bank row is untouched
     finally:
         await _drop_db(conn, dbname, user)

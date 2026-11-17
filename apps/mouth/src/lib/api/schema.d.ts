@@ -4166,6 +4166,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/accounting/bank-statement/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Import Bank Statement
+     * @description Store a CIMB statement: the preview report plus the import result.
+     *
+     *     All or nothing, and a transaction is never stored twice (see bank_import_service).
+     *     The only database write goes through `import_statement`.
+     */
+    post: operations["import_bank_statement_api_crm_accounting_bank_statement_import_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/accounting/bank-statement/preview": {
     parameters: {
       query?: never;
@@ -20365,6 +20388,14 @@ export interface components {
     Body_assign_thread_api_omnichannel_threads__thread_id__assign_post: {
       /** Assignee */
       assignee: string;
+    };
+    /** Body_import_bank_statement_api_crm_accounting_bank_statement_import_post */
+    Body_import_bank_statement_api_crm_accounting_bank_statement_import_post: {
+      /**
+       * File
+       * @description CIMB OCTO Biz 'Account Statement Summary' CSV
+       */
+      file: string;
     };
     /** Body_import_cashout_pdf_api_crm_accounting_import_cashout_post */
     Body_import_cashout_pdf_api_crm_accounting_import_cashout_post: {
@@ -36783,6 +36814,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["DriveValidationSummary"];
+        };
+      };
+    };
+  };
+  import_bank_statement_api_crm_accounting_bank_statement_import_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_import_bank_statement_api_crm_accounting_bank_statement_import_post"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };
