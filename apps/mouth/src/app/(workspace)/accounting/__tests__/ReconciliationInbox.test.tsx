@@ -234,6 +234,7 @@ describe("ported reconciliation contract", () => {
   it("03: tabs carry counts and filter rows client-side", async () => {
     renderInbox();
     await ready();
+    expect(screen.getByTestId("cc-count-link")).toHaveTextContent("1");
     await openTab("link", "ROW RECORDED");
     expect(screen.queryByText("ROW GREEN")).toBeNull();
     expect(api.getReconciliationInbox).toHaveBeenCalledTimes(1);
@@ -543,6 +544,8 @@ describe("ported reconciliation contract", () => {
   it("18: Confirm payment opens the unchanged dialog and sends the same request", async () => {
     const onConfirmed = renderInbox();
     await ready();
+    expect(await screen.findByText("Our invoice")).toBeInTheDocument();
+    expect(opened()).toHaveTextContent("INV-000000-00001 · PT CONTOH SATU");
     fireEvent.click(
       await screen.findByRole("button", { name: "Confirm payment" }),
     );
@@ -574,6 +577,15 @@ describe("ported reconciliation contract", () => {
     await act(async () => a.resolve(candidatesFor(1)));
     expect(opened()).toHaveTextContent("PT CONTOH DUA");
     expect(opened()).not.toHaveTextContent("PT CONTOH SATU");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Link, no money moved" }),
+    );
+    await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
+    expect(api.linkRecorded).toHaveBeenCalledWith({
+      bank_txn_id: 2,
+      practice_id: 22,
+      invoice_id: 12,
+    });
   });
 
   it("20: a candidate answer with the wrong txn id is dropped", async () => {
@@ -601,7 +613,15 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
     await waitFor(() => expect(screen.queryByTestId("inbox-row-1")).toBeNull());
     expect(row(5)).toHaveAttribute("aria-current", "true");
-    await act(async () => reload.resolve([]));
+    expect(screen.getAllByText("ROW GREEN TWO").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Loading inbox…")).toBeNull();
+    await act(async () =>
+      reload.resolve([
+        inboxItem({ txn_id: 9, light: "green", description: "ROW SERVER" }),
+      ]),
+    );
+    await screen.findAllByText("ROW SERVER");
+    expect(screen.queryByText("ROW GREEN TWO")).toBeNull();
   });
 
   it("22: an older inbox reload never replaces a newer one", async () => {
@@ -628,9 +648,28 @@ describe("ported reconciliation contract", () => {
     await waitFor(() =>
       expect(api.getReconciliationInbox).toHaveBeenCalledTimes(3),
     );
-    await act(async () => newer.resolve([four()[1]]));
-    await act(async () => old.resolve([four()[0]]));
+    await act(async () =>
+      newer.resolve([
+        inboxItem({
+          ...four()[1],
+          txn_id: 9,
+          description: "ROW NEWER",
+        }),
+      ]),
+    );
+    expect(screen.getAllByText("ROW NEWER").length).toBeGreaterThan(0);
+    await act(async () =>
+      old.resolve([
+        four()[0],
+        inboxItem({
+          ...four()[1],
+          txn_id: 8,
+          description: "ROW OLDER",
+        }),
+      ]),
+    );
     expect(screen.queryByText("ROW GREEN")).toBeNull();
+    expect(screen.queryByText("ROW OLDER")).toBeNull();
   });
 
   it("23: a failed background reload keeps the remaining rows", async () => {
@@ -646,6 +685,12 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(tab("link")).not.toBeDisabled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "Failed to load reconciliation inbox",
+      "Please try again",
+    );
+    await openTab("link", "ROW RECORDED");
+    await openTab("choose", "ROW YELLOW");
   });
 
   it("24: a truncated candidate group states both counts", async () => {
@@ -694,11 +739,21 @@ describe("ported reconciliation contract", () => {
     api.getMatchCandidates.mockRejectedValueOnce(new Error("rank failed"));
     renderInbox();
     await ready();
+    expect(
+      await screen.findByText("Could not load the invoices for this transfer."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ranking candidates…")).toBeNull();
+    api.getMatchCandidates.mockResolvedValueOnce(candidatesFor(1));
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
     await waitFor(() =>
       expect(api.getMatchCandidates).toHaveBeenLastCalledWith(1),
     );
     expect(api.getMatchCandidates).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Could not load the invoices for this transfer."),
+      ).toBeNull(),
+    );
   });
 
   it("28: the confirm dialog survives when its row empties the list", async () => {
@@ -1038,7 +1093,14 @@ describe("ported reconciliation contract", () => {
       await screen.findByRole("button", { name: "Link, no money moved" }),
     );
     expect(importButton).toBeDisabled();
+    fireEvent.click(importButton);
+    expect(api.importBankStatement).not.toHaveBeenCalled();
     await act(async () => held.resolve(ack));
+    await waitFor(() => expect(importButton).toBeEnabled());
+    fireEvent.click(importButton);
+    await waitFor(() =>
+      expect(api.importBankStatement).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("40: Link then Ignore in one tick never half-opens a form", async () => {
@@ -1149,19 +1211,38 @@ describe("ported reconciliation contract", () => {
       .mockRejectedValueOnce(new Error("first failed"))
       .mockResolvedValueOnce([]);
     renderInbox();
+    expect(
+      await screen.findByText("Could not load the inbox."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("All done for today")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
     expect(await screen.findByTestId("cc-calm")).toHaveTextContent(
       "All done for today",
     );
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
   });
 
   it("46: a newer failed load drops an older held answer", async () => {
     const held = deferred<ReturnType<typeof four>>();
-    api.getReconciliationInbox.mockReturnValueOnce(held.promise);
+    api.getReconciliationInbox
+      .mockReturnValueOnce(held.promise)
+      .mockRejectedValueOnce(new Error("failed"));
+    api.previewBankStatement.mockResolvedValue(previewFixture());
+    api.importBankStatement.mockResolvedValue(importFixture());
     renderInbox();
     expect(screen.getByText("Loading inbox…")).toBeInTheDocument();
-    await act(async () => held.reject(new Error("failed")));
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "statement.csv")] },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Import 3 transactions/i }),
+    );
+    expect(
+      await screen.findByText("Could not load the inbox."),
+    ).toBeInTheDocument();
+    await act(async () => held.resolve([]));
     expect(screen.getByText("Could not load the inbox.")).toBeInTheDocument();
+    expect(screen.queryByText("All done for today")).toBeNull();
   });
 
   it("47: a failed reload with rows on screen keeps those rows", async () => {
@@ -1174,6 +1255,8 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(tab("link")).not.toBeDisabled();
+    await openTab("choose", "ROW YELLOW");
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
   });
 
   it("48: when the last row leaves, a held reload shows loading", async () => {
@@ -1186,7 +1269,12 @@ describe("ported reconciliation contract", () => {
     fireEvent.change(await openIgnore(), { target: { value: "valid reason" } });
     fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
     expect(await screen.findByText("Loading inbox…")).toBeInTheDocument();
+    expect(screen.queryByText("All done for today")).toBeNull();
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
     await act(async () => held.resolve([]));
+    expect(await screen.findByTestId("cc-calm")).toHaveTextContent(
+      "All done for today",
+    );
   });
 
   it("49: when the last-row reload fails, the failure view wins", async () => {
@@ -1205,13 +1293,20 @@ describe("ported reconciliation contract", () => {
   it("50: a new last-row reload replaces an older failure with loading", async () => {
     const held = deferred<ReturnType<typeof four>>();
     api.getReconciliationInbox
-      .mockResolvedValueOnce([four()[0]])
+      .mockResolvedValueOnce([four()[0], four()[2]])
+      .mockRejectedValueOnce(new Error("reload failed"))
       .mockReturnValueOnce(held.promise);
     renderInbox();
     await ready();
+    await openTab("choose", "ROW YELLOW");
+    fireEvent.change(await openIgnore(), { target: { value: "valid reason" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    await openTab("confirm", "ROW GREEN");
     fireEvent.change(await openIgnore(), { target: { value: "valid reason" } });
     fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
     expect(await screen.findByText("Loading inbox…")).toBeInTheDocument();
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
     await act(async () => held.resolve([]));
   });
 
