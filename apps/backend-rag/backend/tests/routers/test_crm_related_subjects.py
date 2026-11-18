@@ -3934,8 +3934,8 @@ async def test_ev4_migration_366_repairs_string_evidence_and_forbids_the_wrong_s
             for sub, ev in ((sid, wrong), (sid2, right)):
                 await c.execute(
                     "INSERT INTO related_subject_identifiers (id_type, id_norm, id_raw, "
-                    f"norm_version, subject_id, evidence) VALUES ('passport', 'ZZ' || {sub}, "
-                    f"'ZZ' || {sub}, 1, {sub}, {ev})"
+                    f"norm_version, subject_id, evidence) VALUES ('passport', 'ZZ0000000' || {sub}, "
+                    f"'ZZ0000000' || {sub}, 1, {sub}, {ev})"
                 )
             for label, ev in (("w", wrong), ("r", right)):
                 await c.execute(
@@ -3977,7 +3977,7 @@ async def test_ev4_migration_366_repairs_string_evidence_and_forbids_the_wrong_s
                 "related_subjects": "INSERT INTO related_subjects (kind, evidence, created_by) "
                 "VALUES ('person', $1::jsonb, 'zz')",
                 "related_subject_identifiers": "INSERT INTO related_subject_identifiers (id_type, "
-                f"id_norm, id_raw, norm_version, subject_id, evidence) VALUES ('nik', 'ZZ99', 'ZZ99', 1, {sid}, $1::jsonb)",
+                f"id_norm, id_raw, norm_version, subject_id, evidence) VALUES ('nik', 'ZZ0000099', 'ZZ0000099', 1, {sid}, $1::jsonb)",
                 "related_documents": "INSERT INTO related_documents (sha256, byte_size, "
                 "mime_type, first_seen_on, first_channel, evidence, created_by) VALUES "
                 "(repeat('c', 64), 1, 'application/pdf', now(), 'drive', $1::jsonb, 'zz')",
