@@ -192,7 +192,10 @@ def configure_logging() -> None:
         root_logger.addHandler(file_handler)
 
     # Configure third-party loggers to be less verbose
-    for logger_name in ["httpx", "httpcore", "urllib3", "asyncio"]:
+    # httpx2 / httpcore2 are the successor packages in requirements-prod.lock.txt
+    # (anthropic, langsmith, mcp): their records are NOT children of "httpx"/"httpcore".
+    # Parents suffice here: a child with no level of its own inherits this one.
+    for logger_name in ["httpx", "httpcore", "httpx2", "httpcore2", "urllib3", "asyncio"]:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
     # Suppress noisy logs from specific libraries
