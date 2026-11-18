@@ -340,7 +340,7 @@ export function canonicalPathname(pathname: string): string {
 // `dynamicParams = false`). `/[category]/[slug]` cannot give that status itself:
 // app/loading.tsx puts it in a Suspense boundary, so its 200 head is sent
 // before notFound() runs (measured on a production build).
-const STATUS_GATE_404_PATH = "/gate-not-found";
+export const STATUS_GATE_404_PATH = "/gate-not-found";
 
 export function proxy(request: NextRequest) {
   const hostname = normalizeHostname(request.headers.get("host") || "");
