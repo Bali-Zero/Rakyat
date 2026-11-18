@@ -1228,3 +1228,121 @@ async def test_a1_a_link_waits_for_an_uncommitted_change_of_the_invoice_amount(
     else:
         assert not isinstance(got[0], BaseException), got[0]
         assert got[0].reconciled_status == "manual"
+
+
+# ── candidate identity: the pool query's LEFT JOIN to practice_types, on real Postgres ─────
+
+
+async def _typed_practice(
+    conn, status: str | None, *, type_name: str | None, number: str | None, issued=None
+) -> tuple[int, int]:
+    """One practice (optionally typed) with one invoice carrying the given number and date."""
+    type_id = None
+    if type_name is not None:
+        type_id = await conn.fetchval(
+            "INSERT INTO practice_types (code, name) VALUES ($1, $2) RETURNING id",
+            f"code-{type_name.lower().replace(' ', '-')}-{random.randrange(10**9)}",
+            type_name,
+        )
+    cid = await conn.fetchval(
+        "INSERT INTO clients (full_name) VALUES ('Contoh Klien') RETURNING id"
+    )
+    pid = await conn.fetchval(
+        "INSERT INTO practices (client_id, payment_status, practice_type_id)"
+        " VALUES ($1, $2, $3) RETURNING id",
+        cid,
+        status,
+        type_id,
+    )
+    iid = await conn.fetchval(
+        "INSERT INTO invoices (practice_id, invoice_number, amount_idr, generated_at)"
+        " VALUES ($1, $2, 4000000, $3) RETURNING id",
+        pid,
+        number,
+        issued,
+    )
+    return pid, iid
+
+
+@pytest.mark.parametrize(("status", "recorded"), [("unpaid", False), ("paid", True)])
+async def test_identity_comes_back_from_the_database_in_both_pools(db, status, recorded) -> None:
+    from datetime import datetime, timezone
+
+    from backend.app.routers.accounting import _candidate_json, _fetch_invoice_pool
+    from backend.services.accounting.matcher import rank_candidates
+
+    conn, _ = db
+    issued = datetime(2026, 1, 10, 15, 30, tzinfo=timezone.utc)
+    _p, iid = await _typed_practice(
+        conn, status, type_name="Example service", number="INV-000000-00001", issued=issued
+    )
+    (inv,) = await _fetch_invoice_pool(conn, recorded=recorded)
+    assert inv.invoice_id == iid
+    assert (inv.invoice_number, inv.invoice_issued_at, inv.service_name) == (
+        "INV-000000-00001",
+        "2026-01-10T15:30:00+00:00",
+        "Example service",
+    )
+    (cand,) = rank_candidates(
+        transfer_amount_idr=4_000_000,
+        transfer_date=date(2026, 1, 12),
+        payer_memo="",
+        open_invoices=[inv],
+    )
+    out = _candidate_json(cand)
+    assert (out["invoice_number"], out["invoice_issued_at"], out["service_name"]) == (
+        "INV-000000-00001",
+        "2026-01-10T15:30:00+00:00",
+        "Example service",
+    )
+
+
+@pytest.mark.parametrize(("status", "recorded"), [("unpaid", False), ("paid", True)])
+async def test_a_practice_without_a_type_stays_in_the_pool_with_a_null_service(
+    db, status, recorded
+) -> None:
+    from backend.app.routers.accounting import _fetch_invoice_pool
+
+    conn, _ = db
+    _p, iid = await _typed_practice(conn, status, type_name=None, number="INV-000000-00002")
+    (inv,) = await _fetch_invoice_pool(conn, recorded=recorded)
+    assert (inv.invoice_id, inv.service_name) == (iid, None)
+
+
+async def test_an_invoice_without_a_number_gives_none_and_without_a_date_gives_none(db) -> None:
+    from backend.app.routers.accounting import _fetch_invoice_pool
+
+    conn, _ = db
+    await _typed_practice(conn, "unpaid", type_name="Example service", number=None)
+    await conn.execute("UPDATE invoices SET generated_at = NULL")
+    (inv,) = await _fetch_invoice_pool(conn, recorded=False)
+    assert (inv.invoice_number, inv.invoice_issued_at) == (None, None)
+    assert inv.service_name == "Example service"
+
+
+async def test_the_join_neither_adds_nor_drops_a_pool_row(db) -> None:
+    from backend.app.routers.accounting import _fetch_invoice_pool
+
+    conn, _ = db
+    # Typed (two practices share one type name), untyped and NULL-status, all open; two paid.
+    for status, name in [
+        ("unpaid", "Example service"),
+        ("partial", "Example service"),
+        (None, None),
+        ("unpaid", None),
+        ("paid", "Example service"),
+        ("paid", None),
+    ]:
+        await _typed_practice(conn, status, type_name=name, number=None)
+    open_rows = await _fetch_invoice_pool(conn, recorded=False)
+    recorded_rows = await _fetch_invoice_pool(conn, recorded=True)
+    want_open = await conn.fetchval(
+        "SELECT count(*) FROM invoices i JOIN practices p ON i.practice_id = p.id"
+        " WHERE COALESCE(p.payment_status, 'unpaid') <> 'paid'"
+    )
+    want_recorded = await conn.fetchval(
+        "SELECT count(*) FROM invoices i JOIN practices p ON i.practice_id = p.id"
+        " WHERE COALESCE(p.payment_status, 'unpaid') = 'paid'"
+    )
+    assert (len(open_rows), len(recorded_rows)) == (want_open, want_recorded) == (4, 2)
+    assert len({r.invoice_id for r in open_rows + recorded_rows}) == 6
