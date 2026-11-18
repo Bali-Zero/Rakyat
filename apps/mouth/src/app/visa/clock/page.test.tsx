@@ -135,11 +135,7 @@ describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", ()
 
     render(<VisaClockPage />);
     const select = screen.getByLabelText("Visa type") as HTMLSelectElement;
-    // "" is the placeholder and "not_sure" the ask-us option: neither is a
-    // visa type, and the page never posts either to /api/visa/clock.
-    const options = Array.from(select.options).filter(
-      (o) => o.value !== "" && o.value !== "not_sure",
-    );
+    const options = Array.from(select.options).filter((o) => o.value !== "");
 
     expect(options.length).toBeGreaterThan(0);
     const codes = options.map((o) => o.value);
@@ -163,31 +159,37 @@ describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", ()
   });
 });
 
-describe("VisaClockPage — Not sure option hands off to the visa team", () => {
+describe("VisaClockPage — Not sure hands off to the visa team", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchMock.mockReset();
   });
 
-  it("offers a 'Not sure — ask us' option in the visa type dropdown", () => {
+  it("is a separate button, never an option of the Visa type select", () => {
     render(<VisaClockPage />);
     const select = screen.getByLabelText("Visa type") as HTMLSelectElement;
-    const notSure = Array.from(select.options).find(
-      (o) => o.value === "not_sure",
-    );
-    expect(notSure?.textContent).toBe("Not sure — ask us");
+    expect(
+      Array.from(select.options).some((o) =>
+        /not sure/i.test(o.textContent ?? ""),
+      ),
+    ).toBe(false);
+    const button = screen.getByRole("button", {
+      name: "Not sure which visa you are on? Ask us",
+    });
+    expect(button).toHaveAttribute("type", "button");
+    expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("picking it shows the existing WhatsApp CTA to the visa funnel", () => {
+  it("clicking it shows the existing WhatsApp CTA to the visa funnel", () => {
     render(<VisaClockPage />);
     expect(
       screen.queryByRole("link", { name: /ask the visa team on whatsapp/i }),
     ).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Visa type"), {
-      target: { value: "not_sure" },
-    });
+    const button = screen.getByRole("button", { name: /not sure which visa/i });
+    fireEvent.click(button);
 
+    expect(button).toHaveAttribute("aria-expanded", "true");
     const link = screen.getByRole("link", {
       name: /ask the visa team on whatsapp/i,
     });
@@ -197,20 +199,15 @@ describe("VisaClockPage — Not sure option hands off to the visa team", () => {
     expect(href.searchParams.get("utm_medium")).toBe("whatsapp_cta");
   });
 
-  it("never posts 'not_sure' to /api/visa/clock and keeps the count at real visa types", () => {
+  it("never posts to /api/visa/clock and keeps the count at real visa types", () => {
     render(<VisaClockPage />);
-    fireEvent.change(screen.getByLabelText("Entry date"), {
-      target: { value: "2026-07-01" },
-    });
-    fireEvent.change(screen.getByLabelText("Visa type"), {
-      target: { value: "not_sure" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Show my timeline" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /not sure which visa/i }),
+    );
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(trackerMocks.formSubmitted).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent(/ask our visa team/i);
-    // Trust strip counts visa types only (13), not the ask-us option.
+    // Trust strip counts visa types only (13), not the ask-us button.
     expect(screen.getByText("13")).toBeInTheDocument();
   });
 });
