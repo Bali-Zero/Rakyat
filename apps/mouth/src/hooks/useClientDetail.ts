@@ -58,11 +58,20 @@ export function buildBusinessStorySearchTerms(
  * Fetches the full client profile (client, family, documents, practices,
  * expiry_alerts, company_links, stats) with React Query caching.
  */
+/**
+ * The profile query's key, fetcher and freshness in one place, so the hook and
+ * the early prefetch the workspace layout starts (clients/[id]/prefetch.ts)
+ * read and write the SAME cache entry.
+ */
+export const clientDetailQueryOptions = (clientId: string | number) => ({
+  queryKey: clientDetailQueryKey(clientId),
+  queryFn: () => api.crm.getClientProfile(Number(clientId)),
+  staleTime: 2 * 60 * 1000,
+});
+
 export function useClientDetail(clientId: string | number) {
   return useQuery<ClientProfile>({
-    queryKey: clientDetailQueryKey(clientId),
-    queryFn: () => api.crm.getClientProfile(Number(clientId)),
-    staleTime: 2 * 60 * 1000,
+    ...clientDetailQueryOptions(clientId),
     refetchOnWindowFocus: true,
     enabled: !!clientId && Number(clientId) > 0,
   });
