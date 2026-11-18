@@ -319,7 +319,7 @@ describe("Accounting control centre", () => {
     expect(
       await screen.findByText("One invoice matches this transfer"),
     ).toBeInTheDocument();
-    expect(opened()).toHaveTextContent("From the bank");
+    await waitFor(() => expect(opened()).toHaveTextContent("From the bank"));
     expect(opened()).toHaveTextContent("Our invoice");
     expect(opened()).toHaveTextContent(
       "same amount · number in memo · same client",

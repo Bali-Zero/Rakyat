@@ -258,19 +258,22 @@ describe("ported reconciliation contract", () => {
       await screen.findByText("Link it instead of confirming it again."),
     ).toBeInTheDocument();
     await chooseTable();
+    expect(screen.getByText("Already paid")).toBeInTheDocument();
     expect(
       within(screen.getByTestId("cc-cand-12")).getByText("Suggested"),
     ).toBeInTheDocument();
   });
 
   it("06: Link sends only on click with the selected ids", async () => {
-    renderInbox();
+    const onConfirmed = renderInbox();
     await ready();
     await openTab("link", "ROW RECORDED");
     expect(api.linkRecorded).not.toHaveBeenCalled();
     fireEvent.click(
       await screen.findByRole("button", { name: "Link, no money moved" }),
     );
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    expect(api.linkRecorded).toHaveBeenCalledTimes(1);
     expect(api.linkRecorded).toHaveBeenCalledWith({
       bank_txn_id: 2,
       practice_id: 22,
@@ -291,14 +294,19 @@ describe("ported reconciliation contract", () => {
 
   it("08: a link error is shown and the row remains", async () => {
     api.linkRecorded.mockRejectedValueOnce(new Error("link refused"));
-    renderInbox();
+    const onConfirmed = renderInbox();
     await ready();
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
       await screen.findByRole("button", { name: "Link, no money moved" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("link refused");
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(api.getReconciliationInbox).toHaveBeenCalledTimes(1);
     expect(row(2)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Link, no money moved" }),
+    ).toBeEnabled();
   });
 
   it("09: a pending link disables its controls and cannot double-send", async () => {
@@ -312,19 +320,29 @@ describe("ported reconciliation contract", () => {
     });
     fireEvent.click(button);
     fireEvent.click(button);
+    fireEvent.click(button);
     expect(api.linkRecorded).toHaveBeenCalledTimes(1);
     expect(button).toBeDisabled();
+    for (const ignore of screen.getAllByRole("button", { name: "Ignore" })) {
+      expect(ignore).toBeDisabled();
+    }
     await act(async () => held.resolve(ack));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
+    expect(api.linkRecorded).toHaveBeenCalledTimes(1);
   });
 
   it("10: a short ignore reason cannot be sent", async () => {
     renderInbox();
     await ready();
     const input = await openIgnore();
-    fireEvent.change(input, { target: { value: "ab" } });
-    expect(
-      screen.getByRole("button", { name: "Ignore transfer" }),
-    ).toBeDisabled();
+    const send = screen.getByRole("button", { name: "Ignore transfer" });
+    expect(send).toBeDisabled();
+    fireEvent.change(input, { target: { value: "  ab  " } });
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
   });
 
   it("11: a valid trimmed ignore reason is sent with the opened id", async () => {
@@ -350,13 +368,15 @@ describe("ported reconciliation contract", () => {
 
   it("12: an ignore error keeps the form and server text", async () => {
     api.ignoreTransaction.mockRejectedValueOnce(new Error("ignore refused"));
-    renderInbox();
+    const onConfirmed = renderInbox();
     await ready();
-    fireEvent.change(await openIgnore(), { target: { value: "valid reason" } });
+    fireEvent.change(await openIgnore(), { target: { value: "abc" } });
     fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "ignore refused",
     );
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Reason for ignoring")).toHaveValue("abc");
     expect(screen.getByTestId("cc-ignore-form")).toBeInTheDocument();
   });
 
@@ -379,18 +399,56 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(send);
     fireEvent.click(send);
     expect(api.ignoreTransaction).toHaveBeenCalledTimes(1);
+    expect(send).toBeDisabled();
     await act(async () => held.resolve(ack));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("15: linked and ignored loads only after its Done control opens", async () => {
+    api.getBankTransactions.mockImplementation(async (options) =>
+      options?.limit === 1
+        ? [bank]
+        : options?.reconciledStatus === "manual"
+          ? [
+              {
+                ...bank,
+                id: 31,
+                description: "ROW LINKED",
+                reconciled_status: "manual",
+              },
+            ]
+          : options?.reconciledStatus === "ignored"
+            ? [
+                {
+                  ...bank,
+                  id: 32,
+                  description: "ROW IGNORED",
+                  reconciled_status: "ignored",
+                },
+              ]
+            : [],
+    );
     renderInbox();
     await ready();
     fireEvent.click(tab("done"));
     expect(api.getBankTransactions).toHaveBeenCalledTimes(1);
+    expect(
+      api.getBankTransactions.mock.calls
+        .map((call) => call[0]?.reconciledStatus)
+        .filter(Boolean),
+    ).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Linked and ignored" }));
+    expect(await screen.findByText("ROW IGNORED")).toBeInTheDocument();
+    await screen.findByText("ROW LINKED");
     await waitFor(() =>
       expect(api.getBankTransactions).toHaveBeenCalledTimes(3),
     );
+    const statuses = api.getBankTransactions.mock.calls
+      .map((call) => call[0]?.reconciledStatus)
+      .filter(Boolean);
+    expect(statuses.sort()).toEqual(["ignored", "manual"]);
   });
 
   it("16: Reopen sends the row id, reloads and reports the write", async () => {
@@ -398,16 +456,43 @@ describe("ported reconciliation contract", () => {
       options?.limit === 1
         ? [bank]
         : options?.reconciledStatus === "manual"
-          ? [{ ...bank, id: 77, reconciled_status: "manual" }]
-          : [],
+          ? [
+              {
+                ...bank,
+                id: 76,
+                description: "ROW LINKED",
+                reconciled_status: "manual",
+              },
+            ]
+          : options?.reconciledStatus === "ignored"
+            ? [
+                {
+                  ...bank,
+                  id: 77,
+                  description: "ROW IGNORED",
+                  reconciled_status: "ignored",
+                },
+              ]
+            : [],
     );
     const onConfirmed = renderInbox();
     await ready();
     fireEvent.click(tab("done"));
     fireEvent.click(screen.getByRole("button", { name: "Linked and ignored" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
+    await screen.findByText("ROW IGNORED");
+    const [reopen] = await screen.findAllByRole("button", { name: "Reopen" });
+    expect(api.reopenTransaction).not.toHaveBeenCalled();
+    const before = api.getBankTransactions.mock.calls.length;
+    fireEvent.click(reopen);
     expect(api.reopenTransaction).toHaveBeenCalledWith(77);
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    expect(api.reopenTransaction).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(api.getBankTransactions).toHaveBeenCalledTimes(before + 2),
+    );
   });
 
   it("17: pending and failed Reopen stays single and shows its error", async () => {
@@ -415,22 +500,44 @@ describe("ported reconciliation contract", () => {
       options?.limit === 1
         ? [bank]
         : options?.reconciledStatus === "manual"
-          ? [{ ...bank, id: 78 }]
-          : [],
+          ? [
+              {
+                ...bank,
+                id: 78,
+                description: "ROW LINKED",
+                reconciled_status: "manual",
+              },
+            ]
+          : options?.reconciledStatus === "ignored"
+            ? [
+                {
+                  ...bank,
+                  id: 79,
+                  description: "ROW IGNORED",
+                  reconciled_status: "ignored",
+                },
+              ]
+            : [],
     );
     const held = deferred<typeof ack>();
     api.reopenTransaction.mockReturnValueOnce(held.promise);
-    renderInbox();
+    const onConfirmed = renderInbox();
     await ready();
     fireEvent.click(tab("done"));
     fireEvent.click(screen.getByRole("button", { name: "Linked and ignored" }));
+    await screen.findByText("ROW LINKED");
     const reopen = await screen.findAllByRole("button", { name: "Reopen" });
     fireEvent.click(reopen[0]);
+    fireEvent.click(reopen[0]);
+    expect(api.reopenTransaction).toHaveBeenCalledTimes(1);
     expect(reopen[0]).toBeDisabled();
+    for (const button of reopen) expect(button).toBeDisabled();
     await act(async () => held.reject(new Error("reopen refused")));
     expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
       "reopen refused",
     );
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("button", { name: "Reopen" })[0]).toBeEnabled();
   });
 
   it("18: Confirm payment opens the unchanged dialog and sends the same request", async () => {
