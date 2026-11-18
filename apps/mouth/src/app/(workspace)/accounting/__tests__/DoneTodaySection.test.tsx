@@ -113,12 +113,18 @@ beforeEach(() => {
 
 describe("DoneTodaySection", () => {
   it("F1: mount sends exactly one load and no other request", async () => {
-    render(<DoneTodaySection version={0} />);
+    const { container } = render(<DoneTodaySection version={0} />);
     await loaded(1);
     expect(api.getDoneToday).toHaveBeenCalledTimes(1);
-    open();
-    open();
-    expect(api.getDoneToday).toHaveBeenCalledTimes(1);
+    for (const [name, mock] of Object.entries(api)) {
+      if (name !== "getDoneToday") expect(mock).not.toHaveBeenCalled();
+    }
+    expect(container.children).toHaveLength(2);
+    expect(container.firstElementChild).toBe(header());
+    expect(container.lastElementChild).toContainElement(
+      screen.getByTestId("done-today-item-1"),
+    );
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("F2/F3: the count and list show after the load", async () => {

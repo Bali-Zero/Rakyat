@@ -328,15 +328,24 @@ describe("ported reconciliation contract", () => {
   });
 
   it("11: a valid trimmed ignore reason is sent with the opened id", async () => {
-    renderInbox();
+    const onConfirmed = renderInbox();
     await ready();
     const input = await openIgnore();
     fireEvent.change(input, { target: { value: "  not   a payment " } });
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    expect(api.ignoreTransaction).toHaveBeenCalledTimes(1);
     expect(api.ignoreTransaction).toHaveBeenCalledWith({
       bank_txn_id: 1,
       reason: "not a payment",
     });
+    expect(JSON.stringify(toast.success.mock.calls)).not.toContain(
+      "not a payment",
+    );
+    expect(JSON.stringify(toast.error.mock.calls)).not.toContain(
+      "not a payment",
+    );
   });
 
   it("12: an ignore error keeps the form and server text", async () => {
@@ -425,18 +434,26 @@ describe("ported reconciliation contract", () => {
   });
 
   it("18: Confirm payment opens the unchanged dialog and sends the same request", async () => {
-    renderInbox();
+    const onConfirmed = renderInbox();
     await ready();
     fireEvent.click(
       await screen.findByRole("button", { name: "Confirm payment" }),
     );
+    expect(api.confirm).not.toHaveBeenCalled();
     expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
-    await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
-    expect(api.confirm.mock.calls[0][0]).toMatchObject({
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledTimes(1);
+    expect(api.confirm).toHaveBeenCalledWith({
       bank_txn_id: 1,
       practice_id: 21,
       invoice_id: 11,
+      amount_applied_idr: 500000,
+      new_status: "paid",
+      payment_method: "bank_transfer",
+      payment_reference: "ROW GREEN",
+      movement_date: "2026-01-05",
+      pph_withheld_idr: 0,
     });
   });
 
@@ -694,16 +711,23 @@ describe("ported reconciliation contract", () => {
   });
 
   it("32: another row can open while the first row's ignore form retains text", async () => {
-    api.getReconciliationInbox.mockResolvedValue([
-      four()[0],
-      inboxItem({ ...four()[0], txn_id: 5, description: "ROW GREEN TWO" }),
-    ]);
-    renderInbox();
+    const onConfirmed = renderInbox();
     await ready();
     fireEvent.change(await openIgnore(), { target: { value: "kept reason" } });
-    fireEvent.click(row(5));
+    await openTab("link", "ROW RECORDED");
     expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
-    fireEvent.click(row(1));
+    api.getReconciliationInbox.mockResolvedValue(
+      four().filter((item) => item.txn_id !== 2),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Link, no money moved" }),
+    );
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.queryByText("ROW RECORDED")).toBeNull();
+    fireEvent.click(tab("confirm"));
     expect(screen.getByLabelText("Reason for ignoring")).toHaveValue(
       "kept reason",
     );
@@ -726,12 +750,27 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Confirm payment" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
+    const confirm = screen.getByRole("button", { name: /^Confirm paid$/ });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
     const close = screen.getByRole("button", { name: "Close" });
     expect(close).toBeDisabled();
     fireEvent.click(close);
     expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
-    await act(async () => held.reject(new Error("stop")));
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(api.confirm).toHaveBeenCalledTimes(1);
+    expect(
+      within(opened()).getByRole("button", { name: "Ignore" }),
+    ).toBeDisabled();
+    api.getReconciliationInbox.mockResolvedValue(
+      four().filter((item) => item.txn_id !== 1),
+    );
+    await act(async () => held.resolve({} as never));
+    await waitFor(() =>
+      expect(screen.queryByText("Confirm payment match")).toBeNull(),
+    );
+    await waitFor(() => expect(screen.queryByText("ROW GREEN")).toBeNull());
+    expect(api.confirm).toHaveBeenCalledTimes(1);
   });
 
   it("35: Link then Confirm in one tick sends only the link", async () => {
@@ -746,19 +785,27 @@ describe("ported reconciliation contract", () => {
     const openRadio = within(screen.getByTestId("cc-cand-11")).getByRole(
       "radio",
     );
+    fireEvent.click(openRadio);
+    const confirmClick = renderedClick(
+      screen.getByRole("button", { name: "Confirm payment" }),
+    );
     fireEvent.click(recordedRadio);
     const link = screen.getByRole("button", { name: "Link, no money moved" });
     act(() => {
       link.click();
       openRadio.click();
-      link.click();
+      confirmClick();
     });
     expect(api.linkRecorded).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Confirm payment match")).toBeNull();
-    await act(async () => held.resolve(ack));
-    await waitFor(() =>
-      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    expect(api.confirm).not.toHaveBeenCalled();
+    api.getReconciliationInbox.mockResolvedValue(
+      four().filter((item) => item.txn_id !== 3),
     );
+    await act(async () => held.resolve(ack));
+    await waitFor(() => expect(screen.queryByText("ROW YELLOW")).toBeNull());
+    expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2);
+    expect(api.confirm).not.toHaveBeenCalled();
   });
 
   it("36: Confirm then Link in one tick opens the dialog and sends no link", async () => {
@@ -802,7 +849,10 @@ describe("ported reconciliation contract", () => {
       expect(api.confirm).toHaveBeenCalledTimes(1);
       act(() => closer.click());
       expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
-      await act(async () => held.reject(new Error("stop")));
+      await act(async () => held.resolve({} as never));
+      await waitFor(() =>
+        expect(screen.queryByText("Confirm payment match")).toBeNull(),
+      );
     },
   );
 
@@ -900,6 +950,7 @@ describe("ported reconciliation contract", () => {
     });
     expect(api.linkRecorded).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
     await act(async () => held.resolve(ack));
     await waitFor(() =>
       expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
@@ -941,24 +992,45 @@ describe("ported reconciliation contract", () => {
   });
 
   it("43: confirmation preserves empty and populated payment references", async () => {
-    api.getReconciliationInbox.mockResolvedValue([
-      inboxItem({ ...four()[0], description: "" }),
-    ]);
-    renderInbox();
-    await screen.findByText("(no memo)");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Confirm payment" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
-    await waitFor(() => expect(api.confirm).toHaveBeenCalled());
-    expect(api.confirm.mock.calls[0][0].payment_reference).toBe("");
+    for (const [memo, expected] of [
+      ["", ""],
+      ["MEMO CONTOH", "MEMO CONTOH"],
+    ] as const) {
+      api.confirm.mockClear();
+      api.getReconciliationInbox.mockResolvedValue([
+        inboxItem({ ...four()[0], description: memo }),
+      ]);
+      const { unmount } = render(
+        <ReconciliationInbox
+          onConfirmed={vi.fn()}
+          doneVersion={0}
+          onOpenCashout={vi.fn()}
+        />,
+      );
+      await screen.findByText(memo || "(no memo)");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Confirm payment" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
+      await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
+      expect(api.confirm.mock.calls[0][0].payment_reference).toBe(expected);
+      unmount();
+    }
   });
 
   it("44: ignore counts code points after collapsing whitespace", async () => {
     renderInbox();
     await ready();
-    fireEvent.change(await openIgnore(), { target: { value: "  🧾   ok " } });
-    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+    const input = await openIgnore();
+    const send = screen.getByRole("button", { name: "Ignore transfer" });
+    fireEvent.change(input, { target: { value: "😀😀" } });
+    expect(send).toBeDisabled();
+    fireEvent.change(input, { target: { value: "😀😀😀" } });
+    expect(send).toBeEnabled();
+    fireEvent.change(input, { target: { value: "  🧾   ok " } });
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(1));
     expect(api.ignoreTransaction).toHaveBeenCalledWith({
       bank_txn_id: 1,
       reason: "🧾 ok",
@@ -1081,10 +1153,12 @@ describe("ported reconciliation contract", () => {
       fireEvent.change(input, { target: { value: "latest reason" } });
       send.click();
     });
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(1));
     expect(api.ignoreTransaction).toHaveBeenCalledWith({
       bank_txn_id: 1,
       reason: "latest reason",
     });
+    expect(api.ignoreTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("54: a refused import lock still permits choosing and previewing a file", async () => {

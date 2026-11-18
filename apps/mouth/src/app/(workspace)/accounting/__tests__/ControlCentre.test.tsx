@@ -92,7 +92,48 @@ const done = {
   day: "2026-11-18",
   timezone: "Asia/Makassar",
   counts: { confirmed: 2, linked: 1, ignored: 1, total: 4 },
-  items: [],
+  items: [
+    {
+      txn_id: 101,
+      action: "confirmed" as const,
+      done_at: "2026-11-18T08:01:00+08:00",
+      txn_date: "2026-11-18",
+      amount_idr: 100000,
+      description: "DONE CONTOH ONE",
+      invoice_number: "INV-000000-00001",
+      client_name: "PT CONTOH SATU",
+    },
+    {
+      txn_id: 102,
+      action: "confirmed" as const,
+      done_at: "2026-11-18T08:02:00+08:00",
+      txn_date: "2026-11-18",
+      amount_idr: 200000,
+      description: "DONE CONTOH TWO",
+      invoice_number: "INV-000000-00002",
+      client_name: "PT CONTOH DUA",
+    },
+    {
+      txn_id: 103,
+      action: "linked" as const,
+      done_at: "2026-11-18T08:03:00+08:00",
+      txn_date: "2026-11-18",
+      amount_idr: 300000,
+      description: "DONE CONTOH THREE",
+      invoice_number: "INV-000000-00003",
+      client_name: "PT CONTOH TIGA",
+    },
+    {
+      txn_id: 104,
+      action: "ignored" as const,
+      done_at: "2026-11-18T08:04:00+08:00",
+      txn_date: "2026-11-18",
+      amount_idr: 400000,
+      description: "DONE CONTOH FOUR",
+      invoice_number: null,
+      client_name: null,
+    },
+  ],
   truncated: false,
 };
 const bankRow = {
@@ -222,8 +263,13 @@ describe("Accounting control centre", () => {
     await ready();
     expect(screen.getByTestId("cc-count-done")).toHaveTextContent("4");
     fireEvent.click(tab("done"));
-    expect(screen.getByTestId("cc-done")).toHaveTextContent("Done today");
-    expect(screen.getByTestId("cc-done")).toHaveClass("cc-done");
+    const doneView = screen.getByTestId("cc-done");
+    expect(doneView).toHaveTextContent("Done today");
+    expect(doneView).toHaveClass("cc-done");
+    for (const item of done.items)
+      expect(
+        within(doneView).getByTestId(`done-today-item-${item.txn_id}`),
+      ).toBeInTheDocument();
     expect(screen.getByText("Linked and ignored")).toBeInTheDocument();
   });
 
@@ -635,14 +681,36 @@ describe("Accounting control centre", () => {
     renderCentre();
     await ready();
     await screen.findByTestId("cc-foot");
-    for (const testId of ["cc-header", "cc-opened", "cc-foot"]) {
+    const expectPinnedButtons = (testId: string) => {
       const container = screen.getByTestId(testId);
       for (const button of within(container).getAllByRole("button"))
         expect(button).toHaveClass("shrink-0", "whitespace-nowrap");
-    }
+    };
+    expectPinnedButtons("cc-header");
+    expectPinnedButtons("cc-opened");
+    expectPinnedButtons("cc-foot");
     const foot = screen.getByTestId("cc-foot");
     expect(foot.firstElementChild).toHaveClass("flex-1", "min-w-0");
     expect(foot.lastElementChild).toHaveClass("flex-none");
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose another" }));
+    expectPinnedButtons("cc-opened");
+
+    fireEvent.click(tab("nomatch"));
+    await screen.findByText("Nothing found");
+    expectPinnedButtons("cc-opened");
+
+    api.getMatchCandidates.mockRejectedValueOnce(
+      new Error("candidate failure"),
+    );
+    fireEvent.click(tab("link"));
+    await screen.findByText("Could not load the invoices for this transfer.");
+    expectPinnedButtons("cc-opened");
+
+    fireEvent.click(tab("confirm"));
+    fireEvent.click(await screen.findByRole("button", { name: "Ignore" }));
+    await screen.findByTestId("cc-ignore-form");
+    expectPinnedButtons("cc-opened");
     expect(screen.getByTestId("cc-work")).toHaveClass(
       "h-[550px]",
       "grid-rows-[minmax(0,1fr)]",
