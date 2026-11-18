@@ -44,12 +44,21 @@ REGISTRY_TABLES = (
     "related_documents",
     "related_document_sightings",
     "related_subject_documents",
+    "related_subject_links",
 )
 
 ADMIN = {"email": "zz-admin@example.test", "user_id": 1, "role": "admin"}
 STAFF = {"email": "zz-staff@example.test", "user_id": 2, "role": "team_member"}
 CLIENT = {"email": "zz-client@example.test", "user_id": 3, "role": "client"}
 PARTNER = {"email": "zz-partner@example.test", "user_id": 4, "role": "partner"}
+
+CLIENTS_SCHEMA = """
+CREATE TABLE clients (
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    full_name text NOT NULL,
+    deleted_at timestamptz
+);
+"""
 
 AUDIT_SCHEMA = """
 CREATE TABLE api_audit_trail (
@@ -135,10 +144,12 @@ async def pool():
                 "362_related_documents.sql",
                 "365_related_subject_names.sql",
                 "366_related_evidence_objects.sql",
+                "367_related_subject_links.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
             await c.execute(AUDIT_SCHEMA)
+            await c.execute(CLIENTS_SCHEMA)
             await c.execute(WRITE_LOG_SQL)
         yield created
         async with created.acquire() as c:
@@ -552,8 +563,9 @@ def test_t10_every_sql_text_of_the_service_is_a_plain_select():
         for attr, value in vars(service_module).items()
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     ]
-    # slice 4A added the recorded-names statement of the detail page: 8 complete statements
-    assert len(statements) == 8
+    # slice 4A added the recorded-names statement of the detail page, slice 4B the links
+    # statement: 9 complete statements
+    assert len(statements) == 9
     for sql in statements:
         assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
     # the executed statements are exactly the module's constants (no inline SQL in a call)
