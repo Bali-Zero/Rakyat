@@ -33,10 +33,20 @@ class RelatedRegistryIdentifier(BaseModel):
     value: str
 
 
+NameSource = Literal["manual", "mrz_corrected", "registration", "ocr_corroborated", "ocr_single"]
+
+
+class RelatedRegistryName(BaseModel):
+    name: str
+    source: NameSource
+    created_at: datetime
+
+
 class RelatedRegistrySubjectRow(BaseModel):
     id: int
     kind: str
     display_name: str | None
+    name_source: NameSource | None
     date_of_birth: date | None
     nationality: str | None
     identifiers: list[RelatedRegistryIdentifier]
@@ -63,6 +73,9 @@ class RelatedRegistrySubjectDetail(BaseModel):
     id: int
     kind: str
     display_name: str | None
+    name_source: NameSource | None
+    names: list[RelatedRegistryName]
+    names_total: int
     date_of_birth: date | None
     nationality: str | None
     sex: str | None

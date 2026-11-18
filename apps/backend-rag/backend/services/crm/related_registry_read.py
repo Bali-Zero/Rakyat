@@ -1,7 +1,11 @@
-"""Read-only access to the related-subjects registry (tables of migrations 361 and 362).
+"""Read-only access to the related-subjects registry (tables of migrations 361, 362 and 365).
 
 Every statement here is a SELECT with bound parameters; no user text is interpolated into SQL.
 Evidence columns (``evidence``, ``created_by``) are never selected. Nothing in this module logs.
+
+The name a reader sees is the EFFECTIVE name: the top candidate among the registration name
+(``related_subjects.display_name``) and the recorded names, by source rank (manual, mrz_corrected,
+registration, ocr_corroborated, ocr_single), then newest ``created_at``, then highest ``id``.
 """
 
 from __future__ import annotations
@@ -16,14 +20,44 @@ from backend.services.crm.related_identifiers import ID_TYPES, canonical_form
 
 MIN_PREFIX = 3
 MAX_DETAIL_DOCUMENTS = 200
+MAX_DETAIL_NAMES = 20
 
+# The effective name, selected in SQL so that ORDER BY and LIMIT see it. The registration name is
+# one candidate (rank 3, stamped with the subject's creation, id 0); recorded rows follow their
+# source rank. No CTE: one lateral subquery per subject.
+_EFFECTIVE_SQL = """
+LEFT JOIN LATERAL (
+    SELECT c.name, c.source
+    FROM (
+        SELECT s.display_name AS name, 'registration'::text AS source, 3 AS rk,
+               s.created_at AS stamp, 0::bigint AS cid
+        WHERE s.display_name IS NOT NULL
+        UNION ALL
+        SELECT n.name, n.source,
+               CASE n.source WHEN 'manual' THEN 1 WHEN 'mrz_corrected' THEN 2
+                             WHEN 'ocr_corroborated' THEN 4 ELSE 5 END,
+               n.created_at, n.id
+        FROM related_subject_names n
+        WHERE n.subject_id = s.id
+    ) c
+    ORDER BY c.rk ASC, c.stamp DESC, c.cid DESC
+    LIMIT 1
+) eff ON TRUE
+"""
+
+# A subject matches a name search when its registration name or any recorded name does (the
+# effective name is one of them), or an identifier prefix does.
 _MATCH_SQL = """
-FROM related_subjects s
 WHERE s.merged_into IS NULL
   AND ($1::text IS NULL OR s.kind = $1)
   AND (
     $2::text IS NULL
     OR s.display_name ILIKE '%' || $2 || '%' ESCAPE '\\'
+    OR EXISTS (
+        SELECT 1
+        FROM related_subject_names n
+        WHERE n.subject_id = s.id AND n.name ILIKE '%' || $2 || '%' ESCAPE '\\'
+    )
     OR EXISTS (
         SELECT 1
         FROM related_subject_identifiers i
@@ -34,12 +68,14 @@ WHERE s.merged_into IS NULL
   )
 """
 
-_TOTAL_SQL = "SELECT count(*) " + _MATCH_SQL
+_TOTAL_SQL = "SELECT count(*) FROM related_subjects s " + _MATCH_SQL
 
 _PAGE_SQL = (
-    "SELECT s.id, s.kind, s.display_name, s.date_of_birth, s.nationality "
+    "SELECT s.id, s.kind, eff.name AS display_name, eff.source AS name_source, "
+    "s.date_of_birth, s.nationality FROM related_subjects s "
+    + _EFFECTIVE_SQL
     + _MATCH_SQL
-    + " ORDER BY s.display_name ASC NULLS LAST, s.id ASC LIMIT $5 OFFSET $6"
+    + " ORDER BY eff.name ASC NULLS LAST, s.id ASC LIMIT $5 OFFSET $6"
 )
 
 _IDENTIFIERS_SQL = """
@@ -56,10 +92,18 @@ WHERE subject_id = ANY($1::bigint[])
 GROUP BY subject_id
 """
 
-_SUBJECT_SQL = """
-SELECT id, kind, display_name, date_of_birth, nationality, sex, created_at
-FROM related_subjects
-WHERE id = $1
+_SUBJECT_SQL = (
+    "SELECT s.id, s.kind, eff.name AS display_name, eff.source AS name_source, "
+    "s.display_name AS registration_name, s.date_of_birth, s.nationality, s.sex, s.created_at "
+    "FROM related_subjects s " + _EFFECTIVE_SQL + "WHERE s.id = $1"
+)
+
+_NAMES_SQL = """
+SELECT name, source, created_at, count(*) OVER () AS n
+FROM related_subject_names
+WHERE subject_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $2
 """
 
 _DOCUMENTS_SQL = """
@@ -122,6 +166,7 @@ async def list_subjects(
             "id": r["id"],
             "kind": r["kind"],
             "display_name": r["display_name"],
+            "name_source": r["name_source"],
             "date_of_birth": r["date_of_birth"],
             "nationality": r["nationality"],
             "identifiers": identifiers.get(r["id"], []),
@@ -157,10 +202,25 @@ async def get_subject(conn: asyncpg.Connection, subject_id: int) -> dict[str, An
         }
         for d in doc_rows
     ]
+    registered = row["registration_name"]
+    name_rows = await conn.fetch(
+        _NAMES_SQL, subject_id, MAX_DETAIL_NAMES - (1 if registered is not None else 0)
+    )
+    names = [
+        {"name": r["name"], "source": r["source"], "created_at": r["created_at"]} for r in name_rows
+    ]
+    if registered is not None:
+        names.insert(
+            0, {"name": registered, "source": "registration", "created_at": row["created_at"]}
+        )
+    names_total = (name_rows[0]["n"] if name_rows else 0) + (1 if registered is not None else 0)
     return {
         "id": row["id"],
         "kind": row["kind"],
         "display_name": row["display_name"],
+        "name_source": row["name_source"],
+        "names": names,
+        "names_total": names_total,
         "date_of_birth": row["date_of_birth"],
         "nationality": row["nationality"],
         "sex": row["sex"],
