@@ -1084,13 +1084,12 @@ async def test_n10_with_every_gate_open_an_invalid_body_is_422_and_runs_no_state
 
 # ── N13 ───────────────────────────────────────────────────────────────────────
 
-SECRET_NAME = "ZzSecretAlphaName"
-SECRET_ID = "ZZ4242424"
-SECRET_KEY_ID = "ZZ4242425"
+PROBE_NAME = "ZzProbeAlphaName"
+PROBE_ID = "ZZ4242424"
 PROTOCOL_WORDS = frozenset(
     {
         "person", "company", "passport", "nik", "ocr_single", "ocr_corroborated", "mrz_corrected",
-        "true", "false", "null", "kind", "subject", "identifiers", "type", "value", "names",
+        "true", "false", "null", "manual", "kind", "subject", "identifiers", "type", "value", "names",
         "name", "source", "evidence", "plan_sha256", "files", "blobs", "mrz_valid", "dry_run",
     }
 )  # fmt: skip
@@ -1126,86 +1125,195 @@ def _record_text(record: logging.LogRecord) -> str:
     return rendered + " " + " ".join(str(v) for v in record.__dict__.values())
 
 
+# The probe world: every subject a case can reach. Registration names carry the probe prefix so
+# that a leak of stored data, not only of the request, is caught.
+PA, PB, PC, PD, PE, PF = (
+    "ZZ4242424",
+    "ZZ4242425",
+    "ZZ4242426",
+    "ZZ4242428",
+    "ZZ4242430",
+    "ZZ4242431",
+)
+P_UNKNOWN, P_EXTRA = "ZZ4242499", "ZZ4242432"
+NIK_A = "3201 0000 0000 0002"
+NPWP_G = "012345678901234"
+WORLD_NAMES = ("ZzProbe1", "ZzProbeSmith", "ZzProbeC0rp")
+N = PROBE_NAME
+FULL_A = (("passport", PA), ("nik", NIK_A))
+
+
+@pytest_asyncio.fixture
+async def probe_world(conn):
+    a = await seed_subject(conn, "person", "ZzProbe1", list(FULL_A))
+    await seed_subject(conn, "person", None, [("passport", PB)])
+    await seed_subject(conn, "company", None, [("passport", PC)])
+    await seed_subject(conn, "person", None, [("passport", PD)], merged=a)
+    await seed_subject(conn, "person", None, [("passport", PE)])
+    await seed_subject(conn, "person", "ZzProbeSmith", [("passport", PF)])
+    await seed_subject(conn, "company", "ZzProbeC0rp", [("npwp", NPWP_G)])
+
+
+def _two(ids, kind="person", **over):
+    return payload([entry(N), entry(N + " Two", "ocr_corroborated")], ids=ids, kind=kind, **over)
+
+
+def _on_a(mutate):
+    return mutate(copy.deepcopy(payload([entry(N)], ids=FULL_A)))
+
+
+def _correction(name, ids=FULL_A, kind="person"):
+    return payload([entry(name, "mrz_corrected")], ids=ids, kind=kind)
+
+
+def _patch_parser(mp):
+    def boom(cls, *a, **k):
+        raise RuntimeError(f"boom {N} {PA}")
+
+    mp.setattr(route_module.RelatedNamesRegisterRequest, "model_validate_json", classmethod(boom))
+
+
+def _patch_database(mp):
+    async def boom(*a, **k):
+        raise asyncpg.PostgresError(f"boom {N} {PA}")
+
+    mp.setattr(route_module, "record_names", boom)
+
+
+def _case(data, status, outcome=None, patch=None, logs=True):
+    return {"data": data, "status": status, "outcome": outcome, "patch": patch, "logs": logs}
+
+
+_REFUSED = ("subject_not_registered",)
+N13_CASES = {
+    # success, both modes, and a repeat
+    "success_dry_run": _case(
+        lambda: [_two((("passport", PB),), dry_run=True)], 200, ("recorded", None)
+    ),
+    "success_apply_then_repeat": _case(
+        lambda: [_two((("passport", PB),)), _two((("passport", PB),))], 200, ("recorded", None)
+    ),
+    # every subject refusal
+    "refuse_none_owned": _case(
+        lambda: [_two((("passport", P_UNKNOWN),))], 200, (*_REFUSED, "none_owned")
+    ),
+    "refuse_two_owners": _case(
+        lambda: [_two((("passport", PA), ("passport", PB)))], 200, (*_REFUSED, "two_owners")
+    ),
+    "refuse_subset": _case(lambda: [_two((("passport", PA),))], 200, (*_REFUSED, "set_differs")),
+    "refuse_superset": _case(
+        lambda: [_two((*FULL_A, ("passport", P_EXTRA)))], 200, (*_REFUSED, "set_differs")
+    ),
+    "refuse_partial_overlap": _case(
+        lambda: [_two((("passport", PA), ("passport", P_EXTRA)))],
+        200,
+        (*_REFUSED, "partial_overlap"),
+    ),
+    "refuse_kind_differs": _case(
+        lambda: [_two((("passport", PC),))], 200, (*_REFUSED, "kind_differs")
+    ),
+    "refuse_merged": _case(lambda: [_two((("passport", PD),))], 200, (*_REFUSED, "merged")),
+    # every cause of a refused correction
+    "correction_company": _case(
+        lambda: [_correction("ZzProbeCorp", (("npwp", NPWP_G),), "company")],
+        200,
+        ("correction_refused", None),
+    ),
+    "correction_null_registration": _case(
+        lambda: [_correction(N, (("passport", PE),))], 200, ("correction_refused", None)
+    ),
+    "correction_digit_free_registration": _case(
+        lambda: [_correction("ZzProbeSmyth", (("passport", PF),))],
+        200,
+        ("correction_refused", None),
+    ),
+    "correction_unchanged_name": _case(
+        lambda: [_correction("ZzProbe1")], 200, ("correction_refused", None)
+    ),
+    "correction_different_name": _case(lambda: [_correction(N)], 200, ("correction_refused", None)),
+    # every validation error
+    "invalid_name": _case(lambda: [_on_a(_set_entry(name="\u0000" + N))], 422, logs=False),
+    "blobs_above_files": _case(lambda: [_on_a(_set_evidence(files=1, blobs=2))], 422, logs=False),
+    "mismatch_ocr_corroborated": _case(
+        lambda: [_on_a(_set_entry(source="ocr_corroborated"))], 422, logs=False
+    ),
+    "mismatch_ocr_single_two_blobs": _case(
+        lambda: [_on_a(_set_evidence(files=2, blobs=2))], 422, logs=False
+    ),
+    "mismatch_ocr_single_mrz_valid": _case(
+        lambda: [_on_a(_set_evidence(mrz_valid=True))], 422, logs=False
+    ),
+    "duplicate_name": _case(
+        lambda: [payload([entry(N), entry(N.lower())], ids=FULL_A)], 422, logs=False
+    ),
+    "number_as_name": _case(
+        lambda: [payload([{**entry(N), "name": 5}, entry(N + " Two")], ids=FULL_A)], 422, logs=False
+    ),
+    "string_as_dry_run": _case(
+        lambda: [_on_a(_mut(lambda d: d.update(dry_run="true")))], 422, logs=False
+    ),
+    "string_as_mrz_valid": _case(lambda: [_on_a(_set_evidence(mrz_valid="yes"))], 422, logs=False),
+    "float_as_files": _case(lambda: [_on_a(_set_evidence(files=1.5))], 422, logs=False),
+    "zero_names": _case(lambda: [payload([], ids=FULL_A)], 422, logs=False),
+    "six_names": _case(
+        lambda: [payload([entry(f"{N} {i}") for i in range(6)], ids=FULL_A)], 422, logs=False
+    ),
+    "manual_source": _case(lambda: [_on_a(_set_entry(source="manual"))], 422, logs=False),
+    "unknown_field": _case(
+        lambda: [_on_a(_mut(lambda d: d.update(ProbeUnknownField=N)))], 422, logs=False
+    ),
+    "created_by_field": _case(
+        lambda: [_on_a(_mut(lambda d: d.update(created_by=N)))], 422, logs=False
+    ),
+    "malformed_json": _case(lambda: [b'{"names": "' + N.encode() + b'"'], 422, logs=False),
+    "oversize_body": _case(
+        lambda: [b"x" * (route_module.MAX_BODY_BYTES + 1) + N.encode()], 422, logs=False
+    ),
+    # injected failures
+    "injected_parser_failure": _case(lambda: [_two(FULL_A)], 500, patch=_patch_parser),
+    "injected_database_failure": _case(lambda: [_two(FULL_A)], 503, patch=_patch_database),
+}
+
+
 @pytest.mark.asyncio
-async def test_n13_no_name_identifier_or_body_in_any_log_response_or_audit_row(
-    client, conn, caplog, monkeypatch, writes
+@pytest.mark.parametrize("case", sorted(N13_CASES))
+async def test_n13_names_route_logs_and_answers_carry_no_name_identifier_or_body(
+    case, client, conn, probe_world, caplog, monkeypatch, writes
 ):
     writes.add(NAMES_INSERT)
     caplog.set_level(logging.DEBUG)
-    await seed_subject(conn, "person", "ZZ SM1TH", [("passport", SECRET_ID)])
-    await seed_subject(conn, "person", None, [("passport", SECRET_KEY_ID)])
-    await seed_subject(conn, "company", None, [("passport", "ZZ4242426")], merged=None)
-    ids = (("passport", SECRET_ID),)
-    sent: list[dict] = []
-    responses: list[httpx.Response] = []
-
-    async def call(data, **kw):
-        sent.append(data if isinstance(data, dict) else {"raw": data.decode()})
-        resp = await post(client, data, **kw)
-        responses.append(resp)
-        return resp
-
-    names = [entry(SECRET_NAME), entry(SECRET_NAME + " Two", "ocr_corroborated")]
-    assert (await call(payload(names, ids=ids, dry_run=True))).status_code == 200
-    assert (await call(payload(names, ids=ids))).status_code == 200
-    assert (await call(payload(names, ids=ids))).status_code == 200
-    # refusals
-    for refused in (
-        payload(names, ids=(("passport", "ZZ4242427"),)),
-        payload(names, ids=(("passport", SECRET_ID), ("passport", SECRET_KEY_ID))),
-        payload(names, ids=(("passport", "ZZ4242426"),)),
-        payload([entry(SECRET_NAME + " Zebra", "mrz_corrected")], ids=ids),
-    ):
-        assert (await call(refused)).status_code == 200
-    # validation errors
-    for invalid in (
-        payload([entry("\u0000" + SECRET_NAME)], ids=ids),
-        payload([entry(SECRET_NAME), entry(SECRET_NAME.lower())], ids=ids),
-        payload(names, ids=ids, **{SECRET_NAME: 1}),
-        b'{"names": "' + SECRET_NAME.encode() + b'"',
-        b"x" * (route_module.MAX_BODY_BYTES + 1) + SECRET_NAME.encode(),
-    ):
-        assert (await call(invalid)).status_code == 422
-
-    # injected parser failure and injected database failure
-    def parser_boom(cls, *a, **k):
-        raise RuntimeError(f"boom {SECRET_NAME} {SECRET_ID}")
-
-    monkeypatch.setattr(
-        route_module.RelatedNamesRegisterRequest, "model_validate_json", classmethod(parser_boom)
-    )
-    boom = await call(payload(names, ids=ids))
-    assert boom.status_code == 500 and boom.json() == {"detail": "internal_error"}
-    monkeypatch.undo()
-    monkeypatch.setattr(settings, "related_subject_registry_enabled", True, raising=False)
-    monkeypatch.setattr(settings, "wa_mirror_crm_write_key", KEY, raising=False)
-    as_identity(monkeypatch, None)
-
-    async def db_boom(*a, **k):
-        raise asyncpg.PostgresError(f"boom {SECRET_NAME} {SECRET_ID}")
-
-    monkeypatch.setattr(route_module, "record_names", db_boom)
-    down = await call(payload(names, ids=ids))
-    assert down.status_code == 503 and down.json() == {"detail": "database_error"}
-
-    tokens = _forbidden(sent)
-    assert any(SECRET_NAME.casefold() in t for t in tokens) and SECRET_ID.casefold() in tokens
+    spec = N13_CASES[case]
+    if spec["patch"]:
+        spec["patch"](monkeypatch)
+    calls = spec["data"]()
+    responses = [await post(client, data) for data in calls]
+    tokens = {N.casefold(), PA.casefold()} | {w.casefold() for w in WORLD_NAMES}
+    for data in calls:
+        if isinstance(data, dict):
+            tokens |= _forbidden(data)
     for resp in responses:
+        assert resp.status_code == spec["status"], (case, resp.status_code, resp.text[:80])
         text = resp.text.casefold()
-        assert [t for t in tokens if t in text] == [], resp.status_code
+        assert [t for t in tokens if t in text] == [], case
+        if spec["outcome"]:
+            body = resp.json()
+            assert body["outcome"] == spec["outcome"][0], case
+            if spec["outcome"][1]:
+                assert body["reason"] == spec["outcome"][1], case
     records = [r for r in caplog.records if not r.name.startswith(("httpx", "httpcore"))]
-    assert any(r.name == names_module.__name__ for r in records), "capture saw no service record"
-    assert any(r.name == route_module.__name__ for r in records), "capture saw no route record"
+    if spec["logs"]:
+        own = {names_module.__name__, route_module.__name__}
+        assert any(r.name in own for r in records), f"capture saw no record of the route ({case})"
     log_text = " ".join(_record_text(r) for r in records).casefold()
-    assert [t for t in tokens if t in log_text] == []
+    assert [t for t in tokens if t in log_text] == [], case
     rows = await conn.fetch(
         "SELECT endpoint, request_body, query_params, response_body, error_message "
         "FROM api_audit_trail ORDER BY id"
     )
-    assert len(rows) == len(sent)
+    assert len(rows) == len(calls)
     assert all(r["request_body"] is None for r in rows)
     audit_text = " ".join(str(dict(r)) for r in rows).casefold()
-    assert [t for t in tokens if t in audit_text] == []
+    assert [t for t in tokens if t in audit_text] == [], case
 
 
 # ── N14 ───────────────────────────────────────────────────────────────────────
@@ -1538,13 +1646,13 @@ async def test_n12_a_populated_page_runs_at_most_four_selects(conn):
 @pytest.mark.asyncio
 async def test_n13_the_read_routes_log_no_name(admin, conn, caplog):
     caplog.set_level(logging.DEBUG)
-    sid = await seed_subject(conn, "person", "ZzReadSecretReg", [("passport", SECRET_ID)])
-    await seed_name(conn, sid, "ZzReadSecretRow", "ocr_single", at=T0)
-    assert (await admin.get(READ, params={"q": "zzreadsecretrow"})).status_code == 200
+    sid = await seed_subject(conn, "person", "ZzReadProbeReg", [("passport", PROBE_ID)])
+    await seed_name(conn, sid, "ZzReadProbeRow", "ocr_single", at=T0)
+    assert (await admin.get(READ, params={"q": "zzreadproberow"})).status_code == 200
     assert (await admin.get(f"{READ}/{sid}")).status_code == 200
     records = [r for r in caplog.records if not r.name.startswith(("httpx", "httpcore"))]
     assert any(r.name == read_module.__name__ for r in records)
     text = " ".join(_record_text(r) for r in records).casefold()
-    assert "zzreadsecret" not in text and SECRET_ID.casefold() not in text
+    assert "zzreadprobe" not in text and PROBE_ID.casefold() not in text
     audit = await conn.fetch("SELECT query_params, request_body FROM api_audit_trail")
-    assert "zzreadsecret" not in " ".join(str(dict(r)) for r in audit).casefold()
+    assert "zzreadprobe" not in " ".join(str(dict(r)) for r in audit).casefold()
