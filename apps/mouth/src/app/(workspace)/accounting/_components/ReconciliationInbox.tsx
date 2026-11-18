@@ -161,8 +161,10 @@ export function ReconciliationInbox({
   } | null>(null);
   const [ignoreFor, setIgnoreFor] = useState<number | null>(null);
   const [reason, setReason] = useState("");
+  // ONE pending flag for the whole tab: the inbox and "Linked and ignored" share it.
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const [candFailed, setCandFailed] = useState(false);
   // Token of the latest candidates request: a late answer for another one is dropped.
   const candReq = useRef(0);
   const [rowError, setRowError] = useState<{
@@ -201,39 +203,53 @@ export function ReconciliationInbox({
   const afterWrite = (txnId: number) => {
     // The acted row leaves the list at once; the reload then replaces the list.
     setItems((cur) => cur.filter((it) => it.txn_id !== txnId));
-    setExpandedTxn(null);
-    setIgnoreFor(null);
-    setReason("");
+    setExpandedTxn((cur) => (cur === txnId ? null : cur));
+    // another row's open ignore form keeps its text
+    if (ignoreFor === txnId) {
+      setIgnoreFor(null);
+      setReason("");
+    }
     setVersion((v) => v + 1);
     void load();
     onConfirmed();
   };
 
-  // One write at a time; the ref closes the gap before React re-renders.
-  const runAction = async (
-    txnId: number,
-    title: string,
-    run: () => Promise<unknown>,
-  ) => {
+  // One write at a time on the whole tab; the ref closes the gap before React re-renders.
+  const exclusive = async (fn: () => Promise<void>) => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    setRowError(null);
     try {
-      await run();
-      success(title);
-      afterWrite(txnId);
-    } catch (err) {
-      const detail =
-        (err instanceof Error && err.message) || "Please try again";
-      setRowError({ txnId, message: detail });
-      error("Action failed", detail);
-      logger.error(`accounting ${title} failed txn=${txnId}`, {}, err as Error);
+      await fn();
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
   };
+
+  const runAction = (
+    txnId: number,
+    title: string,
+    run: () => Promise<unknown>,
+  ) =>
+    exclusive(async () => {
+      setRowError(null);
+      try {
+        await run();
+        success(title);
+        afterWrite(txnId);
+      } catch (err) {
+        const detail =
+          (err instanceof Error && err.message) || "Please try again";
+        setRowError({ txnId, message: detail });
+        error("Action failed", detail);
+        logger.error(
+          `accounting ${title} failed txn=${txnId}`,
+          {},
+          err as Error,
+        );
+      }
+    });
 
   const openCandidates = async (item: ReconciliationInboxItem) => {
     const token = ++candReq.current;
@@ -243,6 +259,7 @@ export function ReconciliationInbox({
     }
     setExpandedTxn(item.txn_id);
     setCandidates(null);
+    setCandFailed(false);
     setCandLoading(true);
     try {
       const res = await accountingApi.getMatchCandidates(item.txn_id);
@@ -251,6 +268,7 @@ export function ReconciliationInbox({
       setCandidates(res);
     } catch (err) {
       if (candReq.current !== token) return;
+      setCandFailed(true);
       error("Failed to load candidates", "Please try again");
       logger.error(
         `accounting candidates failed txn=${item.txn_id}`,
@@ -279,6 +297,7 @@ export function ReconciliationInbox({
   const visible = items.filter(
     (it) => filter === "all" || normalizeLight(it.light) === filter,
   );
+  const locked = busy || modal !== null;
   const trimmed = reason.trim();
   const reasonOk = trimmed.length >= MIN_REASON && trimmed.length <= MAX_REASON;
 
@@ -286,14 +305,30 @@ export function ReconciliationInbox({
   const frame = (content: React.ReactNode) => (
     <div className="space-y-4">
       <BankStatementUpload
+        locked={locked}
+        exclusive={exclusive}
         onImported={() => {
           void load();
           onConfirmed();
         }}
       />
       {content}
+      {modal && (
+        <ConfirmModal
+          txn={modal.txn}
+          candidate={modal.candidate}
+          onClose={() => setModal(null)}
+          exclusive={exclusive}
+          onConfirmed={() => {
+            setModal(null);
+            afterWrite(modal.txn.id);
+          }}
+        />
+      )}
       <LinkedIgnoredSection
         version={version}
+        locked={locked}
+        exclusive={exclusive}
         onReopened={() => {
           setVersion((v) => v + 1);
           void load();
@@ -384,7 +419,7 @@ export function ReconciliationInbox({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy}
+                  disabled={locked}
                   onClick={() => toggleIgnore(item.txn_id)}
                 >
                   Ignore
@@ -399,13 +434,17 @@ export function ReconciliationInbox({
                     placeholder="Why is this not a client payment?"
                     maxLength={MAX_REASON}
                     value={reason}
-                    disabled={busy}
+                    disabled={locked}
                     onChange={(e) => setReason(e.target.value)}
                     className="min-w-[240px] flex-1 rounded-md border bg-background px-2 py-1 text-sm"
                   />
+                  <p className="basis-full text-xs text-muted-foreground">
+                    Ignoring moves no money. The transfer can be reopened under
+                    Linked and ignored.
+                  </p>
                   <Button
                     size="sm"
-                    disabled={busy || !reasonOk}
+                    disabled={locked || !reasonOk}
                     onClick={() =>
                       runAction(item.txn_id, "Transfer ignored", () =>
                         accountingApi.ignoreTransaction({
@@ -420,7 +459,7 @@ export function ReconciliationInbox({
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy}
+                    disabled={locked}
                     onClick={() => toggleIgnore(item.txn_id)}
                   >
                     Cancel
@@ -439,7 +478,12 @@ export function ReconciliationInbox({
 
               {expandedTxn === item.txn_id && (
                 <div className="space-y-3 border-t bg-muted/20 p-3">
-                  {candLoading || !candidates ? (
+                  {candFailed ? (
+                    <p className="py-2 text-center text-sm text-[var(--state-danger)]">
+                      Could not load the invoices for this transfer. Close the
+                      row and open it again.
+                    </p>
+                  ) : candLoading || !candidates ? (
                     <div className="flex items-center justify-center py-4 text-muted-foreground">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Ranking
                       candidates…
@@ -473,7 +517,7 @@ export function ReconciliationInbox({
                               light === "green" && c.invoice_id === suggestedId
                             }
                             actionLabel="Match"
-                            disabled={busy}
+                            disabled={locked}
                             onAction={() => setModal({ txn, candidate: c })}
                           />
                         )}
@@ -491,7 +535,7 @@ export function ReconciliationInbox({
                               c.invoice_id === suggestedId
                             }
                             actionLabel="Link, no money moved"
-                            disabled={busy}
+                            disabled={locked}
                             onAction={() =>
                               runAction(item.txn_id, "Transfer linked", () =>
                                 accountingApi.linkRecorded({
@@ -512,18 +556,6 @@ export function ReconciliationInbox({
           );
         })}
       </div>
-
-      {modal && (
-        <ConfirmModal
-          txn={modal.txn}
-          candidate={modal.candidate}
-          onClose={() => setModal(null)}
-          onConfirmed={() => {
-            setModal(null);
-            afterWrite(modal.txn.id);
-          }}
-        />
-      )}
     </>,
   );
 }

@@ -40,8 +40,14 @@ function Stat({
 
 export function BankStatementUpload({
   onImported,
+  locked = false,
+  exclusive,
 }: {
   onImported: () => void;
+  /** Another write of the tab is pending or a dialog is open: Import waits. */
+  locked?: boolean;
+  /** Shared one-write-at-a-time runner of the tab. */
+  exclusive?: (fn: () => Promise<void>) => Promise<void>;
 }) {
   const { error } = useToast();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -98,14 +104,20 @@ export function BankStatementUpload({
       return;
     }
     inFlight.current = true;
-    setPhase("importing");
+    const run = async () => {
+      setPhase("importing");
+      try {
+        const res = await accountingApi.importBankStatement(file);
+        setOutcome(res.import);
+        setPhase("done");
+        onImported();
+      } catch (err) {
+        fail("Statement import failed", err);
+      }
+    };
     try {
-      const res = await accountingApi.importBankStatement(file);
-      setOutcome(res.import);
-      setPhase("done");
-      onImported();
-    } catch (err) {
-      fail("Statement import failed", err);
+      if (exclusive) await exclusive(run);
+      else await run();
     } finally {
       inFlight.current = false;
     }
@@ -216,7 +228,10 @@ export function BankStatementUpload({
               <Button variant="outline" onClick={reset} disabled={busy}>
                 Cancel
               </Button>
-              <Button onClick={handleImport} disabled={busy || !balanceOk}>
+              <Button
+                onClick={handleImport}
+                disabled={busy || locked || !balanceOk}
+              >
                 {phase === "importing" && (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 )}

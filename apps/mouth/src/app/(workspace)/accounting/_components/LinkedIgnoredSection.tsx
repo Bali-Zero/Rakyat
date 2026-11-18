@@ -15,8 +15,14 @@ import {
 
 export function LinkedIgnoredSection({
   version,
+  locked,
+  exclusive,
   onReopened,
 }: {
+  /** True while any write of the tab is pending or the confirm dialog is open. */
+  locked: boolean;
+  /** Shared runner: returns at once when a write is pending, else runs and clears the flag. */
+  exclusive: (fn: () => Promise<void>) => Promise<void>;
   /** Bumped by the inbox after a write: the open list reloads. */
   version: number;
   onReopened: () => void;
@@ -25,26 +31,30 @@ export function LinkedIgnoredSection({
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<BankTransaction[]>([]);
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
   const [rowError, setRowError] = useState<{
     id: number;
     message: string;
   } | null>(null);
 
+  // Token of the latest refresh: an older one answering late never replaces the list.
+  const loadReq = useRef(0);
+
   const load = useCallback(async () => {
+    const token = ++loadReq.current;
     try {
       setLoading(true);
       const [linked, ignored] = await Promise.all([
         accountingApi.getBankTransactions({ reconciledStatus: "manual" }),
         accountingApi.getBankTransactions({ reconciledStatus: "ignored" }),
       ]);
+      if (loadReq.current !== token) return;
       setRows([...linked, ...ignored].sort((a, b) => b.id - a.id));
     } catch (err) {
+      if (loadReq.current !== token) return;
       error("Failed to load linked and ignored transfers", "Please try again");
       logger.error("accounting linked/ignored load failed", {}, err as Error);
     } finally {
-      setLoading(false);
+      if (loadReq.current === token) setLoading(false);
     }
   }, [error]);
 
@@ -52,26 +62,21 @@ export function LinkedIgnoredSection({
     if (open) void load();
   }, [open, version, load]);
 
-  const reopen = async (id: number) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setRowError(null);
-    try {
-      await accountingApi.reopenTransaction(id);
-      success("Transfer reopened");
-      onReopened();
-    } catch (err) {
-      const detail =
-        (err instanceof Error && err.message) || "Please try again";
-      setRowError({ id, message: detail });
-      error("Reopen failed", detail);
-      logger.error(`accounting reopen failed txn=${id}`, {}, err as Error);
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+  const reopen = (id: number) =>
+    exclusive(async () => {
+      setRowError(null);
+      try {
+        await accountingApi.reopenTransaction(id);
+        success("Transfer reopened");
+        onReopened();
+      } catch (err) {
+        const detail =
+          (err instanceof Error && err.message) || "Please try again";
+        setRowError({ id, message: detail });
+        error("Reopen failed", detail);
+        logger.error(`accounting reopen failed txn=${id}`, {}, err as Error);
+      }
+    });
 
   return (
     <section className="rounded-lg border">
@@ -110,7 +115,7 @@ export function LinkedIgnoredSection({
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy}
+                    disabled={locked}
                     onClick={() => reopen(r.id)}
                   >
                     Reopen

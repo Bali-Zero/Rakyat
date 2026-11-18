@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2, CheckCircle2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -19,14 +19,19 @@ export function ConfirmModal({
   candidate,
   onClose,
   onConfirmed,
+  exclusive,
 }: {
   txn: Pick<BankTransaction, "id" | "amount_idr" | "description" | "txn_date">;
   candidate: MatchCandidate;
   onClose: () => void;
   onConfirmed: () => void;
+  /** Shared one-write-at-a-time runner of the tab; absent: the dialog guards itself only. */
+  exclusive?: (fn: () => Promise<void>) => Promise<void>;
 }) {
   const { success, error } = useToast();
   const [busy, setBusy] = useState(false);
+  // A second click in the same tick lands before React re-renders.
+  const inFlight = useRef(false);
   const delta = txn.amount_idr - candidate.invoice_amount_idr;
   // A transfer net of PPh23 withholding (delta < 0 but flagged likely_withheld)
   // still SETTLES the invoice — the withheld tax is recorded separately, not a
@@ -35,7 +40,19 @@ export function ConfirmModal({
     delta >= -1000 || candidate.likely_withheld ? "paid" : "partial";
 
   const handleConfirm = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
+    try {
+      if (exclusive) await exclusive(submit);
+      else await submit();
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
     try {
       await accountingApi.confirm({
         bank_txn_id: txn.id,
@@ -60,8 +77,6 @@ export function ConfirmModal({
         {},
         err as Error,
       );
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -72,7 +87,8 @@ export function ConfirmModal({
           <h3 className="text-lg font-semibold">Confirm payment match</h3>
           <button
             onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
+            disabled={busy}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
