@@ -1926,12 +1926,14 @@ async def test_c9_the_failure_answer_cannot_raise(monkeypatch):
 
 def test_c10_router_is_not_a_portal_route_and_portal_roles_are_refused():
     paths = {r.path for r in route_module.router.routes}
-    # slice 2 adds the documents route to the same router, slice 4A the names route, 4B links
+    # slice 2 adds the documents route to the same router, slice 4A the names route, 4B links,
+    # 4C merges
     assert paths == {
         URL,
         URL2,
         "/api/crm/related-subjects/names/register",
         "/api/crm/related-subjects/links/register",
+        "/api/crm/related-subjects/merges/register",
     }
     assert not any(p.startswith("/api/portal") for p in paths)
     for role in ("client", "partner"):
