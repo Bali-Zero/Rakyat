@@ -28,7 +28,9 @@ _ONSHORE = "Working KITAS (Altus/Onshore)"
 _DISSOLVING = "Dissolving Company"
 
 #: sha256 over the catalogue minus the rows below and metadata.last_updated.
-_BASE_DIGEST = "865c04e15b40ff541bac5859e9be971b2f9dcb4e87cb067b42060d0a22f25b90"
+_BASE_DIGEST = (
+    "865c04e15b40ff541bac5859e9be971b2f9dcb4e87cb067b42060d0a22f25b90"  # pragma: allowlist secret
+)
 
 
 def _load() -> dict:
