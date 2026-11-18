@@ -108,3 +108,33 @@ def can_write_client(
     owners = {(assigned_to or "").strip().lower(), (created_by or "").strip().lower()}
     owners.discard("")
     return bool(owners & caller_pool_peers(current_user))
+
+
+def caller_in_client_pool(current_user: dict[str, Any] | None) -> bool:
+    """True for a human team member whose email sits in a validated pool of two or more."""
+    return len(caller_pool_peers(current_user)) > 1
+
+
+def can_edit_company(
+    current_user: dict[str, Any],
+    company_created_by: str | None,
+    linked_client_owners: Any,
+) -> bool:
+    """Edit rule for a company: admin, or the caller's peers manage it.
+
+    Managing = the company's ``created_by``, or any linked client's ``assigned_to`` /
+    ``created_by`` / ``tax_consultant``, is the caller or one of the caller's pool peers.
+    Machine principals never edit.
+    """
+    from backend.app.utils.crm_utils import is_crm_admin
+
+    if is_crm_admin(current_user):
+        return True
+    if not is_human_team_member((current_user or {}).get("role")):
+        return False
+    owners = {(company_created_by or "").strip().lower()}
+    for row in linked_client_owners or ():
+        for key in ("assigned_to", "created_by", "tax_consultant"):
+            owners.add((row[key] or "").strip().lower())
+    owners.discard("")
+    return bool(owners & caller_pool_peers(current_user))

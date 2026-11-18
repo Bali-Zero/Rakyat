@@ -5471,7 +5471,7 @@ export interface paths {
     head?: never;
     /**
      * Update Company
-     * @description Update company details
+     * @description Update company details (admin, or staff who manage the company's clients)
      */
     patch: operations["update_company_api_crm_companies__company_id__patch"];
     trace?: never;

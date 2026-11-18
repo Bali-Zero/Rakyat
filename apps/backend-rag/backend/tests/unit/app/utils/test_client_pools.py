@@ -300,6 +300,16 @@ async def test_profile_viewer_can_write_false_for_a_non_member_and_created_by_no
     assert "created_by" not in result["client"]
 
 
+@pytest.mark.asyncio
+async def test_profile_viewer_can_create_company_follows_pool_membership():
+    assert (await _profile({"email": A, "role": "Reception"}, A, None))[
+        "viewer_can_create_company"
+    ] is True
+    assert (await _profile({"email": OUTSIDER, "role": "Reception"}, A, None))[
+        "viewer_can_create_company"
+    ] is False
+
+
 # --------------------------------------------------------------------------- #
 # machine principals never expand into a pool                                  #
 # --------------------------------------------------------------------------- #

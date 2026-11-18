@@ -2,7 +2,8 @@
 Guard: who may create a company (POST /api/crm/companies).
 
 The tax team (Tax Consultant / Lead / Supervisor / Responsible) may create a
-company besides the CRM admins. Edit (PATCH) and delete stay admin-only.
+company besides the CRM admins and client-pool members. Edit (PATCH) needs a managing
+link (see test_company_edit_rule.py); delete stays admin-only.
 Synthetic users only (@example.test), no real identifiers.
 """
 
@@ -100,12 +101,14 @@ def test_other_roles_are_refused_and_write_nothing(role):
 
 
 @pytest.mark.parametrize("role", TAX_ROLES)
-def test_tax_team_still_cannot_edit_company(role):
+def test_tax_team_cannot_edit_a_company_it_does_not_manage(role):
     tc, conn = _client(_user(role))
+    conn.fetchrow = AsyncMock(return_value={"created_by": "someone.else@example.test"})
+    conn.fetch = AsyncMock(return_value=[])
     with tc:
         resp = tc.patch("/api/crm/companies/1", json={"company_name": "Renamed PT"})
     assert resp.status_code == 403
-    conn.fetchrow.assert_not_awaited()
+    assert conn.fetchrow.await_count == 1
 
 
 @pytest.mark.parametrize("role", TAX_ROLES)
