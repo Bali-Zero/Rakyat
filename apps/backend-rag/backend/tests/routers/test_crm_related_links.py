@@ -1264,7 +1264,15 @@ async def test_l10_with_every_gate_open_an_invalid_body_is_422_and_runs_no_state
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 DAY = timedelta(days=1)
-LINK_FIELDS = {"client_id", "client_name", "client_live", "basis", "relation", "created_at"}
+LINK_FIELDS = {
+    "client_id",
+    "client_name",
+    "client_live",
+    "basis",
+    "relation",
+    "created_at",
+    "from_subject_id",
+}
 
 
 def _ids(resp):
@@ -1272,7 +1280,7 @@ def _ids(resp):
 
 
 @pytest.mark.asyncio
-async def test_l11_the_detail_carries_links_with_exactly_six_fields_in_order(admin, conn, clients):
+async def test_l11_the_detail_carries_links_with_exactly_seven_fields_in_order(admin, conn, clients):
     sid = await seed_subject(conn, "person", "ZzL11 Person", [("passport", P1)])
     third = await seed_link(conn, sid, LIVE3, "identity", at=T0 + 2 * DAY)
     first = await seed_link(conn, sid, LIVE1, "drive_folder", at=T0)
@@ -1290,6 +1298,7 @@ async def test_l11_the_detail_carries_links_with_exactly_six_fields_in_order(adm
     for item in detail["links"]:
         assert set(item) == LINK_FIELDS
         assert item["relation"] == "unknown" and item["client_live"] is True
+        assert item["from_subject_id"] is None
         assert datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")).tzinfo
     assert detail["links"][0]["client_name"] == NAME_LIVE1
 
@@ -1496,7 +1505,7 @@ FORBIDDEN_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|TRUNCATE|MERGE|ALTER|DROP|C
 GUARDED_NAME = "CASE WHEN c.id IS NOT NULL AND c.deleted_at IS NULL THEN c.full_name END"
 
 
-def test_l12_static_census_is_nine_plain_selects_and_the_guarded_name():
+def test_l12_static_census_is_ten_plain_selects_and_the_guarded_name():
     service = related_registry_read
     for sql in _sql_constants(service):
         assert not FORBIDDEN_SQL.search(sql), sql[:60]
@@ -1506,7 +1515,7 @@ def test_l12_static_census_is_nine_plain_selects_and_the_guarded_name():
         for attr, value in vars(service).items()
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     }
-    assert len(statements) == 9
+    assert len(statements) == 10
     for attr, sql in statements.items():
         assert sql.lstrip().upper().startswith("SELECT"), attr
         # no read statement selects the producer's evidence or the registry actor
