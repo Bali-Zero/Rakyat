@@ -597,6 +597,39 @@ describe("Accounting control centre", () => {
     expect(click).toHaveBeenCalledTimes(1);
   });
 
+  it("disables Upload statement while previewing and importing", async () => {
+    const preview = deferred<ReturnType<typeof previewFixture>>();
+    const imported = deferred<ReturnType<typeof importFixture>>();
+    api.previewBankStatement.mockReturnValueOnce(preview.promise);
+    api.importBankStatement.mockReturnValueOnce(imported.promise);
+    renderCentre();
+    await ready();
+    const upload = screen.getByRole("button", { name: "Upload statement" });
+    expect(upload).toBeEnabled();
+
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "statement.csv")] },
+    });
+    await waitFor(() => {
+      expect(api.previewBankStatement).toHaveBeenCalledTimes(1);
+      expect(upload).toBeDisabled();
+    });
+
+    await act(async () => preview.resolve(previewFixture()));
+    await waitFor(() => expect(upload).toBeEnabled());
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Import 3 transactions/i }),
+    );
+    await waitFor(() => {
+      expect(api.importBankStatement).toHaveBeenCalledTimes(1);
+      expect(upload).toBeDisabled();
+    });
+
+    await act(async () => imported.resolve(importFixture()));
+    await waitFor(() => expect(upload).toBeEnabled());
+  });
+
   it("reloads the inbox and bank date after an import", async () => {
     api.previewBankStatement.mockResolvedValue(previewFixture());
     api.importBankStatement.mockResolvedValue(importFixture());
@@ -643,6 +676,31 @@ describe("Accounting control centre", () => {
     expect(
       screen.getByRole("button", { name: "See what was done today" }),
     ).toBeInTheDocument();
+  });
+
+  it("hides the calm-view Done action when the route is unavailable", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    api.getDoneToday.mockRejectedValue(
+      Object.assign(new Error("not found"), { statusCode: 404 }),
+    );
+    renderCentre();
+    expect(await screen.findByTestId("cc-calm")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.getDoneToday).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByRole("button", { name: "See what was done today" }),
+      ).toBeNull();
+    });
+  });
+
+  it("opens Done today from the calm view when the route is available", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    renderCentre();
+    expect(await screen.findByTestId("cc-calm")).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "See what was done today" }),
+    );
+    expect(await screen.findByTestId("cc-done")).toBeInTheDocument();
   });
 
   it("advances when a tab empties and shows calm when all tabs empty", async () => {

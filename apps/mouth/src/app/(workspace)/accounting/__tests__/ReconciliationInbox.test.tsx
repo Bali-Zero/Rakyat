@@ -1835,4 +1835,103 @@ describe("ported reconciliation contract", () => {
 
     expect(api.ignoreTransaction).not.toHaveBeenCalled();
   });
+
+  it("67: a held import disables the picked TABLE VIEW primary", async () => {
+    const held = deferred<ReturnType<typeof importFixture>>();
+    api.previewBankStatement.mockResolvedValue(previewFixture());
+    api.importBankStatement.mockReturnValueOnce(held.promise);
+    renderInbox();
+    await ready();
+    await openTab("choose", "ROW YELLOW");
+    fireEvent.click(
+      within(await screen.findByTestId("cc-cand-11")).getByRole("radio"),
+    );
+    const primary = screen.getByRole("button", { name: "Confirm payment" });
+    expect(primary).toBeEnabled();
+
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "statement.csv")] },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Import 3 transactions/i }),
+    );
+    await waitFor(() => {
+      expect(api.importBankStatement).toHaveBeenCalledTimes(1);
+      expect(primary).toBeDisabled();
+    });
+
+    await act(async () => held.resolve(importFixture()));
+    await waitFor(() => expect(primary).toBeEnabled());
+  });
+
+  it("68: a held import disables both NOTHING VIEW footer controls", async () => {
+    api.getReconciliationInbox.mockResolvedValue([
+      four()[3],
+      inboxItem({ txn_id: 6, light: "red", description: "ROW RED TWO" }),
+    ]);
+    const held = deferred<ReturnType<typeof importFixture>>();
+    api.previewBankStatement.mockResolvedValue(previewFixture());
+    api.importBankStatement.mockReturnValueOnce(held.promise);
+    renderInbox();
+    await screen.findByText("ROW RED");
+    await screen.findByText("Nothing found");
+    const skip = screen.getByRole("button", { name: "Skip for now" });
+    const ignore = screen.getByRole("button", {
+      name: "Ignore with a reason",
+    });
+    expect(skip).toBeEnabled();
+    expect(ignore).toBeEnabled();
+
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "statement.csv")] },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Import 3 transactions/i }),
+    );
+    await waitFor(() => {
+      expect(api.importBankStatement).toHaveBeenCalledTimes(1);
+      expect(skip).toBeDisabled();
+      expect(ignore).toBeDisabled();
+    });
+
+    await act(async () => held.resolve(importFixture()));
+    await waitFor(() => {
+      expect(skip).toBeEnabled();
+      expect(ignore).toBeEnabled();
+    });
+  });
+
+  it("69: a held import disables the ignore form reason and Cancel", async () => {
+    const held = deferred<ReturnType<typeof importFixture>>();
+    api.previewBankStatement.mockResolvedValue(previewFixture());
+    api.importBankStatement.mockReturnValueOnce(held.promise);
+    renderInbox();
+    await ready();
+    await openTab("nomatch", "ROW RED");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Ignore with a reason" }),
+    );
+    const reason = screen.getByLabelText("Reason for ignoring");
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    expect(reason).toBeEnabled();
+    expect(cancel).toBeEnabled();
+
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "statement.csv")] },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Import 3 transactions/i }),
+    );
+    await waitFor(() => {
+      expect(api.importBankStatement).toHaveBeenCalledTimes(1);
+      expect(reason).toBeDisabled();
+      expect(cancel).toBeDisabled();
+    });
+
+    await act(async () => held.resolve(importFixture()));
+    await waitFor(() => {
+      expect(reason).toBeEnabled();
+      expect(cancel).toBeEnabled();
+    });
+  });
 });

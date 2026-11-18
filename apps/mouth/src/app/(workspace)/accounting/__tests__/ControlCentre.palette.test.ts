@@ -19,6 +19,10 @@ const components = componentNames.map((name) => ({
   name,
   source: readFileSync(join(root, "_components", name), "utf8"),
 }));
+const colourFiles = [
+  ...components,
+  { name: "page.tsx", source: readFileSync(join(root, "page.tsx"), "utf8") },
+];
 
 describe("control-centre palette boundary", () => {
   it("gives every non-button border inside Done today the hairline", () => {
@@ -80,9 +84,14 @@ describe("control-centre palette boundary", () => {
   it("keeps literals and unsupported colour utilities out of components", () => {
     const family =
       /(?<![\w-])(?:bg|text|border|ring|divide|fill|stroke)-(?:card|muted|muted-foreground|foreground|background|popover|primary|secondary|accent|destructive|border|input)(?![\w-])/;
-    for (const { name, source } of components) {
+    const namedColour =
+      /(?<![\w-])(?:text-white|bg-black|(?:text|bg|border|ring|fill|stroke|from|to|via|outline|decoration|divide|placeholder|caret|accent|shadow)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3})(?![\w-])/;
+    for (const { name, source } of colourFiles) {
       expect(source, name).not.toMatch(/#[\da-f]{3,8}|rgba?\(|hsla?\(/i);
       expect(source, name).not.toMatch(family);
+      expect(source, name).not.toMatch(namedColour);
+    }
+    for (const { name, source } of components) {
       expect(source, name).not.toContain("dark:");
       expect(source, name).not.toMatch(/\$\{[^}]*var\(/);
       const variables = Array.from(
