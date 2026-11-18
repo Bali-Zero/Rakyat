@@ -44,6 +44,10 @@ class OpenInvoice:
     amount_idr: int
     generated_at: date | None = None
     pph_expected_idr: int = 0
+    # Identity of the invoice for a human; None when the source has no value.
+    invoice_number: str | None = None
+    invoice_issued_at: str | None = None
+    service_name: str | None = None
 
 
 @dataclass
@@ -63,6 +67,9 @@ class MatchCandidate:
     amount_relation: str = "none"  # exact | net | partial | over | none
     name_score: float = 0.0  # 0-100, the raw fuzzy score (also below the hint floor)
     in_window: bool = True
+    invoice_number: str | None = None
+    invoice_issued_at: str | None = None
+    service_name: str | None = None
 
 
 def _amount_signals(transfer_idr: int, inv: OpenInvoice) -> tuple[float, list[str], int, bool, str]:
@@ -163,6 +170,9 @@ def rank_candidates(
                 amount_relation=relation,
                 name_score=name,
                 in_window=in_window,
+                invoice_number=inv.invoice_number,
+                invoice_issued_at=inv.invoice_issued_at,
+                service_name=inv.service_name,
             )
         )
 

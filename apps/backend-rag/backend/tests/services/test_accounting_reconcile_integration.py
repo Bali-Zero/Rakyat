@@ -37,8 +37,14 @@ MIGRATION_239 = (
 STUBS = """
 CREATE TABLE IF NOT EXISTS team_members (id VARCHAR PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, full_name VARCHAR);
+-- Real types: models.py PracticeType (id int PK, code VARCHAR(50) NOT NULL UNIQUE, name
+-- VARCHAR(255) NOT NULL) and Practice.practice_type_id (nullable int FK, migration 157 note,
+-- ci_bootstrap_schema.py:703). The pool query LEFT JOINs them.
+CREATE TABLE IF NOT EXISTS practice_types (
+    id SERIAL PRIMARY KEY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);
 CREATE TABLE IF NOT EXISTS practices (
     id SERIAL PRIMARY KEY, client_id INT, payment_status VARCHAR DEFAULT 'unpaid',
+    practice_type_id INT REFERENCES practice_types(id),
     paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE IF NOT EXISTS invoices (
     id SERIAL PRIMARY KEY, practice_id INT UNIQUE, invoice_number VARCHAR,

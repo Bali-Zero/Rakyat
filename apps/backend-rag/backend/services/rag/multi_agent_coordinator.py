@@ -45,11 +45,6 @@ multi_agent_requests_total = Counter(
 
 # Lazy imports for LLM providers (matching kg_langgraph_orchestrator.py pattern)
 try:
-    from langchain_anthropic import ChatAnthropic
-except ImportError:
-    ChatAnthropic = None  # type: ignore[assignment,misc]
-
-try:
     from langchain_openai import ChatOpenAI
 except ImportError:
     ChatOpenAI = None  # type: ignore[assignment,misc]

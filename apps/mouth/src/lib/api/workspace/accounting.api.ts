@@ -83,6 +83,11 @@ export interface MatchCandidate {
   reasons: string[];
   amount_delta_idr: number;
   likely_withheld: boolean;
+  /** Identity of the invoice; null when the source has none, absent from an older backend. */
+  invoice_number?: string | null;
+  /** ISO 8601 stamp of the invoice's generated_at. */
+  invoice_issued_at?: string | null;
+  service_name?: string | null;
 }
 
 export interface MatchCandidatesResponse {

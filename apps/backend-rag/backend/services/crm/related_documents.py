@@ -14,7 +14,6 @@ outcome and counts only: never a hash, a Drive file id or an identifier.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import date
@@ -211,7 +210,7 @@ async def _attempt(
             doc.mime_type,
             doc.first_seen_on,
             doc.first_channel,
-            json.dumps({"plan_sha256": request.evidence["plan_sha256"]}),
+            {"plan_sha256": request.evidence["plan_sha256"]},
             REGISTRY_ACTOR,
         )
         if won is None:
@@ -220,12 +219,10 @@ async def _attempt(
         won = await conn.fetchval(_INSERT_SIGHTING_SQL, ref, sha, seen_on, REGISTRY_ACTOR)
         if won is None:
             raise _Abandon
-    link_evidence = json.dumps(
-        {
-            "plan_sha256": request.evidence["plan_sha256"],
-            "subject_ref": request.evidence["subject_ref"],
-        }
-    )
+    link_evidence = {
+        "plan_sha256": request.evidence["plan_sha256"],
+        "subject_ref": request.evidence["subject_ref"],
+    }
     for doc in new_links:
         won = await conn.fetchval(
             _INSERT_LINK_SQL, subject_id, doc.sha256, doc.doc_type, link_evidence, REGISTRY_ACTOR

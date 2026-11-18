@@ -29,7 +29,6 @@ from fastapi.testclient import TestClient
 from backend.app.dependencies import get_current_user
 from backend.app.routers import agents as agents_router
 from backend.app.routers import dynamic_pricing as dynamic_pricing_router
-from backend.plugins.bali_zero.pricing_plugin import PricingPlugin, PricingQueryInput
 from backend.services.compliance.renewal_rules import RENEWAL_RULES
 from backend.services.compliance.revenue_estimator import estimate_renewal_revenue
 from backend.services.misc.zantara_tools import ZantaraTools
@@ -341,7 +340,7 @@ def test_agents_router_pricing_calculate_no_query_omits_internal_and_includes_e3
 
 
 @pytest.mark.asyncio
-async def test_zantara_tools_and_pricing_plugin_no_query_omit_internal_and_include_e33f() -> None:
+async def test_zantara_tools_no_query_omit_internal_and_include_e33f() -> None:
     svc = get_pricing_service()
 
     tools = ZantaraTools.__new__(ZantaraTools)
@@ -353,15 +352,6 @@ async def test_zantara_tools_and_pricing_plugin_no_query_omit_internal_and_inclu
         assert internal_key not in zantara_keys
     for e33f_key, expected_price in E33F_ROWS.items():
         assert zantara_res["data"]["kitas_permits"][e33f_key]["price"] == expected_price
-
-    plugin = PricingPlugin(pricing_service=svc)
-    plugin_out = await plugin.execute(PricingQueryInput(service_type="kitas"))
-    assert plugin_out.success is True
-    plugin_keys = _collect_all_dict_keys(plugin_out.data)
-    for internal_key in INTERNAL_RETIREMENT_ROWS:
-        assert internal_key not in plugin_keys
-    for e33f_key, expected_price in E33F_ROWS.items():
-        assert plugin_out.data["kitas_permits"][e33f_key]["price"] == expected_price
 
 
 def test_get_pricing_vs_get_pricing_for_clients_innocence() -> None:

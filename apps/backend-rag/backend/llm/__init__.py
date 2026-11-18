@@ -3,7 +3,6 @@
 # Unified LLM Provider System (no circular deps)
 from .base import LLMMessage, LLMProvider, LLMResponse
 from .fallback_messages import FALLBACK_MESSAGES, get_fallback_message
-from .provider_registry import get_provider, list_providers, register_provider
 
 
 def __getattr__(name: str):
@@ -50,7 +49,4 @@ __all__ = [
     "ZantaraAIClientConstants",
     # Fallback messages
     "get_fallback_message",
-    "get_provider",
-    "list_providers",
-    "register_provider",
 ]

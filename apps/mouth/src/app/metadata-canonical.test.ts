@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -32,8 +33,9 @@ import { fileURLToPath } from "url";
  *
  *   - `(workspace)/**`, `portal/**`, `login`, `prime/**`  — kita / my / prime,
  *     internal hosts that robots.ts blocks wholesale. Nothing to canonicalise.
- *   - `v2/**` — eight pages, each carrying `robots: { index: false }`. A
- *     noindex page's canonical is moot by definition.
+ *   - any page carrying `robots: { index: false }` (`/v2` was eight such
+ *     pages until it was retired and redirected). A noindex page's canonical
+ *     is moot by definition.
  *   - `/chat` — `robots.ts` DISALLOW carries it; never crawled, never read.
  *
  * A blanket "every page must declare a canonical" would fail on ~100 files on
@@ -114,12 +116,12 @@ function canonicalExpr(file: string): string | null {
  * inheritance this guard exists to catch, so counting it as coverage would
  * make every assertion below vacuously true.
  */
-function chainBelowRoot(pageRel: string): string[] {
+function chainBelowRoot(pageRel: string, root: string = APP_DIR): string[] {
   const out = [pageRel];
   let dir = path.dirname(pageRel);
   while (dir !== "." && dir !== "") {
     const layout = path.join(dir, "layout.tsx");
-    if (fs.existsSync(path.join(APP_DIR, layout))) out.push(layout);
+    if (fs.existsSync(path.join(root, layout))) out.push(layout);
     dir = path.dirname(dir);
   }
   return out;
@@ -139,12 +141,13 @@ function isPublic(rel: string): boolean {
 /**
  * True when the page or a layout below the root opts the route out of the
  * index. A noindex page's canonical is moot — Google never consolidates a URL
- * it was told not to index — so flagging one would be an over-match. `v2/**`
- * is eight such pages and is the reason this function exists.
+ * it was told not to index — so flagging one would be an over-match. `/v2` was
+ * eight such pages and the reason this function exists; it is retired and
+ * redirected now, and the rule stays for any future noindex page.
  */
-function isNoindex(rel: string): boolean {
-  return chainBelowRoot(rel).some((f) => {
-    const p = path.join(APP_DIR, f);
+function isNoindex(rel: string, root: string = APP_DIR): boolean {
+  return chainBelowRoot(rel, root).some((f) => {
+    const p = path.join(root, f);
     return (
       fs.existsSync(p) &&
       /robots:\s*\{[^}]*index:\s*false/.test(fs.readFileSync(p, "utf8"))
@@ -153,9 +156,9 @@ function isNoindex(rel: string): boolean {
 }
 
 /** True when the page or a layout below the root declares a canonical. */
-function selfCanonical(rel: string): boolean {
-  return chainBelowRoot(rel).some((f) =>
-    Boolean(canonicalExpr(path.join(APP_DIR, f))),
+function selfCanonical(rel: string, root: string = APP_DIR): boolean {
+  return chainBelowRoot(rel, root).some((f) =>
+    Boolean(canonicalExpr(path.join(root, f))),
   );
 }
 
@@ -257,17 +260,34 @@ describe("public routes vs the inherited homepage canonical", () => {
   });
 
   it("leaves noindex and robots-blocked routes alone (innocence)", () => {
-    // /v2 is eight pages of deliberate `robots: { index: false }`; a noindex
-    // page's canonical is moot. Flagging them would be an over-match, and
-    // "fixing" them would imply /v2 is meant to be indexed.
-    const v2 = fs.readFileSync(path.join(APP_DIR, "v2/page.tsx"), "utf8");
-    expect(v2).toMatch(/robots:\s*\{\s*index:\s*false/);
-    expect(isNoindex("v2/page.tsx")).toBe(true);
-    expect(barePublicPages()).not.toContain("v2/page.tsx");
-    // ...but the exemption is earned by the flag, not by the path: strip the
-    // noindex and the ratchet must reclaim the route.
-    expect(isPublic("v2/page.tsx")).toBe(true);
-    expect(selfCanonical("v2/page.tsx")).toBe(false);
+    // A noindex page's canonical is moot. Flagging one would be an over-match,
+    // and "fixing" it would imply the route is meant to be indexed. No real
+    // page has the shape any more (/v2 was retired and redirected), so the
+    // sample is synthetic: a public page, noindex, no canonical in its chain.
+    const bare = (rel: string, root: string) =>
+      isPublic(rel) && !isNoindex(rel, root) && !selfCanonical(rel, root);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "canonical-guard-"));
+    try {
+      const rel = "sample/page.tsx";
+      fs.mkdirSync(path.join(root, "sample"));
+      fs.writeFileSync(
+        path.join(root, rel),
+        "export const metadata = { robots: { index: false, follow: false } };\n",
+      );
+      expect(isNoindex(rel, root)).toBe(true);
+      expect(selfCanonical(rel, root)).toBe(false);
+      expect(bare(rel, root)).toBe(false);
+      // ...but the exemption is earned by the flag, not by the path: strip the
+      // noindex and the ratchet must reclaim the route.
+      fs.writeFileSync(
+        path.join(root, rel),
+        "export const metadata = { title: 'x' };\n",
+      );
+      expect(isNoindex(rel, root)).toBe(false);
+      expect(bare(rel, root)).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
     expect(isPublic("chat/page.tsx")).toBe(false);
   });
 

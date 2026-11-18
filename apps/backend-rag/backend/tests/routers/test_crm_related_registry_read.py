@@ -34,6 +34,7 @@ from backend.middleware.hybrid_auth import ROLE_BOUNDARY_DETAIL, HybridAuthMiddl
 from backend.middleware.request_tracing import RequestTracingMiddleware
 from backend.services.crm.related_identifiers import canonical_form
 from backend.services.monitoring.activity_logger import activity_logger
+from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
 
 MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
 BASE = "/api/crm/related-registry"
@@ -119,7 +120,13 @@ async def pool():
     schema = "related_registry_read_" + uuid4().hex
     await admin.execute(f'CREATE SCHEMA "{schema}"')
     created = await asyncpg.create_pool(
-        dsn, min_size=1, max_size=6, server_settings={"search_path": schema}
+        dsn,
+        min_size=1,
+        max_size=6,
+        server_settings={"search_path": schema},
+        init=init_prod_shaped_connection,
+        statement_cache_size=0,
+        max_inactive_connection_lifetime=30.0,
     )
     try:
         async with created.acquire() as c:
@@ -127,6 +134,7 @@ async def pool():
                 "361_related_subjects_registry.sql",
                 "362_related_documents.sql",
                 "365_related_subject_names.sql",
+                "366_related_evidence_objects.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -617,3 +625,15 @@ async def test_t12_database_error_is_a_fixed_503_and_nothing_leaks(
     assert any(r.name == route_module.__name__ for r in records), "capture saw no router record"
     text = " ".join(_record_text(r) for r in records).casefold()
     assert BOOM_VALUE.casefold() not in text and "zz boom" not in text
+
+
+# ── the production jsonb codec ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guard_the_module_pool_carries_the_production_jsonb_codec(conn):
+    # a native container round-trips as itself; a pre-serialised string comes back as a STRING,
+    # which is the double-encoding signature of the 2026-08-27 incident class
+    assert await conn.fetchval("SELECT $1::jsonb", {"a": 1}) == {"a": 1}
+    assert await conn.fetchval("SELECT $1::jsonb", '{"a": 1}') == '{"a": 1}'
+    assert await conn.fetchval("SELECT jsonb_typeof($1::jsonb)", '{"a": 1}') == "string"

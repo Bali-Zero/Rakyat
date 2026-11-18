@@ -211,6 +211,17 @@ _OP04_SWEEP_LIMIT = 200
 _ALARM_SEND_TIMEOUT_SECONDS = 20.0
 
 
+def _admin_alarm_recipient(settings) -> str:
+    """The alarm recipient: a non-blank `ADMIN_NOTIFICATION_EMAIL` env value wins,
+    anything blank falls back to `settings.admin_notification_email`. A blank
+    value used to win and mute both alarms."""
+    from backend.services.garuda_orders.outbox_handlers import (
+        resolve_admin_notification_email,
+    )
+
+    return resolve_admin_notification_email(settings)
+
+
 async def _send_outbox_alarm(client: "httpx.AsyncClient", text: str) -> bool:  # noqa: F821
     """Best-effort internal operational page for GARUDA outbox backlogs. NEVER raises.
 
@@ -246,11 +257,7 @@ async def _send_outbox_alarm(client: "httpx.AsyncClient", text: str) -> bool:  #
         )
         return False
 
-    recipient = (
-        os.environ["ADMIN_NOTIFICATION_EMAIL"]
-        if "ADMIN_NOTIFICATION_EMAIL" in os.environ
-        else settings.admin_notification_email
-    ).strip()
+    recipient = _admin_alarm_recipient(settings)
     api_key = os.getenv("NUZANTARA_API_KEY", "").strip()
     if not recipient or not api_key:
         logger.error(
@@ -307,11 +314,7 @@ async def _send_quarantine_alarm(client: "httpx.AsyncClient", text: str) -> bool
         )
         return False
 
-    recipient = (
-        os.environ["ADMIN_NOTIFICATION_EMAIL"]
-        if "ADMIN_NOTIFICATION_EMAIL" in os.environ
-        else settings.admin_notification_email
-    ).strip()
+    recipient = _admin_alarm_recipient(settings)
     api_key = os.getenv("NUZANTARA_API_KEY", "").strip()
     if not recipient or not api_key:
         logger.error(
@@ -332,9 +335,7 @@ async def _send_quarantine_alarm(client: "httpx.AsyncClient", text: str) -> bool
         logger.error("GARUDA payment quarantine alarm could not be delivered: %s", exc)
         return False
     except Exception as exc:
-        logger.error(
-            "GARUDA payment quarantine alarm unexpected delivery error: %s", exc
-        )
+        logger.error("GARUDA payment quarantine alarm unexpected delivery error: %s", exc)
         return False
     return True
 
@@ -387,7 +388,7 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
     from backend.services.garuda_orders.outbox_consumer import count_undrained, drain_once
     from backend.services.garuda_orders.outbox_handlers import (
         BrevoEmailSender,
-        TelegramStaffPageSender,
+        EmailStaffPageSender,
         build_handlers,
     )
     from backend.services.garuda_orders.payment_inbox_watch import count_quarantined
@@ -423,9 +424,8 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
             _probe_exc,
         )
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Same injected client as the email sender (Golden Rule #10) — a
-        # Telegram POST is just another HTTPS call, no reason for a second
-        # long-lived client here.
+        # Both customer emails and staff money-anomaly pages share the single
+        # injected `httpx.AsyncClient` and `BrevoEmailSender` (Golden Rule #10).
         #
         # WRAPPED, because this runs OUTSIDE the per-tick try below and a failure
         # here killed the whole drain in silence (cross-family seat, Kimi K3,
@@ -441,9 +441,8 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
         # The task still dies (there is no safe way to drain without handlers),
         # but it dies LOUDLY: one CRITICAL naming the cause, then the re-raise.
         try:
-            handlers = build_handlers(
-                pool, BrevoEmailSender(client), TelegramStaffPageSender(client)
-            )
+            email_sender = BrevoEmailSender(client)
+            handlers = build_handlers(pool, email_sender, EmailStaffPageSender(email_sender))
         except Exception:
             logger.critical(
                 "GARUDA outbox scheduler CANNOT START — build_handlers failed; "

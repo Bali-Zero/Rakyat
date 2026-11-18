@@ -13,7 +13,6 @@ from backend.app.main_cloud import (
     _parse_history,
     _safe_endpoint_label,
     app,
-    initialize_plugins,
     initialize_services,
     on_shutdown,
     on_startup,
@@ -22,7 +21,6 @@ from backend.app.main_cloud import (
 __all__ = [
     "app",
     "initialize_services",
-    "initialize_plugins",
     "on_startup",
     "on_shutdown",
     "_parse_history",
