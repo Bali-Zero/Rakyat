@@ -217,7 +217,7 @@ def test_non_exact_or_non_idr_price_requires_contact(raw_price: object) -> None:
         ("E31E", 730, 15_000_000, 18_000_000, "Dependent 2 Years (Altus/Onshore)"),
         ("E31H", 365, 11_000_000, 13_500_000, "Dependent 1 Year (Altus/Onshore)"),
         ("E31J", 730, 15_000_000, 18_000_000, "Dependent 2 Years (Altus/Onshore)"),
-        ("E23", 365, 34_500_000, 36_000_000, "Working KITAS (Altus/Onshore)"),
+        ("E23", 365, 34_500_000, 36_500_000, "Working KITAS (Altus/Onshore)"),
         ("E33G", 365, 13_000_000, 14_000_000, "E33G Remote Worker (Altus/Onshore)"),
         # Products without a separate onshore SKU keep their base pricing_key unchanged.
         ("E33", 1825, 35_000_000, 35_000_000, "E33 Second Home (5 Years)"),

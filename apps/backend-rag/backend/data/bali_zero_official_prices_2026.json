@@ -10,7 +10,7 @@
       "location": "Kerobokan, Bali, Indonesia",
       "website": "balizero.com"
     },
-    "last_updated": "2026-10-17"
+    "last_updated": "2026-11-18"
   },
   "services": {
     "single_entry_visas": {
@@ -243,11 +243,12 @@
     "kitas_permits": {
       "Working KITAS (Altus/Onshore)": {
         "name": "Working KITAS (Altus/Onshore)",
-        "price": "36.000.000 IDR",
+        "price": "36.500.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "1 year",
         "notes": "",
+        "verified_on": "2026-11-18",
         "description_en": "Standard work permit KITAS sponsored by an Indonesian employer. Onshore process via Altus, suited to candidates already in Indonesia.",
         "icon_id": "kitas-working"
       },
@@ -880,6 +881,17 @@
         "notes": "",
         "description_en": "Full incorporation of a new Indonesian foreign-owned limited company (PT PMA), including notarial deed, BKPM/OSS registration and tax ID issuance.",
         "icon_id": "company-pma"
+      },
+      "Dissolving Company": {
+        "name": "Dissolving Company",
+        "price": "13.000.000 IDR",
+        "tier_range": null,
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "verified_on": "2026-11-18",
+        "description_en": "Dissolution and liquidation of an existing Indonesian limited company, including the notarial dissolution deed and deregistration with the tax and licensing authorities.",
+        "icon_id": "company-close"
       },
       "Virtual Office": {
         "name": "Virtual Office",
