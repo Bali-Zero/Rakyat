@@ -14,6 +14,13 @@ R4 filters: applied to the original leaves, never to a declared probe.
 R5 audit rows: every column scanned except columns of a timestamp, real, double or numeric TYPE;
    containers are walked, never serialised; a string that parses as JSON is walked decoded too;
    a float inside a scanned column or container is a scalar like any other and is scanned.
+   The walker's table is SPEC_B4C_addendum_walker.md (W1 to W9); a response text goes through it too.
+
+Limits (what THIS instrument can see): a number written inside a longer text is scanned as that
+text only, the walker does not look for number literals in prose; renderings of a number other than
+integer text, repr and positional expansion (digit grouping, another base, fewer significant digits,
+a locale's separators) are outside the rule; the six interpreter-measured attributes of a log record
+are left out by name and the audit columns of an unscanned TYPE by type.
 R8 suppression guard: the vocabulary filter must not silently remove a request string from a set.
 R9 teeth: pure tests (in the caller's module) that these functions can fail.
 """
@@ -27,6 +34,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from backend.services.crm.related_identifiers import ID_TYPES, canonical_form
@@ -231,17 +239,29 @@ def unclassified_protocol_words(vocab: Vocabulary, origin: dict[str, str]) -> li
 # ── surfaces ──────────────────────────────────────────────────────────────────
 
 
+def _number_texts(value: float | Decimal) -> list[str]:
+    """W3/W4: the repr (or str) and, when finite, the positional expansion without an exponent,
+    written from the shortest repr: the exact binary value is not what a reader sees."""
+    if isinstance(value, Decimal):
+        out = [str(value)]
+        if value.is_finite():
+            out.append(format(value, "f"))
+        return out
+    out = [repr(value)]
+    if math.isfinite(value):
+        out.append(format(Decimal(repr(value)), "f"))
+    return out
+
+
 def walk(value: Any, out: list[str]) -> None:
-    """Every key and scalar of a value as text, decoded: integers as decimals, floats as their
-    repr (and, when finite and integral, also as the integer they equal), NULL and booleans
-    skipped, a string that parses as JSON also walked as the value it holds (never serialised, so a
-    token cannot be split by escaping)."""
+    """Table W: None and booleans nothing; integers their decimals; floats and Decimals their repr
+    and positional expansion; bytes as Latin-1 text; a string itself and, when the WHOLE string
+    parses as JSON (any string is tried), the decoded value walked again; containers key by key and
+    item by item, never serialised (so a token cannot be split by escaping)."""
     if value is None or isinstance(value, bool):
         return
-    if isinstance(value, float):
-        out.append(repr(value))
-        if math.isfinite(value) and value == int(value):
-            out.append(str(int(value)))
+    if isinstance(value, (float, Decimal)):
+        out.extend(_number_texts(value))
         return
     if isinstance(value, int):
         out.append(str(value))
@@ -250,12 +270,11 @@ def walk(value: Any, out: list[str]) -> None:
         value = bytes(value).decode("latin-1")
     if isinstance(value, str):
         out.append(value)
-        if value.lstrip()[:1] in ("{", "[", '"'):
-            try:
-                decoded = json.loads(value)
-            except ValueError:
-                return
-            walk(decoded, out)
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return
+        walk(decoded, out)
         return
     if isinstance(value, dict):
         for key, item in value.items():
@@ -276,6 +295,14 @@ def record_texts(record: logging.LogRecord) -> list[str]:
         if name not in INTERPRETER_ATTRIBUTES:
             walk(value, out)
     return out
+
+
+def response_surface(text: str) -> str:
+    """The case-folded surface of a response text: the text itself and, being JSON, the decoded
+    value walked by table W (a number in an answer is rendered like any other)."""
+    out: list[str] = []
+    walk(text, out)
+    return " ".join(out).casefold()
 
 
 def log_surface(

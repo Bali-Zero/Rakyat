@@ -27,6 +27,7 @@ import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -2208,7 +2209,9 @@ async def _wait(event: asyncio.Event, what: str, *tasks):
 
 
 async def _blocked(observer, pid: int, *tasks):
-    """The third connection sees the backend `pid` waiting on a lock it was not granted."""
+    """The third connection sees the backend `pid` waiting on a lock it was not granted. The cap
+    bounds when the wait gives up and STARTS cancelling: the elapsed time can exceed it by the time
+    a cancelled query takes to return, and no task is left pending."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + CAP
     while loop.time() < deadline:
@@ -2235,7 +2238,9 @@ async def _blocked(observer, pid: int, *tasks):
 async def run_schedule(pool, winner: dict, loser: dict):
     """Both transactions start and stop BEFORE their first lock; the winner is released and runs to
     its pointer UPDATE holding both locks; the loser is released and must be seen blocked from a
-    third connection; only then the winner commits. Returns (winner's answer, loser's answer)."""
+    third connection; only then the winner commits. Returns (winner's answer, loser's answer).
+    The cap bounds when the wait gives up and STARTS cancelling: the elapsed time can exceed it by
+    the time a cancelled transaction takes to return, and no task is left pending."""
     win, lose = _Hold(), _Hold()
     lose.commit.set()
     async with pool.acquire() as cw, pool.acquire() as cl, pool.acquire() as observer:
@@ -3506,6 +3511,56 @@ def test_m18_teeth_a_float_in_an_excluded_audit_type_and_in_an_interpreter_attri
         )
 
 
+def _surfaces(value):
+    """The three places a value can sit: an audit container, a log extra, a log args."""
+    return [
+        privacy.audit_texts([{"id": 1, "response_body": {"n": value}}], AUDIT_TYPES),
+        privacy.audit_texts([{"id": 1, "response_body": [value]}], AUDIT_TYPES),
+        privacy.audit_texts([{"id": 1, "response_body": {"k": {"n": [value]}}}], AUDIT_TYPES),
+        privacy.log_surface([_record(extra={"n": value})]),
+        privacy.log_surface([_record(extra=[value])]),
+        privacy.log_surface([_record(args=(value,))]),
+    ]
+
+
+def test_m18_teeth_h_a_float_with_an_exponent_repr_is_caught_on_every_surface():
+    for value in (float("7.373741e26"), -float("7.373741e26"), 7.373741e-05):
+        for surface in _surfaces(value):
+            assert privacy.leaks(_num_forbidden(), surface), (repr(value), surface[:60])
+
+
+def test_m18_teeth_i_a_json_number_string_in_exponent_form_is_caught_decoded():
+    text = "7.373741e+26"
+    for value in (text, json.dumps(text), json.dumps(json.dumps(text))):
+        row = {"id": 1, "request_body": value}
+        assert privacy.leaks(_num_forbidden(), privacy.audit_texts([row], AUDIT_TYPES)), value
+        assert privacy.leaks(_num_forbidden(), privacy.log_surface([_record(extra=value)])), value
+    inside = {"n": text}
+    assert privacy.leaks(
+        _num_forbidden(), privacy.audit_texts([{"id": 1, "response_body": inside}], AUDIT_TYPES)
+    )
+    assert privacy.leaks(_num_forbidden(), privacy.log_surface([_record(extra=inside)]))
+
+
+def test_m18_teeth_j_a_decimal_in_exponent_form_is_caught():
+    value = Decimal("7.373741E+26")
+    assert privacy.leaks(_num_forbidden(), privacy.log_surface([_record(extra=value)]))
+    assert privacy.leaks(_num_forbidden(), privacy.log_surface([_record(extra={"n": value})]))
+
+
+def test_m18_teeth_k_non_finite_numbers_do_not_raise_and_report_nothing():
+    for value in (float("inf"), float("nan"), Decimal("NaN"), Decimal("Infinity")):
+        for surface in _surfaces(value):
+            assert privacy.leaks(_num_forbidden(), surface) == [], repr(value)
+
+
+def test_m18_teeth_l_a_response_text_with_an_exponent_float_is_caught_by_the_helper_only():
+    text = '{"detail": 7.373741e+26}'
+    assert privacy.leaks(_num_forbidden(), privacy.response_surface(text))
+    assert privacy.leaks(_num_forbidden(), text.casefold()) == []
+    assert privacy.leaks(_num_forbidden(), privacy.response_surface('{"detail": "plain"}')) == []
+
+
 def test_m18_teeth_the_interpreter_attributes_are_exactly_six_names():
     assert privacy.INTERPRETER_ATTRIBUTES == {
         "thread", "process", "lineno", "created", "msecs", "relativeCreated",
@@ -3605,7 +3660,7 @@ async def test_m18_route_logs_and_answers_carry_no_identifier_name_or_body(
 
     log_set, answer_set = privacy.case_sets(VOCAB, requests, spec["ids"], ())
     for resp in responses:
-        assert privacy.leaks(answer_set, resp.text.casefold()) == [], case
+        assert privacy.leaks(answer_set, privacy.response_surface(resp.text)) == [], case
     assert privacy.leaks(log_set, privacy.log_surface(records, sentinels)) == [], case
 
     # one audit row per call, no request body, no token in any scanned column
