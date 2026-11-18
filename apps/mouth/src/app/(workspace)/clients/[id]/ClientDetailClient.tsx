@@ -524,7 +524,10 @@ export function ClientDetailClient({
   } = profile;
   // `viewer_can_write` is the server's answer for THIS viewer (it knows the
   // shared client pools); it rides on `client` so the delete predicate sees it.
-  const client = { ...profileClient, viewer_can_write: profile.viewer_can_write };
+  const client = {
+    ...profileClient,
+    viewer_can_write: profile.viewer_can_write,
+  };
   const canCreateCompany =
     typeof profile.viewer_can_create_company === "boolean"
       ? profile.viewer_can_create_company
@@ -1239,6 +1242,8 @@ export function ClientDetailClient({
               day={profileDay!}
               documents={documentRows}
               documentsByCategory={documentsByCategory}
+              clientFolderId={client.google_drive_folder_id}
+              companyLinks={company_links ?? []}
               formatDate={formatDate}
               onAddClick={() => setActiveModal("add_document")}
               onEditClick={(doc) => {
