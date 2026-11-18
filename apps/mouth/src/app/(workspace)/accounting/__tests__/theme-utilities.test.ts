@@ -1,97 +1,60 @@
 /**
- * Folder guard: the accounting sources may only use colours this app's theme
- * defines. The shadcn-style names below are declared nowhere, so a utility
- * built on them paints nothing; a var(--x) with no declaration paints nothing
- * either.
+ * Folder guard (G1 names, G3 no hit on the real files; rules in themeGuard.ts).
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { declaredInTree, guardedFiles, reportFile } from "./themeGuard";
 
 const ACCOUNTING = resolve(__dirname, "..");
 const GLOBALS = resolve(process.cwd(), "src/app/globals.css");
 
-const UNDEFINED_COLOURS = [
-  "card",
-  "popover",
-  "background",
-  "foreground",
-  "muted",
-  "muted-foreground",
-  "primary",
-  "primary-foreground",
-  "secondary",
-  "secondary-foreground",
-  "destructive",
-  "destructive-foreground",
-  "input",
-  "ring",
-];
-const UTILITY = new RegExp(
-  `^(?:[\\w-]+:)*(?:bg|text|border|border-[trblxy]|ring|divide|outline|fill|stroke|from|to|via|placeholder|decoration|caret|accent|shadow)-(${UNDEFINED_COLOURS.join("|")})(?:/[\\d.]+)?$`,
-);
+describe("accounting theme guard", () => {
+  const declared = declaredInTree(GLOBALS);
+  const files = guardedFiles(ACCOUNTING);
 
-function sources(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) {
-      return name === "__tests__" ? [] : sources(p);
-    }
-    return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [p] : [];
-  });
-}
-
-function cssTree(file: string, seen = new Set<string>()): string {
-  if (seen.has(file)) return "";
-  seen.add(file);
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    return "";
-  }
-  const imports = [...text.matchAll(/@import\s+["'](\.[^"']+)["']/g)].map((m) =>
-    resolve(dirname(file), m[1]),
-  );
-  return text + "\n" + imports.map((f) => cssTree(f, seen)).join("\n");
-}
-
-describe("accounting theme utilities", () => {
-  const files = sources(ACCOUNTING);
-
-  it("finds the accounting sources", () => {
-    expect(files.length).toBeGreaterThan(4);
-  });
-
-  it("uses no colour utility the theme does not define", () => {
-    const offenders: string[] = [];
-    for (const f of files) {
-      const text = readFileSync(f, "utf8");
-      for (const tok of text.split(/[\s"'`{}()<>=,;]+/)) {
-        if (UTILITY.test(tok)) {
-          offenders.push(`${f.replace(ACCOUNTING, "")}: ${tok}`);
-        }
-      }
-    }
-    expect(offenders).toEqual([]);
-  });
-
-  it("references only CSS variables that are declared", () => {
-    const css = cssTree(GLOBALS);
-    const declared = new Set(
-      [...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]),
-    );
+  it("reads the stylesheet tree", () => {
     expect(declared.size).toBeGreaterThan(50);
-    const offenders: string[] = [];
-    for (const f of files) {
-      const text = readFileSync(f, "utf8");
-      for (const m of text.matchAll(/var\((--[\w-]+)/g)) {
-        if (!declared.has(m[1])) {
-          offenders.push(`${f.replace(ACCOUNTING, "")}: ${m[1]}`);
-        }
-      }
-    }
-    expect(offenders).toEqual([]);
+    expect(declared.has("bz-card")).toBe(true);
+  });
+
+  it("guards exactly the nine files that exist today", () => {
+    expect(files.map((f) => f.slice(ACCOUNTING.length + 1))).toEqual([
+      "_components/BankStatementUpload.tsx",
+      "_components/ConfirmModal.tsx",
+      "_components/LinkedIgnoredSection.tsx",
+      "_components/ReconciliationInbox.tsx",
+      "_components/formatStatementAmount.ts",
+      "_components/useWriteLock.ts",
+      "error.tsx",
+      "loading.tsx",
+      "page.tsx",
+    ]);
+  });
+
+  it("G3: the guarded files produce no hit", () => {
+    const hits = files.flatMap((f) =>
+      reportFile(
+        f.slice(ACCOUNTING.length + 1),
+        readFileSync(f, "utf8"),
+        declared,
+      ),
+    );
+    expect(hits).toEqual([]);
+  });
+
+  it("reports hits as file:line match", () => {
+    expect(
+      reportFile(
+        "planted.tsx",
+        'a\n<div className="[&:hover]:bg-card/50 bg-[var(--not-declared-anywhere)]/20 bg-(--nope,red) bg-[var(--bz-card)]" />',
+        declared,
+      ),
+    ).toEqual([
+      "planted.tsx:2 bg-card",
+      "planted.tsx:2 --not-declared-anywhere",
+      "planted.tsx:2 --nope",
+    ]);
   });
 });
