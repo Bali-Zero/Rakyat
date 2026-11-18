@@ -32,7 +32,7 @@ function Stat({
 }) {
   return (
     <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dt className="text-xs text-[var(--bz-text-2)]">{label}</dt>
       <dd className="text-sm font-medium tabular-nums">{children}</dd>
     </div>
   );
@@ -135,14 +135,14 @@ export function BankStatementUpload({
 
   return (
     <section
-      className="space-y-3 rounded-lg border bg-card p-4"
+      className="space-y-3 rounded-lg border bg-[var(--bz-card)] p-4"
       aria-label="Bank statement"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <Upload className="h-4 w-4 text-[var(--bz-accent)]" /> Bank statement
         </h2>
-        <label className="text-sm text-muted-foreground">
+        <label className="text-sm text-[var(--bz-text-2)]">
           <span className="mr-2">Upload bank statement (CSV)</span>
           <input
             type="file"
@@ -158,7 +158,7 @@ export function BankStatementUpload({
       </div>
 
       {phase === "previewing" && (
-        <p className="flex items-center text-sm text-muted-foreground">
+        <p className="flex items-center text-sm text-[var(--bz-text-2)]">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Reading statement…
         </p>
       )}
@@ -210,7 +210,7 @@ export function BankStatementUpload({
           )}
 
           <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase text-muted-foreground">
+            <thead className="text-left text-xs uppercase text-[var(--bz-text-2)]">
               <tr>
                 <th className="py-1 font-medium">Kind</th>
                 <th className="py-1 text-right font-medium">Count</th>

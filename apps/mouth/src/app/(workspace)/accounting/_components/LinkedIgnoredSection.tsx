@@ -92,18 +92,18 @@ export function LinkedIgnoredSection({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="w-full p-3 text-left text-sm font-medium hover:bg-muted/30"
+        className="w-full p-3 text-left text-sm font-medium hover:bg-[var(--bz-card-hover)]/30"
       >
         Linked and ignored
       </button>
       {open && (
         <div className="space-y-2 border-t p-3">
           {rows.length === 0 && loadStatus === "loading" ? (
-            <div className="flex items-center justify-center py-3 text-muted-foreground">
+            <div className="flex items-center justify-center py-3 text-[var(--bz-text-2)]">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
             </div>
           ) : rows.length === 0 && loadStatus === "failed" ? (
-            <div className="text-center text-sm text-muted-foreground">
+            <div className="text-center text-sm text-[var(--bz-text-2)]">
               <p>Could not load this list.</p>
               <Button
                 className="mt-2"
@@ -115,7 +115,7 @@ export function LinkedIgnoredSection({
               </Button>
             </div>
           ) : rows.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground">
+            <p className="text-center text-sm text-[var(--bz-text-2)]">
               Nothing linked or ignored yet.
             </p>
           ) : (
@@ -126,7 +126,7 @@ export function LinkedIgnoredSection({
                     <p className="truncate text-sm font-medium">
                       {r.description ?? "(no memo)"}
                     </p>
-                    <p className="text-xs text-muted-foreground tabular-nums">
+                    <p className="text-xs text-[var(--bz-text-2)] tabular-nums">
                       {r.txn_date} ·{" "}
                       {r.reconciled_status === "ignored" ? "Ignored" : "Linked"}{" "}
                       · <Money value={r.amount_idr} />

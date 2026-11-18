@@ -88,7 +88,7 @@ function CandidateRow({
   onAction: () => void;
 }) {
   return (
-    <li className="flex items-center justify-between gap-3 rounded-md border bg-card p-2">
+    <li className="flex items-center justify-between gap-3 rounded-md border bg-[var(--bz-card)] p-2">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">
           {candidate.client_name}
@@ -98,7 +98,7 @@ function CandidateRow({
             </span>
           )}
         </p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-[var(--bz-text-2)]">
           <Money value={candidate.invoice_amount_idr} /> ·{" "}
           {(candidate.confidence * 100).toFixed(0)}% ·{" "}
           {candidate.reasons[0] ?? ""}
@@ -127,12 +127,12 @@ function CandidateGroup({
   if (rows.length === 0 && !truncated) return null;
   return (
     <div>
-      <h4 className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+      <h4 className="mb-1 text-xs font-semibold uppercase text-[var(--bz-text-2)]">
         {title}
       </h4>
       {rows.length > 0 && <ul className="space-y-2">{rows.map(renderRow)}</ul>}
       {truncated && (
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-xs text-[var(--bz-text-2)]">
           {count} invoices have this amount; the {rows.length} closest are
           shown.
         </p>
@@ -363,7 +363,7 @@ export function ReconciliationInbox({
 
   if (items.length === 0 && loadStatus === "loading") {
     return frame(
-      <div className="flex items-center justify-center p-10 text-muted-foreground">
+      <div className="flex items-center justify-center p-10 text-[var(--bz-text-2)]">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading inbox…
       </div>,
     );
@@ -371,7 +371,7 @@ export function ReconciliationInbox({
 
   if (items.length === 0 && loadStatus === "failed") {
     return frame(
-      <div className="rounded-lg border p-10 text-center text-muted-foreground">
+      <div className="rounded-lg border p-10 text-center text-[var(--bz-text-2)]">
         <p>Could not load the inbox.</p>
         <Button
           className="mt-3"
@@ -387,7 +387,7 @@ export function ReconciliationInbox({
 
   if (items.length === 0) {
     return frame(
-      <div className="rounded-lg border p-10 text-center text-muted-foreground">
+      <div className="rounded-lg border p-10 text-center text-[var(--bz-text-2)]">
         <Inbox className="mx-auto mb-2 h-8 w-8 opacity-50" />
         No unmatched incoming transfers. Inbox zero.
       </div>,
@@ -405,8 +405,8 @@ export function ReconciliationInbox({
             onClick={() => setFilter(f.key)}
             className={`rounded-full border px-3 py-1 text-xs font-medium ${
               filter === f.key
-                ? "border-[var(--bz-accent)] text-foreground"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-[var(--bz-accent)] text-[var(--bz-text-1)]"
+                : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
             }`}
           >
             {f.label} ({counts[f.key]})
@@ -415,7 +415,7 @@ export function ReconciliationInbox({
       </div>
 
       {visible.length === 0 && (
-        <p className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+        <p className="rounded-lg border p-6 text-center text-sm text-[var(--bz-text-2)]">
           No transfers in this filter.
         </p>
       )}
@@ -440,13 +440,13 @@ export function ReconciliationInbox({
                 <button
                   onClick={() => openCandidates(item)}
                   aria-expanded={expandedTxn === item.txn_id}
-                  className="flex min-w-0 flex-1 items-center justify-between gap-3 p-3 text-left hover:bg-muted/30"
+                  className="flex min-w-0 flex-1 items-center justify-between gap-3 p-3 text-left hover:bg-[var(--bz-card-hover)]/30"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
                       {item.description || "(no memo)"}
                     </p>
-                    <p className="text-xs text-muted-foreground tabular-nums">
+                    <p className="text-xs text-[var(--bz-text-2)] tabular-nums">
                       {item.txn_date}
                     </p>
                   </div>
@@ -466,7 +466,7 @@ export function ReconciliationInbox({
               </div>
 
               {ignoreForm?.txnId === item.txn_id && (
-                <div className="flex flex-wrap items-center gap-2 border-t bg-muted/20 p-3">
+                <div className="flex flex-wrap items-center gap-2 border-t bg-[var(--bz-surface)]/20 p-3">
                   <input
                     type="text"
                     aria-label="Reason for ignoring"
@@ -476,9 +476,9 @@ export function ReconciliationInbox({
                     onChange={(e) =>
                       setIgnoreReason(item.txn_id, e.target.value)
                     }
-                    className="min-w-[240px] flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+                    className="min-w-[240px] flex-1 rounded-md border bg-[var(--bz-base)] px-2 py-1 text-sm"
                   />
-                  <p className="basis-full text-xs text-muted-foreground">
+                  <p className="basis-full text-xs text-[var(--bz-text-2)]">
                     Ignoring moves no money. The transfer can be reopened under
                     Linked and ignored.
                   </p>
@@ -510,14 +510,14 @@ export function ReconciliationInbox({
               )}
 
               {expandedTxn === item.txn_id && (
-                <div className="space-y-3 border-t bg-muted/20 p-3">
+                <div className="space-y-3 border-t bg-[var(--bz-surface)]/20 p-3">
                   {candFailed ? (
                     <p className="py-2 text-center text-sm text-[var(--state-danger)]">
                       Could not load the invoices for this transfer. Close the
                       row and open it again.
                     </p>
                   ) : candLoading || !candidates ? (
-                    <div className="flex items-center justify-center py-4 text-muted-foreground">
+                    <div className="flex items-center justify-center py-4 text-[var(--bz-text-2)]">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Ranking
                       candidates…
                     </div>
@@ -533,7 +533,7 @@ export function ReconciliationInbox({
                         candidates.recorded_candidates.length === 0 &&
                         item.open_candidates <= 0 &&
                         item.recorded_candidates <= 0 && (
-                          <p className="py-2 text-center text-sm text-muted-foreground">
+                          <p className="py-2 text-center text-sm text-[var(--bz-text-2)]">
                             No plausible invoice match. Leave unmatched or
                             handle manually.
                           </p>
