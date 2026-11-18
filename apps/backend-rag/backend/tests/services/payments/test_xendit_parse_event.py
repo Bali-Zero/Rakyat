@@ -193,3 +193,88 @@ async def test_a_refund_without_a_charge_id_never_reaches_the_provider() -> None
 
     assert "no charge id" in str(raised.value)
     assert calls == [], "a refund with no charge id was sent to the provider anyway"
+
+
+# --- event identity carries the lifecycle status --------------------------------
+#
+# The payment inbox dedups on `(provider, provider_event_id)` and the handlers
+# answer OP-09 on that conflict before any state logic. An identity of the bare
+# invoice id therefore let an EXPIRED callback swallow a late PAID for the same
+# invoice, and a PAID swallow its REFUND. Found by a cross-family gate.
+
+
+def _parse(provider: XenditPaymentProvider, body: dict):
+    return provider.parse_event(raw_body=json.dumps(body).encode(), headers={})
+
+
+def test_paid_identity_is_the_invoice_with_a_paid_suffix(provider: XenditPaymentProvider) -> None:
+    event = _parse(
+        provider, {"id": "inv-ident-1", "status": "PAID", "paid_amount": 790000, "currency": "IDR"}
+    )
+    assert isinstance(event, NormalizedPaidEvent)
+    assert event.provider_event_id == "inv-ident-1:paid"
+    # correlation and the spendable charge id stay the bare invoice id
+    assert event.provider_session_id == "inv-ident-1"
+    assert event.provider_charge_id == "inv-ident-1"
+
+
+def test_expired_and_failed_identities_are_distinct_per_status(
+    provider: XenditPaymentProvider,
+) -> None:
+    expired = _parse(provider, {"id": "inv-ident-2", "status": "EXPIRED"})
+    failed = _parse(provider, {"id": "inv-ident-2", "status": "FAILED", "failure_code": "x"})
+    assert isinstance(expired, NormalizedFailureEvent)
+    assert isinstance(failed, NormalizedFailureEvent)
+    assert expired.provider_event_id == "inv-ident-2:expired"
+    assert failed.provider_event_id == "inv-ident-2:failed"
+    assert expired.provider_session_id == failed.provider_session_id == "inv-ident-2"
+
+
+def test_no_two_lifecycle_statuses_of_one_invoice_share_an_identity(
+    provider: XenditPaymentProvider,
+) -> None:
+    paid = _parse(
+        provider, {"id": "inv-ident-3", "status": "PAID", "paid_amount": 1000, "currency": "IDR"}
+    )
+    expired = _parse(provider, {"id": "inv-ident-3", "status": "EXPIRED"})
+    refunded = _parse(provider, {"id": "inv-ident-3", "status": "REFUNDED", "refund_id": "r-1"})
+    ids = {paid.provider_event_id, expired.provider_event_id, refunded.provider_event_id}
+    assert len(ids) == 3
+
+
+def test_refund_identity_carries_the_refund_id(provider: XenditPaymentProvider) -> None:
+    one = _parse(provider, {"id": "inv-ident-4", "status": "REFUNDED", "refund_id": "rfd-a"})
+    two = _parse(provider, {"id": "inv-ident-4", "status": "REFUNDED", "refund_id": "rfd-b"})
+    assert isinstance(one, NormalizedRefundEvent)
+    assert one.provider_event_id == "inv-ident-4:refund:rfd-a"
+    assert two.provider_event_id == "inv-ident-4:refund:rfd-b"
+    assert one.provider_refund_id == "rfd-a"
+    assert one.provider_charge_id == "inv-ident-4"
+    assert one.provider_session_id == "inv-ident-4"
+
+
+def test_a_refund_without_a_refund_id_uses_the_stable_fallback_and_redelivery_is_identical(
+    provider: XenditPaymentProvider,
+) -> None:
+    body = {"id": "inv-ident-5", "status": "REFUNDED"}
+    first = _parse(provider, body)
+    again = _parse(provider, body)
+    assert (
+        first.provider_event_id
+        == again.provider_event_id
+        == "inv-ident-5:refund:inv-ident-5-refund"
+    )
+
+
+def test_a_redelivered_body_yields_the_identical_identity(provider: XenditPaymentProvider) -> None:
+    body = {"id": "inv-ident-6", "status": "PAID", "paid_amount": 5, "currency": "IDR"}
+    assert _parse(provider, body).provider_event_id == _parse(provider, body).provider_event_id
+
+
+def test_settled_is_still_not_a_recognised_status(provider: XenditPaymentProvider) -> None:
+    # SETTLED is a later stage of the same payment. It is deliberately not
+    # added here; if it ever is, it must map to `<invoice>:paid`.
+    from backend.services.payments.port import WebhookUnparseable
+
+    with pytest.raises(WebhookUnparseable):
+        _parse(provider, {"id": "inv-ident-7", "status": "SETTLED", "paid_amount": 5})

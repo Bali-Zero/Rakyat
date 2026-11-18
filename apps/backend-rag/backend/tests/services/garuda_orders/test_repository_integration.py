@@ -2123,3 +2123,146 @@ async def test_resume_on_an_adapter_without_the_capability_is_not_resumable(pool
     order_id = await _awaiting_order(repository, "result-resume-nocap-00001")
     with pytest.raises(CheckoutNotResumable):
         await repository.resume_checkout(order_id=order_id, result_id="result-resume-nocap-00001")
+
+
+# --- Xendit event identity carries the lifecycle status ------------------------
+#
+# Events here are built THROUGH `XenditPaymentProvider.parse_event` from
+# realistic callback bodies, not hand-invented ids: the defect lived in the
+# adapter's identity, so a hand-built event would have hidden it.
+
+
+def _xendit_event(body: dict):
+    import json
+
+    import httpx
+
+    from backend.services.payments.xendit import XenditFeeConfig, XenditPaymentProvider
+
+    adapter = XenditPaymentProvider(
+        secret_key="xnd_development_fake_key_for_tests",
+        callback_verification_token="fake-token",
+        public_base_url="https://example.com",
+        fee_config=XenditFeeConfig(percentage_bps=350, fixed_idr=6000),
+        client=httpx.AsyncClient(),
+    )
+    raw = json.dumps(body).encode()
+    return adapter.parse_event(raw_body=raw, headers={}), raw
+
+
+def _digest(raw: bytes) -> bytes:
+    import hashlib
+
+    return hashlib.sha256(raw).digest()
+
+
+@pytest.mark.asyncio
+async def test_xendit_late_payment_after_expiry_is_a_late_case_not_a_duplicate(pool, repository):
+    order_id = await _awaiting_order(repository, "result-xid-late-000001")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    expired, raw_e = _xendit_event({"id": invoice, "status": "EXPIRED"})
+    assert (
+        await repository.handle_failure_event(expired, canonical_payload_sha256=_digest(raw_e))
+        == "OP-03"
+    )
+    assert (
+        await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_id)
+        == "failed"
+    )
+
+    paid, raw_p = _xendit_event(
+        {"id": invoice, "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p))
+        == "OP-F05"
+    )
+    state, late_open = await pool.fetchrow(
+        "SELECT state, late_case_open FROM garuda_orders WHERE order_id = $1", order_id
+    )
+    assert (state, late_open) == ("failed", True)
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM garuda_order_outbox WHERE order_id = $1 "
+            "AND job_type = 'staff_page_late_paid_after_terminal'",
+            order_id,
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_xendit_refund_after_paid_runs_the_refund_handler_not_a_duplicate(pool, repository):
+    order_id = await _awaiting_order(repository, "result-xid-refund-00001")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    paid, raw_p = _xendit_event(
+        {"id": invoice, "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-02"
+    )
+
+    refund, raw_r = _xendit_event({"id": invoice, "status": "REFUNDED", "refund_id": "rfd-xid-1"})
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-06"
+    )
+    assert (
+        await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_id)
+        == "refunded"
+    )
+
+
+@pytest.mark.asyncio
+async def test_xendit_exact_redeliveries_are_still_duplicates(pool, repository):
+    # PAID twice
+    paid_order = await _awaiting_order(repository, "result-xid-dup-paid-001")
+    price = await pool.fetchval(
+        "SELECT price_idr FROM garuda_orders WHERE order_id = $1", paid_order
+    )
+    paid, raw_p = _xendit_event(
+        {"id": f"sess-{paid_order}", "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-02"
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-09"
+    )
+
+    # EXPIRED twice
+    exp_order = await _awaiting_order(repository, "result-xid-dup-exp-0001")
+    expired, raw_e = _xendit_event({"id": f"sess-{exp_order}", "status": "EXPIRED"})
+    assert (
+        await repository.handle_failure_event(expired, canonical_payload_sha256=_digest(raw_e))
+        == "OP-03"
+    )
+    assert (
+        await repository.handle_failure_event(expired, canonical_payload_sha256=_digest(raw_e))
+        == "OP-09"
+    )
+
+    # the same refund twice
+    ref_order = await _awaiting_order(repository, "result-xid-dup-ref-0001")
+    ref_price = await pool.fetchval(
+        "SELECT price_idr FROM garuda_orders WHERE order_id = $1", ref_order
+    )
+    rpaid, raw_rp = _xendit_event(
+        {"id": f"sess-{ref_order}", "status": "PAID", "paid_amount": ref_price, "currency": "IDR"}
+    )
+    await repository.handle_paid_event(rpaid, canonical_payload_sha256=_digest(raw_rp))
+    refund, raw_r = _xendit_event(
+        {"id": f"sess-{ref_order}", "status": "REFUNDED", "refund_id": "rfd-dup-1"}
+    )
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-06"
+    )
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-09"
+    )
