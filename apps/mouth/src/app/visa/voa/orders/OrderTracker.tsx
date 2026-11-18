@@ -13,6 +13,8 @@ import {
 import { useOrderTracking } from "./useOrderTracking";
 import type { OrderView, PracticeState } from "./types";
 import { VOA_PRIMARY_ACTION_STYLE } from "../voa-action-style";
+import { useVoaLocale } from "../useVoaLocale";
+import { voaCopy } from "../voa-copy";
 
 /**
  * GARUDA VOA — order tracker + visa delivery view (`/visa/voa/orders/{orderId}`).
@@ -90,6 +92,9 @@ export function OrderTracker({ orderId }: { orderId: string }) {
 }
 
 function OrderTrackerReady({ order }: { order: OrderView }) {
+  // The journey's language, for the closed-order panel only: the rest of the
+  // tracker stays as it is.
+  const t = voaCopy(useVoaLocale());
   const subtitle = subtitleFor(order);
 
   return (
@@ -141,10 +146,11 @@ function OrderTrackerReady({ order }: { order: OrderView }) {
           tone="retry"
           heading={
             order.order_state === "failed"
-              ? "This checkout couldn't be completed."
-              : "This checkout session expired."
+              ? t("order.closed.failed.heading")
+              : t("order.closed.expired.heading")
           }
-          body="If money has already left your account, contact us first: a consultant can verify your payment status before you try again. Otherwise you can start a new checkout from the same check."
+          body={t("order.closed.safetyBody")}
+          payAgainLabel={t("order.closed.payAgain")}
           payAgainResultId={order.result_id}
         />
       ) : null}
@@ -536,6 +542,7 @@ function ExceptionPanel({
   body,
   tone,
   payAgainResultId,
+  payAgainLabel,
 }: {
   heading: string;
   body: string;
@@ -543,6 +550,8 @@ function ExceptionPanel({
   /** Only the failed/expired panel passes this; a same-origin link, rendered only
    * when it matches the result-id pattern. */
   payAgainResultId?: string;
+  /** The localised CTA text; passed with `payAgainResultId`. */
+  payAgainLabel?: string;
 }) {
   return (
     <section
@@ -572,7 +581,7 @@ function ExceptionPanel({
             ...VOA_PRIMARY_ACTION_STYLE,
           }}
         >
-          Pay again
+          {payAgainLabel}
         </a>
       ) : null}
       <WhatsAppHelp />
