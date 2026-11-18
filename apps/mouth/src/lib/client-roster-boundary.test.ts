@@ -137,8 +137,8 @@ function isClientModule(source: string): boolean {
  */
 function importsRosterGraph(source: string): string[] {
   // `import type { X } from "…"` is erased by the compiler and carries nothing
-  // at runtime, so it is NOT a boundary crossing — SocialProof legitimately
-  // takes its row type from the server resolver that way. Dropping the `type`
+  // at runtime, so it is NOT a boundary crossing — a client component may
+  // take a row type from a server resolver that way. Dropping the `type`
   // keyword is a one-word change that compiles clean and ships the module, so
   // the erasure is applied here and nowhere else: remove the type-only
   // statements, then judge what is left.
@@ -171,7 +171,7 @@ describe("the roster does not cross the client boundary", () => {
     // pass while checking absolutely nothing.
     expect(files.length).toBeGreaterThan(200);
     expect(
-      files.some((f) => f.endsWith("app/v2/_components/SocialProof.tsx")),
+      files.some((f) => f.endsWith("app/v2/_components/socialProofRoster.ts")),
     ).toBe(true);
     expect(files.some((f) => f.endsWith("data/team-roster.ts"))).toBe(true);
   });
@@ -253,28 +253,6 @@ describe("the roster does not cross the client boundary", () => {
     );
     expect(isClientModule(bookTeam)).toBe(false);
     expect(bookTeam).toContain("publicRoster");
-  });
-
-  it("SocialProof stays a CLIENT component and imports no roster graph", () => {
-    const src = readFileSync(
-      join(SRC, "app/v2/_components/SocialProof.tsx"),
-      "utf8",
-    );
-    // It must STAY client: it hands `next/image` an `onError` fallback, and a
-    // server component cannot pass an event handler to a client component.
-    // Deleting the directive to get the roster out of the bundle looked like the
-    // minimal fix and was measured wrong — /v2 threw "Event handlers cannot be
-    // passed to Client Component props" on every portrait and rendered an error
-    // boundary. The directive was never the problem; the import was.
-    expect(isClientModule(src)).toBe(true);
-    expect(src).toContain("onError");
-    // `import type` is erased, so the type-only edge to the resolver is allowed
-    // and is the ONLY thing that may reference it here.
-    // type-only edge to the resolver is fine and is the only reference allowed
-    expect(importsRosterGraph(src)).toEqual([]);
-    expect(src).toContain("import type { SocialProofMember }");
-    expect(src).toContain("founders");
-    expect(src).toContain("team");
   });
 
   it("the server resolver is not a client module and owns the exclusion", () => {
