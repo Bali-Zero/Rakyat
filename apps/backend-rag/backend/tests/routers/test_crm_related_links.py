@@ -1280,7 +1280,9 @@ def _ids(resp):
 
 
 @pytest.mark.asyncio
-async def test_l11_the_detail_carries_links_with_exactly_seven_fields_in_order(admin, conn, clients):
+async def test_l11_the_detail_carries_links_with_exactly_seven_fields_in_order(
+    admin, conn, clients
+):
     sid = await seed_subject(conn, "person", "ZzL11 Person", [("passport", P1)])
     third = await seed_link(conn, sid, LIVE3, "identity", at=T0 + 2 * DAY)
     first = await seed_link(conn, sid, LIVE1, "drive_folder", at=T0)
