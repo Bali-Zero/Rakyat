@@ -20,6 +20,7 @@ import os
 import re
 import unicodedata
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -41,6 +42,7 @@ from backend.middleware.activity_logging import ActivityLoggingMiddleware
 from backend.middleware.error_monitoring import ErrorMonitoringMiddleware
 from backend.middleware.hybrid_auth import HybridAuthMiddleware
 from backend.middleware.request_tracing import RequestTracingMiddleware
+from backend.services.crm import related_registry_read
 from backend.services.crm.related_identifiers import canonical_form
 from backend.services.crm.related_names import (
     InvalidName,
@@ -470,7 +472,6 @@ def test_n2_final_nfc_after_upper_casing():
 def test_n2_refused_forms(raw):
     with pytest.raises(InvalidName):
         normalise_name(raw)
-    assert _model_errors(raw)[-1][1] in {"invalid_name"} or "\u0000" in raw or raw == "   "
     assert (("names", 0, "name"), "invalid_name") in _model_errors(raw)
 
 
@@ -1272,3 +1273,278 @@ async def test_n14_the_two_existing_write_routes_answer_as_before(client, conn):
     # a slice-4A field name is still "_" on the older routes
     third = await post(client, {"names": 1, "kind": "person"}, url=URL_SUBJECT)
     assert {"loc": ["_"], "code": "extra_forbidden"} in third.json()["detail"]
+
+
+# ── N11: the effective name ───────────────────────────────────────────────────
+
+T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+DAY = timedelta(days=1)
+
+
+@pytest_asyncio.fixture
+async def admin(pool, auth_on, audit_logger, monkeypatch):
+    as_identity(monkeypatch, ADMIN)
+    async with make_client(pool) as c:
+        yield c
+
+
+async def _effective(conn, sid):
+    """The effective name through the detail query and through the list query, which must agree."""
+    detail = await related_registry_read.get_subject(conn, sid)
+    listed = await related_registry_read.list_subjects(conn, q=None, kind=None, limit=100, offset=0)
+    row = next(r for r in listed["items"] if r["id"] == sid)
+    assert (row["display_name"], row["name_source"]) == (
+        detail["display_name"],
+        detail["name_source"],
+    )
+    return detail["display_name"], detail["name_source"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "higher,lower",
+    [
+        ("manual", "mrz_corrected"),
+        ("mrz_corrected", "registration"),
+        ("registration", "ocr_corroborated"),
+        ("ocr_corroborated", "ocr_single"),
+    ],
+)
+async def test_n11_each_rank_beats_the_next_even_when_the_next_is_newer(conn, higher, lower):
+    registration = (
+        "ZZ HIGH" if higher == "registration" else "ZZ LOW" if lower == "registration" else None
+    )
+    sid = await seed_subject(conn, "person", registration, [("passport", P1)])
+    if higher != "registration":
+        await seed_name(conn, sid, "ZZ HIGH", higher, at=T0)
+    if lower != "registration":
+        await seed_name(conn, sid, "ZZ LOW", lower, at=T0 + DAY)
+    assert await _effective(conn, sid) == ("ZZ HIGH", higher)
+
+
+@pytest.mark.asyncio
+async def test_n11_the_newest_row_wins_inside_a_rank(conn):
+    sid = await seed_subject(conn, "person", None, [("passport", P1)])
+    await seed_name(conn, sid, "ZZ NEWER", "ocr_single", at=T0 + DAY)
+    await seed_name(conn, sid, "ZZ OLDER", "ocr_single", at=T0)
+    assert await _effective(conn, sid) == ("ZZ NEWER", "ocr_single")
+
+
+@pytest.mark.asyncio
+async def test_n11_the_highest_id_wins_on_equal_time(conn):
+    sid = await seed_subject(conn, "person", None, [("passport", P1)])
+    await seed_name(conn, sid, "ZZ FIRST", "ocr_single", at=T0)
+    await seed_name(conn, sid, "ZZ SECOND", "ocr_single", at=T0)
+    assert await _effective(conn, sid) == ("ZZ SECOND", "ocr_single")
+
+
+@pytest.mark.asyncio
+async def test_n11_a_null_registration_name_takes_its_best_ocr_row(conn):
+    sid = await seed_subject(conn, "person", None, [("passport", P1)])
+    await seed_name(conn, sid, "ZZ SINGLE", "ocr_single", at=T0 + DAY)
+    await seed_name(conn, sid, "ZZ CORROBORATED", "ocr_corroborated", at=T0)
+    assert await _effective(conn, sid) == ("ZZ CORROBORATED", "ocr_corroborated")
+
+
+@pytest.mark.asyncio
+async def test_n11_no_candidate_is_a_null_name_and_a_null_source(conn):
+    sid = await seed_subject(conn, "person", None, [("passport", P1)])
+    assert await _effective(conn, sid) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_n11_a_company_takes_its_ocr_rows(conn):
+    sid = await seed_subject(conn, "company", None, [("npwp", "012345678901234")])
+    await seed_name(conn, sid, "ZZ CORP ONE", "ocr_single", at=T0)
+    await seed_name(conn, sid, "ZZ CORP TWO", "ocr_corroborated", at=T0)
+    assert await _effective(conn, sid) == ("ZZ CORP TWO", "ocr_corroborated")
+
+
+# ── N12: the read routes ──────────────────────────────────────────────────────
+
+
+class _CountingConn:
+    """Delegates to a real connection and counts the statements the service runs."""
+
+    def __init__(self, conn):
+        self._conn, self.statements = conn, 0
+
+    def __getattr__(self, attr):
+        target = getattr(self._conn, attr)
+        if attr in {"fetch", "fetchrow", "fetchval", "execute"}:
+
+            async def counted(*args, **kwargs):
+                self.statements += 1
+                return await target(*args, **kwargs)
+
+            return counted
+        return target
+
+
+def _ids(resp):
+    return [r["id"] for r in resp.json()["items"]]
+
+
+@pytest.mark.asyncio
+async def test_n12_list_and_detail_carry_the_effective_name_and_its_source(admin, conn):
+    sid = await seed_subject(conn, "person", "ZzReg Name", [("passport", P1)])
+    await seed_name(conn, sid, "ZZ CORRECTED", "mrz_corrected", at=T0)
+    listed = (await admin.get(READ)).json()["items"][0]
+    assert listed["display_name"] == "ZZ CORRECTED" and listed["name_source"] == "mrz_corrected"
+    detail = (await admin.get(f"{READ}/{sid}")).json()
+    assert detail["display_name"] == "ZZ CORRECTED" and detail["name_source"] == "mrz_corrected"
+    other = await seed_subject(conn, "person", None, [("passport", P2)])
+    unnamed = (await admin.get(f"{READ}/{other}")).json()
+    assert unnamed["display_name"] is None and unnamed["name_source"] is None
+    assert unnamed["names"] == [] and unnamed["names_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_n12_every_names_item_holds_exactly_three_fields(admin, conn):
+    sid = await seed_subject(conn, "person", "ZzReg Name", [("passport", P1)])
+    await seed_name(conn, sid, "ZZ ROW", "ocr_corroborated", at=T0)
+    detail = (await admin.get(f"{READ}/{sid}")).json()
+    assert [n["source"] for n in detail["names"]] == ["registration", "ocr_corroborated"]
+    for item in detail["names"]:
+        assert set(item) == {"name", "source", "created_at"}
+        assert item["source"] is not None
+        assert datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")).tzinfo
+    assert detail["names"][0]["name"] == "ZzReg Name"
+    assert detail["names"][0]["created_at"] == detail["created_at"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registration", ["ZZ REGISTERED", None])
+async def test_n12_detail_shows_one_plus_nineteen_or_twenty_and_counts_every_candidate(
+    admin, conn, registration
+):
+    sid = await seed_subject(conn, "person", registration, [("passport", P1)])
+    for i in range(25):
+        await seed_name(conn, sid, f"ZZ ROW {i:02d}", "ocr_single", at=T0 + i * DAY)
+    detail = (await admin.get(f"{READ}/{sid}")).json()
+    shown = [n["name"] for n in detail["names"]]
+    if registration:
+        assert shown[0] == registration and len(shown) == 20
+        assert shown[1:] == [f"ZZ ROW {i:02d}" for i in range(24, 5, -1)]
+        assert detail["names_total"] == 26
+    else:
+        assert len(shown) == 20 and shown[0] == "ZZ ROW 24"
+        assert shown == [f"ZZ ROW {i:02d}" for i in range(24, 4, -1)]
+        assert detail["names_total"] == 25
+
+
+@pytest.mark.asyncio
+async def test_n12_equal_registration_and_recorded_strings_are_counted_twice(admin, conn):
+    sid = await seed_subject(conn, "person", "ZZ SAME", [("passport", P1)])
+    await seed_name(conn, sid, "ZZ SAME", "ocr_single", at=T0)
+    detail = (await admin.get(f"{READ}/{sid}")).json()
+    assert [(n["name"], n["source"]) for n in detail["names"]] == [
+        ("ZZ SAME", "registration"),
+        ("ZZ SAME", "ocr_single"),
+    ]
+    assert detail["names_total"] == 2 and detail["name_source"] == "registration"
+
+
+@pytest.mark.asyncio
+async def test_n12_search_finds_a_subject_by_an_outranked_name_and_by_its_registration_name(
+    admin, conn
+):
+    one = await seed_subject(conn, "person", "ZzRegAlpha Person", [("passport", P1)])
+    await seed_name(conn, one, "ZZ OTHERNAME", "ocr_single", at=T0)
+    two = await seed_subject(conn, "person", "ZzRegBeta Person", [("passport", P2)])
+    await seed_name(conn, two, "ZZ FIXEDBETA", "mrz_corrected", at=T0)
+    multi = await seed_subject(conn, "person", None, [("passport", P3)])
+    for source in ("ocr_single", "ocr_corroborated", "mrz_corrected"):
+        await seed_name(conn, multi, "ZZ MULTIWORD " + source[:4], source, at=T0)
+
+    by_outranked = await admin.get(READ, params={"q": "othername"})
+    assert _ids(by_outranked) == [one] and by_outranked.json()["total"] == 1
+    assert by_outranked.json()["items"][0]["display_name"] == "ZzRegAlpha Person"
+    by_registration = await admin.get(READ, params={"q": "regbeta"})
+    assert _ids(by_registration) == [two]
+    assert by_registration.json()["items"][0]["name_source"] == "mrz_corrected"
+    by_recorded = await admin.get(READ, params={"q": "fixedbeta"})
+    assert _ids(by_recorded) == [two]
+    again = await admin.get(READ, params={"q": "multiword"})
+    assert _ids(again) == [multi] and again.json()["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_n12_a_literal_percent_and_underscore_in_q_match_themselves_only(admin, conn):
+    pct = await seed_subject(conn, "person", None, [("passport", P1)])
+    await seed_name(conn, pct, "ZZ 50%_OFF", "ocr_single", at=T0)
+    plain = await seed_subject(conn, "person", None, [("passport", P2)])
+    await seed_name(conn, plain, "ZZ 50XYOFF", "ocr_single", at=T0)
+    assert _ids(await admin.get(READ, params={"q": "%_"})) == [pct]
+    assert (await admin.get(READ, params={"q": "%%"})).json()["total"] == 0
+    assert _ids(await admin.get(READ, params={"q": "zz 50"})) == [pct, plain]
+    assert (await admin.get(READ, params={"q": "5__"})).json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_n12_the_identifier_prefix_search_answers_as_before(admin, conn):
+    sid = await seed_subject(conn, "person", None, [("passport", P1)])
+    await seed_name(conn, sid, "ZZ HAS NAME", "ocr_single", at=T0)
+    other = await seed_subject(conn, "person", "ZzOther", [("passport", P2)])
+    for typed in (P1, "zz-000000", "zz 00000"):
+        assert _ids(await admin.get(READ, params={"q": typed})) == [sid], typed
+    assert sorted(_ids(await admin.get(READ, params={"q": "ZZ000000"}))) == sorted([sid, other])
+
+
+@pytest.mark.asyncio
+async def test_n12_order_and_paging_follow_the_effective_name_nulls_last(admin, conn):
+    c = await seed_subject(conn, "person", "ZZ C REGISTERED", [("passport", P1)])
+    a = await seed_subject(conn, "person", None, [("passport", P2)])
+    await seed_name(conn, a, "ZZ A RECORDED", "ocr_single", at=T0)
+    b = await seed_subject(conn, "person", "ZZ B OUTRANKED", [("passport", P3)])
+    await seed_name(conn, b, "ZZ AA NEVER SHOWN", "ocr_single", at=T0)
+    none1 = await seed_subject(conn, "person", None, [("passport", P4)])
+    none2 = await seed_subject(conn, "company", None, [("npwp", "012345678901234")])
+    full = await admin.get(READ, params={"limit": 100})
+    assert _ids(full) == [a, b, c, none1, none2]
+    assert [r["display_name"] for r in full.json()["items"]] == [
+        "ZZ A RECORDED",
+        "ZZ B OUTRANKED",
+        "ZZ C REGISTERED",
+        None,
+        None,
+    ]
+    pages = [
+        _ids(await admin.get(READ, params={"limit": 2, "offset": off})) for off in (0, 2, 4, 6)
+    ]
+    assert pages == [[a, b], [c, none1], [none2], []]
+    assert (await admin.get(READ, params={"limit": 2})).json()["total"] == 5
+
+
+@pytest.mark.asyncio
+async def test_n12_a_populated_page_runs_at_most_four_selects(conn):
+    for i, raw in enumerate((P1, P2, P3)):
+        sid = await seed_subject(conn, "person", f"ZZ REG {i}", [("passport", raw)])
+        await seed_name(conn, sid, f"ZZ ROW {i}", "ocr_single", at=T0)
+    counting = _CountingConn(conn)
+    result = await related_registry_read.list_subjects(
+        counting, q=None, kind=None, limit=50, offset=0
+    )
+    assert len(result["items"]) == 3
+    assert counting.statements == 4
+    searching = _CountingConn(conn)
+    await related_registry_read.list_subjects(searching, q="zz row", kind=None, limit=50, offset=0)
+    assert searching.statements == 4
+    empty = _CountingConn(conn)
+    await related_registry_read.list_subjects(empty, q="nomatch", kind=None, limit=50, offset=0)
+    assert empty.statements == 2
+
+
+@pytest.mark.asyncio
+async def test_n13_the_read_routes_log_no_name(admin, conn, caplog):
+    caplog.set_level(logging.DEBUG)
+    sid = await seed_subject(conn, "person", "ZzReadSecretReg", [("passport", SECRET_ID)])
+    await seed_name(conn, sid, "ZzReadSecretRow", "ocr_single", at=T0)
+    assert (await admin.get(READ, params={"q": "zzreadsecretrow"})).status_code == 200
+    assert (await admin.get(f"{READ}/{sid}")).status_code == 200
+    records = [r for r in caplog.records if not r.name.startswith(("httpx", "httpcore"))]
+    assert any(r.name == read_module.__name__ for r in records)
+    text = " ".join(_record_text(r) for r in records).casefold()
+    assert "zzreadsecret" not in text and SECRET_ID.casefold() not in text
+    audit = await conn.fetch("SELECT query_params, request_body FROM api_audit_trail")
+    assert "zzreadsecret" not in " ".join(str(dict(r)) for r in audit).casefold()

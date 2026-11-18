@@ -345,8 +345,10 @@ async def test_t3_list_without_q_orders_pages_and_counts(admin, seeded):
         {"type": "permit", "value": ZZ_PERMIT_RAW},
     ]
     assert set(row) == {
-        "id", "kind", "display_name", "date_of_birth", "nationality", "identifiers", "document_count",
+        "id", "kind", "display_name", "name_source", "date_of_birth", "nationality", "identifiers",
+        "document_count",
     }  # fmt: skip
+    assert row["name_source"] == "registration"
 
     page = await admin.get(BASE, params={"limit": 3, "offset": 2})
     assert ids_of(page) == [seeded[k] for k in ORDER[2:5]]
@@ -504,6 +506,8 @@ async def test_t9_no_protected_value_in_logs_and_q_is_masked_in_the_audit_row(
 
 # ── T10 ───────────────────────────────────────────────────────────────────────
 
+# SQL constants that are clauses spliced into the statements, not statements of their own
+FRAGMENTS = {"_MATCH_SQL", "_EFFECTIVE_SQL"}
 FORBIDDEN_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|TRUNCATE|MERGE|ALTER|DROP|CREATE)\b", re.I)
 
 
@@ -527,16 +531,17 @@ def _sql_constants(module) -> list[str]:
 
 def test_t10_every_sql_text_of_the_service_is_a_plain_select():
     constants = _sql_constants(service_module)
-    assert len(constants) >= 7
+    assert len(constants) >= 10
     for sql in constants:
         assert not FORBIDDEN_SQL.search(sql), sql[:60]
         assert not re.search(r"\bWITH\b", sql, re.I), sql[:60]
     statements = [
         value
         for attr, value in vars(service_module).items()
-        if attr.endswith("_SQL") and attr != "_MATCH_SQL"
+        if attr.endswith("_SQL") and attr not in FRAGMENTS
     ]
-    assert len(statements) == 7
+    # slice 4A added the recorded-names statement of the detail page: 8 complete statements
+    assert len(statements) == 8
     for sql in statements:
         assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
     # the executed statements are exactly the module's constants (no inline SQL in a call)
