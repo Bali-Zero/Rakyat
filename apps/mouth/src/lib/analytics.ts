@@ -273,10 +273,40 @@ export function trackLeadWhatsAppCTA(
     ...(params.result_ref ? { result_ref: params.result_ref } : {}),
   });
   trackEvent("lead_whatsapp_cta", { source, ...params });
-  void trackFunnelEvent("lead_whatsapp_cta", {
-    sessionId: getOrCreateSessionId(),
-    payload: { source, ...params },
-  });
+  // Backend funnel store only. `trackFunnelEvent` would ALSO call gtag, so one
+  // click reached GA4 twice — the second hit without a top-level `source`
+  // (its payload is a JSON string), inflating lead_whatsapp_cta and leaving
+  // half the events unattributed. The GA4 hit above is the only one.
+  void postFunnelEventToBackend("lead_whatsapp_cta", { source, ...params });
+}
+
+/**
+ * POST a funnel event to the backend store WITHOUT a gtag hit — for events
+ * whose GA4 hit is already sent by `sendGA4Event` with flat, reportable
+ * params. Same body as `trackFunnelEvent` (session_id, event, payload,
+ * hostname) so the backend funnel rows are unchanged.
+ */
+async function postFunnelEventToBackend(
+  event: Parameters<typeof trackFunnelEvent>[0],
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    await fetch("/api/analytics/funnel-event", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: getOrCreateSessionId(),
+        event,
+        payload,
+        hostname: window.location.hostname,
+      }),
+      keepalive: true,
+    });
+  } catch {
+    /* silent — analytics never blocks UX */
+  }
 }
 
 // ============================================================
