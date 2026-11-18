@@ -155,7 +155,6 @@ ENTITIES: dict[str, InvoiceEntity] = {
 PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     # issuer 1, PT Bayu Bali Nol (default)
     "accessories": CIMB_BAYU_BALI_NOL.key,
-    "ext_c1_tourism": CIMB_BAYU_BALI_NOL.key,
     "open_inquiry": CIMB_BAYU_BALI_NOL.key,
     "other_cancel_rptka": CIMB_BAYU_BALI_NOL.key,
     "other_cancel_wajib_lapor": CIMB_BAYU_BALI_NOL.key,
@@ -164,8 +163,6 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     "other_driving_license": CIMB_BAYU_BALI_NOL.key,
     "other_epassport_10yr": CIMB_BAYU_BALI_NOL.key,
     "other_epassport_5yr": CIMB_BAYU_BALI_NOL.key,
-    "other_epo": CIMB_BAYU_BALI_NOL.key,
-    "other_erp": CIMB_BAYU_BALI_NOL.key,
     "other_imta_rptka_only_12mo": CIMB_BAYU_BALI_NOL.key,
     "other_imta_rptka_only_6mo_or_less": CIMB_BAYU_BALI_NOL.key,
     "other_mutation_address": CIMB_BAYU_BALI_NOL.key,
@@ -275,9 +272,13 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     "tax_npwpd_registration": PERMATA_BALI_NOL_KONSULTAN.key,
     "tax_registration": PERMATA_BALI_NOL_KONSULTAN.key,
     "tax_update_data_coretax": PERMATA_BALI_NOL_KONSULTAN.key,
-    # issuer 3, CV Bayu Santero
+    # issuer 3, CV Bayu Santero (owner ruling 2026-11-18 moved ext_c1_tourism, other_epo,
+    # other_erp here from issuer 1; new invoices only, stored invoices keep their issuer)
     "ext_b1_voa": BNI_BAYU_SANTERO.key,
+    "ext_c1_tourism": BNI_BAYU_SANTERO.key,
     "extension_visa": BNI_BAYU_SANTERO.key,
+    "other_epo": BNI_BAYU_SANTERO.key,
+    "other_erp": BNI_BAYU_SANTERO.key,
 }
 
 KNOWN_UNMAPPED_CODES = frozenset({"other_acc_boarding_pass"})
