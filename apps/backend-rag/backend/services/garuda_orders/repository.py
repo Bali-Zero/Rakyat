@@ -37,13 +37,16 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import asyncpg
 
 from backend.services.garuda_flow import pricing
 from backend.services.garuda_orders import idempotency, journal
 from backend.services.garuda_orders.errors import (
+    CheckoutNotResumable,
     HonouredWithoutPaidPayment,
+    InvalidStateTransition,
     NoOpenLateCase,
     OrderNotFound,
     OrderNotReady,
@@ -193,6 +196,26 @@ async def _open_late_case(
         """,
         order_id,
         charge_id,
+    )
+
+
+def _is_provider_checkout_url(url: str | None, hosts: frozenset[str]) -> bool:
+    """`https:` on one of the adapter's own checkout hosts, nothing else —
+    no userinfo, no explicit port (the server-side twin of the tracker's
+    `isProviderCheckoutUrl`)."""
+
+    if not url:
+        return False
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and port is None
+        and "@" not in parts.netloc
+        and (parts.hostname or "") in hosts
     )
 
 
@@ -510,6 +533,66 @@ class GarudaOrderRepository:
                     datetime.now(UTC),
                 )
             )
+
+    # ---- resumeOrderCheckout: tracker "Pay now" -------------------------
+
+    async def resume_checkout(self, *, order_id: str, result_id: str) -> str:
+        """Return the provider checkout URL of the order's ONE bound session,
+        read from the provider at request time.
+
+        Writes nothing: no order, journal, outbox, idempotency or inbox row,
+        and the URL is never logged (the #455 boundary — a provider URL is a
+        payment capability and lives only in this response). It never mints a
+        second session: a closed one is refused with `CheckoutNotResumable`,
+        so "at most one payable session per order" holds by construction and
+        every webhook for this order still matches `provider_session_id`.
+
+        `result_id` is the magic-session actor; a non-owned order raises
+        `OrderNotFound` exactly like an absent one (non-enumerating).
+        """
+
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT state, provider, provider_session_id
+                  FROM garuda_orders
+                 WHERE order_id = $1 AND result_id_ref = $2
+                """,
+                order_id,
+                result_id,
+            )
+        if row is None:
+            raise OrderNotFound(order_id)
+        if row["state"] != OrderState.AWAITING_PAYMENT.value or not row["provider_session_id"]:
+            raise InvalidStateTransition(order_id)
+
+        provider = self.provider_for(row["provider"])
+        resume = getattr(provider, "resume_checkout_session", None)
+        if resume is None:
+            # Midtrans: the Snap URL is not retrievable and an unused token
+            # cannot be voided, so it can never be re-served safely.
+            raise CheckoutNotResumable(order_id)
+        try:
+            status = await resume(provider_session_id=row["provider_session_id"])
+        except Exception as exc:  # provider transport/HTTP errors
+            logger.warning(
+                "garuda_orders: checkout resume lookup failed for %s (%s)",
+                order_id,
+                type(exc).__name__,
+            )
+            raise PaymentProviderUnavailable(order_id) from exc
+        if not status.is_open:
+            raise CheckoutNotResumable(order_id)
+        if not _is_provider_checkout_url(
+            status.checkout_url, getattr(provider, "checkout_hosts", frozenset())
+        ):
+            logger.warning(
+                "garuda_orders: provider re-served a checkout URL off its allow-list for %s",
+                order_id,
+            )
+            raise PaymentProviderUnavailable(order_id)
+        assert status.checkout_url is not None
+        return status.checkout_url
 
     # ---- OP-07: browser return observation ------------------------------
 

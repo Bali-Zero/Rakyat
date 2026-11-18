@@ -301,6 +301,8 @@ _NO_VALIDATION_ERROR_OPERATIONS = frozenset(
         "getEligibilityResult",
         "deleteEligibilityResult",
         "getOrderAndPractice",
+        # Tracker "Pay now": no body, `order_id` a bare path capture.
+        "resumeOrderCheckout",
         "listIntakeDocuments",
         # `listStaffPractices`/`getStaffPractice` (step 8,
         # `garuda_staff_router.py`) joined the same way: `practice_id` is a

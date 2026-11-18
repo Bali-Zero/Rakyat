@@ -24,6 +24,8 @@ const COPY: Record<OrderErrorCode, string> = {
     "Your application isn't ready to check out yet. Please confirm your document details first.",
   INVALID_STATE_TRANSITION:
     "This order has already moved on. Reload the page to see its current state.",
+  CHECKOUT_NOT_RESUMABLE:
+    "This payment link is no longer available. If you've just paid, this page will update shortly.",
   INVALID_REQUEST: "We couldn't process that request. Please try again.",
   RATE_LIMITED: "Too many attempts. Please wait a moment and try again.",
   PERSISTENCE_POLICY_UNAVAILABLE:
