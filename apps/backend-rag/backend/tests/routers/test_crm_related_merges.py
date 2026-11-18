@@ -898,6 +898,20 @@ async def test_m13_merged_from_is_ordered_with_the_latest_history_row_of_the_pai
     assert detail["merged_into"] is None
 
 
+@pytest.mark.asyncio
+async def test_m13_two_history_rows_of_one_pair_at_the_same_instant_the_higher_id_wins(
+    conn, clients
+):
+    s = await seed_subject(conn, "person", "ZzTieHist Survivor", [("passport", "ZZ4242651")])
+    m = await seed_subject(conn, "person", None, [("permit", "ZZ42PERMIT0651Z")], merged=s)
+    await seed_history(conn, m, s, "manual", at=T0 + DAY)
+    await seed_history(conn, m, s, "permit_stamp", at=T0 + DAY)
+    detail = await detail_of(conn, s)
+    assert detail["merged_from"] == [
+        {"subject_id": m, "basis": "permit_stamp", "merged_at": T0 + DAY}
+    ]
+
+
 # the effective name over the union: rank first, then the survivor's OWN, then newest, highest id
 
 
