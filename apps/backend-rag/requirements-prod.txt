@@ -70,7 +70,6 @@ urllib3>=2.0.0
 PyJWT[crypto]==2.15.1  # Security fix: CVE-2026-32597 crit header validation
 cryptography>=50.0.0  # GHSA-537c-gmf6-5ccf fix (vulnerable static OpenSSL in wheels)
 bcrypt>=5.0.0  # Security and performance improvements
-passlib[bcrypt]>=1.7.4
 
 # Database
 asyncpg>=0.31.0  # Performance and security improvements
