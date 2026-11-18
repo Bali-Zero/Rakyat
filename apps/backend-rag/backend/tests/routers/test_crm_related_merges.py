@@ -1193,14 +1193,18 @@ def test_m14_static_census_is_ten_plain_selects_without_the_merge_word_or_eviden
     # the executed statements are exactly the module's constants (no inline SQL in a call)
     source = Path(service.__file__).read_text()
     assert not re.search(r"\.(execute|executemany|fetch|fetchrow|fetchval)\(\s*f?[\"']", source)
-    # only the read module and its router name the history table in the application code
+    # the read module and, since the merge route (4C-2), the merge service name the history table
+    # in the application code; the router of the reads does not (M17 pins the full list)
     named = [
         p.relative_to(BACKEND).as_posix()
         for base in ("app", "services")
         for p in (BACKEND / base).rglob("*.py")
         if "related_subject_merges" in p.read_text()
     ]
-    assert named == ["services/crm/related_registry_read.py"]
+    assert sorted(named) == [
+        "services/crm/related_merges.py",
+        "services/crm/related_registry_read.py",
+    ]
 
 
 # ── M15: a subject in no merge answers exactly as before, plus empty new fields ──
@@ -1807,7 +1811,7 @@ async def test_m4_every_refusal_and_already_merged_attempts_no_insert_or_update(
 
 async def decision_states(conn):
     """Every decision of 3.2.2 that refuses or says already_merged, as (request, expected answer as
-    a function of dry_run, (source id, target id)), on records seeded fresh. Operator-made states
+    a function of (source id, target id, dry_run), (source id, target id)), on records seeded fresh. Operator-made states
     (a chain, a pointer between two kinds) are seeded directly: the database allows them."""
     numbers = iter(range(4243001, 4243999))
     states: dict = {}
@@ -1820,14 +1824,14 @@ async def decision_states(conn):
 
     a = next(numbers)
     s = await person([("permit", permit(a))])
-    put("same_subject", src(a), src(a), s, s, lambda d: refused("same_subject", s, s))
+    put("same_subject", src(a), src(a), s, s, lambda s, t, d: refused("same_subject", s, t))
     put(
         "same_subject_spelling",
         src(a),
         (("permit", permit(a).lower()),),
         s,
         s,
-        lambda d: refused("same_subject", s, s),
+        lambda s, t, d: refused("same_subject", s, t),
     )
 
     a = next(numbers)
@@ -1835,14 +1839,14 @@ async def decision_states(conn):
     c = await seed_subject(conn, "company", None, [("npwp", npwp(a))])
     put(
         "kind_differs", src(a), (("npwp", npwp(a)),), s, c,
-        lambda d: refused("kind_differs", s, c), kind_t="company",
+        lambda s, t, d: refused("kind_differs", s, t), kind_t="company",
     )  # fmt: skip
 
     a, b, x = next(numbers), next(numbers), next(numbers)
     other = await person([("passport", passport(x))], "ZzOther")
     s = await person([("permit", permit(a))])
     t = await person([("passport", passport(b))], "ZzTarget", merged=other)
-    put("target_is_merged", src(a), tgt(b), s, t, lambda d: refused("target_is_merged", s, t))
+    put("target_is_merged", src(a), tgt(b), s, t, lambda s, t, d: refused("target_is_merged", s, t))
 
     a, b, x = next(numbers), next(numbers), next(numbers)
     other = await person([("passport", passport(x))], "ZzOther")
@@ -1850,21 +1854,28 @@ async def decision_states(conn):
     t = await person([("passport", passport(b))], "ZzTarget")
     put(
         "source_merged_elsewhere", src(a), tgt(b), s, t,
-        lambda d: refused("source_merged_elsewhere", s, t),
+        lambda s, t, d: refused("source_merged_elsewhere", s, t),
     )  # fmt: skip
 
     a, b, z = next(numbers), next(numbers), next(numbers)
     s = await person([("permit", permit(a))])
     await person([("permit", permit(z))], merged=s)
     t = await person([("passport", passport(b))], "ZzTarget")
-    put("source_is_survivor", src(a), tgt(b), s, t, lambda d: refused("source_is_survivor", s, t))
+    put(
+        "source_is_survivor",
+        src(a),
+        tgt(b),
+        s,
+        t,
+        lambda s, t, d: refused("source_is_survivor", s, t),
+    )
 
     a, b = next(numbers), next(numbers)
     s = await person([("permit", permit(a)), ("nik", nik(a))])
     t = await person([("passport", passport(b))], "ZzTarget")
     put(
         "basis_nik_besides_permit", (("permit", permit(a)), ("nik", nik(a))), tgt(b), s, t,
-        lambda d: refused("basis_precondition", s, t),
+        lambda s, t, d: refused("basis_precondition", s, t),
     )  # fmt: skip
 
     a, b = next(numbers), next(numbers)
@@ -1872,13 +1883,13 @@ async def decision_states(conn):
     t = await person([("nik", nik(b))], "ZzTarget")
     put(
         "basis_target_without_passport", src(a), (("nik", nik(b)),), s, t,
-        lambda d: refused("basis_precondition", s, t),
+        lambda s, t, d: refused("basis_precondition", s, t),
     )  # fmt: skip
 
     a, b = next(numbers), next(numbers)
     t = await person([("passport", passport(b))], "ZzTarget")
     s = await person([("permit", permit(a))], merged=t)
-    put("already_merged", src(a), tgt(b), s, t, lambda d: already(s, t, d))
+    put("already_merged", src(a), tgt(b), s, t, lambda s, t, d: already(s, t, d))
 
     # precedence, on operator-made states that fail an earlier AND a later decision
     a, b = next(numbers), next(numbers)
@@ -1886,7 +1897,7 @@ async def decision_states(conn):
     s = await person([("permit", permit(a))], merged=c)  # a pointer across two kinds
     put(
         "already_merged_before_kind_differs", src(a), (("npwp", npwp(b)),), s, c,
-        lambda d: already(s, c, d), kind_t="company",
+        lambda s, t, d: already(s, t, d), kind_t="company",
     )  # fmt: skip
 
     a, b, x = next(numbers), next(numbers), next(numbers)
@@ -1895,7 +1906,7 @@ async def decision_states(conn):
     c = await seed_subject(conn, "company", None, [("npwp", npwp(b))], merged=cx)
     put(
         "kind_differs_before_target_is_merged", src(a), (("npwp", npwp(b)),), s, c,
-        lambda d: refused("kind_differs", s, c), kind_t="company",
+        lambda s, t, d: refused("kind_differs", s, t), kind_t="company",
     )  # fmt: skip
 
     a, b, x, y = (next(numbers) for _ in range(4))
@@ -1905,7 +1916,7 @@ async def decision_states(conn):
     t = await person([("passport", passport(b))], "ZzTarget", merged=py)
     put(
         "target_is_merged_before_source_merged_elsewhere", src(a), tgt(b), s, t,
-        lambda d: refused("target_is_merged", s, t),
+        lambda s, t, d: refused("target_is_merged", s, t),
     )  # fmt: skip
 
     a, b, x, z = (next(numbers) for _ in range(4))
@@ -1915,7 +1926,7 @@ async def decision_states(conn):
     t = await person([("passport", passport(b))], "ZzTarget")
     put(
         "source_merged_elsewhere_before_source_is_survivor", src(a), tgt(b), s, t,
-        lambda d: refused("source_merged_elsewhere", s, t),
+        lambda s, t, d: refused("source_merged_elsewhere", s, t),
     )  # fmt: skip
 
     a, b, z = next(numbers), next(numbers), next(numbers)
@@ -1925,7 +1936,7 @@ async def decision_states(conn):
     put(
         "source_is_survivor_before_basis_precondition",
         (("permit", permit(a)), ("nik", nik(a))), (("nik", nik(b)),), s, t,
-        lambda d: refused("source_is_survivor", s, t),
+        lambda s, t, d: refused("source_is_survivor", s, t),
     )  # fmt: skip
     return states
 
@@ -1944,10 +1955,10 @@ async def test_m5_every_refusal_has_its_exact_body_in_the_order_of_the_decisions
                 await seed_history(conn, t, s)
     rows_before = len(await history(conn))
     pointers_before = await pointers(conn)
-    for name, (data, expected, _) in states.items():
+    for name, (data, expected, pair) in states.items():
         resp = await post(client, {**data, "dry_run": dry_run})
         assert resp.status_code == 200, (name, resp.text)
-        assert resp.json() == expected(dry_run), name
+        assert resp.json() == expected(*pair, dry_run), name
     assert len(await history(conn)) == rows_before
     assert await ledger(conn) == [] and await pointers(conn) == pointers_before
 
@@ -2110,7 +2121,9 @@ async def test_m6_the_owner_resolvers_agree_on_every_reason_and_the_new_one_lack
 @pytest.mark.parametrize(
     "after", ["_INSERT_MERGE_SQL", "_UPDATE_POINTER_SQL"], ids=["after_insert", "after_update"]
 )
-async def test_m7_a_failure_after_a_write_leaves_no_history_row_and_no_pointer(pool, conn, after):
+async def test_m7_a_failure_after_a_write_leaves_no_history_row_and_no_pointer(
+    pool, conn, merge_writes, after
+):
     s, t = await seed_pair(conn)
     spy = _Spy()
 
