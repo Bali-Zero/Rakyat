@@ -209,6 +209,25 @@ class TestAccountingNotificationContent:
         assert payload["to"] == ACCOUNTING_EMAIL
         _assert_accounting_body(payload["body"], entity)
 
+    @pytest.mark.asyncio
+    async def test_step_sends_accounting_to_confirm_the_payment_on_the_accounting_page(
+        self, env, synth
+    ):
+        service, _, email_client = env
+        await service._send_accounting_notification(
+            client_data=client_data(),
+            practice_data=practice_data(),
+            invoice_number="INV-R2-1",
+            pdf_bytes=b"%PDF-1.4 synthetic",
+            filename="Invoice_INV-R2-1.pdf",
+            entity=synth[D_KEY],
+            amount=FINAL,
+        )
+        body = email_client.post.call_args.kwargs["json"]["body"]
+        assert "https://kita.balizero.com/accounting" in body
+        assert "confirm it on the" in body and "then move the practice to ON PROCESS" in body
+        assert "update the status to ON PROCESS" not in body
+
 
 # ============================================================
 # Full-flow parity: visa practice vs TAX practice, routing active
