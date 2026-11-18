@@ -126,10 +126,10 @@ describe("Swarm Vertical 2 — KBLI & LKPM API Contract Parity", () => {
       "kadek.tax",
       "dewaayu.tax",
       "angel.tax",
+      "dea",
+      "candra",
     ]);
     expect(localParts).not.toContain("veronika.tax");
-    expect(localParts).not.toContain("dea");
-    expect(localParts).not.toContain("candra");
 
     const batchSrc = readFileSync(
       join(SRC_ROOT, "app", "(workspace)", "lkpm", "LkpmBatchClient.tsx"),

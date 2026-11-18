@@ -172,16 +172,16 @@ describe("workspace roster directory", () => {
       expect(values).not.toContain(v);
   });
 
-  it("keeps the LKPM assignee list at four, aligned with the backend allowlist, without Dea or Candra", () => {
+  it("keeps the LKPM assignee list at six, aligned with the backend allowlist, with Dea and Candra", () => {
     expect(lkpmAssignees()).toEqual([
       { value: "krisna@balizero.com", label: "Krisna" },
       { value: "kadek.tax@balizero.com", label: "Kadek" },
       { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
       { value: "angel.tax@balizero.com", label: "Angel" },
+      { value: "dea@balizero.com", label: "Dea" },
+      { value: "candra@balizero.com", label: "Candra" },
     ]);
     const values = lkpmAssignees().map((c) => c.value);
-    expect(values).not.toContain("dea@balizero.com");
-    expect(values).not.toContain("candra@balizero.com");
     expect(values).not.toContain("veronika.tax@balizero.com");
   });
 
@@ -190,7 +190,7 @@ describe("workspace roster directory", () => {
     a[0].label = "mutated";
     a.push({ value: "x@example.test", label: "X" });
     expect(lkpmAssignees()[0].label).toBe("Krisna");
-    expect(LKPM_ASSIGNEES).toHaveLength(4);
+    expect(LKPM_ASSIGNEES).toHaveLength(6);
     expect(lkpmAssignees()).not.toBe(LKPM_ASSIGNEES);
     expect(taxConsultants()).not.toEqual(lkpmAssignees());
   });

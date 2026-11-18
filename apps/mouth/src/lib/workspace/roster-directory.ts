@@ -137,6 +137,8 @@ export const LKPM_ASSIGNEES: readonly TaxConsultantOption[] = [
   { value: "kadek.tax@balizero.com", label: "Kadek" },
   { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
   { value: "angel.tax@balizero.com", label: "Angel" },
+  { value: "dea@balizero.com", label: "Dea" },
+  { value: "candra@balizero.com", label: "Candra" },
 ];
 
 /** A copy the client can hold: plain rows, no roster type crosses over. */

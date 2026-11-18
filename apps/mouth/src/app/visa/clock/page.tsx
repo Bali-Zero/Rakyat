@@ -8,6 +8,7 @@ import {
   AppTrustStrip,
   useFunnelApp,
 } from "@balizero/core";
+import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
 
 // Every `code` MUST be a member of the backend `VisaType` enum
 // (apps/backend-rag/backend/services/visa_check/catalogue.py) — an unknown
@@ -30,6 +31,15 @@ const VISA_OPTIONS = [
   { code: "E31", label: "E31 Family KITAS" },
   { code: "E30A", label: "E30A Student KITAS (Primary & Secondary)" },
 ];
+
+// "Not sure" is not a visa type, so it is a separate button and never an
+// <option> of the Visa type select: the select must only ever hold backend
+// `VisaType` codes (guarded by swarm-visa-contracts VISA-3C-01), nothing is
+// sent to /api/visa/clock, and the trust strip keeps counting visa types only.
+// The button reveals the visa team's existing WhatsApp CTA — we do not guess
+// dates for a visa the visitor cannot name.
+const NOT_SURE_WHATSAPP_MESSAGE =
+  "Hi Bali Zero, I am not sure which visa I am on. Can you help me check my stay dates?";
 
 // Mirrors `ClockRequest._entry_date_reasonable` (visa_check.py): an entry date
 // more than 6 years (365 * 6 days, supporting 5-year E33/E33E stay permits) in
@@ -63,6 +73,7 @@ export default function VisaClockPage() {
   const [entryDate, setEntryDate] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notSure, setNotSure] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -166,6 +177,36 @@ export default function VisaClockPage() {
           ),
         }}
       />
+      <button
+        type="button"
+        aria-expanded={notSure}
+        aria-controls="visa-clock-not-sure"
+        onClick={() => setNotSure((open) => !open)}
+        style={{
+          alignSelf: "flex-start",
+          padding: 0,
+          border: 0,
+          background: "none",
+          color: "inherit",
+          font: "inherit",
+          textDecoration: "underline",
+          cursor: "pointer",
+        }}
+      >
+        Not sure which visa you are on? Ask us
+      </button>
+      {notSure ? (
+        <p id="visa-clock-not-sure" style={{ margin: 0, lineHeight: 1.6 }}>
+          Our visa team can check it from your passport and entry stamp.{" "}
+          <a
+            href={buildWhatsAppLink("visa", NOT_SURE_WHATSAPP_MESSAGE)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Ask the visa team on WhatsApp →
+          </a>
+        </p>
+      ) : null}
     </AppFrame>
   );
 }
