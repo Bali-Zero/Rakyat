@@ -5595,7 +5595,7 @@ export interface paths {
     put?: never;
     /**
      * Sync Company Drive Folder
-     * @description _require_crm_admin(current_user)
+     * @description Allowed to whoever may edit the company (admin, or staff who manage its clients).
      *     Scan the company's Google Drive folder and upsert files into company_documents.
      *     Files already tracked (by google_drive_file_id) are skipped.
      *     Returns a summary: {added, skipped, total, docs}.
