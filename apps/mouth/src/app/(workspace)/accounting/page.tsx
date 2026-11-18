@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import { ReconciliationInbox } from "./_components/ReconciliationInbox";
+import { DoneTodaySection } from "./_components/DoneTodaySection";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
 import {
@@ -180,6 +181,8 @@ export default function AccountingPage() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  // Bumped after every write of the Reconciliation tab: "Done today" reloads.
+  const [doneVersion, setDoneVersion] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadCashout = useCallback(async () => {
@@ -201,6 +204,11 @@ export default function AccountingPage() {
 
   useEffect(() => {
     loadCashout();
+  }, [loadCashout]);
+
+  const handleConfirmed = useCallback(() => {
+    void loadCashout();
+    setDoneVersion((v) => v + 1);
   }, [loadCashout]);
 
   const handleExport = async () => {
@@ -340,7 +348,10 @@ export default function AccountingPage() {
           <CashoutTable rows={cashout} />
         )
       ) : (
-        <ReconciliationInbox onConfirmed={loadCashout} />
+        <>
+          <ReconciliationInbox onConfirmed={handleConfirmed} />
+          <DoneTodaySection version={doneVersion} />
+        </>
       )}
     </div>
   );
