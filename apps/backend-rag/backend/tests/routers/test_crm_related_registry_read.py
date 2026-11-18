@@ -625,3 +625,15 @@ async def test_t12_database_error_is_a_fixed_503_and_nothing_leaks(
     assert any(r.name == route_module.__name__ for r in records), "capture saw no router record"
     text = " ".join(_record_text(r) for r in records).casefold()
     assert BOOM_VALUE.casefold() not in text and "zz boom" not in text
+
+
+# ── the production jsonb codec ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guard_the_module_pool_carries_the_production_jsonb_codec(conn):
+    # a native container round-trips as itself; a pre-serialised string comes back as a STRING,
+    # which is the double-encoding signature of the 2026-08-27 incident class
+    assert await conn.fetchval("SELECT $1::jsonb", {"a": 1}) == {"a": 1}
+    assert await conn.fetchval("SELECT $1::jsonb", '{"a": 1}') == '{"a": 1}'
+    assert await conn.fetchval("SELECT jsonb_typeof($1::jsonb)", '{"a": 1}') == "string"
