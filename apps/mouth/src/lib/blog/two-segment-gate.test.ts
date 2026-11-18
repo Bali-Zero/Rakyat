@@ -1,7 +1,10 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { INTERNAL_ROUTES } from "@/proxy";
+import { afterAll, describe, expect, it } from "vitest";
+import { generateStaticParams } from "@/app/(blog)/[category]/page";
+import { CATEGORY_SEO } from "@/lib/blog/category-seo";
+import { INTERNAL_ROUTES, STATUS_GATE_404_PATH } from "@/proxy";
 import {
   PUBLIC_TWO_SEGMENT_ROUTES,
   classifyTwoSegmentPath,
@@ -12,10 +15,12 @@ const APP_DIR = path.join(process.cwd(), "src/app");
 const ROUTE_FILE = /^(page|route)\.(tsx?|jsx?|mjs|cjs|mdx)$/;
 
 /**
- * URL routes under src/app, two segments deep. Route groups add no segment,
- * private folders (`_x`) are not routes, and parallel-route slots and
- * intercepting markers (`@panel`, `(.)x`) are not URLs of their own.
- * scripts/lib/app-routes.mjs refuses those conventions, and kbli/@panel is one.
+ * URL routes under a route tree. Route groups add no segment, private folders
+ * (`_x`) are not routes, a parallel-route slot (`@panel`) adds no segment but
+ * its pages are served at the parent's URL (`x/@slot/y/page.tsx` serves
+ * `/x/y`), and an intercepting folder (`(.)x`, `(..)x`, `(...)x`) only
+ * intercepts a soft navigation: a hard request for that URL reaches the real
+ * route, so it is not a URL of its own. kbli/@panel is a live slot.
  */
 function appRoutes(dir: string, segments: string[] = []): string[] {
   const out: string[] = [];
@@ -25,9 +30,11 @@ function appRoutes(dir: string, segments: string[] = []): string[] {
   }
   for (const e of entries) {
     if (!e.isDirectory()) continue;
-    if (e.name.startsWith("_") || e.name.startsWith("@")) continue;
+    if (e.name.startsWith("_")) continue;
     if (/^\(\.{1,3}\)/.test(e.name)) continue;
-    const isGroup = e.name.startsWith("(") && e.name.endsWith(")");
+    const isGroup =
+      (e.name.startsWith("(") && e.name.endsWith(")")) ||
+      e.name.startsWith("@");
     out.push(
       ...appRoutes(
         path.join(dir, e.name),
@@ -43,7 +50,9 @@ function appRoutes(dir: string, segments: string[] = []): string[] {
  * src/app except the paths it redirects first (workspace routes, /portal,
  * /chat) and the API.
  */
-function publicTwoSegmentRoutes(): Record<string, string[] | "*"> {
+function publicTwoSegmentRoutes(
+  root: string = APP_DIR,
+): Record<string, string[] | "*"> {
   const redirected = new Set([
     ...INTERNAL_ROUTES.map((r) => r.slice(1)),
     "portal",
@@ -51,7 +60,7 @@ function publicTwoSegmentRoutes(): Record<string, string[] | "*"> {
     "api",
   ]);
   const out: Record<string, string[] | "*"> = {};
-  for (const route of appRoutes(APP_DIR)) {
+  for (const route of appRoutes(root)) {
     const segments = route.split("/");
     if (segments.length !== 2) continue;
     const [first, second] = segments;
@@ -80,6 +89,35 @@ describe("PUBLIC_TWO_SEGMENT_ROUTES mirrors src/app", () => {
     expect(Object.keys(fromTree)).not.toEqual(
       Object.keys(PUBLIC_TWO_SEGMENT_ROUTES),
     );
+  });
+});
+
+describe("appRoutes derivation on a synthetic tree", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "gate-tree-"));
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+  const page = (rel: string) => {
+    const file = path.join(root, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "export default null;\n");
+  };
+  page("x/@slot/y/page.tsx");
+  page("g/(grp)/h/page.tsx");
+  page("w/(.)ghost/page.tsx");
+  page("w/(..)(..)ghost2/page.tsx");
+  page("p/_private/page.tsx");
+  page("d/[id]/page.tsx");
+
+  it("[guilt] a page under a parallel slot serves the parent URL", () => {
+    expect(appRoutes(root)).toContain("x/y");
+    expect(publicTwoSegmentRoutes(root)["x"]).toEqual(["y"]);
+  });
+
+  it("[innocence] groups, intercepts and private folders add no route", () => {
+    const routes = appRoutes(root);
+    expect(routes).toContain("g/h");
+    expect(routes).toContain("d/[id]");
+    expect(routes.filter((r) => /ghost|_private/.test(r))).toEqual([]);
+    expect(publicTwoSegmentRoutes(root)["d"]).toBe("*");
   });
 });
 
@@ -148,12 +186,61 @@ describe("classifyTwoSegmentPath", () => {
  * the owner table alone cannot prove the gate 404s only non-pages. Two
  * mechanical facts close that, and both are asserted from the files.
  */
+/**
+ * True when the config text declares `rewrites` in any form: method
+ * (`async rewrites() {`), property (`rewrites: async () =>`, `"rewrites":`),
+ * shorthand (`{ rewrites }`) or assignment (`config.rewrites = ...`). Comments
+ * are stripped first; the name must stand alone, so `noRewritesHere` is not it.
+ */
+function declaresRewrites(source: string): boolean {
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|\s)\/\/.*$/gm, "$1");
+  return /(?<![\w$])['"`]?rewrites['"`]?\s*[(:,}=]/.test(code);
+}
+
+describe("declaresRewrites", () => {
+  it.each([
+    ["method", "const c = { async rewrites() { return []; } };"],
+    ["bare method", "const c = {\n  rewrites() { return []; },\n};"],
+    ["property async arrow", "const c = { rewrites: async () => [] };"],
+    ["property arrow", "const c = { rewrites: () => [] };"],
+    ["property function", "const c = { rewrites: async function () {} };"],
+    ["quoted key", `const c = { "rewrites": async () => [] };`],
+    ["single-quoted key", "const c = { 'rewrites': () => [] };"],
+    [
+      "shorthand",
+      "const rewrites = async () => [];\nexport default { rewrites };",
+    ],
+    ["assignment", "nextConfig.rewrites = async () => [];"],
+    ["after a comment line", "// note\nconst c = { rewrites() {} };"],
+  ])("[guilt] flags %s", (_name, src) => {
+    expect(declaresRewrites(src)).toBe(true);
+  });
+
+  it.each([
+    ["line comment", "// Do NOT add rewrites for /api/* here\nconst c = {};"],
+    ["trailing comment", "const c = {}; // rewrites: would conflict"],
+    [
+      "block comment",
+      "/* rewrites() are shadowed by the proxy */ const c = {};",
+    ],
+    [
+      "unrelated identifier",
+      "const noRewritesHere = true; const rewritesCount = 1;",
+    ],
+    ["prose in a string", `const s = "middleware rewrites)";`],
+  ])("[innocence] ignores %s", (_name, src) => {
+    expect(declaresRewrites(src)).toBe(false);
+  });
+});
+
 describe("the gate cannot 404 anything that is not a page route", () => {
   const MOUTH = process.cwd();
 
   it("no rewrite exists to be shadowed (next.config.ts and vercel.json)", () => {
     const cfg = fs.readFileSync(path.join(MOUTH, "next.config.ts"), "utf8");
-    expect(cfg).not.toMatch(/^\s*(async\s+)?rewrites\s*\(/m);
+    expect(declaresRewrites(cfg)).toBe(false);
     const vercel = JSON.parse(
       fs.readFileSync(path.join(MOUTH, "vercel.json"), "utf8"),
     );
@@ -179,5 +266,29 @@ describe("the gate cannot 404 anything that is not a page route", () => {
   it("dotted paths and the proxy's own skip prefixes are never gated", () => {
     expect(classifyTwoSegmentPath("/.well-known/security.txt")).toBe("pass");
     expect(classifyTwoSegmentPath("/images/a.jpg")).toBe("pass");
+  });
+});
+
+describe("the 404 sentinel is reserved", () => {
+  const name = STATUS_GATE_404_PATH.replace(/^\//, "");
+
+  it("is a one-segment path", () => {
+    expect(name).toMatch(/^[a-z0-9-]+$/);
+  });
+
+  it("is not an article category", () => {
+    expect(Object.keys(CATEGORY_SEO)).not.toContain(name);
+  });
+
+  it("is not produced by (blog)/[category] generateStaticParams", () => {
+    expect(generateStaticParams().map((p) => p.category)).not.toContain(name);
+  });
+
+  it("no route under src/app resolves a one-segment route with that name", () => {
+    const oneSegment = appRoutes(APP_DIR).filter(
+      (r) => r !== "" && !r.includes("/"),
+    );
+    expect(oneSegment).not.toContain(name);
+    expect(oneSegment.filter((r) => r.startsWith("["))).toEqual(["[category]"]);
   });
 });
