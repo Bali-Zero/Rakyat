@@ -354,6 +354,14 @@ _INFRA = (
         match="exact",
         methods=("POST",),
     ),
+    # Slice 4C (merges): the same flag and key, POST only.
+    PublicEndpoint(
+        "/api/crm/related-subjects/merges/register",
+        Category.INFRA,
+        "related-subject merges registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
     PublicEndpoint(
         "/api/crm/internal/clients/{client_id}/documents/upload",
         Category.INFRA,
