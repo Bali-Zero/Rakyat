@@ -9,13 +9,19 @@
 -- and forbids the wrong shape from now on.
 -- Date: 2026-11-18
 --
--- Forward, per table: (1) unwrap every string-typed evidence whose text is a
--- JSON object, with (evidence #>> '{}')::jsonb; (2) add CHECK
--- (jsonb_typeof(evidence) = 'object') as NOT VALID, then VALIDATE it, so the
--- ACCESS EXCLUSIVE window is the catalog change only and the scan runs under a
--- weaker lock. A row that is neither an object nor a string holding an object
--- is not touched by the UPDATE and makes VALIDATE fail loudly: the migration
--- aborts instead of guessing.
+-- Forward, per table: (1) unwrap every string-typed evidence whose text starts with
+-- '{', with (evidence #>> '{}')::jsonb: the repair shape of migrations 242 and 243,
+-- which fixed this same defect on other columns; only '{' because these columns
+-- must hold objects, and the left()/ltrim() test keeps the cast away from text
+-- that is not an object; (2) add CHECK (jsonb_typeof(evidence) = 'object') as NOT
+-- VALID, then VALIDATE it. The runner applies this file inside ONE transaction, so
+-- every lock is held until the commit and the NOT VALID / VALIDATE pair gives no
+-- lock benefit here; it is kept as the lint-friendly habit. The four tables are
+-- small (under 8,000 rows each) and nothing writes to them meanwhile: the registry
+-- write routes are behind a flag that is off. A row that is neither an object nor a
+-- string holding an object is not touched by the UPDATE and makes VALIDATE fail:
+-- the transaction rolls back and the migration aborts instead of guessing. Uses
+-- nothing newer than PostgreSQL 15.
 --
 -- These tables are insert-only for the application (no route updates or deletes
 -- a row). This one-time UPDATE is the gated way to repair rows the application
@@ -36,19 +42,19 @@ SET statement_timeout = '60s';
 
 UPDATE related_subjects
    SET evidence = (evidence #>> '{}')::jsonb
- WHERE jsonb_typeof(evidence) = 'string' AND (evidence #>> '{}') IS JSON OBJECT;
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
 
 UPDATE related_subject_identifiers
    SET evidence = (evidence #>> '{}')::jsonb
- WHERE jsonb_typeof(evidence) = 'string' AND (evidence #>> '{}') IS JSON OBJECT;
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
 
 UPDATE related_documents
    SET evidence = (evidence #>> '{}')::jsonb
- WHERE jsonb_typeof(evidence) = 'string' AND (evidence #>> '{}') IS JSON OBJECT;
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
 
 UPDATE related_subject_documents
    SET evidence = (evidence #>> '{}')::jsonb
- WHERE jsonb_typeof(evidence) = 'string' AND (evidence #>> '{}') IS JSON OBJECT;
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
 
 ALTER TABLE related_subjects
     ADD CONSTRAINT related_subjects_evidence_object_chk

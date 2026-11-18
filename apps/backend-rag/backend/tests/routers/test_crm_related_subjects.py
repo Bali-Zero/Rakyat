@@ -4002,3 +4002,58 @@ async def test_ev4_migration_366_repairs_string_evidence_and_forbids_the_wrong_s
         await created.close()
         await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
         await admin.close()
+
+
+@pytest.mark.asyncio
+async def test_ev5_migration_366_aborts_and_rolls_back_on_a_row_it_cannot_repair():
+    dsn = os.environ.get("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL required for the real PostgreSQL registry proof")
+    admin = await asyncpg.connect(dsn)
+    name = await admin.fetchval("SELECT current_database()")
+    if not re.search(r"_test(?:_run_[0-9]+_[0-9]+)?(?:_gw[0-9]+)?$", name):
+        await admin.close()
+        pytest.fail("A test database or isolated test worker is required")
+    schema = "related_evidence_abort_" + uuid4().hex
+    await admin.execute(f'CREATE SCHEMA "{schema}"')
+    created = await asyncpg.create_pool(
+        dsn,
+        min_size=1,
+        max_size=2,
+        server_settings={"search_path": schema},
+        init=init_prod_shaped_connection,
+        statement_cache_size=0,
+        max_inactive_connection_lifetime=30.0,
+    )
+    try:
+        async with created.acquire() as c:
+            for migration in (MIGRATION, MIGRATION2):
+                forward, _ = split_migration_sql(migration.read_text())
+                await c.execute(forward)
+            # one repairable row and one string that is not an object text
+            await c.execute(
+                "INSERT INTO related_subjects (kind, evidence, created_by) VALUES "
+                "('person', to_jsonb('{\"a\": 1}'::text), 'zz'), "
+                "('person', to_jsonb('zz'::text), 'zz')"
+            )
+            before = await c.fetch(
+                "SELECT id, evidence::text AS e FROM related_subjects ORDER BY id"
+            )
+            forward, _ = split_migration_sql(MIGRATION_EVIDENCE.read_text())
+            with pytest.raises(asyncpg.CheckViolationError):
+                async with c.transaction():  # as the runner applies a migration file
+                    await c.execute(forward)
+            assert await _evidence_constraints(c) == set()
+            after = await c.fetch(
+                "SELECT id, evidence::text AS e FROM related_subjects ORDER BY id"
+            )
+            assert [tuple(r) for r in after] == [tuple(r) for r in before]
+            kinds = [
+                r["k"]
+                for r in await c.fetch("SELECT jsonb_typeof(evidence) AS k FROM related_subjects")
+            ]
+            assert kinds == ["string", "string"]
+    finally:
+        await created.close()
+        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        await admin.close()
