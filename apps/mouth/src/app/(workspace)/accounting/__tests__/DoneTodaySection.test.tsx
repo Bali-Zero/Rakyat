@@ -211,6 +211,11 @@ describe("DoneTodaySection", () => {
     "18/11/2026T10:20",
     "2026-11-18 10:20:00+08:00",
     "x2026-11-18T10:20",
+    "2026-11-18T1:20",
+    "2026-11-18T10:2",
+    "2026-11-18T100:20",
+    "2026-111-18T10:20",
+    "12026-11-18T10:20",
   ])("F4: done_at %j has no pattern, so no time shows", async (doneAt) => {
     api.getDoneToday.mockResolvedValue(
       body([item({ txn_id: 5, done_at: doneAt, description: "" })]),
@@ -221,6 +226,37 @@ describe("DoneTodaySection", () => {
     const entry = screen.getByTestId("done-today-item-5");
     expect(within(entry).getByText("(no memo)")).toBeInTheDocument();
     expect(entry.textContent).not.toContain(":");
+  });
+
+  it("F4: confirmed and linked entries show their populated invoice number and client name", async () => {
+    api.getDoneToday.mockResolvedValue(
+      body([
+        item({
+          txn_id: 2,
+          action: "linked",
+          description: "TRF LINK",
+          invoice_number: "INV-000000-00042",
+          client_name: "PT KLIEN TIGA",
+        }),
+        item({
+          txn_id: 1,
+          action: "confirmed",
+          description: "TRF CONFIRM",
+          invoice_number: "INV-000000-00007",
+          client_name: "PT KLIEN EMPAT",
+        }),
+      ]),
+    );
+    render(<DoneTodaySection version={0} />);
+    await loaded(2);
+    open();
+    const linked = screen.getByTestId("done-today-item-2");
+    expect(linked.textContent).toContain("INV-000000-00042 · PT KLIEN TIGA");
+    expect(linked.textContent).not.toContain("No invoice number");
+    const confirmed = screen.getByTestId("done-today-item-1");
+    expect(confirmed.textContent).toContain(
+      "INV-000000-00007 · PT KLIEN EMPAT",
+    );
   });
 
   it("F3: the loading, empty and truncated texts", async () => {
@@ -437,5 +473,64 @@ describe("DoneTodaySection", () => {
     expect(source).not.toMatch(
       /(?<![\w-])(?:bg|text|border|ring|divide|fill|stroke)-(?:card|muted|muted-foreground|foreground|background|popover|primary|secondary|accent|destructive|border|input)(?![\w-])/,
     );
+  });
+
+  it("F8: in every state, every variable a rendered class uses is one of the allowed ones", async () => {
+    const allowed = new Set([
+      "--bz-card",
+      "--bz-card-hover",
+      "--bz-text-1",
+      "--bz-text-2",
+      "--bz-border",
+      "--state-success",
+      "--state-info",
+      "--state-danger",
+    ]);
+    const varsIn = (root: HTMLElement) => {
+      const classes = Array.from(root.querySelectorAll("[class]"))
+        .map((e) => e.getAttribute("class") ?? "")
+        .join(" ");
+      return Array.from(classes.matchAll(/var\((--[\w-]+)\)/g)).map(
+        (m) => m[1],
+      );
+    };
+    const check = (root: HTMLElement) => {
+      const used = varsIn(root);
+      expect(used.length).toBeGreaterThan(0);
+      for (const name of used) {
+        expect(allowed.has(name), `${name} is not allowed`).toBe(true);
+      }
+    };
+    // failed initial load, expanded: the retry control
+    api.getDoneToday.mockRejectedValueOnce(
+      Object.assign(new Error("boom"), { statusCode: 500 }),
+    );
+    const failed = render(<DoneTodaySection version={0} />);
+    open();
+    await screen.findByRole("button", { name: "Try again" });
+    check(failed.container);
+    failed.unmount();
+    // loading, expanded
+    api.getDoneToday.mockReturnValueOnce(new Promise(() => {}));
+    const loading = render(<DoneTodaySection version={0} />);
+    open();
+    check(loading.container);
+    loading.unmount();
+    // loaded with every action and a truncation line
+    api.getDoneToday.mockResolvedValueOnce(
+      body(
+        [
+          item({ txn_id: 1, action: "confirmed" }),
+          item({ txn_id: 2, action: "linked" }),
+          item({ txn_id: 3, action: "ignored" }),
+          item({ txn_id: 4, action: "weird" as never }),
+        ],
+        { truncated: true },
+      ),
+    );
+    const done = render(<DoneTodaySection version={0} />);
+    await loaded(4);
+    open();
+    check(done.container);
   });
 });

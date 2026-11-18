@@ -4,7 +4,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { logger } from "@/lib/logger";
 import { Money } from "@balizero/core";
 import {
@@ -127,14 +126,13 @@ export function DoneTodayList({
     return (
       <div className="text-center text-sm text-[var(--bz-text-2)]">
         <p>Could not load what was done today.</p>
-        <Button
-          className="mt-2"
-          size="sm"
-          variant="outline"
+        <button
+          type="button"
+          className="mt-2 rounded-md border border-[var(--bz-border)] px-3 py-1 text-sm text-[var(--bz-text-1)] hover:bg-[var(--bz-card-hover)]/30"
           onClick={() => onRetry()}
         >
           Try again
-        </Button>
+        </button>
       </div>
     );
   }
