@@ -5,8 +5,6 @@ Tests route handler functions directly (no TestClient) with mocked dependencies.
 Covers all endpoints and helper functions:
 - GET  /clients/{id}/profile       -> get_client_profile
 - PATCH /clients/{id}/profile      -> update_client_profile
-- GET  /companies/by-client/{id}   -> get_client_companies
-- GET  /companies/{id}/documents   -> get_company_documents
 - GET  /clients/{id}/family        -> get_family_members
 - POST /clients/{id}/family        -> create_family_member
 - PATCH /clients/{id}/family/{mid} -> update_family_member
@@ -743,70 +741,6 @@ class TestUpdateClientProfile:
             {"avatar_url": "x", "google_drive_folder_id": "attacker-controlled-folder"}
         )
         assert not hasattr(data, "google_drive_folder_id")
-
-
-# ---------------------------------------------------------------------------
-# GET /companies/by-client/{id}
-# ---------------------------------------------------------------------------
-
-
-class TestGetClientCompanies:
-    @pytest.mark.asyncio
-    async def test_success(
-        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
-    ) -> None:
-        from backend.app.routers.crm_enhanced import get_client_companies
-
-        mock_db_conn.fetch = AsyncMock(return_value=[{"link_id": 1, "company_name": "PT X"}])
-        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
-            result = await get_client_companies(
-                client_id=42, pool=mock_db_pool, current_user=admin_user
-            )
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_empty(
-        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
-    ) -> None:
-        from backend.app.routers.crm_enhanced import get_client_companies
-
-        mock_db_conn.fetch = AsyncMock(return_value=[])
-        with patch("backend.app.routers.crm_enhanced.verify_client_access", new=AsyncMock()):
-            result = await get_client_companies(
-                client_id=42, pool=mock_db_pool, current_user=admin_user
-            )
-        assert result == []
-
-
-# ---------------------------------------------------------------------------
-# GET /companies/{id}/documents
-# ---------------------------------------------------------------------------
-
-
-class TestGetCompanyDocuments:
-    @pytest.mark.asyncio
-    async def test_all_docs(
-        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
-    ) -> None:
-        from backend.app.routers.crm_enhanced import get_company_documents
-
-        mock_db_conn.fetch = AsyncMock(return_value=[{"id": 1, "document_type": "akta"}])
-        result = await get_company_documents(
-            company_id=10, doc_type=None, pool=mock_db_pool, current_user=admin_user
-        )
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_filtered(
-        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
-    ) -> None:
-        from backend.app.routers.crm_enhanced import get_company_documents
-
-        mock_db_conn.fetch = AsyncMock(return_value=[])
-        result = await get_company_documents(
-            company_id=10, doc_type="nib", pool=mock_db_pool, current_user=admin_user
-        )
-        assert result == []
 
 
 # ---------------------------------------------------------------------------

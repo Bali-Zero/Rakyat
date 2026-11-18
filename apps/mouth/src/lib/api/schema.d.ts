@@ -5416,10 +5416,10 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Get Client Companies
-     * @description Get all companies linked to a client.
+     * Get Client Companies Early
+     * @description Get all companies linked to a client — must be before /{company_id} route
      */
-    get: operations["get_client_companies_api_crm_companies_by_client__client_id__get"];
+    get: operations["get_client_companies_early_api_crm_companies_by_client__client_id__get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -5529,9 +5529,9 @@ export interface paths {
     };
     /**
      * Get Company Documents
-     * @description Get all documents for a company.
+     * @description Get documents for a company
      */
-    get: operations["get_crm_company_documents"];
+    get: operations["get_company_documents_api_crm_companies__company_id__documents_get"];
     put?: never;
     /**
      * Create Company Document
@@ -38970,7 +38970,7 @@ export interface operations {
       };
     };
   };
-  get_client_companies_api_crm_companies_by_client__client_id__get: {
+  get_client_companies_early_api_crm_companies_by_client__client_id__get: {
     parameters: {
       query?: never;
       header?: never;
@@ -39245,9 +39245,10 @@ export interface operations {
       };
     };
   };
-  get_crm_company_documents: {
+  get_company_documents_api_crm_companies__company_id__documents_get: {
     parameters: {
       query?: {
+        /** @description Filter by document type */
         doc_type?: string | null;
       };
       header?: never;
