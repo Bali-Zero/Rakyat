@@ -1851,7 +1851,7 @@ async def _audit_scan(conn) -> tuple[list, str, set[str]]:
     excluded = {c["column_name"] for c in columns if c["data_type"] in UNSCANNED_AUDIT_TYPES}
     rows = await conn.fetch("SELECT * FROM api_audit_trail ORDER BY id")
     text = " ".join(
-        f"{name}={value if isinstance(value, str) else json.dumps(value, default=str)}"
+        value if isinstance(value, str) else json.dumps(value, default=str)
         for row in rows
         for name, value in dict(row).items()
         if name not in excluded
