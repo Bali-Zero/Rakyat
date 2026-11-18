@@ -284,7 +284,13 @@ export function ReconciliationInbox({
 
   const confirm = () => {
     const current = pickRef.current;
-    if (!opened || !current || current.txnId !== opened.txn_id) return;
+    if (
+      !opened ||
+      !current ||
+      current.txnId !== opened.txn_id ||
+      current.group !== "open"
+    )
+      return;
     const txn = {
       id: opened.txn_id,
       amount_idr: opened.amount_idr,
@@ -295,7 +301,13 @@ export function ReconciliationInbox({
   };
   const link = () => {
     const current = pickRef.current;
-    if (!opened || !current || current.txnId !== opened.txn_id) return;
+    if (
+      !opened ||
+      !current ||
+      current.txnId !== opened.txn_id ||
+      current.group !== "recorded"
+    )
+      return;
     void runAction(opened.txn_id, "Transfer linked", () =>
       accountingApi.linkRecorded({
         bank_txn_id: opened.txn_id,
@@ -382,7 +394,10 @@ export function ReconciliationInbox({
   );
   const work =
     activeSituation && opened ? (
-      <div className="mt-5 grid grid-cols-[344px_minmax(0,1fr)] gap-6">
+      <div
+        data-testid="cc-work"
+        className="mt-5 grid h-[550px] grid-cols-[344px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-6"
+      >
         <TransferList
           situation={activeSituation}
           rows={rows}

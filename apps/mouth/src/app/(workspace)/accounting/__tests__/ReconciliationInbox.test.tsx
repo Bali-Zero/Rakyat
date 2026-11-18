@@ -7,7 +7,10 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { accountingApi } from "@/lib/api/workspace/accounting.api";
+import {
+  accountingApi,
+  type BankTransaction,
+} from "@/lib/api/workspace/accounting.api";
 import { ReconciliationInbox } from "../_components/ReconciliationInbox";
 import {
   candidate,
@@ -107,12 +110,18 @@ const done = {
 };
 const bank = {
   id: 99,
+  statement_id: null,
   txn_date: "2026-01-05",
   description: "BANK",
   amount_idr: 1,
   direction: "credit",
+  running_balance_idr: null,
+  bank_account_id: null,
   reconciled_status: "unmatched",
-} as never;
+  matched_practice_id: null,
+  matched_invoice_id: null,
+  created_at: null,
+} satisfies BankTransaction;
 const candidatesFor = (id: number) => ({
   txn_id: id,
   transfer_amount_idr: 500000,
@@ -149,6 +158,15 @@ const ready = async () => screen.findByText("ROW GREEN");
 const tab = (key: string) => screen.getByTestId(`cc-tab-${key}`);
 const row = (id: number) => screen.getByTestId(`inbox-row-${id}`);
 const opened = () => screen.getByTestId("cc-opened");
+const renderedClick = (element: HTMLElement) => {
+  const propsKey = Object.keys(element).find((key) =>
+    key.startsWith("__reactProps$"),
+  );
+  if (!propsKey) throw new Error("Rendered click handler not found");
+  return (element as unknown as Record<string, { onClick: () => void }>)[
+    propsKey
+  ].onClick;
+};
 const openTab = async (key: string, text: string) => {
   fireEvent.click(tab(key));
   await waitFor(() =>
@@ -539,26 +557,69 @@ describe("ported reconciliation contract", () => {
   });
 
   it("28: the confirm dialog survives when its row empties the list", async () => {
+    const reload = deferred<ReturnType<typeof four>>();
+    api.getReconciliationInbox
+      .mockResolvedValueOnce([four()[0], four()[1]])
+      .mockReturnValueOnce(reload.promise);
     renderInbox();
     await ready();
+    await openTab("link", "ROW RECORDED");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Link, no money moved" }),
+    );
+    await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
     fireEvent.click(
       await screen.findByRole("button", { name: "Confirm payment" }),
     );
     expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
-    expect(tab("done")).toBeInTheDocument();
+    await act(async () => reload.resolve([]));
+    expect(await screen.findByTestId("cc-calm")).toBeInTheDocument();
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
   });
 
-  it("29: switching tabs does not unmount an open confirm dialog", async () => {
+  it("29: dialog lock keeps other-tab actions inert and survives tab changes", async () => {
+    api.getBankTransactions.mockImplementation(async (options) =>
+      options?.limit === 1
+        ? [bank]
+        : options?.reconciledStatus === "manual"
+          ? [{ ...bank, id: 77, reconciled_status: "manual" }]
+          : [],
+    );
     renderInbox();
     await ready();
     fireEvent.click(
       await screen.findByRole("button", { name: "Confirm payment" }),
     );
     fireEvent.click(tab("link"));
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    const ignore = screen.getByRole("button", { name: "Ignore" });
+    expect(link).toBeDisabled();
+    expect(ignore).toBeDisabled();
+    fireEvent.click(link);
+    fireEvent.click(ignore);
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
+    fireEvent.click(tab("done"));
+    fireEvent.click(screen.getByRole("button", { name: "Linked and ignored" }));
+    const reopen = (
+      await screen.findAllByRole("button", { name: "Reopen" })
+    )[0];
+    expect(reopen).toBeDisabled();
+    fireEvent.click(reopen);
+    expect(api.reopenTransaction).not.toHaveBeenCalled();
     expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
   });
 
   it("30: an inbox write shares the lock with Done-today reopen", async () => {
+    api.getBankTransactions.mockImplementation(async (options) =>
+      options?.limit === 1
+        ? [bank]
+        : options?.reconciledStatus === "manual"
+          ? [{ ...bank, id: 78, reconciled_status: "manual" }]
+          : [],
+    );
     const held = deferred<typeof ack>();
     api.linkRecorded.mockReturnValueOnce(held.promise);
     renderInbox();
@@ -567,10 +628,18 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Link, no money moved" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Link, no money moved" }),
-    ).toBeDisabled();
+    fireEvent.click(tab("done"));
+    fireEvent.click(screen.getByRole("button", { name: "Linked and ignored" }));
+    const reopen = (
+      await screen.findAllByRole("button", { name: "Reopen" })
+    )[0];
+    expect(reopen).toBeDisabled();
+    fireEvent.click(reopen);
+    expect(api.reopenTransaction).not.toHaveBeenCalled();
     await act(async () => held.resolve(ack));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("31: a pending reopen uses the same shared lock", async () => {
@@ -586,10 +655,21 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "Reopen" }))[0],
     );
-    expect(
-      (await screen.findAllByRole("button", { name: "Reopen" }))[0],
-    ).toBeDisabled();
+    fireEvent.click(tab("link"));
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    const ignore = screen.getByRole("button", { name: "Ignore" });
+    expect(link).toBeDisabled();
+    expect(ignore).toBeDisabled();
+    fireEvent.click(link);
+    fireEvent.click(ignore);
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
     await act(async () => held.resolve(ack));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("32: another row can open while the first row's ignore form retains text", async () => {
@@ -634,43 +714,76 @@ describe("ported reconciliation contract", () => {
   });
 
   it("35: Link then Confirm in one tick sends only the link", async () => {
+    const held = deferred<typeof ack>();
+    api.linkRecorded.mockReturnValueOnce(held.promise);
     renderInbox();
     await ready();
     await openTab("choose", "ROW YELLOW");
-    fireEvent.click(
-      within(await screen.findByTestId("cc-cand-12")).getByRole("radio"),
+    const recordedRadio = within(
+      await screen.findByTestId("cc-cand-12"),
+    ).getByRole("radio");
+    const openRadio = within(screen.getByTestId("cc-cand-11")).getByRole(
+      "radio",
     );
+    fireEvent.click(recordedRadio);
     const link = screen.getByRole("button", { name: "Link, no money moved" });
-    fireEvent.click(link);
-    fireEvent.click(link);
+    act(() => {
+      link.click();
+      openRadio.click();
+      link.click();
+    });
     expect(api.linkRecorded).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Confirm payment match")).toBeNull();
+    await act(async () => held.resolve(ack));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("36: Confirm then Link in one tick opens the dialog and sends no link", async () => {
     renderInbox();
     await ready();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Confirm payment" }),
+    await openTab("choose", "ROW YELLOW");
+    const openRadio = within(await screen.findByTestId("cc-cand-11")).getByRole(
+      "radio",
     );
-    fireEvent.click(tab("link"));
+    const recordedRadio = within(screen.getByTestId("cc-cand-12")).getByRole(
+      "radio",
+    );
+    fireEvent.click(openRadio);
+    const confirm = screen.getByRole("button", { name: "Confirm payment" });
+    act(() => {
+      confirm.click();
+      recordedRadio.click();
+      confirm.click();
+    });
     expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
     expect(api.linkRecorded).not.toHaveBeenCalled();
   });
 
-  it("37: dialog Close and Cancel remain inert in the confirm request tick", async () => {
-    const held = deferred<never>();
-    api.confirm.mockReturnValueOnce(held.promise);
-    renderInbox();
-    await ready();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Confirm payment" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
-    await act(async () => held.reject(new Error("stop")));
-  });
+  it.each(["Close", "Cancel"])(
+    "37: dialog %s remains inert in the confirm request tick",
+    async (name) => {
+      const held = deferred<never>();
+      api.confirm.mockReturnValueOnce(held.promise);
+      renderInbox();
+      await ready();
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Confirm payment" }),
+      );
+      const confirm = screen.getByRole("button", { name: /^Confirm paid$/ });
+      const closer = screen.getByRole("button", { name });
+      act(() => {
+        confirm.click();
+        closer.click();
+      });
+      expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+      expect(api.confirm).toHaveBeenCalledTimes(1);
+      act(() => closer.click());
+      expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+      await act(async () => held.reject(new Error("stop")));
+    },
+  );
 
   it("38: a pending statement import locks reconciliation actions", async () => {
     const held = deferred<ReturnType<typeof importFixture>>();
@@ -678,16 +791,56 @@ describe("ported reconciliation contract", () => {
     api.importBankStatement.mockReturnValueOnce(held.promise);
     renderInbox();
     await ready();
+    api.getBankTransactions.mockImplementation(async (options) =>
+      options?.limit === 1
+        ? [bank]
+        : options?.reconciledStatus === "manual"
+          ? [{ ...bank, id: 80, reconciled_status: "manual" }]
+          : [],
+    );
     fireEvent.change(screen.getByTestId("bank-statement-input"), {
       target: { files: [new File(["x"], "statement.csv")] },
     });
     fireEvent.click(
       await screen.findByRole("button", { name: /Import 3 transactions/i }),
     );
-    expect(
-      screen.getByRole("button", { name: "Confirm payment" }),
-    ).toBeDisabled();
+    const confirm = screen.getByRole("button", { name: "Confirm payment" });
+    const confirmIgnore = screen.getByRole("button", { name: "Ignore" });
+    expect(confirm).toBeDisabled();
+    expect(confirmIgnore).toBeDisabled();
+    fireEvent.click(confirm);
+    fireEvent.click(confirmIgnore);
+    await openTab("link", "ROW RECORDED");
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    const linkIgnore = screen.getByRole("button", { name: "Ignore" });
+    expect(link).toBeDisabled();
+    expect(linkIgnore).toBeDisabled();
+    fireEvent.click(link);
+    fireEvent.click(linkIgnore);
+    fireEvent.click(tab("done"));
+    fireEvent.click(screen.getByRole("button", { name: "Linked and ignored" }));
+    const reopen = (
+      await screen.findAllByRole("button", { name: "Reopen" })
+    )[0];
+    expect(reopen).toBeDisabled();
+    fireEvent.click(reopen);
+    expect(api.confirm).not.toHaveBeenCalled();
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+    expect(api.reopenTransaction).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
     await act(async () => held.resolve(importFixture()));
+    await screen.findByText(/new transactions stored/);
+    await waitFor(() => expect(reopen).toBeEnabled());
+    fireEvent.click(tab("link"));
+    expect(
+      await screen.findByRole("button", { name: "Link, no money moved" }),
+    ).toBeEnabled();
+    fireEvent.click(tab("confirm"));
+    expect(
+      await screen.findByRole("button", { name: "Confirm payment" }),
+    ).toBeEnabled();
   });
 
   it("39: a pending link disables statement Import", async () => {
@@ -711,23 +864,40 @@ describe("ported reconciliation contract", () => {
   });
 
   it("40: Link then Ignore in one tick never half-opens a form", async () => {
+    const held = deferred<typeof ack>();
+    api.linkRecorded.mockReturnValueOnce(held.promise);
     renderInbox();
     await ready();
     await openTab("link", "ROW RECORDED");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Ignore" }));
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    const ignore = screen.getByRole("button", { name: "Ignore" });
+    act(() => {
+      link.click();
+      ignore.click();
+    });
+    expect(api.linkRecorded).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
+    await act(async () => held.resolve(ack));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("41: Ignore transfer then Cancel in one tick keeps a refused form", async () => {
-    api.ignoreTransaction.mockRejectedValueOnce(new Error("refused"));
+    const held = deferred<typeof ack>();
+    api.ignoreTransaction.mockReturnValueOnce(held.promise);
     renderInbox();
     await ready();
     fireEvent.change(await openIgnore(), { target: { value: "valid reason" } });
-    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const send = screen.getByRole("button", { name: "Ignore transfer" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    act(() => {
+      send.click();
+      cancel.click();
+    });
+    await act(async () => held.reject(new Error("refused")));
     expect(await screen.findByRole("alert")).toHaveTextContent("refused");
     expect(screen.getByLabelText("Reason for ignoring")).toHaveValue(
       "valid reason",
@@ -737,10 +907,14 @@ describe("ported reconciliation contract", () => {
   it("42: Match then Ignore in one tick opens only the dialog", async () => {
     renderInbox();
     await ready();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Confirm payment" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Ignore" }));
+    const confirm = await screen.findByRole("button", {
+      name: "Confirm payment",
+    });
+    const ignore = screen.getByRole("button", { name: "Ignore" });
+    act(() => {
+      confirm.click();
+      ignore.click();
+    });
     expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
     expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
   });
@@ -846,9 +1020,13 @@ describe("ported reconciliation contract", () => {
     await ready();
     fireEvent.change(await openIgnore(), { target: { value: "valid reason" } });
     const send = screen.getByRole("button", { name: "Ignore transfer" });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(send);
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    act(() => {
+      cancel.click();
+      send.click();
+    });
     expect(api.ignoreTransaction).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
   });
 
   it("52: Ignore on B replaces A's hidden form instead of opening two", async () => {
@@ -859,10 +1037,17 @@ describe("ported reconciliation contract", () => {
     renderInbox();
     await ready();
     fireEvent.change(await openIgnore(), { target: { value: "reason A" } });
+    const cancelA = screen.getByRole("button", { name: "Cancel" });
     fireEvent.click(row(5));
-    fireEvent.click(await screen.findByRole("button", { name: "Ignore" }));
+    const ignoreB = await screen.findByRole("button", { name: "Ignore" });
+    act(() => {
+      ignoreB.click();
+      cancelA.click();
+    });
     expect(screen.getAllByTestId("cc-ignore-form")).toHaveLength(1);
     expect(screen.getByLabelText("Reason for ignoring")).toHaveValue("");
+    fireEvent.click(row(1));
+    expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
   });
 
   it("53: typing and sending in one act uses the latest ref value", async () => {
@@ -870,8 +1055,11 @@ describe("ported reconciliation contract", () => {
     await ready();
     const input = await openIgnore();
     const send = screen.getByRole("button", { name: "Ignore transfer" });
-    fireEvent.change(input, { target: { value: "latest reason" } });
-    fireEvent.click(send);
+    fireEvent.change(input, { target: { value: "first reason" } });
+    act(() => {
+      fireEvent.change(input, { target: { value: "latest reason" } });
+      send.click();
+    });
     expect(api.ignoreTransaction).toHaveBeenCalledWith({
       bank_txn_id: 1,
       reason: "latest reason",
@@ -884,16 +1072,31 @@ describe("ported reconciliation contract", () => {
     api.previewBankStatement.mockResolvedValue(previewFixture());
     renderInbox();
     await ready();
-    await openTab("link", "ROW RECORDED");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
-    );
-    const file = new File(["x"], "statement.csv");
-    fireEvent.change(screen.getByTestId("bank-statement-input"), {
-      target: { files: [file] },
+    const input = screen.getByTestId("bank-statement-input");
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "first.csv")] },
     });
+    const importButton = await screen.findByRole("button", {
+      name: /Import 3 transactions/i,
+    });
+    await openTab("link", "ROW RECORDED");
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    api.previewBankStatement.mockClear();
+    const file = new File(["y"], "second.csv");
+    act(() => {
+      link.click();
+      importButton.click();
+      fireEvent.change(input, { target: { files: [file] } });
+    });
+    expect(api.importBankStatement).not.toHaveBeenCalled();
+    expect(api.previewBankStatement).toHaveBeenCalledTimes(1);
     expect(api.previewBankStatement).toHaveBeenCalledWith(file);
     await act(async () => held.resolve(ack));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("55: table rows show invoice number, INV date and service", async () => {
@@ -924,5 +1127,85 @@ describe("ported reconciliation contract", () => {
     const candidateRow = await screen.findByTestId("cc-cand-44");
     expect(candidateRow).toHaveTextContent("No invoice number");
     expect(candidateRow).not.toHaveTextContent("Example service");
+  });
+
+  it("57: an emptied selected tab moves to the first non-empty tab", async () => {
+    const reload = deferred<ReturnType<typeof four>>();
+    api.getReconciliationInbox
+      .mockResolvedValueOnce(four())
+      .mockReturnValueOnce(reload.promise);
+    renderInbox();
+    await ready();
+    await openTab("link", "ROW RECORDED");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Link, no money moved" }),
+    );
+    await waitFor(() =>
+      expect(tab("confirm")).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(row(1)).toHaveAttribute("aria-current", "true");
+    await act(async () =>
+      reload.resolve(four().filter((item) => item.txn_id !== 2)),
+    );
+  });
+
+  it("58: a held link disables Choose another and Ignore in the pair view", async () => {
+    const held = deferred<typeof ack>();
+    api.linkRecorded.mockReturnValueOnce(held.promise);
+    renderInbox();
+    await ready();
+    await openTab("link", "ROW RECORDED");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Link, no money moved" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Choose another" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ignore" })).toBeDisabled();
+    await act(async () => held.resolve(ack));
+  });
+
+  it("59: stale Link handler rejects an open pick changed in the same act", async () => {
+    renderInbox();
+    await ready();
+    await openTab("choose", "ROW YELLOW");
+    const openRadio = within(await screen.findByTestId("cc-cand-11")).getByRole(
+      "radio",
+    );
+    fireEvent.click(
+      within(screen.getByTestId("cc-cand-12")).getByRole("radio"),
+    );
+    const staleLink = screen.getByRole("button", {
+      name: "Link, no money moved",
+    });
+    const staleClick = renderedClick(staleLink);
+    act(() => {
+      openRadio.click();
+      staleClick();
+    });
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+    expect(screen.queryByText("Confirm payment match")).toBeNull();
+  });
+
+  it("60: stale Confirm handler rejects a recorded pick changed in the same act", async () => {
+    renderInbox();
+    await ready();
+    await openTab("choose", "ROW YELLOW");
+    fireEvent.click(
+      within(await screen.findByTestId("cc-cand-11")).getByRole("radio"),
+    );
+    const recordedRadio = within(screen.getByTestId("cc-cand-12")).getByRole(
+      "radio",
+    );
+    const staleConfirm = screen.getByRole("button", {
+      name: "Confirm payment",
+    });
+    const staleClick = renderedClick(staleConfirm);
+    act(() => {
+      recordedRadio.click();
+      staleClick();
+    });
+    expect(screen.queryByText("Confirm payment match")).toBeNull();
+    expect(api.linkRecorded).not.toHaveBeenCalled();
   });
 });

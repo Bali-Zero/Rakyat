@@ -1,5 +1,5 @@
-import { Check } from "lucide-react";
 import type { DoneTodayResponse } from "@/lib/api/workspace/accounting.api";
+import { CcGlyph } from "./CcGlyph";
 
 export type Situation = "confirm" | "link" | "choose" | "nomatch";
 export type ReconciliationTab = Situation | "done";
@@ -69,7 +69,7 @@ export function ReconciliationTabs({
           >
             {LABEL[key]}
             {!loaded ? null : empty ? (
-              <Check className="h-4 w-4" aria-hidden="true" />
+              <CcGlyph name="tick" className="h-4 w-4" />
             ) : (
               <span
                 data-testid={`cc-count-${key}`}

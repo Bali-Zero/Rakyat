@@ -255,7 +255,7 @@ export default function AccountingPage() {
   };
 
   return (
-    <div className="p-6">
+    <div className={view === "centre" ? "px-4 pb-2 pt-1.5" : "p-6"}>
       {view === "centre" ? (
         <ReconciliationInbox
           onConfirmed={handleConfirmed}

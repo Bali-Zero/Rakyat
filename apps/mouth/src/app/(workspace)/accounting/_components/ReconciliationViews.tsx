@@ -1,24 +1,15 @@
-import {
-  ArrowRight,
-  ArrowUpRight,
-  CircleCheck,
-  FileUp,
-  Loader2,
-  Upload,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
 import type { DoneTodayResponse } from "@/lib/api/workspace/accounting.api";
 import type { DoneTodayStatus } from "./DoneTodaySection";
 import { DoneTodayList } from "./DoneTodaySection";
+import { CalmArt, DayOneArt } from "./CcArt";
+import { CcGlyph, CC_PRIMARY, CC_SECONDARY } from "./CcGlyph";
 import { ccDayDate } from "./ccFormat";
 import type { BankDateState } from "./useBankDate";
 
 export type CentreView =
   "done" | "loading" | "failed" | "dayone" | "calm" | "work";
 
-const SECONDARY =
-  "inline-flex h-10 items-center gap-2 rounded-[10px] border border-[var(--cc-line-control)] bg-[var(--cc-card)] px-4 text-sm font-bold text-[var(--cc-tx)]";
-const PRIMARY =
-  "inline-flex h-11 items-center gap-2 rounded-[10px] bg-[var(--cc-act)] px-[22px] text-sm font-bold text-[var(--cc-act-on)] disabled:opacity-50";
 const EMPTY_CARD =
   "mt-5 flex h-[470px] flex-col items-center justify-center rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] text-[var(--cc-tx-2)]";
 
@@ -63,7 +54,7 @@ export function ReconciliationBody({
         <p>Could not load the inbox.</p>
         <button
           type="button"
-          className={`${SECONDARY} mt-3`}
+          className={`${CC_SECONDARY} mt-3`}
           onClick={onRetryInbox}
         >
           Try again
@@ -77,11 +68,8 @@ export function ReconciliationBody({
         data-testid="cc-dayone"
         className="mt-[30px] grid h-[470px] grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)]"
       >
-        <div className="flex items-center justify-center bg-[var(--cc-wash)]">
-          <FileUp
-            className="h-[88px] w-[88px] text-[var(--cc-tx-2)]"
-            aria-hidden="true"
-          />
+        <div className="flex items-center justify-center bg-[var(--cc-art-tile)]">
+          <DayOneArt />
         </div>
         <div className="flex flex-col px-[52px] py-11 text-[var(--cc-tx)]">
           <h2 className="font-serif text-[26px] font-semibold leading-tight tracking-[-0.01em] text-[var(--cc-tx)]">
@@ -112,17 +100,17 @@ export function ReconciliationBody({
                 </span>
                 <span>
                   <b className="mt-[3px] block text-base">{title}</b>
-                  <span className="text-[var(--cc-tx-2)]">{copy}</span>
+                  <span className="text-sm text-[var(--cc-tx-2)]">{copy}</span>
                 </span>
               </li>
             ))}
           </ol>
           <div className="mt-auto flex items-center gap-[18px]">
-            <button type="button" className={PRIMARY} onClick={onUpload}>
-              <Upload className="h-4 w-4" aria-hidden="true" /> Upload CIMB
+            <button type="button" className={CC_PRIMARY} onClick={onUpload}>
+              <CcGlyph name="upload" className="h-4 w-4" /> Upload CIMB
               statement
             </button>
-            <p className="text-[var(--cc-tx-2)]">
+            <p className="text-sm text-[var(--cc-tx-2)]">
               a .csv file exported from CIMB
             </p>
           </div>
@@ -147,10 +135,7 @@ export function ReconciliationBody({
   const handled = done?.counts.total;
   return (
     <div data-testid="cc-calm" className={`${EMPTY_CARD} text-center`}>
-      <CircleCheck
-        className="h-14 w-14 text-[var(--cc-confirm-ink)]"
-        aria-hidden="true"
-      />
+      <CalmArt />
       <h2 className="mt-[26px] font-serif text-[26px] font-semibold leading-tight tracking-[-0.01em] text-[var(--cc-tx)]">
         All done for today
       </h2>
@@ -163,7 +148,7 @@ export function ReconciliationBody({
       {!doneUnavailable && (
         <button
           type="button"
-          className={`${SECONDARY} mt-[26px]`}
+          className={`${CC_SECONDARY} mt-[26px]`}
           onClick={onShowDone}
         >
           See what was done today
@@ -180,23 +165,22 @@ export function ReconciliationMore({
 }) {
   return (
     <section data-testid="cc-more" className="mt-6 grid grid-cols-2 gap-6">
-      <div aria-hidden="true" />
       <div
         data-testid="cc-cashout-card"
         className="flex h-20 items-center gap-4 rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] px-6"
       >
         <span className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--cc-wash)] text-[var(--cc-tx-2)]">
-          <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+          <CcGlyph name="out" className="h-[18px] w-[18px]" />
         </span>
         <p className="text-sm font-semibold text-[var(--cc-tx-2)]">
           Cash-out this week
         </p>
         <button
           type="button"
-          className="ml-auto flex items-center gap-1 font-bold text-[var(--cc-tx)] underline decoration-1 underline-offset-4"
+          className="ml-auto flex items-center gap-1 text-sm font-bold text-[var(--cc-tx)] underline decoration-1 underline-offset-4"
           onClick={onOpenCashout}
         >
-          Open <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          Open <CcGlyph name="arrow" className="h-3.5 w-3.5" />
         </button>
       </div>
     </section>

@@ -10,11 +10,12 @@
  */
 
 import { useRef, useState } from "react";
-import { Loader2, Upload } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import { formatStatementAmount } from "./formatStatementAmount";
+import { CcGlyph, CC_SECONDARY } from "./CcGlyph";
 import {
   accountingApi,
   type BankStatementImportOutcome,
@@ -160,11 +161,11 @@ export function BankStatementUpload({
           {!hideTrigger && (
             <button
               type="button"
-              className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-[var(--cc-line-control)] bg-[var(--cc-card)] px-4 text-sm font-bold text-[var(--cc-tx)]"
+              className={CC_SECONDARY}
               onClick={() => inputRef.current?.click()}
               disabled={busy}
             >
-              <Upload className="h-4 w-4" aria-hidden="true" /> Upload statement
+              <CcGlyph name="upload" className="h-4 w-4" /> Upload statement
             </button>
           )}
         </div>

@@ -19,7 +19,7 @@ export function TransferList({
   return (
     <ul
       aria-label="Transfers"
-      className={`${SITUATION_CLASS[situation]} overflow-hidden rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)]`}
+      className={`${SITUATION_CLASS[situation]} min-h-0 overflow-y-auto rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)]`}
     >
       {rows.map((item) => {
         const opened = item.txn_id === openedId;

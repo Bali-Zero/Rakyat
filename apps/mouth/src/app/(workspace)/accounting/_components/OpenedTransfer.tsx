@@ -1,12 +1,4 @@
-import {
-  Check,
-  CircleCheck,
-  CircleHelp,
-  CircleOff,
-  Link2,
-  Loader2,
-  Lock,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
 import type {
   MatchCandidate,
   MatchCandidatesResponse,
@@ -15,6 +7,13 @@ import type {
 import { candidateIdentityParts, NO_INVOICE_NUMBER } from "./CandidateIdentity";
 import { CcAmount } from "./CcAmount";
 import { ccFull, ccInv, ccShort } from "./ccFormat";
+import {
+  CcGlyph,
+  CC_PRIMARY,
+  CC_SECONDARY,
+  CC_TEXT,
+  type CcGlyphName,
+} from "./CcGlyph";
 import { SITUATION_CLASS, type Situation } from "./ReconciliationTabs";
 
 export type CandidatePick = {
@@ -23,19 +22,13 @@ export type CandidatePick = {
   candidate: MatchCandidate;
 };
 
-const PRIMARY =
-  "inline-flex h-11 items-center gap-2 rounded-[10px] bg-[var(--cc-act)] px-[22px] text-sm font-bold text-[var(--cc-act-on)] disabled:opacity-50";
-const SECONDARY =
-  "inline-flex h-10 items-center gap-2 rounded-[10px] border border-[var(--cc-line-control)] bg-[var(--cc-card)] px-4 text-sm font-bold text-[var(--cc-tx)]";
-const TEXT =
-  "h-10 px-4 text-sm font-bold text-[var(--cc-tx)] underline underline-offset-4";
 const PICKED_ROW = "bg-[var(--cc-sel)]";
 
-const BAND: Record<Situation, { title: string; icon: typeof CircleCheck }> = {
-  confirm: { title: "One invoice matches this transfer", icon: CircleCheck },
-  link: { title: "This payment looks already recorded", icon: Link2 },
-  choose: { title: "Which invoice is this payment for?", icon: CircleHelp },
-  nomatch: { title: "No invoice has this amount", icon: CircleOff },
+const BAND: Record<Situation, { title: string; glyph: CcGlyphName }> = {
+  confirm: { title: "One invoice matches this transfer", glyph: "confirm" },
+  link: { title: "This payment looks already recorded", glyph: "link" },
+  choose: { title: "Which invoice is this payment for?", glyph: "choose" },
+  nomatch: { title: "No invoice has this amount", glyph: "nomatch" },
 };
 
 function BankSide({ item }: { item: ReconciliationInboxItem }) {
@@ -44,11 +37,11 @@ function BankSide({ item }: { item: ReconciliationInboxItem }) {
       <p className="text-xs font-semibold text-[var(--cc-tx-2)]">
         From the bank
       </p>
-      <span className="mb-4 mt-2 block text-[26px] font-medium">
+      <span className="mb-4 mt-2 block text-[26px] font-medium leading-[1.1]">
         <CcAmount value={item.amount_idr} />
       </span>
-      <p className="text-sm font-semibold">{item.description || "(no memo)"}</p>
-      <p className="text-sm text-[var(--cc-tx-2)]">
+      <p className="text-sm font-bold">{item.description || "(no memo)"}</p>
+      <p className="mt-0.5 text-sm text-[var(--cc-tx-2)]">
         Received {ccFull(item.txn_date)}
       </p>
     </div>
@@ -71,34 +64,37 @@ function PairView({
   ].filter((part): part is string => part !== null);
   return (
     <>
-      <div className="grid grid-cols-[1fr_40px_1fr] items-center">
+      <div className="grid grid-cols-[1fr_40px_1fr] items-stretch">
         <BankSide item={item} />
-        <span className="mx-auto flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[var(--cc-solid)] font-bold text-[var(--cc-on)]">
+        <span className="mx-auto flex h-[30px] w-[30px] items-center justify-center self-center rounded-full bg-[var(--cc-solid)] font-serif text-lg font-semibold leading-none text-[var(--cc-on)]">
           =
         </span>
         <div className="rounded-[12px] border border-[var(--cc-edge)] px-6 pb-6 pt-[22px]">
           <p className="text-xs font-semibold text-[var(--cc-tx-2)]">
             Our invoice
           </p>
-          <span className="mb-4 mt-2 block text-[26px] font-medium">
+          <span className="mb-4 mt-2 block text-[26px] font-medium leading-[1.1]">
             <CcAmount value={pick.candidate.invoice_amount_idr} />
           </span>
-          <p className="text-sm font-semibold">
+          <p className="text-sm font-bold">
             {identity.number ?? NO_INVOICE_NUMBER} ·{" "}
             {pick.candidate.client_name}
           </p>
           {secondary.length > 0 && (
-            <p className="text-sm text-[var(--cc-tx-2)]">
+            <p className="mt-0.5 text-sm text-[var(--cc-tx-2)]">
               {secondary.join(" · ")}
             </p>
           )}
           {situation === "link" && (
-            <p className="text-sm text-[var(--cc-tx-2)]">Already paid</p>
+            <p className="mt-0.5 text-sm text-[var(--cc-tx-2)]">Already paid</p>
           )}
         </div>
       </div>
       <p className="mt-[22px] flex items-center gap-2.5 text-base">
-        <Check className="h-5 w-5 text-[var(--cc-ink)]" aria-hidden="true" />
+        <CcGlyph
+          name="tick"
+          className="h-5 w-5 flex-none text-[var(--cc-ink)]"
+        />
         {pick.candidate.reasons.join(" · ")}
       </p>
       {situation === "link" && (
@@ -151,7 +147,7 @@ function CandidateGroup({
               <label
                 key={`${group}-${candidate.invoice_id}`}
                 data-testid={`cc-cand-${candidate.invoice_id}`}
-                className={`grid grid-cols-[18px_150px_minmax(50px,auto)_minmax(0,1fr)_minmax(0,1.2fr)_auto] items-center gap-x-3.5 border-b border-[var(--cc-hair)] px-[18px] py-2.5 text-sm ${picked ? PICKED_ROW : ""}`}
+                className={`grid min-h-10 grid-cols-[18px_150px_minmax(50px,auto)_minmax(0,1fr)_minmax(0,1.2fr)_auto] items-center gap-x-3.5 border-b border-[var(--cc-hair)] px-[18px] py-1 text-sm last:border-b-0 ${picked ? PICKED_ROW : ""}`}
               >
                 <input
                   type="radio"
@@ -160,7 +156,7 @@ function CandidateGroup({
                   onChange={() =>
                     onPick({ txnId: item.txn_id, group, candidate })
                   }
-                  className="h-[18px] w-[18px] accent-[var(--cc-ink)]"
+                  className="h-[18px] w-[18px] appearance-none rounded-full border-[1.5px] border-[var(--cc-line-control)] bg-[var(--cc-card)] checked:border-[5.5px] checked:border-[var(--cc-ink)]"
                 />
                 <span className="font-serif font-semibold">
                   {identity.number ?? NO_INVOICE_NUMBER}
@@ -177,13 +173,13 @@ function CandidateGroup({
                     </span>
                   )}
                 </span>
-                <span className="text-right">
+                <span className="text-right font-medium">
                   <CcAmount value={candidate.invoice_amount_idr} />
                 </span>
                 {candidate.reasons.length > 0 && (
                   <span
                     data-testid={`cc-reasons-${candidate.invoice_id}`}
-                    className="col-span-5 col-start-2 pb-0.5 text-xs text-[var(--cc-tx-2)] [overflow-wrap:anywhere]"
+                    className="col-span-5 col-start-2 text-xs leading-4 text-[var(--cc-tx-2)] [overflow-wrap:anywhere]"
                   >
                     {candidate.reasons.join(" · ")}
                   </span>
@@ -203,7 +199,7 @@ function CandidateGroup({
   );
 }
 
-function TableView({
+function TableGroups({
   item,
   situation,
   candidates,
@@ -223,22 +219,6 @@ function TableView({
     item.recorded_candidates <= 0;
   return (
     <>
-      <div className="grid grid-cols-[1fr_auto] items-center gap-5 rounded-[12px] bg-[var(--cc-wash)] px-[22px] py-3">
-        <div>
-          <p className="text-xs font-semibold text-[var(--cc-tx-2)]">
-            From the bank
-          </p>
-          <p className="text-sm font-semibold">
-            {item.description || "(no memo)"}
-          </p>
-          <p className="text-sm text-[var(--cc-tx-2)]">
-            Received {ccFull(item.txn_date)}
-          </p>
-        </div>
-        <span className="text-[26px] font-medium">
-          <CcAmount value={item.amount_idr} />
-        </span>
-      </div>
       {empty && (
         <p className="py-2 text-center text-sm text-[var(--cc-tx-2)]">
           No plausible invoice match. Leave unmatched or handle manually.
@@ -317,7 +297,6 @@ export function OpenedTransfer({
   onSendIgnore: () => void;
   onCancelIgnore: () => void;
 }) {
-  const Icon = BAND[situation].icon;
   const formOpen = ignoreForm?.txnId === item.txn_id;
   const table = !pair && !nothing && candidates !== null;
   const note =
@@ -328,62 +307,101 @@ export function OpenedTransfer({
         : "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page.";
   const primaryLabel =
     pick?.group === "recorded" ? "Link, no money moved" : "Confirm payment";
+  const noteGlyph = pick?.group === "recorded" || nothing ? "undo" : "lock";
   return (
     <section
       data-testid="cc-opened"
       aria-label="Opened transfer"
-      className={`${SITUATION_CLASS[situation]} overflow-hidden rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] text-[var(--cc-tx)]`}
+      className={`${SITUATION_CLASS[situation]} flex min-h-0 flex-col overflow-hidden rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] text-[var(--cc-tx)]`}
     >
       <div
         data-testid="cc-band"
-        className="flex h-16 items-center gap-3.5 bg-[var(--cc-solid)] px-7 text-[var(--cc-on)]"
+        className="flex h-16 flex-none items-center gap-3.5 bg-[var(--cc-solid)] px-7 text-[var(--cc-on)]"
       >
-        <Icon className="h-[26px] w-[26px]" aria-hidden="true" />
+        <CcGlyph
+          name={BAND[situation].glyph}
+          className="h-[26px] w-[26px] flex-none"
+        />
         <h2 className="text-xl font-semibold">{BAND[situation].title}</h2>
       </div>
-      <div className="px-7 pb-6 pt-[26px]">
-        {failed ? (
-          <div>
-            <p className="text-sm text-[var(--state-danger)]">
-              Could not load the invoices for this transfer.
-            </p>
-            <button
-              type="button"
-              className={`${SECONDARY} mt-3`}
-              onClick={onRetry}
-            >
-              Try again
-            </button>
-          </div>
-        ) : loading || candidates === null ? (
-          <div className="flex items-center justify-center py-4 text-[var(--cc-tx-2)]">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Ranking
-            candidates…
-          </div>
-        ) : pair && pick ? (
-          <PairView item={item} pick={pick} situation={situation} />
-        ) : nothing ? (
-          <div className="grid grid-cols-[1fr_40px_1fr] items-center">
-            <BankSide item={item} />
-            <span className="mx-auto flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[var(--cc-solid)] font-bold text-[var(--cc-on)]">
-              ≠
-            </span>
-            <div className="rounded-[12px] border-[1.5px] border-dashed border-[var(--cc-line-control)] px-6 pb-6 pt-[22px]">
+      <div
+        className={
+          table
+            ? "flex min-h-0 flex-1 flex-col px-7 py-5"
+            : "flex min-h-0 flex-1 flex-col px-7 pb-6 pt-[26px]"
+        }
+      >
+        {table && (
+          <div className="grid flex-none grid-cols-[1fr_auto] items-center gap-5 rounded-[12px] bg-[var(--cc-wash)] px-[22px] py-3">
+            <div>
               <p className="text-xs font-semibold text-[var(--cc-tx-2)]">
-                Our side
+                From the bank
               </p>
-              <p className="mt-2 text-base font-semibold">Nothing found</p>
+              <p className="text-sm font-bold">
+                {item.description || "(no memo)"}
+              </p>
+              <p className="text-sm text-[var(--cc-tx-2)]">
+                Received {ccFull(item.txn_date)}
+              </p>
             </div>
+            <span className="text-[26px] font-medium leading-none">
+              <CcAmount value={item.amount_idr} />
+            </span>
           </div>
-        ) : (
-          <TableView
-            item={item}
-            situation={situation}
-            candidates={candidates}
-            pick={pick}
-            onPick={onPick}
-          />
         )}
+        <div data-testid="cc-scroll" className="min-h-0 flex-1 overflow-y-auto">
+          {failed ? (
+            <div>
+              <p className="text-sm text-[var(--state-danger)]">
+                Could not load the invoices for this transfer.
+              </p>
+              <button
+                type="button"
+                className={`${CC_SECONDARY} mt-3`}
+                onClick={onRetry}
+              >
+                Try again
+              </button>
+            </div>
+          ) : loading || candidates === null ? (
+            <div className="flex items-center justify-center py-4 text-[var(--cc-tx-2)]">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Ranking
+              candidates…
+            </div>
+          ) : pair && pick ? (
+            <PairView item={item} pick={pick} situation={situation} />
+          ) : nothing ? (
+            <div className="grid grid-cols-[1fr_40px_1fr] items-stretch">
+              <BankSide item={item} />
+              <span className="mx-auto flex h-[30px] w-[30px] items-center justify-center self-center rounded-full bg-[var(--cc-solid)] font-serif text-lg font-semibold leading-none text-[var(--cc-on)]">
+                ≠
+              </span>
+              <div className="rounded-[12px] border-[1.5px] border-dashed border-[var(--cc-line-control)] px-6 pb-6 pt-[22px]">
+                <p className="text-xs font-semibold text-[var(--cc-tx-2)]">
+                  Our side
+                </p>
+                <p className="mb-3.5 mt-2.5 text-xl font-bold leading-[1.2]">
+                  Nothing found
+                </p>
+                <p className="text-sm">
+                  No open or paid invoice of{" "}
+                  <CcAmount value={item.amount_idr} />.
+                </p>
+                <p className="mt-0.5 text-sm text-[var(--cc-tx-2)]">
+                  If it is not a client payment, ignore it with a reason.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <TableGroups
+              item={item}
+              situation={situation}
+              candidates={candidates}
+              pick={pick}
+              onPick={onPick}
+            />
+          )}
+        </div>
 
         {formOpen && (
           <div
@@ -404,7 +422,7 @@ export function OpenedTransfer({
             />
             <button
               type="button"
-              className={PRIMARY}
+              className={CC_PRIMARY}
               disabled={locked || !reasonOk}
               onClick={onSendIgnore}
             >
@@ -412,7 +430,7 @@ export function OpenedTransfer({
             </button>
             <button
               type="button"
-              className={TEXT}
+              className={CC_TEXT}
               disabled={locked}
               onClick={onCancelIgnore}
             >
@@ -426,17 +444,24 @@ export function OpenedTransfer({
         )}
 
         {!formOpen && !loading && !failed && candidates !== null && (
-          <div className="mt-[26px] flex items-center gap-4 border-t border-[var(--cc-hair)] pt-[22px]">
-            <p className="flex max-w-[420px] items-start gap-2 text-sm text-[var(--cc-tx-2)]">
-              <Lock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <div
+            data-testid="cc-foot"
+            className={
+              table
+                ? "mt-4 flex flex-none items-center gap-4 border-t border-[var(--cc-hair)] pt-4"
+                : "mt-[26px] flex flex-none items-center gap-4 border-t border-[var(--cc-hair)] pt-[22px]"
+            }
+          >
+            <p className="flex min-w-0 flex-1 items-start gap-2 text-sm text-[var(--cc-tx-2)] [text-wrap:pretty]">
+              <CcGlyph name={noteGlyph} className="mt-0.5 h-4 w-4 flex-none" />
               {note}
             </p>
-            <div className="ml-auto flex items-center gap-1">
+            <div className="ml-auto flex flex-none items-center gap-1">
               {pair ? (
                 <>
                   <button
                     type="button"
-                    className={TEXT}
+                    className={CC_TEXT}
                     disabled={locked}
                     onClick={onChooseAnother}
                   >
@@ -444,7 +469,7 @@ export function OpenedTransfer({
                   </button>
                   <button
                     type="button"
-                    className={TEXT}
+                    className={CC_TEXT}
                     disabled={locked}
                     onClick={onIgnore}
                   >
@@ -452,7 +477,7 @@ export function OpenedTransfer({
                   </button>
                   <button
                     type="button"
-                    className={PRIMARY}
+                    className={CC_PRIMARY}
                     disabled={locked}
                     onClick={situation === "link" ? onLink : onConfirm}
                   >
@@ -465,7 +490,7 @@ export function OpenedTransfer({
                 <>
                   <button
                     type="button"
-                    className={TEXT}
+                    className={CC_TEXT}
                     disabled={locked || rowsCount === 1}
                     onClick={onSkip}
                   >
@@ -473,18 +498,18 @@ export function OpenedTransfer({
                   </button>
                   <button
                     type="button"
-                    className={PRIMARY}
+                    className={CC_PRIMARY}
                     disabled={locked}
                     onClick={onIgnore}
                   >
-                    Ignore
+                    Ignore with a reason
                   </button>
                 </>
               ) : table ? (
                 <>
                   <button
                     type="button"
-                    className={TEXT}
+                    className={CC_TEXT}
                     disabled={locked || rowsCount === 1}
                     onClick={onSkip}
                   >
@@ -492,7 +517,7 @@ export function OpenedTransfer({
                   </button>
                   <button
                     type="button"
-                    className={TEXT}
+                    className={CC_TEXT}
                     disabled={locked}
                     onClick={onIgnore}
                   >
@@ -500,7 +525,7 @@ export function OpenedTransfer({
                   </button>
                   <button
                     type="button"
-                    className={PRIMARY}
+                    className={CC_PRIMARY}
                     disabled={locked || pick === null}
                     onClick={pick?.group === "recorded" ? onLink : onConfirm}
                   >

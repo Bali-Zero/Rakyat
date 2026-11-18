@@ -12,6 +12,8 @@ const componentNames = [
   "ReconciliationViews.tsx",
   "CcAmount.tsx",
   "BankStatementUpload.tsx",
+  "CcGlyph.tsx",
+  "CcArt.tsx",
 ];
 const components = componentNames.map((name) => ({
   name,
@@ -57,6 +59,14 @@ describe("control-centre palette boundary", () => {
       "--cc-link-ink",
       "--cc-choose-ink",
       "--cc-nomatch-ink",
+      "--cc-art-tile",
+      "--cc-art-sky",
+      "--cc-art-sun",
+      "--cc-art-hill1",
+      "--cc-art-hill3",
+      "--cc-art-sheet",
+      "--cc-art-sheet-line",
+      "--cc-art-sheet-head",
     ])
       expect(dark, property).toContain(property);
   });
@@ -86,6 +96,26 @@ describe("control-centre palette boundary", () => {
           `${name}: ${variable}`,
         ).toBe(true);
       }
+    }
+  });
+
+  it("keeps lucide out of glyphs and limits other control-centre imports to Loader2", () => {
+    const glyph = components.find(({ name }) => name === "CcGlyph.tsx");
+    expect(glyph?.source).not.toContain('from "lucide-react"');
+    for (const { name, source } of components) {
+      if (name === "CcGlyph.tsx") continue;
+      const imported = Array.from(
+        source.matchAll(/import\s*\{([^}]*)\}\s*from\s*"lucide-react"/g),
+        (match) =>
+          match[1]
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean),
+      ).flat();
+      expect(
+        imported.every((value) => value === "Loader2"),
+        name,
+      ).toBe(true);
     }
   });
 });

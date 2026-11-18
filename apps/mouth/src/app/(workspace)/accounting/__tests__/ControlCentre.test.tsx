@@ -164,6 +164,17 @@ describe("Accounting control centre", () => {
     expect(screen.getByTestId("cc-count-link")).toHaveTextContent("1");
     expect(screen.getByTestId("cc-count-choose")).toHaveTextContent("2");
     expect(screen.getByTestId("cc-count-nomatch")).toHaveTextContent("1");
+    for (const [key, text] of [
+      ["confirm", "CONTOH TRANSFER ONE"],
+      ["link", "CONTOH TRANSFER TWO"],
+      ["choose", "CONTOH TRANSFER THREE"],
+      ["nomatch", "CONTOH TRANSFER FOUR"],
+    ] as const) {
+      fireEvent.click(tab(key));
+      expect((await screen.findAllByText(text)).length).toBeGreaterThan(0);
+    }
+    fireEvent.click(tab("choose"));
+    expect(await screen.findByText("(no memo)")).toBeInTheDocument();
   });
 
   it("selects the first non-empty tab and applies its situation classes", async () => {
@@ -182,7 +193,7 @@ describe("Accounting control centre", () => {
     renderCentre();
     await ready();
     expect(tab("link")).toBeDisabled();
-    expect(tab("link").querySelector("svg")).not.toBeNull();
+    expect(tab("link").querySelector('[data-glyph="tick"]')).not.toBeNull();
     expect(screen.queryByTestId("cc-count-link")).toBeNull();
   });
 
@@ -240,6 +251,10 @@ describe("Accounting control centre", () => {
     expect(row).toHaveAttribute("aria-current", "true");
     expect(row).toHaveClass("bg-[var(--cc-sel)]");
     expect(within(row).getByTestId("cc-marker")).toBeInTheDocument();
+    fireEvent.click(tab("choose"));
+    const other = screen.getByTestId("inbox-row-5");
+    expect(other).not.toHaveAttribute("aria-current");
+    expect(within(other).queryByTestId("cc-marker")).toBeNull();
   });
 
   it("loads the automatically opened transfer and does not reload on a re-click", async () => {
@@ -264,26 +279,57 @@ describe("Accounting control centre", () => {
     );
   });
 
+  it.each([
+    ["confirm", "One invoice matches this transfer", "confirm", "cc-s-confirm"],
+    ["link", "This payment looks already recorded", "link", "cc-s-link"],
+    ["choose", "Which invoice is this payment for?", "choose", "cc-s-choose"],
+    ["nomatch", "No invoice has this amount", "nomatch", "cc-s-nomatch"],
+  ])(
+    "pins the %s band title, glyph and situation class",
+    async (key, title, glyph, situationClass) => {
+      renderCentre();
+      await ready();
+      fireEvent.click(tab(key));
+      const band = await screen.findByTestId("cc-band");
+      expect(band).toHaveTextContent(title);
+      expect(band.querySelector(`[data-glyph="${glyph}"]`)).not.toBeNull();
+      expect(opened()).toHaveClass(situationClass);
+    },
+  );
+
   it("opens the table without a request when Choose another is clicked", async () => {
     renderCentre();
     await ready();
     await screen.findByText("One invoice matches this transfer");
     const calls = api.getMatchCandidates.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Choose another" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another" }),
+    );
     expect(screen.getByTestId("cc-cand-11")).toBeInTheDocument();
     expect(api.getMatchCandidates).toHaveBeenCalledTimes(calls);
   });
 
-  it("shows every candidate field, reason and the missing-number fallback", async () => {
+  it("shows every candidate field, all reasons and the missing-number fallback", async () => {
     renderCentre();
     await ready();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another" }),
+    );
+    const row = screen.getByTestId("cc-cand-11");
+    expect(row).toHaveTextContent("INV-000000-00001");
+    expect(row).toHaveTextContent("6 Nov");
+    expect(row).toHaveTextContent("Example service");
+    expect(row).toHaveTextContent("PT CONTOH SATU");
+    expect(row).toHaveTextContent("Rp12.500.000");
+    expect(row).toHaveTextContent("same amount · number in memo · same client");
     fireEvent.click(tab("link"));
     await screen.findByText("This payment looks already recorded");
-    fireEvent.click(screen.getByRole("button", { name: "Choose another" }));
-    const row = screen.getByTestId("cc-cand-12");
-    expect(row).toHaveTextContent("No invoice number");
-    expect(row).toHaveTextContent("PT CONTOH DUA");
-    expect(row).toHaveTextContent("same amount");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another" }),
+    );
+    expect(screen.getByTestId("cc-cand-12")).toHaveTextContent(
+      "No invoice number",
+    );
   });
 
   it("preselects nothing on To choose until a radio is chosen", async () => {
@@ -291,23 +337,46 @@ describe("Accounting control centre", () => {
     await ready();
     fireEvent.click(tab("choose"));
     await screen.findByText("Which invoice is this payment for?");
-    const primary = screen.getByRole("button", { name: "Confirm payment" });
+    const primary = await screen.findByRole("button", {
+      name: "Confirm payment",
+    });
     expect(primary).toBeDisabled();
     fireEvent.click(
       within(screen.getByTestId("cc-cand-11")).getByRole("radio"),
     );
-    expect(primary).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Confirm payment" }),
+    ).toBeEnabled();
   });
 
   it("switches the primary label and footer when a recorded candidate is picked", async () => {
+    api.getMatchCandidates.mockImplementation(async (id) =>
+      id === 3
+        ? {
+            ...emptyCandidates(id),
+            candidates: [openCandidate],
+            recorded_candidates: [recordedCandidate],
+          }
+        : emptyCandidates(id),
+    );
     renderCentre();
     await ready();
-    fireEvent.click(tab("link"));
-    await screen.findByText("This payment looks already recorded");
+    fireEvent.click(tab("choose"));
+    await screen.findByText("Which invoice is this payment for?");
+    fireEvent.click(
+      within(screen.getByTestId("cc-cand-12")).getByRole("radio"),
+    );
     expect(
       screen.getByRole("button", { name: "Link, no money moved" }),
     ).toBeInTheDocument();
     expect(opened()).toHaveTextContent("Linking moves no money");
+    fireEvent.click(
+      within(screen.getByTestId("cc-cand-11")).getByRole("radio"),
+    );
+    expect(
+      screen.getByRole("button", { name: "Confirm payment" }),
+    ).toBeInTheDocument();
+    expect(opened()).toHaveTextContent("Confirming records this payment");
   });
 
   it("renders the nothing view for a No match transfer", async () => {
@@ -316,6 +385,15 @@ describe("Accounting control centre", () => {
     fireEvent.click(tab("nomatch"));
     expect(await screen.findByText("Nothing found")).toBeInTheDocument();
     expect(opened()).toHaveTextContent("≠");
+    expect(opened()).toHaveTextContent("Our side");
+    expect(opened()).toHaveTextContent("No open or paid invoice of Rp500.000.");
+    expect(opened()).toHaveTextContent(
+      "If it is not a client payment, ignore it with a reason.",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ignore with a reason" }),
+    );
+    expect(screen.getByTestId("cc-ignore-form")).toBeInTheDocument();
   });
 
   it("wraps Skip for now and disables it for a single row", async () => {
@@ -325,14 +403,58 @@ describe("Accounting control centre", () => {
     await screen.findByText("Which invoice is this payment for?");
     expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
-    expect(screen.getByTestId("inbox-row-5")).toHaveAttribute(
-      "aria-current",
-      "true",
+    await waitFor(() =>
+      expect(screen.getByTestId("inbox-row-5")).toHaveAttribute(
+        "aria-current",
+        "true",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("inbox-row-3")).toHaveAttribute(
+        "aria-current",
+        "true",
+      ),
     );
     fireEvent.click(tab("nomatch"));
     expect(
       await screen.findByRole("button", { name: "Skip for now" }),
     ).toBeDisabled();
+  });
+
+  it("disables TABLE VIEW Skip for now with one row", async () => {
+    api.getReconciliationInbox.mockResolvedValue([rows()[2]]);
+    renderCentre();
+    await screen.findByText("CONTOH TRANSFER THREE");
+    expect(
+      await screen.findByRole("button", { name: "Skip for now" }),
+    ).toBeDisabled();
+  });
+
+  it("forgets Choose another when another transfer opens", async () => {
+    const second = inboxItem({
+      ...rows()[0],
+      txn_id: 6,
+      description: "CONTOH TRANSFER SIX",
+    });
+    api.getReconciliationInbox.mockResolvedValue([rows()[0], second]);
+    api.getMatchCandidates.mockImplementation(async (id) => ({
+      ...emptyCandidates(id),
+      candidates: [openCandidate],
+    }));
+    renderCentre();
+    await ready();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another" }),
+    );
+    expect(screen.getByTestId("cc-cand-11")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("inbox-row-6"));
+    await screen.findAllByText("CONTOH TRANSFER SIX");
+    fireEvent.click(screen.getByTestId("inbox-row-1"));
+    expect(
+      await screen.findByText("One invoice matches this transfer"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("cc-cand-11")).toBeNull();
   });
 
   it("renders Rp separately with the pinned amount classes", async () => {
@@ -352,12 +474,21 @@ describe("Accounting control centre", () => {
     expect(api.getBankTransactions).toHaveBeenCalledWith({ limit: 1 });
   });
 
-  it("shows empty and failed bank-date states", async () => {
+  it("shows the empty bank-date state", async () => {
     api.getBankTransactions.mockResolvedValueOnce([]);
     const first = renderCentre();
     await ready();
     expect(screen.getByText("No bank data yet")).toBeInTheDocument();
     first.onOpenCashout.mockClear();
+  });
+
+  it("shows the failed bank-date state", async () => {
+    api.getBankTransactions.mockRejectedValueOnce(new Error("date failed"));
+    renderCentre();
+    await ready();
+    expect(screen.getByTestId("cc-bank-date")).toHaveTextContent(
+      "Bank data date could not be loaded.",
+    );
   });
 
   it("hides the bank line while its request is loading", async () => {
@@ -416,6 +547,20 @@ describe("Accounting control centre", () => {
     expect(screen.getByTestId("cc-calm")).toHaveTextContent(
       "4 transfers handled",
     );
+    expect(screen.getByTestId("cc-calm")).toHaveTextContent(
+      "Bank data is in through Mon 16 Nov.",
+    );
+    expect(
+      screen.getByRole("button", { name: "See what was done today" }),
+    ).toBeInTheDocument();
+  });
+
+  it("uses calm, not day one, when the bank-date request fails", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    api.getBankTransactions.mockRejectedValue(new Error("date failed"));
+    renderCentre();
+    expect(await screen.findByTestId("cc-calm")).toBeInTheDocument();
+    expect(screen.queryByTestId("cc-dayone")).toBeNull();
   });
 
   it("renders day one without tabs or header trigger and its CTA clicks the input", async () => {
@@ -473,5 +618,102 @@ describe("Accounting control centre", () => {
     expect(api.linkRecorded).not.toHaveBeenCalled();
     expect(api.ignoreTransaction).not.toHaveBeenCalled();
     expect(api.confirm).not.toHaveBeenCalled();
+  });
+
+  it("disables every situation tab without badge or glyph before the first answer", () => {
+    api.getReconciliationInbox.mockReturnValue(new Promise(() => {}));
+    renderCentre();
+    for (const key of ["confirm", "link", "choose", "nomatch"]) {
+      expect(tab(key)).toBeDisabled();
+      expect(tab(key).querySelector("[data-glyph]")).toBeNull();
+      expect(screen.queryByTestId(`cc-count-${key}`)).toBeNull();
+    }
+  });
+
+  it("pins nowrap buttons, footer flex sizing and fixed-height scroll classes", async () => {
+    renderCentre();
+    await ready();
+    await screen.findByTestId("cc-foot");
+    for (const testId of ["cc-header", "cc-opened", "cc-foot"]) {
+      const container = screen.getByTestId(testId);
+      for (const button of within(container).getAllByRole("button"))
+        expect(button).toHaveClass("shrink-0", "whitespace-nowrap");
+    }
+    const foot = screen.getByTestId("cc-foot");
+    expect(foot.firstElementChild).toHaveClass("flex-1", "min-w-0");
+    expect(foot.lastElementChild).toHaveClass("flex-none");
+    expect(screen.getByTestId("cc-work")).toHaveClass(
+      "h-[550px]",
+      "grid-rows-[minmax(0,1fr)]",
+    );
+    expect(screen.getByRole("list", { name: "Transfers" })).toHaveClass(
+      "min-h-0",
+      "overflow-y-auto",
+    );
+    expect(screen.getByTestId("cc-scroll")).toHaveClass(
+      "min-h-0",
+      "flex-1",
+      "overflow-y-auto",
+    );
+  });
+
+  it("pins calm and day-one art and button classes", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    renderCentre();
+    const calm = await screen.findByTestId("cc-calm");
+    expect(calm.querySelector('[data-art="calm"]')).not.toBeNull();
+    for (const button of within(calm).getAllByRole("button"))
+      expect(button).toHaveClass("shrink-0", "whitespace-nowrap");
+  });
+
+  it("pins day-one art and CTA button classes", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    api.getBankTransactions.mockResolvedValue([]);
+    renderCentre();
+    const dayone = await screen.findByTestId("cc-dayone");
+    expect(dayone.querySelector('[data-art="dayone"]')).not.toBeNull();
+    for (const button of within(dayone).getAllByRole("button"))
+      expect(button).toHaveClass("shrink-0", "whitespace-nowrap");
+  });
+
+  it("uses mock glyphs in tabs, band, footer, header and cash-out card", async () => {
+    renderCentre();
+    await ready();
+    await screen.findByTestId("cc-foot");
+    expect(
+      screen.getByTestId("cc-band").querySelector('[data-glyph="confirm"]'),
+    ).not.toBeNull();
+    expect(
+      screen.getByTestId("cc-foot").querySelector('[data-glyph="lock"]'),
+    ).not.toBeNull();
+    expect(
+      screen.getByTestId("cc-header").querySelector('[data-glyph="upload"]'),
+    ).not.toBeNull();
+    expect(
+      screen.getByTestId("cc-cashout-card").querySelector('[data-glyph="out"]'),
+    ).not.toBeNull();
+    fireEvent.click(tab("link"));
+    await screen.findByText("This payment looks already recorded");
+    expect(
+      screen.getByTestId("cc-foot").querySelector('[data-glyph="undo"]'),
+    ).not.toBeNull();
+  });
+
+  it("renders cc-more with only the cash-out card", async () => {
+    renderCentre();
+    await ready();
+    const more = screen.getByTestId("cc-more");
+    expect(more.children).toHaveLength(1);
+    expect(more.firstElementChild).toBe(screen.getByTestId("cc-cashout-card"));
+  });
+
+  it("pins compact candidate row and reasons classes", async () => {
+    renderCentre();
+    await ready();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another" }),
+    );
+    expect(screen.getByTestId("cc-cand-11")).toHaveClass("min-h-10", "py-1");
+    expect(screen.getByTestId("cc-reasons-11")).toHaveClass("leading-4");
   });
 });
