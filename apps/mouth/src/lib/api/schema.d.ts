@@ -16885,7 +16885,7 @@ export interface paths {
      * Assign Lkpm Report
      * @description Assign (or unassign) an LKPM report to a tax consultant.
      *
-     *     RBAC: any CRM admin OR any of the 5 tax consultants in LKPM_ASSIGNEES.
+     *     RBAC: any CRM admin OR anyone in LKPM_ASSIGNEES.
      *     The tax team is collaborative — Veronika/Kadek/Dewa Ayu/Angel/Faisha
      *     can re-route reports between themselves without going through an admin.
      *     Users outside both groups get 403.

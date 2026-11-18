@@ -63,6 +63,9 @@ LKPM_ASSIGNEES: set[str] = {
     # handover ("Handle BY: Krisna"). He doesn't have a .tax@ sub-alias,
     # so we whitelist his main inbox.
     "krisna@balizero.com",
+    # Owner decision 2026-11-18: Dea and Candra join the LKPM team (main inbox, no .tax@ alias, like Krisna).
+    "dea@balizero.com",
+    "candra@balizero.com",
 }
 
 
@@ -787,7 +790,7 @@ async def assign_lkpm_report(
     """
     Assign (or unassign) an LKPM report to a tax consultant.
 
-    RBAC: any CRM admin OR any of the 5 tax consultants in LKPM_ASSIGNEES.
+    RBAC: any CRM admin OR anyone in LKPM_ASSIGNEES.
     The tax team is collaborative — Veronika/Kadek/Dewa Ayu/Angel/Faisha
     can re-route reports between themselves without going through an admin.
     Users outside both groups get 403.
@@ -862,7 +865,7 @@ async def get_oss_credentials(
     is_admin = is_crm_admin(current_user)
     is_tax_consultant = user_email in LKPM_ASSIGNEES
 
-    # The tax team is collaborative: any of the 5 tax consultants can read
+    # The tax team is collaborative: anyone in LKPM_ASSIGNEES can read
     # credentials for any PMA, regardless of who is assigned to a specific
     # report. Avoids the catch-22 where consultants couldn't read until an
     # admin assigned them. Admins also pass.
