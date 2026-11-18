@@ -53,6 +53,7 @@ from backend.services.crm.related_names import (
 )
 from backend.services.crm.related_subjects import REGISTRY_ACTOR, prepare_identifiers
 from backend.services.monitoring.activity_logger import activity_logger
+from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
 
 MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
 MIGRATION_NAMES = MIGRATIONS / "365_related_subject_names.sql"
@@ -144,8 +145,18 @@ async def pool(writes):
         pytest.fail("A test database or isolated test worker is required")
     schema = "related_names_" + uuid4().hex
     await admin.execute(f'CREATE SCHEMA "{schema}"')
+    # Production-shaped: the same `init` hook every production pool registers (the jsonb codec) and
+    # the other settings both production pools share. The factory of prod_shaped_pool.py takes no
+    # `server_settings`, which this module needs for its per-test schema, so the pool is built here
+    # from the factory's own init hook instead of a copy of it.
     created = await asyncpg.create_pool(
-        dsn, min_size=1, max_size=6, server_settings={"search_path": schema}
+        dsn,
+        min_size=1,
+        max_size=6,
+        server_settings={"search_path": schema},
+        init=init_prod_shaped_connection,
+        statement_cache_size=0,
+        max_inactive_connection_lifetime=30.0,
     )
     try:
         async with created.acquire() as c:
@@ -362,18 +373,18 @@ async def test_n1_migration_table_constraints_cascade_and_rollback(pool, conn):
         "VALUES ($1, $2, $3, $4::jsonb, 'zz')"
     )
     async with unmeasured(conn):
-        await conn.execute(insert, sid, "ZZ ALPHA", "ocr_single", "{}")
+        await conn.execute(insert, sid, "ZZ ALPHA", "ocr_single", {})
         # the database accepts what a later slice will write
-        await conn.execute(insert, sid, "ZZ ALPHA", "manual", "{}")
+        await conn.execute(insert, sid, "ZZ ALPHA", "manual", {})
         refused = [
-            (asyncpg.CheckViolationError, (sid, "ZZ BETA", "guessed", "{}")),
-            (asyncpg.UniqueViolationError, (sid, "ZZ ALPHA", "ocr_single", "{}")),
-            (asyncpg.CheckViolationError, (sid, "", "ocr_single", "{}")),
-            (asyncpg.CheckViolationError, (sid, " ZZ BETA", "ocr_single", "{}")),
-            (asyncpg.CheckViolationError, (sid, "ZZ BETA ", "ocr_single", "{}")),
-            (asyncpg.CheckViolationError, (sid, "Z" * 201, "ocr_single", "{}")),
-            (asyncpg.CheckViolationError, (sid, "ZZ BETA", "ocr_single", "[]")),
-            (asyncpg.ForeignKeyViolationError, (sid + 999, "ZZ BETA", "ocr_single", "{}")),
+            (asyncpg.CheckViolationError, (sid, "ZZ BETA", "guessed", {})),
+            (asyncpg.UniqueViolationError, (sid, "ZZ ALPHA", "ocr_single", {})),
+            (asyncpg.CheckViolationError, (sid, "", "ocr_single", {})),
+            (asyncpg.CheckViolationError, (sid, " ZZ BETA", "ocr_single", {})),
+            (asyncpg.CheckViolationError, (sid, "ZZ BETA ", "ocr_single", {})),
+            (asyncpg.CheckViolationError, (sid, "Z" * 201, "ocr_single", {})),
+            (asyncpg.CheckViolationError, (sid, "ZZ BETA", "ocr_single", [])),
+            (asyncpg.ForeignKeyViolationError, (sid + 999, "ZZ BETA", "ocr_single", {})),
         ]
         for error, args in refused:
             with pytest.raises(error):
@@ -391,7 +402,7 @@ async def test_n1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "INSERT INTO related_subjects (kind, evidence, created_by) "
             "VALUES ('person', '{}'::jsonb, 'zz') RETURNING id"
         )
-        await conn.execute(insert, other, "ZZ KEEP", "ocr_single", "{}")
+        await conn.execute(insert, other, "ZZ KEEP", "ocr_single", {})
         await conn.execute("DELETE FROM related_subjects WHERE id = $1", sid)
         assert [r["name"] for r in await name_rows(conn)] == ["ZZ KEEP"]
 
@@ -508,13 +519,13 @@ async def test_n3_apply_writes_normalised_names_with_the_server_actor(client, co
         ("ZZ ALPHA BETA", "ocr_single"),
     ]
     assert {r["created_by"] for r in rows} == {REGISTRY_ACTOR}
-    assert json.loads(rows[0]["evidence"]) == {
+    assert rows[0]["evidence"] == {
         "plan_sha256": PLAN,
         "files": 3,
         "blobs": 2,
         "mrz_valid": False,
     }
-    assert isinstance(json.loads(rows[1]["evidence"]), dict)
+    assert isinstance(rows[1]["evidence"], dict)
 
 
 @pytest.mark.asyncio
@@ -604,8 +615,8 @@ async def test_n4_a_repeat_with_other_evidence_numbers_leaves_the_stored_evidenc
     )
     assert again.json()["recorded"] == 0 and again.json()["already_recorded"] == 1
     after = (await name_rows(conn, sid))[0]
-    assert json.loads(after["evidence"]) == json.loads(stored["evidence"])
-    assert json.loads(after["evidence"])["files"] == 2
+    assert after["evidence"] == stored["evidence"]
+    assert after["evidence"]["files"] == 2
     assert after["id"] == stored["id"]
 
 
@@ -1786,3 +1797,64 @@ async def test_n13_the_read_routes_log_no_name(admin, conn, caplog):
     assert "zzreadprobe" not in text and PROBE_ID.casefold() not in text
     audit = await conn.fetch("SELECT query_params, request_body FROM api_audit_trail")
     assert "zzreadprobe" not in " ".join(str(dict(r)) for r in audit).casefold()
+
+
+# ── N15: the production jsonb codec ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_n15_guard_the_module_pool_carries_the_production_jsonb_codec(conn):
+    # a native container round-trips as itself; a pre-serialised string comes back as a STRING,
+    # which is the double-encoding signature of the 2026-08-27 incident class
+    assert await conn.fetchval("SELECT $1::jsonb", {"a": 1}) == {"a": 1}
+    assert await conn.fetchval("SELECT $1::jsonb", '{"a": 1}') == '{"a": 1}'
+    assert await conn.fetchval("SELECT jsonb_typeof($1::jsonb)", '{"a": 1}') == "string"
+
+
+@pytest.mark.asyncio
+async def test_n15_a_written_row_holds_a_jsonb_object_with_the_evidence_sent(client, conn, writes):
+    writes.add(NAMES_INSERT)
+    sid = await seed_subject(conn, "person", None, [("passport", P1)])
+    resp = await post(
+        client,
+        payload(
+            [
+                entry("zz alpha", "ocr_corroborated", files=5, blobs=3),
+                entry("zz beta", "ocr_corroborated", files=1, blobs=1, mrz=True),
+            ]
+        ),
+    )
+    assert resp.json()["recorded"] == 2
+    rows = await conn.fetch(
+        "SELECT name, jsonb_typeof(evidence) AS kind, evidence->>'plan_sha256' AS plan, "
+        "(evidence->>'files')::int AS files, (evidence->>'blobs')::int AS blobs, "
+        "(evidence->>'mrz_valid')::boolean AS mrz FROM related_subject_names "
+        "WHERE subject_id = $1 ORDER BY name",
+        sid,
+    )
+    assert [(r["name"], r["kind"], r["plan"], r["files"], r["blobs"], r["mrz"]) for r in rows] == [
+        ("ZZ ALPHA", "object", PLAN, 5, 3, False),
+        ("ZZ BETA", "object", PLAN, 1, 1, True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_n15_a_row_written_through_the_route_is_read_back_by_the_detail_route(
+    admin, enabled, conn, writes
+):
+    writes.add(NAMES_INSERT)
+    sid = await seed_subject(conn, "person", None, [("passport", P1)])
+    resp = await post(admin, payload([entry("zz alpha", "ocr_corroborated")]))
+    assert resp.json() == {
+        "outcome": "recorded",
+        "subject_id": sid,
+        "recorded": 1,
+        "already_recorded": 0,
+        "dry_run": False,
+    }
+    detail = (await admin.get(f"{READ}/{sid}")).json()
+    assert detail["display_name"] == "ZZ ALPHA" and detail["name_source"] == "ocr_corroborated"
+    assert [(n["name"], n["source"]) for n in detail["names"]] == [("ZZ ALPHA", "ocr_corroborated")]
+    assert detail["names_total"] == 1
+    listed = (await admin.get(READ, params={"q": "alpha"})).json()["items"]
+    assert [r["id"] for r in listed] == [sid]
