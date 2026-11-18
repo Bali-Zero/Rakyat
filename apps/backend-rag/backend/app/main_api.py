@@ -211,6 +211,16 @@ _OP04_SWEEP_LIMIT = 200
 _ALARM_SEND_TIMEOUT_SECONDS = 20.0
 
 
+def _admin_alarm_recipient(settings) -> str:
+    """The alarm recipient: a non-blank `ADMIN_NOTIFICATION_EMAIL` env value wins,
+    anything blank falls back to `settings.admin_notification_email`. A blank
+    value used to win and mute both alarms."""
+    return (
+        os.environ.get("ADMIN_NOTIFICATION_EMAIL", "").strip()
+        or (settings.admin_notification_email or "").strip()
+    )
+
+
 async def _send_outbox_alarm(client: "httpx.AsyncClient", text: str) -> bool:  # noqa: F821
     """Best-effort internal operational page for GARUDA outbox backlogs. NEVER raises.
 
@@ -246,11 +256,7 @@ async def _send_outbox_alarm(client: "httpx.AsyncClient", text: str) -> bool:  #
         )
         return False
 
-    recipient = (
-        os.environ["ADMIN_NOTIFICATION_EMAIL"]
-        if "ADMIN_NOTIFICATION_EMAIL" in os.environ
-        else settings.admin_notification_email
-    ).strip()
+    recipient = _admin_alarm_recipient(settings)
     api_key = os.getenv("NUZANTARA_API_KEY", "").strip()
     if not recipient or not api_key:
         logger.error(
@@ -307,11 +313,7 @@ async def _send_quarantine_alarm(client: "httpx.AsyncClient", text: str) -> bool
         )
         return False
 
-    recipient = (
-        os.environ["ADMIN_NOTIFICATION_EMAIL"]
-        if "ADMIN_NOTIFICATION_EMAIL" in os.environ
-        else settings.admin_notification_email
-    ).strip()
+    recipient = _admin_alarm_recipient(settings)
     api_key = os.getenv("NUZANTARA_API_KEY", "").strip()
     if not recipient or not api_key:
         logger.error(

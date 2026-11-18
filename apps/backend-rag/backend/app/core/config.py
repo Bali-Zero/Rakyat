@@ -1119,6 +1119,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    @field_validator("admin_notification_email", mode="before")
+    @classmethod
+    def blank_admin_notification_email_keeps_default(cls, v: Any) -> Any:
+        """A blank `ADMIN_NOTIFICATION_EMAIL` (e.g. an empty Fly secret) would
+        otherwise replace the default with "" and silently mute every consumer:
+        the GARUDA alarms, the stale-practice digest and the welcome BCC."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return cls.model_fields["admin_notification_email"].default
+        return v.strip() if isinstance(v, str) else v
+
     # Historical default preserved when ADMIN_EMAILS is unset. The intent is that
     # ADMIN_EMAILS should always be set explicitly in production; this fallback
     # only matters for local dev where the routers still need to start.

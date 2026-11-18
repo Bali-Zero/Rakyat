@@ -673,8 +673,13 @@ async def test_the_real_sender_reports_delivery_truthfully(
     suppression hour again.
     """
 
+    from backend.app.core.config import settings
+
     monkeypatch.setenv("NUZANTARA_API_KEY", api_key)
     monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", recipient)
+    # A blank env value now falls back to settings; blank that too so the blank
+    # rows still prove "no recipient anywhere -> zero wire calls".
+    monkeypatch.setattr(settings, "admin_notification_email", "")
 
     requests_seen: list[httpx.Request] = []
 
@@ -833,8 +838,13 @@ async def test_the_real_OUTBOX_sender_reports_delivery_truthfully(
     False with zero wire calls so `confirm_sent` is never falsely armed.
     """
 
+    from backend.app.core.config import settings
+
     monkeypatch.setenv("NUZANTARA_API_KEY", api_key)
     monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", recipient)
+    # A blank env value now falls back to settings; blank that too so the blank
+    # rows still prove "no recipient anywhere -> zero wire calls".
+    monkeypatch.setattr(settings, "admin_notification_email", "")
 
     requests_seen: list[httpx.Request] = []
 
@@ -1023,3 +1033,33 @@ async def test_a_pass_that_fills_its_own_limit_says_the_backlog_is_not_drained(
         await _drive_one_tick(monkeypatch, repository=object(), conn=_LockConn(), sweep=sweep)
 
     assert any("backlog not drained" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+async def test_a_blank_env_recipient_falls_back_to_settings_for_both_alarms(
+    monkeypatch, blank
+) -> None:
+    """A blank `ADMIN_NOTIFICATION_EMAIL` (an empty Fly secret) used to win over
+    `settings.admin_notification_email` and mute both alarms."""
+
+    from backend.app.core.config import settings
+
+    monkeypatch.setenv("NUZANTARA_API_KEY", "test-nuz-key")
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", blank)
+    monkeypatch.setattr(settings, "admin_notification_email", "ops-fallback-beta")
+
+    recipients: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recipients.append(json.loads(request.read().decode())["to"])
+        return httpx.Response(200, json={"success": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        outbox_ok = await main_api._send_outbox_alarm(client, "GARUDA outbox summary")
+        quarantine_ok = await main_api._send_quarantine_alarm(
+            client, "GARUDA quarantine summary"
+        )
+
+    assert outbox_ok is True
+    assert quarantine_ok is True
+    assert recipients == ["ops-fallback-beta", "ops-fallback-beta"]

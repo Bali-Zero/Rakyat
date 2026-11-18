@@ -2,6 +2,8 @@
 Unit tests for app/core/config.py database URL resolution.
 """
 
+import pytest
+
 from backend.app.core.config import Settings
 
 
@@ -175,3 +177,25 @@ def test_migration_database_url_normalizes_postgres_scheme(monkeypatch):
     assert settings.migration_database_url == (
         "postgresql://backend_rag_migrator:uxxx14@dxxxxxxxxxxxxxxxx1.flycast:5432/nuzantara_rag"
     )
+
+
+# --- a blank ADMIN_NOTIFICATION_EMAIL must not mute its consumers ---------------
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t"])
+def test_blank_admin_notification_email_keeps_the_default(monkeypatch, blank):
+    """An empty Fly secret used to replace the default with "" and mute the GARUDA
+    alarms, the stale-practice digest and the welcome BCC at once."""
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", blank)
+    settings = Settings(_env_file=None)
+    default = Settings.model_fields["admin_notification_email"].default
+    assert default.strip()
+    assert settings.admin_notification_email == default
+
+
+def test_admin_notification_email_is_taken_trimmed(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", "  ops-dest-alpha@example.invalid ")
+    settings = Settings(_env_file=None)
+    assert settings.admin_notification_email == "ops-dest-alpha@example.invalid"
