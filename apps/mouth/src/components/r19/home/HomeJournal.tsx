@@ -1,5 +1,6 @@
 import { getAllArticles, getPinnedMdxArticles } from "@/lib/blog/articles";
 import homepageLayout from "@/content/homepage-layout.json";
+import Link from "next/link";
 import { Journal } from "./Journal";
 import {
   insightSlots,
@@ -58,10 +59,10 @@ export function JournalPending() {
             must read as content, not as a placeholder: a crawler kept
             "Loading the latest stories…" as homepage copy. */}
         <p>
-          <a className="textlink" href="/news">
+          <Link className="textlink" href="/news">
             Read the latest stories in the Journal{" "}
             <span aria-hidden="true">↗</span>
-          </a>
+          </Link>
         </p>
       </section>
     </div>
