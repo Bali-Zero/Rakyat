@@ -1,7 +1,8 @@
 """Registry of related people and companies: POST /api/crm/related-subjects/register (slice 1),
 POST /api/crm/related-subjects/documents/register (slice 2, documents by reference) and
 POST /api/crm/related-subjects/names/register (slice 4A, recorded names) and
-POST /api/crm/related-subjects/links/register (slice 4B, proposed client links).
+POST /api/crm/related-subjects/links/register (slice 4B, proposed client links) and
+POST /api/crm/related-subjects/merges/register (slice 4C, merges of two subjects).
 
 Auth: scoped ``X-CRM-Write-Key`` plus ``RELATED_SUBJECT_REGISTRY_ENABLED`` (default off, 503).
 
@@ -47,6 +48,7 @@ from backend.services.crm.related_documents import (
 )
 from backend.services.crm.related_identifiers import MAX_RAW_LENGTH, InvalidIdentifier, canonicalize
 from backend.services.crm.related_links import LinkEntry, LinksInput, record_links
+from backend.services.crm.related_merges import MergeInput, MergeSide, record_merge
 from backend.services.crm.related_names import (
     MAX_RAW_NAME,
     InvalidName,
@@ -506,6 +508,55 @@ class RelatedLinksRegisterRequest(_Strict):
         )
 
 
+# ── slice 4C: merges ──────────────────────────────────────────────────────────
+
+# Slice 4C has closed lists of its own; the lists above are not widened.
+_MERGES_LOC = frozenset(
+    {
+        "body",
+        "source",
+        "target",
+        "kind",
+        "identifiers",
+        "type",
+        "value",
+        "basis",
+        "evidence",
+        "plan_sha256",
+        "files",
+        "dry_run",
+    }
+)
+_MERGES_CODE = _NAMES_CODE - {
+    "invalid_name",
+    "blobs_above_files",
+    "evidence_source_mismatch",
+    "duplicate_name",
+}
+_MERGES_INDEX_LIMIT = {"identifiers": MAX_KEYS}
+
+
+class _MergeEvidence(_Strict):
+    plan_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    files: Annotated[int, Field(ge=1, le=MAX_COUNT)]
+
+
+class RelatedMergesRegisterRequest(_Strict):
+    source: _SubjectKeys
+    target: _SubjectKeys
+    basis: Literal["permit_stamp"]
+    evidence: _MergeEvidence
+    dry_run: StrictBool = True
+
+    def to_input(self) -> MergeInput:
+        return MergeInput(
+            source=MergeSide(self.source.kind, self.source.prepared()),
+            target=MergeSide(self.target.kind, self.target.prepared()),
+            basis=self.basis,
+            evidence=self.evidence.model_dump(),
+        )
+
+
 # Fixed answers: the whole failure surface is these constants. No status, code or text taken
 # from an exception or from the request ever reaches an answer.
 _ANSWER_BODIES: dict[str, bytes] = {
@@ -601,6 +652,22 @@ def _invalid_links(errors: list[dict[str, Any]]) -> Response:
                 loc.append(part if part in _LINKS_LOC else "_")
         code = err.get("type")
         items.append({"loc": loc, "code": code if code in _LINKS_CODE else "invalid"})
+    return _fixed(422, items)
+
+
+def _invalid_merges(errors: list[dict[str, Any]]) -> Response:
+    """422 body of the merges route: closed lists of its own, never an input or a message."""
+    items = []
+    for err in errors[:50]:
+        loc: list[Any] = []
+        for part in err.get("loc", ()):
+            limit = _MERGES_INDEX_LIMIT.get(loc[-1]) if loc else None
+            if isinstance(part, int) and not isinstance(part, bool):
+                loc.append(part if limit is not None and 0 <= part < limit else "_")
+            else:
+                loc.append(part if part in _MERGES_LOC else "_")
+        code = err.get("type")
+        items.append({"loc": loc, "code": code if code in _MERGES_CODE else "invalid"})
     return _fixed(422, items)
 
 
@@ -737,4 +804,25 @@ async def register_related_subject_links(
         )
     async with db_pool.acquire() as conn:
         result = await record_links(conn, payload.to_input(), dry_run=payload.dry_run)
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.post("/merges/register", response_model=None)
+async def register_related_subject_merge(
+    request: Request,
+    _actor: str = Depends(verify_related_subject_write),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Record that one registered subject is another (dry run by default). Answers carry ids only."""
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _invalid_merges([{"loc": ("body",), "type": "too_long"}])
+    try:
+        payload = RelatedMergesRegisterRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        return _invalid_merges(
+            exc.errors(include_input=False, include_context=False, include_url=False)
+        )
+    async with db_pool.acquire() as conn:
+        result = await record_merge(conn, payload.to_input(), dry_run=payload.dry_run)
     return JSONResponse(status_code=200, content=result)

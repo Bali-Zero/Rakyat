@@ -1482,6 +1482,7 @@ def test_n14_the_route_is_registered_where_the_two_existing_ones_are():
         ("/api/crm/related-subjects/documents/register", ("POST",)),
         ("/api/crm/related-subjects/names/register", ("POST",)),
         ("/api/crm/related-subjects/links/register", ("POST",)),
+        ("/api/crm/related-subjects/merges/register", ("POST",)),
     }
     assert route_module.router.route_class is route_module._SealedRoute
 

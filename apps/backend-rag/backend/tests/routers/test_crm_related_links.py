@@ -1534,18 +1534,19 @@ def test_l12_static_census_is_ten_plain_selects_and_the_guarded_name():
 
 # ── L14: registration, public entry, existing routes ──────────────────────────
 
-FOUR_PATHS = {
+FIVE_PATHS = {
     ("/api/crm/related-subjects/register", ("POST",)),
     ("/api/crm/related-subjects/documents/register", ("POST",)),
     ("/api/crm/related-subjects/names/register", ("POST",)),
     ("/api/crm/related-subjects/links/register", ("POST",)),
+    ("/api/crm/related-subjects/merges/register", ("POST",)),
 }
 
 
 def test_l14_the_route_is_registered_in_the_sealed_router():
     assert len([e for e in ROUTER_MANIFEST if e.name == "crm_related_subjects"]) == 1
     paths = {(r.path, tuple(sorted(r.methods))) for r in route_module.router.routes}
-    assert paths == FOUR_PATHS
+    assert paths == FIVE_PATHS
     assert route_module.router.route_class is route_module._SealedRoute
 
 
