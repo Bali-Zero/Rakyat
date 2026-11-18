@@ -43,12 +43,24 @@ describe("navigation — the six visible rail sections", () => {
     expect(routeTitles["/obligations"]).toBe("Obligations");
   });
 
-  it("has exactly 13 visible non-ownerOnly items, because the rail numbers them 01-13", () => {
-    const count = visibleSections.reduce(
-      (total, section) => total + section.items.length,
-      0,
-    );
+  it("has exactly 13 visible non-ownerOnly items for everyone, because the rail numbers them 01-13", () => {
+    const count = visibleSections
+      .flatMap((section) => section.items)
+      .filter((item) => !item.accountingOnly).length;
     expect(count).toBe(13);
+  });
+
+  it("carries one accountingOnly Accounting item, last in OPERATIONS, and none in the owner-only section", () => {
+    const operations = visibleSections.find((s) => s.title === "OPERATIONS");
+    expect(operations?.items.slice(-1)[0]).toMatchObject({
+      title: "Accounting",
+      href: "/accounting",
+      accountingOnly: true,
+    });
+    const ownerOnly = navigation.filter((section) => section.ownerOnly);
+    expect(ownerOnly.length).toBeGreaterThan(0);
+    const hrefs = ownerOnly.flatMap((s) => s.items.map((i) => i.href));
+    expect(hrefs).not.toContain("/accounting");
   });
 
   it("GUILT: the missing-routeTitle detector fires on a planted href without an entry", () => {

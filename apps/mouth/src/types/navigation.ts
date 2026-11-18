@@ -8,6 +8,11 @@ export interface NavItem {
   children?: NavItem[];
   roles?: string[]; // Role-based access
   external?: boolean; // Opens in new tab / external subdomain
+  // When true, AppSidebar shows the item to the owner always, and to anyone
+  // else only once the server says they are an accounting admin (GET
+  // /api/hr/me/capabilities); pending or failed means hidden. The server still
+  // enforces access on every accounting route; this only decides the offer.
+  accountingOnly?: boolean;
 }
 
 export interface NavSection {
@@ -39,7 +44,9 @@ export interface BreadcrumbItem {
 
 // Navigation configuration — six titled sections (R19K rail, SAETTA-R19K
 // K1c-bis). The rail numbers visible non-ownerOnly items 01..13 running
-// across these six sections in this exact order; regrouping an item moves
+// across these six sections in this exact order (14 for the owner
+// and accounting admins: the accountingOnly item takes its place in order and
+// shifts the later ones by one); regrouping an item moves
 // its ordinal, so keep the section order and the item order inside each
 // section stable unless the rail spec changes too.
 export const navigation: NavSection[] = [
@@ -64,6 +71,12 @@ export const navigation: NavSection[] = [
       { title: "Review", href: "/review", icon: "ClipboardCheck" },
       { title: "Obligations", href: "/obligations", icon: "Receipt" },
       { title: "LKPM", href: "/lkpm", icon: "ClipboardCheck" },
+      {
+        title: "Accounting",
+        href: "/accounting",
+        icon: "Banknote",
+        accountingOnly: true,
+      },
     ],
   },
   {
@@ -108,7 +121,6 @@ export const navigation: NavSection[] = [
     // owner decides which stay, get merged elsewhere, or get cut.
     ownerOnly: true,
     items: [
-      { title: "Accounting", href: "/accounting", icon: "Banknote" },
       {
         title: "Funnel Analytics",
         href: "/analytics/funnel",

@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getCapabilities, type HrCapabilities } from "@/lib/api/hr/hr";
 import { AppSidebar } from "./AppSidebar";
 import { navigation } from "@/types/navigation";
 
@@ -27,6 +28,29 @@ vi.mock("next/link", () => ({
 vi.mock("next/navigation", () => ({
   usePathname: () => "/dashboard",
 }));
+
+vi.mock("@/lib/api/hr/hr", () => ({
+  getCapabilities: vi.fn(),
+}));
+
+const mockedGetCapabilities = vi.mocked(getCapabilities);
+
+function capabilities(accounting_admin: boolean): HrCapabilities {
+  return {
+    hr_admin: false,
+    accounting_admin,
+    has_employee_record: false,
+    people_scope: null,
+    hr_edit: false,
+    hr_card_write: false,
+    hr_payroll_write: false,
+  };
+}
+
+beforeEach(() => {
+  mockedGetCapabilities.mockReset();
+  mockedGetCapabilities.mockResolvedValue(capabilities(false));
+});
 
 describe("AppSidebar", () => {
   it("marks the active workspace item with the R19 copper left rule, not a fill", () => {
@@ -265,7 +289,7 @@ describe("AppSidebar", () => {
   it("numbers visible items 01..13 across groups without restarting per group", () => {
     const { container } = render(
       <AppSidebar
-        user={{ name: "Zero", email: "zero@balizero.com" }}
+        user={{ name: "Zero", email: "staff@example.test" }}
         onLogout={() => undefined}
         navigationConfig={navigation}
       />,
@@ -366,10 +390,10 @@ describe("AppSidebar", () => {
         navigationConfig={navigation}
       />,
     );
-    // "Accounting" is the first Da fare item: its row carries no
+    // "Funnel Analytics" is the first Da fare item: its row carries no
     // aria-hidden ordinal glyph at all, not even an empty one.
-    const accounting = screen.getByRole("link", { name: "Accounting" });
-    expect(accounting.querySelector('[aria-hidden="true"]')).toBeNull();
+    const funnel = screen.getByRole("link", { name: "Funnel Analytics" });
+    expect(funnel.querySelector('[aria-hidden="true"]')).toBeNull();
   });
 
   it("the active row takes the copper rule and the active wash", () => {
@@ -527,5 +551,166 @@ describe("AppSidebar workspace logo (kita visual refresh)", () => {
     expect(img).not.toBeNull();
     expect(img!.getAttribute("src") ?? "").toContain("logo.webp");
     expect(img!.getAttribute("src") ?? "").not.toContain("balizero-logo-clean");
+  });
+});
+
+describe("AppSidebar accounting entry", () => {
+  const renderSidebar = (email = "member@example.test") =>
+    render(
+      <AppSidebar
+        user={{ name: "Member", email }}
+        onLogout={() => undefined}
+        navigationConfig={navigation}
+      />,
+    );
+
+  const ordinals = (container: HTMLElement) =>
+    [...container.querySelectorAll("nav a[href]")]
+      .map((a) => a.querySelector('[aria-hidden="true"]')?.textContent ?? "")
+      .filter((n) => /^\d\d$/.test(n));
+
+  const consecutive = (list: string[]) =>
+    list.map((_, i) => String(i + 1).padStart(2, "0"));
+
+  it("an accounting admin sees Accounting under OPERATIONS, linking /accounting", async () => {
+    mockedGetCapabilities.mockResolvedValue(capabilities(true));
+    const { container } = renderSidebar();
+    const link = await screen.findByRole("link", { name: "Accounting" });
+    expect(link).toHaveAttribute("href", "/accounting");
+    const text = container.textContent ?? "";
+    expect(text.indexOf("OPERATIONS")).toBeLessThan(text.indexOf("Accounting"));
+    expect(text.indexOf("Accounting")).toBeLessThan(
+      text.indexOf("INTELLIGENCE"),
+    );
+  });
+
+  it("someone who is not an accounting admin has no Accounting link", async () => {
+    renderSidebar();
+    await waitFor(() => expect(mockedGetCapabilities).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("link", { name: "Accounting" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("before the capabilities answer there is no Accounting link", () => {
+    mockedGetCapabilities.mockReturnValue(new Promise(() => undefined));
+    renderSidebar();
+    expect(
+      screen.queryByRole("link", { name: "Accounting" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("when the capabilities request fails there is no Accounting link", async () => {
+    mockedGetCapabilities.mockRejectedValue(new Error("boom"));
+    renderSidebar();
+    await waitFor(() => expect(mockedGetCapabilities).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(
+      screen.queryByRole("link", { name: "Accounting" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ordinals stay consecutive without the item (01..13) and with it (01..14)", async () => {
+    const without = renderSidebar();
+    await waitFor(() => expect(mockedGetCapabilities).toHaveBeenCalled());
+    const a = ordinals(without.container);
+    expect(a).toHaveLength(13);
+    expect(a).toEqual(consecutive(a));
+    without.unmount();
+
+    mockedGetCapabilities.mockResolvedValue(capabilities(true));
+    const withItem = renderSidebar();
+    await screen.findByRole("link", { name: "Accounting" });
+    const b = ordinals(withItem.container);
+    expect(b).toHaveLength(14);
+    expect(b).toEqual(consecutive(b));
+    const rows = [...withItem.container.querySelectorAll("nav a[href]")].map(
+      (el) => el.getAttribute("href"),
+    );
+    // Accounting takes slot 09; the later items shift by one.
+    expect(rows.indexOf("/accounting")).toBe(8);
+    expect(rows[9]).toBe("https://knowledge.balizero.com");
+  });
+
+  describe("the owner", () => {
+    const OWNER = "zero@balizero.com";
+    const states: [string, () => void][] = [
+      [
+        "pending",
+        () =>
+          mockedGetCapabilities.mockReturnValue(new Promise(() => undefined)),
+      ],
+      [
+        "answered false",
+        () => mockedGetCapabilities.mockResolvedValue(capabilities(false)),
+      ],
+      [
+        "rejected",
+        () => mockedGetCapabilities.mockRejectedValue(new Error("boom")),
+      ],
+    ];
+
+    it.each(states)(
+      "sees Accounting numbered under OPERATIONS from the first render, capabilities %s",
+      async (_name, arrange) => {
+        arrange();
+        const { container } = renderSidebar(OWNER);
+        const link = screen.getByRole("link", { name: "Accounting" });
+        expect(link).toHaveAttribute("href", "/accounting");
+        const text = container.textContent ?? "";
+        expect(text.indexOf("OPERATIONS")).toBeLessThan(
+          text.indexOf("Accounting"),
+        );
+        expect(text.indexOf("Accounting")).toBeLessThan(
+          text.indexOf("INTELLIGENCE"),
+        );
+        const list = ordinals(container);
+        expect(list).toHaveLength(14);
+        expect(list).toEqual(consecutive(list));
+        await Promise.resolve();
+      },
+    );
+
+    it("gets the same (text, href) links as the pre-change config would give", () => {
+      const { container } = renderSidebar(OWNER);
+      const rendered = [...container.querySelectorAll("nav a[href]")]
+        .map(
+          (a) =>
+            `${a.textContent
+              ?.replace(/^\d\d/, "")
+              .replace(/\s*↗.*$/, "")
+              .replace(/0$/, "")}|${a.getAttribute("href")}`,
+        )
+        .sort();
+      const expected = navigation
+        .flatMap((section) => section.items)
+        .map((item) => `${item.title}|${item.href}`)
+        .sort();
+      expect(rendered).toEqual(expected);
+      expect(rendered.filter((r) => r.endsWith("|/accounting"))).toHaveLength(
+        1,
+      );
+    });
+  });
+
+  it("the owner-only section no longer contains Accounting", () => {
+    const hrefs = navigation
+      .filter((section) => section.ownerOnly)
+      .flatMap((section) => section.items.map((item) => item.href));
+    expect(hrefs).not.toContain("/accounting");
+  });
+
+  it("the client portal never asks for HR capabilities", () => {
+    render(
+      <AppSidebar
+        user={{ name: "Portal User", email: "portal@example.test" }}
+        onLogout={() => undefined}
+        isPortal
+        navigationConfig={[
+          { items: [{ title: "Home", href: "/portal", icon: "Home" }] },
+        ]}
+      />,
+    );
+    expect(mockedGetCapabilities).not.toHaveBeenCalled();
   });
 });
