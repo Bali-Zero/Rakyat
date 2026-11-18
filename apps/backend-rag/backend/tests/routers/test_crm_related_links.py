@@ -1555,9 +1555,11 @@ def test_l14_public_entry_is_exact_path_and_post_only():
     for path in (READ, f"{READ}/7"):
         assert not any(e.matches(path, "GET") for e in PUBLIC_ENDPOINTS), path
     # the three older entries are unchanged
-    for older in (URL_SUBJECT, URL_DOCUMENTS, URL_NAMES):
+    older_methods = {URL_SUBJECT: None, URL_DOCUMENTS: ("POST",), URL_NAMES: ("POST",)}
+    for older, methods in older_methods.items():
         matching = [e for e in PUBLIC_ENDPOINTS if e.prefix == older]
-        assert len(matching) == 1 and tuple(matching[0].methods) == ("POST",), older
+        assert len(matching) == 1 and matching[0].match == "exact", older
+        assert (None if matching[0].methods is None else tuple(matching[0].methods)) == methods
 
 
 @pytest.mark.asyncio
