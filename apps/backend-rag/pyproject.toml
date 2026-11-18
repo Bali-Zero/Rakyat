@@ -392,7 +392,6 @@ exclude = [
 "backend/app/modules/**/router*.py" = ["ARG001", "B904"]  # Same for module routers
 "backend/app/modules/**/*router*.py" = ["ARG001", "B904"]  # Module routers with different naming
 "backend/app/modules/**/test_*.py" = ["ARG001", "B904"]  # Test files in modules
-"backend/agents/**/test_*.py" = ["ARG001"]  # Test files in agents
 "backend/generals/tests/*.py" = ["ARG002"]  # General test files
 "backend/migrations/*.py" = ["ARG001", "E402", "G", "LOG"]  # Migration scripts with placeholder params and late imports; f-string OK in CLI one-shots
 "backend/cli/*.py" = ["E402", "G", "LOG"]  # CLI scripts with late imports; f-string OK in CLI one-shots
