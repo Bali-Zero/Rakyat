@@ -96,23 +96,29 @@ async def test_sla_preserves_expiry_without_alert_adapter():
 
 
 @pytest.mark.asyncio
-async def test_claim_excludes_six_retired_types_before_increment():
-    from backend.services.garuda_orders.outbox_consumer import _claim_one
+async def test_claim_excludes_six_retired_types_before_increment(monkeypatch):
+    from backend.services.garuda_orders import outbox_consumer
+
+    assert outbox_consumer.RETIRED_TELEGRAM_JOB_TYPES == ()
 
     conn = AsyncMock()
     conn.fetchrow.return_value = None
-    await _claim_one(conn, max_attempts=5, exclude_ids=[])
+    await outbox_consumer._claim_one(conn, max_attempts=5, exclude_ids=[])
+    sql, maximum, ids, retired = conn.fetchrow.await_args.args
+    assert "AND NOT (c.job_type = ANY($3::text[]))" in sql
+    assert maximum == 5 and ids == [] and retired == []
+
+    monkeypatch.setattr(
+        outbox_consumer,
+        "RETIRED_TELEGRAM_JOB_TYPES",
+        ("synthetic_retired_tg_a", "synthetic_retired_tg_b"),
+    )
+    conn.fetchrow.reset_mock()
+    await outbox_consumer._claim_one(conn, max_attempts=5, exclude_ids=[])
     sql, maximum, ids, retired = conn.fetchrow.await_args.args
     assert "AND NOT (c.job_type = ANY($3::text[]))" in sql
     assert maximum == 5 and ids == []
-    assert set(retired) == {
-        "staff_page_duplicate_charge",
-        "staff_page_late_paid_after_refund",
-        "staff_page_late_paid_after_terminal",
-        "staff_page_charge_without_webhook",
-        "staff_page_payment_failure",
-        "staff_page_refund_out_of_order",
-    }
+    assert set(retired) == {"synthetic_retired_tg_a", "synthetic_retired_tg_b"}
 
 
 @pytest.mark.asyncio

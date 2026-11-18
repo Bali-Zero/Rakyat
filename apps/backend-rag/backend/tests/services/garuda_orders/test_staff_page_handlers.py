@@ -15,11 +15,15 @@ what a handler reads has something to leak and a test that catches it.
 
 from __future__ import annotations
 
+import html
 import importlib
+import inspect
+import json
 import logging
 import os
 import re
 import uuid
+from typing import Any
 from urllib.parse import quote
 
 import asyncpg
@@ -34,6 +38,7 @@ from backend.services.garuda_orders import journal
 from backend.services.garuda_orders.outbox_consumer import KILL_SWITCH_ENV, OutboxJob, drain_once
 from backend.services.garuda_orders.outbox_handlers import (
     BrevoEmailSender,
+    EmailStaffPageSender,
     StaffPageChargeWithoutWebhookHandler,
     StaffPageDuplicateChargeHandler,
     StaffPageLatePaidAfterRefundHandler,
@@ -45,6 +50,7 @@ from backend.services.garuda_orders.outbox_handlers import (
     TelegramStaffPageSender,
     _StaffPageHandler,
     build_handlers,
+    resolve_admin_notification_email,
 )
 from backend.tests.fixtures.prod_shaped_pool import create_prod_shaped_pool
 
@@ -174,59 +180,121 @@ def _job(order_id: str, journal_event_id: str, job_type: str, job_id: int = 1) -
 
 
 # --------------------------------------------------------------------------
-# fake Telegram transport
+# fake internal-email transport (Telegram retired)
 # --------------------------------------------------------------------------
 
+_DEFAULT_OK: dict[str, Any] = {"success": True}
+_SENTINEL = object()
+_TEST_NUZ_KEY = "test-nuz-key"
+_TEST_OPS_EMAIL = "ops-alerts-test"
 
-class _TgRecorder:
-    def __init__(self, status: int = 200, boom: Exception | None = None) -> None:
+
+class _EmailRecorder:
+    def __init__(
+        self,
+        status: int = 200,
+        boom: Exception | None = None,
+        *,
+        response_json: Any = _SENTINEL,
+        response_text: str | None = None,
+    ) -> None:
         self.status = status
         self.boom = boom
+        self.response_json = _DEFAULT_OK if response_json is _SENTINEL else response_json
+        self.response_text = response_text
         self.requests: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        assert _TG_HOST not in str(request.url), (
+            f"retired Telegram endpoint called on the wire: {request.url}"
+        )
         self.requests.append(request)
         if self.boom is not None:
             raise self.boom
-        return httpx.Response(self.status, json={"ok": True})
+        if self.response_text is not None:
+            return httpx.Response(self.status, text=self.response_text)
+        return httpx.Response(self.status, json=self.response_json)
 
 
-def _tg_sender(recorder: _TgRecorder, **kw) -> tuple[TelegramStaffPageSender, httpx.AsyncClient]:
+def _email_page_sender(
+    recorder: _EmailRecorder,
+    *,
+    recipient: str | None = _TEST_OPS_EMAIL,
+    nuz_key: str = _TEST_NUZ_KEY,
+) -> tuple[EmailStaffPageSender, httpx.AsyncClient]:
     client = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
-    return (
-        TelegramStaffPageSender(client, bot_token="test-bot-token", chat_id="12345", **kw),
-        client,
+    email_sender = BrevoEmailSender(client, api_key=nuz_key)
+    return EmailStaffPageSender(email_sender, recipient=recipient), client
+
+
+def _last_payload(rec: _EmailRecorder) -> dict[str, Any]:
+    req = rec.requests[-1]
+    assert req.method == "POST"
+    assert _TG_HOST not in str(req.url)
+    assert req.headers.get("X-API-Key")
+    return json.loads(req.read().decode())
+
+
+def _last_text(rec: _EmailRecorder) -> str:
+    body = _last_payload(rec)["body"]
+    assert body.startswith("<pre>") and body.endswith("</pre>")
+    inner = body[len("<pre>") : -len("</pre>")]
+    assert "<" not in inner and ">" not in inner
+    return html.unescape(inner)
+
+
+# --------------------------------------------------------------------------
+# EmailStaffPageSender — must raise StaffPageSendFailed on any failure
+# --------------------------------------------------------------------------
+
+
+async def test_the_sender_posts_to_the_configured_recipient(monkeypatch):
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", "ops-dest-alpha")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "stale-test-token")
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "stale-chat-id")
+
+    async def forbidden_telegram(*args, **kwargs):
+        raise AssertionError("send_telegram_message must never be called after retirement")
+
+    monkeypatch.setattr(
+        "backend.services.wa_copilot.telegram_notifier.send_telegram_message",
+        forbidden_telegram,
     )
 
-
-def _last_text(rec: _TgRecorder) -> str:
-    from urllib.parse import parse_qs
-
-    body = rec.requests[-1].read().decode()
-    return parse_qs(body)["text"][0]
-
-
-# --------------------------------------------------------------------------
-# TelegramStaffPageSender — must raise, like BrevoEmailSender
-# --------------------------------------------------------------------------
-
-
-async def test_the_sender_posts_to_the_configured_chat():
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec, recipient=None)
     try:
-        await sender.send(text="hello staff")
+        await sender.send(text="LATE PAYMENT AFTER TERMINAL STATE\n\nOrder: `ord_123`")
     finally:
         await client.aclose()
     assert len(rec.requests) == 1
-    assert rec.requests[0].url.path.endswith("/bottest-bot-token/sendMessage")
-    assert "hello staff" in _last_text(rec)
+    payload = _last_payload(rec)
+    assert payload["to"] == "ops-dest-alpha"
+    assert payload["subject"] == "[GARUDA] LATE PAYMENT AFTER TERMINAL STATE"
+    assert payload["body"] == "<pre>LATE PAYMENT AFTER TERMINAL STATE\n\nOrder: `ord_123`</pre>"
+    assert "LATE PAYMENT AFTER TERMINAL STATE" in _last_text(rec)
+
+
+async def test_the_sender_falls_back_to_settings_recipient_when_env_is_blank(monkeypatch):
+    from backend.app.core.config import settings
+
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", "   ")
+    monkeypatch.setattr(settings, "admin_notification_email", "ops-fallback-beta")
+    assert resolve_admin_notification_email() == "ops-fallback-beta"
+
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec, recipient=None)
+    try:
+        await sender.send(text="DUPLICATE CHARGE\n\nOrder: `ord_456`")
+    finally:
+        await client.aclose()
+    assert _last_payload(rec)["to"] == "ops-fallback-beta"
 
 
 @pytest.mark.parametrize("status", [400, 401, 429, 500, 503])
 async def test_the_sender_raises_on_every_error_status(status):
-    rec = _TgRecorder(status=status)
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder(status=status)
+    sender, client = _email_page_sender(rec)
     try:
         with pytest.raises(StaffPageSendFailed):
             await sender.send(text="x")
@@ -235,8 +303,8 @@ async def test_the_sender_raises_on_every_error_status(status):
 
 
 async def test_the_sender_raises_when_unreachable():
-    rec = _TgRecorder(boom=httpx.ConnectError("no route"))
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder(boom=httpx.ConnectError("no route"))
+    sender, client = _email_page_sender(rec)
     try:
         with pytest.raises(StaffPageSendFailed):
             await sender.send(text="x")
@@ -244,16 +312,108 @@ async def test_the_sender_raises_when_unreachable():
         await client.aclose()
 
 
-async def test_the_sender_refuses_to_send_without_a_destination():
-    rec = _TgRecorder()
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        ("success-false", {"response_json": {"success": False}}),
+        ("missing-success", {"response_json": {}}),
+        ("invalid-json", {"response_text": "not-json"}),
+    ],
+)
+async def test_the_sender_raises_on_200_without_success_true(label, kwargs):
+    rec = _EmailRecorder(status=200, **kwargs)
+    sender, client = _email_page_sender(rec)
+    try:
+        with pytest.raises(StaffPageSendFailed):
+            await sender.send(text=f"probe {label}")
+    finally:
+        await client.aclose()
+    assert len(rec.requests) == 1
+
+
+async def test_endpoint_200_with_success_false_raises_and_leaves_job_undelivered(pool):
+    order_id = await _seed_order(
+        pool, state="failed", late_case_open=True, late_case_charge_id="ch_200_false"
+    )
+    row_id, _event_id = await _enqueue_staff_page(
+        pool,
+        order_id,
+        job_type="staff_page_late_paid_after_terminal",
+        event_name="payment.late_paid_after_terminal",
+        transition_id="OP-F05",
+        detail={"charge_id": "ch_200_false"},
+    )
+    rec = _EmailRecorder(status=200, response_json={"success": False})
     client = httpx.AsyncClient(transport=httpx.MockTransport(rec))
+    email_sender = BrevoEmailSender(client, api_key=_TEST_NUZ_KEY)
+    handlers = build_handlers(
+        pool,
+        email_sender,
+        staff_page_sender=EmailStaffPageSender(email_sender, recipient=_TEST_OPS_EMAIL),
+    )
     try:
-        sender = TelegramStaffPageSender(client, bot_token="", chat_id="")
-        with pytest.raises(StaffPageSendFailed):
-            await sender.send(text="x")
+        async with pool.acquire() as conn:
+            stats = await drain_once(conn, handlers)
+            row = await conn.fetchrow(
+                "SELECT dispatched_at, attempts FROM garuda_order_outbox WHERE id = $1",
+                row_id,
+            )
     finally:
         await client.aclose()
+
+    assert (stats.claimed, stats.dispatched, stats.failed) == (1, 0, 1)
+    assert len(rec.requests) == 1
+    assert row is not None
+    assert row["dispatched_at"] is None
+    assert row["attempts"] == 1
+
+
+async def test_the_sender_refuses_to_send_without_a_destination(pool, monkeypatch):
+    from backend.app.core.config import settings
+
+    rec = _EmailRecorder()
+    for blank in ("", "   "):
+        sender, client = _email_page_sender(rec, recipient=blank)
+        try:
+            with pytest.raises(StaffPageSendFailed):
+                await sender.send(text="x")
+        finally:
+            await client.aclose()
     assert rec.requests == [], "must not put a request on the wire with no destination"
+
+    monkeypatch.setenv("ADMIN_NOTIFICATION_EMAIL", "  ")
+    monkeypatch.setattr(settings, "admin_notification_email", "")
+    order_id = await _seed_order(pool, state="paid", late_case_open=True)
+    row_id, _event_id = await _enqueue_staff_page(
+        pool,
+        order_id,
+        job_type="staff_page_duplicate_charge",
+        event_name="payment.duplicate_charge_detected",
+        transition_id="OP-08",
+        detail={"second_charge_id": "ch_missing_recipient"},
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(rec))
+    email_sender = BrevoEmailSender(client, api_key=_TEST_NUZ_KEY)
+    handlers = build_handlers(
+        pool,
+        email_sender,
+        staff_page_sender=EmailStaffPageSender(email_sender),
+    )
+    try:
+        async with pool.acquire() as conn:
+            stats = await drain_once(conn, handlers)
+            row = await conn.fetchrow(
+                "SELECT dispatched_at, attempts FROM garuda_order_outbox WHERE id = $1",
+                row_id,
+            )
+    finally:
+        await client.aclose()
+
+    assert (stats.claimed, stats.dispatched, stats.failed) == (1, 0, 1)
+    assert rec.requests == []
+    assert row is not None
+    assert row["dispatched_at"] is None
+    assert row["attempts"] == 1
 
 
 # --------------------------------------------------------------------------
@@ -271,8 +431,8 @@ async def test_duplicate_charge_pages_when_case_is_open(pool):
         transition_id="OP-08",
         detail={"second_charge_id": "ch_dup_999"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageDuplicateChargeHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_duplicate_charge")
@@ -297,8 +457,8 @@ async def test_duplicate_charge_is_resolved_without_paging_once_case_is_closed(p
         transition_id="OP-08",
         detail={"second_charge_id": "ch_dup_999"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         with caplog.at_level(logging.WARNING, logger="garuda.orders.outbox_handlers"):
             await StaffPageDuplicateChargeHandler(pool, sender)(
@@ -331,8 +491,8 @@ async def test_late_paid_after_refund_pages_and_names_the_charge(pool):
         transition_id="OP-F04",
         detail={"charge_id": "ch_late_refund_1"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageLatePaidAfterRefundHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_late_paid_after_refund")
@@ -356,8 +516,8 @@ async def test_late_paid_after_refund_is_resolved_without_paging_once_closed(poo
         transition_id="OP-F04",
         detail={"charge_id": "ch_late_refund_2"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         with caplog.at_level(logging.WARNING, logger="garuda.orders.outbox_handlers"):
             await StaffPageLatePaidAfterRefundHandler(pool, sender)(
@@ -380,8 +540,8 @@ async def test_late_paid_after_terminal_pages_when_case_is_open(pool):
         transition_id="OP-F05",
         detail={"charge_id": "ch_late_terminal_1"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageLatePaidAfterTerminalHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_late_paid_after_terminal")
@@ -404,8 +564,8 @@ async def test_late_paid_after_terminal_is_resolved_without_paging_once_closed(p
         transition_id="OP-F05",
         detail={"charge_id": "ch_x"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         with caplog.at_level(logging.WARNING, logger="garuda.orders.outbox_handlers"):
             await StaffPageLatePaidAfterTerminalHandler(pool, sender)(
@@ -440,8 +600,8 @@ async def test_charge_without_webhook_pages_when_open_and_silent_when_closed_or_
         transition_id="OP-F08",
         detail={"charge_id": "ch_f08_open", "provider_status": "SETTLED"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageChargeWithoutWebhookHandler(pool, sender)(
             _job(order_open, event_open, "staff_page_charge_without_webhook")
@@ -468,8 +628,8 @@ async def test_charge_without_webhook_pages_when_open_and_silent_when_closed_or_
         transition_id="OP-F08",
         detail={"charge_id": "ch_f08_closed", "provider_status": "SETTLED"},
     )
-    rec_closed = _TgRecorder()
-    sender_closed, client_closed = _tg_sender(rec_closed)
+    rec_closed = _EmailRecorder()
+    sender_closed, client_closed = _email_page_sender(rec_closed)
     try:
         await StaffPageChargeWithoutWebhookHandler(pool, sender_closed)(
             _job(order_closed, event_closed, "staff_page_charge_without_webhook")
@@ -509,8 +669,8 @@ async def test_charge_without_webhook_pages_when_open_and_silent_when_closed_or_
             order_resolved,
             "ch_f08_case_b",
         )
-    rec_resolved = _TgRecorder()
-    sender_resolved, client_resolved = _tg_sender(rec_resolved)
+    rec_resolved = _EmailRecorder()
+    sender_resolved, client_resolved = _email_page_sender(rec_resolved)
     try:
         await StaffPageChargeWithoutWebhookHandler(pool, sender_resolved)(
             _job(order_resolved, event_a, "staff_page_charge_without_webhook")
@@ -533,8 +693,8 @@ async def test_payment_failure_always_pages(pool):
         transition_id="OP-03",
         detail={"outcome": "PROVIDER_UNAVAILABLE", "customer_action": "TRY_AGAIN_LATER"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPagePaymentFailureHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_payment_failure")
@@ -558,8 +718,8 @@ async def test_refund_out_of_order_always_pages(pool):
         transition_id="OP-05",
         detail={"refund_id": "rfnd_out_of_order_1"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageRefundOutOfOrderHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_refund_out_of_order")
@@ -577,8 +737,8 @@ async def test_refund_out_of_order_always_pages(pool):
 
 
 async def test_a_missing_order_raises_for_every_handler(pool):
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     handler_classes = [
         StaffPageChargeWithoutWebhookHandler,
         StaffPageDuplicateChargeHandler,
@@ -611,8 +771,8 @@ async def test_a_failed_send_raises_and_does_not_mark_delivered(pool):
         transition_id="OP-05",
         detail={"refund_id": "rfnd_transport_fail"},
     )
-    rec = _TgRecorder(status=500)
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder(status=500)
+    sender, client = _email_page_sender(rec)
     try:
         with pytest.raises(StaffPageSendFailed):
             await StaffPageRefundOutOfOrderHandler(pool, sender)(
@@ -678,8 +838,8 @@ async def test_no_log_line_carries_applicant_pii(pool, caplog):
         transition_id="OP-08",
         detail={"second_charge_id": "ch_dup_log"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         with caplog.at_level(logging.DEBUG, logger="garuda.orders.outbox_handlers"):
             await StaffPageDuplicateChargeHandler(pool, sender)(
@@ -701,7 +861,7 @@ async def test_no_outgoing_page_carries_applicant_pii_through_the_real_load_path
     gets read into `case_type` or `detail`). This one runs every handler
     through a REAL seeded order, with real applicant email/name/passport on
     the row, and inspects the literal bytes that would go out over the wire —
-    the same thing `test_the_sender_posts_to_the_configured_chat` inspects,
+    the same thing `test_the_sender_posts_to_the_configured_recipient` inspects,
     just for content instead of destination.
     """
 
@@ -738,8 +898,8 @@ async def test_no_outgoing_page_carries_applicant_pii_through_the_real_load_path
             transition_id=transition_id,
             detail=detail,
         )
-        rec = _TgRecorder()
-        sender, client = _tg_sender(rec)
+        rec = _EmailRecorder()
+        sender, client = _email_page_sender(rec)
         try:
             await cls(pool, sender)(_job(order_id, event_id, job_type))
         finally:
@@ -761,8 +921,8 @@ def test_build_handlers_does_not_route_staff_pages_without_a_sender() -> None:
 
 
 def test_build_handlers_routes_all_six_when_given_a_staff_page_sender() -> None:
-    rec = _TgRecorder()
-    staff_sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    staff_sender, client = _email_page_sender(rec)
     try:
         handlers = build_handlers(pool=None, sender=None, staff_page_sender=staff_sender)
     finally:
@@ -829,24 +989,26 @@ async def test_draining_a_queued_staff_page_sends_and_marks_it_dispatched(pool):
         detail={"second_charge_id": "ch_dup_drain"},
     )
 
-    email_rec = _TgRecorder()  # unused by this pass but BrevoEmailSender needs a client
-    tg_rec = _TgRecorder()
+    email_rec = _EmailRecorder()
     email_client = httpx.AsyncClient(transport=httpx.MockTransport(email_rec))
-    staff_sender, staff_client = _tg_sender(tg_rec)
+    email_sender = BrevoEmailSender(email_client, api_key=_TEST_NUZ_KEY)
+    staff_sender = EmailStaffPageSender(email_sender, recipient=_TEST_OPS_EMAIL)
     try:
         handlers = build_handlers(
             pool,
-            BrevoEmailSender(email_client, api_key="test-key-not-a-real-secret"),
+            email_sender,
             staff_page_sender=staff_sender,
         )
         async with pool.acquire() as conn:
             stats = await drain_once(conn, handlers)
     finally:
         await email_client.aclose()
-        await staff_client.aclose()
 
     assert (stats.claimed, stats.dispatched, stats.failed) == (1, 1, 0)
-    assert len(tg_rec.requests) == 1
+    assert len(email_rec.requests) == 1
+    payload = _last_payload(email_rec)
+    assert payload["to"] == _TEST_OPS_EMAIL
+    assert payload["subject"] == "[GARUDA] DUPLICATE CHARGE"
     async with pool.acquire() as conn:
         assert (
             await conn.fetchval(
@@ -883,7 +1045,17 @@ async def test_draining_a_queued_staff_page_sends_and_marks_it_dispatched(pool):
 # string, is what nobody would re-audit.
 
 
-async def test_a_failed_send_never_puts_the_bot_token_in_the_durable_error():
+async def test_a_failed_send_never_puts_the_bot_token_in_the_durable_error(monkeypatch):
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.garuda_orders.outbox_handlers"),
+        "telegram_is_retired",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.wa_copilot.telegram_notifier"),
+        "telegram_is_retired",
+        lambda: False,
+    )
     token = "8400044000:AA-a-token-shaped-string-nobody-should-ever-see"
 
     # A provider that echoes the request URL back in its body — the shape that
@@ -997,8 +1169,8 @@ async def test_a_poisoned_journal_detail_does_not_reach_a_page(pool):
             transition_id=transition_id,
             detail=detail,
         )
-        rec = _TgRecorder()
-        sender, client = _tg_sender(rec)
+        rec = _EmailRecorder()
+        sender, client = _email_page_sender(rec)
         try:
             await cls(pool, sender)(_job(order_id, event_id, job_type))
         finally:
@@ -1012,7 +1184,7 @@ async def test_a_poisoned_journal_detail_does_not_reach_a_page(pool):
         ):
             assert secret not in text, (
                 f"{cls.__name__} carried the {label} from a poisoned journal detail "
-                f"into a Telegram page: {text!r}"
+                f"into an email page: {text!r}"
             )
         # Innocence: it must still have paged, and still carry the ONE detail
         # key it is supposed to read — otherwise a handler that composed an
@@ -1078,8 +1250,8 @@ async def test_a_page_is_withheld_once_ITS_OWN_case_was_resolved(pool):
             "ch_case_B",
         )
 
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageLatePaidAfterRefundHandler(pool, sender)(
             _job(order_id, event_a, "staff_page_late_paid_after_refund")
@@ -1107,8 +1279,8 @@ async def test_a_page_still_goes_out_when_its_own_case_is_untouched(pool):
         transition_id="OP-F04",
         detail={"charge_id": "ch_untouched"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageLatePaidAfterRefundHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_late_paid_after_refund")
@@ -1138,8 +1310,8 @@ async def test_a_structure_hidden_under_a_read_key_is_not_serialised(pool):
         transition_id="OP-08",
         detail={"second_charge_id": {"nested": APPLICANT_EMAIL, "more": APPLICANT_PASSPORT}},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageDuplicateChargeHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_duplicate_charge")
@@ -1165,8 +1337,8 @@ async def test_an_overlong_read_value_is_capped(pool):
         transition_id="OP-08",
         detail={"second_charge_id": "ch_" + ("x" * 5000)},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageDuplicateChargeHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_duplicate_charge")
@@ -1203,7 +1375,17 @@ async def test_an_overlong_read_value_is_capped(pool):
         ),
     ],
 )
-async def test_no_form_of_the_bot_token_survives_into_the_durable_error(label, render):
+async def test_no_form_of_the_bot_token_survives_into_the_durable_error(label, render, monkeypatch):
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.garuda_orders.outbox_handlers"),
+        "telegram_is_retired",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        importlib.import_module("backend.services.wa_copilot.telegram_notifier"),
+        "telegram_is_retired",
+        lambda: False,
+    )
     # Hyphen-RICH on purpose: if the pattern stopped at the first `-`, the tail
     # would survive and the window loop below would name it.
     token = "8400044000:AA-a-token-shaped-string-nobody-should-ever-see"
@@ -1394,8 +1576,8 @@ async def test_a_job_pointing_at_an_event_that_does_not_exist_raises(pool):
         )
     phantom_event = "evt_" + uuid.uuid4().hex  # satisfies the event_id CHECK, exists nowhere
 
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         with pytest.raises(StaffPageOrderMissing):
             await StaffPageLatePaidAfterRefundHandler(pool, sender)(
@@ -1489,8 +1671,8 @@ async def test_the_page_names_the_charge_of_ITS_OWN_event_not_the_open_cases(poo
         transition_id="OP-F04",
         detail={"charge_id": "ch_case_B"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageLatePaidAfterRefundHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_late_paid_after_refund")
@@ -1526,8 +1708,8 @@ async def test_no_divergence_warning_when_the_two_ids_agree(pool):
         transition_id="OP-F05",
         detail={"charge_id": "ch_only_one"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageLatePaidAfterTerminalHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_late_paid_after_terminal")
@@ -1561,8 +1743,8 @@ async def test_a_backtick_in_a_rendered_id_cannot_break_the_code_span(pool):
         transition_id="OP-08",
         detail={"second_charge_id": "ch_bad`*_[evil"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageDuplicateChargeHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_duplicate_charge")
@@ -1645,8 +1827,8 @@ async def _replay_lands_as_op_f04(pool, order_id: str, *, charge_id: str) -> str
 
 
 async def _render_f04(pool, order_id: str, event_id: str) -> str:
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageLatePaidAfterRefundHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_late_paid_after_refund")
@@ -1747,8 +1929,8 @@ async def test_the_duplicate_charge_page_justifies_itself_with_the_empty_column(
         transition_id="OP-08",
         detail={"second_charge_id": "ch_duplicate_1"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageDuplicateChargeHandler(pool, sender)(
             _job(order_id, event_id, "staff_page_duplicate_charge")
@@ -1822,8 +2004,8 @@ async def test_a_staff_page_survives_telegram_markdown_parsing(pool):
         transition_id="OP-F08",
         detail={"charge_id": "ch_md_probe", "provider_status": "SETTLED"},
     )
-    rec = _TgRecorder()
-    sender, client = _tg_sender(rec)
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
     try:
         await StaffPageChargeWithoutWebhookHandler(pool, sender)(
             _job(order, event, "staff_page_charge_without_webhook")
@@ -1895,16 +2077,77 @@ def test_every_staff_page_survives_markdown_parsing(cls):
     assert _markdown_leftovers(text) == [], f"{cls.job_type}: {_markdown_leftovers(text)}"
 
 
-@pytest.fixture(autouse=True)
-def legacy_mock_transport_contract(monkeypatch):
-    """Retained protocol code under test doubles; not the production policy."""
-    monkeypatch.setattr(
-        importlib.import_module("backend.services.wa_copilot.telegram_notifier"),
-        "telegram_is_retired",
-        lambda: False,
+@pytest.mark.parametrize("cls", _STAFF_PAGE_CLASSES, ids=lambda c: c.job_type)
+async def test_every_staff_page_html_escapes_hostile_fields_on_the_wire(cls):
+    hostile = '<script>x</script> & "q"'
+    facts = _anomaly_facts(
+        case_type=hostile,
+        state=hostile,
+        detail={
+            "charge_id": hostile,
+            "provider_status": hostile,
+            "second_charge_id": hostile,
+            "outcome": hostile,
+            "customer_action": hostile,
+            "refund_id": hostile,
+        },
     )
+    rec = _EmailRecorder()
+    sender, client = _email_page_sender(rec)
+    try:
+        await sender.send(text=cls(None, sender)._compose(facts))
+    finally:
+        await client.aclose()
+
+    payload = _last_payload(rec)
+    body = payload["body"]
+    assert "<script>" not in body
+    assert "&lt;script&gt;x&lt;/script&gt;" in body
+    assert "&amp;" in body
+    assert "&quot;" in body
+    assert APPLICANT_EMAIL not in body
+    assert APPLICANT_NAME not in body
+    assert APPLICANT_PASSPORT not in body
+
+
+async def test_telegram_staff_page_sender_refuses_retired_path_with_zero_env_reads_or_calls(
+    monkeypatch,
+):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "stale-test-token")
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "stale-chat-id")
+
+    real_getenv = os.getenv
+
+    def guarded_getenv(key: str, default: Any = None) -> Any:
+        if key in {"TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_CHAT_ID"}:
+            raise AssertionError(f"Telegram env {key} must not be read on the retired path")
+        return real_getenv(key, default)
+
+    async def forbidden_telegram(*args, **kwargs):
+        raise AssertionError("send_telegram_message must never be called on the retired path")
+
+    monkeypatch.setattr(os, "getenv", guarded_getenv)
     monkeypatch.setattr(
-        importlib.import_module("backend.services.garuda_orders.outbox_consumer"),
-        "telegram_is_retired",
-        lambda: False,
+        "backend.services.wa_copilot.telegram_notifier.send_telegram_message",
+        forbidden_telegram,
     )
+
+    rec = _EmailRecorder()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(rec))
+    try:
+        sender = TelegramStaffPageSender(client)
+        with pytest.raises(StaffPageSendFailed, match="retired"):
+            await sender.send(text="DUPLICATE CHARGE")
+    finally:
+        await client.aclose()
+    assert rec.requests == []
+
+
+def test_main_api_scheduler_wires_email_staff_page_sender_without_telegram() -> None:
+    import textwrap
+
+    from backend.app import main_api
+
+    src = textwrap.dedent(inspect.getsource(main_api._run_garuda_outbox_scheduler))
+    assert "EmailStaffPageSender" in src
+    assert "TelegramStaffPageSender" not in src

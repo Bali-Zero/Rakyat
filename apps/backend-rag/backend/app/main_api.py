@@ -215,10 +215,11 @@ def _admin_alarm_recipient(settings) -> str:
     """The alarm recipient: a non-blank `ADMIN_NOTIFICATION_EMAIL` env value wins,
     anything blank falls back to `settings.admin_notification_email`. A blank
     value used to win and mute both alarms."""
-    return (
-        os.environ.get("ADMIN_NOTIFICATION_EMAIL", "").strip()
-        or (settings.admin_notification_email or "").strip()
+    from backend.services.garuda_orders.outbox_handlers import (
+        resolve_admin_notification_email,
     )
+
+    return resolve_admin_notification_email(settings)
 
 
 async def _send_outbox_alarm(client: "httpx.AsyncClient", text: str) -> bool:  # noqa: F821
@@ -387,7 +388,7 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
     from backend.services.garuda_orders.outbox_consumer import count_undrained, drain_once
     from backend.services.garuda_orders.outbox_handlers import (
         BrevoEmailSender,
-        TelegramStaffPageSender,
+        EmailStaffPageSender,
         build_handlers,
     )
     from backend.services.garuda_orders.payment_inbox_watch import count_quarantined
@@ -423,9 +424,8 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
             _probe_exc,
         )
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Same injected client as the email sender (Golden Rule #10) — a
-        # Telegram POST is just another HTTPS call, no reason for a second
-        # long-lived client here.
+        # Both customer emails and staff money-anomaly pages share the single
+        # injected `httpx.AsyncClient` and `BrevoEmailSender` (Golden Rule #10).
         #
         # WRAPPED, because this runs OUTSIDE the per-tick try below and a failure
         # here killed the whole drain in silence (cross-family seat, Kimi K3,
@@ -441,9 +441,8 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
         # The task still dies (there is no safe way to drain without handlers),
         # but it dies LOUDLY: one CRITICAL naming the cause, then the re-raise.
         try:
-            handlers = build_handlers(
-                pool, BrevoEmailSender(client), TelegramStaffPageSender(client)
-            )
+            email_sender = BrevoEmailSender(client)
+            handlers = build_handlers(pool, email_sender, EmailStaffPageSender(email_sender))
         except Exception:
             logger.critical(
                 "GARUDA outbox scheduler CANNOT START — build_handlers failed; "

@@ -31,17 +31,21 @@ stored. This product must never show a customer a fee/PNBP split (SM-G04: the
 price is written once at OP-00 and never recomputed or decomposed), so there is
 deliberately no arithmetic anywhere in this file.
 
-THE FIVE `staff_page_*` HANDLERS (added after the email/CRM/portal weld). Every
+THE SIX `staff_page_*` HANDLERS (added after the email/CRM/portal weld). Every
 money-anomaly page — a duplicate charge, a payment arriving after the order
-was already refunded or already terminal, a payment failure worth a human's
-attention, a refund issued before any charge existed — goes to **Telegram, to
-`TELEGRAM_OWNER_CHAT_ID`**, never WhatsApp. That is not a style choice: SYMBIOSIS
-Law 2's one named WhatsApp-to-assigned-team-member derogation caps its payload
-at name+initial, `client_id` and a deadline, and a money-anomaly page needs an
-order id, an amount and a provider charge id — it does not fit inside that cap.
-Telegram to the owner chat carries none of that name+initial shape and needs no
-derogation at all. See `_StaffPageHandler` below for the shared load/guard/send
-shape and each subclass's docstring for its own paging condition.
+was already refunded or already terminal, a charge detected without a webhook,
+a payment failure worth a human's attention, a refund issued before any charge
+existed — routes to the internal admin email recipient (`EmailStaffPageSender` ->
+`BrevoEmailSender` -> `ADMIN_NOTIFICATION_EMAIL` /
+`settings.admin_notification_email`) now that Telegram is retired, never
+WhatsApp. That is not a style choice: SYMBIOSIS Law 2's one named
+WhatsApp-to-assigned-team-member derogation caps its payload at name+initial,
+`client_id` and a deadline, and a money-anomaly page needs an order id, an
+amount and a provider charge id — it does not fit inside that cap. The internal
+admin email carries none of that applicant shape (order/journal facts only,
+HTML-escaped inside `<pre>`). See `_StaffPageHandler` below for the shared
+load/guard/send shape and each subclass's docstring for its own paging
+condition.
 """
 
 from __future__ import annotations
@@ -55,12 +59,13 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import quote
 
 import asyncpg
 import httpx
 
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.garuda_ops.adapters_pg import (
     PostgresCrmWriter,
     PostgresOrderSnapshotProvider,
@@ -119,6 +124,18 @@ def _h(value: object) -> str:
 
 class EmailSendFailed(RuntimeError):
     """The send did not happen. Raised so the outbox records the attempt."""
+
+
+def resolve_admin_notification_email(settings_obj: Any = None) -> str:
+    """The internal admin recipient: a non-blank `ADMIN_NOTIFICATION_EMAIL`
+    env value wins; anything blank falls back to `settings.admin_notification_email`.
+    Shared by the GARUDA operational alarms and `EmailStaffPageSender`."""
+    if settings_obj is None:
+        from backend.app.core.config import settings as settings_obj
+    return (
+        os.environ.get("ADMIN_NOTIFICATION_EMAIL", "").strip()
+        or (getattr(settings_obj, "admin_notification_email", "") or "").strip()
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1395,12 +1412,64 @@ _PRACTICE_TRANSITION_EMAILS: tuple[tuple[str, str, str], ...] = (
 
 
 # ---------------------------------------------------------------------------
-# staff_page_* — money-anomaly pages, Telegram to the owner chat
+# staff_page_* — money-anomaly pages, internal email to ADMIN_NOTIFICATION_EMAIL
 # ---------------------------------------------------------------------------
 
 
 class StaffPageSendFailed(RuntimeError):
-    """The page did not reach Telegram. Raised so the outbox records the attempt."""
+    """The page did not reach the staff channel. Raised so the outbox records the attempt."""
+
+
+class StaffPageSender(Protocol):
+    async def send(self, *, text: str) -> None: ...
+
+
+class EmailStaffPageSender:
+    """Posts one money-anomaly page through `BrevoEmailSender` to the internal
+    admin notification recipient. Raises `StaffPageSendFailed` on any failure so
+    `drain_once` records the failed attempt and never marks an undelivered page
+    dispatched."""
+
+    def __init__(
+        self,
+        email_sender: BrevoEmailSender,
+        *,
+        recipient: str | Callable[[], str] | None = None,
+    ) -> None:
+        self._email_sender = email_sender
+        self._recipient = recipient
+
+    def _resolve_recipient(self) -> str:
+        if self._recipient is None:
+            return resolve_admin_notification_email()
+        if callable(self._recipient):
+            return (self._recipient() or "").strip()
+        return self._recipient.strip()
+
+    @staticmethod
+    def _subject_for(text: str) -> str:
+        if "\n\n" in text:
+            headline = text.split("\n\n", 1)[0].strip()
+            if headline and "\n" not in headline and len(headline) <= 80:
+                return f"[GARUDA] {headline}"
+        return "[GARUDA] Staff money-anomaly page"
+
+    async def send(self, *, text: str) -> None:
+        if not telegram_is_retired():
+            raise StaffPageSendFailed(
+                "telegram_is_retired() returned False; refusing unexpected non-retired path"
+            )
+        to = self._resolve_recipient()
+        if not to:
+            raise StaffPageSendFailed("ADMIN_NOTIFICATION_EMAIL is empty; refusing to page nowhere")
+        try:
+            await self._email_sender.send(
+                to=to,
+                subject=self._subject_for(text),
+                html_body=f"<pre>{html.escape(text)}</pre>",
+            )
+        except EmailSendFailed as exc:
+            raise StaffPageSendFailed(f"staff page email send failed: {exc}") from exc
 
 
 class StaffPageOrderMissing(RuntimeError):
@@ -1464,14 +1533,21 @@ class TelegramStaffPageSender:
         chat_id: str | None = None,
     ) -> None:
         self._client = client
-        self._bot_token = (
-            bot_token if bot_token is not None else os.getenv(TELEGRAM_BOT_TOKEN_ENV, "")
-        )
-        self._chat_id = (
-            chat_id if chat_id is not None else os.getenv(TELEGRAM_OWNER_CHAT_ID_ENV, "")
-        )
+        if telegram_is_retired():
+            # Zero Telegram env reads on the retired path.
+            self._bot_token = bot_token or ""
+            self._chat_id = chat_id or ""
+        else:
+            self._bot_token = (
+                bot_token if bot_token is not None else os.getenv(TELEGRAM_BOT_TOKEN_ENV, "")
+            )
+            self._chat_id = (
+                chat_id if chat_id is not None else os.getenv(TELEGRAM_OWNER_CHAT_ID_ENV, "")
+            )
 
     async def send(self, *, text: str) -> None:
+        if telegram_is_retired():
+            raise StaffPageSendFailed("Telegram is retired; staff pages route via internal email")
         if not self._bot_token or not self._chat_id:
             # Raising beats sending nowhere: an unset destination is a
             # deployment fault that should surface as an exhausted job, not
@@ -1672,7 +1748,7 @@ class _StaffPageHandler:
     #: log call.
     job_type: str = ""
 
-    def __init__(self, pool: asyncpg.Pool, sender: TelegramStaffPageSender) -> None:
+    def __init__(self, pool: asyncpg.Pool, sender: StaffPageSender) -> None:
         self._pool = pool
         self._sender = sender
 
@@ -2220,7 +2296,7 @@ class StaffPageRefundOutOfOrderHandler(_StaffPageHandler):
 def build_handlers(
     pool: asyncpg.Pool,
     sender: BrevoEmailSender,
-    staff_page_sender: TelegramStaffPageSender | None = None,
+    staff_page_sender: StaffPageSender | None = None,
 ) -> dict[str, object]:
     """The registry `drain_once` consumes.
 
@@ -2268,15 +2344,14 @@ def build_handlers(
     invites an import cycle through the router package. Binding it here, inside
     the function, keeps the dependency at call time where it is harmless.
 
-    THE FIVE `staff_page_*` JOB TYPES ARE ROUTED ONLY WHEN `staff_page_sender`
-    IS GIVEN — the remaining five of the thirteen, the money anomalies (OP-08
-    duplicate charge, OP-F04/OP-F05 late payment, OP-03 failure, OP-05
-    out-of-order refund). It defaults to `None` so a caller that does not wire
-    it keeps the previous behaviour exactly: those five report as `unroutable`,
-    are logged by name, keep their full attempt budget, and are picked up
-    unharmed once a sender is passed. Pass a `TelegramStaffPageSender` (e.g.
-    from `_run_garuda_outbox_scheduler` in `main_api.py`, reusing the SAME
-    injected `httpx.AsyncClient` the email sender already owns) to arm them.
+    THE SIX `staff_page_*` JOB TYPES ARE ROUTED ONLY WHEN `staff_page_sender`
+    IS GIVEN — the money anomalies (OP-08 duplicate charge, OP-F04/OP-F05 late
+    payment, OP-F08 charge without webhook, OP-03 failure, OP-05 out-of-order
+    refund). It defaults to `None` so a caller that does not wire it keeps
+    reporting them as `unroutable`, logged by name, keeping their full attempt
+    budget until a sender is passed. Pass an `EmailStaffPageSender` (e.g. from
+    `_run_garuda_outbox_scheduler` in `main_api.py`, reusing the SAME
+    `BrevoEmailSender` / injected `httpx.AsyncClient`) to arm them.
 
     THE CATEGORY OF DELIBERATELY-UNHANDLED JOB TYPES IS NOW EMPTY, and that is
     what finally makes the alarm simple. While one known type was unrouted, an
@@ -2361,6 +2436,7 @@ __all__ = [
     "CheckoutReadyEmailHandler",
     "CrmPracticeNotWrittenYet",
     "EmailSendFailed",
+    "EmailStaffPageSender",
     "LateRefundConfirmationEmailHandler",
     "LateRefundFacts",
     "OrderAnomalyFacts",
@@ -2385,6 +2461,8 @@ __all__ = [
     "StaffPagePaymentFailureHandler",
     "StaffPageRefundOutOfOrderHandler",
     "StaffPageSendFailed",
+    "StaffPageSender",
     "TelegramStaffPageSender",
     "build_handlers",
+    "resolve_admin_notification_email",
 ]
