@@ -369,8 +369,9 @@ async def test_t3_list_without_q_orders_pages_and_counts(admin, seeded):
     ]
     assert set(row) == {
         "id", "kind", "display_name", "name_source", "date_of_birth", "nationality", "identifiers",
-        "document_count",
+        "document_count", "links_count",
     }  # fmt: skip
+    assert row["links_count"] == 0
     assert row["name_source"] == "registration"
 
     page = await admin.get(BASE, params={"limit": 3, "offset": 2})
