@@ -187,18 +187,11 @@ annotated-types==0.8.0 \
     --hash=sha256:13b2beaad985e05e2d6407ee4c4f35590b11f8d693a258a561055cac8f64cab7 \
     --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
     # via pydantic
-anthropic==1.2.0 \
-    --hash=sha256:12f8eedee7b7fb5685837b1371b7bfae1b281703f62355f4632598ec2fc53b34 \
-    --hash=sha256:b60642b3e3cd6b8e3e328a2d3f2863ad2b6e743f1037e42cc0143f7df99f63c6
-    # via
-    #   -r requirements-prod.txt
-    #   langchain-anthropic
 anyio==4.14.2 \
     --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494 \
     --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f
     # via
     #   -r requirements-prod.txt
-    #   anthropic
     #   google-genai
     #   httpx
     #   httpx2
@@ -1003,10 +996,6 @@ dnspython==2.9.2 \
     --hash=sha256:8d4d39a513e649d634004ce4d39ade2352efcea472a0247535a5c2d18a9d7ba9 \
     --hash=sha256:af15f7d385a6ae2fb35a796fde2138004c8c42c7389090e2addc83e3b3340fd8
     # via email-validator
-docstring-parser==0.18.0 \
-    --hash=sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015 \
-    --hash=sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b
-    # via anthropic
 ebooklib==0.20 \
     --hash=sha256:35e2f9d7d39907be8d39ae2deb261b19848945903ae3dbb6577b187ead69e985 \
     --hash=sha256:fff5322517a37e31c972d27be7d982cc3928c16b3dcc5fd7e8f7c0f5d7bcf42b
@@ -1439,7 +1428,6 @@ httpx2==2.12.0 \
     --hash=sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf \
     --hash=sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36
     # via
-    #   anthropic
     #   langsmith
     #   mcp
 hyperframe==6.1.0 \
@@ -1567,9 +1555,7 @@ jiter==0.16.0 \
     --hash=sha256:f3bd327cdfa118bc1ce69c214c2678571d5bd39b8ccd0ebf43a54db00541ba9a \
     --hash=sha256:f4444a83f946605990c98f625cdd3d2725bfb818158760c5748c653170a20e0e \
     --hash=sha256:fb08c276dd02dac3a284acdd02cacc630d2e3cd6572a4b85519f35cbd133c3de
-    # via
-    #   anthropic
-    #   openai
+    # via openai
 jmespath==1.1.0 \
     --hash=sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d \
     --hash=sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64
@@ -1598,16 +1584,11 @@ jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
     --hash=sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d
     # via jsonschema
-langchain-anthropic==1.7.0 \
-    --hash=sha256:68b34369aa01dad0c67bc690b8c47e09d06bd30fb28f320ad19ddc71c4445dc0 \
-    --hash=sha256:d48e3c118ff8d3eea83f17b50234a2d2ff491a2375d565f212eb990e7e3856cb
-    # via -r requirements-prod.txt
 langchain-core==1.7.7 \
     --hash=sha256:acc4205b5617f36cc0495ee77af7b3eedf8714941c7c14a40220be52770d4536 \
     --hash=sha256:d69535f817e9ea949dabc85079dccc28b0cde04a579ec5c2273be2f7b09b859c
     # via
     #   -r requirements-prod.txt
-    #   langchain-anthropic
     #   langchain-openai
     #   langgraph
     #   langgraph-checkpoint
@@ -2247,13 +2228,8 @@ openinference-instrumentation==0.1.59 \
     --hash=sha256:96eb1b9a29bc934e06db69fb2d10c9ccd676c3d5c328110db6c1a861e7c084bc \
     --hash=sha256:d9947cf0c984e61eb7628edc3163a23c2a84fa74d985ea527075a54a2ad55b3a
     # via
-    #   openinference-instrumentation-anthropic
     #   openinference-instrumentation-google-genai
     #   openinference-instrumentation-openai
-openinference-instrumentation-anthropic==2.1.1 \
-    --hash=sha256:32f97e6395d11f16a57c6679e09548742378debfbb0d291b95901e36a2dfc2b8 \
-    --hash=sha256:854b57e1b848b4c6f5d261e0b7218870367718920761796c196e73d02770757a
-    # via -r requirements-prod.txt
 openinference-instrumentation-google-genai==1.4.0 \
     --hash=sha256:265935f09845c73a770c8a82c46e5a88277aaa054ad9cdd816ce845e6aa5378c \
     --hash=sha256:838d3bb42896eb978b3d9853430ada72a05307ee7d7eec936e10bab79134ddb5
@@ -2267,7 +2243,6 @@ openinference-semantic-conventions==0.1.37 \
     --hash=sha256:ff1d7568bb75427320221ec0eee222a52a020b868e1846505be43af2b76808fd
     # via
     #   openinference-instrumentation
-    #   openinference-instrumentation-anthropic
     #   openinference-instrumentation-google-genai
     #   openinference-instrumentation-openai
 openpyxl==3.1.5 \
@@ -2282,7 +2257,6 @@ opentelemetry-api==1.45.2 \
     #   langfuse
     #   mcp
     #   openinference-instrumentation
-    #   openinference-instrumentation-anthropic
     #   openinference-instrumentation-google-genai
     #   openinference-instrumentation-openai
     #   opentelemetry-exporter-http-transport
@@ -2310,7 +2284,6 @@ opentelemetry-instrumentation==0.66b2 \
     --hash=sha256:02b094150e53b76f5906d75e628dbb3833bbc6e62fa109b5c7ba0c081865e923 \
     --hash=sha256:fa9ccfdab147a14af8107d19ef0a7b5015675273c5adced7a1fc38f28b42ec4c
     # via
-    #   openinference-instrumentation-anthropic
     #   openinference-instrumentation-google-genai
     #   openinference-instrumentation-openai
 opentelemetry-proto==1.45.2 \
@@ -2331,7 +2304,6 @@ opentelemetry-semantic-conventions==0.66b2 \
     --hash=sha256:4cbe61e5f9275d57ab31708446e7938ef4291ebbe6a7fca6f7a629c5acae87d8 \
     --hash=sha256:7da5f1a5dc4383eb66711d4d3d3e71824d9403ac1559fea021cc103c1a4c4976
     # via
-    #   openinference-instrumentation-anthropic
     #   openinference-instrumentation-google-genai
     #   openinference-instrumentation-openai
     #   opentelemetry-instrumentation
@@ -2926,10 +2898,8 @@ pydantic==2.13.4 \
     --hash=sha256:c40756b57adaa8b1efeeced5c196f3f3b7c435f90e84ea7f443901bec8099ef6
     # via
     #   -r requirements-prod.txt
-    #   anthropic
     #   fastapi
     #   google-genai
-    #   langchain-anthropic
     #   langchain-core
     #   langfuse
     #   langgraph
@@ -3735,7 +3705,6 @@ sniffio==1.3.1 \
     --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
     --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc
     # via
-    #   anthropic
     #   google-genai
     #   langsmith
     #   openai
@@ -4067,7 +4036,6 @@ typing-extensions==4.16.0 \
     # via
     #   aiohttp
     #   aiosignal
-    #   anthropic
     #   anyio
     #   beautifulsoup4
     #   fastapi
@@ -4081,7 +4049,6 @@ typing-extensions==4.16.0 \
     #   mcp
     #   mcp-types
     #   openai
-    #   openinference-instrumentation-anthropic
     #   openinference-instrumentation-openai
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-http
@@ -4567,7 +4534,6 @@ wrapt==2.3.0 \
     #   deprecated
     #   langfuse
     #   openinference-instrumentation
-    #   openinference-instrumentation-anthropic
     #   openinference-instrumentation-google-genai
     #   openinference-instrumentation-openai
     #   opentelemetry-instrumentation
