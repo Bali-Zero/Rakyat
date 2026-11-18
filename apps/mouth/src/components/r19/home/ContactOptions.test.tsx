@@ -50,4 +50,16 @@ describe("R19 topic-aware contact adapter", () => {
       ),
     ).toContain("Property due diligence");
   });
+
+  it("says where the message is written, since this widget has no message field", () => {
+    render(<ContactOptions />);
+    // The widget is a topic picker plus two hand-offs: no textarea exists, and
+    // none is sent in the lead payload (context = topic/source_page/section).
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Your topic carries into WhatsApp or your email app/),
+    ).toHaveTextContent(
+      "Write your message there and review it before sending.",
+    );
+  });
 });
