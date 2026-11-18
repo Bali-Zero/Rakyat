@@ -77,7 +77,8 @@ _REDACTIONS = (
 # A logger's filters run only for records that ORIGINATE on it; they do NOT run
 # for records propagating up from children. So `"httpcore"` alone would have been
 # decorative: httpx 0.28.1 logs on `"httpx"` (covered), but httpcore logs on
-# `httpcore.http11` / `.http2` / `.proxy` / `.socks` — children, every one.
+# `httpcore.http11` / `.http2` / `.proxy` / `.socks` — children, every one. The httpx2 /
+# httpcore2 twins follow the same shape and are listed the same way.
 _URL_EMITTING_LOGGERS = (
     "httpx",
     "httpcore.http11",
@@ -85,6 +86,14 @@ _URL_EMITTING_LOGGERS = (
     "httpcore.proxy",
     "httpcore.socks",
     "urllib3.connectionpool",
+    # httpx2 / httpcore2 2.12.0 (requirements-prod.lock.txt), names read from the wheels:
+    # httpx2/_client.py logs on "httpx2"; httpcore2 logs on the four children below
+    # (it also has "httpcore2.connection", which carries no URL, like its httpcore twin).
+    "httpx2",
+    "httpcore2.http11",
+    "httpcore2.http2",
+    "httpcore2.proxy",
+    "httpcore2.socks",
 )
 
 _FILTER_MARKER = "_nuzantara_secret_log_redaction"

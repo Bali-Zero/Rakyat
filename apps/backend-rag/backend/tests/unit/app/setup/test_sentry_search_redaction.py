@@ -59,6 +59,26 @@ class MemoryTransport(Transport):
             self.payloads.append(item.payload.get_bytes().decode("utf-8", "replace"))
 
 
+def _clear_breadcrumbs() -> None:
+    """The test client's own request log writes breadcrumbs into the MAIN thread's scopes;
+    left there they ride along on a later test's event (one CI flake, Referer case)."""
+    sentry_sdk.get_isolation_scope().clear_breadcrumbs()
+    sentry_sdk.get_current_scope().clear_breadcrumbs()
+
+
+@pytest.fixture
+def stale_breadcrumb():
+    """What an EARLIER test leaves behind: a breadcrumb already on the main thread's scope
+    when the next test's fixture starts. Free text, which the hooks deliberately keep."""
+    # add_breadcrumb is a no-op without a live client, so bind one first (as the earlier
+    # test's own fixture had), then let the next fixture re-init over the same scopes.
+    sentry_sdk.init(dsn="https://public@o0.ingest.sentry.io/1", transport=MemoryTransport())
+    sentry_sdk.add_breadcrumb(category="httpx", message=f"left by an earlier test: {VALUE}")
+    yield
+    sentry_sdk.get_client().close()
+    _clear_breadcrumbs()
+
+
 @pytest.fixture
 def transport():
     t = MemoryTransport()
@@ -72,8 +92,17 @@ def transport():
         traces_sample_rate=0.0,
         max_request_body_size="never",
     )
+    _clear_breadcrumbs()
     yield t
     sentry_sdk.get_client().close()
+    _clear_breadcrumbs()
+
+
+def test_a_breadcrumb_left_by_an_earlier_test_never_reaches_this_event(stale_breadcrumb, transport):
+    sentry_sdk.capture_message("main-thread event")
+    sentry_sdk.flush()
+    assert transport.payloads, "the event must be sent, or this proves nothing"
+    assert VALUE not in json.dumps(transport.payloads)
 
 
 def _failing_app() -> TestClient:
@@ -181,8 +210,10 @@ def traced_transport():
         traces_sample_rate=1.0,
         max_request_body_size="never",
     )
+    _clear_breadcrumbs()
     yield t
     sentry_sdk.get_client().close()
+    _clear_breadcrumbs()
 
 
 @pytest.mark.parametrize("header", ["Referer", "Link", "Location"])
