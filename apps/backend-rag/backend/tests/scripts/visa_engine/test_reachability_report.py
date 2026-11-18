@@ -237,10 +237,9 @@ def test_not_asked_facts_are_exactly_the_five_hardcoded_in_the_mapper() -> None:
     # dropped out before them.
     #
     # `intent.requested_product_code` used to stay NOT_ASKED until seq-33:
-    # `mapRequestedProductCode(facts)` in fact-mapper.ts now conditionally
-    # maps it on onshore conversion/status-bridging flows (unblocking
-    # `hf.visit.not-e28a-conversion`, `review.e28a.bridging-origin`, and the
-    # 4 `el.bridging.*` rules), leaving UNKNOWN(NOT_ASKED) otherwise. So it
+    # `mapRequestedProductCode(facts)` in fact-mapper.ts maps an explicit
+    # destination or derives E28A for onshore PT PMA conversion or bridging.
+    # It leaves UNKNOWN(NOT_ASKED) when the destination is unresolved. So it
     # drops out of the unconditional-placeholder list — five back to four.
     assert found == [
         "commercial.service_fee_budget_idr",

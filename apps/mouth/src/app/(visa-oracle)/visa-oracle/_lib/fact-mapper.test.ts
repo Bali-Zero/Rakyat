@@ -2494,16 +2494,25 @@ describe("mapRequestedProductCode (seq-33 reachability)", () => {
     },
   );
 
-  it("derives the current stay_permit_code for onshore STATUS_BRIDGING + OTHER walks (unblocking the 4 el.bridging.* rules)", () => {
-    const wire = mapFacts({
+  it("keeps the applicant's current permit separate from the bridging destination", () => {
+    const facts: OracleFacts = {
       in_indonesia: "yes",
       application_channel: "STATUS_BRIDGING",
       holds_stay_permit: "yes",
       stay_permit_code: "E23",
       category: "other",
       other_paid_activity: "no",
+    };
+    const wire = mapFacts(facts);
+    expect(wire.facts["immigration.current_status_code"]).toEqual({
+      status: "KNOWN",
+      value: "E23",
     });
-    expect(wire.facts[PATH]).toEqual({ status: "KNOWN", value: "E23" });
+    expect(wire.facts[PATH]).toEqual({ status: "UNKNOWN", reason: "NOT_ASKED" });
+    expect(mapFacts({ ...facts, requested_product_code: "E28A" }).facts[PATH]).toEqual({
+      status: "KNOWN",
+      value: "E28A",
+    });
   });
 
   it("stays UNKNOWN(NOT_ASKED) when offshore, non-PT-PMA, re-routed to SECOND_HOME/EMPLOYMENT, or without stay_permit_code", () => {

@@ -186,6 +186,15 @@ class BrevoEmailSender:
                 f"notifications endpoint unreachable: {type(exc).__name__}"
             ) from exc
 
+        # The notifications endpoint reports provider refusal as HTTP 200.
+        # Keep its body out of exceptions because it can echo the recipient.
+        try:
+            result = response.json()
+        except ValueError:
+            raise EmailSendFailed("notifications endpoint returned invalid JSON") from None
+        if not isinstance(result, dict) or result.get("success") is not True:
+            raise EmailSendFailed("notifications endpoint did not confirm email acceptance")
+
 
 class PaymentPaidEmailHandler:
     """Sends one payment confirmation per `payment_paid_email` outbox job.
@@ -280,23 +289,10 @@ class PaymentPaidEmailHandler:
 
 
 class CheckoutReadyEmailHandler:
-    """Sends one "your payment link is ready" email per `checkout_ready_email` job.
+    """Notify the customer while the order still needs payment.
 
-    ENQUEUED FROM. `repository.py`'s OP-01 transition (`created -> awaiting_payment`)
-    enqueues this in the SAME transaction that writes the `checkout_url` into the
-    outbox `payload` — the URL is a provider capability, never persisted on
-    `garuda_orders` itself (see that call site's own comment), so the payload is
-    the ONLY place this handler can read it from.
-
-    STATE GUARD, AND WHY IT DIFFERS FROM THE PAID HANDLER'S. A checkout link is
-    true only while the order is still, in fact, awaiting payment: the session
-    it points at is provider-side and time-boxed (`checkout_expires_at`), and if
-    the order has already moved on — paid, failed, expired, refunded — the link
-    is either redundant (a `payment_paid_email` job for the same order is on its
-    way) or actively wrong (offering to pay something that can no longer be
-    paid). Unlike `PaymentPaidEmailHandler`, whose guard names the ONE state the
-    email is a durable receipt of, this guard names the ONE state during which
-    the invitation is still live.
+    New OP-01 jobs need only the order ID to link to the tracker. Queued jobs
+    from before the change can still carry the original provider link.
     """
 
     _STATES_WORTH_LINKING = frozenset({"awaiting_payment"})
@@ -321,13 +317,8 @@ class CheckoutReadyEmailHandler:
             return
 
         checkout_url = (job.payload or {}).get("checkout_url")
-        if not checkout_url:
-            # The enqueue call always carries this key (repository.py OP-01).
-            # Its absence means the payload was written or read wrong — raise
-            # rather than send a customer an email with no way to pay.
-            raise EmailSendFailed(
-                f"checkout_ready_email job for order {job.order_id} carries no checkout_url"
-            )
+        if not isinstance(checkout_url, str) or not checkout_url.startswith("https://"):
+            checkout_url = None
 
         await self._sender.send(
             to=facts.email,
@@ -358,17 +349,22 @@ class CheckoutReadyEmailHandler:
         )
 
     @staticmethod
-    def _body(facts: OrderEmailFacts, checkout_url: str) -> str:
+    def _body(facts: OrderEmailFacts, checkout_url: str | None) -> str:
         base = os.getenv(TRACKER_BASE_URL_ENV, DEFAULT_TRACKER_BASE_URL).rstrip("/")
         tracker = f"{base}/{facts.order_id}"
         amount = f"IDR {facts.price_idr:,}".replace(",", ".")
+        payment_link = (
+            f'<a href="{_h(checkout_url)}">Complete my payment</a><br><br>'
+            if checkout_url
+            else ""
+        )
         return (
             "Hello,<br><br>"
             "Your Bali Zero Visa on Arrival application "
             f"({_h(facts.case_type)}) is ready for payment.<br><br>"
             f"<b>Amount due: {amount}</b><br><br>"
-            f'<a href="{checkout_url}">Complete my payment</a><br><br>'
-            "You can also follow this order's status here:<br><br>"
+            f"{payment_link}"
+            "You can follow this order's status here:<br><br>"
             f'<a href="{tracker}">Track my application</a><br><br>'
             "— Bali Zero"
         )

@@ -640,18 +640,29 @@ async def test_a_delivered_page_DOES_start_the_suppression_window(monkeypatch) -
 
 
 @pytest.mark.parametrize(
-    ("api_key", "recipient", "status_code", "boom", "expected", "expect_requests"),
+    ("api_key", "recipient", "status_code", "body", "boom", "expected", "expect_requests"),
     [
-        ("test-nuz-key", "ops-dest-alpha", 200, None, True, 1),
-        ("test-nuz-key", "ops-dest-alpha", 400, None, False, 1),
-        ("test-nuz-key", "ops-dest-alpha", 500, None, False, 1),
-        ("test-nuz-key", "ops-dest-alpha", None, httpx.ConnectError("connection reset"), False, 1),
-        ("", "ops-dest-alpha", 200, None, False, 0),
-        ("test-nuz-key", "   ", 200, None, False, 0),
+        ("test-nuz-key", "ops-dest-alpha", 200, {"success": True}, None, True, 1),
+        ("test-nuz-key", "ops-dest-alpha", 200, {"success": False}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 200, {"success": "true"}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 200, {}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 400, {}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 500, {}, None, False, 1),
+        (
+            "test-nuz-key",
+            "ops-dest-alpha",
+            None,
+            {},
+            httpx.ConnectError("connection reset"),
+            False,
+            1,
+        ),
+        ("", "ops-dest-alpha", 200, {}, None, False, 0),
+        ("test-nuz-key", "   ", 200, {}, None, False, 0),
     ],
 )
 async def test_the_real_sender_reports_delivery_truthfully(
-    monkeypatch, api_key, recipient, status_code, boom, expected, expect_requests
+    monkeypatch, api_key, recipient, status_code, body, boom, expected, expect_requests
 ) -> None:
     """RED IF `_send_quarantine_alarm` ever reports success it did not have.
 
@@ -671,7 +682,7 @@ async def test_the_real_sender_reports_delivery_truthfully(
         requests_seen.append(request)
         if boom is not None:
             raise boom
-        return httpx.Response(status_code or 200, json={"ok": status_code == 200})
+        return httpx.Response(status_code or 200, json=body)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         delivered = await main_api._send_quarantine_alarm(
@@ -790,23 +801,34 @@ async def test_a_delivered_OUTBOX_page_DOES_start_the_suppression_window(
 
 
 @pytest.mark.parametrize(
-    ("api_key", "recipient", "status_code", "boom", "expected", "expect_requests"),
+    ("api_key", "recipient", "status_code", "body", "boom", "expected", "expect_requests"),
     [
-        ("test-nuz-key", "ops-dest-alpha", 200, None, True, 1),
-        ("test-nuz-key", "ops-dest-alpha", 400, None, False, 1),
-        ("test-nuz-key", "ops-dest-alpha", 500, None, False, 1),
-        ("test-nuz-key", "ops-dest-alpha", None, httpx.ConnectError("connection reset"), False, 1),
-        ("", "ops-dest-alpha", 200, None, False, 0),
-        ("test-nuz-key", "", 200, None, False, 0),
+        ("test-nuz-key", "ops-dest-alpha", 200, {"success": True}, None, True, 1),
+        ("test-nuz-key", "ops-dest-alpha", 200, {"success": False}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 200, {"success": "true"}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 200, {}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 400, {}, None, False, 1),
+        ("test-nuz-key", "ops-dest-alpha", 500, {}, None, False, 1),
+        (
+            "test-nuz-key",
+            "ops-dest-alpha",
+            None,
+            {},
+            httpx.ConnectError("connection reset"),
+            False,
+            1,
+        ),
+        ("", "ops-dest-alpha", 200, {}, None, False, 0),
+        ("test-nuz-key", "", 200, {}, None, False, 0),
     ],
 )
 async def test_the_real_OUTBOX_sender_reports_delivery_truthfully(
-    monkeypatch, api_key, recipient, status_code, boom, expected, expect_requests
+    monkeypatch, api_key, recipient, status_code, body, boom, expected, expect_requests
 ) -> None:
     """RED IF `_send_outbox_alarm` ever reports success it did not have.
 
-    Verifies the post-Telegram Brevo email delivery path: HTTP 2xx returns True
-    only after the request succeeds, 4xx/5xx/transport failures return False,
+    A successful HTTP response must also confirm email acceptance. Provider
+    refusals, 4xx/5xx and transport failures return False,
     and missing `NUZANTARA_API_KEY` or blank `ADMIN_NOTIFICATION_EMAIL` returns
     False with zero wire calls so `confirm_sent` is never falsely armed.
     """
@@ -820,7 +842,7 @@ async def test_the_real_OUTBOX_sender_reports_delivery_truthfully(
         requests_seen.append(request)
         if boom is not None:
             raise boom
-        return httpx.Response(status_code or 200, json={"ok": status_code == 200})
+        return httpx.Response(status_code or 200, json=body)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         delivered = await main_api._send_outbox_alarm(
@@ -872,7 +894,7 @@ async def test_garuda_alarms_respect_telegram_retirement_even_with_legacy_env(
 
     def handler(request: httpx.Request) -> httpx.Response:
         sent_payloads.append(json.loads(request.read().decode()))
-        return httpx.Response(200, json={"ok": True})
+        return httpx.Response(200, json={"success": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         outbox_ok = await main_api._send_outbox_alarm(client, "GARUDA outbox summary")
