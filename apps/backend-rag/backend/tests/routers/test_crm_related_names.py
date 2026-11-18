@@ -402,7 +402,7 @@ async def test_n1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "INSERT INTO related_subjects (kind, evidence, created_by) "
             "VALUES ('person', '{}'::jsonb, 'zz') RETURNING id"
         )
-        await conn.execute(insert, other, "ZZ KEEP", "ocr_single", "{}")
+        await conn.execute(insert, other, "ZZ KEEP", "ocr_single", {})
         await conn.execute("DELETE FROM related_subjects WHERE id = $1", sid)
         assert [r["name"] for r in await name_rows(conn)] == ["ZZ KEEP"]
 
