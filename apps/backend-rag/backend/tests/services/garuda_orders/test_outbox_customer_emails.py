@@ -433,9 +433,7 @@ async def test_practice_received_sends_for_a_paid_order_with_its_practice(pool):
     rec = _Recorder()
     sender, client = _sender(rec)
     try:
-        await PracticeReceivedEmailHandler(pool, sender)(
-            _job(order_id, "practice_received_email")
-        )
+        await PracticeReceivedEmailHandler(pool, sender)(_job(order_id, "practice_received_email"))
     finally:
         await client.aclose()
     assert len(rec.requests) == 1
@@ -461,8 +459,7 @@ async def test_practice_received_resolves_without_sending_once_refunded(pool, ca
         await client.aclose()
     assert rec.requests == []
     assert any(
-        "practice_received_email resolved WITHOUT sending" in r.getMessage()
-        for r in caplog.records
+        "practice_received_email resolved WITHOUT sending" in r.getMessage() for r in caplog.records
     )
 
 
@@ -649,9 +646,7 @@ async def test_terminal_notice_is_still_sent_when_no_late_payment_case_is_open(
         (RefundEmailHandler, "refund_email"),
     ],
 )
-async def test_the_stale_state_branch_logs_no_applicant_pii(
-    pool, caplog, handler_cls, job_type
-):
+async def test_the_stale_state_branch_logs_no_applicant_pii(pool, caplog, handler_cls, job_type):
     marker_email = f"pii-stale-{uuid.uuid4().hex}@example.invalid"
     # `paid` warrants none of these three notices, so each takes its stale-state
     # early return.
@@ -714,8 +709,7 @@ async def test_a_sender_failure_leaks_no_applicant_pii_into_its_error(pool, capl
     surfaced = str(raised.value) + "\n".join(r.getMessage() for r in caplog.records)
     assert surfaced.strip(), "the failure surfaced no text at all — nothing to diagnose from"
     assert "500" in surfaced, (
-        "the error names neither the status nor anything else actionable: "
-        f"{surfaced!r}"
+        f"the error names neither the status nor anything else actionable: {surfaced!r}"
     )
     for label, secret in (
         ("applicant email", marker_email),
@@ -723,6 +717,4 @@ async def test_a_sender_failure_leaks_no_applicant_pii_into_its_error(pool, capl
         ("passport number", "Z9345678"),
         ("phone", "+009900000017"),
     ):
-        assert secret not in surfaced, (
-            f"the sender-failure path surfaced the {label}: {surfaced!r}"
-        )
+        assert secret not in surfaced, f"the sender-failure path surfaced the {label}: {surfaced!r}"

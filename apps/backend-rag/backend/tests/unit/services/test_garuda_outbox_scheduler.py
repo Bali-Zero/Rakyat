@@ -870,8 +870,7 @@ async def test_the_real_OUTBOX_sender_reports_delivery_truthfully(
         assert payload["subject"] == "[GARUDA] Outbox backlog alarm"
         body_html = payload.get("body") or payload.get("html_body") or ""
         assert (
-            "<pre>GARUDA outbox page body &lt;practice_release &amp; count=3&gt;</pre>"
-            in body_html
+            "<pre>GARUDA outbox page body &lt;practice_release &amp; count=3&gt;</pre>" in body_html
         )
 
 
@@ -908,9 +907,7 @@ async def test_garuda_alarms_respect_telegram_retirement_even_with_legacy_env(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         outbox_ok = await main_api._send_outbox_alarm(client, "GARUDA outbox summary")
-        quarantine_ok = await main_api._send_quarantine_alarm(
-            client, "GARUDA quarantine summary"
-        )
+        quarantine_ok = await main_api._send_quarantine_alarm(client, "GARUDA quarantine summary")
 
     assert telegram_calls == []
     assert outbox_ok is True
@@ -1056,9 +1053,7 @@ async def test_a_blank_env_recipient_falls_back_to_settings_for_both_alarms(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         outbox_ok = await main_api._send_outbox_alarm(client, "GARUDA outbox summary")
-        quarantine_ok = await main_api._send_quarantine_alarm(
-            client, "GARUDA quarantine summary"
-        )
+        quarantine_ok = await main_api._send_quarantine_alarm(client, "GARUDA quarantine summary")
 
     assert outbox_ok is True
     assert quarantine_ok is True

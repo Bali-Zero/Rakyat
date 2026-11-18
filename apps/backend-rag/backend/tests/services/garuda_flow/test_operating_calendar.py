@@ -172,10 +172,7 @@ class TestCoverageEndHorizonWarning:
     def test_a_custom_threshold_is_honoured(self) -> None:
         far_but_inside_custom = COVERAGE_END - timedelta(days=90)
         assert coverage_end_horizon_warning(far_but_inside_custom) is None
-        assert (
-            coverage_end_horizon_warning(far_but_inside_custom, threshold_days=120)
-            is not None
-        )
+        assert coverage_end_horizon_warning(far_but_inside_custom, threshold_days=120) is not None
 
     def test_never_invents_a_2028_closure(self) -> None:
         # The warning fires past COVERAGE_END, but OPERATING_CALENDAR itself
@@ -190,7 +187,9 @@ class TestCalendarDataNeverExceedsCoverageEnd:
 
     def test_no_calendar_date_beyond_coverage_end(self) -> None:
         # 4 late-2026 dates from COVERAGE_START (2026-07-28) + 26 full-year 2027 SKB dates = 30.
-        assert len(OPERATING_CALENDAR) == 30, "calendar must carry late-2026 + full-year 2027 SKB dates"
+        assert len(OPERATING_CALENDAR) == 30, (
+            "calendar must carry late-2026 + full-year 2027 SKB dates"
+        )
         assert any(entry.at.year == 2027 for entry in OPERATING_CALENDAR)
         for entry in OPERATING_CALENDAR:
             assert entry.at <= COVERAGE_END, (
