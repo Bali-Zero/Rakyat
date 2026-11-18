@@ -1584,6 +1584,42 @@ export interface components {
       /** Value */
       value: string;
     };
+    /** RelatedRegistryLink */
+    RelatedRegistryLink: {
+      /**
+       * Basis
+       * @enum {string}
+       */
+      basis: "drive_folder" | "whatsapp_phone" | "identity" | "manual";
+      /** Client Id */
+      client_id: number;
+      /** Client Live */
+      client_live: boolean;
+      /** Client Name */
+      client_name: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Relation
+       * @enum {string}
+       */
+      relation:
+        | "unknown"
+        | "self"
+        | "spouse"
+        | "child"
+        | "parent"
+        | "sibling"
+        | "other_family"
+        | "director"
+        | "commissioner"
+        | "shareholder"
+        | "employee"
+        | "sponsor";
+    };
     /** RelatedRegistryListOut */
     RelatedRegistryListOut: {
       /** Items */
@@ -1634,6 +1670,10 @@ export interface components {
       identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
       /** Kind */
       kind: string;
+      /** Links */
+      links: components["schemas"]["RelatedRegistryLink"][];
+      /** Links Total */
+      links_total: number;
       /** Name Source */
       name_source:
         | (
@@ -1667,6 +1707,8 @@ export interface components {
       identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
       /** Kind */
       kind: string;
+      /** Links Count */
+      links_count: number;
       /** Name Source */
       name_source:
         | (
