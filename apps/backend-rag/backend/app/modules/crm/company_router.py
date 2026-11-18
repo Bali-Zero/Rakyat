@@ -44,6 +44,24 @@ def _require_crm_admin(current_user: dict) -> None:
         raise HTTPException(status_code=403, detail="CRM admin access required")
 
 
+async def _require_company_editor(conn, company_id: int, current_user: dict, action: str) -> None:
+    """403/404 unless the caller may change this company (``client_pools.can_edit_company``)."""
+    await ensure_client_pools_validated(conn)
+    if is_crm_admin(current_user):
+        return
+    company = await conn.fetchrow("SELECT created_by FROM companies WHERE id = $1", company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    owners = await conn.fetch(
+        "SELECT c.assigned_to, c.created_by, c.tax_consultant "
+        "FROM client_company_links l JOIN clients c ON c.id = l.client_id "
+        "WHERE l.company_id = $1 AND c.deleted_at IS NULL",
+        company_id,
+    )
+    if not can_edit_company(current_user, company["created_by"], owners):
+        raise HTTPException(status_code=403, detail=f"Not allowed to {action} this company")
+
+
 def company_record_to_dict(record: asyncpg.Record) -> dict:
     """Convert asyncpg record to dict for Company"""
     return {
@@ -390,21 +408,7 @@ async def update_company(
 
     async with db.acquire() as conn:
         # Authorize first: a denied caller gets 403/404 whatever the payload holds.
-        await ensure_client_pools_validated(conn)
-        if not is_crm_admin(current_user):
-            company = await conn.fetchrow(
-                "SELECT created_by FROM companies WHERE id = $1", company_id
-            )
-            if not company:
-                raise HTTPException(status_code=404, detail="Company not found")
-            owners = await conn.fetch(
-                "SELECT c.assigned_to, c.created_by, c.tax_consultant "
-                "FROM client_company_links l JOIN clients c ON c.id = l.client_id "
-                "WHERE l.company_id = $1 AND c.deleted_at IS NULL",
-                company_id,
-            )
-            if not can_edit_company(current_user, company["created_by"], owners):
-                raise HTTPException(status_code=403, detail="Not allowed to edit this company")
+        await _require_company_editor(conn, company_id, current_user, "edit")
 
         # Only fields the client actually sent are written. CompanyUpdate has
         # already validated and converted them: a date string arrives as
@@ -848,12 +852,13 @@ async def sync_company_drive_folder(
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """
-    _require_crm_admin(current_user)
+    Allowed to whoever may edit the company (admin, or staff who manage its clients).
     Scan the company's Google Drive folder and upsert files into company_documents.
     Files already tracked (by google_drive_file_id) are skipped.
     Returns a summary: {added, skipped, total, docs}.
     """
     async with db.acquire() as conn:
+        await _require_company_editor(conn, company_id, current_user, "sync")
         row = await conn.fetchrow(
             "SELECT id, company_name, google_drive_folder_id FROM companies WHERE id = $1",
             company_id,

@@ -210,3 +210,63 @@ def test_router_owners_query_excludes_deleted_clients():
     sqls = [c.args[0] for c in conn.fetch.await_args_list]
     assert len(sqls) == 1
     assert "c.deleted_at IS NULL" in sqls[0]
+
+
+def _sync(tc):
+    return tc.post("/api/crm/companies/1/sync-drive")
+
+
+def _folder_lookups(conn) -> list:
+    return [c for c in conn.fetchrow.await_args_list if "google_drive_folder_id" in c.args[0]]
+
+
+_NO_FOLDER = {"id": 1, "company_name": "PT Synthetic", "google_drive_folder_id": None}
+
+
+def test_sync_drive_unrelated_staff_gets_403_before_the_folder_lookup():
+    tc, conn = _client(
+        _user(), company={"created_by": OTHER}, owners=[_owner(assigned=B)], update_row=_NO_FOLDER
+    )
+    with tc:
+        resp = _sync(tc)
+    assert resp.status_code == 403
+    assert _folder_lookups(conn) == []
+
+
+def test_sync_drive_managing_staff_is_authorized_and_reaches_the_folder_check():
+    tc, conn = _client(
+        _user(), company={"created_by": OTHER}, owners=[_owner(assigned=A)], update_row=_NO_FOLDER
+    )
+    with tc:
+        resp = _sync(tc)
+    assert resp.status_code == 400
+    assert len(_folder_lookups(conn)) == 1
+
+
+def test_sync_drive_admin_is_authorized_without_ownership_lookup():
+    tc, conn = _client(ADMIN, company=None, owners=[], update_row=_NO_FOLDER)
+    with tc:
+        resp = _sync(tc)
+    assert resp.status_code == 400
+    conn.fetch.assert_not_awaited()
+
+
+def test_sync_drive_missing_company_is_404_for_staff():
+    tc, conn = _client(_user(), company=None, owners=[], update_row=_NO_FOLDER)
+    with tc:
+        resp = _sync(tc)
+    assert resp.status_code == 404
+    assert _folder_lookups(conn) == []
+
+
+def test_sync_drive_machine_role_gets_403(pool_ab):
+    tc, conn = _client(
+        _user(A, "internal"),
+        company={"created_by": A},
+        owners=[_owner(assigned=A)],
+        update_row=_NO_FOLDER,
+    )
+    with tc:
+        resp = _sync(tc)
+    assert resp.status_code == 403
+    assert _folder_lookups(conn) == []
