@@ -120,7 +120,10 @@ def can_edit_company(
     company_created_by: str | None,
     linked_client_owners: Any,
 ) -> bool:
-    """Edit rule for a company: admin, or the caller's peers manage it.
+    """Edit rule for a company: admin exactly as ``_require_crm_admin``, else the caller's peers manage it.
+
+    CRM admins: any identity ``is_crm_admin`` accepts, unchanged from before this rule. The
+    human-only rule below applies to everyone else.
 
     Managing = the company's ``created_by``, or any linked client's ``assigned_to`` /
     ``created_by`` / ``tax_consultant``, is the caller or one of the caller's pool peers.

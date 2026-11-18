@@ -388,28 +388,8 @@ async def update_company(
     """Update company details (admin, or staff who manage the company's clients)"""
     user_email = current_user.get("email", "system")
 
-    # Only fields the client actually sent are written. CompanyUpdate has
-    # already validated and converted them: a date string arrives as
-    # datetime.date, and an explicit null clears a nullable column.
-    payload = data.model_dump(exclude_unset=True)
-
-    updates = []
-    params = []
-    for field, value in payload.items():
-        updates.append(f"{field} = ${len(params) + 1}")
-        params.append(value)
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
-
-    updates.append(f"updated_by = ${len(params) + 1}")
-    updates.append("updated_at = NOW()")
-    params.append(user_email)
-    params.append(company_id)
-
-    query = f"UPDATE companies SET {', '.join(updates)} WHERE id = ${len(params)} RETURNING id, company_name"
-
     async with db.acquire() as conn:
+        # Authorize first: a denied caller gets 403/404 whatever the payload holds.
         await ensure_client_pools_validated(conn)
         if not is_crm_admin(current_user):
             company = await conn.fetchrow(
@@ -425,6 +405,28 @@ async def update_company(
             )
             if not can_edit_company(current_user, company["created_by"], owners):
                 raise HTTPException(status_code=403, detail="Not allowed to edit this company")
+
+        # Only fields the client actually sent are written. CompanyUpdate has
+        # already validated and converted them: a date string arrives as
+        # datetime.date, and an explicit null clears a nullable column.
+        payload = data.model_dump(exclude_unset=True)
+
+        updates = []
+        params = []
+        for field, value in payload.items():
+            updates.append(f"{field} = ${len(params) + 1}")
+            params.append(value)
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="No valid fields to update")
+
+        updates.append(f"updated_by = ${len(params) + 1}")
+        updates.append("updated_at = NOW()")
+        params.append(user_email)
+        params.append(company_id)
+
+        query = f"UPDATE companies SET {', '.join(updates)} WHERE id = ${len(params)} RETURNING id, company_name"
+
         row = await conn.fetchrow(query, *params)
         if not row:
             raise HTTPException(status_code=404, detail="Company not found")

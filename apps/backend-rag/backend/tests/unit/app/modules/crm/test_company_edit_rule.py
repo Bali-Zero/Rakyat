@@ -170,3 +170,43 @@ def test_router_delete_stays_admin_only():
         resp = tc.delete("/api/crm/companies/1")
     assert resp.status_code == 403
     conn.execute.assert_not_awaited()
+
+
+def test_admin_identity_unchanged_from_base():
+    # Mirrors `_require_crm_admin` on base: any identity is_crm_admin accepts (the admin API
+    # key principal included) could PATCH before this rule and still can.
+    tc, conn = _client(
+        {"role": "admin", "email": "admin@internal"},
+        company=None,
+        owners=[],
+        update_row={"id": 1, "company_name": "Renamed PT"},
+    )
+    with tc:
+        resp = _patch(tc)
+    assert resp.status_code == 200
+    assert len(_updates(conn)) == 1
+
+
+def test_router_unrelated_staff_with_empty_payload_gets_403_not_400():
+    tc, conn = _client(_user(), company={"created_by": OTHER}, owners=[_owner(assigned=B)])
+    with tc:
+        resp = tc.patch("/api/crm/companies/1", json={})
+    assert resp.status_code == 403
+    assert _updates(conn) == []
+
+
+def test_router_allowed_staff_with_empty_payload_gets_400():
+    tc, conn = _client(_user(), company={"created_by": OTHER}, owners=[_owner(assigned=A)])
+    with tc:
+        resp = tc.patch("/api/crm/companies/1", json={})
+    assert resp.status_code == 400
+    assert _updates(conn) == []
+
+
+def test_router_owners_query_excludes_deleted_clients():
+    tc, conn = _client(_user(), company={"created_by": OTHER}, owners=[_owner(assigned=A)])
+    with tc:
+        _patch(tc)
+    sqls = [c.args[0] for c in conn.fetch.await_args_list]
+    assert len(sqls) == 1
+    assert "c.deleted_at IS NULL" in sqls[0]
