@@ -6805,6 +6805,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/related-subjects/names/register": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Register Related Subject Names
+     * @description Record names for one registered subject (dry run by default). Answers carry no input.
+     */
+    post: operations["register_related_subject_names_api_crm_related_subjects_names_register_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/related-subjects/register": {
     parameters: {
       query?: never;
@@ -27144,6 +27164,26 @@ export interface components {
       /** Total */
       total: number;
     };
+    /** RelatedRegistryName */
+    RelatedRegistryName: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Name */
+      name: string;
+      /**
+       * Source
+       * @enum {string}
+       */
+      source:
+        | "manual"
+        | "mrz_corrected"
+        | "registration"
+        | "ocr_corroborated"
+        | "ocr_single";
+    };
     /** RelatedRegistrySubjectDetail */
     RelatedRegistrySubjectDetail: {
       /**
@@ -27163,6 +27203,20 @@ export interface components {
       identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
       /** Kind */
       kind: string;
+      /** Name Source */
+      name_source:
+        | (
+            | "manual"
+            | "mrz_corrected"
+            | "registration"
+            | "ocr_corroborated"
+            | "ocr_single"
+          )
+        | null;
+      /** Names */
+      names: components["schemas"]["RelatedRegistryName"][];
+      /** Names Total */
+      names_total: number;
       /** Nationality */
       nationality: string | null;
       /** Sex */
@@ -27182,6 +27236,16 @@ export interface components {
       identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
       /** Kind */
       kind: string;
+      /** Name Source */
+      name_source:
+        | (
+            | "manual"
+            | "mrz_corrected"
+            | "registration"
+            | "ocr_corroborated"
+            | "ocr_single"
+          )
+        | null;
       /** Nationality */
       nationality: string | null;
     };
@@ -41251,6 +41315,26 @@ export interface operations {
     };
   };
   register_related_subject_documents_api_crm_related_subjects_documents_register_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+    };
+  };
+  register_related_subject_names_api_crm_related_subjects_names_register_post: {
     parameters: {
       query?: never;
       header?: never;
