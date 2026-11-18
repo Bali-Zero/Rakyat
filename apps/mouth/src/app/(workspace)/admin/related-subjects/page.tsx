@@ -108,6 +108,26 @@ const BASIS_LABELS: Readonly<Record<string, string>> = {
   manual: "Entered by hand",
 };
 
+/** How a merge was decided: the history row's basis, shown as a short label. */
+const MERGE_BASIS_LABELS: Readonly<Record<string, string>> = {
+  permit_stamp: "Permit stamp",
+  same_identity: "Same identity",
+  manual: "Entered by hand",
+};
+
+/** The mark on an item that belongs to a record merged into the opened subject. */
+function FromMark({ id }: { id?: number | null }) {
+  if (id === null || id === undefined) return null;
+  return (
+    <span
+      data-testid="from-mark"
+      className="ml-2 align-middle text-[11px] text-[var(--tx-secondary)]"
+    >
+      {`from merged record #${id}`}
+    </span>
+  );
+}
+
 /** The mark on a list row of a subject that has at least one proposed client link. */
 function ClientMark({ count }: { count?: number | null }) {
   if (!count || count <= 0) return null;
@@ -267,6 +287,8 @@ export default function RelatedRegistryPage() {
 
   const shownLinks = detail?.links ?? [];
   const linksTotal = detail?.links_total ?? shownLinks.length;
+  const mergedFrom = detail?.merged_from ?? [];
+  const mergedInto = detail?.merged_into ?? null;
   const shownNames = detail?.names ?? [];
   const namesTotal = detail?.names_total ?? shownNames.length;
 
@@ -454,6 +476,48 @@ export default function RelatedRegistryPage() {
                 {detail.display_name ?? `Unnamed subject #${detail.id}`}
                 <NameMark source={detail.name_source} />
               </h2>
+              {mergedInto !== null && (
+                <Notice tone="wait" role="status">
+                  {`This record was merged into subject #${mergedInto}. `}
+                  <button
+                    type="button"
+                    data-testid="open-survivor"
+                    onClick={() => setSelectedId(mergedInto)}
+                    className={cn("text-[var(--bz-copper)] underline", FOCUS)}
+                  >
+                    {`Open subject #${mergedInto}`}
+                  </button>
+                </Notice>
+              )}
+              {mergedFrom.length > 0 && (
+                <div data-testid="registry-merged-from">
+                  <p className="text-[13px] text-[var(--tx-secondary)]">
+                    {mergedFrom.length === 1
+                      ? "1 record merged into this one"
+                      : `${mergedFrom.length} records merged into this one`}
+                  </p>
+                  <ul className="text-[13px] text-[var(--tx-pure)]">
+                    {mergedFrom.map((merged) => (
+                      <li
+                        key={merged.subject_id}
+                        data-testid="registry-merged-record"
+                      >
+                        {[
+                          `#${merged.subject_id}`,
+                          merged.basis
+                            ? (MERGE_BASIS_LABELS[merged.basis] ?? null)
+                            : null,
+                          merged.merged_at
+                            ? merged.merged_at.slice(0, 10)
+                            : null,
+                        ]
+                          .filter((part) => part !== null)
+                          .join(" · ")}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px] text-[var(--tx-pure)]">
                 <dt className="text-[var(--tx-secondary)]">Kind</dt>
                 <dd>{detail.kind}</dd>
@@ -488,6 +552,7 @@ export default function RelatedRegistryPage() {
                       >
                         {entry.name} · {SOURCE_LABELS[entry.source] ?? "—"} ·{" "}
                         {entry.created_at.slice(0, 10)}
+                        <FromMark id={entry.from_subject_id} />
                       </li>
                     ))}
                   </ul>
@@ -531,6 +596,7 @@ export default function RelatedRegistryPage() {
                         )}{" "}
                         · {BASIS_LABELS[link.basis] ?? "—"} ·{" "}
                         {link.created_at.slice(0, 10)}
+                        <FromMark id={link.from_subject_id} />
                       </li>
                     ))}
                   </ul>
@@ -549,9 +615,10 @@ export default function RelatedRegistryPage() {
                 <h3 className={HEAD}>Identifiers</h3>
                 <ul className="text-[13px] text-[var(--tx-pure)]">
                   {detail.identifiers.map((identifier) => (
-                    <li
-                      key={`${identifier.type}:${identifier.value}`}
-                    >{`${identifier.type.toUpperCase()} ${identifier.value}`}</li>
+                    <li key={`${identifier.type}:${identifier.value}`}>
+                      {`${identifier.type.toUpperCase()} ${identifier.value}`}
+                      <FromMark id={identifier.from_subject_id} />
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -574,6 +641,7 @@ export default function RelatedRegistryPage() {
                           {doc.doc_type ?? "—"} · {doc.mime_type ?? "—"} ·{" "}
                           {humanSize(doc.byte_size)} · first seen{" "}
                           {doc.first_seen_on ?? "—"}
+                          <FromMark id={doc.from_subject_id} />
                         </div>
                         {doc.drive_file_ids.map((fileId) => (
                           <div key={fileId}>

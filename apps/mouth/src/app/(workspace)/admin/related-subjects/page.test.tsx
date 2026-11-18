@@ -606,4 +606,202 @@ describe("related subjects registry page", () => {
       "Entered by hand",
     ]);
   });
+
+  const MERGED_AT = "2026-02-03T08:00:00Z";
+  const mergedRecord = (over: Record<string, unknown> = {}) => ({
+    subject_id: 11,
+    basis: "permit_stamp",
+    merged_at: MERGED_AT,
+    ...over,
+  });
+  const survivorDetail = (over: Record<string, unknown> = {}) => ({
+    ...DETAIL_A,
+    merged_into: null,
+    merged_from: [mergedRecord()],
+    ...over,
+  });
+
+  it("F25 a survivor says how many records were merged into it, singular for one, a line per record", async () => {
+    await openDetail(survivorDetail());
+    const block = screen.getByTestId("registry-merged-from");
+    expect(
+      within(block).getByText("1 record merged into this one"),
+    ).toBeTruthy();
+    const lines = within(block).getAllByTestId("registry-merged-record");
+    expect(lines.map((l) => l.textContent)).toEqual([
+      "#11 · Permit stamp · 2026-02-03",
+    ]);
+    expect(screen.queryByTestId("open-survivor")).toBeNull();
+    expect(screen.queryByText(/This record was merged into/)).toBeNull();
+
+    document.body.innerHTML = "";
+    apiMock.get.mockReset();
+    await openDetail(
+      survivorDetail({
+        merged_from: [
+          mergedRecord(),
+          mergedRecord({ subject_id: 12, basis: "manual" }),
+        ],
+      }),
+    );
+    const plural = screen.getByTestId("registry-merged-from");
+    expect(
+      within(plural).getByText("2 records merged into this one"),
+    ).toBeTruthy();
+    expect(
+      within(plural).getAllByTestId("registry-merged-record"),
+    ).toHaveLength(2);
+  });
+
+  it("F26 items from a merged record carry the mark in identifiers, documents, names and clients; own items none", async () => {
+    const detail = survivorDetail({
+      identifiers: [
+        { type: "passport", value: "ZZ-1", from_subject_id: null },
+        { type: "permit", value: "ZZ-P1", from_subject_id: 11 },
+      ],
+      documents: [
+        { ...DETAIL_A.documents[0], from_subject_id: null },
+        {
+          ...DETAIL_A.documents[0],
+          sha256: "2".repeat(64),
+          drive_file_ids: [],
+          from_subject_id: 11,
+        },
+      ],
+      names: [
+        {
+          name: "ZZ OWN",
+          source: "registration",
+          created_at: "2026-01-01T00:00:00Z",
+          from_subject_id: null,
+        },
+        {
+          name: "ZZ THEIRS",
+          source: "ocr_single",
+          created_at: "2026-02-03T00:00:00Z",
+          from_subject_id: 11,
+        },
+      ],
+      names_total: 2,
+      links: [
+        { ...linkOf(), from_subject_id: null },
+        { ...linkOf({ client_id: 424243 }), from_subject_id: 11 },
+      ],
+      links_total: 2,
+    });
+    await openDetail(detail);
+    const marks = screen.getAllByTestId("from-mark");
+    expect(marks).toHaveLength(4);
+    for (const mark of marks) {
+      expect(mark.textContent).toBe("from merged record #11");
+    }
+    const names = screen.getAllByTestId("registry-name");
+    expect(within(names[0]).queryByTestId("from-mark")).toBeNull();
+    expect(within(names[1]).getByTestId("from-mark")).toBeTruthy();
+    const clients = screen.getAllByTestId("registry-client");
+    expect(within(clients[0]).queryByTestId("from-mark")).toBeNull();
+    expect(within(clients[1]).getByTestId("from-mark")).toBeTruthy();
+    const docs = screen.getAllByTestId("registry-document");
+    expect(within(docs[0]).queryByTestId("from-mark")).toBeNull();
+    expect(within(docs[1]).getByTestId("from-mark")).toBeTruthy();
+    const region = within(
+      screen.getByRole("region", { name: "Subject detail" }),
+    );
+    const theirs = region
+      .getByText(/PERMIT ZZ-P1/)
+      .closest("li") as HTMLElement;
+    expect(within(theirs).getByTestId("from-mark")).toBeTruthy();
+    const own = region.getByText(/PASSPORT ZZ-1/).closest("li") as HTMLElement;
+    expect(within(own).queryByTestId("from-mark")).toBeNull();
+  });
+
+  it("F27 a merged-away record shows the banner with the survivor's id; the control asks the survivor's detail and nothing else", async () => {
+    const away = {
+      ...DETAIL_A,
+      id: 11,
+      merged_into: 7,
+      merged_from: [],
+    };
+    apiMock.get.mockImplementation((url: string) =>
+      Promise.resolve(
+        isDetail(url)
+          ? url.endsWith("/7")
+            ? survivorDetail()
+            : away
+          : page([{ ...ROW_A, id: 11 }]),
+      ),
+    );
+    render(<RelatedRegistryPage />);
+    await settle();
+    fireEvent.click(screen.getAllByTestId("registry-row")[0]);
+    await settle();
+    expect(
+      screen.getByText(/This record was merged into subject #7/),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("registry-merged-from")).toBeNull();
+    const region = screen.getByRole("region", { name: "Subject detail" });
+    expect(
+      within(region).getByRole("heading", { name: /ZzAaa Person/ }),
+    ).toBeTruthy();
+    expect(within(region).queryAllByRole("button")).toHaveLength(1);
+    const before = apiMock.get.mock.calls.length;
+    fireEvent.click(screen.getByTestId("open-survivor"));
+    await settle();
+    const asked = apiMock.get.mock.calls.slice(before).map((c) => c[0]);
+    expect(asked).toEqual(["/api/crm/related-registry/7"]);
+    expect(screen.getByTestId("registry-merged-from")).toBeTruthy();
+    expect(screen.queryByText(/This record was merged into/)).toBeNull();
+    expect(Object.keys(apiMock)).toEqual(["get"]);
+  });
+
+  it("F28 a subject in no merge, and an answer without the new fields, show no line, banner or mark; every call is a GET", async () => {
+    await openDetail(DETAIL_A);
+    for (const id of ["registry-merged-from", "from-mark", "open-survivor"]) {
+      expect(screen.queryByTestId(id)).toBeNull();
+    }
+    expect(screen.queryByText(/merged/)).toBeNull();
+
+    document.body.innerHTML = "";
+    apiMock.get.mockReset();
+    await openDetail({
+      ...DETAIL_A,
+      identifiers: [{ type: "passport", value: "ZZ-1", from_subject_id: null }],
+      merged_from: [],
+      merged_into: null,
+    });
+    for (const id of ["registry-merged-from", "from-mark", "open-survivor"]) {
+      expect(screen.queryByTestId(id)).toBeNull();
+    }
+    expect(screen.queryByText(/merged/)).toBeNull();
+    expect(Object.keys(apiMock)).toEqual(["get"]);
+    for (const call of apiMock.get.mock.calls) {
+      expect(String(call[0])).toMatch(/^\/api\/crm\/related-registry/);
+    }
+  });
+
+  it("F29 the three basis labels, a null basis, a null date, and both null", async () => {
+    await openDetail(
+      survivorDetail({
+        merged_from: [
+          mergedRecord({ subject_id: 11, basis: "permit_stamp" }),
+          mergedRecord({ subject_id: 12, basis: "same_identity" }),
+          mergedRecord({ subject_id: 13, basis: "manual" }),
+          mergedRecord({ subject_id: 14, basis: null }),
+          mergedRecord({ subject_id: 15, merged_at: null }),
+          mergedRecord({ subject_id: 16, basis: null, merged_at: null }),
+        ],
+      }),
+    );
+    expect(
+      screen.getAllByTestId("registry-merged-record").map((l) => l.textContent),
+    ).toEqual([
+      "#11 · Permit stamp · 2026-02-03",
+      "#12 · Same identity · 2026-02-03",
+      "#13 · Entered by hand · 2026-02-03",
+      "#14 · 2026-02-03",
+      "#15 · Permit stamp",
+      "#16",
+    ]);
+    expect(screen.getByText("6 records merged into this one")).toBeTruthy();
+  });
 });

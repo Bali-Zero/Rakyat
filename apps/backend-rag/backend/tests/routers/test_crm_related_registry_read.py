@@ -45,6 +45,7 @@ REGISTRY_TABLES = (
     "related_document_sightings",
     "related_subject_documents",
     "related_subject_links",
+    "related_subject_merges",
 )
 
 ADMIN = {"email": "zz-admin@example.test", "user_id": 1, "role": "admin"}
@@ -145,6 +146,7 @@ async def pool():
                 "365_related_subject_names.sql",
                 "366_related_evidence_objects.sql",
                 "367_related_subject_links.sql",
+                "369_related_subject_merges.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -364,8 +366,9 @@ async def test_t3_list_without_q_orders_pages_and_counts(admin, seeded):
     assert row["kind"] == "person" and row["nationality"] == "ZZ-land"
     assert row["date_of_birth"] == "1990-01-02" and row["document_count"] == 3
     assert row["identifiers"] == [
-        {"type": "passport", "value": ZZ_PASSPORT_RAW},
-        {"type": "permit", "value": ZZ_PERMIT_RAW},
+        {"type": "passport", "value": ZZ_PASSPORT_RAW, "from_subject_id": None},
+        {"type": "permit", "value": ZZ_PERMIT_RAW, "from_subject_id": None},
+        {"type": "passport", "value": "ZZ77777M7", "from_subject_id": seeded["merged"]},
     ]
     assert set(row) == {
         "id", "kind", "display_name", "name_source", "date_of_birth", "nationality", "identifiers",
@@ -455,7 +458,7 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
     assert body["display_name"] == "ZzAaa Person" and body["sex"] == "F"
     assert body["nationality"] == "ZZ-land" and body["date_of_birth"] == "1990-01-02"
     assert "created_at" in body and "evidence" not in body and "created_by" not in body
-    assert [i["type"] for i in body["identifiers"]] == ["passport", "permit"]
+    assert [i["type"] for i in body["identifiers"]] == ["passport", "permit", "passport"]
     assert [d["sha256"] for d in body["documents"]] == [SHA1, SHA2, SHA3]
     first, second, third = body["documents"]
     assert first["drive_file_ids"] == [REF1, REF2]
@@ -465,11 +468,18 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
     assert first["first_seen_on"] == "2026-01-05"
     assert set(first) == {
         "sha256", "doc_type", "mime_type", "byte_size", "first_seen_on", "drive_file_ids",
+        "from_subject_id",
     }  # fmt: skip
+    assert body["merged_from"] == [
+        {"subject_id": seeded["merged"], "basis": None, "merged_at": None}
+    ]
+    assert body["merged_into"] is None
 
     missing = await admin.get(f"{BASE}/999999")
     assert missing.status_code == 404 and missing.json() == {"detail": "Subject not found"}
     assert (await admin.get(f"{BASE}/0")).status_code == 422
+    merged = await admin.get(f"{BASE}/{seeded['merged']}")
+    assert merged.status_code == 200 and merged.json()["merged_into"] == seeded["aaa"]
 
 
 # ── T8 ────────────────────────────────────────────────────────────────────────
@@ -479,10 +489,12 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
 async def test_t8_merged_subject_is_absent_from_list_and_total(admin, seeded):
     resp = await admin.get(BASE, params={"limit": 100})
     assert seeded["merged"] not in ids_of(resp) and resp.json()["total"] == 9
+    # the merged-away record is never listed itself, but its survivor is now found through the
+    # record's name and identifier (slice 4C); its pointer has no history row (LEFT JOIN)
     by_name = await admin.get(BASE, params={"q": "ZzMerged"})
-    assert by_name.json() == {"items": [], "total": 0, "limit": 50, "offset": 0}
+    assert ids_of(by_name) == [seeded["aaa"]] and by_name.json()["total"] == 1
     by_id = await admin.get(BASE, params={"q": "ZZ77777"})
-    assert by_id.json()["total"] == 0
+    assert ids_of(by_id) == [seeded["aaa"]] and by_id.json()["total"] == 1
     kind = await admin.get(BASE, params={"kind": "person", "limit": 100})
     assert seeded["merged"] not in ids_of(kind) and kind.json()["total"] == 7
     # opened by id, a merged subject is returned like any other
@@ -565,8 +577,8 @@ def test_t10_every_sql_text_of_the_service_is_a_plain_select():
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     ]
     # slice 4A added the recorded-names statement of the detail page, slice 4B the links
-    # statement: 9 complete statements
-    assert len(statements) == 9
+    # statement, slice 4C the members statement of the detail page: 10 complete statements
+    assert len(statements) == 10
     for sql in statements:
         assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
     # the executed statements are exactly the module's constants (no inline SQL in a call)

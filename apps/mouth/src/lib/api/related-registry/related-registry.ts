@@ -19,6 +19,7 @@ export type RegistryDocument = components["schemas"]["RelatedRegistryDocument"];
 export type RegistryIdentifier =
   components["schemas"]["RelatedRegistryIdentifier"];
 export type RegistryLink = components["schemas"]["RelatedRegistryLink"];
+export type RegistryMerged = components["schemas"]["RelatedRegistryMerged"];
 export type RegistryLinked = "true" | "false";
 
 export interface RegistryListParams {

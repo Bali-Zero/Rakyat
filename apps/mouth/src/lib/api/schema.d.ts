@@ -1572,6 +1572,8 @@ export interface components {
       drive_file_ids: string[];
       /** First Seen On */
       first_seen_on: string | null;
+      /** From Subject Id */
+      from_subject_id: number | null;
       /** Mime Type */
       mime_type: string | null;
       /** Sha256 */
@@ -1579,6 +1581,8 @@ export interface components {
     };
     /** RelatedRegistryIdentifier */
     RelatedRegistryIdentifier: {
+      /** From Subject Id */
+      from_subject_id: number | null;
       /** Type */
       type: string;
       /** Value */
@@ -1602,6 +1606,8 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** From Subject Id */
+      from_subject_id: number | null;
       /**
        * Relation
        * @enum {string}
@@ -1631,6 +1637,15 @@ export interface components {
       /** Total */
       total: number;
     };
+    /** RelatedRegistryMerged */
+    RelatedRegistryMerged: {
+      /** Basis */
+      basis: ("permit_stamp" | "same_identity" | "manual") | null;
+      /** Merged At */
+      merged_at: string | null;
+      /** Subject Id */
+      subject_id: number;
+    };
     /** RelatedRegistryName */
     RelatedRegistryName: {
       /**
@@ -1638,6 +1653,8 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** From Subject Id */
+      from_subject_id: number | null;
       /** Name */
       name: string;
       /**
@@ -1674,6 +1691,10 @@ export interface components {
       links: components["schemas"]["RelatedRegistryLink"][];
       /** Links Total */
       links_total: number;
+      /** Merged From */
+      merged_from: components["schemas"]["RelatedRegistryMerged"][];
+      /** Merged Into */
+      merged_into: number | null;
       /** Name Source */
       name_source:
         | (
