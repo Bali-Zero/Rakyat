@@ -334,9 +334,7 @@ async def _send_quarantine_alarm(client: "httpx.AsyncClient", text: str) -> bool
         logger.error("GARUDA payment quarantine alarm could not be delivered: %s", exc)
         return False
     except Exception as exc:
-        logger.error(
-            "GARUDA payment quarantine alarm unexpected delivery error: %s", exc
-        )
+        logger.error("GARUDA payment quarantine alarm unexpected delivery error: %s", exc)
         return False
     return True
 

@@ -354,9 +354,7 @@ class CheckoutReadyEmailHandler:
         tracker = f"{base}/{facts.order_id}"
         amount = f"IDR {facts.price_idr:,}".replace(",", ".")
         payment_link = (
-            f'<a href="{_h(checkout_url)}">Complete my payment</a><br><br>'
-            if checkout_url
-            else ""
+            f'<a href="{_h(checkout_url)}">Complete my payment</a><br><br>' if checkout_url else ""
         )
         return (
             "Hello,<br><br>"

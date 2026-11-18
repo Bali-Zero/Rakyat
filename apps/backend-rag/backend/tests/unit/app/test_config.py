@@ -40,10 +40,7 @@ class TestConfig:
 
         settings = Settings(_env_file=None)
 
-        assert (
-            settings.database_url
-            == "postgresql://nuzantara:uxxx14@localhost:5432/nuzantara"
-        )
+        assert settings.database_url == "postgresql://nuzantara:uxxx14@localhost:5432/nuzantara"
 
     def test_database_url_normalizes_postgres_scheme(self, monkeypatch):
         """Legacy postgres:// URLs should be normalized."""

@@ -79,9 +79,7 @@ class TestPassportValidityDerivation:
 
     def test_passport_one_day_short_declines(self) -> None:
         entry = _TODAY + timedelta(days=5)
-        req = _issuance(
-            passport_expiry_date=entry + timedelta(days=MIN_PASSPORT_VALIDITY_DAYS - 1)
-        )
+        req = _issuance(passport_expiry_date=entry + timedelta(days=MIN_PASSPORT_VALIDITY_DAYS - 1))
         verdict = build_verdict(req, today=_TODAY)
         assert verdict.decision is Decision.DECLINE
         assert any("6 mont" in r for r in verdict.decline_reasons)
@@ -100,9 +98,7 @@ class TestExtensionDaysUntilExpiryDerivation:
 
     def test_extension_exactly_at_published_deadline_accepts(self) -> None:
         # Owner ruling 2026-07-27: the deadline day itself is still filable.
-        req = _extension(
-            voa_expiry_date=_TODAY + timedelta(days=PUBLISHED_FILING_DEADLINE_DAYS)
-        )
+        req = _extension(voa_expiry_date=_TODAY + timedelta(days=PUBLISHED_FILING_DEADLINE_DAYS))
         verdict = build_verdict(req, today=_TODAY)
         assert verdict.accepted is True
 
