@@ -103,7 +103,6 @@ async def lifespan(app: FastAPI):
     Startup Phase:
     - Initialize AlertService
     - Initialize all backend services (RAG, CRM, Integrations, etc.)
-    - Initialize plugin system
 
     Shutdown Phase:
     - Stop all background tasks (WebSocket listener, Health Monitor, etc.)
@@ -178,18 +177,6 @@ async def lifespan(app: FastAPI):
         from backend.app.utils.client_pools import validate_client_pools_on_pool
 
         await validate_client_pools_on_pool(getattr(app.state, "db_pool", None))
-
-        try:
-            from backend.app.setup.plugin_initializer import initialize_plugins
-
-            await initialize_plugins(app)
-        except Exception as e:
-            logger.error(
-                "⚠️ Failed to initialize plugins (non-critical): %s",
-                e,
-                exc_info=True,
-            )
-            app.state.plugin_registry = None
 
         # Initialize Notification Scheduler (automated email alerts)
         try:

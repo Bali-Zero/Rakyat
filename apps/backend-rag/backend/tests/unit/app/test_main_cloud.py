@@ -38,10 +38,6 @@ class TestMainCloud:
                 "backend.app.setup.service_initializer.initialize_services",
                 new_callable=AsyncMock,
             ) as mock_init_services,
-            patch(
-                "backend.app.setup.plugin_initializer.initialize_plugins",
-                new_callable=AsyncMock,
-            ) as mock_init_plugins,
             patch("backend.services.monitoring.alert_service.AlertService") as mock_alert,
         ):
             mock_alert.return_value = MagicMock()
@@ -49,7 +45,6 @@ class TestMainCloud:
             await on_startup()
 
             mock_init_services.assert_called_once()
-            mock_init_plugins.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_shutdown(self):

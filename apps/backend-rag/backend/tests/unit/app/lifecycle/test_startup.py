@@ -21,7 +21,6 @@ def mock_startup_dependencies():
     with patch.dict(
         "sys.modules",
         {
-            "backend.app.setup.plugin_initializer": MagicMock(),
             "backend.app.setup.service_initializer": MagicMock(),
         },
     ):
@@ -42,36 +41,32 @@ class TestStartupHandlers:
     def test_register_startup_handlers(self, mock_app):
         """Test registering startup handlers"""
         # Import inside test to use mocked dependencies
-        with patch("backend.app.setup.plugin_initializer.initialize_plugins", new=AsyncMock()):
-            with patch(
-                "backend.app.setup.service_initializer.initialize_services",
-                new=AsyncMock(),
+        with patch(
+            "backend.app.setup.service_initializer.initialize_services",
+            new=AsyncMock(),
+        ):
+            # Re-import with mocked deps
+            if "backend.app.lifecycle.startup" in sys.modules:
+                del sys.modules["backend.app.lifecycle.startup"]
+
+            # Mock the imports at module level
+            with patch.dict(
+                "sys.modules",
+                {
+                    "backend.app.setup.service_initializer": MagicMock(
+                        initialize_services=AsyncMock(),
+                    ),
+                    "backend.services.monitoring.alert_service": MagicMock(
+                        AlertService=MagicMock(),
+                    ),
+                },
             ):
-                # Re-import with mocked deps
-                if "backend.app.lifecycle.startup" in sys.modules:
-                    del sys.modules["backend.app.lifecycle.startup"]
+                from backend.app.lifecycle.startup import register_startup_handlers
 
-                # Mock the imports at module level
-                with patch.dict(
-                    "sys.modules",
-                    {
-                        "backend.app.setup.plugin_initializer": MagicMock(
-                            initialize_plugins=AsyncMock(),
-                        ),
-                        "backend.app.setup.service_initializer": MagicMock(
-                            initialize_services=AsyncMock(),
-                        ),
-                        "backend.services.monitoring.alert_service": MagicMock(
-                            AlertService=MagicMock(),
-                        ),
-                    },
-                ):
-                    from backend.app.lifecycle.startup import register_startup_handlers
+                register_startup_handlers(mock_app)
 
-                    register_startup_handlers(mock_app)
-
-                    # Should register startup event
-                    assert mock_app.on_event.called
+                # Should register startup event
+                assert mock_app.on_event.called
 
 
 class TestStartupHandlersDirect:
@@ -97,7 +92,6 @@ class TestStartupHandlersDirect:
         with patch.dict(
             "sys.modules",
             {
-                "backend.app.setup.plugin_initializer": MagicMock(initialize_plugins=AsyncMock()),
                 "backend.app.setup.service_initializer": MagicMock(initialize_services=AsyncMock()),
                 "backend.services.monitoring.alert_service": MagicMock(AlertService=MagicMock()),
             },
@@ -135,15 +129,11 @@ class TestStartupHandlersDirect:
         mock_app.on_event = mock_on_event
 
         mock_init_services = AsyncMock()
-        mock_init_plugins = AsyncMock()
         mock_alert_service = MagicMock()
 
         with patch.dict(
             "sys.modules",
             {
-                "backend.app.setup.plugin_initializer": MagicMock(
-                    initialize_plugins=mock_init_plugins,
-                ),
                 "backend.app.setup.service_initializer": MagicMock(
                     initialize_services=mock_init_services,
                 ),
@@ -166,7 +156,6 @@ class TestStartupHandlersDirect:
 
             # Verify services were initialized
             mock_init_services.assert_called_once_with(mock_app)
-            mock_init_plugins.assert_called_once_with(mock_app)
 
             # Verify alert service was set on app state
             assert mock_app.state.alert_service is not None
@@ -192,14 +181,10 @@ class TestStartupHandlersDirect:
 
         # Make initialize_services raise an error
         mock_init_services = AsyncMock(side_effect=Exception("Service init failed"))
-        mock_init_plugins = AsyncMock()
 
         with patch.dict(
             "sys.modules",
             {
-                "backend.app.setup.plugin_initializer": MagicMock(
-                    initialize_plugins=mock_init_plugins,
-                ),
                 "backend.app.setup.service_initializer": MagicMock(
                     initialize_services=mock_init_services,
                 ),
