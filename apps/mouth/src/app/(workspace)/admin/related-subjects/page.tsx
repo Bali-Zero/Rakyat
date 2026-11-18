@@ -9,12 +9,13 @@
  * table. The page has no role check of its own: the server's answer decides.
  *
  * Answers that may update the page: only the latest list request for the
- * current search, kind and offset, and only the detail request for the
+ * current search, kind, client-link filter and offset, and only the detail request for the
  * subject currently selected. A superseded answer, error included, is ignored
  * (the effect cleanup flips a per-request flag). The search text is sent only
  * as the query key `q` and is never logged.
  */
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -22,6 +23,7 @@ import {
   listRegistry,
   type RegistryDetail,
   type RegistryKind,
+  type RegistryLinked,
   type RegistryRow,
 } from "@/lib/api/related-registry/related-registry";
 import { cn } from "@/lib/utils";
@@ -50,9 +52,18 @@ const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> = [
   { value: "company", label: "Companies" },
 ];
 
+type LinkedFilter = "all" | RegistryLinked;
+
+const LINKED_OPTIONS: ReadonlyArray<{ value: LinkedFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "true", label: "Linked" },
+  { value: "false", label: "Not linked" },
+];
+
 interface ListQuery {
   q: string;
   kind: KindFilter;
+  linked: LinkedFilter;
   offset: number;
 }
 
@@ -89,6 +100,28 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
   ocr_single: "OCR, one file",
 };
 
+/** How a link was proposed: the producer's basis, shown as a short label. */
+const BASIS_LABELS: Readonly<Record<string, string>> = {
+  drive_folder: "Drive folder",
+  whatsapp_phone: "WhatsApp phone",
+  identity: "Identity",
+  manual: "Entered by hand",
+};
+
+/** The mark on a list row of a subject that has at least one proposed client link. */
+function ClientMark({ count }: { count?: number | null }) {
+  if (!count || count <= 0) return null;
+  return (
+    <span
+      data-testid="client-mark"
+      title="This subject is proposed as linked to a CRM client. Not confirmed."
+      className="ml-2 border border-[var(--line-control)] px-1.5 py-0.5 align-middle text-[10px] font-[650] uppercase tracking-[0.08em] text-[var(--tx-secondary)]"
+    >
+      Client
+    </span>
+  );
+}
+
 /** The mark beside a name read by OCR; nothing for any other source. */
 function NameMark({ source }: { source?: string | null }) {
   const label = source ? OCR_MARKS[source] : undefined;
@@ -117,6 +150,7 @@ export default function RelatedRegistryPage() {
   const [query, setQuery] = useState<ListQuery>({
     q: "",
     kind: "all",
+    linked: "all",
     offset: 0,
   });
 
@@ -171,6 +205,7 @@ export default function RelatedRegistryPage() {
     listRegistry({
       q: query.q || undefined,
       kind: query.kind === "all" ? undefined : query.kind,
+      linked: query.linked === "all" ? undefined : query.linked,
       limit: LIMIT,
       offset: query.offset,
     })
@@ -225,6 +260,13 @@ export default function RelatedRegistryPage() {
       prev.kind === kind ? prev : { ...prev, kind, offset: 0 },
     );
 
+  const setLinked = (linked: LinkedFilter) =>
+    setQuery((prev) =>
+      prev.linked === linked ? prev : { ...prev, linked, offset: 0 },
+    );
+
+  const shownLinks = detail?.links ?? [];
+  const linksTotal = detail?.links_total ?? shownLinks.length;
   const shownNames = detail?.names ?? [];
   const namesTotal = detail?.names_total ?? shownNames.length;
 
@@ -243,16 +285,37 @@ export default function RelatedRegistryPage() {
       <DeskStrip
         className="mb-4"
         filters={
-          <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {KIND_OPTIONS.map((option) => (
-              <StatePill
-                key={option.value}
-                tone="wait"
-                label={option.label}
-                pressed={query.kind === option.value}
-                onClick={() => setKind(option.value)}
-              />
-            ))}
+          <div className="flex min-w-0 items-center gap-4 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div
+              role="group"
+              aria-label="Subject kind"
+              className="flex items-center gap-1.5"
+            >
+              {KIND_OPTIONS.map((option) => (
+                <StatePill
+                  key={option.value}
+                  tone="wait"
+                  label={option.label}
+                  pressed={query.kind === option.value}
+                  onClick={() => setKind(option.value)}
+                />
+              ))}
+            </div>
+            <div
+              role="group"
+              aria-label="Client link"
+              className="flex items-center gap-1.5"
+            >
+              {LINKED_OPTIONS.map((option) => (
+                <StatePill
+                  key={option.value}
+                  tone="wait"
+                  label={option.label}
+                  pressed={query.linked === option.value}
+                  onClick={() => setLinked(option.value)}
+                />
+              ))}
+            </div>
           </div>
         }
         right={
@@ -311,6 +374,7 @@ export default function RelatedRegistryPage() {
                       <td className={CELL}>
                         {row.display_name ?? "—"}
                         <NameMark source={row.name_source} />
+                        <ClientMark count={row.links_count} />
                       </td>
                       <td className={CELL}>{row.kind}</td>
                       <td className={CELL}>
@@ -437,6 +501,49 @@ export default function RelatedRegistryPage() {
                   </p>
                 )}
               </div>
+
+              {shownLinks.length > 0 && (
+                <div data-testid="registry-clients">
+                  <h3 className={HEAD}>Clients</h3>
+                  <p className="text-[13px] text-[var(--tx-secondary)]">
+                    Proposed from documents, not confirmed.
+                  </p>
+                  <ul className="text-[13px] text-[var(--tx-pure)]">
+                    {shownLinks.map((link, index) => (
+                      <li
+                        key={`${index}:${link.client_id}:${link.basis}`}
+                        data-testid="registry-client"
+                      >
+                        {link.client_live ? (
+                          <Link
+                            href={`/clients/${link.client_id}`}
+                            className={cn(
+                              "text-[var(--bz-copper)] underline",
+                              FOCUS,
+                            )}
+                          >
+                            {link.client_name ?? `Client #${link.client_id}`}
+                          </Link>
+                        ) : (
+                          <span className="text-[var(--tx-secondary)]">
+                            Client no longer in the CRM
+                          </span>
+                        )}{" "}
+                        · {BASIS_LABELS[link.basis] ?? "—"} ·{" "}
+                        {link.created_at.slice(0, 10)}
+                      </li>
+                    ))}
+                  </ul>
+                  {linksTotal > shownLinks.length && (
+                    <p
+                      data-testid="registry-clients-truncated"
+                      className="text-[13px] text-[var(--tx-secondary)]"
+                    >
+                      {`Showing ${shownLinks.length} of ${linksTotal} clients.`}
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div>
                 <h3 className={HEAD}>Identifiers</h3>
