@@ -3885,11 +3885,15 @@ _EVIDENCE_TABLES = {
 }
 
 
-async def _evidence_constraints(c) -> set[str]:
+async def _evidence_constraints(c, *, validated_only=False) -> set[str]:
+    """The evidence CHECKs of THIS connection's schema only: the hosted database is migrated in
+    `public` before pytest starts, so an unscoped catalog read also sees those four."""
     rows = await c.fetch(
-        "SELECT conname FROM pg_constraint WHERE conrelid = ANY($1::regclass[]) "
-        "AND conname LIKE '%_evidence_object_chk'",
+        "SELECT conname FROM pg_constraint WHERE connamespace = current_schema()::regnamespace "
+        "AND conrelid = ANY($1::regclass[]) AND conname LIKE '%_evidence_object_chk' "
+        "AND (convalidated OR NOT $2)",
         list(_EVIDENCE_TABLES),
+        validated_only,
     )
     return {r["conname"] for r in rows}
 
@@ -3967,11 +3971,7 @@ async def test_ev4_migration_366_repairs_string_evidence_and_forbids_the_wrong_s
                 assert [r["k"] for r in rows] == ["object", "object"]
                 assert all(r["evidence"] == {"a": 1, "b": [2, 3]} for r in rows)
             assert await _evidence_constraints(c) == set(_EVIDENCE_TABLES.values())
-            validated = await c.fetchval(
-                "SELECT count(*) FROM pg_constraint WHERE conname LIKE '%_evidence_object_chk' "
-                "AND convalidated"
-            )
-            assert validated == 4
+            assert len(await _evidence_constraints(c, validated_only=True)) == 4
 
             seeds = {
                 "related_subjects": "INSERT INTO related_subjects (kind, evidence, created_by) "
