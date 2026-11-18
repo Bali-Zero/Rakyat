@@ -26,7 +26,10 @@ export interface HrCapabilitiesState {
  * What the signed-in member may see in the HR & accounting space, as answered
  * by the backend predicates that guard the routes themselves.
  */
-export function useHrCapabilities(): HrCapabilitiesState {
+export function useHrCapabilities(
+  options: { enabled?: boolean } = {},
+): HrCapabilitiesState {
+  const { enabled = true } = options;
   const [state, setState] = useState<HrCapabilitiesState>({
     capabilities: NO_CAPABILITIES,
     loaded: false,
@@ -34,6 +37,7 @@ export function useHrCapabilities(): HrCapabilitiesState {
   });
 
   useEffect(() => {
+    if (!enabled) return;
     let mounted = true;
     getCapabilities()
       .then((capabilities) => {
@@ -50,7 +54,7 @@ export function useHrCapabilities(): HrCapabilitiesState {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [enabled]);
 
   return state;
 }
