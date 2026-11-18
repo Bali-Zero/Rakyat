@@ -404,7 +404,9 @@ async def test_op_f04_late_paid_after_refund_keeps_refunded_and_opens_no_practic
     # the repository must handle it gracefully as OP-F04, not crash.
     late_paid_event = NormalizedPaidEvent(
         provider_event_id="evt-late-paid-1",
-        provider_charge_id="charge-x",
+        # A DIFFERENT charge than the refunded one ("charge-x"): independent
+        # new money. The same charge would be the original payment (OP-09).
+        provider_charge_id="charge-late-y",
         provider_session_id=f"sess-{order_id}",
         amount_idr=body["price_idr"],
         currency="IDR",
@@ -2140,8 +2142,8 @@ def _xendit_event(body: dict):
     from backend.services.payments.xendit import XenditFeeConfig, XenditPaymentProvider
 
     adapter = XenditPaymentProvider(
-        secret_key="xnd_development_fake_key_for_tests",
-        callback_verification_token="fake-token",
+        secret_key="xnd_development_fake_key_for_tests",  # pragma: allowlist secret
+        callback_verification_token="fake-token",  # pragma: allowlist secret
         public_base_url="https://example.com",
         fee_config=XenditFeeConfig(percentage_bps=350, fixed_idr=6000),
         client=httpx.AsyncClient(),
@@ -2265,4 +2267,83 @@ async def test_xendit_exact_redeliveries_are_still_duplicates(pool, repository):
     assert (
         await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
         == "OP-09"
+    )
+
+
+@pytest.mark.asyncio
+async def test_xendit_original_paid_after_out_of_order_refund_is_not_a_late_case(pool, repository):
+    order_id = await _awaiting_order(repository, "result-xid-oop-refund-01")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    refund, raw_r = _xendit_event({"id": invoice, "status": "REFUNDED", "refund_id": "rfd-oop-1"})
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-05"
+    )
+    assert (
+        await pool.fetchval(
+            "SELECT provider_charge_id FROM garuda_orders WHERE order_id = $1", order_id
+        )
+        == invoice
+    )
+    jobs_before = await pool.fetch(
+        "SELECT job_type FROM garuda_order_outbox WHERE order_id = $1 ORDER BY job_type", order_id
+    )
+
+    paid, raw_p = _xendit_event(
+        {"id": invoice, "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-09"
+    )
+    state, late_open, late_charge = await pool.fetchrow(
+        "SELECT state, late_case_open, late_case_charge_id FROM garuda_orders WHERE order_id = $1",
+        order_id,
+    )
+    assert (state, late_open, late_charge) == ("refunded", False, None)
+    jobs_after = await pool.fetch(
+        "SELECT job_type FROM garuda_order_outbox WHERE order_id = $1 ORDER BY job_type", order_id
+    )
+    assert [j["job_type"] for j in jobs_after] == [j["job_type"] for j in jobs_before]
+    assert "staff_page_late_paid_after_refund" not in [j["job_type"] for j in jobs_after]
+
+
+@pytest.mark.asyncio
+async def test_refunded_order_paid_with_a_different_charge_is_still_a_late_case(pool, repository):
+    from backend.services.payments.port import NormalizedPaidEvent
+
+    order_id = await _awaiting_order(repository, "result-xid-oop-refund-02")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    refund, raw_r = _xendit_event({"id": invoice, "status": "REFUNDED", "refund_id": "rfd-oop-2"})
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-05"
+    )
+
+    other = NormalizedPaidEvent(
+        provider_event_id="evt-independent-new-money-1",
+        provider_charge_id="charge-independent-new-money-1",
+        provider_session_id=invoice,
+        amount_idr=price,
+        currency="IDR",
+    )
+    assert (
+        await repository.handle_paid_event(other, canonical_payload_sha256=_digest(b"independent"))
+        == "OP-F04"
+    )
+    state, late_open, late_charge = await pool.fetchrow(
+        "SELECT state, late_case_open, late_case_charge_id FROM garuda_orders WHERE order_id = $1",
+        order_id,
+    )
+    assert (state, late_open, late_charge) == ("refunded", True, "charge-independent-new-money-1")
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM garuda_order_outbox WHERE order_id = $1 "
+            "AND job_type = 'staff_page_late_paid_after_refund'",
+            order_id,
+        )
+        == 1
     )
