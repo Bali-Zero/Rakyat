@@ -661,7 +661,7 @@ class GarudaOrderRepository:
                 return "OP-09"  # duplicate delivery — already processed or in flight
 
             order = await conn.fetchrow(
-                "SELECT order_id, state, price_idr FROM garuda_orders WHERE provider_session_id = $1 FOR UPDATE",
+                "SELECT order_id, state, price_idr, provider_charge_id FROM garuda_orders WHERE provider_session_id = $1 FOR UPDATE",
                 event.provider_session_id,
             )
             if order is None:
@@ -795,6 +795,16 @@ class GarudaOrderRepository:
                     journal_event_id=event_id,
                     job_type="staff_page_duplicate_charge",
                 )
+            elif (
+                state == OrderState.REFUNDED.value
+                and order["provider_charge_id"] is not None
+                and event.provider_charge_id == order["provider_charge_id"]
+            ):
+                # The REFUNDED callback beat this PAID (OP-05 recorded the
+                # refunded charge). Same charge: this is the original payment
+                # of money already refunded, not new money -- no late case, no
+                # page, no journal event; the inbox row commits as OP-09.
+                transition_id = "OP-09"
             elif state == OrderState.REFUNDED.value:
                 transition_id = "OP-F04"
                 # CORRECTED (refuter finding): this branch previously opened
@@ -992,9 +1002,12 @@ class GarudaOrderRepository:
             else:
                 transition_id, event_name = "OP-06", "payment.refunded"
             await conn.execute(
-                "UPDATE garuda_orders SET state = 'refunded' WHERE order_id = $1 AND state = $2",
+                "UPDATE garuda_orders SET state = 'refunded', "
+                "provider_charge_id = COALESCE(provider_charge_id, $3) "
+                "WHERE order_id = $1 AND state = $2",
                 order_id,
                 state,
+                event.provider_charge_id,
             )
             event_id = await journal.append_event(
                 conn,
