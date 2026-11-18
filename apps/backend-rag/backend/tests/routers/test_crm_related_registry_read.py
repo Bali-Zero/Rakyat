@@ -1,6 +1,6 @@
 """Related-subjects registry, slice 3: the read-only admin routes on a real PostgreSQL.
 
-Each test builds a throwaway schema in the TEST database (migrations 361 and 362 forward parts
+Each test builds a throwaway schema in the TEST database (migrations 361, 362 and 364 forward parts
 plus the audit table), seeds invented rows (``Zz`` / ``ZZ`` conventions) and calls the real router
 behind the real middleware stack. Nothing here is a real person, company or document.
 """
@@ -123,7 +123,11 @@ async def pool():
     )
     try:
         async with created.acquire() as c:
-            for migration in ("361_related_subjects_registry.sql", "362_related_documents.sql"):
+            for migration in (
+                "361_related_subjects_registry.sql",
+                "362_related_documents.sql",
+                "364_related_subject_names.sql",
+            ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
             await c.execute(AUDIT_SCHEMA)
