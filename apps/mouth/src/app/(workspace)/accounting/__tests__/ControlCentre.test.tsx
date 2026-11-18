@@ -282,6 +282,34 @@ describe("Accounting control centre", () => {
     await waitFor(() => expect(screen.queryByTestId("cc-tab-done")).toBeNull());
   });
 
+  it("leaves the Done view when a later load says the route is unavailable", async () => {
+    const props = { onConfirmed: vi.fn(), onOpenCashout: vi.fn() };
+    const { rerender } = render(
+      <ReconciliationInbox {...props} doneVersion={0} />,
+    );
+    await ready();
+    fireEvent.click(await screen.findByRole("tab", { name: /done today/i }));
+    await screen.findByTestId("cc-done");
+
+    api.getDoneToday.mockRejectedValueOnce(
+      Object.assign(new Error("Not Found"), { statusCode: 404 }),
+    );
+    rerender(<ReconciliationInbox {...props} doneVersion={1} />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("tab", { name: /done today/i })).toBeNull();
+      expect(screen.queryByTestId("cc-done")).toBeNull();
+      expect(screen.getByRole("tab", { name: /to confirm/i })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getByTestId("inbox-row-1")).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+    });
+  });
+
   it("renders date blocks, empty memos and raw dates", async () => {
     renderCentre();
     await ready();

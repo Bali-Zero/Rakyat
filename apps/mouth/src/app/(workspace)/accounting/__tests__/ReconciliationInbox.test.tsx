@@ -1545,4 +1545,86 @@ describe("ported reconciliation contract", () => {
       expect(ignore).toBeEnabled();
     });
   });
+
+  it("62: a Confirm handler of an earlier transfer rejects the pick of the one opened after it", async () => {
+    api.getReconciliationInbox.mockResolvedValue([
+      inboxItem({
+        txn_id: 101,
+        light: "green",
+        description: "ROW CONFIRM A",
+        open_candidates: 1,
+        suggestion: openOne,
+      }),
+      inboxItem({
+        txn_id: 102,
+        light: "green",
+        description: "ROW CONFIRM B",
+        open_candidates: 1,
+        suggestion: openTwo,
+      }),
+    ]);
+    api.getMatchCandidates.mockImplementation(async (txnId) => ({
+      txn_id: txnId,
+      transfer_amount_idr: 500000,
+      candidates: [txnId === 101 ? openOne : openTwo],
+      recorded_candidates: [],
+    }));
+    renderInbox();
+    await screen.findByText("ROW CONFIRM A");
+    await within(opened()).findByText("INV-000000-00001", { exact: false });
+    const staleClick = renderedClick(
+      screen.getByRole("button", { name: "Confirm payment" }),
+    );
+
+    fireEvent.click(row(102));
+    await within(opened()).findByText("INV-000000-00003", { exact: false });
+    await act(async () => staleClick());
+
+    expect(screen.queryByText("Confirm payment match")).toBeNull();
+    expect(api.confirm).not.toHaveBeenCalled();
+  });
+
+  it("63: a Link handler of an earlier transfer rejects the pick of the one opened after it", async () => {
+    const recordedTwo = candidate({
+      invoice_id: 14,
+      practice_id: 24,
+      client_name: "PT CONTOH EMPAT",
+      invoice_number: "INV-000000-00004",
+      reasons: ["payment already recorded"],
+    });
+    api.getReconciliationInbox.mockResolvedValue([
+      inboxItem({
+        txn_id: 201,
+        light: "recorded",
+        description: "ROW LINK A",
+        recorded_candidates: 1,
+        suggestion: recorded,
+      }),
+      inboxItem({
+        txn_id: 202,
+        light: "recorded",
+        description: "ROW LINK B",
+        recorded_candidates: 1,
+        suggestion: recordedTwo,
+      }),
+    ]);
+    api.getMatchCandidates.mockImplementation(async (txnId) => ({
+      txn_id: txnId,
+      transfer_amount_idr: 500000,
+      candidates: [],
+      recorded_candidates: [txnId === 201 ? recorded : recordedTwo],
+    }));
+    renderInbox();
+    await screen.findByText("ROW LINK A");
+    await within(opened()).findByText("INV-000000-00002", { exact: false });
+    const staleClick = renderedClick(
+      screen.getByRole("button", { name: "Link, no money moved" }),
+    );
+
+    fireEvent.click(row(202));
+    await within(opened()).findByText("INV-000000-00004", { exact: false });
+    await act(async () => staleClick());
+
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+  });
 });
