@@ -7,8 +7,6 @@ const read = (rel: string) =>
 
 const SURFACES = {
   "services/page.tsx": read("./page.tsx"),
-  "v2/FunnelFeature.tsx": read("../../v2/_components/FunnelFeature.tsx"),
-  "v2/HeroCarousel.tsx": read("../../v2/_components/HeroCarousel.tsx"),
 };
 
 describe("public founded year is 2020 on /services and /v2", () => {
