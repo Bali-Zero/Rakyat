@@ -167,30 +167,3 @@ export function DoneTodayList({
     </div>
   );
 }
-
-export function DoneTodaySection({ version }: { version: number }) {
-  const { data, status, unavailable, retry } = useDoneToday(version);
-  const [open, setOpen] = useState(false);
-  if (unavailable) return null;
-  return (
-    <section className="rounded-lg border">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="w-full p-3 text-left text-sm font-medium hover:bg-[var(--bz-card-hover)]/30"
-      >
-        Done today{data ? ` · ${data.counts.total}` : ""}
-      </button>
-      {open && (
-        <div className="border-t p-3">
-          <DoneTodayList
-            data={data}
-            status={status}
-            onRetry={() => void retry()}
-          />
-        </div>
-      )}
-    </section>
-  );
-}

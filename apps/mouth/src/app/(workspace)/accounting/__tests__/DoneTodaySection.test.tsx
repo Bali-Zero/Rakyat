@@ -9,7 +9,7 @@ import {
   act,
 } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { DoneTodaySection } from "../_components/DoneTodaySection";
+import { DoneTodayList, useDoneToday } from "../_components/DoneTodaySection";
 import {
   accountingApi,
   type DoneTodayItem,
@@ -88,8 +88,21 @@ const deferred = <T,>() => {
 };
 const notFound = () =>
   Object.assign(new Error("Not Found"), { statusCode: 404 });
-const header = () => screen.getByRole("button", { name: /^done today/i });
-const open = () => fireEvent.click(header());
+function Harness({ version }: { version: number }) {
+  const { data, status, unavailable, retry } = useDoneToday(version);
+  if (unavailable) return null;
+  return (
+    <>
+      <p data-testid="done-count">
+        Done today{data ? ` · ${data.counts.total}` : ""}
+      </p>
+      <DoneTodayList data={data} status={status} onRetry={() => void retry()} />
+    </>
+  );
+}
+const DoneTodaySection = Harness;
+const header = () => screen.getByTestId("done-count");
+const open = () => undefined;
 const loaded = async (total: number) =>
   waitFor(() => expect(header()).toHaveTextContent(`Done today · ${total}`));
 
@@ -108,18 +121,11 @@ describe("DoneTodaySection", () => {
     expect(api.getDoneToday).toHaveBeenCalledTimes(1);
   });
 
-  it("F2/F3: collapsed on mount, the count shows after the load, the list only when open", async () => {
+  it("F2/F3: the count and list show after the load", async () => {
     render(<DoneTodaySection version={0} />);
-    expect(header()).toHaveAttribute("aria-expanded", "false");
     await loaded(1);
-    expect(screen.queryByTestId("done-today-item-1")).toBeNull();
-    expect(screen.queryByText(/^Today, /)).toBeNull();
-    open();
-    expect(header()).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("done-today-item-1")).toBeInTheDocument();
     expect(screen.getByText("Today, 2026-11-18 (WITA)")).toBeInTheDocument();
-    open();
-    expect(screen.queryByTestId("done-today-item-1")).toBeNull();
   });
 
   it("F4: entries keep their order and show time, label, memo, date, amount, invoice and client", async () => {
@@ -422,7 +428,7 @@ describe("DoneTodaySection", () => {
       if (name !== "getDoneToday") expect(fn, name).not.toHaveBeenCalled();
     }
     expect(screen.queryAllByRole("alert")).toHaveLength(0);
-    for (const b of screen.getAllByRole("button")) expect(b).toBeEnabled();
+    for (const b of screen.queryAllByRole("button")) expect(b).toBeEnabled();
     expect(source).not.toContain("useWriteLock");
     expect(source).not.toContain("useToast");
   });

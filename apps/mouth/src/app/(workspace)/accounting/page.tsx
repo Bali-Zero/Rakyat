@@ -19,11 +19,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Loader2,
   Wallet,
-  Inbox,
-  TableProperties,
   CheckCircle2,
   ArrowDownToLine,
   ArrowUpFromLine,
+  ArrowLeft,
   Sheet,
   Upload,
 } from "lucide-react";
@@ -31,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import { ReconciliationInbox } from "./_components/ReconciliationInbox";
-import { DoneTodaySection } from "./_components/DoneTodaySection";
+import "./control-centre.css";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
 import {
@@ -40,7 +39,7 @@ import {
   type CashbookSummary,
 } from "@/lib/api/workspace/accounting.api";
 
-type Tab = "cashout" | "inbox";
+type View = "centre" | "cashout";
 
 // ── Summary cards ────────────────────────────────────────────────────────────
 
@@ -175,7 +174,7 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
 
 export default function AccountingPage() {
   const { success, error } = useToast();
-  const [tab, setTab] = useState<Tab>("cashout");
+  const [view, setView] = useState<View>("centre");
   const [summary, setSummary] = useState<CashbookSummary | null>(null);
   const [cashout, setCashout] = useState<CashoutRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,102 +255,96 @@ export default function AccountingPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Wallet className="h-6 w-6 text-[var(--bz-accent)]" />
-          <h1 className="text-2xl font-semibold tracking-tight">Accounting</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="hidden"
-            onChange={(e) => {
-              void handleImportFile(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          <Button
-            variant="outline"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            title="Import Asya's weekly cashout worksheet PDF (GABUNGAN)"
-          >
-            {importing ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="mr-2 h-4 w-4" />
-            )}
-            Import Cashout PDF
-          </Button>
-          <Button variant="outline" onClick={handleExport} disabled={exporting}>
-            {exporting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Sheet className="mr-2 h-4 w-4" />
-            )}
-            Export to Sheets
-          </Button>
-        </div>
-      </div>
-
-      <SummaryCards summary={summary} />
-      {(() => {
-        // Worksheet rows are Asya's planning draft (excluded from the totals
-        // above) — surface how much pending money is sitting in that bucket so
-        // the gap between "what's booked" and "what's confirmed in the bank" is
-        // visible at a glance.
-        const ws = summary?.by_type?.find(
-          (t) => t.type === "cashout_worksheet",
-        );
-        if (!ws || !ws.n) return null;
-        return (
-          <p className="-mt-3 text-xs text-[var(--state-warning)]">
-            {ws.n} worksheet draft(s) (<Money value={ws.total_idr} />) imported
-            from Asya&apos;s PDF — excluded from the totals above, pending bank
-            reconciliation.
-          </p>
-        );
-      })()}
-
-      <div className="flex gap-2 border-b">
-        <button
-          onClick={() => setTab("cashout")}
-          className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
-            tab === "cashout"
-              ? "border-b-2 border-[var(--bz-accent)] text-[var(--bz-text-1)]"
-              : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
-          }`}
-        >
-          <TableProperties className="h-4 w-4" /> Weekly Cashout
-        </button>
-        <button
-          onClick={() => setTab("inbox")}
-          className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
-            tab === "inbox"
-              ? "border-b-2 border-[var(--bz-accent)] text-[var(--bz-text-1)]"
-              : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
-          }`}
-        >
-          <Inbox className="h-4 w-4" /> Reconciliation
-        </button>
-      </div>
-
-      {tab === "cashout" ? (
-        loading ? (
-          <div className="flex items-center justify-center p-10 text-[var(--bz-text-2)]">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading cashout…
-          </div>
-        ) : (
-          <CashoutTable rows={cashout} />
-        )
+    <div className="p-6">
+      {view === "centre" ? (
+        <ReconciliationInbox
+          onConfirmed={handleConfirmed}
+          doneVersion={doneVersion}
+          onOpenCashout={() => setView("cashout")}
+        />
       ) : (
-        <>
-          <ReconciliationInbox onConfirmed={handleConfirmed} />
-          <DoneTodaySection version={doneVersion} />
-        </>
+        <div className="space-y-6">
+          <button
+            type="button"
+            data-testid="back-to-centre"
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
+            onClick={() => setView("centre")}
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to reconciliation
+          </button>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Wallet className="h-6 w-6 text-[var(--bz-accent)]" />
+              <h1 className="text-2xl font-semibold tracking-tight">
+                Accounting
+              </h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  void handleImportFile(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                title="Import Asya's weekly cashout worksheet PDF (GABUNGAN)"
+              >
+                {importing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="mr-2 h-4 w-4" />
+                )}
+                Import Cashout PDF
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleExport}
+                disabled={exporting}
+              >
+                {exporting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Sheet className="mr-2 h-4 w-4" />
+                )}
+                Export to Sheets
+              </Button>
+            </div>
+          </div>
+
+          <SummaryCards summary={summary} />
+          {(() => {
+            // Worksheet rows are Asya's planning draft (excluded from the totals
+            // above) — surface how much pending money is sitting in that bucket so
+            // the gap between "what's booked" and "what's confirmed in the bank" is
+            // visible at a glance.
+            const ws = summary?.by_type?.find(
+              (t) => t.type === "cashout_worksheet",
+            );
+            if (!ws || !ws.n) return null;
+            return (
+              <p className="-mt-3 text-xs text-[var(--state-warning)]">
+                {ws.n} worksheet draft(s) (<Money value={ws.total_idr} />)
+                imported from Asya&apos;s PDF — excluded from the totals above,
+                pending bank reconciliation.
+              </p>
+            );
+          })()}
+
+          {loading ? (
+            <div className="flex items-center justify-center p-10 text-[var(--bz-text-2)]">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading cashout…
+            </div>
+          ) : (
+            <CashoutTable rows={cashout} />
+          )}
+        </div>
       )}
     </div>
   );

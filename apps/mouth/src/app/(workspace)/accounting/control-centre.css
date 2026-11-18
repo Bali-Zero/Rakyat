@@ -1,0 +1,72 @@
+.cc-root {
+  --cc-card: #fffcf7;
+  --cc-wash: #f3efe7;
+  --cc-pill: #efe9de;
+  --cc-sel: #f4efe6;
+  --cc-tx: #1d2c3b;
+  --cc-tx-2: #58626b;
+  --cc-edge: #ddd6ca;
+  --cc-hair: #ebe5da;
+  --cc-line-control: #857f73;
+  --cc-act: #253e33;
+  --cc-act-on: #f7f4ee;
+  --cc-on: #ffffff;
+  --cc-confirm: #2a7a49;
+  --cc-confirm-ink: #226a3e;
+  --cc-confirm-mark: #2a7a49;
+  --cc-link: #1f66b0;
+  --cc-link-ink: #1b5c9f;
+  --cc-link-mark: #1f66b0;
+  --cc-choose: #9e6206;
+  --cc-choose-ink: #8a5a12;
+  --cc-choose-mark: #9e6206;
+  --cc-nomatch: #b0432f;
+  --cc-nomatch-ink: #ad3b29;
+  --cc-nomatch-mark: #b0432f;
+}
+
+[data-theme="operative-dark"] .cc-root {
+  --cc-card: #1a1a1f;
+  --cc-wash: #222127;
+  --cc-pill: rgba(247, 244, 238, 0.1);
+  --cc-sel: rgba(247, 244, 238, 0.06);
+  --cc-tx: #f7f4ee;
+  --cc-tx-2: rgba(247, 244, 238, 0.66);
+  --cc-edge: rgba(247, 244, 238, 0.14);
+  --cc-hair: rgba(247, 244, 238, 0.08);
+  --cc-line-control: rgba(247, 244, 238, 0.46);
+  --cc-act: #3f7a5c;
+  --cc-act-on: #ffffff;
+  --cc-confirm-ink: #74cf98;
+  --cc-confirm-mark: #74cf98;
+  --cc-link-ink: #8fbcf0;
+  --cc-link-mark: #8fbcf0;
+  --cc-choose-ink: #e9bb52;
+  --cc-choose-mark: #e9bb52;
+  --cc-nomatch-ink: #f39079;
+  --cc-nomatch-mark: #f39079;
+}
+
+.cc-s-confirm {
+  --cc-solid: var(--cc-confirm);
+  --cc-ink: var(--cc-confirm-ink);
+  --cc-mark: var(--cc-confirm-mark);
+}
+
+.cc-s-link {
+  --cc-solid: var(--cc-link);
+  --cc-ink: var(--cc-link-ink);
+  --cc-mark: var(--cc-link-mark);
+}
+
+.cc-s-choose {
+  --cc-solid: var(--cc-choose);
+  --cc-ink: var(--cc-choose-ink);
+  --cc-mark: var(--cc-choose-mark);
+}
+
+.cc-s-nomatch {
+  --cc-solid: var(--cc-nomatch);
+  --cc-ink: var(--cc-nomatch-ink);
+  --cc-mark: var(--cc-nomatch-mark);
+}

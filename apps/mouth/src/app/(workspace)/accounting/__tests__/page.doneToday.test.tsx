@@ -34,7 +34,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
 const api = vi.mocked(accountingApi);
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   api.getSummary.mockResolvedValue({
     income_idr: 0,
     outgoing_idr: 0,
@@ -46,6 +46,15 @@ beforeEach(() => {
   api.getReconciliationInbox.mockResolvedValue([
     inboxItem({ txn_id: 7, description: "CONTOH TRANSFER" }),
   ]);
+  api.getBankTransactions.mockResolvedValue([
+    { id: 1, txn_date: "2026-11-16" } as never,
+  ]);
+  api.getMatchCandidates.mockImplementation(async (id) => ({
+    txn_id: id,
+    transfer_amount_idr: 500000,
+    candidates: [],
+    recorded_candidates: [],
+  }));
   api.getDoneToday.mockResolvedValue({
     day: "2026-11-18",
     timezone: "Asia/Makassar",
@@ -56,21 +65,21 @@ beforeEach(() => {
 });
 
 describe("AccountingPage Done today", () => {
-  it("is not on the cashout tab and loads nothing there", async () => {
+  it("the cashout view has no Done tab and opening it sends no new done load", async () => {
     render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    expect(api.getDoneToday).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(await screen.findByText("No cashout rows yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^done today/i })).toBeNull();
-    expect(api.getDoneToday).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: /^done today/i })).toBeNull();
+    expect(api.getDoneToday).toHaveBeenCalledTimes(1);
   });
 
-  it("opening the Reconciliation tab shows it and loads it once", async () => {
+  it("the page opens with Done today loaded once", async () => {
     render(<AccountingPage />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /reconciliation/i }),
-    );
     expect(
-      await screen.findByRole("button", { name: /^done today · 0$/i }),
-    ).toBeInTheDocument();
+      await screen.findByRole("tab", { name: /^done today/i }),
+    ).toHaveTextContent("0");
     await screen.findByText("CONTOH TRANSFER");
     expect(api.getDoneToday).toHaveBeenCalledTimes(1);
   });
@@ -79,11 +88,8 @@ describe("AccountingPage Done today", () => {
     api.previewBankStatement.mockResolvedValue(previewFixture());
     api.importBankStatement.mockResolvedValue(importFixture());
     render(<AccountingPage />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /reconciliation/i }),
-    );
     await screen.findByText("CONTOH TRANSFER");
-    await screen.findByRole("button", { name: /^done today · 0$/i });
+    await screen.findByRole("tab", { name: /^done today/i });
     const doneCalls = api.getDoneToday.mock.calls.length;
     const summaryCalls = api.getSummary.mock.calls.length;
 

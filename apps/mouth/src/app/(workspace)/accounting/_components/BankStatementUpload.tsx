@@ -23,6 +23,8 @@ import {
 
 type Phase = "idle" | "previewing" | "ready" | "importing" | "done";
 
+export const BANK_FILE_INPUT_ID = "bank-statement-file";
+
 function Stat({
   label,
   children,
@@ -42,12 +44,18 @@ export function BankStatementUpload({
   onImported,
   locked = false,
   exclusive,
+  title,
+  status,
+  hideTrigger = false,
 }: {
   onImported: () => void;
   /** Another write of the tab is pending or a dialog is open: Import waits. */
   locked?: boolean;
   /** Shared one-write-at-a-time runner of the tab. */
   exclusive?: (fn: () => Promise<unknown>) => Promise<unknown>;
+  title?: string;
+  status?: React.ReactNode;
+  hideTrigger?: boolean;
 }) {
   const { error } = useToast();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -68,6 +76,7 @@ export function BankStatementUpload({
   const [message, setMessage] = useState<string | null>(null);
   // Synchronous guard: a second click can land before React re-renders.
   const inFlight = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const busy = phase === "previewing" || phase === "importing";
 
@@ -133,138 +142,167 @@ export function BankStatementUpload({
   const mismatches = report?.balance_check.mismatch_positions.length ?? 0;
   const balanceOk = report?.balance_check.ok ?? false;
 
+  const panel = phase !== "idle" || message || report || outcome;
+
   return (
-    <section
-      className="space-y-3 rounded-lg border bg-[var(--bz-card)] p-4"
-      aria-label="Bank statement"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <Upload className="h-4 w-4 text-[var(--bz-accent)]" /> Bank statement
-        </h2>
-        <label className="text-sm text-[var(--bz-text-2)]">
-          <span className="mr-2">Upload bank statement (CSV)</span>
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            disabled={busy}
-            data-testid="bank-statement-input"
-            onChange={(e) => {
-              void handleChoose(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-        </label>
-      </div>
-
-      {phase === "previewing" && (
-        <p className="flex items-center text-sm text-[var(--bz-text-2)]">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Reading statement…
-        </p>
-      )}
-
-      {message && (
-        <p role="alert" className="text-sm text-[var(--state-danger)]">
-          {message}
-        </p>
-      )}
-
-      {report && (
-        <div className="space-y-3">
-          <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="Account">
-              {report.account.number} · {report.account.name}
-            </Stat>
-            <Stat label="Period">
-              {report.period.first.replace("T", " ")} to{" "}
-              {report.period.last.replace("T", " ")}
-            </Stat>
-            <Stat label="Transactions">{report.row_count}</Stat>
-            <Stat label="Balance check">
-              {balanceOk
-                ? "OK"
-                : `${mismatches} mismatch${mismatches === 1 ? "" : "es"}`}
-            </Stat>
-            <Stat label="Total debit">
-              {formatStatementAmount(report.total_debit)}
-            </Stat>
-            <Stat label="Total credit">
-              {formatStatementAmount(report.total_credit)}
-            </Stat>
-            <Stat label="Opening balance">
-              {formatStatementAmount(report.opening_balance)}
-            </Stat>
-            <Stat label="Closing balance">
-              {formatStatementAmount(report.closing_balance)}
-            </Stat>
-          </dl>
-
-          {!balanceOk && (
-            <p
-              role="alert"
-              className="rounded-md bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] p-2 text-xs text-[var(--state-warning)]"
+    <>
+      <div
+        data-testid="cc-header"
+        className="flex h-11 items-center gap-[18px]"
+      >
+        {title && (
+          <h1 className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-[var(--cc-tx)]">
+            {title}
+          </h1>
+        )}
+        <div className="ml-auto flex items-center gap-3.5">
+          {status}
+          {!hideTrigger && (
+            <button
+              type="button"
+              className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-[var(--cc-line-control)] bg-[var(--cc-card)] px-4 text-sm font-bold text-[var(--cc-tx)]"
+              onClick={() => inputRef.current?.click()}
+              disabled={busy}
             >
-              The statement&apos;s running balance does not add up, so it cannot
-              be imported.
+              <Upload className="h-4 w-4" aria-hidden="true" /> Upload statement
+            </button>
+          )}
+        </div>
+      </div>
+      <input
+        ref={inputRef}
+        id={BANK_FILE_INPUT_ID}
+        type="file"
+        accept=".csv,text/csv"
+        disabled={busy}
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Upload bank statement (CSV)"
+        data-testid="bank-statement-input"
+        onChange={(e) => {
+          void handleChoose(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+
+      {panel && (
+        <section
+          className="mt-5 space-y-3 rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] p-5"
+          aria-label="Bank statement"
+        >
+          {phase === "previewing" && (
+            <p className="flex items-center text-sm text-[var(--bz-text-2)]">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Reading
+              statement…
             </p>
           )}
 
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase text-[var(--bz-text-2)]">
-              <tr>
-                <th className="py-1 font-medium">Kind</th>
-                <th className="py-1 text-right font-medium">Count</th>
-                <th className="py-1 text-right font-medium">Sum</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {Object.entries(report.kinds).map(([kind, v]) => (
-                <tr key={kind}>
-                  <td className="py-1">{kind.replace(/_/g, " ")}</td>
-                  <td className="py-1 text-right tabular-nums">{v.count}</td>
-                  <td className="py-1 text-right tabular-nums">
-                    {formatStatementAmount(v.total)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {message && (
+            <p role="alert" className="text-sm text-[var(--state-danger)]">
+              {message}
+            </p>
+          )}
 
-          {(phase === "ready" || phase === "importing") && (
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={reset} disabled={busy}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleImport}
-                disabled={busy || locked || !balanceOk}
-              >
-                {phase === "importing" && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Import {report.row_count} transactions
-              </Button>
+          {report && (
+            <div className="space-y-3">
+              <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Stat label="Account">
+                  {report.account.number} · {report.account.name}
+                </Stat>
+                <Stat label="Period">
+                  {report.period.first.replace("T", " ")} to{" "}
+                  {report.period.last.replace("T", " ")}
+                </Stat>
+                <Stat label="Transactions">{report.row_count}</Stat>
+                <Stat label="Balance check">
+                  {balanceOk
+                    ? "OK"
+                    : `${mismatches} mismatch${mismatches === 1 ? "" : "es"}`}
+                </Stat>
+                <Stat label="Total debit">
+                  {formatStatementAmount(report.total_debit)}
+                </Stat>
+                <Stat label="Total credit">
+                  {formatStatementAmount(report.total_credit)}
+                </Stat>
+                <Stat label="Opening balance">
+                  {formatStatementAmount(report.opening_balance)}
+                </Stat>
+                <Stat label="Closing balance">
+                  {formatStatementAmount(report.closing_balance)}
+                </Stat>
+              </dl>
+
+              {!balanceOk && (
+                <p
+                  role="alert"
+                  className="rounded-md bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] p-2 text-xs text-[var(--state-warning)]"
+                >
+                  The statement&apos;s running balance does not add up, so it
+                  cannot be imported.
+                </p>
+              )}
+
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs uppercase text-[var(--bz-text-2)]">
+                  <tr>
+                    <th className="py-1 font-medium">Kind</th>
+                    <th className="py-1 text-right font-medium">Count</th>
+                    <th className="py-1 text-right font-medium">Sum</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {Object.entries(report.kinds).map(([kind, v]) => (
+                    <tr key={kind}>
+                      <td className="py-1">{kind.replace(/_/g, " ")}</td>
+                      <td className="py-1 text-right tabular-nums">
+                        {v.count}
+                      </td>
+                      <td className="py-1 text-right tabular-nums">
+                        {formatStatementAmount(v.total)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {(phase === "ready" || phase === "importing") && (
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={reset} disabled={busy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleImport}
+                    disabled={busy || locked || !balanceOk}
+                  >
+                    {phase === "importing" && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Import {report.row_count} transactions
+                  </Button>
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
 
-      {outcome && (
-        <div className="space-y-1 text-sm" role="status">
-          <p>
-            {outcome.nothing_new
-              ? "Nothing new: every transaction of this statement was already stored."
-              : `${outcome.rows_inserted} new transactions stored, ${outcome.rows_duplicate} already stored.`}
-          </p>
-          {outcome.history_segments > 1 && (
-            <p className="text-[var(--state-warning)]">
-              The stored history of this account has {outcome.history_segments}{" "}
-              separate segments: a statement for a period in between has not
-              been uploaded yet.
-            </p>
+          {outcome && (
+            <div className="space-y-1 text-sm" role="status">
+              <p>
+                {outcome.nothing_new
+                  ? "Nothing new: every transaction of this statement was already stored."
+                  : `${outcome.rows_inserted} new transactions stored, ${outcome.rows_duplicate} already stored.`}
+              </p>
+              {outcome.history_segments > 1 && (
+                <p className="text-[var(--state-warning)]">
+                  The stored history of this account has{" "}
+                  {outcome.history_segments} separate segments: a statement for
+                  a period in between has not been uploaded yet.
+                </p>
+              )}
+            </div>
           )}
-        </div>
+        </section>
       )}
-    </section>
+    </>
   );
 }
