@@ -69,7 +69,7 @@ def _is_schema_module(spec: str, importer: Path, src_root: Path) -> bool:
     else:
         return False
     parts = target.resolve().parts
-    stem = re.sub(r"(\.d)?\.(ts|js)$", "", parts[-1]) if parts else ""
+    stem = re.sub(r"(\.d)?(\.(ts|js))?$", "", parts[-1]) if parts else ""
     return (*parts[:-1], stem)[-3:] == SCHEMA_MODULE
 
 
@@ -201,8 +201,9 @@ def prune_openapi(schema: dict[str, Any], consumed: dict[str, set[str]]) -> dict
 
     def follow(ref: str) -> None:
         m = re.fullmatch(r"#/components/([^/]+)/(.+)", ref)
-        if m:
-            visit(m.group(1), m.group(2).replace("~1", "/").replace("~0", "~"))
+        if not m:
+            raise ConsumedTypesError(f"$ref {ref!r} points outside #/components; the subset cannot carry it")
+        visit(m.group(1), m.group(2).replace("~1", "/").replace("~0", "~"))
 
     for ref in _refs(seeds):
         follow(ref)

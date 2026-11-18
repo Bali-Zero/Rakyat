@@ -115,6 +115,26 @@ def test_a_name_the_backend_does_not_define_fails_loudly():
         prune_openapi(DOC, {"paths": {"/nope"}})
 
 
+@pytest.mark.parametrize("spec", ["@/lib/api/schema.d", "./schema.d", "@/lib/api/schema.d.ts", "@/lib/api/schema.js"])
+def test_every_spelling_typescript_resolves_to_the_schema_module_is_scanned(tmp_path, spec):
+    importer = "lib/api/x.ts" if spec.startswith(".") else "x.ts"
+    src = _mouth(tmp_path, {
+        "lib/api/schema.d.ts": "",
+        importer: f'import type {{ components }} from "{spec}";\ntype A = components["schemas"]["Used"];\n',
+    })
+    assert "Used" in derive_consumed(src)["components:schemas"]
+
+
+def test_a_ref_outside_components_fails_loudly():
+    from copy import deepcopy
+
+    doc = deepcopy(DOC)
+    doc["$defs"] = {"Root": {}}
+    doc["components"]["schemas"]["Used"] = {"properties": {"r": {"$ref": "#/$defs/Root"}}}
+    with pytest.raises(ConsumedTypesError):
+        prune_openapi(doc, {"components:schemas": {"Used"}})
+
+
 def test_path_seed_keeps_every_method_of_the_item():
     out = prune_openapi(DOC, {"paths": {"/a"}})
     assert {"get", "post"} <= set(out["paths"]["/a"]) and "Unrelated" in out["components"]["schemas"]
