@@ -137,6 +137,38 @@ describe("AppSidebar", () => {
     ).toHaveAttribute("data-prefetch", "false");
   });
 
+  it("disables speculative prefetch on workspace rail links and the home link", () => {
+    render(
+      <AppSidebar
+        user={{ name: "Zero", email: "zero@balizero.com" }}
+        onLogout={() => undefined}
+        navigationConfig={[
+          {
+            items: [
+              { title: "Dashboard", href: "/dashboard", icon: "Home" },
+              {
+                title: "Intelligence Center",
+                href: "/intelligence",
+                icon: "Activity",
+              },
+              { title: "Clients", href: "/clients", icon: "Users" },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    for (const name of ["Dashboard", "Intelligence Center", "Clients"]) {
+      expect(screen.getByRole("link", { name })).toHaveAttribute(
+        "data-prefetch",
+        "false",
+      );
+    }
+    expect(
+      screen.getByRole("link", { name: "Bali Zero — workspace home" }),
+    ).toHaveAttribute("data-prefetch", "false");
+  });
+
   it("shows the owner-only 'Da fare' section to the owner", () => {
     render(
       <AppSidebar
