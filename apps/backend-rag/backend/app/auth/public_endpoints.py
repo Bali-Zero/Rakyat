@@ -337,6 +337,15 @@ _INFRA = (
         match="exact",
         methods=("POST",),
     ),
+    # Slice 4A (recorded names): the same flag and key, checked by the same in-router
+    # dependency, POST only. The two entries above are unchanged.
+    PublicEndpoint(
+        "/api/crm/related-subjects/names/register",
+        Category.INFRA,
+        "related-subject names registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
     PublicEndpoint(
         "/api/crm/internal/clients/{client_id}/documents/upload",
         Category.INFRA,

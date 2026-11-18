@@ -1,5 +1,6 @@
-"""Registry of related people and companies: POST /api/crm/related-subjects/register (slice 1)
-and POST /api/crm/related-subjects/documents/register (slice 2, documents by reference).
+"""Registry of related people and companies: POST /api/crm/related-subjects/register (slice 1),
+POST /api/crm/related-subjects/documents/register (slice 2, documents by reference) and
+POST /api/crm/related-subjects/names/register (slice 4A, recorded names).
 
 Auth: scoped ``X-CRM-Write-Key`` plus ``RELATED_SUBJECT_REGISTRY_ENABLED`` (default off, 503).
 
@@ -44,6 +45,14 @@ from backend.services.crm.related_documents import (
     register_documents,
 )
 from backend.services.crm.related_identifiers import MAX_RAW_LENGTH, InvalidIdentifier, canonicalize
+from backend.services.crm.related_names import (
+    MAX_RAW_NAME,
+    InvalidName,
+    NameEntry,
+    NamesInput,
+    normalise_name,
+    record_names,
+)
 from backend.services.crm.related_subjects import (
     IdentifierInput,
     InvalidSubject,
@@ -314,6 +323,122 @@ class RelatedDocumentsRegisterRequest(_Strict):
         )
 
 
+# ── slice 4A: recorded names ──────────────────────────────────────────────────
+
+MAX_NAMES = 5
+MAX_COUNT = 10000
+
+# Slice 4A has closed lists of its own; the lists above are not widened.
+_NAMES_LOC = frozenset(
+    {
+        "body",
+        "subject",
+        "kind",
+        "identifiers",
+        "type",
+        "value",
+        "names",
+        "name",
+        "source",
+        "evidence",
+        "plan_sha256",
+        "files",
+        "blobs",
+        "mrz_valid",
+        "dry_run",
+    }
+)
+_NAMES_CODE = frozenset(
+    {
+        "missing",
+        "extra_forbidden",
+        "string_type",
+        "string_too_short",
+        "string_too_long",
+        "string_pattern_mismatch",
+        "bool_type",
+        "int_type",
+        "greater_than_equal",
+        "less_than_equal",
+        "literal_error",
+        "list_type",
+        "too_short",
+        "too_long",
+        "model_type",
+        "dict_type",
+        "json_invalid",
+        "invalid_identifier",
+        "kind_type_mismatch",
+        "duplicate_identifier",
+        "invalid_name",
+        "blobs_above_files",
+        "evidence_source_mismatch",
+        "duplicate_name",
+    }
+)
+_NAMES_INDEX_LIMIT = {"identifiers": MAX_KEYS, "names": MAX_NAMES}
+
+
+class _NameEvidence(_Strict):
+    plan_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    files: Annotated[int, Field(ge=1, le=MAX_COUNT)]
+    blobs: Annotated[int, Field(ge=1, le=MAX_COUNT)]
+    mrz_valid: StrictBool
+
+    @model_validator(mode="after")
+    def _blobs_fit_files(self) -> _NameEvidence:
+        if self.blobs > self.files:
+            raise PydanticCustomError("blobs_above_files", "blobs above files")
+        return self
+
+
+class _NameIn(_Strict):
+    name: Annotated[str, Field(min_length=1, max_length=MAX_RAW_NAME)]
+    source: Literal["ocr_corroborated", "ocr_single", "mrz_corrected"]
+    evidence: _NameEvidence
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        try:
+            return normalise_name(value)
+        except InvalidName:
+            raise PydanticCustomError("invalid_name", "invalid name") from None
+
+    @model_validator(mode="after")
+    def _evidence_fits_source(self) -> _NameIn:
+        ev = self.evidence
+        if self.source == "ocr_corroborated":
+            fits = ev.blobs >= 2 or ev.mrz_valid
+        elif self.source == "ocr_single":
+            fits = ev.blobs == 1 and not ev.mrz_valid
+        else:
+            fits = ev.files >= 1
+        if not fits:
+            raise PydanticCustomError("evidence_source_mismatch", "evidence does not fit source")
+        return self
+
+
+class RelatedNamesRegisterRequest(_Strict):
+    subject: _SubjectKeys
+    names: Annotated[list[_NameIn], Field(min_length=1, max_length=MAX_NAMES)]
+    dry_run: StrictBool = True
+
+    @model_validator(mode="after")
+    def _names_are_distinct(self) -> RelatedNamesRegisterRequest:
+        keys = [(n.source, n.name) for n in self.names]
+        if len(keys) != len(set(keys)):
+            raise PydanticCustomError("duplicate_name", "duplicate name")
+        return self
+
+    def to_input(self) -> NamesInput:
+        return NamesInput(
+            kind=self.subject.kind,
+            identifiers=self.subject.prepared(),
+            names=tuple(NameEntry(n.name, n.source, n.evidence.model_dump()) for n in self.names),
+        )
+
+
 # Fixed answers: the whole failure surface is these constants. No status, code or text taken
 # from an exception or from the request ever reaches an answer.
 _ANSWER_BODIES: dict[str, bytes] = {
@@ -377,6 +502,22 @@ def _invalid_documents(errors: list[dict[str, Any]]) -> Response:
                 loc.append(part if part in _DOCUMENTS_LOC else "_")
         code = err.get("type")
         items.append({"loc": loc, "code": code if code in _DOCUMENTS_CODE else "invalid"})
+    return _fixed(422, items)
+
+
+def _invalid_names(errors: list[dict[str, Any]]) -> Response:
+    """422 body of the names route: closed lists of its own, never an input or a message."""
+    items = []
+    for err in errors[:50]:
+        loc: list[Any] = []
+        for part in err.get("loc", ()):
+            limit = _NAMES_INDEX_LIMIT.get(loc[-1]) if loc else None
+            if isinstance(part, int) and not isinstance(part, bool):
+                loc.append(part if limit is not None and 0 <= part < limit else "_")
+            else:
+                loc.append(part if part in _NAMES_LOC else "_")
+        code = err.get("type")
+        items.append({"loc": loc, "code": code if code in _NAMES_CODE else "invalid"})
     return _fixed(422, items)
 
 
@@ -471,4 +612,25 @@ async def register_related_subject_documents(
         )
     async with db_pool.acquire() as conn:
         result = await register_documents(conn, payload.to_input(), dry_run=payload.dry_run)
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.post("/names/register", response_model=None)
+async def register_related_subject_names(
+    request: Request,
+    _actor: str = Depends(verify_related_subject_write),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Record names for one registered subject (dry run by default). Answers carry no input."""
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _invalid_names([{"loc": ("body",), "type": "too_long"}])
+    try:
+        payload = RelatedNamesRegisterRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        return _invalid_names(
+            exc.errors(include_input=False, include_context=False, include_url=False)
+        )
+    async with db_pool.acquire() as conn:
+        result = await record_names(conn, payload.to_input(), dry_run=payload.dry_run)
     return JSONResponse(status_code=200, content=result)
