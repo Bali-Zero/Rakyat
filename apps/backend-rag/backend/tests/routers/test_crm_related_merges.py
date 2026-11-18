@@ -194,8 +194,10 @@ async def conn(pool):
 async def unmeasured(c):
     """Seeding and cleanup inside the block are taken out of the write measurement."""
     mark = await c.fetchval("SELECT coalesce(max(id), 0) FROM write_log")
-    yield
-    await c.execute("DELETE FROM write_log WHERE id > $1", mark)
+    try:
+        yield
+    finally:
+        await c.execute("DELETE FROM write_log WHERE id > $1", mark)
 
 
 async def seed_subject(c, kind, name, ids, *, merged=None, at=T0):
@@ -1017,12 +1019,12 @@ async def test_m13_a_document_registered_after_the_merge_shows_under_the_survivo
     writer, conn, clients, writes, monkeypatch
 ):
     s = await seed_subject(conn, "person", "ZzReg Survivor", [("passport", "ZZ4242821")])
-    m = await seed_subject(conn, "person", None, [("permit", "ZZ42PERMIT0821Z")], merged=s)
+    m = await seed_subject(conn, "person", None, [("passport", "ZZ4242822")], merged=s)
     writes.update({("related_documents", "INSERT"), ("related_subject_documents", "INSERT")})
     body = {
         "subject": {
             "kind": "person",
-            "identifiers": [{"type": "permit", "value": "ZZ42PERMIT0821Z"}],
+            "identifiers": [{"type": "passport", "value": "ZZ4242822"}],
         },
         "documents": [
             {
