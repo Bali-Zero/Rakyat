@@ -215,6 +215,7 @@ export const routeTitles: Record<string, string> = {
   "/accounting": "Accounting",
   "/garuda-voa": "GARUDA VOA",
   "/admin/team-activity": "Team Activity",
+  "/admin/related-subjects": "Related Subjects",
   "/agents": "Agents",
   "/intelligence/analytics": "Intelligence Analytics",
   "/settings": "Settings",

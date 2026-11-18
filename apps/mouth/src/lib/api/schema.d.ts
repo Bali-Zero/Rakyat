@@ -6745,6 +6745,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/related-registry": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Registry
+     * @description List and search registry subjects (CRM admins only).
+     */
+    get: operations["list_registry_api_crm_related_registry_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/crm/related-registry/{subject_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Registry Subject
+     * @description Open one registry subject with its identifiers and documents (CRM admins only).
+     */
+    get: operations["get_registry_subject_api_crm_related_registry__subject_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/related-subjects/documents/register": {
     parameters: {
       query?: never;
@@ -27071,6 +27111,80 @@ export interface components {
       /** Reason */
       reason: string;
     };
+    /** RelatedRegistryDocument */
+    RelatedRegistryDocument: {
+      /** Byte Size */
+      byte_size: number;
+      /** Doc Type */
+      doc_type: string | null;
+      /** Drive File Ids */
+      drive_file_ids: string[];
+      /** First Seen On */
+      first_seen_on: string | null;
+      /** Mime Type */
+      mime_type: string | null;
+      /** Sha256 */
+      sha256: string;
+    };
+    /** RelatedRegistryIdentifier */
+    RelatedRegistryIdentifier: {
+      /** Type */
+      type: string;
+      /** Value */
+      value: string;
+    };
+    /** RelatedRegistryListOut */
+    RelatedRegistryListOut: {
+      /** Items */
+      items: components["schemas"]["RelatedRegistrySubjectRow"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** RelatedRegistrySubjectDetail */
+    RelatedRegistrySubjectDetail: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Date Of Birth */
+      date_of_birth: string | null;
+      /** Display Name */
+      display_name: string | null;
+      /** Documents */
+      documents: components["schemas"]["RelatedRegistryDocument"][];
+      /** Id */
+      id: number;
+      /** Identifiers */
+      identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
+      /** Kind */
+      kind: string;
+      /** Nationality */
+      nationality: string | null;
+      /** Sex */
+      sex: string | null;
+    };
+    /** RelatedRegistrySubjectRow */
+    RelatedRegistrySubjectRow: {
+      /** Date Of Birth */
+      date_of_birth: string | null;
+      /** Display Name */
+      display_name: string | null;
+      /** Document Count */
+      document_count: number;
+      /** Id */
+      id: number;
+      /** Identifiers */
+      identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
+      /** Kind */
+      kind: string;
+      /** Nationality */
+      nationality: string | null;
+    };
     /**
      * RelationType
      * @description The applicant's relationship to the family sponsor (``family.relation_to_sponsor``).
@@ -41058,6 +41172,71 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_registry_api_crm_related_registry_get: {
+    parameters: {
+      query?: {
+        q?: string | null;
+        kind?: ("person" | "company") | null;
+        limit?: number;
+        offset?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RelatedRegistryListOut"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_registry_subject_api_crm_related_registry__subject_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        subject_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RelatedRegistrySubjectDetail"];
         };
       };
       /** @description Validation Error */
