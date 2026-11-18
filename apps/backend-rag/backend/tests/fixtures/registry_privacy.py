@@ -12,7 +12,8 @@ R2 collection: request string leaves (keys included) and integer leaves; surface
 R3 forms: raw, upper-cased with white space normalised, and the canonical form for each identifier type.
 R4 filters: applied to the original leaves, never to a declared probe.
 R5 audit rows: every column scanned except columns of a timestamp, real, double or numeric TYPE;
-   containers are walked, never serialised; a string that parses as JSON is walked decoded too.
+   containers are walked, never serialised; a string that parses as JSON is walked decoded too;
+   a float inside a scanned column or container is a scalar like any other and is scanned.
 R8 suppression guard: the vocabulary filter must not silently remove a request string from a set.
 R9 teeth: pure tests (in the caller's module) that these functions can fail.
 """
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -45,9 +47,19 @@ UNSCANNED_AUDIT_TYPES = frozenset(
     }
 )
 
-# Integers the interpreter measures about a log call (not derived from any body): the only log
-# attributes left out of the scan, by name, and said so in the module that uses them.
-INTERPRETER_ATTRIBUTES = frozenset({"thread", "process", "lineno"})
+# Numbers the interpreter measures about a log call (three integers and three floats, not derived
+# from any body, their digits arbitrary): the only log attributes left out of the scan, by name,
+# and said so in the module that uses them. A float under any other attribute is scanned.
+INTERPRETER_ATTRIBUTES = frozenset(
+    {"thread", "process", "lineno", "created", "msecs", "relativeCreated"}
+)
+HTTP_CLIENT_LOGGERS = ("httpx", "httpcore")
+
+
+def is_http_client_logger(name: str) -> bool:
+    """The exact HTTP-client namespaces: the logger itself or a child, never a bare prefix."""
+    return any(name == root or name.startswith(root + ".") for root in HTTP_CLIENT_LOGGERS)
+
 
 PROTOCOL_CLASSES = frozenset(
     {"request key", "closed value the model accepts", "refused value M10 sends"}
@@ -220,10 +232,16 @@ def unclassified_protocol_words(vocab: Vocabulary, origin: dict[str, str]) -> li
 
 
 def walk(value: Any, out: list[str]) -> None:
-    """Every key and scalar of a value as text, decoded: integers as decimals, NULL and booleans
+    """Every key and scalar of a value as text, decoded: integers as decimals, floats as their
+    repr (and, when finite and integral, also as the integer they equal), NULL and booleans
     skipped, a string that parses as JSON also walked as the value it holds (never serialised, so a
     token cannot be split by escaping)."""
-    if value is None or isinstance(value, (bool, float)):
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, float):
+        out.append(repr(value))
+        if math.isfinite(value) and value == int(value):
+            out.append(str(int(value)))
         return
     if isinstance(value, int):
         out.append(str(value))
@@ -260,11 +278,16 @@ def record_texts(record: logging.LogRecord) -> list[str]:
     return out
 
 
-def log_surface(records: Iterable[logging.LogRecord], sentinel: str) -> str:
+def log_surface(
+    records: Iterable[logging.LogRecord], excluded: Iterable[logging.LogRecord] = ()
+) -> str:
+    """Every record of every logger but the HTTP-client namespaces, except the record OBJECTS in
+    ``excluded`` (compared by identity, never by what a message contains)."""
+    skip = list(excluded)
     return " ".join(
         text
         for r in records
-        if not r.name.startswith(("httpx", "httpcore")) and sentinel not in r.getMessage()
+        if not is_http_client_logger(r.name) and not any(r is e for e in skip)
         for text in record_texts(r)
     ).casefold()
 

@@ -148,8 +148,8 @@ async def record_merge(
 
     Resolution takes no lock (source first, then target). A dry run stops after the decision and
     writes nothing. An apply locks both rows in ascending id order, decides again from the LOCKED
-    rows, then writes the history row and the pointer in the same transaction. The answer is built
-    after the commit.
+    rows, then writes the history row and the pointer in the same transaction. The answer is returned,
+    and the outcome logged, only after the commit.
     """
     source_id: int | None = None
     target_id: int | None = None

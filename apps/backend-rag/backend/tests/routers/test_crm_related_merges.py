@@ -2209,14 +2209,22 @@ async def _wait(event: asyncio.Event, what: str, *tasks):
 
 async def _blocked(observer, pid: int, *tasks):
     """The third connection sees the backend `pid` waiting on a lock it was not granted."""
-    deadline = asyncio.get_running_loop().time() + CAP
-    while asyncio.get_running_loop().time() < deadline:
-        if await observer.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.pid = $1 "
-            "AND a.wait_event_type = 'Lock' AND EXISTS "
-            "(SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND NOT l.granted))",
-            pid,
-        ):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CAP
+    while loop.time() < deadline:
+        try:
+            seen = await asyncio.wait_for(
+                observer.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.pid = $1 "
+                    "AND a.wait_event_type = 'Lock' AND EXISTS "
+                    "(SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND NOT l.granted))",
+                    pid,
+                ),
+                timeout=max(deadline - loop.time(), 0.001),
+            )
+        except asyncio.TimeoutError:
+            break
+        if seen:
             return
         if any(t.done() for t in tasks):
             break
@@ -2250,7 +2258,13 @@ async def run_schedule(pool, winner: dict, loser: dict):
         finally:
             for event in (win.release, lose.release, win.commit):
                 event.set()
-            await asyncio.gather(tw, tl, return_exceptions=True)
+            try:
+                await asyncio.wait_for(asyncio.gather(tw, tl, return_exceptions=True), CAP)
+            except asyncio.TimeoutError:
+                for task in (tw, tl):
+                    task.cancel()
+                await asyncio.gather(tw, tl, return_exceptions=True)
+                raise AssertionError("an M8 transaction did not finish within the cap") from None
 
 
 async def _after_schedule(conn, expected_pointers: dict, history_rows: int):
@@ -2900,6 +2914,14 @@ async def test_m16_after_a_merge_the_four_other_routes_answer_as_section_3_4_say
         url=URL_DOCUMENTS,
     )
     assert second.status_code == 200, second.text
+    # the complete body, in the shape the documents module pins (test_crm_related_subjects.py,
+    # the exact-body case of the documents route): one new document, no sighting, one new link
+    assert second.json() == {
+        "outcome": "linked",
+        "subject_id": m,
+        "dry_run": False,
+        "counts": {"documents": 1, "sightings": 0, "links": 1, "descriptive_differences": 0},
+    }
     owner = await conn.fetchval("SELECT subject_id FROM related_subject_documents")
     assert owner == m
     # POST /names/register and /links/register: refused, reason merged
@@ -3044,7 +3066,6 @@ ANSWER_WORDS = frozenset(
         "same_subject", "target_is_merged", "source_merged_elsewhere", "source_is_survivor",
         "basis_precondition", "registry_unavailable", "registry_busy", "unauthorized",
         "database_error", "internal_error",
-        *SERVICE_LOG_WORDS, *ROUTE_FAILURE_WORDS, URL, *PATH_SEGMENTS,
     }
 )  # fmt: skip
 VOCAB = privacy.Vocabulary(
@@ -3053,9 +3074,10 @@ VOCAB = privacy.Vocabulary(
     plan=PLAN,
     unconditional=frozenset(STORED_PROBES),
 )
-FIXED_WORDS = {w.casefold() for w in ANSWER_WORDS} | {
-    w.casefold() for w in re.split(r"[^A-Za-z0-9_]+", URL) if w
-}
+FIXED_WORDS = {
+    w.casefold()
+    for w in (*ANSWER_WORDS, *SERVICE_LOG_WORDS, *ROUTE_FAILURE_WORDS, URL, *PATH_SEGMENTS)
+} | {w.casefold() for w in re.split(r"[^A-Za-z0-9_]+", URL) if w}
 
 
 @pytest_asyncio.fixture
@@ -3350,8 +3372,8 @@ def test_m18_a_form_collision_check_fires_on_a_short_numeric_form():
     assert privacy.collisions({"7373701"}, {"200", "422", "1", "2"}) == []
 
 
-def _spoke(records, module):
-    return [r for r in records if r.name == module.__name__ and SENTINEL not in r.getMessage()]
+def _spoke(records, module, sentinels=()):
+    return [r for r in records if r.name == module.__name__ and not any(r is s for s in sentinels)]
 
 
 def _record(**extra) -> logging.LogRecord:
@@ -3433,11 +3455,87 @@ def test_m18_teeth_a_probe_that_is_only_a_dictionary_key_in_a_container_is_caugh
     row = {"id": 1, "response_body": {TEETH_PROBE: 1}}
     assert privacy.leaks(answer, privacy.audit_texts([row], AUDIT_TYPES))
     record = _record(extra={TEETH_PROBE: 1})
-    assert privacy.leaks(answer, privacy.log_surface([record], SENTINEL))
-    assert privacy.leaks(
-        answer, privacy.log_surface([_record(extra=[{"deep": TEETH_PROBE}])], SENTINEL)
+    assert privacy.leaks(answer, privacy.log_surface([record]))
+    assert privacy.leaks(answer, privacy.log_surface([_record(extra=[{"deep": TEETH_PROBE}])]))
+    assert privacy.leaks(answer, privacy.log_surface([_record()])) == []
+
+
+NUM_PROBE = "7373741"  # a numeric identifier form stored nowhere, at least seven digits
+
+
+def _num_forbidden():
+    return privacy.probe_forms([NUM_PROBE])
+
+
+def test_m18_teeth_numeric_probe_does_not_collide_with_a_legitimate_value():
+    assert privacy.collisions(_num_forbidden(), {"200", "422", "1", "2", *FIXED_WORDS}) == []
+
+
+def test_m18_teeth_a_numeric_float_in_a_jsonb_container_of_an_audit_row_is_caught():
+    value = float(NUM_PROBE)
+    for container in ({"n": value}, [value], {"k": {"n": [value]}}):
+        row = {"id": 1, "response_body": container}
+        assert privacy.leaks(_num_forbidden(), privacy.audit_texts([row], AUDIT_TYPES)), container
+    clean = {"id": 1, "response_body": {"n": 1.5}}
+    assert privacy.leaks(_num_forbidden(), privacy.audit_texts([clean], AUDIT_TYPES)) == []
+
+
+def test_m18_teeth_a_numeric_float_in_a_log_extra_container_and_in_args_is_caught():
+    value = float(NUM_PROBE)
+    for record in (
+        _record(extra={"n": value}),
+        _record(extra=[value]),
+        _record(args=(value,)),
+    ):
+        assert privacy.leaks(_num_forbidden(), privacy.log_surface([record]))
+    assert privacy.leaks(_num_forbidden(), privacy.log_surface([_record()])) == []
+
+
+def test_m18_teeth_a_float_in_an_excluded_audit_type_and_in_an_interpreter_attribute_is_not_scanned():
+    value = float(NUM_PROBE)
+    types = {**AUDIT_TYPES, "zz_real": "double precision"}
+    row = {"id": 1, "zz_real": value, "created_at": datetime.now()}
+    assert privacy.leaks(_num_forbidden(), privacy.audit_texts([row], types)) == []
+    for name in ("created", "msecs", "relativeCreated"):
+        assert (
+            privacy.leaks(_num_forbidden(), privacy.log_surface([_record(**{name: value})])) == []
+        )
+    for name in ("zz_other", "duration"):
+        assert privacy.leaks(_num_forbidden(), privacy.log_surface([_record(**{name: value})])), (
+            name
+        )
+
+
+def test_m18_teeth_the_interpreter_attributes_are_exactly_six_names():
+    assert privacy.INTERPRETER_ATTRIBUTES == {
+        "thread", "process", "lineno", "created", "msecs", "relativeCreated",
+    }  # fmt: skip
+
+
+def test_m18_teeth_a_record_whose_message_contains_the_sentinel_text_is_still_scanned():
+    leaking = logging.LogRecord(
+        "zz.teeth", logging.INFO, __file__, 1, f"{SENTINEL} {TEETH_PROBE}", None, None
     )
-    assert privacy.leaks(answer, privacy.log_surface([_record()], SENTINEL)) == []
+    assert privacy.leaks(_teeth_answer_set("dict"), privacy.log_surface([leaking]))
+
+
+def test_m18_teeth_the_http_client_exemption_is_the_exact_namespace_not_a_prefix():
+    for name in ("httpx_zz", "httpcorezz", "httpxx.client"):
+        record = logging.LogRecord(name, logging.INFO, __file__, 1, TEETH_PROBE, None, None)
+        assert privacy.leaks(_teeth_answer_set("dict"), privacy.log_surface([record])), name
+    for name in ("httpx", "httpx._client", "httpcore.connection"):
+        record = logging.LogRecord(name, logging.INFO, __file__, 1, TEETH_PROBE, None, None)
+        assert privacy.leaks(_teeth_answer_set("dict"), privacy.log_surface([record])) == [], name
+
+
+def test_m18_teeth_an_excluded_record_is_left_out_only_by_identity():
+    def make():
+        return logging.LogRecord("zz.teeth", logging.INFO, __file__, 1, TEETH_PROBE, None, None)
+
+    first, twin = make(), make()
+    answer = _teeth_answer_set("dict")
+    assert privacy.leaks(answer, privacy.log_surface([first], excluded=[first])) == []
+    assert privacy.leaks(answer, privacy.log_surface([first, twin], excluded=[first]))
 
 
 def test_m18_teeth_a_created_at_outside_the_clock_bracket_is_caught():
@@ -3480,8 +3578,10 @@ async def test_m18_route_logs_and_answers_carry_no_identifier_name_or_body(
     # the capture is live for both modules, at any level
     logging.getLogger(route_module.__name__).debug(SENTINEL)
     logging.getLogger(merges_module.__name__).debug(SENTINEL)
-    live = {r.name for r in caplog.records if SENTINEL in r.getMessage()}
-    assert live == {route_module.__name__, merges_module.__name__}, case
+    sentinels = [r for r in caplog.records if r.getMessage() == SENTINEL]
+    assert sorted(r.name for r in sentinels) == sorted(
+        [route_module.__name__, merges_module.__name__]
+    ), case
 
     if spec["patch"]:
         spec["patch"](monkeypatch)
@@ -3494,18 +3594,19 @@ async def test_m18_route_logs_and_answers_carry_no_identifier_name_or_body(
         assert resp.json() == expected, case
 
     # the logger that must have spoken did; a validation case speaks through neither
-    records = [r for r in caplog.records if not r.name.startswith(("httpx", "httpcore"))]
+    records = [r for r in caplog.records if not privacy.is_http_client_logger(r.name)]
     if spec["service"]:
-        assert _spoke(records, merges_module), (case, "service logger silent")
+        assert _spoke(records, merges_module, sentinels), (case, "service logger silent")
     if spec["route"]:
-        assert _spoke(records, route_module), (case, "route logger silent")
+        assert _spoke(records, route_module, sentinels), (case, "route logger silent")
     if spec["quiet"]:
-        assert not _spoke(records, merges_module) and not _spoke(records, route_module), case
+        assert not _spoke(records, merges_module, sentinels), case
+        assert not _spoke(records, route_module, sentinels), case
 
     log_set, answer_set = privacy.case_sets(VOCAB, requests, spec["ids"], ())
     for resp in responses:
         assert privacy.leaks(answer_set, resp.text.casefold()) == [], case
-    assert privacy.leaks(log_set, privacy.log_surface(records, SENTINEL)) == [], case
+    assert privacy.leaks(log_set, privacy.log_surface(records, sentinels)) == [], case
 
     # one audit row per call, no request body, no token in any scanned column
     rows, types = await privacy.audit_snapshot(conn)
