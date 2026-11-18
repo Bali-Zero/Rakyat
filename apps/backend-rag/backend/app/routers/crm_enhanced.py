@@ -24,6 +24,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.client_pools import can_write_client
 from backend.app.utils.crm_utils import (
     AvatarUrl,
+    can_create_company,
     extract_json_from_llm_response,
     verify_client_access,
 )
@@ -1401,6 +1402,7 @@ async def get_client_profile(
         return {
             "client": dict(client),
             "viewer_can_write": viewer_can_write,
+            "viewer_can_create_company": can_create_company(current_user),
             "family_members": [dict(fm) for fm in family_members],
             "documents": documents_out,
             "expiry_alerts": [dict(a) for a in expiry_alerts],

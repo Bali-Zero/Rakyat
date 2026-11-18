@@ -875,6 +875,48 @@ describe("ClientDetailClient", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers Add company to a role the server allows (pool member)", async () => {
+    const { api } = await import("@/lib/api");
+    vi.mocked(api.getUserProfile).mockReturnValue({
+      email: "synthetic.team@example.test",
+      role: "Reception",
+    } as ReturnType<typeof api.getUserProfile>);
+    onTestFinished(() => {
+      vi.mocked(api.getUserProfile).mockReturnValue({
+        email: "synthetic.team@example.test",
+        role: "Tax Consultant",
+      } as ReturnType<typeof api.getUserProfile>);
+    });
+    mockUseClientDetail.mockReturnValue({
+      data: { ...companyLessProfile(), viewer_can_create_company: true },
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(
+      await screen.findByRole("button", { name: "Add company" }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides Add company when the server says no, whatever the role", async () => {
+    mockUseClientDetail.mockReturnValue({
+      data: { ...companyLessProfile(), viewer_can_create_company: false },
+      isLoading: false,
+      error: null,
+    });
+    const { ClientDetailClient } = await import("./ClientDetailClient");
+    render(<ClientDetailClient taxConsultants={CONSULTANTS} />);
+
+    expect(
+      await screen.findByText("No company linked yet."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add company" }),
+    ).not.toBeInTheDocument();
+  });
+
   // Trigger: staff opened Documents, saw no passport and assumed it was lost —
   // the tab hides live passports (they live in Overview › Passport) silently.
   describe("Documents tab passport hint", () => {
