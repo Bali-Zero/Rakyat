@@ -81,11 +81,15 @@ export function useClientDetail(clientId: string | number) {
  * Fetches the client timeline (interactions) with React Query caching.
  * Kept separate from the profile so it can be invalidated independently.
  */
+export const clientTimelineQueryOptions = (clientId: string | number) => ({
+  queryKey: clientTimelineQueryKey(clientId),
+  queryFn: () => api.crm.getClientTimeline(Number(clientId), 50),
+  staleTime: 2 * 60 * 1000,
+});
+
 export function useClientTimeline(clientId: string | number) {
   return useQuery<Interaction[]>({
-    queryKey: clientTimelineQueryKey(clientId),
-    queryFn: () => api.crm.getClientTimeline(Number(clientId), 50),
-    staleTime: 2 * 60 * 1000,
+    ...clientTimelineQueryOptions(clientId),
     refetchOnWindowFocus: true,
     enabled: !!clientId && Number(clientId) > 0,
   });
@@ -95,11 +99,15 @@ export function useClientTimeline(clientId: string | number) {
  * Fetches document categories (static reference data).
  * Long staleTime since categories rarely change.
  */
+export const documentCategoriesQueryOptions = () => ({
+  queryKey: ["document-categories"] as const,
+  queryFn: () => api.crm.getDocumentCategories(),
+  staleTime: 10 * 60 * 1000,
+});
+
 export function useDocumentCategories() {
   return useQuery<DocumentCategory[]>({
-    queryKey: ["document-categories"],
-    queryFn: () => api.crm.getDocumentCategories(),
-    staleTime: 10 * 60 * 1000,
+    ...documentCategoriesQueryOptions(),
     refetchOnWindowFocus: false,
   });
 }

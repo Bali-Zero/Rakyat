@@ -84,7 +84,8 @@ import { clearCompanyDetailCache } from "./components/company/companyDetailCache
 import { BusinessStoryPanel } from "./components/BusinessStoryPanel";
 import { viewerCanChangeDocumentVisibility } from "./components/modals/document-visibility";
 import { viewerCanCreateCompany } from "./components/modals/company-create";
-import { startEarly, earlyKey } from "./components/early-fetch";
+import { earlyKey, takeEarly } from "./components/early-fetch";
+import { startClientDetailEarly } from "./prefetch";
 import { TabSkeleton } from "./components/TabSkeleton";
 
 /*
@@ -229,23 +230,13 @@ export function ClientDetailClient({
   const clientId = params?.id ? Number(params.id) : 0;
   const { options: teamMemberOptions } = useTeamMemberOptions();
 
-  // The calls that only need the client id start NOW, in parallel with the
-  // profile request, not after it resolves and the Overview mounts. Their
-  // owning components take these promises on first load (early-fetch.ts).
+  // The calls that only need the client id start NOW, all in parallel with
+  // the profile request, not after it resolves and the Overview mounts. On a
+  // first load the layout already started them (prefetch.ts) and this is a
+  // no-op; on client-side navigation it is the start. Their owning components
+  // take these promises on first load (early-fetch.ts).
   useEffect(() => {
-    if (!clientId) return;
-    startEarly(earlyKey("ai-summary", clientId), () =>
-      api.crm.getClientAiSummary(clientId),
-    );
-    startEarly(earlyKey("wa-case-intel", clientId), () =>
-      api.crm.getClientWaCaseIntelligence(clientId),
-    );
-    startEarly(earlyKey("portal-status", clientId), () =>
-      api.crm.getPortalStatus(clientId),
-    );
-    startEarly(earlyKey("portal-messages", clientId), () =>
-      api.crm.getPortalMessages(clientId),
-    );
+    startClientDetailEarly(clientId);
   }, [clientId]);
 
   const {
@@ -354,8 +345,10 @@ export function ClientDetailClient({
   const [lkpmReports, setLkpmReports] = useState(0);
   useEffect(() => {
     let alive = true;
-    lkpmApi
-      .getClientHistory(clientId)
+    (
+      takeEarly<{ count: number }>(earlyKey("lkpm-history", clientId)) ??
+      lkpmApi.getClientHistory(clientId)
+    )
       .then((r) => {
         if (alive) setLkpmReports(r.count);
       })

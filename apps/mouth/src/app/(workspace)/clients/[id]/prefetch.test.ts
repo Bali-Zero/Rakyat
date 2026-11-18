@@ -1,13 +1,21 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getClientProfile, getPortalStatus } = vi.hoisted(() => ({
+const crm = vi.hoisted(() => ({
   getClientProfile: vi.fn(),
   getPortalStatus: vi.fn(),
+  getPortalMessages: vi.fn(),
+  getClientAiSummary: vi.fn(),
+  getClientWaCaseIntelligence: vi.fn(),
+  getClientTimeline: vi.fn(),
+  getDocumentCategories: vi.fn(),
 }));
-vi.mock("@/lib/api", () => ({
-  api: { crm: { getClientProfile, getPortalStatus } },
+const getClientHistory = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api", () => ({ api: { crm } }));
+vi.mock("@/lib/api/workspace/lkpm.api", () => ({
+  lkpmApi: { getClientHistory },
 }));
+const { getClientProfile, getPortalStatus } = crm;
 
 import { clientDetailQueryKey } from "@/hooks/useClientDetail";
 import { earlyKey, resetEarly, takeEarly } from "./components/early-fetch";
@@ -31,6 +39,29 @@ describe("prefetchClientDetail", () => {
     resetEarly();
     getClientProfile.mockReset().mockResolvedValue({ client: { id: 7 } });
     getPortalStatus.mockReset().mockResolvedValue({ has_access: false });
+    for (const fn of [
+      crm.getPortalMessages,
+      crm.getClientAiSummary,
+      crm.getClientWaCaseIntelligence,
+      crm.getClientTimeline,
+      crm.getDocumentCategories,
+      getClientHistory,
+    ]) {
+      fn.mockReset().mockResolvedValue({});
+    }
+  });
+
+  it("starts every id-only first-screen call at once, none waiting on another", () => {
+    // The profile never resolves: nothing else may be chained behind it.
+    getClientProfile.mockReturnValue(new Promise(() => {}));
+    prefetchClientDetail(new QueryClient(), 7);
+    expect(crm.getPortalStatus).toHaveBeenCalledWith(7);
+    expect(crm.getPortalMessages).toHaveBeenCalledWith(7);
+    expect(crm.getClientAiSummary).toHaveBeenCalledWith(7);
+    expect(crm.getClientWaCaseIntelligence).toHaveBeenCalledWith(7);
+    expect(crm.getClientTimeline).toHaveBeenCalledWith(7, 50);
+    expect(crm.getDocumentCategories).toHaveBeenCalled();
+    expect(getClientHistory).toHaveBeenCalledWith(7);
   });
   afterEach(() => resetEarly());
 
