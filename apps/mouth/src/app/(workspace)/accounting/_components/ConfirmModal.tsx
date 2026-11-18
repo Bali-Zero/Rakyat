@@ -26,7 +26,7 @@ export function ConfirmModal({
   onClose: () => void;
   onConfirmed: () => void;
   /** Shared one-write-at-a-time runner of the tab; absent: the dialog guards itself only. */
-  exclusive?: (fn: () => Promise<void>) => Promise<void>;
+  exclusive?: (fn: () => Promise<unknown>) => Promise<unknown>;
 }) {
   const { success, error } = useToast();
   const [busy, setBusy] = useState(false);

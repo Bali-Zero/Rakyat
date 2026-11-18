@@ -47,12 +47,21 @@ export function BankStatementUpload({
   /** Another write of the tab is pending or a dialog is open: Import waits. */
   locked?: boolean;
   /** Shared one-write-at-a-time runner of the tab. */
-  exclusive?: (fn: () => Promise<void>) => Promise<void>;
+  exclusive?: (fn: () => Promise<unknown>) => Promise<unknown>;
 }) {
   const { error } = useToast();
   const [phase, setPhase] = useState<Phase>("idle");
-  const [file, setFile] = useState<File | null>(null);
-  const [report, setReport] = useState<BankStatementPreview | null>(null);
+  // The chosen file and its report: truth in a ref (Import reads it at click
+  // time), mirrored to state for rendering.
+  const chosenRef = useRef<{
+    file: File | null;
+    report: BankStatementPreview | null;
+  }>({ file: null, report: null });
+  const [report, setReportState] = useState<BankStatementPreview | null>(null);
+  const setChosen = (file: File | null, rep: BankStatementPreview | null) => {
+    chosenRef.current = { file, report: rep };
+    setReportState(rep);
+  };
   const [outcome, setOutcome] = useState<BankStatementImportOutcome | null>(
     null,
   );
@@ -63,9 +72,9 @@ export function BankStatementUpload({
   const busy = phase === "previewing" || phase === "importing";
 
   const reset = () => {
+    if (inFlight.current) return;
     setPhase("idle");
-    setFile(null);
-    setReport(null);
+    setChosen(null, null);
     setOutcome(null);
     setMessage(null);
   };
@@ -73,8 +82,7 @@ export function BankStatementUpload({
   const fail = (title: string, err: unknown) => {
     const detail = (err instanceof Error && err.message) || "Please try again";
     setMessage(detail);
-    setReport(null);
-    setFile(null);
+    setChosen(null, null);
     setPhase("idle");
     error(title, detail);
     logger.error(`accounting bank statement ${title}`, {}, err as Error);
@@ -83,14 +91,13 @@ export function BankStatementUpload({
   const handleChoose = async (chosen: File | undefined) => {
     if (!chosen || inFlight.current) return;
     inFlight.current = true;
-    setReport(null);
+    setChosen(chosen, null);
     setOutcome(null);
     setMessage(null);
-    setFile(chosen);
     setPhase("previewing");
     try {
       const res = await accountingApi.previewBankStatement(chosen);
-      setReport(res);
+      setChosen(chosen, res);
       setPhase("ready");
     } catch (err) {
       fail("Statement preview failed", err);
@@ -100,11 +107,13 @@ export function BankStatementUpload({
   };
 
   const handleImport = async () => {
-    if (!file || !report || !report.balance_check.ok || inFlight.current) {
-      return;
-    }
-    inFlight.current = true;
+    // Decide on the refs, at click time.
+    const { file, report: rep } = chosenRef.current;
+    if (!file || !rep || !rep.balance_check.ok || inFlight.current) return;
+    // The flag is set only when the request really starts (inside what the runner
+    // calls): an import the lock refuses leaves nothing set.
     const run = async () => {
+      inFlight.current = true;
       setPhase("importing");
       try {
         const res = await accountingApi.importBankStatement(file);
@@ -113,14 +122,12 @@ export function BankStatementUpload({
         onImported();
       } catch (err) {
         fail("Statement import failed", err);
+      } finally {
+        inFlight.current = false;
       }
     };
-    try {
-      if (exclusive) await exclusive(run);
-      else await run();
-    } finally {
-      inFlight.current = false;
-    }
+    if (exclusive) await exclusive(run);
+    else await run();
   };
 
   const mismatches = report?.balance_check.mismatch_positions.length ?? 0;

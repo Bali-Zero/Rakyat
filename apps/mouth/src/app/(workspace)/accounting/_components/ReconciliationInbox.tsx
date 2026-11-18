@@ -24,6 +24,7 @@ import {
 import { BankStatementUpload } from "./BankStatementUpload";
 import { ConfirmModal } from "./ConfirmModal";
 import { LinkedIgnoredSection } from "./LinkedIgnoredSection";
+import { useWriteLock } from "./useWriteLock";
 
 type Light = "green" | "recorded" | "yellow" | "red";
 type Filter = "all" | Light;
@@ -58,6 +59,10 @@ const normalizeLight = (light: string): Light =>
 
 const MIN_REASON = 3;
 const MAX_REASON = 200;
+
+/** The server's rule: collapse whitespace, count code points. */
+const normalizeReason = (raw: string): string =>
+  raw.trim().replace(/\s+/g, " ");
 
 function LightChip({ light }: { light: Light }) {
   return (
@@ -143,9 +148,11 @@ export function ReconciliationInbox({
 }) {
   const { error, success } = useToast();
   const [items, setItems] = useState<ReconciliationInboxItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  // The full-list spinner is for the first load only; later reloads run in the background.
-  const [hasLoaded, setHasLoaded] = useState(false);
+  // Status of the LATEST STARTED load. With no rows on screen it decides the text:
+  // loading line, empty message (ok) or failure (failed); rows are never replaced.
+  const [loadStatus, setLoadStatus] = useState<"loading" | "ok" | "failed">(
+    "loading",
+  );
   const [filter, setFilter] = useState<Filter>("all");
   const [expandedTxn, setExpandedTxn] = useState<number | null>(null);
   const [candidates, setCandidates] = useState<MatchCandidatesResponse | null>(
@@ -159,11 +166,19 @@ export function ReconciliationInbox({
     >;
     candidate: MatchCandidate;
   } | null>(null);
-  const [ignoreFor, setIgnoreFor] = useState<number | null>(null);
-  const [reason, setReason] = useState("");
-  // ONE pending flag for the whole tab: the inbox and "Linked and ignored" share it.
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
+  // The ignore form's truth is a ref (mirrored to state for rendering): no
+  // handler decides on a value captured at render time.
+  const ignoreRef = useRef<{ txnId: number; reason: string } | null>(null);
+  const [ignoreForm, setIgnoreFormState] = useState<{
+    txnId: number;
+    reason: string;
+  } | null>(null);
+  const setIgnoreForm = (v: { txnId: number; reason: string } | null) => {
+    ignoreRef.current = v;
+    setIgnoreFormState(v);
+  };
+  // ONE lock for the whole tab: the inbox, the card and "Linked and ignored" share it.
+  const lock = useWriteLock();
   const [candFailed, setCandFailed] = useState(false);
   // Token of the latest candidates request: a late answer for another one is dropped.
   const candReq = useRef(0);
@@ -179,20 +194,17 @@ export function ReconciliationInbox({
 
   const load = useCallback(async () => {
     const token = ++loadReq.current;
+    setLoadStatus("loading");
     try {
-      setLoading(true);
       const rows = await accountingApi.getReconciliationInbox();
       if (loadReq.current !== token) return;
       setItems(rows);
+      setLoadStatus("ok");
     } catch (err) {
       if (loadReq.current !== token) return;
+      setLoadStatus("failed");
       error("Failed to load reconciliation inbox", "Please try again");
       logger.error("accounting inbox load failed", {}, err as Error);
-    } finally {
-      if (loadReq.current === token) {
-        setLoading(false);
-        setHasLoaded(true);
-      }
     }
   }, [error]);
 
@@ -204,27 +216,11 @@ export function ReconciliationInbox({
     // The acted row leaves the list at once; the reload then replaces the list.
     setItems((cur) => cur.filter((it) => it.txn_id !== txnId));
     setExpandedTxn((cur) => (cur === txnId ? null : cur));
-    // another row's open ignore form keeps its text
-    if (ignoreFor === txnId) {
-      setIgnoreFor(null);
-      setReason("");
-    }
+    // only the acted row's form closes; another row's keeps its text
+    if (ignoreRef.current?.txnId === txnId) setIgnoreForm(null);
     setVersion((v) => v + 1);
     void load();
     onConfirmed();
-  };
-
-  // One write at a time on the whole tab; the ref closes the gap before React re-renders.
-  const exclusive = async (fn: () => Promise<void>) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      await fn();
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
   };
 
   const runAction = (
@@ -232,7 +228,7 @@ export function ReconciliationInbox({
     title: string,
     run: () => Promise<unknown>,
   ) =>
-    exclusive(async () => {
+    lock.runWrite(async () => {
       setRowError(null);
       try {
         await run();
@@ -280,10 +276,33 @@ export function ReconciliationInbox({
     }
   };
 
-  const toggleIgnore = (txnId: number) => {
+  // Opening and closing the form go through the lock like every other control.
+  const openIgnore = (txnId: number) => {
+    if (!lock.isFree()) return;
+    if (ignoreRef.current?.txnId === txnId) return;
     setRowError(null);
-    setReason("");
-    setIgnoreFor((cur) => (cur === txnId ? null : txnId));
+    setIgnoreForm({ txnId, reason: "" });
+  };
+  const closeIgnore = (txnId: number) => {
+    if (!lock.isFree()) return;
+    if (ignoreRef.current?.txnId !== txnId) return;
+    setIgnoreForm(null);
+  };
+  const setIgnoreReason = (txnId: number, text: string) => {
+    const cur = ignoreRef.current;
+    if (!cur || cur.txnId !== txnId) return;
+    setIgnoreForm({ ...cur, reason: text });
+  };
+  // Reads the ref at click time: the reason validated and sent is the ref's.
+  const sendIgnore = (txnId: number) => {
+    const cur = ignoreRef.current;
+    if (!cur || cur.txnId !== txnId) return;
+    const text = normalizeReason(cur.reason);
+    const len = Array.from(text).length;
+    if (len < MIN_REASON || len > MAX_REASON) return;
+    void runAction(txnId, "Transfer ignored", () =>
+      accountingApi.ignoreTransaction({ bank_txn_id: txnId, reason: text }),
+    );
   };
 
   const counts: Record<Filter, number> = {
@@ -297,16 +316,17 @@ export function ReconciliationInbox({
   const visible = items.filter(
     (it) => filter === "all" || normalizeLight(it.light) === filter,
   );
-  const locked = busy || modal !== null;
-  const trimmed = reason.trim();
-  const reasonOk = trimmed.length >= MIN_REASON && trimmed.length <= MAX_REASON;
+  const reasonLength = Array.from(
+    normalizeReason(ignoreForm?.reason ?? ""),
+  ).length;
+  const reasonOk = reasonLength >= MIN_REASON && reasonLength <= MAX_REASON;
 
   // The upload card and the linked/ignored list stay mounted while the list reloads.
   const frame = (content: React.ReactNode) => (
     <div className="space-y-4">
       <BankStatementUpload
-        locked={locked}
-        exclusive={exclusive}
+        locked={lock.locked}
+        exclusive={lock.runWrite}
         onImported={() => {
           void load();
           onConfirmed();
@@ -317,9 +337,12 @@ export function ReconciliationInbox({
         <ConfirmModal
           txn={modal.txn}
           candidate={modal.candidate}
-          onClose={() => setModal(null)}
-          exclusive={exclusive}
+          onClose={() => {
+            if (lock.tryCloseDialog()) setModal(null);
+          }}
+          exclusive={lock.runDialogWrite}
           onConfirmed={() => {
+            lock.dialogDone();
             setModal(null);
             afterWrite(modal.txn.id);
           }}
@@ -327,10 +350,10 @@ export function ReconciliationInbox({
       )}
       <LinkedIgnoredSection
         version={version}
-        locked={locked}
-        exclusive={exclusive}
+        locked={lock.locked}
+        exclusive={lock.runWrite}
         onReopened={() => {
-          setVersion((v) => v + 1);
+          // the section refreshed itself at the reopen: no version bump here
           void load();
           onConfirmed();
         }}
@@ -338,10 +361,26 @@ export function ReconciliationInbox({
     </div>
   );
 
-  if (loading && !hasLoaded) {
+  if (items.length === 0 && loadStatus === "loading") {
     return frame(
       <div className="flex items-center justify-center p-10 text-muted-foreground">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading inbox…
+      </div>,
+    );
+  }
+
+  if (items.length === 0 && loadStatus === "failed") {
+    return frame(
+      <div className="rounded-lg border p-10 text-center text-muted-foreground">
+        <p>Could not load the inbox.</p>
+        <Button
+          className="mt-3"
+          variant="outline"
+          size="sm"
+          onClick={() => void load()}
+        >
+          Try again
+        </Button>
       </div>,
     );
   }
@@ -387,7 +426,7 @@ export function ReconciliationInbox({
           const txn = {
             id: item.txn_id,
             amount_idr: item.amount_idr,
-            description: item.description || null,
+            description: item.description,
             txn_date: item.txn_date,
           };
           const suggestedId = item.suggestion?.invoice_id;
@@ -419,23 +458,24 @@ export function ReconciliationInbox({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={locked}
-                  onClick={() => toggleIgnore(item.txn_id)}
+                  disabled={lock.locked}
+                  onClick={() => openIgnore(item.txn_id)}
                 >
                   Ignore
                 </Button>
               </div>
 
-              {ignoreFor === item.txn_id && (
+              {ignoreForm?.txnId === item.txn_id && (
                 <div className="flex flex-wrap items-center gap-2 border-t bg-muted/20 p-3">
                   <input
                     type="text"
                     aria-label="Reason for ignoring"
                     placeholder="Why is this not a client payment?"
-                    maxLength={MAX_REASON}
-                    value={reason}
-                    disabled={locked}
-                    onChange={(e) => setReason(e.target.value)}
+                    value={ignoreForm.reason}
+                    disabled={lock.locked}
+                    onChange={(e) =>
+                      setIgnoreReason(item.txn_id, e.target.value)
+                    }
                     className="min-w-[240px] flex-1 rounded-md border bg-background px-2 py-1 text-sm"
                   />
                   <p className="basis-full text-xs text-muted-foreground">
@@ -444,23 +484,16 @@ export function ReconciliationInbox({
                   </p>
                   <Button
                     size="sm"
-                    disabled={locked || !reasonOk}
-                    onClick={() =>
-                      runAction(item.txn_id, "Transfer ignored", () =>
-                        accountingApi.ignoreTransaction({
-                          bank_txn_id: item.txn_id,
-                          reason: trimmed,
-                        }),
-                      )
-                    }
+                    disabled={lock.locked || !reasonOk}
+                    onClick={() => sendIgnore(item.txn_id)}
                   >
                     Ignore transfer
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={locked}
-                    onClick={() => toggleIgnore(item.txn_id)}
+                    disabled={lock.locked}
+                    onClick={() => closeIgnore(item.txn_id)}
                   >
                     Cancel
                   </Button>
@@ -517,8 +550,11 @@ export function ReconciliationInbox({
                               light === "green" && c.invoice_id === suggestedId
                             }
                             actionLabel="Match"
-                            disabled={locked}
-                            onAction={() => setModal({ txn, candidate: c })}
+                            disabled={lock.locked}
+                            onAction={() => {
+                              if (lock.tryOpenDialog())
+                                setModal({ txn, candidate: c });
+                            }}
                           />
                         )}
                       />
@@ -535,7 +571,7 @@ export function ReconciliationInbox({
                               c.invoice_id === suggestedId
                             }
                             actionLabel="Link, no money moved"
-                            disabled={locked}
+                            disabled={lock.locked}
                             onAction={() =>
                               runAction(item.txn_id, "Transfer linked", () =>
                                 accountingApi.linkRecorded({

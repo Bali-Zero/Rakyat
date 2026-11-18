@@ -868,7 +868,7 @@ describe("round 4: one write at a time, dialog included", () => {
     expect(api.confirm).toHaveBeenCalledTimes(1);
   });
 
-  it("S1b: Link and Match clicked in the same tick, then Confirm paid while the link is held: no confirm is sent", async () => {
+  it("S1b: Link then Match in the same tick: the link is sent and NO dialog opens", async () => {
     const d = deferred<typeof ack>();
     api.linkRecorded.mockReturnValue(d.promise);
     api.getMatchCandidates.mockResolvedValue({ ...both, txn_id: 2 });
@@ -878,14 +878,12 @@ describe("round 4: one write at a time, dialog included", () => {
       name: "Link, no money moved",
     });
     const match = screen.getByRole("button", { name: "Match" });
-    // both clicks land before React re-renders: the dialog opens over a pending link
     act(() => {
       link.click();
       match.click();
     });
     expect(api.linkRecorded).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm paid" }));
-    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("Confirm payment match")).toBeNull();
     expect(api.confirm).not.toHaveBeenCalled();
 
     api.getReconciliationInbox.mockResolvedValue(
@@ -895,6 +893,50 @@ describe("round 4: one write at a time, dialog included", () => {
     await waitFor(() => expect(screen.queryByText("ROW RECORDED")).toBeNull());
     expect(api.confirm).not.toHaveBeenCalled();
   });
+
+  it("B2: Match then Link in the same tick: the dialog opens and NO link is sent", async () => {
+    api.getMatchCandidates.mockResolvedValue({ ...both, txn_id: 2 });
+    await renderInbox();
+    fireEvent.click(within(row(2)).getByText("ROW RECORDED"));
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    const match = screen.getByRole("button", { name: "Match" });
+    act(() => {
+      match.click();
+      link.click();
+    });
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+  });
+
+  it.each(["Close", "Cancel"])(
+    "B1: confirm held, %s clicked in the same tick as Confirm paid: the dialog stays",
+    async (name) => {
+      const d = deferred<never>();
+      api.confirm.mockReturnValue(d.promise);
+      api.getMatchCandidates.mockResolvedValue({ ...both, txn_id: 2 });
+      await renderInbox();
+      fireEvent.click(within(row(2)).getByText("ROW RECORDED"));
+      fireEvent.click(await screen.findByRole("button", { name: "Match" }));
+      const confirmBtn = screen.getByRole("button", { name: "Confirm paid" });
+      const closer = screen.getByRole("button", { name });
+      act(() => {
+        confirmBtn.click();
+        closer.click();
+      });
+      expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+      expect(api.confirm).toHaveBeenCalledTimes(1);
+      act(() => {
+        closer.click();
+      });
+      expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+      d.resolve({} as never);
+      await waitFor(() =>
+        expect(screen.queryByText("Confirm payment match")).toBeNull(),
+      );
+    },
+  );
 
   const readyCard = async () => {
     api.previewBankStatement.mockResolvedValue(previewFixture());
@@ -950,5 +992,332 @@ describe("round 4: one write at a time, dialog included", () => {
     await waitFor(() =>
       expect(api.importBankStatement).toHaveBeenCalledTimes(1),
     );
+  });
+});
+
+describe("round 6", () => {
+  const openForm = (id: number, text?: string) => {
+    fireEvent.click(within(row(id)).getByRole("button", { name: "Ignore" }));
+    if (text !== undefined)
+      fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+        target: { value: text },
+      });
+  };
+  const sendIgnore = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+  const ignoreCalls = () => api.ignoreTransaction.mock.calls.map((c) => c[0]);
+
+  it("F1: Link on row 1 then Ignore on row 2 in one tick: row 2's form is never half-opened or wiped", async () => {
+    api.linkRecorded.mockResolvedValue(ack);
+    api.getMatchCandidates.mockResolvedValue({
+      txn_id: 1,
+      transfer_amount_idr: 500000,
+      candidates: [],
+      recorded_candidates: [candidate({ invoice_id: 12, practice_id: 22 })],
+    });
+    await renderInbox();
+    fireEvent.click(within(row(1)).getByText("ROW GREEN"));
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    const ignore2 = within(row(3)).getByRole("button", { name: "Ignore" });
+    act(() => {
+      link.click();
+      ignore2.click();
+    });
+    await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.queryByLabelText("Reason for ignoring")).toBeNull();
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
+  });
+
+  it("F2: Ignore transfer then the form's Cancel in one tick, server refuses: error shown, form and reason still there", async () => {
+    const d = deferred<typeof ack>();
+    api.ignoreTransaction.mockReturnValue(d.promise);
+    await renderInbox();
+    openForm(4, "typed reason");
+    const send = screen.getByRole("button", { name: "Ignore transfer" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    act(() => {
+      send.click();
+      cancel.click();
+    });
+    d.reject(new Error("fixed refusal"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("fixed refusal");
+    expect(screen.getByLabelText("Reason for ignoring")).toHaveValue(
+      "typed reason",
+    );
+  });
+
+  it("F2: Match then Ignore in one tick: the dialog opens and no form opens", async () => {
+    api.getMatchCandidates.mockResolvedValue({
+      txn_id: 1,
+      transfer_amount_idr: 500000,
+      candidates: [candidate()],
+      recorded_candidates: [],
+    });
+    await renderInbox();
+    fireEvent.click(within(row(1)).getByText("ROW GREEN"));
+    const match = await screen.findByRole("button", { name: "Match" });
+    const ignore = within(row(4)).getByRole("button", { name: "Ignore" });
+    act(() => {
+      match.click();
+      ignore.click();
+    });
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reason for ignoring")).toBeNull();
+  });
+
+  it('F5: an empty memo sends payment_reference ""; a memo with text sends it', async () => {
+    api.confirm.mockResolvedValue({} as never);
+    for (const [memo, expected] of [
+      ["", ""],
+      ["MEMO CONTOH", "MEMO CONTOH"],
+    ] as const) {
+      api.confirm.mockClear();
+      api.getReconciliationInbox.mockResolvedValue([
+        inboxItem({ txn_id: 1, light: "green", description: memo }),
+      ]);
+      api.getMatchCandidates.mockResolvedValue({
+        txn_id: 1,
+        transfer_amount_idr: 500000,
+        candidates: [candidate()],
+        recorded_candidates: [],
+      });
+      const { unmount } = render(<ReconciliationInbox onConfirmed={vi.fn()} />);
+      fireEvent.click(await screen.findByText(memo || "(no memo)"));
+      fireEvent.click(await screen.findByRole("button", { name: "Match" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm paid" }));
+      await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
+      expect(api.confirm.mock.calls[0][0].payment_reference).toBe(expected);
+      unmount();
+    }
+  });
+
+  it("F6: the reason is counted in code points after collapsing whitespace, and sent collapsed", async () => {
+    api.ignoreTransaction.mockResolvedValue(ack);
+    await renderInbox();
+    openForm(4, "\u{1F600}\u{1F600}");
+    const btn = screen.getByRole("button", { name: "Ignore transfer" });
+    expect(btn).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "\u{1F600}\u{1F600}\u{1F600}" },
+    });
+    expect(btn).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "  a  \t b " },
+    });
+    expect(btn).toBeEnabled();
+    sendIgnore();
+    await waitFor(() => expect(ignoreCalls()).toHaveLength(1));
+    expect(ignoreCalls()[0]).toEqual({ bank_txn_id: 4, reason: "a b" });
+  });
+
+  it("F7: a failed first load is not an empty inbox; Try again loads; a successful empty load says Inbox zero", async () => {
+    api.getReconciliationInbox.mockRejectedValueOnce(new Error("down"));
+    render(<ReconciliationInbox onConfirmed={vi.fn()} />);
+    expect(
+      await screen.findByText("Could not load the inbox."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Inbox zero/)).toBeNull();
+    api.getReconciliationInbox.mockResolvedValue([]);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText(/Inbox zero/);
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
+  });
+
+  it("F7: first load held, a second load fails, the first is dropped: failure text, not Inbox zero", async () => {
+    const first = deferred<ReturnType<typeof four>>();
+    api.getReconciliationInbox.mockReturnValueOnce(first.promise);
+    api.getReconciliationInbox.mockRejectedValueOnce(new Error("down"));
+    api.previewBankStatement.mockResolvedValue(previewFixture());
+    api.importBankStatement.mockResolvedValue(importFixture());
+    render(<ReconciliationInbox onConfirmed={vi.fn()} />);
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "c.csv", { type: "text/csv" })] },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /import 3 transactions/i }),
+    );
+    expect(
+      await screen.findByText("Could not load the inbox."),
+    ).toBeInTheDocument();
+    first.resolve([]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByText("Could not load the inbox.")).toBeInTheDocument();
+    expect(screen.queryByText(/Inbox zero/)).toBeNull();
+  });
+
+  it("F7: a failed reload with rows on screen keeps the rows", async () => {
+    api.ignoreTransaction.mockResolvedValue(ack);
+    await renderInbox();
+    api.getReconciliationInbox.mockRejectedValue(new Error("down"));
+    openForm(4, "abc");
+    sendIgnore();
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(screen.getByText("ROW GREEN")).toBeInTheDocument();
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
+  });
+});
+
+describe("round 7", () => {
+  const oneRow = () => [
+    inboxItem({ txn_id: 4, light: "red", description: "ROW RED" }),
+  ];
+  const ignoreLast = async () => {
+    api.ignoreTransaction.mockResolvedValue(ack);
+    fireEvent.click(within(row(4)).getByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "abc" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+  };
+  const heldReload = () => {
+    const d = deferred<ReturnType<typeof four>>();
+    api.getReconciliationInbox.mockReturnValue(d.promise);
+    return d;
+  };
+
+  it("N1: last row leaves with the reload held: loading line, then the load result decides", async () => {
+    api.getReconciliationInbox.mockResolvedValue(oneRow());
+    render(<ReconciliationInbox onConfirmed={vi.fn()} />);
+    await screen.findByText("ROW RED");
+    const d = heldReload();
+    await ignoreLast();
+    await screen.findByText("Loading inbox…");
+    expect(screen.queryByText(/Inbox zero/)).toBeNull();
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
+    d.resolve([]);
+    await screen.findByText(/Inbox zero/);
+  });
+
+  it("N1: the held reload then fails: failure text", async () => {
+    api.getReconciliationInbox.mockResolvedValue(oneRow());
+    render(<ReconciliationInbox onConfirmed={vi.fn()} />);
+    await screen.findByText("ROW RED");
+    let rej!: (e: Error) => void;
+    api.getReconciliationInbox.mockReturnValue(
+      new Promise((_, r) => {
+        rej = r;
+      }) as never,
+    );
+    await ignoreLast();
+    await screen.findByText("Loading inbox…");
+    rej(new Error("down"));
+    await screen.findByText("Could not load the inbox.");
+  });
+
+  it("N1: after a failed reload, the last row leaves and a new reload is in flight: loading line, not the failure", async () => {
+    api.getReconciliationInbox.mockResolvedValue([
+      inboxItem({ txn_id: 4, light: "red", description: "ROW RED" }),
+      inboxItem({ txn_id: 3, light: "yellow", description: "ROW YELLOW" }),
+    ]);
+    api.linkRecorded.mockResolvedValue(ack);
+    api.getMatchCandidates.mockResolvedValue({
+      txn_id: 3,
+      transfer_amount_idr: 1,
+      candidates: [],
+      recorded_candidates: [candidate({ invoice_id: 12, practice_id: 22 })],
+    });
+    render(<ReconciliationInbox onConfirmed={vi.fn()} />);
+    await screen.findByText("ROW RED");
+    api.getReconciliationInbox.mockRejectedValueOnce(new Error("down"));
+    fireEvent.click(within(row(3)).getByText("ROW YELLOW"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Link, no money moved" }),
+    );
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(screen.getByText("ROW RED")).toBeInTheDocument();
+    heldReload();
+    await ignoreLast();
+    await screen.findByText("Loading inbox…");
+    expect(screen.queryByText("Could not load the inbox.")).toBeNull();
+  });
+
+  const formState = () => screen.queryByLabelText("Reason for ignoring");
+
+  it("N2: the form's Cancel then Ignore transfer in one tick sends nothing", async () => {
+    await renderInbox();
+    fireEvent.click(within(row(4)).getByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "abcdef" },
+    });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const send = screen.getByRole("button", { name: "Ignore transfer" });
+    act(() => {
+      cancel.click();
+      send.click();
+    });
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
+    expect(formState()).toBeNull();
+  });
+
+  it("N2/N4: Ignore on row 2 then Cancel on row 3 (its form was open): the form ends on row 2, none opens on row 3", async () => {
+    await renderInbox();
+    fireEvent.click(within(row(3)).getByRole("button", { name: "Ignore" }));
+    const cancel3 = screen.getByRole("button", { name: "Cancel" });
+    const ignore2 = within(row(2)).getByRole("button", { name: "Ignore" });
+    act(() => {
+      ignore2.click();
+      cancel3.click();
+    });
+    expect(
+      within(row(2)).getByLabelText("Reason for ignoring"),
+    ).toBeInTheDocument();
+    expect(within(row(3)).queryByLabelText("Reason for ignoring")).toBeNull();
+  });
+
+  it("N2: typing then Ignore transfer in one tick sends the latest text", async () => {
+    api.ignoreTransaction.mockResolvedValue(ack);
+    await renderInbox();
+    fireEvent.click(within(row(4)).getByRole("button", { name: "Ignore" }));
+    const input = screen.getByLabelText("Reason for ignoring");
+    fireEvent.change(input, { target: { value: "first text" } });
+    const send = screen.getByRole("button", { name: "Ignore transfer" });
+    act(() => {
+      fireEvent.change(input, { target: { value: "latest text" } });
+      send.click();
+    });
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(1));
+    expect(api.ignoreTransaction).toHaveBeenCalledWith({
+      bank_txn_id: 4,
+      reason: "latest text",
+    });
+  });
+
+  it("N3b: Link, Import (refused) and a file choice in one tick: the preview is sent", async () => {
+    const held = deferred<typeof ack>();
+    api.linkRecorded.mockReturnValue(held.promise);
+    api.getMatchCandidates.mockResolvedValue({
+      txn_id: 2,
+      transfer_amount_idr: 1,
+      candidates: [],
+      recorded_candidates: [candidate({ invoice_id: 12, practice_id: 22 })],
+    });
+    api.previewBankStatement.mockResolvedValue(previewFixture());
+    await renderInbox();
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "a.csv", { type: "text/csv" })] },
+    });
+    const importBtn = await screen.findByRole("button", {
+      name: /import 3 transactions/i,
+    });
+    fireEvent.click(within(row(2)).getByText("ROW RECORDED"));
+    const link = await screen.findByRole("button", {
+      name: "Link, no money moved",
+    });
+    api.previewBankStatement.mockClear();
+    act(() => {
+      link.click();
+      importBtn.click();
+      fireEvent.change(screen.getByTestId("bank-statement-input"), {
+        target: { files: [new File(["y"], "b.csv", { type: "text/csv" })] },
+      });
+    });
+    expect(api.importBankStatement).not.toHaveBeenCalled();
+    expect(api.previewBankStatement).toHaveBeenCalledTimes(1);
+    held.resolve(ack);
   });
 });

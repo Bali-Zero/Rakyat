@@ -22,7 +22,7 @@ export function LinkedIgnoredSection({
   /** True while any write of the tab is pending or the confirm dialog is open. */
   locked: boolean;
   /** Shared runner: returns at once when a write is pending, else runs and clears the flag. */
-  exclusive: (fn: () => Promise<void>) => Promise<void>;
+  exclusive: (fn: () => Promise<unknown>) => Promise<unknown>;
   /** Bumped by the inbox after a write: the open list reloads. */
   version: number;
   onReopened: () => void;
@@ -30,7 +30,10 @@ export function LinkedIgnoredSection({
   const { error, success } = useToast();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<BankTransaction[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Status of the LATEST STARTED refresh; with no rows it picks loading / empty / failure.
+  const [loadStatus, setLoadStatus] = useState<"loading" | "ok" | "failed">(
+    "loading",
+  );
   const [rowError, setRowError] = useState<{
     id: number;
     message: string;
@@ -41,20 +44,20 @@ export function LinkedIgnoredSection({
 
   const load = useCallback(async () => {
     const token = ++loadReq.current;
+    setLoadStatus("loading");
     try {
-      setLoading(true);
       const [linked, ignored] = await Promise.all([
         accountingApi.getBankTransactions({ reconciledStatus: "manual" }),
         accountingApi.getBankTransactions({ reconciledStatus: "ignored" }),
       ]);
       if (loadReq.current !== token) return;
       setRows([...linked, ...ignored].sort((a, b) => b.id - a.id));
+      setLoadStatus("ok");
     } catch (err) {
       if (loadReq.current !== token) return;
+      setLoadStatus("failed");
       error("Failed to load linked and ignored transfers", "Please try again");
       logger.error("accounting linked/ignored load failed", {}, err as Error);
-    } finally {
-      if (loadReq.current === token) setLoading(false);
     }
   }, [error]);
 
@@ -68,6 +71,11 @@ export function LinkedIgnoredSection({
       try {
         await accountingApi.reopenTransaction(id);
         success("Transfer reopened");
+        // the reopened row leaves at once; the refresh then replaces the list
+        setRows((cur) => cur.filter((r) => r.id !== id));
+        // invalidate every refresh in flight and start the new one right here
+        loadReq.current += 1;
+        void load();
         onReopened();
       } catch (err) {
         const detail =
@@ -90,9 +98,21 @@ export function LinkedIgnoredSection({
       </button>
       {open && (
         <div className="space-y-2 border-t p-3">
-          {loading ? (
+          {rows.length === 0 && loadStatus === "loading" ? (
             <div className="flex items-center justify-center py-3 text-muted-foreground">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+            </div>
+          ) : rows.length === 0 && loadStatus === "failed" ? (
+            <div className="text-center text-sm text-muted-foreground">
+              <p>Could not load this list.</p>
+              <Button
+                className="mt-2"
+                size="sm"
+                variant="outline"
+                onClick={() => void load()}
+              >
+                Try again
+              </Button>
             </div>
           ) : rows.length === 0 ? (
             <p className="text-center text-sm text-muted-foreground">
