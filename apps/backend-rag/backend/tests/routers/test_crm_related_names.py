@@ -1486,7 +1486,7 @@ async def test_n12_the_identifier_prefix_search_answers_as_before(admin, conn):
     sid = await seed_subject(conn, "person", None, [("passport", P1)])
     await seed_name(conn, sid, "ZZ HAS NAME", "ocr_single", at=T0)
     other = await seed_subject(conn, "person", "ZzOther", [("passport", P2)])
-    for typed in (P1, "zz-000000", "zz 00000"):
+    for typed in (P1, "zz-0000001", "zz 000000 1"):
         assert _ids(await admin.get(READ, params={"q": typed})) == [sid], typed
     assert sorted(_ids(await admin.get(READ, params={"q": "ZZ000000"}))) == sorted([sid, other])
 
