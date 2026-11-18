@@ -1119,12 +1119,15 @@ ANSWER_VOCABULARY = frozenset(
 )  # fmt: skip
 
 
-def _forbidden(data) -> set[str]:
+def _forbidden(data, *, answer_words: bool) -> set[str]:
+    """The request-derived forbidden tokens. A logged leaf is a leak unless it is a protocol word
+    or the plan hash; for responses and audit rows (`answer_words=True`) the leaves that are, or
+    are part of, a word the fixed answers contain are excluded too."""
     leaves: set[str] = set()
     _leaves(data, leaves)
     tokens = set()
     for leaf in leaves:
-        in_vocabulary = any(leaf.casefold() in word for word in ANSWER_VOCABULARY)
+        in_vocabulary = answer_words and any(leaf.casefold() in w for w in ANSWER_VOCABULARY)
         if len(leaf) >= 4 and leaf not in PROTOCOL_WORDS and leaf != PLAN and not in_vocabulary:
             tokens.add(leaf.casefold())
             tokens.add(" ".join(leaf.upper().split()).casefold())
@@ -1404,26 +1407,33 @@ async def test_n13_names_route_logs_and_answers_carry_no_name_identifier_or_body
     if spec["route"]:
         assert _spoke(records, route_module), (case, "route logger silent")
 
-    # 5. no forbidden token in any record, response or audit row; the token set is populated
-    leaf_tokens: set[str] = set()
-    for request in requests:
-        if isinstance(request, dict):
-            leaf_tokens |= _forbidden(request)
-    if all(isinstance(r, dict) for r in requests):
-        if spec["name"]:
-            assert any(PROBE_NAME.casefold() in t for t in leaf_tokens), case
-        if spec["ids"]:
-            assert any(i.casefold() in leaf_tokens for i in ALL_PROBE_IDS), case
-    tokens = leaf_tokens | {
+    # 5. no forbidden token in any record, response or audit row; the log token set is populated
+    unconditional = {
         PROBE_NAME.casefold(),
         PA.casefold(),
         NIK_A.casefold(),
         *(w.casefold() for w in WORLD_NAMES),
     }
+    log_leaf_tokens: set[str] = set()
+    answer_leaf_tokens: set[str] = set()
+    for request in requests:
+        if isinstance(request, dict):
+            log_leaf_tokens |= _forbidden(request, answer_words=False)
+            answer_leaf_tokens |= _forbidden(request, answer_words=True)
+    if all(isinstance(r, dict) for r in requests):
+        if spec["name"]:
+            assert any(PROBE_NAME.casefold() in t for t in log_leaf_tokens), case
+        if spec["ids"]:
+            assert any(i.casefold() in log_leaf_tokens for i in ALL_PROBE_IDS), case
+    log_tokens = log_leaf_tokens | unconditional
+    answer_tokens = answer_leaf_tokens | unconditional
     for resp in responses:
-        assert [t for t in tokens if t in resp.text.casefold()] == [], case
-    log_text = " ".join(_record_text(r) for r in records if SENTINEL not in r.getMessage())
-    assert [t for t in tokens if t in log_text.casefold()] == [], case
+        response_text = resp.text.casefold()
+        assert [t for t in answer_tokens if t in response_text] == [], case
+    log_text = " ".join(
+        _record_text(r) for r in records if SENTINEL not in r.getMessage()
+    ).casefold()
+    assert [t for t in log_tokens if t in log_text] == [], case
 
     # 6. one audit row per call, no request body, no token
     rows = await conn.fetch(
@@ -1433,7 +1443,7 @@ async def test_n13_names_route_logs_and_answers_carry_no_name_identifier_or_body
     assert len(rows) == len(requests), case
     assert all(r["request_body"] is None for r in rows), case
     audit_text = " ".join(str(dict(r)) for r in rows).casefold()
-    assert [t for t in tokens if t in audit_text] == [], case
+    assert [t for t in answer_tokens if t in audit_text] == [], case
 
 
 # ── N14 ───────────────────────────────────────────────────────────────────────
