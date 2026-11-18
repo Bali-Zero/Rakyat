@@ -1321,3 +1321,65 @@ describe("round 7", () => {
     held.resolve(ack);
   });
 });
+
+describe("candidate identity on the row", () => {
+  const open = async (cands: ReturnType<typeof candidate>[], recorded = []) => {
+    api.getReconciliationInbox.mockResolvedValue([
+      inboxItem({
+        txn_id: 1,
+        light: "green",
+        description: "ROW GREEN",
+        open_candidates: cands.length,
+        recorded_candidates: recorded.length,
+      }),
+    ]);
+    api.getMatchCandidates.mockResolvedValue({
+      txn_id: 1,
+      transfer_amount_idr: 500000,
+      candidates: cands,
+      recorded_candidates: recorded,
+    });
+    render(<ReconciliationInbox onConfirmed={vi.fn()} />);
+    fireEvent.click(await screen.findByText("ROW GREEN"));
+    await screen.findAllByTestId("candidate-identity");
+  };
+
+  it("shows number, date and service on open and on recorded candidates", async () => {
+    const id = {
+      invoice_number: "INV-000000-00001",
+      invoice_issued_at: "2026-01-10T00:00:00+00:00",
+      service_name: "Example service",
+    };
+    await open([candidate({ invoice_id: 11, ...id })], [
+      candidate({
+        invoice_id: 12,
+        practice_id: 22,
+        ...id,
+        invoice_number: "INV-000000-00002",
+      }),
+    ] as never);
+    const texts = screen
+      .getAllByTestId("candidate-identity")
+      .map((e) => e.textContent);
+    expect(texts).toEqual([
+      "INV-000000-00001 · 2026-01-10 · Example service",
+      "INV-000000-00002 · 2026-01-10 · Example service",
+    ]);
+  });
+
+  it("shows No invoice number for null and absent, without date or service", async () => {
+    await open([
+      candidate({
+        invoice_id: 11,
+        invoice_number: null,
+        invoice_issued_at: null,
+        service_name: null,
+      }),
+      candidate({ invoice_id: 13, practice_id: 23 }),
+    ]);
+    const texts = screen
+      .getAllByTestId("candidate-identity")
+      .map((e) => e.textContent);
+    expect(texts).toEqual(["No invoice number", "No invoice number"]);
+  });
+});

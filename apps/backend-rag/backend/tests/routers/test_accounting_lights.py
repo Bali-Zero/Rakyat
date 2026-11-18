@@ -272,6 +272,9 @@ def test_inbox_shape_and_each_light(mock_db_pool) -> None:
         "reasons",
         "amount_delta_idr",
         "likely_withheld",
+        "invoice_number",
+        "invoice_issued_at",
+        "service_name",
     }
     assert (
         recorded["recorded_candidates"],
@@ -351,6 +354,9 @@ def test_match_candidates_keeps_its_fields_and_gains_recorded_candidates(mock_db
             "reasons": ["exact amount match", "payer name ~ client (100%)"],
             "amount_delta_idr": 0,
             "likely_withheld": False,
+            "invoice_number": None,
+            "invoice_issued_at": "2026-06-20T00:00:00",
+            "service_name": None,
         }
     ]
     assert body["recorded_candidates"] == [
@@ -628,3 +634,164 @@ def test_the_cents_of_an_invoice_amount_are_truncated_in_the_classifier_and_in_m
     conn.fetch = AsyncMock(side_effect=[[_inv(11, "Contoh Klien", amount=cents)], []])
     cand = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()["candidates"][0]
     assert (cand["invoice_amount_idr"], cand["amount_delta_idr"]) == (4_000_000, 0)
+
+
+# ── candidate identity: invoice number, issue date, service (spec I1, I2) ────────────────
+
+IDENTITY_KEYS = {"invoice_number", "invoice_issued_at", "service_name"}
+
+
+def _inv_id(invoice_id: int, name: str, **identity) -> dict:
+    return {**_inv(invoice_id, name), **identity}
+
+
+def test_identity_keys_are_in_every_candidate_of_both_routes_and_in_the_suggestion(
+    mock_db_pool,
+) -> None:
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "id": 3,
+            "txn_date": date(2026, 6, 25),
+            "amount_idr": 4_000_000,
+            "direction": "credit",
+            "description": "TRF Contoh Klien",
+        }
+    )
+    conn.fetch = AsyncMock(side_effect=[[_inv(11, "Contoh Klien")], [_inv(21, "Contoh Klien")]])
+    body = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()
+    for c in body["candidates"] + body["recorded_candidates"]:
+        assert IDENTITY_KEYS <= set(c)
+
+    _pool, conn = mock_db_pool
+    conn.fetch = AsyncMock(
+        side_effect=[
+            [_tx(1, 4_000_000, "TRF Contoh Klien")],
+            [_inv(11, "Contoh Klien")],
+            [],
+        ]
+    )
+    item = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()[0]
+    assert IDENTITY_KEYS <= set(item["suggestion"])
+
+
+def test_null_sources_yield_three_nulls_and_values_pass_through(mock_db_pool) -> None:
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "id": 3,
+            "txn_date": date(2026, 6, 25),
+            "amount_idr": 4_000_000,
+            "direction": "credit",
+            "description": "",
+        }
+    )
+    nulls = _inv_id(11, "Contoh A", invoice_number=None, service_name=None)
+    nulls["generated_at"] = None
+    full = _inv_id(
+        12, "Contoh B", invoice_number="INV-000000-00001", service_name="Example service"
+    )
+    conn.fetch = AsyncMock(side_effect=[[nulls, full], []])
+    cands = {
+        c["invoice_id"]: c
+        for c in _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()["candidates"]
+    }
+    assert [cands[11][k] for k in sorted(IDENTITY_KEYS)] == [None, None, None]
+    assert cands[12]["invoice_number"] == "INV-000000-00001"
+    assert cands[12]["invoice_issued_at"] == "2026-06-20T00:00:00"
+    assert cands[12]["service_name"] == "Example service"
+
+
+def test_a_row_without_the_new_columns_still_yields_nulls(mock_db_pool) -> None:
+    _pool, conn = mock_db_pool
+    row = _inv(11, "Contoh A")
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "id": 3,
+            "txn_date": date(2026, 6, 25),
+            "amount_idr": 4_000_000,
+            "direction": "credit",
+            "description": "",
+        }
+    )
+    conn.fetch = AsyncMock(side_effect=[[row], []])
+    cand = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()["candidates"][0]
+    assert (cand["invoice_number"], cand["service_name"]) == (None, None)
+
+
+def _txn_row() -> dict:
+    return {
+        "id": 3,
+        "txn_date": date(2026, 6, 25),
+        "amount_idr": 4_000_000,
+        "direction": "credit",
+        "description": "",
+    }
+
+
+def test_candidates_of_equal_confidence_keep_the_order_of_the_pool_rows_given(
+    mock_db_pool,
+) -> None:
+    """Three tied rows whose numbers are 5, 9, 1 in pool order: an ascending or a descending
+    tie-break by number would reorder them. This pins the matcher's handling of the rows it is
+    given; it does not make the database's row order deterministic."""
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(return_value=_txn_row())
+    rows = [
+        _inv_id(31, "Contoh A", invoice_number="INV-000000-00005"),
+        _inv_id(32, "Contoh A", invoice_number="INV-000000-00009"),
+        _inv_id(33, "Contoh A", invoice_number="INV-000000-00001"),
+    ]
+    conn.fetch = AsyncMock(side_effect=[rows, []])
+    body = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()
+    assert [c["invoice_id"] for c in body["candidates"]] == [31, 32, 33]
+
+
+_POOL_SQL_HEAD = (
+    "SELECT i.id AS invoice_id, i.practice_id, i.amount_idr, i.generated_at, "
+    "COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr, c.full_name AS client_name, "
+    "i.invoice_number, pt.name AS service_name "
+    "FROM invoices i JOIN practices p ON i.practice_id = p.id "
+    "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id "
+    "LEFT JOIN clients c ON p.client_id = c.id "
+)
+
+
+def test_each_pool_query_is_pinned_in_full(mock_db_pool) -> None:
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(return_value=_txn_row())
+    conn.fetch = AsyncMock(side_effect=[[], []])
+    _client(mock_db_pool).get(f"{BASE}/match-candidates/3")
+    open_sql, recorded_sql = [" ".join(c.args[0].split()) for c in conn.fetch.await_args_list]
+    assert open_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') <> 'paid'"
+    assert recorded_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid'"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("invoice_number", "INV-000000-00001"),
+        ("invoice_issued_at", "2026-01-10"),
+        ("service_name", "Example service"),
+    ],
+)
+def test_the_matcher_carries_each_identity_value_from_the_pool_row_to_the_candidate(
+    field, value
+) -> None:
+    from backend.services.accounting.matcher import OpenInvoice, rank_candidates
+
+    inv = OpenInvoice(
+        invoice_id=1,
+        practice_id=2,
+        client_name="Contoh A",
+        amount_idr=4_000_000,
+        generated_at=date(2026, 6, 20),
+        **{field: value},
+    )
+    (cand,) = rank_candidates(
+        transfer_amount_idr=4_000_000,
+        transfer_date=date(2026, 6, 25),
+        payer_memo="",
+        open_invoices=[inv],
+    )
+    assert getattr(cand, field) == value
