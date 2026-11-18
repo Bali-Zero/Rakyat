@@ -93,9 +93,6 @@ sentry-sdk[fastapi]>=2.73.0  # Error monitoring
 # XML/HTML Processing
 lxml>=6.1.1
 
-# ML/Math
-scikit-learn>=1.3.0  # Required for GoldenAnswerService cosine similarity
-
 # Visa Engine — signed RulePack bundle verification
 # (backend/services/visa_engine/bundle.py): RFC 8785 JSON Canonicalization
 # Scheme (JCS) over the signed envelope + Draft 2020-12 JSON Schema
