@@ -28,7 +28,11 @@ Backward Compatibility:
 All original exports are maintained for seamless integration with existing code.
 """
 
+import importlib
+import importlib.util
 import logging
+import pkgutil
+import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -49,31 +53,53 @@ def _get_graph_traversal_tool():
     return _GraphTraversalTool
 
 
-# Core orchestrators
-# Submodules (for direct access)
-from . import context_manager, llm_gateway, memory_handler, prompt_builder, reasoning
-from .kg_orchestrator import AgenticResponse, KGAgenticOrchestrator
-from .orchestrator import AgenticRAGOrchestrator
-from .pipeline import (
-    CitationStage,
-    FormatStage,
-    PostProcessingStage,
-    ResponsePipeline,
-    VerificationStage,
-    create_default_pipeline,
-)
-from .tools import (
-    CalculatorTool,
-    CRMTool,
-    ImageGenerationTool,
-    KBLICanonicalLookupTool,
-    PricingTool,
-    TeamKnowledgeTool,
-    TimeSheetTool,
-    VectorSearchTool,
-    VisionTool,
-    WebSearchTool,
-)
+if TYPE_CHECKING:
+    from .kg_orchestrator import AgenticResponse, KGAgenticOrchestrator
+    from .orchestrator import AgenticRAGOrchestrator
+
+# PEP 562: the public names below load on first access, so importing a light
+# submodule of this package (e.g. ``agentic.tools``) from the ``api`` process no
+# longer drags in the orchestrator and, through it, google.genai and friends.
+_LAZY_ATTRS = {
+    "AgenticResponse": ".kg_orchestrator",
+    "KGAgenticOrchestrator": ".kg_orchestrator",
+    "AgenticRAGOrchestrator": ".orchestrator",
+    "CitationStage": ".pipeline",
+    "FormatStage": ".pipeline",
+    "PostProcessingStage": ".pipeline",
+    "ResponsePipeline": ".pipeline",
+    "VerificationStage": ".pipeline",
+    "create_default_pipeline": ".pipeline",
+    "CalculatorTool": ".tools",
+    "CRMTool": ".tools",
+    "ImageGenerationTool": ".tools",
+    "KBLICanonicalLookupTool": ".tools",
+    "PricingTool": ".tools",
+    "TeamKnowledgeTool": ".tools",
+    "TimeSheetTool": ".tools",
+    "VectorSearchTool": ".tools",
+    "VisionTool": ".tools",
+    "WebSearchTool": ".tools",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_ATTRS:
+        value = getattr(importlib.import_module(_LAZY_ATTRS[name], __name__), name)
+    elif not name.startswith("__") and importlib.util.find_spec(f".{name}", __name__):
+        # Any submodule (context_manager, tools, ...): the eager __init__ left
+        # every transitively imported submodule bound as an attribute.
+        value = importlib.import_module(f".{name}", __name__)
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    submodules = {m.name for m in pkgutil.iter_modules(__path__)}
+    return sorted(set(globals()) | set(_LAZY_ATTRS) | submodules)
+
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +147,7 @@ def create_agentic_rag(
     nlm_enrichment_service: Any = None,  # noqa: ARG001 — Phase 6 DEPRECATED, kept for call-site compat
     specialized_service_router: Any = None,
     faq_cache: Any = None,  # NotebookLMCacheService (P7 SPEC v2 D3: exact-match FAQ cache)
-) -> AgenticRAGOrchestrator:
+) -> "AgenticRAGOrchestrator":
     """
     Factory function to create a fully configured AgenticRAGOrchestrator.
 
@@ -164,6 +190,19 @@ def create_agentic_rag(
     from backend.services.autonomous_agents.knowledge_graph_builder import KnowledgeGraphBuilder
     from backend.services.tools.knowledge_graph_tool import KnowledgeGraphTool
 
+    from .tools import (
+        CalculatorTool,
+        CRMTool,
+        ImageGenerationTool,
+        KBLICanonicalLookupTool,
+        PricingTool,
+        TeamKnowledgeTool,
+        TimeSheetTool,
+        VectorSearchTool,
+        VisionTool,
+        WebSearchTool,
+    )
+
     # We pass the ai_client later if needed, but for now we use the factory's db_pool
     kg_builder = KnowledgeGraphBuilder(search_service=retriever, db_pool=db_pool)
 
@@ -202,7 +241,9 @@ def create_agentic_rag(
     logger.debug("create_agentic_rag: Tools list created")
 
     logger.debug("create_agentic_rag: Instantiating AgenticRAGOrchestrator...")
-    orchestrator = AgenticRAGOrchestrator(
+    # Through the module, not a bare name: resolves lazily, and tests that
+    # monkeypatch the package attribute still take effect.
+    orchestrator = sys.modules[__name__].AgenticRAGOrchestrator(
         tools=tools,
         db_pool=db_pool,
         semantic_cache=semantic_cache,
@@ -218,7 +259,7 @@ def create_agentic_rag(
 def create_kg_agentic_rag(
     retriever,
     db_pool,
-) -> KGAgenticOrchestrator:
+) -> "KGAgenticOrchestrator":
     """
     Factory function to create a KG-enhanced Agentic RAG Orchestrator.
 
@@ -234,7 +275,7 @@ def create_kg_agentic_rag(
     """
     logger.debug("create_kg_agentic_rag: Initializing KG orchestrator...")
 
-    orchestrator = KGAgenticOrchestrator(
+    orchestrator = sys.modules[__name__].KGAgenticOrchestrator(
         db_pool=db_pool,
         retriever=retriever,
     )
