@@ -114,7 +114,7 @@ def _build_digest(invoices: list[dict[str, Any]], today: str) -> tuple[str, str]
     </thead>
     <tbody>{"".join(rows)}</tbody>
   </table>
-  <p>Please check the bank account; if a payment has arrived, update the payment status in the CRM.</p>
+  <p>Please check the bank account; if a payment has arrived, confirm it on the Accounting page: <a href="https://kita.balizero.com/accounting">https://kita.balizero.com/accounting</a>.</p>
   <p style="color:#888;font-size:13px;">Zantara CRM</p>
 </div>
 """.strip()

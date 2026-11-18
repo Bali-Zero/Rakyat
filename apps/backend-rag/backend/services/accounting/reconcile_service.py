@@ -128,16 +128,36 @@ async def confirm_payment(
         prior_paid = int(prac["paid_amount"] or 0)
         new_paid = prior_paid + amount_applied_idr
 
+        # 1b. A given invoice must exist and belong to this practice, before any write.
+        invoice_amount = None
+        if invoice_id is not None:
+            inv = await conn.fetchrow(
+                "SELECT practice_id, amount_idr FROM invoices WHERE id = $1 FOR SHARE", invoice_id
+            )
+            if inv is None:
+                raise ReconcileError(f"invoice {invoice_id} not found")
+            if inv["practice_id"] != practice_id:
+                raise ReconcileError(
+                    f"invoice {invoice_id} does not belong to practice {practice_id}"
+                )
+            invoice_amount = inv["amount_idr"]
+            if invoice_amount is not None and not Decimal(invoice_amount).is_finite():
+                raise ReconcileError(f"invoice {invoice_id} has no usable amount")
+
         # 2. Update practices — SAME columns/path the CRM PATCH writes (superscar #9).
+        #    The invoice amount fills actual_price only while it is still NULL.
         await conn.execute(
             """
             UPDATE practices
-            SET payment_status = $1, paid_amount = $2, updated_at = now()
+            SET payment_status = $1, paid_amount = $2,
+                actual_price = COALESCE(actual_price, $4),
+                updated_at = now()
             WHERE id = $3
             """,
             new_status,
             new_paid,
             practice_id,
+            invoice_amount,
         )
 
         # 3. Fill invoice payment fields, if an invoice is linked.

@@ -587,7 +587,9 @@ class InvoiceAutomationService:
                 "<ol style='margin:6px 0 4px 18px;padding:0;'>"
                 f"<li>{first_step}</li>"
                 "<li>Keep an eye on our bank account</li>"
-                "<li>Once payment comes through, update the status to ON PROCESS</li>"
+                "<li>Once payment comes through, confirm it on the "
+                "<a href='https://kita.balizero.com/accounting'>Accounting page</a>, "
+                "then move the practice to ON PROCESS</li>"
                 "</ol>"
             ),
             cta_label="Open practice in CRM",
