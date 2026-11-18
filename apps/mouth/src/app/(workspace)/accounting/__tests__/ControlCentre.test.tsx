@@ -43,7 +43,17 @@ const openCandidate = candidate({
   invoice_issued_at: "2026-11-06T00:00:00Z",
   service_name: "Example service",
   reasons: ["same amount", "number in memo", "same client"],
-  invoice_amount_idr: 12500000,
+  invoice_amount_idr: 12400000,
+});
+const otherYearCandidate = candidate({
+  invoice_id: 13,
+  practice_id: 23,
+  client_name: "PT CONTOH TIGA",
+  invoice_number: "INV-000000-00003",
+  invoice_issued_at: "2025-11-06T00:00:00Z",
+  service_name: "Example older service",
+  reasons: ["different year"],
+  invoice_amount_idr: 11800000,
 });
 const recordedCandidate = candidate({
   invoice_id: 12,
@@ -169,7 +179,7 @@ beforeEach(() => {
     if (id === 1)
       return {
         ...emptyCandidates(id),
-        candidates: [openCandidate],
+        candidates: [openCandidate, otherYearCandidate],
         transfer_amount_idr: 12500000,
       };
     if (id === 2)
@@ -221,10 +231,69 @@ describe("Accounting control centre", () => {
   it("selects the first non-empty tab and applies its situation classes", async () => {
     renderCentre();
     await ready();
-    expect(tab("confirm")).toHaveAttribute("aria-selected", "true");
-    expect(tab("confirm")).toHaveClass("cc-s-confirm", "bg-[var(--cc-solid)]");
-    expect(screen.getByTestId("cc-count-confirm")).toHaveClass(
+    const active = tab("confirm");
+    const inactive = tab("link");
+    const activeBadge = screen.getByTestId("cc-count-confirm");
+    const inactiveBadge = screen.getByTestId("cc-count-link");
+
+    expect(active).toHaveAttribute("aria-selected", "true");
+    for (const key of ["link", "choose", "nomatch", "done"])
+      expect(tab(key)).toHaveAttribute("aria-selected", "false");
+    expect(active).toHaveClass(
+      "cc-s-confirm",
+      "inline-flex",
+      "h-[42px]",
+      "items-center",
+      "gap-2.5",
+      "rounded-[12px]",
+      "px-4",
+      "text-base",
+      "font-semibold",
+      "bg-[var(--cc-solid)]",
+      "text-[var(--cc-on)]",
+    );
+    expect(inactive).toHaveClass(
+      "cc-s-link",
+      "inline-flex",
+      "h-[42px]",
+      "items-center",
+      "gap-2.5",
+      "rounded-[12px]",
+      "px-4",
+      "text-base",
+      "font-semibold",
+      "text-[var(--cc-tx)]",
+      "hover:bg-[var(--cc-sel)]",
+    );
+    expect(activeBadge).toHaveClass(
+      "inline-flex",
+      "h-6",
+      "min-w-6",
+      "items-center",
+      "justify-center",
+      "rounded-[12px]",
+      "px-[7px]",
+      "font-serif",
+      "text-sm",
+      "font-semibold",
+      "tabular-nums",
       "bg-[var(--cc-on)]",
+      "text-[var(--cc-solid)]",
+    );
+    expect(inactiveBadge).toHaveClass(
+      "inline-flex",
+      "h-6",
+      "min-w-6",
+      "items-center",
+      "justify-center",
+      "rounded-[12px]",
+      "px-[7px]",
+      "font-serif",
+      "text-sm",
+      "font-semibold",
+      "tabular-nums",
+      "bg-[var(--cc-pill)]",
+      "text-[var(--cc-tx)]",
     );
     expect(opened()).toHaveClass("cc-s-confirm");
   });
@@ -253,15 +322,47 @@ describe("Accounting control centre", () => {
   it("keeps Money out inert", async () => {
     renderCentre();
     await ready();
+    await screen.findByTestId("cc-count-done");
     const moneyOut = screen.getByTestId("cc-money-out");
     expect(moneyOut.tagName).toBe("SPAN");
     expect(moneyOut).toHaveAttribute("aria-disabled", "true");
+    const requestsBefore =
+      api.getReconciliationInbox.mock.calls.length +
+      api.getMatchCandidates.mock.calls.length +
+      api.getBankTransactions.mock.calls.length +
+      api.getDoneToday.mock.calls.length +
+      api.linkRecorded.mock.calls.length +
+      api.ignoreTransaction.mock.calls.length +
+      api.reopenTransaction.mock.calls.length +
+      api.confirm.mock.calls.length +
+      api.previewBankStatement.mock.calls.length +
+      api.importBankStatement.mock.calls.length;
+
+    fireEvent.click(moneyOut);
+
+    expect(tab("confirm")).toHaveAttribute("aria-selected", "true");
+    expect(tab("done")).toHaveAttribute("aria-selected", "false");
+    expect(screen.queryByTestId("cc-done")).toBeNull();
+    expect(
+      api.getReconciliationInbox.mock.calls.length +
+        api.getMatchCandidates.mock.calls.length +
+        api.getBankTransactions.mock.calls.length +
+        api.getDoneToday.mock.calls.length +
+        api.linkRecorded.mock.calls.length +
+        api.ignoreTransaction.mock.calls.length +
+        api.reopenTransaction.mock.calls.length +
+        api.confirm.mock.calls.length +
+        api.previewBankStatement.mock.calls.length +
+        api.importBankStatement.mock.calls.length,
+    ).toBe(requestsBefore);
   });
 
   it("shows the Done tab count and the done view", async () => {
     renderCentre();
     await ready();
     expect(screen.getByTestId("cc-count-done")).toHaveTextContent("4");
+    for (const item of done.items)
+      expect(screen.queryByTestId(`done-today-item-${item.txn_id}`)).toBeNull();
     fireEvent.click(tab("done"));
     const doneView = screen.getByTestId("cc-done");
     expect(doneView).toHaveTextContent("Done today");
@@ -270,7 +371,14 @@ describe("Accounting control centre", () => {
       expect(
         within(doneView).getByTestId(`done-today-item-${item.txn_id}`),
       ).toBeInTheDocument();
-    expect(screen.getByText("Linked and ignored")).toBeInTheDocument();
+    expect(
+      within(doneView).getByText("Linked and ignored"),
+    ).toBeInTheDocument();
+    fireEvent.click(tab("confirm"));
+    expect(screen.queryByTestId("cc-done")).toBeNull();
+    for (const item of done.items)
+      expect(screen.queryByTestId(`done-today-item-${item.txn_id}`)).toBeNull();
+    await within(opened()).findByText("Our invoice");
   });
 
   it("removes Done today when the route is unavailable", async () => {
@@ -327,9 +435,19 @@ describe("Accounting control centre", () => {
     expect(row).toHaveClass("bg-[var(--cc-sel)]");
     expect(within(row).getByTestId("cc-marker")).toBeInTheDocument();
     fireEvent.click(tab("choose"));
-    const other = screen.getByTestId("inbox-row-5");
-    expect(other).not.toHaveAttribute("aria-current");
-    expect(within(other).queryByTestId("cc-marker")).toBeNull();
+    await screen.findByText("Which invoice is this payment for?");
+    const newlyOpened = screen.getByTestId("inbox-row-3");
+    expect(newlyOpened).toHaveAttribute("aria-current", "true");
+    const visibleRows = within(
+      screen.getByRole("list", { name: "Transfers" }),
+    ).getAllByRole("button");
+    for (const other of visibleRows.filter(
+      (candidateRow) => candidateRow !== newlyOpened,
+    )) {
+      expect(other).not.toHaveAttribute("aria-current");
+      expect(other).not.toHaveClass("bg-[var(--cc-sel)]");
+      expect(within(other).queryByTestId("cc-marker")).toBeNull();
+    }
   });
 
   it("loads the automatically opened transfer and does not reload on a re-click", async () => {
@@ -362,11 +480,24 @@ describe("Accounting control centre", () => {
     expect(
       await screen.findByText("One invoice matches this transfer"),
     ).toBeInTheDocument();
-    await waitFor(() => expect(opened()).toHaveTextContent("From the bank"));
-    expect(opened()).toHaveTextContent("Our invoice");
-    expect(opened()).toHaveTextContent(
+    const pair = opened();
+    await within(pair).findByText("Our invoice");
+    expect(pair).toHaveTextContent("From the bank");
+    expect(pair).toHaveTextContent("Rp12.500.000");
+    expect(pair).toHaveTextContent("Received Mon 16 Nov 2026");
+    expect(within(pair).getByText("=")).toBeInTheDocument();
+    expect(pair).toHaveTextContent("Rp12.400.000");
+    expect(pair).toHaveTextContent("Example service · issued 6 Nov");
+    expect(pair).toHaveTextContent(
       "same amount · number in memo · same client",
     );
+    expect(pair.querySelector('[data-glyph="tick"]')).not.toBeNull();
+
+    fireEvent.click(tab("link"));
+    const alreadyPaidPair = opened();
+    await within(alreadyPaidPair).findByText("Our invoice");
+    expect(alreadyPaidPair).toHaveTextContent("Already paid");
+    expect(alreadyPaidPair.querySelector('[data-glyph="tick"]')).not.toBeNull();
   });
 
   it.each([
@@ -382,8 +513,21 @@ describe("Accounting control centre", () => {
       fireEvent.click(tab(key));
       const band = await screen.findByTestId("cc-band");
       expect(band).toHaveTextContent(title);
+      expect(band).toHaveClass(
+        "flex",
+        "h-16",
+        "flex-none",
+        "items-center",
+        "gap-3.5",
+        "px-7",
+        "bg-[var(--cc-solid)]",
+        "text-[var(--cc-on)]",
+      );
       expect(band.querySelector(`[data-glyph="${glyph}"]`)).not.toBeNull();
       expect(opened()).toHaveClass(situationClass);
+      expect(screen.getByRole("list", { name: "Transfers" })).toHaveClass(
+        situationClass,
+      );
     },
   );
 
@@ -407,11 +551,14 @@ describe("Accounting control centre", () => {
     );
     const row = screen.getByTestId("cc-cand-11");
     expect(row).toHaveTextContent("INV-000000-00001");
-    expect(row).toHaveTextContent("6 Nov");
+    expect(within(row).getByText("6 Nov")).toBeInTheDocument();
+    expect(within(row).queryByText("6 Nov 2026")).toBeNull();
     expect(row).toHaveTextContent("Example service");
     expect(row).toHaveTextContent("PT CONTOH SATU");
-    expect(row).toHaveTextContent("Rp12.500.000");
+    expect(row).toHaveTextContent("Rp12.400.000");
     expect(row).toHaveTextContent("same amount · number in memo · same client");
+    const otherYearRow = screen.getByTestId("cc-cand-13");
+    expect(within(otherYearRow).getByText("6 Nov 2025")).toBeInTheDocument();
     fireEvent.click(tab("link"));
     await screen.findByText("This payment looks already recorded");
     fireEvent.click(
@@ -459,14 +606,22 @@ describe("Accounting control centre", () => {
     expect(
       screen.getByRole("button", { name: "Link, no money moved" }),
     ).toBeInTheDocument();
-    expect(opened()).toHaveTextContent("Linking moves no money");
+    expect(
+      within(screen.getByTestId("cc-foot")).getByText(
+        "Linking moves no money. You can reopen this transfer any time from Done today.",
+      ),
+    ).toBeInTheDocument();
     fireEvent.click(
       within(screen.getByTestId("cc-cand-11")).getByRole("radio"),
     );
     expect(
       screen.getByRole("button", { name: "Confirm payment" }),
     ).toBeInTheDocument();
-    expect(opened()).toHaveTextContent("Confirming records this payment");
+    expect(
+      within(screen.getByTestId("cc-foot")).getByText(
+        "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders the nothing view for a No match transfer", async () => {
@@ -480,9 +635,31 @@ describe("Accounting control centre", () => {
     expect(opened()).toHaveTextContent(
       "If it is not a client payment, ignore it with a reason.",
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Ignore with a reason" }),
+    expect(
+      within(screen.getByTestId("cc-foot")).getByText(
+        "Ignoring moves no money. You can reopen this transfer any time from Done today.",
+      ),
+    ).toBeInTheDocument();
+    const ignoreWithReason = screen.getByRole("button", {
+      name: "Ignore with a reason",
+    });
+    expect(ignoreWithReason).toHaveClass(
+      "inline-flex",
+      "h-11",
+      "shrink-0",
+      "items-center",
+      "justify-center",
+      "gap-2",
+      "whitespace-nowrap",
+      "rounded-[10px]",
+      "px-[22px]",
+      "text-sm",
+      "font-bold",
+      "bg-[var(--cc-act)]",
+      "text-[var(--cc-act-on)]",
+      "disabled:opacity-50",
     );
+    fireEvent.click(ignoreWithReason);
     expect(screen.getByTestId("cc-ignore-form")).toBeInTheDocument();
   });
 
@@ -541,17 +718,31 @@ describe("Accounting control centre", () => {
     fireEvent.click(screen.getByTestId("inbox-row-6"));
     await screen.findAllByText("CONTOH TRANSFER SIX");
     fireEvent.click(screen.getByTestId("inbox-row-1"));
+    await waitFor(() =>
+      expect(api.getMatchCandidates).toHaveBeenLastCalledWith(1),
+    );
+    const pairAgain = opened();
+    await within(pairAgain).findByText("Our invoice");
+    expect(pairAgain).toHaveTextContent("From the bank");
+    expect(pairAgain).toHaveTextContent("Received Mon 16 Nov 2026");
+    expect(pairAgain).toHaveTextContent("Rp12.400.000");
     expect(
-      await screen.findByText("One invoice matches this transfer"),
+      within(pairAgain).getByRole("button", { name: "Choose another" }),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("cc-cand-11")).toBeNull();
+    expect(screen.queryByTestId("cc-cand-13")).toBeNull();
   });
 
   it("renders Rp separately with the pinned amount classes", async () => {
     renderCentre();
     await ready();
     const amount = within(screen.getByTestId("inbox-row-1")).getByText("Rp");
-    expect(amount).toHaveClass("mr-[0.28em]", "text-[0.72em]", "font-medium");
+    expect(amount).toHaveClass(
+      "mr-[0.28em]",
+      "text-[0.72em]",
+      "font-medium",
+      "text-[var(--cc-tx-2)]",
+    );
     expect(amount.parentElement).toHaveTextContent("Rp12.500.000");
   });
 
@@ -678,6 +869,26 @@ describe("Accounting control centre", () => {
     ).toBeInTheDocument();
   });
 
+  it("uses the singular handled count in the calm view", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    api.getDoneToday.mockResolvedValue({
+      ...done,
+      counts: { confirmed: 1, linked: 0, ignored: 0, total: 1 },
+      items: [done.items[0]],
+    });
+    renderCentre();
+    const calm = await screen.findByTestId("cc-calm");
+    expect(within(calm).getByText(/1 transfer handled\./)).toBeInTheDocument();
+  });
+
+  it("omits the handled count when Done today has no data", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    api.getDoneToday.mockResolvedValue(null as never);
+    renderCentre();
+    const calm = await screen.findByTestId("cc-calm");
+    expect(within(calm).queryByText(/transfers? handled\./)).toBeNull();
+  });
+
   it("hides the calm-view Done action when the route is unavailable", async () => {
     api.getReconciliationInbox.mockResolvedValue([]);
     api.getDoneToday.mockRejectedValue(
@@ -744,7 +955,8 @@ describe("Accounting control centre", () => {
     api.getReconciliationInbox.mockResolvedValue([]);
     api.getBankTransactions.mockRejectedValue(new Error("date failed"));
     renderCentre();
-    expect(await screen.findByTestId("cc-calm")).toBeInTheDocument();
+    const calm = await screen.findByTestId("cc-calm");
+    expect(calm).not.toHaveTextContent("Bank data is in through");
     expect(screen.queryByTestId("cc-dayone")).toBeNull();
   });
 
@@ -901,6 +1113,11 @@ describe("Accounting control centre", () => {
     ).not.toBeNull();
     fireEvent.click(tab("link"));
     await screen.findByText("This payment looks already recorded");
+    expect(
+      screen.getByTestId("cc-foot").querySelector('[data-glyph="undo"]'),
+    ).not.toBeNull();
+    fireEvent.click(tab("nomatch"));
+    await screen.findByText("Nothing found");
     expect(
       screen.getByTestId("cc-foot").querySelector('[data-glyph="undo"]'),
     ).not.toBeNull();
