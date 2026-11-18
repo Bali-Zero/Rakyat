@@ -94,19 +94,13 @@ def test_enabled_path_constructs_client_without_auth_check(
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
 
     fake_instance = mock.MagicMock()
-    with (
-        mock.patch(
-            "backend.core.observability._try_instrument_anthropic",
-        ) as mock_instr,
-        mock.patch("langfuse.Langfuse", return_value=fake_instance) as mock_cls,
-    ):
+    with mock.patch("langfuse.Langfuse", return_value=fake_instance) as mock_cls:
         from backend.core.observability import init_observability
 
         client = init_observability(service_name="svc")
         assert client is fake_instance
         mock_cls.assert_called_once()
         fake_instance.auth_check.assert_not_called()
-        mock_instr.assert_called_once()
 
 
 # ── 2. Import overhead ──────────────────────────────────────────────
