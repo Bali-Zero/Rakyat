@@ -1076,7 +1076,7 @@ L9_CASES = {
         _set_entry(basis="guessed"),
         [(["links", 0, "basis"], "literal_error")],
     ),
-    "unknown_field": (_mut(lambda d: d.update(extra=1)), [(["_"], "extra_forbidden")]),
+    "unknown_field": (_mut(lambda d: d.update(zzextra=1)), [(["_"], "extra_forbidden")]),
     "relation_is_not_a_field": (
         _mut(lambda d: d.update(relation="spouse")),
         [(["_"], "extra_forbidden")],
@@ -2003,6 +2003,31 @@ def test_l13_the_matrix_has_every_case_of_its_specification():
             if isinstance(request, dict):
                 tokens |= _forbidden(request, answer_words=False)
         assert tokens & FIXED_WORDS == set(), (case, sorted(tokens & FIXED_WORDS))
+        # suppression guard: the case-folded substring match of the answer vocabulary must not
+        # remove any non-protocol request string, or any probe identifier, from either forbidden set
+        for request in requests:
+            if not isinstance(request, dict):
+                continue
+            strings: set[str] = set()
+            _leaves(request, strings, set())
+            log_set = _forbidden(request, answer_words=False)
+            answer_set = _forbidden(request, answer_words=True)
+            for leaf in strings:
+                if len(leaf) < 4 or leaf in PROTOCOL_WORDS or leaf == PLAN:
+                    continue
+                forms = {
+                    leaf.casefold(),
+                    " ".join(leaf.upper().split()).casefold(),
+                    canonical_form("passport", leaf).casefold(),
+                } - {""}
+                assert forms <= log_set, (case, "log set lacks", leaf)
+                assert forms <= answer_set, (case, "response/audit set lacks", leaf)
+            for ident in ALL_PROBE_IDS:
+                if ident.casefold() in json.dumps(request).casefold():
+                    assert ident.casefold() in log_set and ident.casefold() in answer_set, (
+                        case,
+                        ident,
+                    )
         # an unconditional probe is no legitimate value of its case and a substring of none
         legitimate: set[str] = {str(spec["status"])} | set(PROTOCOL_WORDS) | set(FIXED_WORDS)
         for _, expected in steps:
