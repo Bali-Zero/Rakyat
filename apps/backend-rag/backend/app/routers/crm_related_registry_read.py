@@ -42,6 +42,32 @@ class RelatedRegistryName(BaseModel):
     created_at: datetime
 
 
+LinkBasis = Literal["drive_folder", "whatsapp_phone", "identity", "manual"]
+LinkRelation = Literal[
+    "unknown",
+    "self",
+    "spouse",
+    "child",
+    "parent",
+    "sibling",
+    "other_family",
+    "director",
+    "commissioner",
+    "shareholder",
+    "employee",
+    "sponsor",
+]
+
+
+class RelatedRegistryLink(BaseModel):
+    client_id: int
+    client_name: str | None
+    client_live: bool
+    basis: LinkBasis
+    relation: LinkRelation
+    created_at: datetime
+
+
 class RelatedRegistrySubjectRow(BaseModel):
     id: int
     kind: str
@@ -51,6 +77,7 @@ class RelatedRegistrySubjectRow(BaseModel):
     nationality: str | None
     identifiers: list[RelatedRegistryIdentifier]
     document_count: int
+    links_count: int
 
 
 class RelatedRegistryListOut(BaseModel):
@@ -76,6 +103,8 @@ class RelatedRegistrySubjectDetail(BaseModel):
     name_source: NameSource | None
     names: list[RelatedRegistryName]
     names_total: int
+    links: list[RelatedRegistryLink]
+    links_total: int
     date_of_birth: date | None
     nationality: str | None
     sex: str | None
@@ -115,6 +144,7 @@ def _unavailable(outcome: str) -> HTTPException:
 async def list_registry(
     q: str | None = Query(None),
     kind: Literal["person", "company"] | None = Query(None),
+    linked: Literal["true", "false"] | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=100000),
     user: dict[str, Any] = Depends(get_current_user),
@@ -126,7 +156,12 @@ async def list_registry(
     try:
         async with pool.acquire() as conn:
             result = await related_registry_read.list_subjects(
-                conn, q=text, kind=kind, limit=limit, offset=offset
+                conn,
+                q=text,
+                kind=kind,
+                limit=limit,
+                offset=offset,
+                linked=None if linked is None else linked == "true",
             )
     except (asyncpg.PostgresError, OSError, asyncpg.InterfaceError) as exc:
         raise _unavailable(type(exc).__name__) from None
@@ -153,6 +188,9 @@ async def get_registry_subject(
         logger.info("related registry detail: subject=%d outcome=not_found", subject_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
     logger.info(
-        "related registry detail: subject=%d documents=%d", subject_id, len(result["documents"])
+        "related registry detail: subject=%d documents=%d links=%d",
+        subject_id,
+        len(result["documents"]),
+        len(result["links"]),
     )
     return result
