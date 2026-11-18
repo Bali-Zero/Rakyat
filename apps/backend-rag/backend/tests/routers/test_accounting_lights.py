@@ -7,7 +7,6 @@ services/test_accounting_lights_actions_integration.py. All values invented.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
@@ -730,42 +729,42 @@ def _txn_row() -> dict:
     }
 
 
-def test_candidate_order_is_the_pools_order_among_equal_confidence(mock_db_pool) -> None:
-    """Order measured on the base: equal confidence keeps pool order. The numbers are distinct and
-    descend against the pool order, so a tie-break by number would reorder the first two."""
+def test_candidates_of_equal_confidence_keep_the_order_of_the_pool_rows_given(
+    mock_db_pool,
+) -> None:
+    """Three tied rows whose numbers are 5, 9, 1 in pool order: an ascending or a descending
+    tie-break by number would reorder them. This pins the matcher's handling of the rows it is
+    given; it does not make the database's row order deterministic."""
     _pool, conn = mock_db_pool
     conn.fetchrow = AsyncMock(return_value=_txn_row())
     rows = [
-        _inv_id(31, "Contoh A", invoice_number="INV-000000-00009"),
-        _inv_id(32, "Contoh A", invoice_number="INV-000000-00001"),
-        _inv_id(
-            33,
-            "Contoh A",
-            invoice_number="INV-000000-00005",
-        ),
+        _inv_id(31, "Contoh A", invoice_number="INV-000000-00005"),
+        _inv_id(32, "Contoh A", invoice_number="INV-000000-00009"),
+        _inv_id(33, "Contoh A", invoice_number="INV-000000-00001"),
     ]
-    rows[2]["amount_idr"] = 4_100_000
     conn.fetch = AsyncMock(side_effect=[rows, []])
     body = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()
     assert [c["invoice_id"] for c in body["candidates"]] == [31, 32, 33]
 
 
-def test_pool_query_has_the_base_join_count_plus_one_and_the_added_clause(
-    mock_db_pool,
-) -> None:
-    """Both pool variants (open, recorded) are the same text but for the WHERE predicate."""
+_POOL_SQL_HEAD = (
+    "SELECT i.id AS invoice_id, i.practice_id, i.amount_idr, i.generated_at, "
+    "COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr, c.full_name AS client_name, "
+    "i.invoice_number, pt.name AS service_name "
+    "FROM invoices i JOIN practices p ON i.practice_id = p.id "
+    "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id "
+    "LEFT JOIN clients c ON p.client_id = c.id "
+)
+
+
+def test_each_pool_query_is_pinned_in_full(mock_db_pool) -> None:
     _pool, conn = mock_db_pool
     conn.fetchrow = AsyncMock(return_value=_txn_row())
     conn.fetch = AsyncMock(side_effect=[[], []])
     _client(mock_db_pool).get(f"{BASE}/match-candidates/3")
-    sqls = [c.args[0] for c in conn.fetch.await_args_list]
-    assert len(sqls) == 2
-    # The base had 2 JOINs: `JOIN practices p` and `LEFT JOIN clients c`. One is added.
-    base_join_count = 2
-    for sql in sqls:
-        assert len(re.findall(r"\bJOIN\b", sql, flags=re.IGNORECASE)) == base_join_count + 1
-        flat = " ".join(sql.split())
-        assert "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id" in flat
+    open_sql, recorded_sql = [" ".join(c.args[0].split()) for c in conn.fetch.await_args_list]
+    assert open_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') <> 'paid'"
+    assert recorded_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid'"
 
 
 @pytest.mark.parametrize(

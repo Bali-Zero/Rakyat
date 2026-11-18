@@ -68,4 +68,13 @@ describe("CandidateIdentity", () => {
     expect(el).toHaveClass("min-w-0");
     expect(el.className).toMatch(/break-words|overflow-wrap:anywhere/);
   });
+
+  it("an array that looks like a date once stringified shows no date", () => {
+    expect(
+      line({
+        invoice_number: "INV-000000-00001",
+        invoice_issued_at: ["2026-01-10"] as never,
+      }).textContent,
+    ).toBe("INV-000000-00001");
+  });
 });

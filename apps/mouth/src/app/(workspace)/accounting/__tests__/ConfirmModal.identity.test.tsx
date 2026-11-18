@@ -127,6 +127,9 @@ describe("the statement, in every status the dialog can present", () => {
         el = el === panel ? null : el.parentElement
       ) {
         expect(el.hasAttribute("hidden")).toBe(false);
+        const style = (el as HTMLElement).style;
+        expect(style.display).not.toBe("none");
+        expect(style.visibility).not.toBe("hidden");
         expect(el.getAttribute("aria-hidden")).not.toBe("true");
         for (const c of ["hidden", "sr-only", "invisible"])
           expect(el.classList.contains(c)).toBe(false);
@@ -161,5 +164,46 @@ describe("the success toast", () => {
         "CONTOH PT marked paid",
       ),
     );
+  });
+});
+
+describe("dialog identity, odd values", () => {
+  const issuedLine = () => screen.queryByText("Issued", { selector: "dt" });
+
+  it("a whitespace-only number shows No invoice number and no blank line", () => {
+    renderModal({ invoice_number: "   " });
+    expect(labelled("Invoice no.")).toHaveTextContent(/^No invoice number$/);
+    for (const dd of document.querySelectorAll("dd"))
+      expect(dd.textContent?.trim()).not.toBe("");
+  });
+
+  it("a date that does not begin as YYYY-MM-DD shows no Issued line", () => {
+    renderModal({ invoice_issued_at: "n/a" });
+    expect(issuedLine()).toBeNull();
+  });
+
+  it("an array that looks like a date once stringified shows no Issued line", () => {
+    renderModal({ invoice_issued_at: ["2026-01-10"] as never });
+    expect(issuedLine()).toBeNull();
+  });
+});
+
+describe("the dialog keeps the lines it showed on the base", () => {
+  it("shows Transfer, Client, Invoice, Delta, New status and every reason", () => {
+    renderModal({
+      reasons: ["first reason", "second reason"],
+      client_name: "PT CONTOH",
+    });
+    for (const label of [
+      "Transfer",
+      "Client",
+      "Invoice",
+      "Delta",
+      "New status",
+    ])
+      expect(screen.getByText(label, { selector: "dt" })).toBeInTheDocument();
+    expect(labelled("Client")).toHaveTextContent("PT CONTOH");
+    expect(screen.getByText("• first reason")).toBeInTheDocument();
+    expect(screen.getByText("• second reason")).toBeInTheDocument();
   });
 });
