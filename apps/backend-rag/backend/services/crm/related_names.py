@@ -11,7 +11,6 @@ logs the subject id, the outcome and counts only: never a name and never an iden
 
 from __future__ import annotations
 
-import json
 import logging
 import unicodedata
 from dataclasses import dataclass
@@ -165,7 +164,7 @@ async def record_names(
                         subject_id,
                         e.name,
                         e.source,
-                        json.dumps(e.evidence),
+                        e.evidence,
                         REGISTRY_ACTOR,
                     )
                     if won is not None:
