@@ -19,7 +19,7 @@ from backend.app.modules.crm.company_schemas import (
     CompanyUpdate,
 )
 from backend.app.routers.documents_proxy import assert_drive_file_belongs_to_company
-from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
+from backend.app.utils.crm_utils import can_create_company, is_crm_admin, verify_client_access
 from backend.services.common.background import spawn
 from backend.services.crm.entity_search import (
     build_company_search,
@@ -152,7 +152,9 @@ async def create_company(
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Create a new company"""
-    _require_crm_admin(current_user)
+    # CRM admins and the tax team; edit/delete stay admin-only.
+    if not can_create_company(current_user):
+        raise HTTPException(status_code=403, detail="Company creation not allowed for this role")
     user_email = current_user.get("email", "system")
 
     query = """
