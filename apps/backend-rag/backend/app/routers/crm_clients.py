@@ -33,7 +33,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_crm_user_filter
 from backend.app.deps.crm_service_write import verify_crm_write_key
 from backend.app.services.crm.audit_logger import audit_change, audit_logger
-from backend.app.services.crm.metrics import metrics_collector, track_client_creation
+from backend.app.services.crm.metrics import track_client_creation
 from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import (
     AvatarUrl,
@@ -2208,54 +2208,6 @@ async def get_client_audit_trail(
             },
             "audit_trail": trail,
             "total_entries": len(trail),
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_database_error(e) from e
-
-
-@router.get("/metrics/summary", operation_id="get_crm_client_metrics_summary")
-async def get_crm_metrics_summary(
-    current_user: dict = Depends(get_current_user),
-    _db_pool: asyncpg.Pool = Depends(get_database_pool),
-) -> Any:
-    """
-    Get CRM metrics summary for dashboard
-    """
-    try:
-        user_email = current_user.get("email", "")
-        if not user_email:
-            raise HTTPException(status_code=401, detail="Authentication required")
-
-        return await metrics_collector.get_metrics_summary()
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_database_error(e) from e
-
-
-@router.post("/metrics/refresh", operation_id="refresh_crm_client_metrics")
-async def refresh_crm_metrics(
-    current_user: dict = Depends(get_current_user),
-    _db_pool: asyncpg.Pool = Depends(get_database_pool),
-) -> dict[str, Any]:
-    """
-    Force refresh of CRM metrics (Admin only)
-    """
-    try:
-        if not is_crm_admin(current_user):
-            raise HTTPException(status_code=403, detail="Admin access required")
-
-        results = await metrics_collector.update_all_metrics()
-
-        return {
-            "message": "CRM metrics refreshed successfully",
-            "timestamp": results.get("timestamp"),
-            "metrics_updated": results.get("metrics_updated", []),
-            "errors": results.get("errors", []),
         }
 
     except HTTPException:
