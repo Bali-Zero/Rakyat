@@ -18,7 +18,10 @@ import { I18nProvider } from "@/i18n";
 import { routeTitles } from "@/types/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { removeDashboardQueries } from "@/hooks/useDashboardData";
-import { clientIdFromPath, prefetchClientDetail } from "./clients/[id]/prefetch";
+import {
+  clientIdFromPath,
+  prefetchClientDetail,
+} from "./clients/[id]/prefetch";
 
 /**
  * R19 typefaces for the whole kita workspace. The faces are declared once in

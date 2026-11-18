@@ -16,7 +16,6 @@ import {
   AlertCircle,
   Bell,
   MessageCircle,
-  Loader2,
   AlertTriangle,
   Mail,
 } from "lucide-react";
@@ -87,6 +86,7 @@ import { viewerCanCreateCompany } from "./components/modals/company-create";
 import { earlyKey, takeEarly } from "./components/early-fetch";
 import { startClientDetailEarly } from "./prefetch";
 import { TabSkeleton } from "./components/TabSkeleton";
+import { ClientDetailSkeleton } from "./components/ClientDetailSkeleton";
 
 /*
  * Only Overview is in this chunk. Every other tab and every modal is its own
@@ -487,11 +487,8 @@ export function ClientDetailClient({
   const formatDate = (dateStr: string) => formatCardDate(dateStr, isMounted);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--tx-secondary)]" />
-      </div>
-    );
+    // The page's own layout, section by section, while the profile loads.
+    return <ClientDetailSkeleton />;
   }
 
   if (error || !profile) {
@@ -517,7 +514,10 @@ export function ClientDetailClient({
   } = profile;
   // `viewer_can_write` is the server's answer for THIS viewer (it knows the
   // shared client pools); it rides on `client` so the delete predicate sees it.
-  const client = { ...profileClient, viewer_can_write: profile.viewer_can_write };
+  const client = {
+    ...profileClient,
+    viewer_can_write: profile.viewer_can_write,
+  };
   const canCreateCompany =
     typeof profile.viewer_can_create_company === "boolean"
       ? profile.viewer_can_create_company
