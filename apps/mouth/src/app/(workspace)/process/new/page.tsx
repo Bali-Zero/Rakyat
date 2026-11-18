@@ -31,6 +31,7 @@ import { casesMetrics } from "@/lib/metrics/cases-metrics";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
+import { canAssignPracticeToAnyone } from "@/lib/workspace/practice-assignment";
 import { useInvalidateClient } from "@/hooks/useClientDetail";
 import { ReferrerDropdown } from "@/components/partners/ReferrerDropdown";
 import {
@@ -203,8 +204,8 @@ export default function NewPracticePage() {
         const user = await api.getProfile();
         userEmail.current = user.email;
         casesMetrics.trackPageView("new", undefined, user.email);
-        // Admin sees all team members, others see only themselves
-        if (api.isAdmin()) {
+        // Admin and Board Member see all team members, others see only themselves
+        if (canAssignPracticeToAnyone(api.isAdmin(), user.role)) {
           setAssignableMembers(allTeamMembers);
         } else {
           const self = allTeamMembers.find((m) => m.email === user.email);
