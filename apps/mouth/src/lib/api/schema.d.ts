@@ -4295,6 +4295,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/accounting/ignore-transaction": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ignore Transaction
+     * @description Mark an unmatched transfer as not a client payment. Moves no money.
+     */
+    post: operations["ignore_transaction_api_crm_accounting_ignore_transaction_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/accounting/import-cashout": {
     parameters: {
       query?: never;
@@ -4323,6 +4343,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/crm/accounting/link-recorded": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Link Recorded
+     * @description Link an unmatched credit to a payment its practice already records. Moves no money.
+     */
+    post: operations["link_recorded_api_crm_accounting_link_recorded_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/crm/accounting/match-candidates/{txn_id}": {
     parameters: {
       query?: never;
@@ -4339,6 +4379,46 @@ export interface paths {
     get: operations["match_candidates_api_crm_accounting_match_candidates__txn_id__get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/crm/accounting/reconciliation-inbox": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Reconciliation Inbox
+     * @description Unmatched incoming transfers, newest first, each with its light. Advice only.
+     */
+    get: operations["reconciliation_inbox_api_crm_accounting_reconciliation_inbox_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/crm/accounting/reopen-transaction": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reopen Transaction
+     * @description Put a linked or ignored transfer back to unmatched. Never reopens a confirmed one.
+     */
+    post: operations["reopen_transaction_api_crm_accounting_reopen_transaction_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -6659,46 +6739,6 @@ export interface paths {
      * @description Client uploads a document for a required field.
      */
     post: operations["upload_client_document_api_crm_practices__practice_id__upload_client_document_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/crm/related-registry": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * List Registry
-     * @description List and search registry subjects (CRM admins only).
-     */
-    get: operations["list_registry_api_crm_related_registry_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/crm/related-registry/{subject_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get Registry Subject
-     * @description Open one registry subject with its identifiers and documents (CRM admins only).
-     */
-    get: operations["get_registry_subject_api_crm_related_registry__subject_id__get"];
-    put?: never;
-    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -23424,6 +23464,13 @@ export interface components {
       /** Version */
       version: string;
     };
+    /** IgnoreTransactionRequest */
+    IgnoreTransactionRequest: {
+      /** Bank Txn Id */
+      bank_txn_id: number;
+      /** Reason */
+      reason: string;
+    };
     /** ImageGenerationRequest */
     ImageGenerationRequest: {
       /**
@@ -24660,6 +24707,15 @@ export interface components {
       } | null;
       /** Success */
       success: boolean;
+    };
+    /** LinkRecordedRequest */
+    LinkRecordedRequest: {
+      /** Bank Txn Id */
+      bank_txn_id: number;
+      /** Invoice Id */
+      invoice_id: number;
+      /** Practice Id */
+      practice_id: number;
     };
     /** ListEpisodesResponse */
     ListEpisodesResponse: {
@@ -27015,80 +27071,6 @@ export interface components {
       /** Reason */
       reason: string;
     };
-    /** RelatedRegistryDocument */
-    RelatedRegistryDocument: {
-      /** Byte Size */
-      byte_size: number;
-      /** Doc Type */
-      doc_type: string | null;
-      /** Drive File Ids */
-      drive_file_ids: string[];
-      /** First Seen On */
-      first_seen_on: string | null;
-      /** Mime Type */
-      mime_type: string | null;
-      /** Sha256 */
-      sha256: string;
-    };
-    /** RelatedRegistryIdentifier */
-    RelatedRegistryIdentifier: {
-      /** Type */
-      type: string;
-      /** Value */
-      value: string;
-    };
-    /** RelatedRegistryListOut */
-    RelatedRegistryListOut: {
-      /** Items */
-      items: components["schemas"]["RelatedRegistrySubjectRow"][];
-      /** Limit */
-      limit: number;
-      /** Offset */
-      offset: number;
-      /** Total */
-      total: number;
-    };
-    /** RelatedRegistrySubjectDetail */
-    RelatedRegistrySubjectDetail: {
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string;
-      /** Date Of Birth */
-      date_of_birth: string | null;
-      /** Display Name */
-      display_name: string | null;
-      /** Documents */
-      documents: components["schemas"]["RelatedRegistryDocument"][];
-      /** Id */
-      id: number;
-      /** Identifiers */
-      identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
-      /** Kind */
-      kind: string;
-      /** Nationality */
-      nationality: string | null;
-      /** Sex */
-      sex: string | null;
-    };
-    /** RelatedRegistrySubjectRow */
-    RelatedRegistrySubjectRow: {
-      /** Date Of Birth */
-      date_of_birth: string | null;
-      /** Display Name */
-      display_name: string | null;
-      /** Document Count */
-      document_count: number;
-      /** Id */
-      id: number;
-      /** Identifiers */
-      identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
-      /** Kind */
-      kind: string;
-      /** Nationality */
-      nationality: string | null;
-    };
     /**
      * RelationType
      * @description The applicant's relationship to the family sponsor (``family.relation_to_sponsor``).
@@ -27130,6 +27112,11 @@ export interface components {
     RenameRequest: {
       /** New Name */
       new_name: string;
+    };
+    /** ReopenTransactionRequest */
+    ReopenTransactionRequest: {
+      /** Bank Txn Id */
+      bank_txn_id: number;
     };
     /**
      * ReplyEmailRequest
@@ -37029,6 +37016,41 @@ export interface operations {
       };
     };
   };
+  ignore_transaction_api_crm_accounting_ignore_transaction_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["IgnoreTransactionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   import_cashout_pdf_api_crm_accounting_import_cashout_post: {
     parameters: {
       query?: never;
@@ -37064,6 +37086,41 @@ export interface operations {
       };
     };
   };
+  link_recorded_api_crm_accounting_link_recorded_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LinkRecordedRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   match_candidates_api_crm_accounting_match_candidates__txn_id__get: {
     parameters: {
       query?: never;
@@ -37074,6 +37131,74 @@ export interface operations {
       cookie?: never;
     };
     requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reconciliation_inbox_api_crm_accounting_reconciliation_inbox_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          }[];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reopen_transaction_api_crm_accounting_reopen_transaction_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReopenTransactionRequest"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -40933,71 +41058,6 @@ export interface operations {
           "application/json": {
             [key: string]: unknown;
           };
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  list_registry_api_crm_related_registry_get: {
-    parameters: {
-      query?: {
-        q?: string | null;
-        kind?: ("person" | "company") | null;
-        limit?: number;
-        offset?: number;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["RelatedRegistryListOut"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  get_registry_subject_api_crm_related_registry__subject_id__get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        subject_id: number;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["RelatedRegistrySubjectDetail"];
         };
       };
       /** @description Validation Error */

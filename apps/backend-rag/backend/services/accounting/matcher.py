@@ -58,22 +58,27 @@ class MatchCandidate:
     reasons: list[str] = field(default_factory=list)
     amount_delta_idr: int = 0  # transfer - invoice (negative = transfer is less)
     likely_withheld: bool = False
+    # Structured copies of the three rules above, read by the lights classifier so it
+    # cannot drift from them. Defaults keep every existing constructor call valid.
+    amount_relation: str = "none"  # exact | net | partial | over | none
+    name_score: float = 0.0  # 0-100, the raw fuzzy score (also below the hint floor)
+    in_window: bool = True
 
 
-def _amount_signals(transfer_idr: int, inv: OpenInvoice) -> tuple[float, list[str], int, bool]:
-    """Score the amount relationship. Returns (score, reasons, delta, withheld)."""
+def _amount_signals(transfer_idr: int, inv: OpenInvoice) -> tuple[float, list[str], int, bool, str]:
+    """Score the amount relationship. Returns (score, reasons, delta, withheld, relation)."""
     reasons: list[str] = []
     delta = transfer_idr - inv.amount_idr
 
     # D6 guard: a zero/non-positive transfer or zero-amount invoice can never be
     # a real payment match — never let 0==0 phantom-match as "exact".
     if transfer_idr <= 0 or inv.amount_idr <= 0:
-        return 0.0, reasons, delta, False
+        return 0.0, reasons, delta, False, "none"
 
     # Exact (within tolerance)
     if abs(delta) <= EXACT_TOLERANCE_IDR:
         reasons.append("exact amount match")
-        return 0.7, reasons, delta, False
+        return 0.7, reasons, delta, False, "exact"
 
     # Net of expected PPh23: a B2B client transfers gross - 2% (or the
     # explicitly-recorded pph_expected). transfer ~= amount - withholding.
@@ -81,20 +86,20 @@ def _amount_signals(transfer_idr: int, inv: OpenInvoice) -> tuple[float, list[st
     net_expected = inv.amount_idr - expected_wh
     if abs(transfer_idr - net_expected) <= EXACT_TOLERANCE_IDR:
         reasons.append(f"matches amount net of PPh23 (withheld ~{expected_wh:,} IDR)")
-        return 0.6, reasons, delta, True
+        return 0.6, reasons, delta, True, "net"
 
     # Partial payment: transfer is a meaningful fraction less than the invoice.
     # Below MIN_PARTIAL_FRACTION it's noise, not a plausible installment.
     if inv.amount_idr * MIN_PARTIAL_FRACTION <= transfer_idr < inv.amount_idr:
         reasons.append("possible partial payment (transfer < invoice)")
-        return 0.2, reasons, delta, False
+        return 0.2, reasons, delta, False, "partial"
 
     # Overpayment / lump sum that exceeds this single invoice.
     if transfer_idr > inv.amount_idr + EXACT_TOLERANCE_IDR:
         reasons.append("transfer exceeds this invoice (overpayment or covers several)")
-        return 0.15, reasons, delta, False
+        return 0.15, reasons, delta, False, "over"
 
-    return 0.0, reasons, delta, False
+    return 0.0, reasons, delta, False, "none"
 
 
 def _date_in_window(transfer_date: date, inv: OpenInvoice) -> bool:
@@ -128,7 +133,7 @@ def rank_candidates(
     candidates: list[MatchCandidate] = []
 
     for inv in open_invoices:
-        amount_score, reasons, delta, withheld = _amount_signals(transfer_amount_idr, inv)
+        amount_score, reasons, delta, withheld, relation = _amount_signals(transfer_amount_idr, inv)
         if amount_score <= 0.0:
             continue  # no amount relationship at all -> not a candidate
 
@@ -155,6 +160,9 @@ def rank_candidates(
                 reasons=reasons,
                 amount_delta_idr=delta,
                 likely_withheld=withheld,
+                amount_relation=relation,
+                name_score=name,
+                in_window=in_window,
             )
         )
 

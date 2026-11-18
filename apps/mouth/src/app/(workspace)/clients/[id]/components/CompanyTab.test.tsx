@@ -160,6 +160,7 @@ describe("CompanyTab — r19 kv-grid ledger", () => {
         documents={[]}
         formatDate={(d: string) => d}
         onRefresh={() => Promise.resolve()}
+        canCreateCompany
       />,
     );
     expect(
@@ -169,6 +170,25 @@ describe("CompanyTab — r19 kv-grid ledger", () => {
       screen.getByRole("button", { name: "Add company" }),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("AiSummaryCard")).not.toBeInTheDocument();
+  });
+
+  it("empty state without canCreateCompany offers no Add company (fail closed)", async () => {
+    mockGetClientCompanies.mockResolvedValueOnce([]);
+    render(
+      <CompanyTab
+        clientId={412}
+        client={{ ...CLIENT, company_name: undefined }}
+        documents={[]}
+        formatDate={(d: string) => d}
+        onRefresh={() => Promise.resolve()}
+      />,
+    );
+    expect(
+      await screen.findByText("No company linked yet."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add company" }),
+    ).not.toBeInTheDocument();
   });
 
   it("GUILT: company_type 'PT' renders through companyType.ts as 'PT (local / PMDN)', not the raw string (PR 6827 gap)", async () => {

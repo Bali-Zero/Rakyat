@@ -14,8 +14,9 @@ import logging
 import os
 import tempfile
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, NoReturn
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -35,7 +36,8 @@ from backend.services.accounting.bank_parser import (
     parse_and_preview_cimb_statement,
     preview_cimb_statement,
 )
-from backend.services.accounting.matcher import OpenInvoice, rank_candidates
+from backend.services.accounting.lights import classify_transfer
+from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
 from backend.services.accounting.reconcile_service import ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
@@ -282,6 +284,61 @@ async def import_bank_statement(
 # ── P1: reconciliation ──────────────────────────────────────────────────────
 
 
+# An invoice is OPEN while its practice's payment status is not `paid`, RECORDED once it is.
+_OPEN_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') <> 'paid'"
+_RECORDED_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') = 'paid'"
+
+
+def _finite_int(value: Any) -> int:
+    """A stored amount as an int; NULL, NaN and Infinity become 0 (the matcher never matches 0)."""
+    if value is None:
+        return 0
+    try:
+        number = value if isinstance(value, Decimal) else Decimal(value)
+    except (ArithmeticError, TypeError, ValueError):
+        return 0
+    return int(number) if number.is_finite() else 0
+
+
+async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> list[OpenInvoice]:
+    """The invoices of one pool (a SELECT; the predicate is one of the two constants above)."""
+    rows = await conn.fetch(
+        f"""
+        SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
+               i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
+               c.full_name AS client_name
+        FROM invoices i
+        JOIN practices p ON i.practice_id = p.id
+        LEFT JOIN clients c ON p.client_id = c.id
+        WHERE {_RECORDED_POOL_SQL if recorded else _OPEN_POOL_SQL}
+        """
+    )
+    return [
+        OpenInvoice(
+            invoice_id=r["invoice_id"],
+            practice_id=r["practice_id"],
+            client_name=r["client_name"] or "",
+            amount_idr=_finite_int(r["amount_idr"]),
+            generated_at=r["generated_at"].date() if r["generated_at"] else None,
+            pph_expected_idr=_finite_int(r["pph_expected_idr"]),
+        )
+        for r in rows
+    ]
+
+
+def _candidate_json(c: MatchCandidate) -> dict[str, Any]:
+    return {
+        "invoice_id": c.invoice_id,
+        "practice_id": c.practice_id,
+        "client_name": c.client_name,
+        "invoice_amount_idr": c.invoice_amount_idr,
+        "confidence": c.confidence,
+        "reasons": c.reasons,
+        "amount_delta_idr": c.amount_delta_idr,
+        "likely_withheld": c.likely_withheld,
+    }
+
+
 @router.get("/match-candidates/{txn_id}")
 async def match_candidates(
     txn_id: int,
@@ -303,51 +360,25 @@ async def match_candidates(
         if tx["direction"] != "credit":
             raise HTTPException(status_code=422, detail="only incoming (credit) transactions are matched")
 
-        # open invoices = invoices whose practice is not yet fully paid
-        rows = await conn.fetch(
-            """
-            SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
-                   i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
-                   c.full_name AS client_name
-            FROM invoices i
-            JOIN practices p ON i.practice_id = p.id
-            LEFT JOIN clients c ON p.client_id = c.id
-            WHERE COALESCE(p.payment_status, 'unpaid') <> 'paid'
-            """
-        )
-        open_invoices = [
-            OpenInvoice(
-                invoice_id=r["invoice_id"],
-                practice_id=r["practice_id"],
-                client_name=r["client_name"] or "",
-                amount_idr=int(r["amount_idr"] or 0),
-                generated_at=r["generated_at"].date() if r["generated_at"] else None,
-                pph_expected_idr=int(r["pph_expected_idr"] or 0),
-            )
-            for r in rows
-        ]
+        open_invoices = await _fetch_invoice_pool(conn, recorded=False)
+        recorded_invoices = await _fetch_invoice_pool(conn, recorded=True)
         candidates = rank_candidates(
             transfer_amount_idr=int(tx["amount_idr"]),
             transfer_date=tx["txn_date"],
             payer_memo=tx["description"] or "",
             open_invoices=open_invoices,
         )
+        recorded_candidates = rank_candidates(
+            transfer_amount_idr=int(tx["amount_idr"]),
+            transfer_date=tx["txn_date"],
+            payer_memo=tx["description"] or "",
+            open_invoices=recorded_invoices,
+        )
         return {
             "txn_id": txn_id,
             "transfer_amount_idr": int(tx["amount_idr"]),
-            "candidates": [
-                {
-                    "invoice_id": c.invoice_id,
-                    "practice_id": c.practice_id,
-                    "client_name": c.client_name,
-                    "invoice_amount_idr": c.invoice_amount_idr,
-                    "confidence": c.confidence,
-                    "reasons": c.reasons,
-                    "amount_delta_idr": c.amount_delta_idr,
-                    "likely_withheld": c.likely_withheld,
-                }
-                for c in candidates
-            ],
+            "candidates": [_candidate_json(c) for c in candidates],
+            "recorded_candidates": [_candidate_json(c) for c in recorded_candidates],
         }
 
 
@@ -421,6 +452,181 @@ async def confirm_reconciliation(
         "status_before": result.status_before,
         "status_after": result.status_after,
     }
+
+
+# ── Lights: the reconciliation inbox and the three actions that move no money ───────────
+
+
+def _classify_inbox(
+    txns: list[dict[str, Any]],
+    open_invoices: list[OpenInvoice],
+    recorded_invoices: list[OpenInvoice],
+) -> list[dict[str, Any]]:
+    """Pure CPU work over in-memory rows; run off the event loop."""
+    items: list[dict[str, Any]] = []
+    for tx in txns:
+        res = classify_transfer(
+            transfer_amount_idr=tx["amount_idr"],
+            transfer_date=tx["txn_date"],
+            payer_memo=tx["description"],
+            open_invoices=open_invoices,
+            recorded_invoices=recorded_invoices,
+        )
+        items.append(
+            {
+                "txn_id": tx["id"],
+                "txn_date": tx["txn_date"],
+                "amount_idr": tx["amount_idr"],
+                "description": tx["description"],
+                "light": res.light,
+                "open_candidates": res.open_candidates,
+                "open_strong": res.open_strong,
+                "recorded_candidates": res.recorded_candidates,
+                "recorded_strong": res.recorded_strong,
+                "suggestion": _candidate_json(res.suggestion) if res.suggestion else None,
+            }
+        )
+    return items
+
+
+@router.get("/reconciliation-inbox")
+async def reconciliation_inbox(
+    limit: int = Query(200, ge=1, le=500),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """Unmatched incoming transfers, newest first, each with its light. Advice only."""
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, txn_date, amount_idr, description
+            FROM bank_transactions
+            WHERE direction = 'credit' AND reconciled_status = 'unmatched'
+            ORDER BY txn_date DESC, id DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+        open_invoices = await _fetch_invoice_pool(conn, recorded=False)
+        recorded_invoices = await _fetch_invoice_pool(conn, recorded=True)
+    txns = [
+        {
+            "id": r["id"],
+            "txn_date": r["txn_date"],
+            "amount_idr": int(r["amount_idr"]),
+            "description": r["description"] or "",
+        }
+        for r in rows
+    ]
+    return await asyncio.to_thread(_classify_inbox, txns, open_invoices, recorded_invoices)
+
+
+# JSON integers only (A8): a boolean, a string or a number with a fraction is a 422.
+_StrictId = Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+_StrictBigId = Annotated[int, Field(strict=True, ge=1, le=9_223_372_036_854_775_807)]
+
+
+class LinkRecordedRequest(BaseModel):
+    bank_txn_id: _StrictBigId
+    practice_id: _StrictId
+    invoice_id: _StrictId
+
+
+class IgnoreTransactionRequest(BaseModel):
+    bank_txn_id: _StrictBigId
+    # No length or pattern here on purpose: the framework echoes a constrained value that
+    # fails, and the service refuses an unfit reason with fixed text instead.
+    reason: str
+
+
+class ReopenTransactionRequest(BaseModel):
+    bank_txn_id: _StrictBigId
+
+
+_ACTION_FAILED = "reconciliation action could not be completed"
+
+
+def _fail_action(exc: Exception) -> NoReturn:
+    logger.error("accounting reconciliation action failed (%s)", type(exc).__name__)
+    raise HTTPException(status_code=500, detail=_ACTION_FAILED) from None
+
+
+def _action_json(result: reconcile_service.ActionResult) -> dict[str, Any]:
+    return {
+        "bank_txn_id": result.bank_txn_id,
+        "reconciled_status": result.reconciled_status,
+        "reconciliation_log_id": result.reconciliation_log_id,
+    }
+
+
+@router.post("/link-recorded")
+async def link_recorded(
+    payload: LinkRecordedRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Link an unmatched credit to a payment its practice already records. Moves no money."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            result = await reconcile_service.link_recorded(
+                conn,
+                bank_txn_id=payload.bank_txn_id,
+                practice_id=payload.practice_id,
+                invoice_id=payload.invoice_id,
+                linked_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except ReconcileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+    return _action_json(result)
+
+
+@router.post("/ignore-transaction")
+async def ignore_transaction(
+    payload: IgnoreTransactionRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Mark an unmatched transfer as not a client payment. Moves no money."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            result = await reconcile_service.ignore_transaction(
+                conn,
+                bank_txn_id=payload.bank_txn_id,
+                reason=payload.reason,
+                ignored_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except ReconcileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+    return _action_json(result)
+
+
+@router.post("/reopen-transaction")
+async def reopen_transaction(
+    payload: ReopenTransactionRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Put a linked or ignored transfer back to unmatched. Never reopens a confirmed one."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            result = await reconcile_service.reopen_transaction(
+                conn,
+                bank_txn_id=payload.bank_txn_id,
+                reopened_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except ReconcileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+    return _action_json(result)
 
 
 # ── P3: Google Sheets export ────────────────────────────────────────────────

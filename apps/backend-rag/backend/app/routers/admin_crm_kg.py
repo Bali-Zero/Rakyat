@@ -8,8 +8,9 @@ Endpoints exposed:
   - POST /api/admin/crm-kg/garbage-collect  → soft-delete orphan nodes,
                                                 hard-delete old edges (PR-D)
 
-All admin-API-key-gated via the existing X-API-Key middleware. Designed
-to be invoked by Mini-Pro2 cron via curl. Background-task pattern: HTTP
+The drive worker runs build-mediated and garbage-collect on a schedule
+(backend/workers/crm_kg_maintenance.py). These endpoints stay for manual
+runs by a CRM admin. Background-task pattern: HTTP
 200 returns in <1s, work happens async on the api machine without
 blocking other requests.
 """

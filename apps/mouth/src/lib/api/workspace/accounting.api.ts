@@ -131,6 +131,73 @@ export interface ImportCashoutResponse {
   replaced: number;
 }
 
+/** Amounts in a statement report are 2-decimal strings (e.g. "1500000.00"). */
+export interface BankStatementKindSum {
+  count: number;
+  total: string;
+}
+
+/** Report of a parsed statement (bank_parser.build_preview_report). */
+export interface BankStatementPreview {
+  account: { number: string; name: string };
+  period: { first: string; last: string };
+  row_count: number;
+  opening_balance: string;
+  closing_balance: string;
+  total_debit: string;
+  total_credit: string;
+  balance_check: { ok: boolean; mismatch_positions: number[] };
+  order_decided_by: string;
+  kinds: Record<string, BankStatementKindSum>;
+}
+
+export interface BankStatementImportOutcome {
+  statement_id: number | null;
+  rows_inserted: number;
+  rows_duplicate: number;
+  history_segments: number;
+  nothing_new: boolean;
+}
+
+export interface BankStatementImportResponse extends BankStatementPreview {
+  import: BankStatementImportOutcome;
+}
+
+/**
+ * Multipart POST of one `file` field. fetch sets the multipart boundary; we only
+ * attach CSRF + Authorization and send httpOnly cookies. A non-OK response
+ * throws an Error whose message is the backend's `detail` (or the statusText).
+ */
+async function postFile<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const headers: Record<string, string> = {};
+  const csrf = api.getCsrfToken();
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  const token = api.getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const resp = await fetch(`${api.getBaseUrl()}${path}`, {
+    method: "POST",
+    headers,
+    body: form,
+    credentials: "include",
+  });
+
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail);
+  }
+  return resp.json() as Promise<T>;
+}
+
 const qs = (params: Record<string, string | number | undefined>): string => {
   const parts = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== "")
@@ -212,30 +279,31 @@ export const accountingApi = {
    * 422 if the PDF carries no "NEW CASHOUT" title / no client rows.
    */
   async importCashout(file: File): Promise<ImportCashoutResponse> {
-    const form = new FormData();
-    form.append("file", file);
-
-    const headers: Record<string, string> = {};
-    const csrf = api.getCsrfToken();
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-    const token = api.getToken();
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    const resp = await fetch(
-      `${api.getBaseUrl()}/api/crm/accounting/import-cashout`,
-      { method: "POST", headers, body: form, credentials: "include" },
+    return postFile<ImportCashoutResponse>(
+      "/api/crm/accounting/import-cashout",
+      file,
     );
+  },
 
-    if (!resp.ok) {
-      let detail = resp.statusText;
-      try {
-        const body = await resp.json();
-        if (body?.detail) detail = String(body.detail);
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new Error(detail);
-    }
-    return resp.json() as Promise<ImportCashoutResponse>;
+  /**
+   * Preview a CIMB statement CSV (max 2 MB, admin only). Stores nothing; returns
+   * the report of the statement. 422 carries a fixed-text `detail`.
+   */
+  async previewBankStatement(file: File): Promise<BankStatementPreview> {
+    return postFile<BankStatementPreview>(
+      "/api/crm/accounting/bank-statement/preview",
+      file,
+    );
+  },
+
+  /**
+   * Store a CIMB statement CSV: the preview report plus an `import` result.
+   * Idempotent: sending the same file again stores nothing new.
+   */
+  async importBankStatement(file: File): Promise<BankStatementImportResponse> {
+    return postFile<BankStatementImportResponse>(
+      "/api/crm/accounting/bank-statement/import",
+      file,
+    );
   },
 };
