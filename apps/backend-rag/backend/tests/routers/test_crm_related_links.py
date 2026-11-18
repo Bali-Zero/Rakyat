@@ -982,7 +982,7 @@ def _set_entry(**kw):
     return _mut(lambda d: d["links"][0].update(kw))
 
 
-PA = "ZZ4242424"
+PA = "ZZ7373730"
 NIK_A = "3201 0000 0000 0002"
 FULL_A = (("passport", PA), ("nik", NIK_A))
 # entry 0 is the one the mutators change; entry 1 is a valid link of another client and carries
@@ -1747,8 +1747,8 @@ PROBE_CLIENT_IDS = tuple(str(c) for c in (LIVE1, LIVE2, LIVE3, GONE, MISSING1, M
 PROBE_CLIENT_NAMES = (NAME_LIVE1, NAME_LIVE2, NAME_LIVE3, NAME_GONE)
 UNCONDITIONAL = frozenset(t.casefold() for t in (*PROBE_CLIENT_IDS, *PROBE_CLIENT_NAMES))
 
-PB, PC, PD = "ZZ4242425", "ZZ4242426", "ZZ4242428"
-P_UNKNOWN, P_EXTRA = "ZZ4242499", "ZZ4242432"
+PB, PC, PD = "ZZ7373731", "ZZ7373732", "ZZ7373733"
+P_UNKNOWN, P_EXTRA = "ZZ7373799", "ZZ7373734"
 ALL_PROBE_IDS = (PA, PB, PC, PD, P_UNKNOWN, P_EXTRA, NIK_A)
 SENTINEL = "l13-sentinel"
 
@@ -2014,6 +2014,8 @@ def test_l13_the_matrix_has_every_case_of_its_specification():
             for probe in UNCONDITIONAL:
                 assert probe not in text, (case, probe)
         for probe in UNCONDITIONAL:
+            # the identifier probes cannot hide a client probe, nor the other way round
+            assert all(probe not in canonical_form("passport", i).casefold() for i in ALL_PROBE_IDS)
             for value in legitimate:
                 assert probe != value and probe not in value, (case, probe, value)
 
@@ -2108,7 +2110,7 @@ async def test_l13_links_route_logs_and_answers_carry_no_client_id_name_identifi
 async def test_l13_the_read_routes_log_no_client_id_or_client_name(admin, conn, caplog):
     caplog.set_level(logging.DEBUG)
     await seed_client(conn, 424250, "ZzReadProbeClient")
-    sid = await seed_subject(conn, "person", "ZzReadProbeReg", [("passport", "ZZ4242450")])
+    sid = await seed_subject(conn, "person", "ZzReadProbeReg", [("passport", "ZZ7373750")])
     await seed_link(conn, sid, 424250)
     listed = await admin.get(READ, params={"linked": "true", "q": "zzreadprobereg"})
     detail = await admin.get(f"{READ}/{sid}")
