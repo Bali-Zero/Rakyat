@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import { Money } from "@balizero/core";
+import { CandidateIdentity } from "./CandidateIdentity";
 import {
   accountingApi,
   type BankTransaction,
@@ -67,7 +68,7 @@ export function ConfirmModal({
       });
       success(
         "Payment confirmed",
-        `${candidate.client_name} marked ${newStatus}`,
+        `${candidate.invoice_number ? `${candidate.invoice_number} · ` : ""}${candidate.client_name} marked ${newStatus}`,
       );
       onConfirmed();
     } catch (err) {
@@ -107,6 +108,15 @@ export function ConfirmModal({
             <dd className="font-medium">{candidate.client_name}</dd>
           </div>
           <div className="flex justify-between">
+            <dt className="text-[var(--bz-text-2)]">Invoice no.</dt>
+            <dd className="text-right">
+              <CandidateIdentity
+                candidate={candidate}
+                className="text-sm font-medium"
+              />
+            </dd>
+          </div>
+          <div className="flex justify-between">
             <dt className="text-[var(--bz-text-2)]">Invoice</dt>
             <dd className="tabular-nums">
               <Money value={candidate.invoice_amount_idr} />
@@ -138,6 +148,11 @@ export function ConfirmModal({
             <li key={i}>• {reason}</li>
           ))}
         </ul>
+
+        <p className="mt-4 text-xs text-[var(--state-warning)]">
+          Confirming records this payment on the practice, the invoice and the
+          cashout. It cannot be undone from this page.
+        </p>
 
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose} disabled={busy}>

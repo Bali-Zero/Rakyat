@@ -22,6 +22,7 @@ import {
   type ReconciliationInboxItem,
 } from "@/lib/api/workspace/accounting.api";
 import { BankStatementUpload } from "./BankStatementUpload";
+import { CandidateIdentity } from "./CandidateIdentity";
 import { ConfirmModal } from "./ConfirmModal";
 import { LinkedIgnoredSection } from "./LinkedIgnoredSection";
 import { useWriteLock } from "./useWriteLock";
@@ -98,6 +99,7 @@ function CandidateRow({
             </span>
           )}
         </p>
+        <CandidateIdentity candidate={candidate} />
         <p className="text-xs text-[var(--bz-text-2)]">
           <Money value={candidate.invoice_amount_idr} /> ·{" "}
           {(candidate.confidence * 100).toFixed(0)}% ·{" "}
