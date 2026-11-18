@@ -246,6 +246,29 @@ class TestConfirm:
         assert resp.status_code == 200
         assert confirm_mock.await_args.kwargs["confirmed_by"] == "admin@example.test"
 
+    def test_confirm_drops_the_revenue_growth_cache(self, mock_db_pool, asya_user) -> None:
+        """actual_price can be filled by a confirm, so the revenue report cache is dropped too."""
+        from backend.services.accounting.reconcile_service import ConfirmResult
+
+        confirm_mock = AsyncMock(
+            return_value=ConfirmResult(
+                practice_id=10, invoice_id=5, cashout_id=77,
+                reconciliation_log_id=88, status_before="unpaid", status_after="paid",
+            )
+        )
+        cache_mock = AsyncMock()
+        with patch(
+            "backend.app.routers.accounting.reconcile_service.confirm_payment", confirm_mock
+        ), patch("backend.core.cache.invalidate_cache", cache_mock):
+            client = TestClient(_build_app(mock_db_pool, asya_user), raise_server_exceptions=False)
+            resp = client.post(
+                "/api/crm/accounting/confirm",
+                json={"practice_id": 10, "invoice_id": 5, "amount_applied_idr": 100, "new_status": "paid"},
+            )
+        assert resp.status_code == 200
+        invalidated = {c.args[0] for c in cache_mock.await_args_list}
+        assert "zantara:crm_practices_revenue_growth:*" in invalidated
+
 
 class TestExportSheet:
     def test_outsider_denied(self, mock_db_pool, outsider_user) -> None:

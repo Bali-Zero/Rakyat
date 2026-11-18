@@ -619,6 +619,67 @@ paths:
           headers: *publicPrivacyHeaders
           content: *errorContent
 
+  /api/visa/voa/orders/{order_id}/checkout-session:
+    parameters:
+      - $ref: "#/components/parameters/OrderId"
+    post:
+      operationId: resumeOrderCheckout
+      tags: [Customer intake]
+      summary: Re-serve the order's bound provider checkout for the tracker's Pay now
+      description: >-
+        Owner decision 2026-11-18. For an `awaiting_payment` order only, asks the order's own
+        payment provider, at request time, whether the ONE checkout session bound at OP-01 is
+        still open and returns its URL in this response alone. It performs no transition and
+        writes nothing: no order, journal, outbox, idempotency or inbox row, and the URL is never
+        persisted or logged. It never creates a provider session; a session that is paid,
+        expired, of unknown status, about to expire, or served by an adapter that cannot re-read
+        it is refused with CHECKOUT_NOT_RESUMABLE. Same authority as getOrderAndPractice: the
+        creator-bound session, non-owned orders answering exactly like absent ones. No
+        Idempotency-Key: nothing is created, so a repeat costs one provider read.
+      x-feature-flag: GARUDA_PUBLIC_ENABLED
+      security:
+        - MagicSession: []
+      responses:
+        "200":
+          description: The bound session is open; its provider checkout URL.
+          headers: *publicPrivacyHeaders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckoutResumption"
+        "401":
+          description: Account session required. Code is SESSION_REQUIRED.
+          x-error-codes: [SESSION_REQUIRED]
+          headers: *publicPrivacyHeaders
+          content: *errorContent
+        "404":
+          description: Surface disabled or non-enumerating malformed/absent/non-owned order.
+          x-error-codes: [GARUDA_PUBLIC_DISABLED, ORDER_NOT_FOUND]
+          headers: *publicPrivacyHeaders
+          content: *errorContent
+        "409":
+          description: >-
+            The order is not awaiting payment (INVALID_STATE_TRANSITION), or its bound provider
+            session cannot be re-served (CHECKOUT_NOT_RESUMABLE).
+          x-error-codes: [INVALID_STATE_TRANSITION, CHECKOUT_NOT_RESUMABLE]
+          headers: *publicPrivacyHeaders
+          content: *errorContent
+        "429":
+          description: Request rate limited. Code is RATE_LIMITED.
+          x-error-codes: [RATE_LIMITED]
+          headers: *publicPrivacyHeaders
+          content: *errorContent
+        "500":
+          description: Unexpected internal failure. Code is INTERNAL_ERROR.
+          x-error-codes: [INTERNAL_ERROR]
+          headers: *publicPrivacyHeaders
+          content: *errorContent
+        "503":
+          description: Order lane not wired, or the provider could not answer or answered a URL off its checkout hosts.
+          x-error-codes: [SERVICE_UNAVAILABLE, PAYMENT_PROVIDER_UNAVAILABLE]
+          headers: *publicPrivacyHeaders
+          content: *errorContent
+
   /api/visa/voa/orders/{order_id}/browser-return-observations:
     parameters:
       - $ref: "#/components/parameters/OrderId"
@@ -1595,6 +1656,19 @@ components:
             a terminal state. It is never null while `order_state` is `awaiting_payment`, and
             never a URL for any other state — that pairing is the whole point of this field and
             is asserted in the contract suite.
+
+    CheckoutResumption:
+      type: object
+      additionalProperties: false
+      required: [checkout_url]
+      properties:
+        checkout_url:
+          type: string
+          format: uri
+          description: >-
+            `https:` provider checkout page of the order's bound session, on the adapter's own
+            checkout host. A creator-bound capability: returned only here, never persisted, never
+            logged, never present in getOrderAndPractice.
 
     PracticeView:
       type: object

@@ -239,6 +239,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """
 
     # Rate limit configuration per endpoint pattern
+    #: GARUDA VOA public operations promise the frozen contract's flat
+    #: RATE_LIMITED envelope and privacy headers on a 429
+    #: (`products/garuda-voa/contracts/errors.yaml`); the generic body below
+    #: is what every other path keeps.
+    GARUDA_CONTRACT_PREFIX = "/api/visa/voa/"
+    GARUDA_RATE_LIMITED_BODY = {
+        "code": "RATE_LIMITED",
+        "retryable": True,
+        "message_key": "garuda_voa.error.rate_limited",
+    }
+    GARUDA_PRIVACY_HEADERS = {
+        "Cache-Control": "no-store, private",
+        "Referrer-Policy": "no-referrer",
+        "X-Robots-Tag": "noindex, nofollow, noarchive",
+    }
+
     RATE_LIMITS = {
         # Strict limits for expensive operations
         "/api/agents/journey/create": (10, 3600),  # 10 per hour
@@ -318,6 +334,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 logger.warning("Visa Oracle evaluation rate limit exceeded")
             else:
                 logger.warning("Rate limit exceeded on %s", log_path)
+            headers = {
+                "X-RateLimit-Limit": str(info["limit"]),
+                "X-RateLimit-Remaining": str(info["remaining"]),
+                "X-RateLimit-Reset": str(info["reset"]),
+                "Retry-After": str(window),
+            }
+            if request.url.path.startswith(self.GARUDA_CONTRACT_PREFIX):
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content=dict(self.GARUDA_RATE_LIMITED_BODY),
+                    headers={**headers, **self.GARUDA_PRIVACY_HEADERS},
+                )
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={
@@ -327,12 +355,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "remaining": info["remaining"],
                     "reset": info["reset"],
                 },
-                headers={
-                    "X-RateLimit-Limit": str(info["limit"]),
-                    "X-RateLimit-Remaining": str(info["remaining"]),
-                    "X-RateLimit-Reset": str(info["reset"]),
-                    "Retry-After": str(window),
-                },
+                headers=headers,
             )
 
         # Add rate limit headers to response

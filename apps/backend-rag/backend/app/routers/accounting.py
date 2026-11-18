@@ -455,6 +455,10 @@ async def confirm_reconciliation(
 
         await invalidate_cache("zantara:crm_practices_stats:*")
         await invalidate_cache("zantara:crm_clients_stats:*")
+        # actual_price can be filled by the confirm: the revenue report reads it.
+        from backend.app.routers.crm_practices import REVENUE_GROWTH_CACHE_NAMESPACE
+
+        await invalidate_cache(f"zantara:{REVENUE_GROWTH_CACHE_NAMESPACE}:*")
     except Exception as cache_exc:  # cache failure must not fail the write
         logger.warning("accounting confirm cache invalidation failed: %s", cache_exc)
 

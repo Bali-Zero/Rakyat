@@ -57,7 +57,15 @@ class NoOpenLateCase(GarudaOrderError):
     """resolveLateOrder called on an order with no open remediation case. -> 409."""
 
 
+class CheckoutNotResumable(GarudaOrderError):
+    """resumeOrderCheckout: the order's bound provider session is not open
+    (paid, expired, unknown status, about to expire) or its adapter cannot
+    re-serve a session at all. -> 409 CHECKOUT_NOT_RESUMABLE. A new session
+    is never minted in its place."""
+
+
 __all__ = [
+    "CheckoutNotResumable",
     "GarudaOrderError",
     "InvalidStateTransition",
     "NoOpenLateCase",

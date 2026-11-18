@@ -3,7 +3,6 @@
   "frozen_at": "2026-09-21",
   "files": [
     "apps/backend-rag/backend/app/routers/research_control.py",
-    "apps/backend-rag/backend/llm/openai_responses_client.py",
     "apps/backend-rag/backend/services/integrations/wa_finalize.py",
     "apps/backend-rag/backend/services/oracle/smart_oracle.py",
     "apps/backend-rag/backend/tests/benchmarks/evidence_sufficiency/build_query_vectors.py"

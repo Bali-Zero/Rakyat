@@ -950,6 +950,13 @@ _VISA_ORACLE = (
         match="template",
     ),
     PublicEndpoint(
+        "/api/visa/voa/orders/{order_id}/checkout-session",
+        Category.VISA_ORACLE,
+        "GARUDA VOA resumeOrderCheckout (L3, tracker Pay now) — same magic-link "
+        "session gate and result_id_ref ownership predicate as getOrderAndPractice",
+        match="template",
+    ),
+    PublicEndpoint(
         "/api/visa/voa/webhooks/payment",
         Category.WEBHOOK,
         "GARUDA VOA receivePaymentWebhook (L3, garuda_orders_router.py) — inbound "

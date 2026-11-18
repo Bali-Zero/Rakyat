@@ -429,6 +429,8 @@ _IDEMPOTENCY_KEY_REQUIRED_OPERATIONS: tuple[str, ...] = tuple(
 _NO_IDEMPOTENCY_KEY_OPERATIONS: tuple[str, ...] = (
     "receivePaymentWebhook",
     "previewMagicLink",
+    # Writes nothing and never creates a provider session (tracker "Pay now").
+    "resumeOrderCheckout",
 )
 
 _STAFF_PRACTICE_OPERATIONS: tuple[str, ...] = (

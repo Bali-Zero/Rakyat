@@ -5,6 +5,7 @@
  *  - `POST /api/visa/voa/orders` (createOrderFromCheck)
  *  - `POST /api/visa/voa/orders/{order_id}/browser-return-observations` (observePaymentBrowserReturn)
  *  - `GET  /api/visa/voa/orders/{order_id}` (getOrderAndPractice)
+ *  - `POST /api/visa/voa/orders/{order_id}/checkout-session` (resumeOrderCheckout)
  *
  * Auth is the contract's `MagicSession` — the same `garuda_session` Secure, HttpOnly
  * cookie `upload/api-client.ts` documents, `Domain` set by the backend's
@@ -18,6 +19,7 @@
 
 import type {
   BrowserReturnObservationRequest,
+  CheckoutResumption,
   CreateOrderRequest,
   ErrorResponse,
   OrderCheckout,
@@ -183,5 +185,32 @@ export async function getOrderAndPractice({
 
   const body = await parseJsonBody(response);
   if (response.ok) return body as OrderView;
+  throwFromErrorBody(response, body);
+}
+
+export interface ResumeOrderCheckoutParams {
+  orderId: string;
+  signal?: AbortSignal;
+}
+
+/** Tracker "Pay now": the order's ONE bound provider checkout, re-read by the backend at
+ * request time. The URL lives only in this response (never in `OrderView`); the caller
+ * must still check it with `isProviderCheckoutUrl` before leaving the site. */
+export async function resumeOrderCheckout({
+  orderId,
+  signal,
+}: ResumeOrderCheckoutParams): Promise<CheckoutResumption> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/visa/voa/orders/${encodeURIComponent(orderId)}/checkout-session`,
+      { method: "POST", credentials: "same-origin", signal },
+    );
+  } catch (cause) {
+    throw new GarudaOrderUnexpectedError(null, cause);
+  }
+
+  const body = await parseJsonBody(response);
+  if (response.ok) return body as CheckoutResumption;
   throwFromErrorBody(response, body);
 }
