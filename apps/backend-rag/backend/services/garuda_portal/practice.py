@@ -152,7 +152,7 @@ class PracticeRepository:
         result_id_ref)` pair -- the caller's existing 404 `ORDER_NOT_FOUND`
         shape, unchanged by this module. Otherwise returns a dict with the
         order's own fields (`order_id`, `order_state`, `price_idr`,
-        `browser_observation`) plus `practice` (a `PracticeView.to_wire()`
+        `browser_observation`, `result_id`) plus `practice` (a `PracticeView.to_wire()`
         dict, or `None` if the order is not yet paid or PR-01 has not
         fired) -- the full `OrderView` shape the router returns verbatim.
         """
@@ -161,7 +161,7 @@ class PracticeRepository:
                 """
                 SELECT
                     o.order_id, o.state AS order_state, o.price_idr,
-                    o.browser_observation,
+                    o.browser_observation, o.result_id_ref,
                     p.practice_id, p.state AS practice_state,
                     p.customer_reason_key, p.required_action_key,
                     p.artifact_available
@@ -197,6 +197,7 @@ class PracticeRepository:
                 "order_state": row["order_state"],
                 "price_idr": row["price_idr"],
                 "browser_observation": row["browser_observation"],
+                "result_id": row["result_id_ref"],
                 "practice": practice,
             }
 

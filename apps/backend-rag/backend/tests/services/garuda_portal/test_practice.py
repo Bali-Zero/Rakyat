@@ -65,9 +65,7 @@ class _FakeProvider:
     def parse_event(self, *, raw_body, headers):
         raise NotImplementedError
 
-    async def confirm_no_successful_charge(
-        self, *, provider_session_id: str
-    ) -> ChargeConfirmation:
+    async def confirm_no_successful_charge(self, *, provider_session_id: str) -> ChargeConfirmation:
         return ChargeConfirmation(confirmed_unpaid=True)
 
     async def refund(self, *, provider_charge_id: str, idempotency_key: str) -> str:
@@ -242,6 +240,8 @@ async def test_unpaid_order_has_no_practice(pool, order_repository, practice_rep
     assert view is not None
     assert view["order_state"] == "awaiting_payment"
     assert view["practice"] is None
+    # The tracker links a closed order back to its own checkout page by this id.
+    assert view["result_id"] == "result-unpaid-840000000"
 
     count = await pool.fetchval("SELECT count(*) FROM garuda_practices")
     assert count == 0

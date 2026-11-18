@@ -27,6 +27,7 @@ function jsonResponse(status: number, body: unknown) {
 function order(state: OrderState): OrderView {
   return {
     order_id: "order-pay-1",
+    result_id: "result-fixture-0000000001",
     order_state: state,
     price_idr: 850000,
     browser_observation: "browser_not_returned",

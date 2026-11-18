@@ -1815,10 +1815,23 @@ components:
       type: object
       additionalProperties: false
       required:
-        [order_id, order_state, price_idr, browser_observation, practice]
+        [
+          order_id,
+          result_id,
+          order_state,
+          price_idr,
+          browser_observation,
+          practice,
+        ]
       properties:
         order_id:
           $ref: "#/components/schemas/OpaqueId"
+        result_id:
+          $ref: "#/components/schemas/ResultId"
+          description: >-
+            The order's own result_id_ref, which equals the caller's magic-session
+            result id (the ownership predicate). It lets the tracker link a closed
+            order back to /visa/voa/checkout/{result_id}; it carries no capability.
         order_state:
           $ref: "#/components/schemas/OrderState"
         price_idr:

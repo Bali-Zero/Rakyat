@@ -68,6 +68,9 @@ export interface PracticeView {
 
 export interface OrderView {
   order_id: string;
+  /** The order's own result id (equals the caller's session result id); only used to
+   * link a closed order back to `/visa/voa/checkout/{result_id}`. */
+  result_id: string;
   order_state: OrderState;
   price_idr: number;
   /** Non-authoritative OP-07 browser-return observation. Can NEVER by itself justify

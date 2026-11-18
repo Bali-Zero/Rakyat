@@ -562,6 +562,8 @@ export interface components {
         };
         OrderView: {
             order_id: components["schemas"]["OpaqueId"];
+            /** @description The order's own result_id_ref, which equals the caller's magic-session result id (the ownership predicate). It lets the tracker link a closed order back to /visa/voa/checkout/{result_id}; it carries no capability. */
+            result_id: components["schemas"]["ResultId"];
             order_state: components["schemas"]["OrderState"];
             /** @description The one all-inclusive integer IDR price from apps/backend-rag/backend/services/garuda_flow/pricing.py:price_for_case. */
             price_idr: number;

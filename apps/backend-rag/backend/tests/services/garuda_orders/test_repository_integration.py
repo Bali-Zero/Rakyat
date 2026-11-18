@@ -2123,3 +2123,97 @@ async def test_resume_on_an_adapter_without_the_capability_is_not_resumable(pool
     order_id = await _awaiting_order(repository, "result-resume-nocap-00001")
     with pytest.raises(CheckoutNotResumable):
         await repository.resume_checkout(order_id=order_id, result_id="result-resume-nocap-00001")
+
+
+# --- "Pay again": a closed (expired / failed) order does not block a new one
+# for the same check. The live-order unique index covers created /
+# awaiting_payment / paid only, so createOrderFromCheck with a fresh key
+# inserts order B with its own provider session and leaves order A untouched.
+
+
+async def _order_a_row_and_journal(pool, order_id: str) -> tuple[str, str]:
+    row = await pool.fetchval(
+        "SELECT row_to_json(o)::text FROM garuda_orders o WHERE order_id = $1", order_id
+    )
+    journal = await pool.fetchval(
+        "SELECT coalesce(string_agg(row_to_json(j)::text, '|' ORDER BY row_to_json(j)::text), '') "
+        "FROM garuda_order_journal j WHERE aggregate_id = $1",
+        order_id,
+    )
+    return row, journal
+
+
+async def _create_for(repository, result_id: str, raw_key: str):
+    return await repository.create_order_and_checkout(
+        result_id=result_id,
+        applicant=_applicant(),
+        review_confirmed=True,
+        idempotency_key_sha256=scoped_key_sha256(
+            actor=result_id, operation="createOrderFromCheck", raw_key=raw_key
+        ),
+        canonical_payload_sha256=canonical_payload_sha256({"result_id": result_id}),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closed_state", ["expired", "failed"])
+async def test_a_closed_order_lets_the_same_check_open_a_new_order(pool, repository, closed_state):
+    result_id = f"result-again-{closed_state}-00001"
+    body_a, _ = await _create_for(repository, result_id, f"idem-again-a-{closed_state}")
+    order_a = body_a["order_id"]
+
+    if closed_state == "failed":
+        transition = await repository.handle_failure_event(
+            NormalizedFailureEvent(
+                provider_event_id=f"evt-again-fail-{closed_state}",
+                provider_session_id=f"sess-{order_a}",
+                failure=classify(FailureOutcome.DECLINED_BY_ISSUER),
+            ),
+            canonical_payload_sha256=b"\x07" * 32,
+        )
+        assert transition == "OP-03"
+    else:
+        await pool.execute(
+            "UPDATE garuda_orders SET checkout_expires_at = now() - interval '1 hour' WHERE order_id = $1",
+            order_a,
+        )
+        from backend.services.garuda_orders.reconciliation import reconcile_expired_checkouts
+
+        summary = await reconcile_expired_checkouts(pool, repository, limit=10)
+        assert summary.expired == 1
+    assert (
+        await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_a)
+        == closed_state
+    )
+    before = await _order_a_row_and_journal(pool, order_a)
+
+    body_b, replayed = await _create_for(repository, result_id, f"idem-again-b-{closed_state}")
+
+    assert replayed is False
+    assert body_b["order_id"] != order_a
+    assert body_b["order_state"] == "awaiting_payment"
+    rows = await pool.fetch(
+        "SELECT order_id, state, provider_session_id FROM garuda_orders "
+        "WHERE result_id_ref = $1 ORDER BY created_at",
+        result_id,
+    )
+    assert [r["state"] for r in rows] == [closed_state, "awaiting_payment"]
+    assert rows[1]["provider_session_id"] == f"sess-{body_b['order_id']}"
+    assert rows[1]["provider_session_id"] != rows[0]["provider_session_id"]
+    # A's row (late-case fields included), and A's journal, are byte-identical.
+    assert await _order_a_row_and_journal(pool, order_a) == before
+
+
+@pytest.mark.asyncio
+async def test_a_live_order_is_returned_not_duplicated_when_pay_again_is_attempted(
+    pool, repository
+):
+    """Innocence: with A still awaiting_payment the same call yields A, no B."""
+    result_id = "result-again-live-0000001"
+    body_a, _ = await _create_for(repository, result_id, "idem-again-live-a")
+    body_b, _ = await _create_for(repository, result_id, "idem-again-live-b")
+    assert body_b["order_id"] == body_a["order_id"]
+    count = await pool.fetchval(
+        "SELECT count(*) FROM garuda_orders WHERE result_id_ref = $1", result_id
+    )
+    assert count == 1
