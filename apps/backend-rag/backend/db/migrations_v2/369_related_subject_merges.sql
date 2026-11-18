@@ -55,3 +55,8 @@ CREATE INDEX IF NOT EXISTS idx_related_subjects_merged_into
 
 COMMENT ON TABLE related_subject_merges IS
     'History of merges of registry subjects (source merged into target), insert-only by application restriction. The pointer related_subjects.merged_into is the single truth; this table says when and on which basis.';
+
+-- === ROLLBACK ===
+
+DROP INDEX IF EXISTS idx_related_subjects_merged_into;
+DROP TABLE IF EXISTS related_subject_merges;
