@@ -7,6 +7,11 @@
       "price": "25.000.000 IDR",
       "icon_id": "company-pma"
     },
+    "company-close": {
+      "name": "Dissolving Company",
+      "price": "13.000.000 IDR",
+      "icon_id": "company-close"
+    },
     "company-virtual": {
       "name": "Virtual Office",
       "price": "5.000.000 IDR",
@@ -292,7 +297,7 @@
         "category": "kitas_permits",
         "key": "Working KITAS (Altus/Onshore)",
         "name": "Working KITAS (Altus/Onshore)",
-        "price": "36.000.000 IDR",
+        "price": "36.500.000 IDR",
         "duration": "",
         "validity": "1 year",
         "notes": "",
@@ -979,6 +984,18 @@
         "notes": "",
         "description_en": "Full incorporation of a new Indonesian foreign-owned limited company (PT PMA), including notarial deed, BKPM/OSS registration and tax ID issuance.",
         "icon_id": "company-pma",
+        "tier_range": null
+      },
+      "Dissolving Company": {
+        "category": "company_services",
+        "key": "Dissolving Company",
+        "name": "Dissolving Company",
+        "price": "13.000.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Dissolution and liquidation of an existing Indonesian limited company, including the notarial dissolution deed and deregistration with the tax and licensing authorities.",
+        "icon_id": "company-close",
         "tier_range": null
       },
       "Virtual Office": {
