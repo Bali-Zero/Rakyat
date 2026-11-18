@@ -192,6 +192,36 @@ describe("analytics", () => {
     });
   });
 
+  it("one WhatsApp click sends exactly one lead_whatsapp_cta hit to GA4, with source", async () => {
+    const gtag = vi.fn();
+    (window as typeof window & { gtag?: typeof gtag }).gtag = gtag;
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    // Use the REAL core emitter: if analytics.ts routed this event through it,
+    // core would add a second gtag hit (the 29 Oct double count).
+    const core = await vi.importActual<
+      typeof import("@balizero/core/analytics")
+    >("@balizero/core/analytics");
+    trackFunnelEventMock.mockImplementation(core.trackFunnelEvent);
+    const { trackLeadWhatsAppCTA } = await loadAnalytics();
+
+    trackLeadWhatsAppCTA("article", { captured: true, lead_intent_id: "li_1" });
+
+    const hits = gtag.mock.calls.filter(
+      (c) => c[0] === "event" && c[1] === "lead_whatsapp_cta",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0][2]).toMatchObject({ source: "article", captured: true });
+    // The backend funnel store still receives the event, once.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/analytics/funnel-event");
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      session_id: "core-session-id",
+      event: "lead_whatsapp_cta",
+      payload: { source: "article", captured: true, lead_intent_id: "li_1" },
+    });
+  });
+
   it("canonicalizes property cta_click onto property_cta_clicked (MYTHOS D5)", async () => {
     const gtag = vi.fn();
     (window as typeof window & { gtag?: typeof gtag }).gtag = gtag;
