@@ -63,6 +63,8 @@ READ = "/api/crm/related-registry"
 KEY = "test-crm-write-key-0000"
 HEADERS = {"X-CRM-Write-Key": KEY, "Content-Type": "application/json"}
 PLAN = "ab12" * 16
+PROBE_NAME = "ZzProbeAlphaName"
+PROBE_ID = "ZZ4242424"
 
 ADMIN = {"email": "zz-admin@example.test", "user_id": 1, "role": "admin"}
 
@@ -880,7 +882,7 @@ N9_CASES = {
     ),
     "no_names": (_mut(lambda d: d.update(names=[])), [(["names"], "too_short")]),
     "six_names": (
-        _mut(lambda d: d.update(names=[entry(f"zz name {i}") for i in range(6)])),
+        _mut(lambda d: d.update(names=[entry(f"{PROBE_NAME} {i}") for i in range(6)])),
         [(["names"], "too_long")],
     ),
     "manual_is_refused": (
@@ -1084,8 +1086,6 @@ async def test_n10_with_every_gate_open_an_invalid_body_is_422_and_runs_no_state
 
 # ── N13 ───────────────────────────────────────────────────────────────────────
 
-PROBE_NAME = "ZzProbeAlphaName"
-PROBE_ID = "ZZ4242424"
 PROTOCOL_WORDS = frozenset(
     {
         "person", "company", "passport", "nik", "ocr_single", "ocr_corroborated", "mrz_corrected",
@@ -1107,12 +1107,25 @@ def _leaves(node, out):
         out.add(node)
 
 
+# Words the answers legitimately contain: a request leaf that is one of them (or a part of one,
+# like the field name "extra" in "extra_forbidden") cannot be a leak.
+ANSWER_VOCABULARY = frozenset(
+    {
+        *route_module._NAMES_LOC, *route_module._NAMES_CODE, "detail", "loc", "code", "outcome",
+        "reason", "recorded", "already_recorded", "subject_id", "subject_not_registered",
+        "correction_refused", "none_owned", "two_owners", "set_differs", "partial_overlap",
+        "kind_differs", "merged", "internal_error", "database_error", "registry_unavailable",
+    }
+)  # fmt: skip
+
+
 def _forbidden(data) -> set[str]:
     leaves: set[str] = set()
     _leaves(data, leaves)
     tokens = set()
     for leaf in leaves:
-        if len(leaf) >= 4 and leaf not in PROTOCOL_WORDS and leaf != PLAN:
+        in_vocabulary = any(leaf.casefold() in word for word in ANSWER_VOCABULARY)
+        if len(leaf) >= 4 and leaf not in PROTOCOL_WORDS and leaf != PLAN and not in_vocabulary:
             tokens.add(leaf.casefold())
             tokens.add(" ".join(leaf.upper().split()).casefold())
             tokens.add(canonical_form("passport", leaf).casefold())
@@ -1125,8 +1138,8 @@ def _record_text(record: logging.LogRecord) -> str:
     return rendered + " " + " ".join(str(v) for v in record.__dict__.values())
 
 
-# The probe world: every subject a case can reach. Registration names carry the probe prefix so
-# that a leak of stored data, not only of the request, is caught.
+# The probe world: every subject a case can reach. Registration names are built on the probe
+# name so that a leak of stored data, not only of the request, is caught.
 PA, PB, PC, PD, PE, PF = (
     "ZZ4242424",
     "ZZ4242425",
@@ -1138,28 +1151,29 @@ PA, PB, PC, PD, PE, PF = (
 P_UNKNOWN, P_EXTRA = "ZZ4242499", "ZZ4242432"
 NIK_A = "3201 0000 0000 0002"
 NPWP_G = "012345678901234"
-WORLD_NAMES = ("ZzProbe1", "ZzProbeSmith", "ZzProbeC0rp")
 N = PROBE_NAME
+REG_A, REG_F, REG_G = N + "1", N + "Smith", N + "0"
+WORLD_NAMES = (REG_A, REG_F, REG_G)
 FULL_A = (("passport", PA), ("nik", NIK_A))
+ALL_PROBE_IDS = (PA, PB, PC, PD, PE, PF, P_UNKNOWN, P_EXTRA, NIK_A, NPWP_G)
+SENTINEL = "n13-sentinel"
 
 
 @pytest_asyncio.fixture
 async def probe_world(conn):
-    a = await seed_subject(conn, "person", "ZzProbe1", list(FULL_A))
-    await seed_subject(conn, "person", None, [("passport", PB)])
-    await seed_subject(conn, "company", None, [("passport", PC)])
-    await seed_subject(conn, "person", None, [("passport", PD)], merged=a)
-    await seed_subject(conn, "person", None, [("passport", PE)])
-    await seed_subject(conn, "person", "ZzProbeSmith", [("passport", PF)])
-    await seed_subject(conn, "company", "ZzProbeC0rp", [("npwp", NPWP_G)])
+    ids = {}
+    ids["a"] = await seed_subject(conn, "person", REG_A, list(FULL_A))
+    ids["b"] = await seed_subject(conn, "person", None, [("passport", PB)])
+    ids["c"] = await seed_subject(conn, "company", None, [("passport", PC)])
+    ids["d"] = await seed_subject(conn, "person", None, [("passport", PD)], merged=ids["a"])
+    ids["e"] = await seed_subject(conn, "person", None, [("passport", PE)])
+    ids["f"] = await seed_subject(conn, "person", REG_F, [("passport", PF)])
+    ids["g"] = await seed_subject(conn, "company", REG_G, [("npwp", NPWP_G)])
+    return ids
 
 
 def _two(ids, kind="person", **over):
     return payload([entry(N), entry(N + " Two", "ocr_corroborated")], ids=ids, kind=kind, **over)
-
-
-def _on_a(mutate):
-    return mutate(copy.deepcopy(payload([entry(N)], ids=FULL_A)))
 
 
 def _correction(name, ids=FULL_A, kind="person"):
@@ -1180,99 +1194,171 @@ def _patch_database(mp):
     mp.setattr(route_module, "record_names", boom)
 
 
-def _case(data, status, outcome=None, patch=None, logs=True):
-    return {"data": data, "status": status, "outcome": outcome, "patch": patch, "logs": logs}
+def _recorded(sid, recorded, already, dry_run):
+    return {
+        "outcome": "recorded",
+        "subject_id": sid,
+        "recorded": recorded,
+        "already_recorded": already,
+        "dry_run": dry_run,
+    }
 
 
-_REFUSED = ("subject_not_registered",)
-N13_CASES = {
-    # success, both modes, and a repeat
-    "success_dry_run": _case(
-        lambda: [_two((("passport", PB),), dry_run=True)], 200, ("recorded", None)
+def _refused(reason):
+    return {"outcome": "subject_not_registered", "reason": reason}
+
+
+def _probe_body(mutate):
+    """The probe body of family B: the complete key set (two identifiers) and two entries, entry 0
+    the one a mutator changes, entry 1 valid, another spelling of the probe name."""
+    body = payload([entry(N), entry(N.lower(), "ocr_corroborated")], ids=FULL_A)
+    return mutate(copy.deepcopy(body))
+
+
+def _case(build, status, *, service=False, route=False, patch=None, name=True, ids=True):
+    """build(world) -> list of (request, exact expected JSON body). `name` / `ids` say whether the
+    request carries the probe name / a probe identifier; a case may declare ONE of them absent."""
+    assert name or ids, "a case cannot lack both probes"
+    return {
+        "build": build, "status": status, "service": service, "route": route, "patch": patch,
+        "name": name, "ids": ids,
+    }  # fmt: skip
+
+
+def _a(build, **kw):
+    return _case(build, 200, service=True, **kw)
+
+
+def _validation(loc_codes):
+    return {"detail": [{"loc": loc, "code": code} for loc, code in loc_codes]}
+
+
+# Family A: cases that reach the service (14)
+FAMILY_A = {
+    "a_success_dry_run": _a(
+        lambda w: [(_two((("passport", PB),), dry_run=True), _recorded(w["b"], 2, 0, True))]
     ),
-    "success_apply_then_repeat": _case(
-        lambda: [_two((("passport", PB),)), _two((("passport", PB),))], 200, ("recorded", None)
+    "a_success_apply_then_again": _a(
+        lambda w: [
+            (_two((("passport", PB),)), _recorded(w["b"], 2, 0, False)),
+            (_two((("passport", PB),)), _recorded(w["b"], 0, 2, False)),
+        ]
     ),
-    # every subject refusal
-    "refuse_none_owned": _case(
-        lambda: [_two((("passport", P_UNKNOWN),))], 200, (*_REFUSED, "none_owned")
+    "a_none_owned": _a(lambda w: [(_two((("passport", P_UNKNOWN),)), _refused("none_owned"))]),
+    "a_two_owners": _a(
+        lambda w: [(_two((("passport", PA), ("passport", PB))), _refused("two_owners"))]
     ),
-    "refuse_two_owners": _case(
-        lambda: [_two((("passport", PA), ("passport", PB)))], 200, (*_REFUSED, "two_owners")
+    "a_set_differs_subset": _a(lambda w: [(_two((("passport", PA),)), _refused("set_differs"))]),
+    "a_set_differs_superset": _a(
+        lambda w: [(_two((*FULL_A, ("passport", P_EXTRA))), _refused("set_differs"))]
     ),
-    "refuse_subset": _case(lambda: [_two((("passport", PA),))], 200, (*_REFUSED, "set_differs")),
-    "refuse_superset": _case(
-        lambda: [_two((*FULL_A, ("passport", P_EXTRA)))], 200, (*_REFUSED, "set_differs")
+    "a_partial_overlap": _a(
+        lambda w: [(_two((("passport", PA), ("passport", P_EXTRA))), _refused("partial_overlap"))]
     ),
-    "refuse_partial_overlap": _case(
-        lambda: [_two((("passport", PA), ("passport", P_EXTRA)))],
-        200,
-        (*_REFUSED, "partial_overlap"),
+    "a_kind_differs": _a(lambda w: [(_two((("passport", PC),)), _refused("kind_differs"))]),
+    "a_merged": _a(lambda w: [(_two((("passport", PD),)), _refused("merged"))]),
+    "a_correction_company": _a(
+        lambda w: [
+            (
+                _correction(REG_G[:-1] + "O", (("npwp", NPWP_G),), "company"),
+                {"outcome": "correction_refused", "subject_id": w["g"]},
+            )
+        ]
     ),
-    "refuse_kind_differs": _case(
-        lambda: [_two((("passport", PC),))], 200, (*_REFUSED, "kind_differs")
+    "a_correction_null_registration": _a(
+        lambda w: [
+            (
+                _correction(N, (("passport", PE),)),
+                {"outcome": "correction_refused", "subject_id": w["e"]},
+            )
+        ]
     ),
-    "refuse_merged": _case(lambda: [_two((("passport", PD),))], 200, (*_REFUSED, "merged")),
-    # every cause of a refused correction
-    "correction_company": _case(
-        lambda: [_correction("ZzProbeCorp", (("npwp", NPWP_G),), "company")],
-        200,
-        ("correction_refused", None),
+    "a_correction_digit_free_registration": _a(
+        lambda w: [
+            (
+                _correction(N + "Smyth", (("passport", PF),)),
+                {"outcome": "correction_refused", "subject_id": w["f"]},
+            )
+        ]
     ),
-    "correction_null_registration": _case(
-        lambda: [_correction(N, (("passport", PE),))], 200, ("correction_refused", None)
+    "a_correction_unchanged_name": _a(
+        lambda w: [(_correction(REG_A), {"outcome": "correction_refused", "subject_id": w["a"]})]
     ),
-    "correction_digit_free_registration": _case(
-        lambda: [_correction("ZzProbeSmyth", (("passport", PF),))],
-        200,
-        ("correction_refused", None),
+    "a_correction_different_name": _a(
+        lambda w: [(_correction(N), {"outcome": "correction_refused", "subject_id": w["a"]})]
     ),
-    "correction_unchanged_name": _case(
-        lambda: [_correction("ZzProbe1")], 200, ("correction_refused", None)
-    ),
-    "correction_different_name": _case(lambda: [_correction(N)], 200, ("correction_refused", None)),
-    # every validation error
-    "invalid_name": _case(lambda: [_on_a(_set_entry(name="\u0000" + N))], 422, logs=False),
-    "blobs_above_files": _case(lambda: [_on_a(_set_evidence(files=1, blobs=2))], 422, logs=False),
-    "mismatch_ocr_corroborated": _case(
-        lambda: [_on_a(_set_entry(source="ocr_corroborated"))], 422, logs=False
-    ),
-    "mismatch_ocr_single_two_blobs": _case(
-        lambda: [_on_a(_set_evidence(files=2, blobs=2))], 422, logs=False
-    ),
-    "mismatch_ocr_single_mrz_valid": _case(
-        lambda: [_on_a(_set_evidence(mrz_valid=True))], 422, logs=False
-    ),
-    "duplicate_name": _case(
-        lambda: [payload([entry(N), entry(N.lower())], ids=FULL_A)], 422, logs=False
-    ),
-    "number_as_name": _case(
-        lambda: [payload([{**entry(N), "name": 5}, entry(N + " Two")], ids=FULL_A)], 422, logs=False
-    ),
-    "string_as_dry_run": _case(
-        lambda: [_on_a(_mut(lambda d: d.update(dry_run="true")))], 422, logs=False
-    ),
-    "string_as_mrz_valid": _case(lambda: [_on_a(_set_evidence(mrz_valid="yes"))], 422, logs=False),
-    "float_as_files": _case(lambda: [_on_a(_set_evidence(files=1.5))], 422, logs=False),
-    "zero_names": _case(lambda: [payload([], ids=FULL_A)], 422, logs=False),
-    "six_names": _case(
-        lambda: [payload([entry(f"{N} {i}") for i in range(6)], ids=FULL_A)], 422, logs=False
-    ),
-    "manual_source": _case(lambda: [_on_a(_set_entry(source="manual"))], 422, logs=False),
-    "unknown_field": _case(
-        lambda: [_on_a(_mut(lambda d: d.update(ProbeUnknownField=N)))], 422, logs=False
-    ),
-    "created_by_field": _case(
-        lambda: [_on_a(_mut(lambda d: d.update(created_by=N)))], 422, logs=False
-    ),
-    "malformed_json": _case(lambda: [b'{"names": "' + N.encode() + b'"'], 422, logs=False),
-    "oversize_body": _case(
-        lambda: [b"x" * (route_module.MAX_BODY_BYTES + 1) + N.encode()], 422, logs=False
-    ),
-    # injected failures
-    "injected_parser_failure": _case(lambda: [_two(FULL_A)], 500, patch=_patch_parser),
-    "injected_database_failure": _case(lambda: [_two(FULL_A)], 503, patch=_patch_database),
 }
+
+# Family B: every entry of N9_CASES, applied to the probe body, plus the three raw/duplicate cases
+FAMILY_B = {}
+for _key, (_mutator, _expected) in N9_CASES.items():
+    FAMILY_B["b_" + _key] = _case(
+        lambda w, _m=_mutator, _e=_expected: [(_probe_body(_m), _validation(_e))],
+        422,
+        # these mutations remove every submitted name / the whole subject: the request cannot carry
+        # the probe name (no_names, names_is_a_list) or an identifier probe (missing_subject)
+        name=_key not in {"no_names", "names_is_a_list"},
+        ids=_key != "missing_subject",
+    )
+FAMILY_B["b_duplicate_name"] = _case(
+    lambda w: [
+        (
+            payload([entry(N), entry(" " + N.lower() + "\t")], ids=FULL_A),
+            _validation([([], "duplicate_name")]),
+        )
+    ],
+    422,
+)
+FAMILY_B["b_malformed_json"] = _case(
+    lambda w: [
+        (
+            b'{"names": "' + N.encode() + b'", "subject": "' + PA.encode() + b'"',
+            _validation([([], "json_invalid")]),
+        )
+    ],
+    422,
+)
+FAMILY_B["b_oversize_body"] = _case(
+    lambda w: [
+        (
+            b"x" * (route_module.MAX_BODY_BYTES + 1) + N.encode() + b" " + PA.encode(),
+            _validation([(["body"], "too_long")]),
+        )
+    ],
+    422,
+)
+
+# Family C: injected failures (2)
+FAMILY_C = {
+    "c_parser_failure": _case(
+        lambda w: [(_two(FULL_A), {"detail": "internal_error"})],
+        500,
+        route=True,
+        patch=_patch_parser,
+    ),
+    "c_database_failure": _case(
+        lambda w: [(_two(FULL_A), {"detail": "database_error"})],
+        503,
+        route=True,
+        patch=_patch_database,
+    ),
+}
+
+N13_CASES = {**FAMILY_A, **FAMILY_B, **FAMILY_C}
+
+
+def test_n13_the_matrix_has_every_case_of_its_specification():
+    assert len(FAMILY_A) == 14 and len(FAMILY_C) == 2
+    assert len(FAMILY_B) == len(N9_CASES) + 3
+    assert len(N13_CASES) == 14 + len(N9_CASES) + 3 + 2
+
+
+def _raw_text(request) -> str:
+    return request.decode("latin-1") if isinstance(request, bytes) else json.dumps(request)
+
+
+def _spoke(records, module):
+    return [r for r in records if r.name == module.__name__ and SENTINEL not in r.getMessage()]
 
 
 @pytest.mark.asyncio
@@ -1283,35 +1369,69 @@ async def test_n13_names_route_logs_and_answers_carry_no_name_identifier_or_body
     writes.add(NAMES_INSERT)
     caplog.set_level(logging.DEBUG)
     spec = N13_CASES[case]
+    world = probe_world
+    steps = spec["build"](world)
+    requests = [request for request, _ in steps]
+
+    # 1. the probes are really in the request text
+    for request in requests:
+        raw = _raw_text(request)
+        assert spec["name"] == (PROBE_NAME.casefold() in raw.casefold()), (case, "name probe")
+        assert spec["ids"] == any(i.casefold() in raw.casefold() for i in ALL_PROBE_IDS), (
+            case,
+            "identifier probe",
+        )
+
+    # 2. the capture is live for both modules, at any level
+    logging.getLogger(route_module.__name__).debug(SENTINEL)
+    logging.getLogger(names_module.__name__).debug(SENTINEL)
+    live = {r.name for r in caplog.records if SENTINEL in r.getMessage()}
+    assert live == {route_module.__name__, names_module.__name__}, case
+
     if spec["patch"]:
         spec["patch"](monkeypatch)
-    calls = spec["data"]()
-    responses = [await post(client, data) for data in calls]
-    tokens = {N.casefold(), PA.casefold()} | {w.casefold() for w in WORLD_NAMES}
-    for data in calls:
-        if isinstance(data, dict):
-            tokens |= _forbidden(data)
-    for resp in responses:
-        assert resp.status_code == spec["status"], (case, resp.status_code, resp.text[:80])
-        text = resp.text.casefold()
-        assert [t for t in tokens if t in text] == [], case
-        if spec["outcome"]:
-            body = resp.json()
-            assert body["outcome"] == spec["outcome"][0], case
-            if spec["outcome"][1]:
-                assert body["reason"] == spec["outcome"][1], case
+    responses = [await post(client, request) for request in requests]
+
+    # 3. status and exact body of every response
+    for resp, (_, expected) in zip(responses, steps, strict=True):
+        assert resp.status_code == spec["status"], (case, resp.status_code, resp.text[:120])
+        assert resp.json() == expected, case
+
+    # 4. the logger that must have spoken did
     records = [r for r in caplog.records if not r.name.startswith(("httpx", "httpcore"))]
-    if spec["logs"]:
-        own = {names_module.__name__, route_module.__name__}
-        assert any(r.name in own for r in records), f"capture saw no record of the route ({case})"
-    log_text = " ".join(_record_text(r) for r in records).casefold()
-    assert [t for t in tokens if t in log_text] == [], case
+    if spec["service"]:
+        assert _spoke(records, names_module), (case, "service logger silent")
+    if spec["route"]:
+        assert _spoke(records, route_module), (case, "route logger silent")
+
+    # 5. no forbidden token in any record, response or audit row; the token set is populated
+    leaf_tokens: set[str] = set()
+    for request in requests:
+        if isinstance(request, dict):
+            leaf_tokens |= _forbidden(request)
+    if all(isinstance(r, dict) for r in requests):
+        if spec["name"]:
+            assert any(PROBE_NAME.casefold() in t for t in leaf_tokens), case
+        if spec["ids"]:
+            assert any(i.casefold() in leaf_tokens for i in ALL_PROBE_IDS), case
+    tokens = leaf_tokens | {
+        PROBE_NAME.casefold(),
+        PA.casefold(),
+        NIK_A.casefold(),
+        *(w.casefold() for w in WORLD_NAMES),
+    }
+    for resp in responses:
+        assert [t for t in tokens if t in resp.text.casefold()] == [], case
+    log_text = " ".join(_record_text(r) for r in records if SENTINEL not in r.getMessage())
+    assert [t for t in tokens if t in log_text.casefold()] == [], case
+
+    # 6. one audit row per call, no request body, no token
     rows = await conn.fetch(
         "SELECT endpoint, request_body, query_params, response_body, error_message "
         "FROM api_audit_trail ORDER BY id"
     )
-    assert len(rows) == len(calls)
-    assert all(r["request_body"] is None for r in rows)
+    assert len(rows) == len(requests), case
+    assert all(r["request_body"] is None for r in rows), case
     audit_text = " ".join(str(dict(r)) for r in rows).casefold()
     assert [t for t in tokens if t in audit_text] == [], case
 
