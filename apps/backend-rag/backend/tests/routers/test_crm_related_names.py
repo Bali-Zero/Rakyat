@@ -1,6 +1,6 @@
 """Related-subjects registry, slice 4A: recorded names, on a real PostgreSQL.
 
-Each test builds a throwaway schema in the TEST database (migrations 361, 362 and 364 forward
+Each test builds a throwaway schema in the TEST database (migrations 361, 362 and 365 forward
 parts plus the audit table), seeds invented rows (``Zz`` / ``ZZ`` conventions) and calls the real
 routers behind the real middleware stack. Nothing here is a real person, company or document.
 
@@ -55,7 +55,7 @@ from backend.services.crm.related_subjects import REGISTRY_ACTOR, prepare_identi
 from backend.services.monitoring.activity_logger import activity_logger
 
 MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
-MIGRATION_NAMES = MIGRATIONS / "364_related_subject_names.sql"
+MIGRATION_NAMES = MIGRATIONS / "365_related_subject_names.sql"
 URL = "/api/crm/related-subjects/names/register"
 URL_SUBJECT = "/api/crm/related-subjects/register"
 URL_DOCUMENTS = "/api/crm/related-subjects/documents/register"
@@ -150,7 +150,7 @@ async def pool(writes):
             for migration in (
                 "361_related_subjects_registry.sql",
                 "362_related_documents.sql",
-                "364_related_subject_names.sql",
+                "365_related_subject_names.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)

@@ -1,4 +1,4 @@
-"""Read-only access to the related-subjects registry (tables of migrations 361, 362 and 364).
+"""Read-only access to the related-subjects registry (tables of migrations 361, 362 and 365).
 
 Every statement here is a SELECT with bound parameters; no user text is interpolated into SQL.
 Evidence columns (``evidence``, ``created_by``) are never selected. Nothing in this module logs.

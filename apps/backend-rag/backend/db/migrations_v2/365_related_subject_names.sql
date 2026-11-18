@@ -1,5 +1,5 @@
 -- ============================================================
--- 364_related_subject_names.sql
+-- 365_related_subject_names.sql
 -- Slice 4A of the related-subject registry: RECORDED NAMES. A name is a recorded
 -- fact about a subject, with its source (OCR reading, corrected MRZ reading,
 -- manual entry). It is added; nothing is overwritten, and related_subjects is
