@@ -1902,3 +1902,224 @@ async def test_honouring_a_paid_order_releases_against_the_payment_not_the_resol
         )
         == 1
     )
+
+
+# ---- resumeOrderCheckout: tracker "Pay now" (owner decision 2026-11-18) ----
+#
+# The tracker re-serves the order's ONE bound provider session, read from the
+# provider at request time. These tests pin the money-path promises: nothing
+# is written, the URL is stored nowhere, no second session is ever created,
+# and only the owning session reaches an `awaiting_payment` order.
+
+_RESUME_URL = "https://checkout.xendit.co/web/inv-resume-fake-0001"
+_GARUDA_TABLES = (
+    "garuda_orders",
+    "garuda_order_journal",
+    "garuda_order_outbox",
+    "garuda_order_idempotency",
+    "garuda_payment_inbox",
+)
+
+
+class _ResumableProvider(_FakeProvider):
+    checkout_hosts = frozenset({"checkout.xendit.co", "checkout-staging.xendit.co"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_calls = 0
+        self.resume_calls: list[str] = []
+        self.resume_answer: object = None
+
+    async def create_checkout_session(self, *, order_id, price_idr, idempotency_key):
+        self.create_calls += 1
+        return await super().create_checkout_session(
+            order_id=order_id, price_idr=price_idr, idempotency_key=idempotency_key
+        )
+
+    async def resume_checkout_session(self, *, provider_session_id: str):
+        from backend.services.payments.port import CheckoutSessionStatus
+
+        self.resume_calls.append(provider_session_id)
+        if isinstance(self.resume_answer, Exception):
+            raise self.resume_answer
+        if self.resume_answer is None:
+            return CheckoutSessionStatus(
+                is_open=True, checkout_url=_RESUME_URL, provider_status="PENDING"
+            )
+        return self.resume_answer
+
+
+@pytest.fixture
+def resumable(pool, repository):
+    provider = _ResumableProvider()
+    repository._provider = provider
+    repository._providers = {"xendit": provider}
+    return repository, provider
+
+
+async def _awaiting_order(repository, result_id: str) -> str:
+    body, _ = await repository.create_order_and_checkout(
+        result_id=result_id,
+        applicant=_applicant(),
+        review_confirmed=True,
+        idempotency_key_sha256=scoped_key_sha256(
+            actor=result_id, operation="createOrderFromCheck", raw_key=f"idem-{result_id}"
+        ),
+        canonical_payload_sha256=canonical_payload_sha256({"result_id": result_id}),
+    )
+    assert body["order_state"] == "awaiting_payment"
+    return body["order_id"]
+
+
+async def _snapshot(pool) -> dict[str, str]:
+    out = {}
+    for table in _GARUDA_TABLES:
+        out[table] = await pool.fetchval(
+            f"SELECT coalesce(string_agg(row_to_json(t)::text, '|' ORDER BY row_to_json(t)::text), '') FROM {table} t"
+        )
+    return out
+
+
+@pytest.mark.asyncio
+async def test_resume_reserves_the_open_session_and_writes_nothing(pool, resumable):
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-open-000001")
+    before = await _snapshot(pool)
+    creates_before = provider.create_calls
+
+    url = await repository.resume_checkout(order_id=order_id, result_id="result-resume-open-000001")
+    url_again = await repository.resume_checkout(
+        order_id=order_id, result_id="result-resume-open-000001"
+    )
+
+    assert url == url_again == _RESUME_URL
+    assert provider.resume_calls == [f"sess-{order_id}", f"sess-{order_id}"]
+    assert provider.create_calls == creates_before  # never a second session
+    after = await _snapshot(pool)
+    assert after == before  # no row written anywhere
+    assert all(_RESUME_URL not in dump for dump in after.values())
+
+
+@pytest.mark.parametrize("provider_status", ["PAID", "SETTLED", "EXPIRED", "SOMETHING_NEW"])
+@pytest.mark.asyncio
+async def test_resume_refuses_a_closed_session_and_never_mints_another(
+    pool, resumable, provider_status
+):
+    from backend.services.garuda_orders.errors import CheckoutNotResumable
+    from backend.services.payments.port import CheckoutSessionStatus
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, f"result-resume-closed-{provider_status}")
+    provider.resume_answer = CheckoutSessionStatus(is_open=False, provider_status=provider_status)
+    before = await _snapshot(pool)
+    creates_before = provider.create_calls
+
+    with pytest.raises(CheckoutNotResumable):
+        await repository.resume_checkout(
+            order_id=order_id, result_id=f"result-resume-closed-{provider_status}"
+        )
+    assert provider.create_calls == creates_before
+    assert await _snapshot(pool) == before
+    state = await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_id)
+    assert state == "awaiting_payment"
+
+
+@pytest.mark.asyncio
+async def test_resume_after_the_webhook_paid_the_order_is_refused_before_the_provider(
+    pool, resumable
+):
+    from backend.services.garuda_orders.errors import InvalidStateTransition
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-paid-0000001")
+    await repository.handle_paid_event(
+        NormalizedPaidEvent(
+            provider_event_id="evt-resume-paid-1",
+            provider_charge_id="charge-resume-1",
+            provider_session_id=f"sess-{order_id}",
+            amount_idr=790_000,
+            currency="IDR",
+        ),
+        canonical_payload_sha256=b"\x01" * 32,
+    )
+    with pytest.raises(InvalidStateTransition):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-paid-0000001")
+    assert provider.resume_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resume_refuses_an_expired_order(pool, resumable):
+    from backend.services.garuda_orders.errors import InvalidStateTransition
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-expired-0001")
+    outcome = await repository.expire_if_unpaid(
+        order_id=order_id, provider_session_id=f"sess-{order_id}"
+    )
+    assert outcome.expired is True
+    with pytest.raises(InvalidStateTransition):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-expired-0001")
+    assert provider.resume_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resume_for_another_sessions_order_is_not_found(pool, resumable):
+    from backend.services.garuda_orders.errors import OrderNotFound
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-owner-00001")
+    with pytest.raises(OrderNotFound):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-intruder-1")
+    with pytest.raises(OrderNotFound):
+        await repository.resume_checkout(
+            order_id="ord_does_not_exist", result_id="result-resume-owner-00001"
+        )
+    assert provider.resume_calls == []
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://checkout.xendit.co/web/inv-1",
+        "https://checkout.xendit.co.example.net/web/inv-1",
+        "https://checkout.xendit.co@example.net/web/inv-1",
+        "https://checkout.xendit.co:8443/web/inv-1",
+        "javascript:alert(1)",
+        "",
+    ],
+)
+@pytest.mark.asyncio
+async def test_resume_refuses_a_url_off_the_provider_checkout_hosts(pool, resumable, bad_url):
+    from backend.services.garuda_orders.errors import PaymentProviderUnavailable
+    from backend.services.payments.port import CheckoutSessionStatus
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-badurl-0001")
+    provider.resume_answer = CheckoutSessionStatus(
+        is_open=True, checkout_url=bad_url, provider_status="PENDING"
+    )
+    with pytest.raises(PaymentProviderUnavailable):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-badurl-0001")
+
+
+@pytest.mark.asyncio
+async def test_resume_provider_error_is_unavailable_and_writes_nothing(pool, resumable):
+    from backend.services.garuda_orders.errors import PaymentProviderUnavailable
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-error-00001")
+    provider.resume_answer = RuntimeError("provider transport down")
+    before = await _snapshot(pool)
+    with pytest.raises(PaymentProviderUnavailable):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-error-00001")
+    assert await _snapshot(pool) == before
+
+
+@pytest.mark.asyncio
+async def test_resume_on_an_adapter_without_the_capability_is_not_resumable(pool, repository):
+    from backend.services.garuda_orders.errors import CheckoutNotResumable
+
+    # The plain fake, like Midtrans, has no `resume_checkout_session`.
+    order_id = await _awaiting_order(repository, "result-resume-nocap-00001")
+    with pytest.raises(CheckoutNotResumable):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-nocap-00001")

@@ -89,6 +89,7 @@ export type OrderErrorCode =
   | "IDEMPOTENCY_CONFLICT"
   | "ORDER_NOT_READY"
   | "INVALID_STATE_TRANSITION"
+  | "CHECKOUT_NOT_RESUMABLE"
   | "INVALID_REQUEST"
   | "RATE_LIMITED"
   | "PERSISTENCE_POLICY_UNAVAILABLE"
@@ -96,6 +97,11 @@ export type OrderErrorCode =
   | "PAYMENT_PROVIDER_UNAVAILABLE"
   | "SERVICE_UNAVAILABLE"
   | "INTERNAL_ERROR";
+
+/** `resumeOrderCheckout` 200 body: the order's bound provider checkout, re-read now. */
+export interface CheckoutResumption {
+  checkout_url: string;
+}
 
 export interface ErrorResponse {
   code: OrderErrorCode;

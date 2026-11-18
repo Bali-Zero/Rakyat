@@ -33,6 +33,7 @@ import httpx
 from backend.services.payments.port import (
     ChargeConfirmation,
     CheckoutSession,
+    CheckoutSessionStatus,
     NormalizedFailureEvent,
     NormalizedPaidEvent,
     NormalizedRefundEvent,
@@ -61,6 +62,14 @@ _CHECKOUT_TTL_MINUTES = 60
 # whose money we were already holding. Anything not listed here is not
 # evidence of absence: it leaves the order alone and opens a late case.
 _INVOICE_STATUSES_WITH_NO_ACCEPTED_CHARGE = frozenset({"PENDING", "EXPIRED", "FAILED"})
+
+# Hosts Xendit serves invoice checkout pages from (live / test mode). A
+# re-served `invoice_url` outside this set is refused, never redirected to.
+_CHECKOUT_HOSTS = frozenset({"checkout.xendit.co", "checkout-staging.xendit.co"})
+
+# An invoice this close to its own expiry is not handed out: the customer
+# could not finish paying it.
+_RESUME_MIN_REMAINING = timedelta(seconds=60)
 
 # Xendit Invoices `failure_code` -> our closed vocabulary. Deliberately
 # NOT exhaustive of Xendit's real catalog: any code not listed here (and
@@ -318,6 +327,46 @@ class XenditPaymentProvider:
                 provider_session_id=str(session_id),
             )
         raise WebhookUnparseable(f"unrecognised Xendit invoice status: {status!r}")
+
+    @property
+    def checkout_hosts(self) -> frozenset[str]:
+        return _CHECKOUT_HOSTS
+
+    async def resume_checkout_session(self, *, provider_session_id: str) -> CheckoutSessionStatus:
+        """Re-read the bound invoice at request time (tracker "Pay now").
+
+        Open means `PENDING` (the only status a customer can still pay)
+        with a parseable `expiry_date` later than now + 60 s; everything else
+        is closed, unknown statuses included. The URL is returned to the
+        caller and never stored or logged here.
+        """
+        response = await self._client.get(
+            f"{self._base_url}/v2/invoices/{quote(provider_session_id, safe='')}",
+            auth=(self._secret_key, ""),
+        )
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+        raw_status = body.get("status")
+        status = str(raw_status) if raw_status is not None else None
+        url = body.get("invoice_url")
+        expiry_raw = body.get("expiry_date")
+        try:
+            expiry = datetime.fromisoformat(str(expiry_raw).replace("Z", "+00:00"))
+        except ValueError:
+            expiry = None
+        is_open = (
+            status == "PENDING"
+            and isinstance(url, str)
+            and bool(url)
+            and expiry is not None
+            and expiry.tzinfo is not None
+            and expiry > datetime.now(UTC) + _RESUME_MIN_REMAINING
+        )
+        return CheckoutSessionStatus(
+            is_open=is_open,
+            checkout_url=url if is_open else None,
+            provider_status=status,
+        )
 
     async def confirm_no_successful_charge(self, *, provider_session_id: str) -> ChargeConfirmation:
         response = await self._client.get(

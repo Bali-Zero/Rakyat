@@ -32,6 +32,22 @@ class CheckoutSession:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckoutSessionStatus:
+    """What the provider says, at request time, about an order's bound session.
+
+    Optional adapter capability `resume_checkout_session(provider_session_id=)`,
+    read by `GarudaOrderRepository.resume_checkout`. `checkout_url` is set only
+    when `is_open`, is handed straight to the customer's browser and is never
+    persisted or logged (the #455 boundary). An adapter without the method
+    cannot re-serve a session, and the tracker's "Pay now" is refused for it.
+    """
+
+    is_open: bool
+    checkout_url: str | None = None
+    provider_status: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizedPaidEvent:
     provider_event_id: str
     provider_charge_id: str
@@ -172,6 +188,7 @@ class PaymentProvider(Protocol):
 __all__ = [
     "ChargeConfirmation",
     "CheckoutSession",
+    "CheckoutSessionStatus",
     "NormalizedFailureEvent",
     "NormalizedPaidEvent",
     "NormalizedRefundEvent",
