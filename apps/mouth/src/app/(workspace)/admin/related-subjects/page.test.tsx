@@ -184,7 +184,12 @@ describe("related subjects registry page", () => {
     fireEvent.click(screen.getByRole("button", { name: /Companies/ }));
     await settle();
     expect(params(lastUrl()).get("kind")).toBe("company");
-    fireEvent.click(screen.getByRole("button", { name: /All/ }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Subject kind" })).getByRole(
+        "button",
+        { name: /All/ },
+      ),
+    );
     await settle();
     expect(params(lastUrl()).has("kind")).toBe(false);
   });
@@ -430,5 +435,175 @@ describe("related subjects registry page", () => {
     await settle();
     expect(screen.getByText("No names.")).toBeTruthy();
     expect(screen.queryAllByTestId("name-mark")).toHaveLength(0);
+  });
+
+  const linkOf = (over: Record<string, unknown> = {}) => ({
+    client_id: 424242,
+    client_name: "ZzClient One",
+    client_live: true,
+    basis: "drive_folder",
+    relation: "unknown",
+    created_at: "2026-03-04T10:00:00Z",
+    ...over,
+  });
+  const withLinks = (links: unknown[], links_total = links.length) => ({
+    ...DETAIL_A,
+    links,
+    links_total,
+  });
+  const openDetail = async (detail: unknown, list: unknown = page([ROW_A])) => {
+    apiMock.get.mockImplementation((url: string) =>
+      Promise.resolve(isDetail(url) ? detail : list),
+    );
+    render(<RelatedRegistryPage />);
+    await settle();
+    fireEvent.click(screen.getAllByTestId("registry-row")[0]);
+    await settle();
+  };
+
+  it("F18 the Clients block lists the name as a link to the CRM client, the basis and the date", async () => {
+    await openDetail(
+      withLinks([
+        linkOf(),
+        linkOf({
+          client_id: 424243,
+          client_name: "ZzClient Two",
+          basis: "whatsapp_phone",
+          created_at: "2026-03-05T10:00:00Z",
+        }),
+      ]),
+    );
+    const block = screen.getByTestId("registry-clients");
+    expect(within(block).getByRole("heading", { level: 3 }).textContent).toBe(
+      "Clients",
+    );
+    expect(
+      within(block).getByText("Proposed from documents, not confirmed."),
+    ).toBeTruthy();
+    const entries = within(block).getAllByTestId("registry-client");
+    expect(entries).toHaveLength(2);
+    expect(entries[0].textContent).toBe(
+      "ZzClient One · Drive folder · 2026-03-04",
+    );
+    expect(entries[1].textContent).toBe(
+      "ZzClient Two · WhatsApp phone · 2026-03-05",
+    );
+    const anchor = within(entries[0]).getByRole("link", {
+      name: "ZzClient One",
+    });
+    expect(anchor.getAttribute("href")).toBe("/clients/424242");
+    expect(within(entries[1]).getByRole("link").getAttribute("href")).toBe(
+      "/clients/424243",
+    );
+  });
+
+  it("F19 a link whose client is not live shows the muted line, no name and no anchor", async () => {
+    await openDetail(
+      withLinks([
+        linkOf({ client_name: null, client_live: false, basis: "identity" }),
+      ]),
+    );
+    const entry = screen.getByTestId("registry-client");
+    expect(entry.textContent).toBe(
+      "Client no longer in the CRM · Identity · 2026-03-04",
+    );
+    expect(within(entry).queryByRole("link")).toBeNull();
+    expect(entry.textContent).not.toContain("ZzClient");
+  });
+
+  it("F20 a subject without links has no block and a total above the shown number is said", async () => {
+    await openDetail(withLinks([]));
+    expect(screen.queryByTestId("registry-clients")).toBeNull();
+    expect(screen.queryByText("Clients")).toBeNull();
+  });
+
+  it("F20b a links_total above the shown number is said, as the names list says it", async () => {
+    const shown = Array.from({ length: 20 }, (_, i) =>
+      linkOf({ client_id: 424300 + i, client_name: `ZzClient ${i}` }),
+    );
+    await openDetail(withLinks(shown, 25));
+    expect(screen.getAllByTestId("registry-client")).toHaveLength(20);
+    expect(screen.getByTestId("registry-clients-truncated").textContent).toBe(
+      "Showing 20 of 25 clients.",
+    );
+  });
+
+  it("F21 the indicator shows on rows with links_count above zero only", async () => {
+    defaults(
+      page([
+        { ...ROW_A, id: 1, display_name: "ZzOne", links_count: 2 },
+        { ...ROW_A, id: 2, display_name: "ZzTwo", links_count: 0 },
+        { ...ROW_A, id: 3, display_name: "ZzThree" },
+      ]),
+    );
+    render(<RelatedRegistryPage />);
+    await settle();
+    const rows = screen.getAllByTestId("registry-row");
+    expect(within(rows[0]).getByTestId("client-mark").textContent).toBe(
+      "Client",
+    );
+    expect(within(rows[1]).queryByTestId("client-mark")).toBeNull();
+    expect(within(rows[2]).queryByTestId("client-mark")).toBeNull();
+    expect(screen.getAllByTestId("client-mark")).toHaveLength(1);
+  });
+
+  it("F22 the filter sends linked=true and linked=false, omits it for All, and a change on a later page asks offset=0", async () => {
+    vi.useFakeTimers();
+    defaults(page([ROW_A], 220));
+    render(<RelatedRegistryPage />);
+    await advance(0);
+    expect(params(lastUrl()).has("linked")).toBe(false);
+    const group = () => screen.getByRole("group", { name: "Client link" });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await advance(0);
+    expect(params(lastUrl()).get("offset")).toBe("50");
+
+    fireEvent.click(within(group()).getByRole("button", { name: "Linked" }));
+    await advance(0);
+    expect(params(lastUrl()).get("linked")).toBe("true");
+    expect(params(lastUrl()).get("offset")).toBe("0");
+
+    fireEvent.click(
+      within(group()).getByRole("button", { name: "Not linked" }),
+    );
+    await advance(0);
+    expect(params(lastUrl()).get("linked")).toBe("false");
+
+    fireEvent.click(within(group()).getByRole("button", { name: "All" }));
+    await advance(0);
+    expect(params(lastUrl()).has("linked")).toBe(false);
+    expect(params(lastUrl()).has("kind")).toBe(false);
+    // the two groups are told apart by their names
+    expect(screen.getByRole("group", { name: "Subject kind" })).toBeTruthy();
+  });
+
+  it("F23 no control of the Clients block writes: no button, and every call is a read", async () => {
+    await openDetail(withLinks([linkOf(), linkOf({ client_live: false })]));
+    const block = screen.getByTestId("registry-clients");
+    expect(within(block).queryAllByRole("button")).toHaveLength(0);
+    expect(Object.keys(apiMock)).toEqual(["get"]);
+    for (const call of apiMock.get.mock.calls) {
+      expect(String(call[0])).toMatch(/^\/api\/crm\/related-registry/);
+    }
+  });
+
+  it("F24 each of the four basis labels", async () => {
+    await openDetail(
+      withLinks([
+        linkOf({ client_id: 1, basis: "drive_folder" }),
+        linkOf({ client_id: 2, basis: "whatsapp_phone" }),
+        linkOf({ client_id: 3, basis: "identity" }),
+        linkOf({ client_id: 4, basis: "manual" }),
+      ]),
+    );
+    const labels = screen
+      .getAllByTestId("registry-client")
+      .map((e) => e.textContent?.split(" · ")[1]);
+    expect(labels).toEqual([
+      "Drive folder",
+      "WhatsApp phone",
+      "Identity",
+      "Entered by hand",
+    ]);
   });
 });

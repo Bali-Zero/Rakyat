@@ -1,6 +1,7 @@
 """Registry of related people and companies: POST /api/crm/related-subjects/register (slice 1),
 POST /api/crm/related-subjects/documents/register (slice 2, documents by reference) and
-POST /api/crm/related-subjects/names/register (slice 4A, recorded names).
+POST /api/crm/related-subjects/names/register (slice 4A, recorded names) and
+POST /api/crm/related-subjects/links/register (slice 4B, proposed client links).
 
 Auth: scoped ``X-CRM-Write-Key`` plus ``RELATED_SUBJECT_REGISTRY_ENABLED`` (default off, 503).
 
@@ -45,6 +46,7 @@ from backend.services.crm.related_documents import (
     register_documents,
 )
 from backend.services.crm.related_identifiers import MAX_RAW_LENGTH, InvalidIdentifier, canonicalize
+from backend.services.crm.related_links import LinkEntry, LinksInput, record_links
 from backend.services.crm.related_names import (
     MAX_RAW_NAME,
     InvalidName,
@@ -439,6 +441,71 @@ class RelatedNamesRegisterRequest(_Strict):
         )
 
 
+# ── slice 4B: proposed client links ───────────────────────────────────────────
+
+MAX_LINKS = 5
+MAX_CLIENT_ID = 2147483647
+
+# Slice 4B has closed lists of its own; the lists above are not widened.
+_LINKS_LOC = frozenset(
+    {
+        "body",
+        "subject",
+        "kind",
+        "identifiers",
+        "type",
+        "value",
+        "links",
+        "client_id",
+        "basis",
+        "evidence",
+        "plan_sha256",
+        "files",
+        "dry_run",
+    }
+)
+_LINKS_CODE = _NAMES_CODE - {
+    "invalid_name",
+    "blobs_above_files",
+    "evidence_source_mismatch",
+    "duplicate_name",
+} | {"duplicate_link"}
+_LINKS_INDEX_LIMIT = {"identifiers": MAX_KEYS, "links": MAX_LINKS}
+
+
+class _LinkEvidence(_Strict):
+    plan_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    files: Annotated[int, Field(ge=1, le=MAX_COUNT)]
+
+
+class _LinkIn(_Strict):
+    client_id: Annotated[int, Field(ge=1, le=MAX_CLIENT_ID)]
+    basis: Literal["drive_folder", "whatsapp_phone", "identity"]
+    evidence: _LinkEvidence
+
+
+class RelatedLinksRegisterRequest(_Strict):
+    subject: _SubjectKeys
+    links: Annotated[list[_LinkIn], Field(min_length=1, max_length=MAX_LINKS)]
+    dry_run: StrictBool = True
+
+    @model_validator(mode="after")
+    def _links_are_distinct(self) -> RelatedLinksRegisterRequest:
+        keys = [(n.client_id, n.basis) for n in self.links]
+        if len(keys) != len(set(keys)):
+            raise PydanticCustomError("duplicate_link", "duplicate link")
+        return self
+
+    def to_input(self) -> LinksInput:
+        return LinksInput(
+            kind=self.subject.kind,
+            identifiers=self.subject.prepared(),
+            links=tuple(
+                LinkEntry(n.client_id, n.basis, n.evidence.model_dump()) for n in self.links
+            ),
+        )
+
+
 # Fixed answers: the whole failure surface is these constants. No status, code or text taken
 # from an exception or from the request ever reaches an answer.
 _ANSWER_BODIES: dict[str, bytes] = {
@@ -518,6 +585,22 @@ def _invalid_names(errors: list[dict[str, Any]]) -> Response:
                 loc.append(part if part in _NAMES_LOC else "_")
         code = err.get("type")
         items.append({"loc": loc, "code": code if code in _NAMES_CODE else "invalid"})
+    return _fixed(422, items)
+
+
+def _invalid_links(errors: list[dict[str, Any]]) -> Response:
+    """422 body of the links route: closed lists of its own, never an input or a message."""
+    items = []
+    for err in errors[:50]:
+        loc: list[Any] = []
+        for part in err.get("loc", ()):
+            limit = _LINKS_INDEX_LIMIT.get(loc[-1]) if loc else None
+            if isinstance(part, int) and not isinstance(part, bool):
+                loc.append(part if limit is not None and 0 <= part < limit else "_")
+            else:
+                loc.append(part if part in _LINKS_LOC else "_")
+        code = err.get("type")
+        items.append({"loc": loc, "code": code if code in _LINKS_CODE else "invalid"})
     return _fixed(422, items)
 
 
@@ -633,4 +716,25 @@ async def register_related_subject_names(
         )
     async with db_pool.acquire() as conn:
         result = await record_names(conn, payload.to_input(), dry_run=payload.dry_run)
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.post("/links/register", response_model=None)
+async def register_related_subject_links(
+    request: Request,
+    _actor: str = Depends(verify_related_subject_write),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Record proposed client links for one registered subject (dry run by default)."""
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _invalid_links([{"loc": ("body",), "type": "too_long"}])
+    try:
+        payload = RelatedLinksRegisterRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        return _invalid_links(
+            exc.errors(include_input=False, include_context=False, include_url=False)
+        )
+    async with db_pool.acquire() as conn:
+        result = await record_links(conn, payload.to_input(), dry_run=payload.dry_run)
     return JSONResponse(status_code=200, content=result)
