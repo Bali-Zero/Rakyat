@@ -134,7 +134,11 @@ describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", ()
 
     render(<VisaClockPage />);
     const select = screen.getByLabelText("Visa type") as HTMLSelectElement;
-    const options = Array.from(select.options).filter((o) => o.value !== "");
+    // "" is the placeholder and "not_sure" the ask-us option: neither is a
+    // visa type, and the page never posts either to /api/visa/clock.
+    const options = Array.from(select.options).filter(
+      (o) => o.value !== "" && o.value !== "not_sure",
+    );
 
     expect(options.length).toBeGreaterThan(0);
     const codes = options.map((o) => o.value);
@@ -155,5 +159,57 @@ describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", ()
     expect(labelByCode.C7A).toMatch(/Music Performance/i);
     expect(labelByCode.C7B).toMatch(/Music Crew/i);
     expect(labelByCode.C7B).not.toMatch(/Sport/i);
+  });
+});
+
+describe("VisaClockPage — Not sure option hands off to the visa team", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+  });
+
+  it("offers a 'Not sure — ask us' option in the visa type dropdown", () => {
+    render(<VisaClockPage />);
+    const select = screen.getByLabelText("Visa type") as HTMLSelectElement;
+    const notSure = Array.from(select.options).find(
+      (o) => o.value === "not_sure",
+    );
+    expect(notSure?.textContent).toBe("Not sure — ask us");
+  });
+
+  it("picking it shows the existing WhatsApp CTA to the visa funnel", () => {
+    render(<VisaClockPage />);
+    expect(
+      screen.queryByRole("link", { name: /ask the visa team on whatsapp/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Visa type"), {
+      target: { value: "not_sure" },
+    });
+
+    const link = screen.getByRole("link", {
+      name: /ask the visa team on whatsapp/i,
+    });
+    const href = new URL(link.getAttribute("href") ?? "");
+    expect(href.hostname).toBe("wa.me");
+    expect(href.searchParams.get("utm_campaign")).toBe("visa");
+    expect(href.searchParams.get("utm_medium")).toBe("whatsapp_cta");
+  });
+
+  it("never posts 'not_sure' to /api/visa/clock and keeps the count at real visa types", () => {
+    render(<VisaClockPage />);
+    fireEvent.change(screen.getByLabelText("Entry date"), {
+      target: { value: "2026-07-01" },
+    });
+    fireEvent.change(screen.getByLabelText("Visa type"), {
+      target: { value: "not_sure" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Show my timeline" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(trackerMocks.formSubmitted).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/ask our visa team/i);
+    // Trust strip counts visa types only (13), not the ask-us option.
+    expect(screen.getByText("13")).toBeInTheDocument();
   });
 });

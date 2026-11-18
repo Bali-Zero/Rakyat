@@ -8,6 +8,7 @@ import {
   AppTrustStrip,
   useFunnelApp,
 } from "@balizero/core";
+import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
 
 // Every `code` MUST be a member of the backend `VisaType` enum
 // (apps/backend-rag/backend/services/visa_check/catalogue.py) — an unknown
@@ -30,6 +31,14 @@ const VISA_OPTIONS = [
   { code: "E31", label: "E31 Family KITAS" },
   { code: "E30A", label: "E30A Student KITAS (Primary & Secondary)" },
 ];
+
+// "Not sure" is not a visa type: it is never sent to /api/visa/clock (the
+// backend would reject it with 422) and is not counted in the trust strip.
+// Picking it swaps the timeline for the visa team's existing WhatsApp CTA —
+// we do not guess dates for a visa the visitor cannot name.
+const NOT_SURE = "not_sure";
+const NOT_SURE_WHATSAPP_MESSAGE =
+  "Hi Bali Zero, I am not sure which visa I am on. Can you help me check my stay dates?";
 
 // Mirrors `ClockRequest._entry_date_reasonable` (visa_check.py): an entry date
 // more than 6 years (365 * 6 days, supporting 5-year E33/E33E stay permits) in
@@ -66,6 +75,10 @@ export default function VisaClockPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (visaType === NOT_SURE) {
+      setError("Pick your visa type, or ask our visa team below.");
+      return;
+    }
     if (!visaType || !entryDate) {
       setError("Pick a visa type and the entry date.");
       return;
@@ -162,10 +175,24 @@ export default function VisaClockPage() {
                   {v.label}
                 </option>
               ))}
+              <option value={NOT_SURE}>Not sure — ask us</option>
             </select>
           ),
         }}
       />
+      {visaType === NOT_SURE ? (
+        <p style={{ margin: 0, lineHeight: 1.6 }}>
+          Not sure which visa you are on? Our visa team can check it from your
+          passport and entry stamp.{" "}
+          <a
+            href={buildWhatsAppLink("visa", NOT_SURE_WHATSAPP_MESSAGE)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Ask the visa team on WhatsApp →
+          </a>
+        </p>
+      ) : null}
     </AppFrame>
   );
 }
