@@ -2996,10 +2996,14 @@ async def test_m17_the_write_measurement_sees_only_the_two_writes(client, conn, 
 PCO = passport(7373712)  # a company record that carries a passport (a person-kind refusal)
 NCO2 = npwp(7373714)  # a company with a tax number (the target of a kind difference)
 PNONE = passport(7373713)  # owned by nobody
+POTH = passport(
+    7373715
+)  # another passport holder: never the bystander, whose keys are in no request
+QRAW1, QRAW2 = permit(7373731), permit(7373732)  # probes of the two raw bodies, stored nowhere
 NAME_SURVIVOR, NAME_BYSTANDER = "ZzProbeSurvivorName", "ZzProbeBystander"
 STORED_PROBES = (
     NAME_SURVIVOR, NAME_BYSTANDER, PSV, QSV, QSRC, PBY, PCO, NCO2, QSRC2, QMG, QSUR, QMEM,
-    QNP, NNP, QAL,
+    QNP, NNP, QAL, POTH,
 )  # fmt: skip
 SENTINEL = "m18-sentinel"
 
@@ -3070,6 +3074,7 @@ async def probe_world(conn):
     w["mem"] = await seed_subject(conn, "person", None, [("permit", QMEM)], merged=w["sur"])
     w["np"] = await seed_subject(conn, "person", None, [("permit", QNP), ("nik", NNP)])
     w["al"] = await seed_subject(conn, "person", None, [("permit", QAL)], merged=w["sv"])
+    w["oth"] = await seed_subject(conn, "person", None, [("passport", POTH)])
     return w
 
 
@@ -3193,11 +3198,11 @@ FAMILY_A = {
     "n_source_merged_elsewhere": _a(
         lambda w: [
             (
-                req((("permit", QMG),), (("passport", PBY),)),
-                refused("source_merged_elsewhere", w["mg"], w["by"]),
+                req((("permit", QMG),), (("passport", POTH),)),
+                refused("source_merged_elsewhere", w["mg"], w["oth"]),
             )
         ],
-        (QMG, PBY),
+        (QMG, POTH),
     ),
     "n_source_is_survivor": _a(
         lambda w: [
@@ -3244,24 +3249,24 @@ FAMILY_B["b_malformed_json"] = _case(
     lambda w: [
         (
             b'{"source": {"kind": "person", "identifiers": [{"type": "permit", "value": "'
-            + QSRC.encode()
+            + QRAW1.encode()
             + b'"',
             _validation([([], "json_invalid")]),
         )
     ],
     422,
-    (QSRC,),
+    (QRAW1,),
     quiet=True,
 )
 FAMILY_B["b_oversize_body"] = _case(
     lambda w: [
         (
-            b" " * (route_module.MAX_BODY_BYTES + 1) + QSRC.encode(),
+            b" " * (route_module.MAX_BODY_BYTES + 1) + QRAW2.encode(),
             _validation([(["body"], "too_long")]),
         )
     ],
     422,
-    (QSRC,),
+    (QRAW2,),
     quiet=True,
 )
 
@@ -3284,7 +3289,9 @@ FAMILY_C = {
 M18_CASES = {**FAMILY_A, **FAMILY_B, **FAMILY_C}
 FAKE_WORLD = {
     k: i + 1
-    for i, k in enumerate(("sv", "src", "by", "co", "co2", "src2", "mg", "sur", "mem", "np", "al"))
+    for i, k in enumerate(
+        ("sv", "src", "by", "co", "co2", "src2", "mg", "sur", "mem", "np", "al", "oth")
+    )
 }
 
 
@@ -3361,7 +3368,7 @@ AUDIT_TYPES = {
     "zz_extra": "text",
     "created_at": "timestamp without time zone",
 }
-TEETH_PROBE = QSRC
+TEETH_PROBE = permit(7373733)  # stored nowhere: only the declaration can put it in a set
 TEETH_REQUESTS = {
     "dict": req((("permit", TEETH_PROBE),), SURVIVOR_KEYS),
     "raw": b'{"source": "' + TEETH_PROBE.encode() + b'"',
