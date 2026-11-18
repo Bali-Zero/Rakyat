@@ -1828,6 +1828,39 @@ def _case_sets(requests) -> tuple[set[str], set[str]]:
     return log_set, answer_set
 
 
+# Audit columns whose digits are measured by the server, not derived from a body: scanned never,
+# chosen by TYPE read from the catalog (never by name). Integer and text columns are always scanned.
+UNSCANNED_AUDIT_TYPES = frozenset(
+    {
+        "timestamp without time zone",
+        "timestamp with time zone",
+        "real",
+        "double precision",
+        "numeric",
+    }
+)
+
+
+async def _audit_scan(conn) -> tuple[list, str, set[str]]:
+    """Complete audit rows, the text of every scanned column, and the excluded column names."""
+    columns = await conn.fetch(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'api_audit_trail' "
+        "ORDER BY ordinal_position"
+    )
+    excluded = {c["column_name"] for c in columns if c["data_type"] in UNSCANNED_AUDIT_TYPES}
+    rows = await conn.fetch("SELECT * FROM api_audit_trail ORDER BY id")
+    text = " ".join(
+        f"{name}={value if isinstance(value, str) else json.dumps(value, default=str)}"
+        for row in rows
+        for name, value in dict(row).items()
+        if name not in excluded
+    ).casefold()
+    if rows:
+        assert set(rows[0].keys()) == {c["column_name"] for c in columns}
+    return rows, text, excluded
+
+
 @pytest_asyncio.fixture
 async def probe_world(conn):
     await seed_client(conn, LIVE1, NAME_LIVE1)
@@ -2161,13 +2194,12 @@ async def test_l13_links_route_logs_and_answers_carry_no_client_id_name_identifi
     assert [t for t in log_tokens if t in log_text] == [], case
 
     # 6. one audit row per call, no request body, no token
-    rows = await conn.fetch(
-        "SELECT endpoint, request_body, query_params, response_body, error_message "
-        "FROM api_audit_trail ORDER BY id"
-    )
+    rows, audit_text, excluded = await _audit_scan(conn)
+    assert excluded == {"created_at"}, (
+        excluded
+    )  # the one timestamp column; a new text column is scanned
     assert len(rows) == len(requests), case
     assert all(r["request_body"] is None for r in rows), case
-    audit_text = " ".join(str(dict(r)) for r in rows).casefold()
     assert [t for t in answer_tokens if t in audit_text] == [], case
 
 
