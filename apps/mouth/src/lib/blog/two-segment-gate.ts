@@ -48,9 +48,8 @@ export function classifyTwoSegmentPath(routePath: string): TwoSegmentVerdict {
   const segments = routePath.split("/").filter(Boolean);
   if (segments.length !== 2) return "pass";
   const [first, second] = segments;
-  // A dot anywhere is a file request (public/ assets, .well-known), which the
-  // proxy's early return and its matcher already keep out of this gate.
-  if (routePath.includes(".")) return "pass";
+  // A dotted value is a file request, and the proxy's early return owns those.
+  if (second.includes(".")) return "pass";
 
   const own = Object.prototype.hasOwnProperty.call(
     PUBLIC_TWO_SEGMENT_ROUTES,

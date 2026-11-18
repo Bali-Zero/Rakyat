@@ -4,7 +4,11 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { generateStaticParams } from "@/app/(blog)/[category]/page";
 import { CATEGORY_SEO } from "@/lib/blog/category-seo";
-import { INTERNAL_ROUTES, STATUS_GATE_404_PATH } from "@/proxy";
+import {
+  INTERNAL_ROUTES,
+  STATUS_GATE_404_PATH,
+  canonicalPathname,
+} from "@/proxy";
 import {
   PUBLIC_TWO_SEGMENT_ROUTES,
   classifyTwoSegmentPath,
@@ -175,6 +179,12 @@ describe("classifyTwoSegmentPath", () => {
     expect(classifyTwoSegmentPath("/foo/file.txt")).toBe("pass");
   });
 
+  it("an encoded dot in the first segment is not a file request: not-found", () => {
+    const canonical = canonicalPathname("/unknown%2Ecategory/slug");
+    expect(canonical).toBe("/unknown.category/slug");
+    expect(classifyTwoSegmentPath(canonical)).toBe("not-found");
+  });
+
   it("does not read inherited object keys as owners or categories", () => {
     expect(classifyTwoSegmentPath("/constructor/x")).toBe("not-found");
     expect(classifyTwoSegmentPath("/toString/x")).toBe("not-found");
@@ -187,16 +197,22 @@ describe("classifyTwoSegmentPath", () => {
  * mechanical facts close that, and both are asserted from the files.
  */
 /**
+ * Limits of a text check, by design: a spread from an imported object
+ * (`...baseConfig`) cannot be seen, because the declaration lives in another
+ * file. A `rewrites` inside a string or after a `;` on a comment line can
+ * false-positive; that fails red, the safe direction, and is left as is.
+ *
  * True when the config text declares `rewrites` in any form: method
  * (`async rewrites() {`), property (`rewrites: async () =>`, `"rewrites":`),
- * shorthand (`{ rewrites }`) or assignment (`config.rewrites = ...`). Comments
+ * shorthand (`{ rewrites }`) assignment (`config.rewrites = ...`) or bracket assignment
+ * (`config["rewrites"] = ...`). Comments
  * are stripped first; the name must stand alone, so `noRewritesHere` is not it.
  */
 function declaresRewrites(source: string): boolean {
   const code = source
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|\s)\/\/.*$/gm, "$1");
-  return /(?<![\w$])['"`]?rewrites['"`]?\s*[(:,}=]/.test(code);
+  return /(?<![\w$])['"`]?rewrites['"`]?\]?\s*[(:,}=]/.test(code);
 }
 
 describe("declaresRewrites", () => {
@@ -213,6 +229,8 @@ describe("declaresRewrites", () => {
       "const rewrites = async () => [];\nexport default { rewrites };",
     ],
     ["assignment", "nextConfig.rewrites = async () => [];"],
+    ["bracket assignment", `nextConfig["rewrites"] = async () => [];`],
+    ["single-quoted bracket assignment", "config['rewrites'] = () => [];"],
     ["after a comment line", "// note\nconst c = { rewrites() {} };"],
   ])("[guilt] flags %s", (_name, src) => {
     expect(declaresRewrites(src)).toBe(true);
