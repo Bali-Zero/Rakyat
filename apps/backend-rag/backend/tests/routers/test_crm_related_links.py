@@ -1794,6 +1794,40 @@ def _record_text(record: logging.LogRecord) -> str:
     return rendered + " " + " ".join(str(v) for v in record.__dict__.values())
 
 
+def _forms(leaf: str) -> set[str]:
+    """The raw, normalised and canonical forms of a string, case-folded (empty form dropped)."""
+    return {
+        leaf.casefold(),
+        " ".join(leaf.upper().split()).casefold(),
+        canonical_form("passport", leaf).casefold(),
+    } - {""}
+
+
+def _declared_probes(requests) -> set[str]:
+    """The probes a case put into its request(s), found in the raw text whatever the shape of the
+    request is (a parsed dictionary or raw bytes): probe identifiers and probe client ids."""
+    out: set[str] = set()
+    for request in requests:
+        raw = _raw_text(request).casefold()
+        for probe in (*ALL_PROBE_IDS, *PROBE_CLIENT_IDS):
+            if probe.casefold() in raw:
+                out |= _forms(probe)
+    return out
+
+
+def _case_sets(requests) -> tuple[set[str], set[str]]:
+    """(log forbidden set, response/audit forbidden set) of a case: the stored probe world, the
+    declared probes of every request and, for dictionary requests, the leaf tokens."""
+    declared = _declared_probes(requests)
+    log_set = set(UNCONDITIONAL) | declared
+    answer_set = set(UNCONDITIONAL) | declared
+    for request in requests:
+        if isinstance(request, dict):
+            log_set |= _forbidden(request, answer_words=False)
+            answer_set |= _forbidden(request, answer_words=True)
+    return log_set, answer_set
+
+
 @pytest_asyncio.fixture
 async def probe_world(conn):
     await seed_client(conn, LIVE1, NAME_LIVE1)
@@ -2028,6 +2062,15 @@ def test_l13_the_matrix_has_every_case_of_its_specification():
                         case,
                         ident,
                     )
+        # the declared probes (identifiers and client ids put into the body, dictionary or raw
+        # bytes) are in BOTH forbidden sets of every case, in all three forms
+        declared = _declared_probes(requests)
+        log_set, answer_set = _case_sets(requests)
+        assert declared and declared <= log_set and declared <= answer_set, case
+        if spec["ids"]:
+            assert any(_forms(i) <= declared for i in ALL_PROBE_IDS), (case, "no identifier probe")
+        if spec["client"]:
+            assert _forms(str(LIVE1)) <= declared, (case, "no client probe")
         # an unconditional probe is no legitimate value of its case and a substring of none
         legitimate: set[str] = {str(spec["status"])} | set(PROTOCOL_WORDS) | set(FIXED_WORDS)
         for _, expected in steps:
@@ -2100,18 +2143,15 @@ async def test_l13_links_route_logs_and_answers_carry_no_client_id_name_identifi
 
     # 5. no forbidden token in any record, response or audit row; the log token set is populated
     log_leaf_tokens: set[str] = set()
-    answer_leaf_tokens: set[str] = set()
     for request in requests:
         if isinstance(request, dict):
             log_leaf_tokens |= _forbidden(request, answer_words=False)
-            answer_leaf_tokens |= _forbidden(request, answer_words=True)
     if all(isinstance(r, dict) for r in requests):
         if spec["client"]:
             assert str(LIVE1) in log_leaf_tokens, case
         if spec["ids"]:
             assert any(i.casefold() in log_leaf_tokens for i in ALL_PROBE_IDS), case
-    log_tokens = log_leaf_tokens | UNCONDITIONAL
-    answer_tokens = answer_leaf_tokens | UNCONDITIONAL
+    log_tokens, answer_tokens = _case_sets(requests)
     for resp in responses:
         response_text = resp.text.casefold()
         assert [t for t in answer_tokens if t in response_text] == [], case
