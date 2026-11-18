@@ -8,6 +8,7 @@ const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
 function order(practiceState: PracticeState): OrderView {
   return {
     order_id: "order-1",
+    result_id: "result-fixture-0000000001",
     order_state: "paid",
     price_idr: 850000,
     browser_observation: "browser_not_returned",

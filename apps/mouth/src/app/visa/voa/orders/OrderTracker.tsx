@@ -13,6 +13,8 @@ import {
 import { useOrderTracking } from "./useOrderTracking";
 import type { OrderView, PracticeState } from "./types";
 import { VOA_PRIMARY_ACTION_STYLE } from "../voa-action-style";
+import { useVoaLocale } from "../useVoaLocale";
+import { voaCopy } from "../voa-copy";
 
 /**
  * GARUDA VOA — order tracker + visa delivery view (`/visa/voa/orders/{orderId}`).
@@ -90,6 +92,9 @@ export function OrderTracker({ orderId }: { orderId: string }) {
 }
 
 function OrderTrackerReady({ order }: { order: OrderView }) {
+  // The journey's language, for the closed-order panel only: the rest of the
+  // tracker stays as it is.
+  const t = voaCopy(useVoaLocale());
   const subtitle = subtitleFor(order);
 
   return (
@@ -141,10 +146,12 @@ function OrderTrackerReady({ order }: { order: OrderView }) {
           tone="retry"
           heading={
             order.order_state === "failed"
-              ? "This checkout couldn't be completed."
-              : "This checkout session expired."
+              ? t("order.closed.failed.heading")
+              : t("order.closed.expired.heading")
           }
-          body="A consultant can verify your payment status before you try again."
+          body={t("order.closed.safetyBody")}
+          payAgainLabel={t("order.closed.payAgain")}
+          payAgainResultId={order.result_id}
         />
       ) : null}
 
@@ -527,14 +534,24 @@ export const EXCEPTION_RULE: Record<ExceptionTone, string> = {
   closed: "var(--state-info)",
 };
 
+/** Mirrors the contract's ResultId schema (`^[A-Za-z0-9_-]{22,128}$`). */
+const RESULT_ID_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
+
 function ExceptionPanel({
   heading,
   body,
   tone,
+  payAgainResultId,
+  payAgainLabel,
 }: {
   heading: string;
   body: string;
   tone: ExceptionTone;
+  /** Only the failed/expired panel passes this; a same-origin link, rendered only
+   * when it matches the result-id pattern. */
+  payAgainResultId?: string;
+  /** The localised CTA text; passed with `payAgainResultId`. */
+  payAgainLabel?: string;
 }) {
   return (
     <section
@@ -550,6 +567,23 @@ function ExceptionPanel({
     >
       <p style={{ margin: 0, fontWeight: 600 }}>{heading}</p>
       <p style={{ margin: 0, lineHeight: 1.6 }}>{body}</p>
+      {payAgainResultId !== undefined &&
+      RESULT_ID_PATTERN.test(payAgainResultId) ? (
+        <a
+          href={`/visa/voa/checkout/${encodeURIComponent(payAgainResultId)}`}
+          style={{
+            display: "inline-block",
+            width: "fit-content",
+            padding: "0.7rem 1.1rem",
+            borderRadius: 8,
+            textDecoration: "none",
+            fontWeight: 600,
+            ...VOA_PRIMARY_ACTION_STYLE,
+          }}
+        >
+          {payAgainLabel}
+        </a>
+      ) : null}
       <WhatsAppHelp />
     </section>
   );
