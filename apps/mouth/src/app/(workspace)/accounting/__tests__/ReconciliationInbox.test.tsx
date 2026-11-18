@@ -1272,6 +1272,12 @@ describe("ported reconciliation contract", () => {
         expect(send).toBeDisabled();
         fireEvent.change(input, { target: { value: "😀😀😀" } });
         expect(send).toBeEnabled();
+        fireEvent.change(input, { target: { value: "😀".repeat(200) } });
+        expect(send).toBeEnabled();
+        fireEvent.change(input, { target: { value: "😀".repeat(201) } });
+        expect(send).toBeDisabled();
+        fireEvent.click(send);
+        expect(api.ignoreTransaction).not.toHaveBeenCalled();
       }
       fireEvent.change(input, { target: { value: reason } });
       expect(send).toBeEnabled();
@@ -1756,5 +1762,77 @@ describe("ported reconciliation contract", () => {
     await act(async () => staleClick());
 
     expect(api.linkRecorded).not.toHaveBeenCalled();
+  });
+
+  it("64: confirming a hand-picked invoice sends that invoice", async () => {
+    renderInbox();
+    await ready();
+    await openTab("choose", "ROW YELLOW");
+    fireEvent.click(
+      within(await screen.findByTestId("cc-cand-13")).getByRole("radio"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm payment" }));
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+    expect(api.confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
+    await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledWith({
+      bank_txn_id: 3,
+      practice_id: 23,
+      invoice_id: 13,
+      amount_applied_idr: 500000,
+      new_status: "paid",
+      payment_method: "bank_transfer",
+      payment_reference: "ROW YELLOW",
+      movement_date: "2026-01-05",
+      pph_withheld_idr: 0,
+    });
+  });
+
+  it("65: linking a hand-picked invoice sends that invoice", async () => {
+    api.getMatchCandidates.mockResolvedValue({
+      ...candidatesFor(1),
+      recorded_candidates: [recorded],
+    });
+    renderInbox();
+    await ready();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another" }),
+    );
+    fireEvent.click(
+      within(await screen.findByTestId("cc-cand-12")).getByRole("radio"),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Link, no money moved" }),
+    );
+    await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
+    expect(api.linkRecorded).toHaveBeenCalledWith({
+      bank_txn_id: 1,
+      practice_id: 22,
+      invoice_id: 12,
+    });
+    expect(api.confirm).not.toHaveBeenCalled();
+  });
+
+  it("66: a stale Ignore transfer handler rejects a form moved to another transfer", async () => {
+    api.getReconciliationInbox.mockResolvedValue([
+      four()[0],
+      inboxItem({ ...four()[0], txn_id: 5, description: "ROW GREEN TWO" }),
+    ]);
+    renderInbox();
+    await ready();
+    fireEvent.change(await openIgnore(), { target: { value: "reason A" } });
+    const staleClick = renderedClick(
+      screen.getByRole("button", { name: "Ignore transfer" }),
+    );
+
+    fireEvent.click(row(5));
+    fireEvent.click(await screen.findByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "reason B" },
+    });
+    await act(async () => staleClick());
+
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
   });
 });

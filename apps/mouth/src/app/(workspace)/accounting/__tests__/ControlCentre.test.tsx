@@ -333,12 +333,27 @@ describe("Accounting control centre", () => {
   });
 
   it("loads the automatically opened transfer and does not reload on a re-click", async () => {
+    api.getReconciliationInbox.mockResolvedValue([
+      ...rows(),
+      inboxItem({
+        txn_id: 6,
+        description: "CONTOH TRANSFER SIX",
+        light: "green",
+      }),
+    ]);
     renderCentre();
     await ready();
-    await waitFor(() => expect(api.getMatchCandidates).toHaveBeenCalledWith(1));
-    const before = api.getMatchCandidates.mock.calls.length;
-    fireEvent.click(screen.getByTestId("inbox-row-1"));
-    expect(api.getMatchCandidates).toHaveBeenCalledTimes(before);
+    await waitFor(() => {
+      expect(api.getMatchCandidates).toHaveBeenCalledTimes(1);
+      expect(api.getMatchCandidates).toHaveBeenCalledWith(1);
+    });
+    fireEvent.click(screen.getByTestId("inbox-row-6"));
+    await waitFor(() => {
+      expect(api.getMatchCandidates).toHaveBeenCalledTimes(2);
+      expect(api.getMatchCandidates).toHaveBeenLastCalledWith(6);
+    });
+    fireEvent.click(screen.getByTestId("inbox-row-6"));
+    expect(api.getMatchCandidates).toHaveBeenCalledTimes(2);
   });
 
   it("shows the band and pair view with every reason", async () => {
@@ -628,6 +643,43 @@ describe("Accounting control centre", () => {
     expect(
       screen.getByRole("button", { name: "See what was done today" }),
     ).toBeInTheDocument();
+  });
+
+  it("advances when a tab empties and shows calm when all tabs empty", async () => {
+    const initial = [rows()[0], rows()[1]];
+    api.getReconciliationInbox
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce([rows()[1]])
+      .mockResolvedValueOnce([]);
+    api.ignoreTransaction.mockResolvedValue({} as never);
+    renderCentre();
+    await ready();
+    fireEvent.click(tab("confirm"));
+    expect(tab("confirm")).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "example reason one" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(tab("link")).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("inbox-row-2")).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+    });
+    expect(opened()).toHaveTextContent("CONTOH TRANSFER TWO");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "example reason two" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("cc-calm")).toBeInTheDocument();
+    expect(screen.queryByTestId("cc-opened")).toBeNull();
   });
 
   it("uses calm, not day one, when the bank-date request fails", async () => {
