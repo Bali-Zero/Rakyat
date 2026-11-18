@@ -229,12 +229,16 @@ describe("ported reconciliation contract", () => {
     expect(row(5)).not.toHaveAttribute("aria-current");
     fireEvent.click(row(5));
     expect(row(5)).toHaveAttribute("aria-current", "true");
+    expect(row(1)).not.toHaveAttribute("aria-current");
   });
 
   it("03: tabs carry counts and filter rows client-side", async () => {
     renderInbox();
     await ready();
+    expect(screen.getByTestId("cc-count-confirm")).toHaveTextContent("1");
     expect(screen.getByTestId("cc-count-link")).toHaveTextContent("1");
+    expect(screen.getByTestId("cc-count-choose")).toHaveTextContent("1");
+    expect(screen.getByTestId("cc-count-nomatch")).toHaveTextContent("1");
     await openTab("link", "ROW RECORDED");
     expect(screen.queryByText("ROW GREEN")).toBeNull();
     expect(api.getReconciliationInbox).toHaveBeenCalledTimes(1);
@@ -271,6 +275,9 @@ describe("ported reconciliation contract", () => {
     ).toBeInTheDocument();
     expect(
       await screen.findByText("Link it instead of confirming it again."),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Link, no money moved" }),
     ).toBeInTheDocument();
     await chooseTable();
     expect(screen.getByText("Already paid")).toBeInTheDocument();
@@ -548,9 +555,9 @@ describe("ported reconciliation contract", () => {
     expect(reopen[0]).toBeDisabled();
     for (const button of reopen) expect(button).toBeDisabled();
     await act(async () => held.reject(new Error("reopen refused")));
-    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
-      "reopen refused",
-    );
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent("reopen refused");
     expect(onConfirmed).not.toHaveBeenCalled();
     expect(screen.getAllByRole("button", { name: "Reopen" })[0]).toBeEnabled();
   });
@@ -719,17 +726,33 @@ describe("ported reconciliation contract", () => {
 
   it("24: a truncated candidate group states both counts", async () => {
     api.getReconciliationInbox.mockResolvedValue([
-      inboxItem({ ...four()[2], open_candidates: 9 }),
+      inboxItem({
+        ...four()[2],
+        open_candidates: 9,
+        recorded_candidates: 9,
+      }),
     ]);
     api.getMatchCandidates.mockResolvedValue({
       ...candidatesFor(3),
       candidates: [openOne, openTwo],
+      recorded_candidates: Array.from({ length: 5 }, (_, index) =>
+        candidate({
+          invoice_id: 21 + index,
+          practice_id: 31 + index,
+          client_name: "PT CONTOH SATU",
+        }),
+      ),
     });
     renderInbox();
     await screen.findByText("ROW YELLOW");
     expect(
       await screen.findByText(
         "9 invoices have this amount; the 2 closest are shown.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "9 invoices have this amount; the 5 closest are shown.",
       ),
     ).toBeInTheDocument();
   });
@@ -773,6 +796,7 @@ describe("ported reconciliation contract", () => {
       expect(api.getMatchCandidates).toHaveBeenLastCalledWith(1),
     );
     expect(api.getMatchCandidates).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText(/PT CONTOH SATU/)).toBeInTheDocument();
     await waitFor(() =>
       expect(
         screen.queryByText("Could not load the invoices for this transfer."),
@@ -1007,14 +1031,23 @@ describe("ported reconciliation contract", () => {
     const recordedRadio = within(screen.getByTestId("cc-cand-12")).getByRole(
       "radio",
     );
+    fireEvent.click(recordedRadio);
+    const linkClick = renderedClick(
+      screen.getByRole("button", { name: "Link, no money moved" }),
+    );
     fireEvent.click(openRadio);
     const confirm = screen.getByRole("button", { name: "Confirm payment" });
     act(() => {
       confirm.click();
       recordedRadio.click();
-      confirm.click();
+      linkClick();
     });
     expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Confirm payment match")).toBeNull(),
+    );
     expect(api.linkRecorded).not.toHaveBeenCalled();
   });
 
@@ -1464,6 +1497,16 @@ describe("ported reconciliation contract", () => {
   });
 
   it("55: table rows show invoice number, INV date and service", async () => {
+    api.getMatchCandidates.mockResolvedValue({
+      ...candidatesFor(1),
+      recorded_candidates: [
+        candidate({
+          ...recorded,
+          invoice_issued_at: "2026-01-03T00:00:00Z",
+          service_name: "Example recorded service",
+        }),
+      ],
+    });
     renderInbox();
     await ready();
     await chooseTable();
@@ -1471,6 +1514,14 @@ describe("ported reconciliation contract", () => {
     expect(candidateRow).toHaveTextContent("INV-000000-00001");
     expect(candidateRow).toHaveTextContent("2 Jan");
     expect(candidateRow).toHaveTextContent("Example service");
+    expect(within(candidateRow).getByText("2 Jan")).toHaveTextContent(
+      /^2 Jan$/,
+    );
+    const recordedRow = screen.getByTestId("cc-cand-12");
+    expect(recordedRow).toHaveTextContent("INV-000000-00002");
+    expect(recordedRow).toHaveTextContent("3 Jan");
+    expect(recordedRow).toHaveTextContent("Example recorded service");
+    expect(within(recordedRow).getByText("3 Jan")).toHaveTextContent(/^3 Jan$/);
   });
 
   it("56: missing invoice identity shows only No invoice number", async () => {
