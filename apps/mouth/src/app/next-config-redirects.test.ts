@@ -13,7 +13,7 @@ type Redirect = {
 // search results, emails) from becoming a 404 when a page is renamed or
 // removed. This file puts the table itself under test: its size, its shape,
 // and the absence of a source that two entries claim.
-const EXPECTED_ENTRY_COUNT = 112;
+const EXPECTED_ENTRY_COUNT = 114;
 
 // Two-hop paths that already exist in the table. They are not loops (each ends
 // on a real page after two permanent redirects) and are recorded here so a NEW
@@ -89,5 +89,48 @@ describe("next.config.ts redirects table", () => {
       if (hops > 1) chains.push(r.source);
     }
     expect(chains.sort()).toEqual([...KNOWN_CHAINS].sort());
+  });
+});
+
+describe("retired /v2 generation of the homepage and news index", () => {
+  it("sends /v2 and /v2/news permanently to the pages that replaced them", async () => {
+    const redirects = await table();
+    expect(redirects).toContainEqual({
+      source: "/v2",
+      destination: "/",
+      permanent: true,
+    });
+    expect(redirects).toContainEqual({
+      source: "/v2/news",
+      destination: "/news",
+      permanent: true,
+    });
+  });
+
+  it("each of the two sources appears once and lands outside the table", async () => {
+    const redirects = await table();
+    for (const source of ["/v2", "/v2/news"]) {
+      expect(redirects.filter((r) => r.source === source)).toHaveLength(1);
+      const entry = redirects.find((r) => r.source === source)!;
+      // No chain: the destination is a real page, not another redirect.
+      expect(entryFor(redirects, entry.destination), source).toBeUndefined();
+    }
+  });
+
+  it("keeps the earlier /v2/* redirects, and does not claim children that never existed", async () => {
+    const redirects = await table();
+    for (const source of [
+      "/v2/privacy",
+      "/v2/terms",
+      "/v2/cookies",
+      "/v2/company/about",
+      "/v2/company/careers",
+      "/v2/company/press",
+    ]) {
+      expect(redirects.some((r) => r.source === source), source).toBe(true);
+    }
+    // /v2/news/<slug> was a 404 before this change and stays one: no wildcard.
+    expect(entryFor(redirects, "/v2/news/some-slug")).toBeUndefined();
+    expect(entryFor(redirects, "/v2/other")).toBeUndefined();
   });
 });
