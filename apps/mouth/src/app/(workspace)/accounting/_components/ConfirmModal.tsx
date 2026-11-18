@@ -82,13 +82,13 @@ export function ConfirmModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl border bg-card p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-xl border border-[var(--bz-border)] bg-[var(--bz-card)] p-6 shadow-xl">
         <div className="flex items-start justify-between">
           <h3 className="text-lg font-semibold">Confirm payment match</h3>
           <button
             onClick={onClose}
             disabled={busy}
-            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)] disabled:opacity-50"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
@@ -97,23 +97,23 @@ export function ConfirmModal({
 
         <dl className="mt-4 space-y-2 text-sm">
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Transfer</dt>
+            <dt className="text-[var(--bz-text-2)]">Transfer</dt>
             <dd className="font-medium tabular-nums">
               <Money value={txn.amount_idr} />
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Client</dt>
+            <dt className="text-[var(--bz-text-2)]">Client</dt>
             <dd className="font-medium">{candidate.client_name}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Invoice</dt>
+            <dt className="text-[var(--bz-text-2)]">Invoice</dt>
             <dd className="tabular-nums">
               <Money value={candidate.invoice_amount_idr} />
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Delta</dt>
+            <dt className="text-[var(--bz-text-2)]">Delta</dt>
             <dd
               className={`tabular-nums ${delta < 0 ? "text-[var(--state-warning)]" : "text-[var(--state-success)]"}`}
             >
@@ -122,7 +122,7 @@ export function ConfirmModal({
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">New status</dt>
+            <dt className="text-[var(--bz-text-2)]">New status</dt>
             <dd className="font-semibold uppercase">{newStatus}</dd>
           </div>
           {candidate.likely_withheld && (
@@ -133,7 +133,7 @@ export function ConfirmModal({
           )}
         </dl>
 
-        <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+        <ul className="mt-3 space-y-1 text-xs text-[var(--bz-text-2)]">
           {candidate.reasons.map((reason, i) => (
             <li key={i}>• {reason}</li>
           ))}
