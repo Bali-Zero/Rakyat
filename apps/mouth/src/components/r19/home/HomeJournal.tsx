@@ -54,7 +54,15 @@ export function JournalPending() {
         aria-label="The Bali Zero Journal"
       >
         <h2>The Bali Zero Journal</h2>
-        <p role="status">Loading the latest stories…</p>
+        {/* Streamed into the server HTML before the stories resolve, so it
+            must read as content, not as a placeholder: a crawler kept
+            "Loading the latest stories…" as homepage copy. */}
+        <p>
+          <a className="textlink" href="/news">
+            Read the latest stories in the Journal{" "}
+            <span aria-hidden="true">↗</span>
+          </a>
+        </p>
       </section>
     </div>
   );
