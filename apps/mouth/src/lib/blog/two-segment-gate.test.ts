@@ -142,3 +142,42 @@ describe("classifyTwoSegmentPath", () => {
     expect(classifyTwoSegmentPath("/toString/x")).toBe("not-found");
   });
 });
+
+/**
+ * The proxy runs before next.config rewrites and before public/ is served, so
+ * the owner table alone cannot prove the gate 404s only non-pages. Two
+ * mechanical facts close that, and both are asserted from the files.
+ */
+describe("the gate cannot 404 anything that is not a page route", () => {
+  const MOUTH = process.cwd();
+
+  it("no rewrite exists to be shadowed (next.config.ts and vercel.json)", () => {
+    const cfg = fs.readFileSync(path.join(MOUTH, "next.config.ts"), "utf8");
+    expect(cfg).not.toMatch(/^\s*(async\s+)?rewrites\s*\(/m);
+    const vercel = JSON.parse(
+      fs.readFileSync(path.join(MOUTH, "vercel.json"), "utf8"),
+    );
+    expect(vercel.rewrites ?? []).toEqual([]);
+  });
+
+  it("every file under public/, at any depth, passes the gate", () => {
+    const files: string[] = [];
+    const walk = (dir: string, rel: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const r = `${rel}/${e.name}`;
+        if (e.isDirectory()) walk(path.join(dir, e.name), r);
+        else files.push(r);
+      }
+    };
+    walk(path.join(MOUTH, "public"), "");
+    expect(files.length).toBeGreaterThan(10);
+    expect(files.filter((f) => classifyTwoSegmentPath(f) !== "pass")).toEqual(
+      [],
+    );
+  });
+
+  it("dotted paths and the proxy's own skip prefixes are never gated", () => {
+    expect(classifyTwoSegmentPath("/.well-known/security.txt")).toBe("pass");
+    expect(classifyTwoSegmentPath("/images/a.jpg")).toBe("pass");
+  });
+});
