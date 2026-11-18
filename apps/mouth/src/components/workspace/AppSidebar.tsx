@@ -101,9 +101,12 @@ export function AppSidebar({
   // The server's own answer about accounting access (the same read the HR
   // layout uses). The client portal never asks: it has no accountingOnly item.
   const { capabilities } = useHrCapabilities({ enabled: !isPortal });
-  const showAccounting = capabilities.accounting_admin;
+  const owner = isOwner(user.email);
+  // The owner always sees accountingOnly items (no wait on the server's
+  // answer); anyone else only once it says accounting_admin is true.
+  const showAccounting = capabilities.accounting_admin || owner;
   const nav = (navigationConfig || navigation).filter(
-    (section) => !section.ownerOnly || isOwner(user.email),
+    (section) => !section.ownerOnly || owner,
   );
 
   const isActive = (href: string) => {
@@ -266,13 +269,15 @@ export function AppSidebar({
     );
   };
 
-  // The rail numbers visible items 01..13 (14 for an accounting admin) with a single counter that runs
+  // The rail numbers visible items 01..13 (14 with Accounting) with a single counter that runs
   // across ALL non-ownerOnly sections without resetting per group (K1c-bis:
   // "the ordinal is a running index ... it does NOT restart per group").
   // ownerOnly sections (only ever visible to the owner) are skipped for
   // numbering so one person's extra "Da fare" section cannot shift anyone
-  // else's numbers. An accountingOnly item that is not shown is filtered out
-  // before the counter runs, so the numbers stay consecutive either way. Portal rows never carry an ordinal at all.
+  // else's numbers. A hidden accountingOnly item is filtered out
+  // before the counter runs, so numbers stay consecutive: the owner and
+  // accounting admins get 01..14, everyone else 01..13. Portal rows never
+  // carry an ordinal at all.
   let ordinalCounter = 0;
 
   const renderNavSection = (section: NavSection, index: number) => (

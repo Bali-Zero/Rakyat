@@ -289,7 +289,7 @@ describe("AppSidebar", () => {
   it("numbers visible items 01..13 across groups without restarting per group", () => {
     const { container } = render(
       <AppSidebar
-        user={{ name: "Zero", email: "zero@balizero.com" }}
+        user={{ name: "Zero", email: "staff@example.test" }}
         onLogout={() => undefined}
         navigationConfig={navigation}
       />,
@@ -630,6 +630,67 @@ describe("AppSidebar accounting entry", () => {
     // Accounting takes slot 09; the later items shift by one.
     expect(rows.indexOf("/accounting")).toBe(8);
     expect(rows[9]).toBe("https://knowledge.balizero.com");
+  });
+
+  describe("the owner", () => {
+    const OWNER = "zero@balizero.com";
+    const states: [string, () => void][] = [
+      [
+        "pending",
+        () =>
+          mockedGetCapabilities.mockReturnValue(new Promise(() => undefined)),
+      ],
+      [
+        "answered false",
+        () => mockedGetCapabilities.mockResolvedValue(capabilities(false)),
+      ],
+      [
+        "rejected",
+        () => mockedGetCapabilities.mockRejectedValue(new Error("boom")),
+      ],
+    ];
+
+    it.each(states)(
+      "sees Accounting numbered under OPERATIONS from the first render, capabilities %s",
+      async (_name, arrange) => {
+        arrange();
+        const { container } = renderSidebar(OWNER);
+        const link = screen.getByRole("link", { name: "Accounting" });
+        expect(link).toHaveAttribute("href", "/accounting");
+        const text = container.textContent ?? "";
+        expect(text.indexOf("OPERATIONS")).toBeLessThan(
+          text.indexOf("Accounting"),
+        );
+        expect(text.indexOf("Accounting")).toBeLessThan(
+          text.indexOf("INTELLIGENCE"),
+        );
+        const list = ordinals(container);
+        expect(list).toHaveLength(14);
+        expect(list).toEqual(consecutive(list));
+        await Promise.resolve();
+      },
+    );
+
+    it("gets the same (text, href) links as the pre-change config would give", () => {
+      const { container } = renderSidebar(OWNER);
+      const rendered = [...container.querySelectorAll("nav a[href]")]
+        .map(
+          (a) =>
+            `${a.textContent
+              ?.replace(/^\d\d/, "")
+              .replace(/\s*↗.*$/, "")
+              .replace(/0$/, "")}|${a.getAttribute("href")}`,
+        )
+        .sort();
+      const expected = navigation
+        .flatMap((section) => section.items)
+        .map((item) => `${item.title}|${item.href}`)
+        .sort();
+      expect(rendered).toEqual(expected);
+      expect(rendered.filter((r) => r.endsWith("|/accounting"))).toHaveLength(
+        1,
+      );
+    });
   });
 
   it("the owner-only section no longer contains Accounting", () => {
