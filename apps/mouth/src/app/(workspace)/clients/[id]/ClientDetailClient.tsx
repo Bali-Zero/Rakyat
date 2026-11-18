@@ -525,6 +525,10 @@ export function ClientDetailClient({
   // `viewer_can_write` is the server's answer for THIS viewer (it knows the
   // shared client pools); it rides on `client` so the delete predicate sees it.
   const client = { ...profileClient, viewer_can_write: profile.viewer_can_write };
+  const canCreateCompany =
+    typeof profile.viewer_can_create_company === "boolean"
+      ? profile.viewer_can_create_company
+      : viewerCanCreateCompany(currentUserRole);
   const setupOption = client.assigned_to
     ? teamMemberOptions.find(
         (m) => m.value === client.assigned_to!.toLowerCase(),
@@ -1146,7 +1150,7 @@ export function ClientDetailClient({
                   tone="wait"
                   title="Company & tax"
                   actions={
-                    viewerCanCreateCompany(currentUserRole) ? (
+                    canCreateCompany ? (
                       <Button
                         variant="outline"
                         size="sm"
@@ -1302,7 +1306,7 @@ export function ClientDetailClient({
               onOpenDocuments={() => handleTabChange("documents")}
               onOpenRemoved={openRemovedDocuments}
               companyLinks={company_links}
-              canCreateCompany={viewerCanCreateCompany(currentUserRole)}
+              canCreateCompany={canCreateCompany}
             />
           )}
 

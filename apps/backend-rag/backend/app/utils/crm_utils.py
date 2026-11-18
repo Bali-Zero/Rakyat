@@ -10,7 +10,11 @@ from typing import Annotated, Any
 from pydantic import AfterValidator
 
 from backend.app.core.config import settings
-from backend.app.utils.client_pools import can_write_client, ensure_client_pools_validated
+from backend.app.utils.client_pools import (
+    caller_in_client_pool,
+    can_write_client,
+    ensure_client_pools_validated,
+)
 from backend.core.env_lists import crm_extra_admin_emails
 
 # CRM-specific admin additions on top of the global allowlist
@@ -152,7 +156,8 @@ def can_change_document_visibility(user: dict) -> bool:
 
 
 #: Job titles (``team_members.role``, lower-cased) that may CREATE a company
-#: besides the CRM admins. Edit and delete stay admin-only (``is_crm_admin``).
+#: besides the CRM admins and every validated client-pool member. Edit follows
+#: ``client_pools.can_edit_company``; delete stays admin-only (``is_crm_admin``).
 #: Mirrored on the desk by ``apps/mouth/.../modals/company-create.ts``.
 COMPANY_CREATE_ROLES = frozenset(
     {
@@ -171,12 +176,14 @@ COMPANY_CREATE_ROLES = frozenset(
 
 
 def can_create_company(user: dict) -> bool:
-    """CRM admins, plus the tax team (``COMPANY_CREATE_ROLES``), may create a company."""
+    """CRM admins, the tax team (``COMPANY_CREATE_ROLES``) and client-pool members may create a company."""
     if not user:
         return False
     if is_crm_admin(user):
         return True
-    return (user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
+    if (user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES:
+        return True
+    return caller_in_client_pool(user)
 
 
 def can_view_all_practices(user: dict) -> bool:

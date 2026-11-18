@@ -619,6 +619,10 @@ export interface ClientProfile {
    *  client? True for an admin, an owner or a member of an owner's shared
    *  client pool; absent on an older backend. */
   viewer_can_write?: boolean;
+  /** The server's answer for this viewer: may they create a company? Admin,
+   *  tax team or a member of a shared client pool; absent on an older
+   *  backend (the desk then falls back to the role rule). */
+  viewer_can_create_company?: boolean;
   stats: {
     family_count: number;
     documents_count: number;
