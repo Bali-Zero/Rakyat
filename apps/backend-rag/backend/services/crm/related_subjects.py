@@ -12,7 +12,6 @@ subject ids, outcomes and counts only: never a name and never an identifier valu
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import date
@@ -191,7 +190,7 @@ async def _attempt(
         subject.date_of_birth,
         subject.nationality,
         subject.sex,
-        json.dumps(subject.evidence),
+        subject.evidence,
         REGISTRY_ACTOR,
     )
     for ident in subject.identifiers:
@@ -202,7 +201,7 @@ async def _attempt(
             ident.id_raw,
             NORM_VERSION,
             subject_id,
-            json.dumps(ident.evidence),
+            ident.evidence,
         )
         if won is None:
             raise _LostRace

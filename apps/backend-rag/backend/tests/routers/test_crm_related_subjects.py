@@ -49,10 +49,12 @@ from backend.services.crm.related_subjects import (
     register_subject,
 )
 from backend.services.monitoring.activity_logger import activity_logger
+from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
 
 MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
 MIGRATION = MIGRATIONS / "361_related_subjects_registry.sql"
 MIGRATION2 = MIGRATIONS / "362_related_documents.sql"
+MIGRATION_EVIDENCE = MIGRATIONS / "366_related_evidence_objects.sql"
 URL = "/api/crm/related-subjects/register"
 URL2 = "/api/crm/related-subjects/documents/register"
 KEY = "test-crm-write-key-0000"
@@ -256,15 +258,25 @@ async def pool(writes):
         pytest.fail("A test database or isolated test worker is required")
     schema = "related_subjects_" + uuid4().hex
     await admin.execute(f'CREATE SCHEMA "{schema}"')
+    # Production-shaped: the same init hook every production pool registers (the jsonb codec), so a
+    # pre-serialised string bound to a ::jsonb placeholder is stored as a string here too.
     created = await asyncpg.create_pool(
-        dsn, min_size=1, max_size=6, server_settings={"search_path": schema}
+        dsn,
+        min_size=1,
+        max_size=6,
+        server_settings={"search_path": schema},
+        init=init_prod_shaped_connection,
+        statement_cache_size=0,
+        max_inactive_connection_lifetime=30.0,
     )
     try:
         forward, _ = split_migration_sql(MIGRATION.read_text())
         forward2, _ = split_migration_sql(MIGRATION2.read_text())
+        forward3, _ = split_migration_sql(MIGRATION_EVIDENCE.read_text())
         async with created.acquire() as conn:
             await conn.execute(forward)
-            await conn.execute(forward2)  # before the measurement triggers: measured from row one
+            await conn.execute(forward2)
+            await conn.execute(forward3)  # before the measurement triggers: measured from row one
             await conn.execute(CRM_SCHEMA)
             await conn.execute(WRITE_LOG_SQL)
         yield created
@@ -749,7 +761,7 @@ async def test_guard_a_subject_without_an_identifier_is_refused_even_when_the_to
     writes.counts(related_subjects=2, related_subject_identifiers=2)
     writes.ops("related_subjects", "DELETE")
     writes.ops("related_subject_identifiers", "DELETE")
-    key = json.dumps({"plan_sha256": SHA, "subject_ref": REF, "tier": TIER})
+    key = {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER}
     owner = await conn.fetchval(
         "INSERT INTO related_subjects (kind, evidence, created_by) VALUES ('person', $1::jsonb, 'x') RETURNING id",
         key,
@@ -929,7 +941,7 @@ async def _seed(conn, ids=(("nik", "3201234567890123"), ("passport", "ZZ0000001"
             "INSERT INTO related_subjects (kind, display_name, date_of_birth, evidence, created_by) "
             "VALUES ('person', 'Zz Probe Subject', $1, $2::jsonb, $3) RETURNING id",
             dob,
-            json.dumps({"plan_sha256": SHA, "subject_ref": REF, "tier": TIER}),
+            {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER},
             REGISTRY_ACTOR,
         )
         for ident in prepared:
@@ -1034,7 +1046,7 @@ async def test_c4_creation_stores_actor_canonical_keys_and_norm_version(writes, 
     row = await conn.fetchrow("SELECT * FROM related_subjects WHERE id = $1", sid)
     assert row["created_by"] == REGISTRY_ACTOR == "system:related-subject-registry"
     assert row["merged_into"] is None and row["kind"] == "person"
-    assert json.loads(row["evidence"]) == {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER}
+    assert row["evidence"] == {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER}
     keys = await conn.fetch(
         "SELECT id_type, id_norm, id_raw, norm_version FROM related_subject_identifiers "
         "WHERE subject_id = $1 ORDER BY id_type",
@@ -2119,7 +2131,7 @@ async def _seed_doc(conn, label, *, size=4317905, mime=MIME, day=DAY1, channel="
             "INSERT INTO related_documents (sha256, byte_size, mime_type, first_seen_on, "
             "first_channel, evidence, created_by) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)",
             dh(label), size, mime, date.fromisoformat(day), channel,
-            json.dumps({"plan_sha256": PLAN2}), REGISTRY_ACTOR,
+            {"plan_sha256": PLAN2}, REGISTRY_ACTOR,
         )  # fmt: skip
 
 
@@ -2138,7 +2150,7 @@ async def _seed_link(conn, sid, label, doc_type=DT):
             "INSERT INTO related_subject_documents (subject_id, sha256, doc_type, evidence, "
             "created_by) VALUES ($1, $2, $3, $4::jsonb, $5)",
             sid, dh(label), doc_type,
-            json.dumps({"plan_sha256": PLAN2, "subject_ref": REF}), REGISTRY_ACTOR,
+            {"plan_sha256": PLAN2, "subject_ref": REF}, REGISTRY_ACTOR,
         )  # fmt: skip
 
 
@@ -2197,7 +2209,7 @@ async def assert_exact_rows(conn, before, payload, sid):
             )  # fmt: skip
             assert row["first_seen_on"].isoformat() == sent["first_seen_on"]
             assert row["created_by"] == REGISTRY_ACTOR
-            assert json.loads(row["evidence"]) == {"plan_sha256": PLAN2}
+            assert row["evidence"] == {"plan_sha256": PLAN2}
     new_sighting_keys = {
         k for txt, k in after["related_document_sightings"].items()
         if txt not in before["related_document_sightings"]
@@ -2221,7 +2233,7 @@ async def assert_exact_rows(conn, before, payload, sid):
             assert row["subject_id"] == sid and row["sha256"] in by_sha
             assert row["doc_type"] == by_sha[row["sha256"]]["doc_type"]
             assert row["created_by"] == REGISTRY_ACTOR
-            assert json.loads(row["evidence"]) == {"plan_sha256": PLAN2, "subject_ref": REF}
+            assert row["evidence"] == {"plan_sha256": PLAN2, "subject_ref": REF}
 
 
 async def _count(conn, table):
@@ -3776,11 +3788,272 @@ async def test_s2_evidence_belongs_to_the_request_that_inserted_the_row(writes, 
     await regd(conn, second)
     rows = {r["sha256"]: r for r in await conn.fetch("SELECT * FROM related_documents")}
     links = {r["sha256"]: r for r in await conn.fetch("SELECT * FROM related_subject_documents")}
-    assert json.loads(rows[dh("ev-a")]["evidence"]) == {"plan_sha256": PLAN2}
-    assert json.loads(rows[dh("ev-b")]["evidence"]) == {"plan_sha256": dh("other-plan")}
-    assert json.loads(links[dh("ev-a")]["evidence"]) == {"plan_sha256": PLAN2, "subject_ref": REF}
-    assert json.loads(links[dh("ev-b")]["evidence"]) == {
+    assert rows[dh("ev-a")]["evidence"] == {"plan_sha256": PLAN2}
+    assert rows[dh("ev-b")]["evidence"] == {"plan_sha256": dh("other-plan")}
+    assert links[dh("ev-a")]["evidence"] == {"plan_sha256": PLAN2, "subject_ref": REF}
+    assert links[dh("ev-b")]["evidence"] == {
         "plan_sha256": dh("other-plan"),
         "subject_ref": "REF-OTHER",
     }
     assert set(rows_a["related_documents"]) <= set((await registry_rows(conn))["related_documents"])
+
+
+# ── evidence is a jsonb OBJECT on the production pool ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ev1_guard_the_module_pool_carries_the_production_jsonb_codec(conn):
+    # a native container round-trips as itself; a pre-serialised string comes back as a STRING,
+    # which is the double-encoding signature of the 2026-08-27 incident class
+    assert await conn.fetchval("SELECT $1::jsonb", {"a": 1}) == {"a": 1}
+    assert await conn.fetchval("SELECT $1::jsonb", '{"a": 1}') == '{"a": 1}'
+    assert await conn.fetchval("SELECT jsonb_typeof($1::jsonb)", '{"a": 1}') == "string"
+
+
+@pytest.mark.asyncio
+async def test_ev2_subjects_register_route_stores_objects_with_the_values_sent(
+    writes, pool, conn, enabled, audit_logger
+):
+    writes("related_subjects", "related_subject_identifiers", "api_audit_trail")
+    writes.counts(related_subjects=1, related_subject_identifiers=2)
+    resp = await post(
+        Stack(pool), body(ids=(("passport", "ZZ0000001"), ("nik", "3201234567890123")))
+    )
+    assert resp.status_code == 200 and resp.json()["outcome"] == "created"
+    subjects = await conn.fetch(
+        "SELECT jsonb_typeof(evidence) AS kind, evidence FROM related_subjects"
+    )
+    idents = await conn.fetch(
+        "SELECT jsonb_typeof(evidence) AS kind, evidence FROM related_subject_identifiers"
+    )
+    assert [(r["kind"], r["evidence"]) for r in subjects] == [
+        ("object", {"plan_sha256": SHA, "subject_ref": REF, "tier": TIER})
+    ]
+    assert [(r["kind"], r["evidence"]) for r in idents] == [("object", {})] * 2
+
+
+@pytest.mark.asyncio
+async def test_ev2_an_identifier_evidence_given_to_the_service_is_stored_as_an_object(writes, conn):
+    writes("related_subjects", "related_subject_identifiers")
+    writes.counts(related_subjects=1, related_subject_identifiers=1)
+    subject = SubjectInput(
+        kind="person",
+        identifiers=prepare_identifiers("person", [("passport", "ZZ0000009", {"files": 3})]),
+        evidence={"plan_sha256": SHA, "subject_ref": REF, "tier": TIER},
+    )
+    out = await reg(conn, subject, dry_run=False)
+    assert out["outcome"] == "created"
+    row = await conn.fetchrow(
+        "SELECT jsonb_typeof(evidence) AS kind, evidence FROM related_subject_identifiers"
+    )
+    assert (row["kind"], row["evidence"]) == ("object", {"files": 3})
+
+
+@pytest.mark.asyncio
+async def test_ev3_documents_register_route_stores_objects_with_the_values_sent(
+    writes, pool, conn, enabled, audit_logger
+):
+    declare_docs(writes, documents=2, sightings=1, links=2, extra=("api_audit_trail",))
+    await _seed(conn)
+    payload = dbody([doc("ev3-a", files=("wordev3a",)), doc("ev3-b")])
+    resp = await postd(Stack(pool), payload)
+    assert resp.status_code == 200 and resp.json()["outcome"] == "linked"
+    docs_rows = await conn.fetch(
+        "SELECT sha256, jsonb_typeof(evidence) AS kind, evidence FROM related_documents "
+        "ORDER BY sha256"
+    )
+    links = await conn.fetch(
+        "SELECT sha256, jsonb_typeof(evidence) AS kind, evidence FROM related_subject_documents "
+        "ORDER BY sha256"
+    )
+    shas = sorted([dh("ev3-a"), dh("ev3-b")])
+    assert [(r["sha256"], r["kind"], r["evidence"]) for r in docs_rows] == [
+        (s, "object", {"plan_sha256": PLAN2}) for s in shas
+    ]
+    assert [(r["sha256"], r["kind"], r["evidence"]) for r in links] == [
+        (s, "object", {"plan_sha256": PLAN2, "subject_ref": REF}) for s in shas
+    ]
+
+
+# ── migration 366 ─────────────────────────────────────────────────────────────
+
+_EVIDENCE_TABLES = {
+    "related_subjects": "related_subjects_evidence_object_chk",
+    "related_subject_identifiers": "related_subject_identifiers_evidence_object_chk",
+    "related_documents": "related_documents_evidence_object_chk",
+    "related_subject_documents": "related_subject_documents_evidence_object_chk",
+}
+
+
+async def _evidence_constraints(c, *, validated_only=False) -> set[str]:
+    """The evidence CHECKs of THIS connection's schema only: the hosted database is migrated in
+    `public` before pytest starts, so an unscoped catalog read also sees those four."""
+    rows = await c.fetch(
+        "SELECT conname FROM pg_constraint WHERE connamespace = current_schema()::regnamespace "
+        "AND conrelid = ANY($1::regclass[]) AND conname LIKE '%_evidence_object_chk' "
+        "AND (convalidated OR NOT $2)",
+        list(_EVIDENCE_TABLES),
+        validated_only,
+    )
+    return {r["conname"] for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_ev4_migration_366_repairs_string_evidence_and_forbids_the_wrong_shape():
+    dsn = os.environ.get("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL required for the real PostgreSQL registry proof")
+    admin = await asyncpg.connect(dsn)
+    name = await admin.fetchval("SELECT current_database()")
+    if not re.search(r"_test(?:_run_[0-9]+_[0-9]+)?(?:_gw[0-9]+)?$", name):
+        await admin.close()
+        pytest.fail("A test database or isolated test worker is required")
+    schema = "related_evidence_" + uuid4().hex
+    await admin.execute(f'CREATE SCHEMA "{schema}"')
+    created = await asyncpg.create_pool(
+        dsn,
+        min_size=1,
+        max_size=2,
+        server_settings={"search_path": schema},
+        init=init_prod_shaped_connection,
+        statement_cache_size=0,
+        max_inactive_connection_lifetime=30.0,
+    )
+    try:
+        async with created.acquire() as c:
+            for migration in (MIGRATION, MIGRATION2):
+                forward, _ = split_migration_sql(migration.read_text())
+                await c.execute(forward)
+            # the production shape: a jsonb STRING scalar whose text is a JSON object
+            wrong = 'to_jsonb(\'{"a": 1, "b": [2, 3]}\'::text)'
+            right = '\'{"a": 1, "b": [2, 3]}\'::jsonb'
+            sid = await c.fetchval(
+                f"INSERT INTO related_subjects (kind, evidence, created_by) "
+                f"VALUES ('person', {wrong}, 'zz') RETURNING id"
+            )
+            sid2 = await c.fetchval(
+                f"INSERT INTO related_subjects (kind, evidence, created_by) "
+                f"VALUES ('person', {right}, 'zz') RETURNING id"
+            )
+            for sub, ev in ((sid, wrong), (sid2, right)):
+                await c.execute(
+                    "INSERT INTO related_subject_identifiers (id_type, id_norm, id_raw, "
+                    f"norm_version, subject_id, evidence) VALUES ('passport', 'ZZ0000000' || {sub}, "
+                    f"'ZZ0000000' || {sub}, 1, {sub}, {ev})"
+                )
+            for label, ev in (("w", wrong), ("r", right)):
+                await c.execute(
+                    "INSERT INTO related_documents (sha256, byte_size, mime_type, first_seen_on, "
+                    f"first_channel, evidence, created_by) VALUES (repeat('{'a' if label == 'w' else 'b'}', 64), "
+                    f"1, 'application/pdf', now(), 'drive', {ev}, 'zz')"
+                )
+            for sub, label, ev in ((sid, "a", wrong), (sid2, "b", right)):
+                await c.execute(
+                    "INSERT INTO related_subject_documents (subject_id, sha256, doc_type, "
+                    f"evidence, created_by) VALUES ({sub}, repeat('{label}', 64), 'zzdoctype', {ev}, 'zz')"
+                )
+            before = {
+                t: [
+                    r["k"]
+                    for r in await c.fetch(
+                        f"SELECT jsonb_typeof(evidence) AS k FROM {t} ORDER BY 1"
+                    )
+                ]
+                for t in _EVIDENCE_TABLES
+            }
+            assert all(kinds == ["object", "string"] for kinds in before.values())
+
+            forward, rollback = split_migration_sql(MIGRATION_EVIDENCE.read_text())
+            await c.execute(forward)
+
+            for t in _EVIDENCE_TABLES:
+                rows = await c.fetch(f"SELECT jsonb_typeof(evidence) AS k, evidence FROM {t}")
+                assert [r["k"] for r in rows] == ["object", "object"]
+                assert all(r["evidence"] == {"a": 1, "b": [2, 3]} for r in rows)
+            assert await _evidence_constraints(c) == set(_EVIDENCE_TABLES.values())
+            assert len(await _evidence_constraints(c, validated_only=True)) == 4
+
+            seeds = {
+                "related_subjects": "INSERT INTO related_subjects (kind, evidence, created_by) "
+                "VALUES ('person', $1::jsonb, 'zz')",
+                "related_subject_identifiers": "INSERT INTO related_subject_identifiers (id_type, "
+                f"id_norm, id_raw, norm_version, subject_id, evidence) VALUES ('nik', 'ZZ0000099', 'ZZ0000099', 1, {sid}, $1::jsonb)",
+                "related_documents": "INSERT INTO related_documents (sha256, byte_size, "
+                "mime_type, first_seen_on, first_channel, evidence, created_by) VALUES "
+                "(repeat('c', 64), 1, 'application/pdf', now(), 'drive', $1::jsonb, 'zz')",
+                "related_subject_documents": "INSERT INTO related_subject_documents (subject_id, "
+                f"sha256, doc_type, evidence, created_by) VALUES ({sid}, repeat('a', 64), 'zzother', $1::jsonb, 'zz')",
+            }
+            for t, sql in seeds.items():
+                for refused in ('{"a": 1}', [1], "text"):
+                    # the production codec encodes the argument: a str binds as a JSON string scalar
+                    with pytest.raises(asyncpg.CheckViolationError) as info:
+                        await c.execute(sql, refused)
+                    assert _EVIDENCE_TABLES[t] in str(info.value)
+
+            await c.execute(rollback)
+            assert await _evidence_constraints(c) == set()
+            for t in _EVIDENCE_TABLES:
+                kinds = [
+                    r["k"] for r in await c.fetch(f"SELECT jsonb_typeof(evidence) AS k FROM {t}")
+                ]
+                assert kinds == ["object", "object"]
+    finally:
+        await created.close()
+        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        await admin.close()
+
+
+@pytest.mark.asyncio
+async def test_ev5_migration_366_aborts_and_rolls_back_on_a_row_it_cannot_repair():
+    dsn = os.environ.get("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL required for the real PostgreSQL registry proof")
+    admin = await asyncpg.connect(dsn)
+    name = await admin.fetchval("SELECT current_database()")
+    if not re.search(r"_test(?:_run_[0-9]+_[0-9]+)?(?:_gw[0-9]+)?$", name):
+        await admin.close()
+        pytest.fail("A test database or isolated test worker is required")
+    schema = "related_evidence_abort_" + uuid4().hex
+    await admin.execute(f'CREATE SCHEMA "{schema}"')
+    created = await asyncpg.create_pool(
+        dsn,
+        min_size=1,
+        max_size=2,
+        server_settings={"search_path": schema},
+        init=init_prod_shaped_connection,
+        statement_cache_size=0,
+        max_inactive_connection_lifetime=30.0,
+    )
+    try:
+        async with created.acquire() as c:
+            for migration in (MIGRATION, MIGRATION2):
+                forward, _ = split_migration_sql(migration.read_text())
+                await c.execute(forward)
+            # one repairable row and one string that is not an object text
+            await c.execute(
+                "INSERT INTO related_subjects (kind, evidence, created_by) VALUES "
+                "('person', to_jsonb('{\"a\": 1}'::text), 'zz'), "
+                "('person', to_jsonb('zz'::text), 'zz')"
+            )
+            before = await c.fetch(
+                "SELECT id, evidence::text AS e FROM related_subjects ORDER BY id"
+            )
+            forward, _ = split_migration_sql(MIGRATION_EVIDENCE.read_text())
+            with pytest.raises(asyncpg.CheckViolationError):
+                async with c.transaction():  # as the runner applies a migration file
+                    await c.execute(forward)
+            assert await _evidence_constraints(c) == set()
+            after = await c.fetch(
+                "SELECT id, evidence::text AS e FROM related_subjects ORDER BY id"
+            )
+            assert [tuple(r) for r in after] == [tuple(r) for r in before]
+            kinds = [
+                r["k"]
+                for r in await c.fetch("SELECT jsonb_typeof(evidence) AS k FROM related_subjects")
+            ]
+            assert kinds == ["string", "string"]
+    finally:
+        await created.close()
+        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        await admin.close()
