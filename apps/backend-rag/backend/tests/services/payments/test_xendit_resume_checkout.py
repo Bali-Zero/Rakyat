@@ -18,7 +18,7 @@ _URL = "https://checkout-staging.xendit.co/web/inv-fake-0001"
 
 def _provider(handler) -> XenditPaymentProvider:
     return XenditPaymentProvider(
-        secret_key="xnd_development_fake_key_for_tests",
+        secret_key="xnd_development_fake_key_for_tests",  # pragma: allowlist secret
         callback_verification_token="fake-token",
         public_base_url="https://example.com",
         fee_config=XenditFeeConfig(percentage_bps=350, fixed_idr=6000),

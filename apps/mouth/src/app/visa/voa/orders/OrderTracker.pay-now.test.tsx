@@ -166,7 +166,7 @@ describe("isProviderCheckoutUrl", () => {
     ["https://checkout-staging.xendit.co/web/inv-1", true],
     ["http://checkout.xendit.co/web/inv-1", false],
     ["https://checkout.xendit.co:8443/web/inv-1", false],
-    ["https://user:pw@checkout.xendit.co/web/inv-1", false],
+    ["https://user:pw@checkout.xendit.co/web/inv-1", false], // pragma: allowlist secret
     ["https://evil.example/checkout.xendit.co", false],
     ["https://app.midtrans.com/snap/v4/redirection/tok", false],
     ["", false],
