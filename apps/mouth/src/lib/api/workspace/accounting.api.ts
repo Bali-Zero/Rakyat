@@ -89,6 +89,43 @@ export interface MatchCandidatesResponse {
   txn_id: number;
   transfer_amount_idr: number;
   candidates: MatchCandidate[];
+  /** Candidates among payments a practice already records (link, never confirm). */
+  recorded_candidates: MatchCandidate[];
+}
+
+/** Advice only: the screen never acts on a light by itself. */
+export type InboxLight = "green" | "recorded" | "yellow" | "red";
+
+/** One unmatched incoming transfer with its light (GET /reconciliation-inbox). */
+export interface ReconciliationInboxItem {
+  txn_id: number;
+  txn_date: string;
+  amount_idr: number;
+  description: string;
+  light: InboxLight;
+  open_candidates: number;
+  open_strong: number;
+  recorded_candidates: number;
+  recorded_strong: number;
+  suggestion: MatchCandidate | null;
+}
+
+export interface LinkRecordedRequest {
+  bank_txn_id: number;
+  practice_id: number;
+  invoice_id: number;
+}
+
+export interface IgnoreTransactionRequest {
+  bank_txn_id: number;
+  /** 3 to 200 characters after trimming. */
+  reason: string;
+}
+
+export interface ReconciliationActionResponse {
+  bank_txn_id: number;
+  reconciled_status: string;
+  reconciliation_log_id: number | null;
 }
 
 export interface ConfirmRequest {
@@ -231,6 +268,45 @@ export const accountingApi = {
         reconciled_status: opts?.reconciledStatus,
         limit: opts?.limit,
       })}`,
+    );
+  },
+
+  /** Unmatched incoming transfers with their light, newest first. */
+  async getReconciliationInbox(
+    limit?: number,
+  ): Promise<ReconciliationInboxItem[]> {
+    return api.get<ReconciliationInboxItem[]>(
+      `/api/crm/accounting/reconciliation-inbox${qs({ limit })}`,
+    );
+  },
+
+  /** Attach a transfer to the invoice of a payment already recorded. Moves no money. */
+  async linkRecorded(
+    payload: LinkRecordedRequest,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/link-recorded",
+      payload,
+    );
+  },
+
+  /** Mark a transfer as not a client payment. Moves no money. */
+  async ignoreTransaction(
+    payload: IgnoreTransactionRequest,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/ignore-transaction",
+      payload,
+    );
+  },
+
+  /** Put a linked or ignored transfer back to unmatched. */
+  async reopenTransaction(
+    bankTxnId: number,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/reopen-transaction",
+      { bank_txn_id: bankTxnId },
     );
   },
 

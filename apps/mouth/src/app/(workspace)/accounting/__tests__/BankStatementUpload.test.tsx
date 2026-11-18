@@ -3,7 +3,13 @@
  * All names, accounts and amounts are invented.
  */
 
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  act,
+} from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { BankStatementUpload } from "../_components/BankStatementUpload";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
@@ -229,5 +235,42 @@ describe("BankStatementUpload", () => {
     d.resolve(previewFixture({ row_count: 4 }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("CONTOH PT", { exact: false })).toBeNull();
+  });
+
+  it("F4: Cancel in the same tick as Import does not reset the card while the import is in flight", async () => {
+    preview.mockResolvedValue(previewFixture());
+    const d = deferred<ReturnType<typeof importFixture>>();
+    doImport.mockReturnValue(d.promise);
+    render(<BankStatementUpload onImported={vi.fn()} />);
+    choose(csv());
+    const importBtn = await screen.findByRole("button", {
+      name: /import 3 transactions/i,
+    });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    act(() => {
+      importBtn.click();
+      cancel.click();
+    });
+    expect(doImport).toHaveBeenCalledTimes(1);
+    expect(input()).toBeDisabled();
+    expect(screen.getByText(/0000000000 · CONTOH PT/)).toBeInTheDocument();
+    d.resolve(importFixture());
+    await screen.findByText(/new transactions stored/);
+  });
+
+  it("N3a: Cancel then Import in one tick imports nothing", async () => {
+    preview.mockResolvedValue(previewFixture());
+    render(<BankStatementUpload onImported={vi.fn()} />);
+    choose(csv());
+    const importBtn = await screen.findByRole("button", {
+      name: /import 3 transactions/i,
+    });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    act(() => {
+      cancel.click();
+      importBtn.click();
+    });
+    expect(doImport).not.toHaveBeenCalled();
+    expect(input()).toBeEnabled();
   });
 });

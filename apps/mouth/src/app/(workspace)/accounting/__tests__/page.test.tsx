@@ -7,7 +7,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import AccountingPage from "../page";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
-import { importFixture, previewFixture } from "./fixtures";
+import { importFixture, inboxItem, previewFixture } from "./fixtures";
 
 // Stable identities: the page's load callbacks depend on them.
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
@@ -18,6 +18,10 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
     getSummary: vi.fn(),
     getCashout: vi.fn(),
     getBankTransactions: vi.fn(),
+    getReconciliationInbox: vi.fn(),
+    linkRecorded: vi.fn(),
+    ignoreTransaction: vi.fn(),
+    reopenTransaction: vi.fn(),
     getMatchCandidates: vi.fn(),
     confirm: vi.fn(),
     exportSheet: vi.fn(),
@@ -39,15 +43,9 @@ beforeEach(() => {
     by_type: [],
   } as never);
   api.getCashout.mockResolvedValue([]);
-  api.getBankTransactions.mockResolvedValue([
-    {
-      id: 7,
-      direction: "credit",
-      amount_idr: 500000,
-      txn_date: "2026-01-05",
-      description: "CONTOH TRANSFER",
-    },
-  ] as never);
+  api.getReconciliationInbox.mockResolvedValue([
+    inboxItem({ txn_id: 7, description: "CONTOH TRANSFER" }),
+  ]);
 });
 
 describe("AccountingPage", () => {
@@ -91,7 +89,7 @@ describe("AccountingPage", () => {
       await screen.findByRole("button", { name: /reconciliation/i }),
     );
     await screen.findByText("CONTOH TRANSFER");
-    const inboxCalls = api.getBankTransactions.mock.calls.length;
+    const inboxCalls = api.getReconciliationInbox.mock.calls.length;
     const summaryCalls = api.getSummary.mock.calls.length;
 
     fireEvent.change(screen.getByTestId("bank-statement-input"), {
@@ -102,7 +100,7 @@ describe("AccountingPage", () => {
     );
     await screen.findByText(/new transactions stored/);
     await vi.waitFor(() => {
-      expect(api.getBankTransactions.mock.calls.length).toBe(inboxCalls + 1);
+      expect(api.getReconciliationInbox.mock.calls.length).toBe(inboxCalls + 1);
       expect(api.getSummary.mock.calls.length).toBe(summaryCalls + 1);
     });
     // the result line survives the list reload
