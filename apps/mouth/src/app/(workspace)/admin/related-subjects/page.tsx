@@ -73,6 +73,37 @@ function driveUrl(fileId: string): string {
   return `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
 }
 
+/** Sources whose name was read from a document: a lead for a person, not a fact. */
+const OCR_MARKS: Readonly<Record<string, string>> = {
+  ocr_corroborated: "OCR",
+  ocr_single: "OCR, one file",
+};
+const OCR_TITLE =
+  "This name was read from a document by OCR. It is not verified.";
+
+const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  manual: "entered by hand",
+  mrz_corrected: "corrected from the passport MRZ",
+  registration: "registration",
+  ocr_corroborated: "OCR",
+  ocr_single: "OCR, one file",
+};
+
+/** The mark beside a name read by OCR; nothing for any other source. */
+function NameMark({ source }: { source?: string | null }) {
+  const label = source ? OCR_MARKS[source] : undefined;
+  if (!label) return null;
+  return (
+    <span
+      data-testid="name-mark"
+      title={OCR_TITLE}
+      className="ml-2 border border-[var(--line-control)] px-1.5 py-0.5 align-middle text-[10px] font-[650] uppercase tracking-[0.08em] text-[var(--tx-secondary)]"
+    >
+      {label}
+    </span>
+  );
+}
+
 const CELL = "px-3 py-2 align-top text-[13px] text-[var(--tx-pure)]";
 const HEAD =
   "px-3 py-2 text-left text-[10px] font-[650] uppercase tracking-[0.12em] text-[var(--tx-secondary)]";
@@ -194,6 +225,9 @@ export default function RelatedRegistryPage() {
       prev.kind === kind ? prev : { ...prev, kind, offset: 0 },
     );
 
+  const shownNames = detail?.names ?? [];
+  const namesTotal = detail?.names_total ?? shownNames.length;
+
   const pageStart = total === 0 ? 0 : query.offset + 1;
   const pageEnd = Math.min(query.offset + LIMIT, total);
 
@@ -274,7 +308,10 @@ export default function RelatedRegistryPage() {
                         selectedId === row.id && "bg-[var(--bz-card-hover)]",
                       )}
                     >
-                      <td className={CELL}>{row.display_name ?? "—"}</td>
+                      <td className={CELL}>
+                        {row.display_name ?? "—"}
+                        <NameMark source={row.name_source} />
+                      </td>
                       <td className={CELL}>{row.kind}</td>
                       <td className={CELL}>
                         {shown.map((identifier) => (
@@ -351,6 +388,7 @@ export default function RelatedRegistryPage() {
                 style={SERIF_SECTION}
               >
                 {detail.display_name ?? `Unnamed subject #${detail.id}`}
+                <NameMark source={detail.name_source} />
               </h2>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px] text-[var(--tx-pure)]">
                 <dt className="text-[var(--tx-secondary)]">Kind</dt>
@@ -370,6 +408,35 @@ export default function RelatedRegistryPage() {
                   </>
                 )}
               </dl>
+
+              <div>
+                <h3 className={HEAD}>Names</h3>
+                {shownNames.length === 0 ? (
+                  <p className="text-[13px] text-[var(--tx-secondary)]">
+                    No names.
+                  </p>
+                ) : (
+                  <ul className="text-[13px] text-[var(--tx-pure)]">
+                    {shownNames.map((entry, index) => (
+                      <li
+                        key={`${index}:${entry.source}:${entry.name}`}
+                        data-testid="registry-name"
+                      >
+                        {entry.name} · {SOURCE_LABELS[entry.source] ?? "—"} ·{" "}
+                        {entry.created_at.slice(0, 10)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {namesTotal > shownNames.length && (
+                  <p
+                    data-testid="registry-names-truncated"
+                    className="text-[13px] text-[var(--tx-secondary)]"
+                  >
+                    {`Showing ${shownNames.length} of ${namesTotal} names.`}
+                  </p>
+                )}
+              </div>
 
               <div>
                 <h3 className={HEAD}>Identifiers</h3>

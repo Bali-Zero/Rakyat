@@ -303,4 +303,132 @@ describe("related subjects registry page", () => {
     await settle();
     expect(screen.getByText(/Showing 1-50 of 137/)).toBeTruthy();
   });
+
+  const OCR_TITLE =
+    "This name was read from a document by OCR. It is not verified.";
+  const rowWith = (id: number, source: string | null) => ({
+    ...ROW_A,
+    id,
+    display_name: `ZzName ${id}`,
+    name_source: source,
+  });
+
+  it('F12 "OCR" marks an ocr_corroborated name, with its title, in the row and in the detail', async () => {
+    const detail = {
+      ...DETAIL_A,
+      name_source: "ocr_corroborated",
+      names: [],
+      names_total: 0,
+    };
+    apiMock.get.mockImplementation((url: string) =>
+      Promise.resolve(
+        isDetail(url) ? detail : page([rowWith(7, "ocr_corroborated")]),
+      ),
+    );
+    render(<RelatedRegistryPage />);
+    await settle();
+    const mark = within(screen.getAllByTestId("registry-row")[0]).getByTestId(
+      "name-mark",
+    );
+    expect(mark.textContent).toBe("OCR");
+    expect(mark.getAttribute("title")).toBe(OCR_TITLE);
+    fireEvent.click(screen.getAllByTestId("registry-row")[0]);
+    await settle();
+    const heading = screen.getByRole("heading", { level: 2 });
+    const detailMark = within(heading).getByTestId("name-mark");
+    expect(detailMark.textContent).toBe("OCR");
+    expect(detailMark.getAttribute("title")).toBe(OCR_TITLE);
+  });
+
+  it('F13 "OCR, one file" marks an ocr_single name, with its title', async () => {
+    defaults(page([rowWith(7, "ocr_single")]));
+    render(<RelatedRegistryPage />);
+    await settle();
+    const mark = within(screen.getAllByTestId("registry-row")[0]).getByTestId(
+      "name-mark",
+    );
+    expect(mark.textContent).toBe("OCR, one file");
+    expect(mark.getAttribute("title")).toBe(OCR_TITLE);
+  });
+
+  it("F14 registration, mrz_corrected, manual and a null source carry no mark", async () => {
+    defaults(
+      page([
+        rowWith(1, "registration"),
+        rowWith(2, "mrz_corrected"),
+        rowWith(3, "manual"),
+        rowWith(4, null),
+        ROW_A,
+      ]),
+    );
+    render(<RelatedRegistryPage />);
+    await settle();
+    expect(screen.getAllByTestId("registry-row")).toHaveLength(5);
+    expect(screen.queryAllByTestId("name-mark")).toHaveLength(0);
+  });
+
+  it("F15 the detail lists the names with source and date", async () => {
+    const detail = {
+      ...DETAIL_A,
+      names: [
+        {
+          name: "ZZ REG NAME",
+          source: "registration",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          name: "ZZ OCR NAME",
+          source: "ocr_single",
+          created_at: "2026-02-03T10:00:00Z",
+        },
+      ],
+      names_total: 2,
+    };
+    apiMock.get.mockImplementation((url: string) =>
+      Promise.resolve(isDetail(url) ? detail : page([ROW_A])),
+    );
+    render(<RelatedRegistryPage />);
+    await settle();
+    fireEvent.click(screen.getAllByTestId("registry-row")[0]);
+    await settle();
+    const entries = screen.getAllByTestId("registry-name");
+    expect(entries).toHaveLength(2);
+    expect(entries[0].textContent).toBe(
+      "ZZ REG NAME · registration · 2026-01-01",
+    );
+    expect(entries[1].textContent).toBe(
+      "ZZ OCR NAME · OCR, one file · 2026-02-03",
+    );
+    expect(screen.queryByTestId("registry-names-truncated")).toBeNull();
+  });
+
+  it("F16 says so when names_total is above the number shown", async () => {
+    const shown = Array.from({ length: 20 }, (_, i) => ({
+      name: `ZZ ROW ${i}`,
+      source: "ocr_single",
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    const detail = { ...DETAIL_A, names: shown, names_total: 26 };
+    apiMock.get.mockImplementation((url: string) =>
+      Promise.resolve(isDetail(url) ? detail : page([ROW_A])),
+    );
+    render(<RelatedRegistryPage />);
+    await settle();
+    fireEvent.click(screen.getAllByTestId("registry-row")[0]);
+    await settle();
+    expect(screen.getAllByTestId("registry-name")).toHaveLength(20);
+    expect(screen.getByTestId("registry-names-truncated").textContent).toBe(
+      "Showing 20 of 26 names.",
+    );
+  });
+
+  it("F17 an answer without names shows the empty names line and no mark", async () => {
+    defaults();
+    render(<RelatedRegistryPage />);
+    await settle();
+    fireEvent.click(screen.getAllByTestId("registry-row")[0]);
+    await settle();
+    expect(screen.getByText("No names.")).toBeTruthy();
+    expect(screen.queryAllByTestId("name-mark")).toHaveLength(0);
+  });
 });
