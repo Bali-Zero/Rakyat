@@ -125,8 +125,9 @@ describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", ()
     );
     const catalogueSrc = readFileSync(cataloguePath, "utf-8");
     const enumBlock =
-      catalogueSrc.split("class VisaType(str, Enum):")[1]?.split("@dataclass")[0] ??
-      "";
+      catalogueSrc
+        .split("class VisaType(str, Enum):")[1]
+        ?.split("@dataclass")[0] ?? "";
     const backendVisaTypes = new Set(
       [...enumBlock.matchAll(/=\s*"([^"]+)"/g)].map((m) => m[1]),
     );
