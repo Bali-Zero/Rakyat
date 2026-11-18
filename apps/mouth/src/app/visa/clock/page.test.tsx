@@ -125,8 +125,9 @@ describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", ()
     );
     const catalogueSrc = readFileSync(cataloguePath, "utf-8");
     const enumBlock =
-      catalogueSrc.split("class VisaType(str, Enum):")[1]?.split("@dataclass")[0] ??
-      "";
+      catalogueSrc
+        .split("class VisaType(str, Enum):")[1]
+        ?.split("@dataclass")[0] ?? "";
     const backendVisaTypes = new Set(
       [...enumBlock.matchAll(/=\s*"([^"]+)"/g)].map((m) => m[1]),
     );
@@ -155,5 +156,58 @@ describe("VisaClockPage — backend catalogue parity (no retired B211A 422)", ()
     expect(labelByCode.C7A).toMatch(/Music Performance/i);
     expect(labelByCode.C7B).toMatch(/Music Crew/i);
     expect(labelByCode.C7B).not.toMatch(/Sport/i);
+  });
+});
+
+describe("VisaClockPage — Not sure hands off to the visa team", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+  });
+
+  it("is a separate button, never an option of the Visa type select", () => {
+    render(<VisaClockPage />);
+    const select = screen.getByLabelText("Visa type") as HTMLSelectElement;
+    expect(
+      Array.from(select.options).some((o) =>
+        /not sure/i.test(o.textContent ?? ""),
+      ),
+    ).toBe(false);
+    const button = screen.getByRole("button", {
+      name: "Not sure which visa you are on? Ask us",
+    });
+    expect(button).toHaveAttribute("type", "button");
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("clicking it shows the existing WhatsApp CTA to the visa funnel", () => {
+    render(<VisaClockPage />);
+    expect(
+      screen.queryByRole("link", { name: /ask the visa team on whatsapp/i }),
+    ).not.toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: /not sure which visa/i });
+    fireEvent.click(button);
+
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    const link = screen.getByRole("link", {
+      name: /ask the visa team on whatsapp/i,
+    });
+    const href = new URL(link.getAttribute("href") ?? "");
+    expect(href.hostname).toBe("wa.me");
+    expect(href.searchParams.get("utm_campaign")).toBe("visa");
+    expect(href.searchParams.get("utm_medium")).toBe("whatsapp_cta");
+  });
+
+  it("never posts to /api/visa/clock and keeps the count at real visa types", () => {
+    render(<VisaClockPage />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /not sure which visa/i }),
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(trackerMocks.formSubmitted).not.toHaveBeenCalled();
+    // Trust strip counts visa types only (13), not the ask-us button.
+    expect(screen.getByText("13")).toBeInTheDocument();
   });
 });
