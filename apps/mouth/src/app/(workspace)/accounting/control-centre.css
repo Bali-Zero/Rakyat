@@ -86,3 +86,7 @@
   --cc-ink: var(--cc-nomatch-ink);
   --cc-mark: var(--cc-nomatch-mark);
 }
+
+.cc-done :is(.border, .border-t):not(button) {
+  border-color: var(--cc-hair);
+}

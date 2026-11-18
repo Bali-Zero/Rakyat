@@ -122,7 +122,7 @@ export function ReconciliationBody({
     return (
       <div
         data-testid="cc-done"
-        className="mt-5 rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] px-7 py-[26px] text-[var(--cc-tx)]"
+        className="cc-done mt-5 rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] px-7 py-[26px] text-[var(--cc-tx)]"
       >
         <h2 className="text-xl font-semibold">Done today</h2>
         <DoneTodayList data={done} status={doneStatus} onRetry={onRetryDone} />

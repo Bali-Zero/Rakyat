@@ -195,6 +195,27 @@ describe("ported reconciliation contract", () => {
     expect(screen.getByTestId("cc-count-link")).toHaveTextContent("1");
     expect(screen.getByTestId("cc-count-choose")).toHaveTextContent("2");
     expect(screen.getByTestId("cc-count-nomatch")).toHaveTextContent("1");
+
+    await openTab("confirm", "ROW GREEN");
+    let transfers = within(screen.getByRole("list", { name: "Transfers" }));
+    expect(transfers.getAllByRole("listitem")).toHaveLength(1);
+    expect(transfers.getByText("ROW GREEN")).toBeInTheDocument();
+
+    await openTab("link", "ROW RECORDED");
+    transfers = within(screen.getByRole("list", { name: "Transfers" }));
+    expect(transfers.getAllByRole("listitem")).toHaveLength(1);
+    expect(transfers.getByText("ROW RECORDED")).toBeInTheDocument();
+
+    await openTab("choose", "ROW YELLOW");
+    transfers = within(screen.getByRole("list", { name: "Transfers" }));
+    expect(transfers.getAllByRole("listitem")).toHaveLength(2);
+    expect(transfers.getByText("ROW YELLOW")).toBeInTheDocument();
+    expect(transfers.getByText("ROW ODD")).toBeInTheDocument();
+
+    await openTab("nomatch", "ROW RED");
+    transfers = within(screen.getByRole("list", { name: "Transfers" }));
+    expect(transfers.getAllByRole("listitem")).toHaveLength(1);
+    expect(transfers.getByText("ROW RED")).toBeInTheDocument();
   });
 
   it("02: aria-current belongs only to the opened row", async () => {
@@ -1207,5 +1228,45 @@ describe("ported reconciliation contract", () => {
     });
     expect(screen.queryByText("Confirm payment match")).toBeNull();
     expect(api.linkRecorded).not.toHaveBeenCalled();
+  });
+
+  it("61: a held import disables Skip for now and Ignore in the To choose table view", async () => {
+    api.getReconciliationInbox.mockResolvedValue([
+      ...four(),
+      inboxItem({
+        txn_id: 5,
+        light: "yellow",
+        description: "ROW YELLOW TWO",
+        open_candidates: 1,
+      }),
+    ]);
+    const held = deferred<ReturnType<typeof importFixture>>();
+    api.previewBankStatement.mockResolvedValue(previewFixture());
+    api.importBankStatement.mockReturnValueOnce(held.promise);
+    renderInbox();
+    await ready();
+    await openTab("choose", "ROW YELLOW");
+    await screen.findByTestId("cc-cand-11");
+    const skip = screen.getByRole("button", { name: "Skip for now" });
+    const ignore = screen.getByRole("button", { name: "Ignore" });
+    expect(skip).toBeEnabled();
+    expect(ignore).toBeEnabled();
+    fireEvent.change(screen.getByTestId("bank-statement-input"), {
+      target: { files: [new File(["x"], "statement.csv")] },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Import 3 transactions/i }),
+    );
+    expect(skip).toBeDisabled();
+    expect(ignore).toBeDisabled();
+    fireEvent.click(skip);
+    fireEvent.click(ignore);
+    expect(row(3)).toHaveAttribute("aria-current", "true");
+    expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
+    await act(async () => held.resolve(importFixture()));
+    await waitFor(() => {
+      expect(skip).toBeEnabled();
+      expect(ignore).toBeEnabled();
+    });
   });
 });

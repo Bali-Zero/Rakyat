@@ -223,6 +223,7 @@ describe("Accounting control centre", () => {
     expect(screen.getByTestId("cc-count-done")).toHaveTextContent("4");
     fireEvent.click(tab("done"));
     expect(screen.getByTestId("cc-done")).toHaveTextContent("Done today");
+    expect(screen.getByTestId("cc-done")).toHaveClass("cc-done");
     expect(screen.getByText("Linked and ignored")).toBeInTheDocument();
   });
 

@@ -21,6 +21,12 @@ const components = componentNames.map((name) => ({
 }));
 
 describe("control-centre palette boundary", () => {
+  it("gives every non-button border inside Done today the hairline", () => {
+    expect(palette).toMatch(
+      /\.cc-done :is\(\.border, \.border-t\):not\(button\)\s*\{\s*border-color: var\(--cc-hair\);\s*\}/,
+    );
+  });
+
   it("declares every control-centre custom property used by components", () => {
     const declared = new Set(
       Array.from(palette.matchAll(/(--cc-[\w-]+)\s*:/g), (match) => match[1]),
