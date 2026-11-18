@@ -112,7 +112,18 @@ class TestCoverageBounds:
         assert last_open_day_before(COVERAGE_END + timedelta(days=5)) is None
 
     def test_departure_far_past_coverage_end_returns_none(self) -> None:
-        assert last_open_day_before(date(2027, 6, 1)) is None
+        assert last_open_day_before(date(2028, 6, 1)) is None
+
+    def test_january_2027_arrival_after_new_year_and_isra_mikraj_is_computable(self) -> None:
+        # Thu 2026-12-31 is open; Fri 2027-01-01 (Tahun Baru) + Sat-Sun 2-3 Jan are closed.
+        assert last_open_day_before(date(2027, 1, 4)) == date(2026, 12, 31)
+        # Mon 2027-01-04 is open; Tue 2027-01-05 is Isra Mikraj -> Wed 2027-01-06 cuts off on Mon 4 Jan.
+        assert last_open_day_before(date(2027, 1, 6)) == date(2027, 1, 4)
+
+    def test_march_2027_nyepi_idulfitri_ten_day_closure_walks_back_to_friday_5_march(self) -> None:
+        # Sat 6 Mar - Mon 15 Mar 2027 (weekend + Nyepi + Idulfitri 1448 H + weekend + cuti bersama)
+        # is a 10-day closed run — well inside _MAX_LOOKBACK_DAYS=60.
+        assert last_open_day_before(date(2027, 3, 16)) == date(2027, 3, 5)
 
     def test_departure_exactly_at_coverage_end_is_still_computable(self) -> None:
         # The boundary date itself IS in coverage -- only strictly-after
@@ -166,7 +177,7 @@ class TestCoverageEndHorizonWarning:
             is not None
         )
 
-    def test_never_invents_a_2027_closure(self) -> None:
+    def test_never_invents_a_2028_closure(self) -> None:
         # The warning fires past COVERAGE_END, but OPERATING_CALENDAR itself
         # must stay exactly what TestCalendarDataNeverExceedsCoverageEnd pins.
         coverage_end_horizon_warning(COVERAGE_END + timedelta(days=200))
@@ -175,10 +186,12 @@ class TestCoverageEndHorizonWarning:
 
 class TestCalendarDataNeverExceedsCoverageEnd:
     """Guard (task requirement): nobody can quietly paste an undecreed
-    2027+ date into `OPERATING_CALENDAR` later without this failing."""
+    2028+ date into `OPERATING_CALENDAR` later without this failing."""
 
     def test_no_calendar_date_beyond_coverage_end(self) -> None:
-        assert len(OPERATING_CALENDAR) > 0, "calendar must not be silently emptied either"
+        # 4 late-2026 dates from COVERAGE_START (2026-07-28) + 26 full-year 2027 SKB dates = 30.
+        assert len(OPERATING_CALENDAR) == 30, "calendar must carry late-2026 + full-year 2027 SKB dates"
+        assert any(entry.at.year == 2027 for entry in OPERATING_CALENDAR)
         for entry in OPERATING_CALENDAR:
             assert entry.at <= COVERAGE_END, (
                 f"{entry.name} ({entry.at}) is beyond COVERAGE_END={COVERAGE_END} — "

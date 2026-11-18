@@ -12,29 +12,27 @@ photo/interview (since 29 May 2025) and carry their own published D-7
 Ngurah Rai filing deadline (`safe_clock.py`), untouched by this ruling.
 
 Provenance — NO date is typed in this module. The decreed dates live in
-`backend.data.id_holidays` (SKB 3 Menteri No. 1497/2025, 2/2025, 5/2025 —
-see that module for the decree text, URLs and the 2026-07-27 corroboration
-route), because a second organ now needs the same dates: the compliance
-obligations register rolls a statutory tax deadline off a hari libur
-(`services.compliance.business_days`, PMK 81/2024). Two readers, one table,
-no hand-copied date.
+`backend.data.id_holidays` (SKB 3 Menteri 2026 No. 1497/2025, 2/2025, 5/2025 and
+SKB 3 Menteri 2027 No. 1205/2026, 3/2026, 2/2026 — see that module for the
+decree text, URLs and corroboration routes), because a second organ now needs
+the same dates: the compliance obligations register rolls a statutory tax
+deadline off a hari libur (`services.compliance.business_days`, PMK 81/2024).
+Two readers, one table, no hand-copied date.
 
-    This module still publishes only the closure set from 2026-07-28
-    onward: `OPERATING_CALENDAR` is the shared table CLIPPED to
-    [COVERAGE_START, COVERAGE_END], which is byte-for-byte the four days it
-    carried before the table moved out (17 Aug, 25 Aug, 24 Dec, 25 Dec
-    2026). Clipping is not data loss — `is_open` already fails closed
+    This module publishes the closure set from 2026-07-28 through 2027-12-31:
+    `OPERATING_CALENDAR` is the shared table CLIPPED to
+    [COVERAGE_START, COVERAGE_END] (4 dates in late 2026 plus all 26 decreed
+    2027 dates). Clipping is not data loss — `is_open` already fails closed
     outside coverage — it keeps this gate's promise that it cannot certify
-    an open day before its materialization boundary. Widening the VOA
-    pilot's coverage is a separate decision with its own evidence; it is
-    not a side effect of giving the dates a home.
+    an open day before its materialization boundary or past the latest loaded
+    decree.
 
-⚠️ COVERAGE_END = 2026-12-31. The 2027 SKB now exists (No. 1205/2026, 3/2026,
-2/2026, 15 September 2026) and is loaded in the shared table for the tax-deadline
-reader, but this gate's coverage is NOT widened by it: widening the VOA pilot's
-window is a separate decision with its own evidence. This module therefore still
-carries ZERO 2027 (or later) dates, and `OPERATING_CALENDAR` clips them away. `test_no_calendar_date_beyond_coverage_end`
-in the test suite pins this so nobody can quietly paste one in later.
+⚠️ COVERAGE_END = 2027-12-31. Both 2026 and full-year 2027 SKB decrees are
+loaded in `backend.data.id_holidays` (see `DECREED_YEARS = {2026, 2027}`).
+The 2028 SKB does not exist yet (expected ~September 2027), so this module
+carries ZERO 2028 (or later) dates, and `OPERATING_CALENDAR` clips anything
+beyond `COVERAGE_END`. `test_no_calendar_date_beyond_coverage_end` in the test
+suite pins this so nobody can quietly paste an undecreed date in later.
 
 PURE functions only — no I/O, no ``date.today()`` anywhere in this module.
 The caller always injects ``today`` (or the day being tested); that is what
@@ -69,11 +67,13 @@ __all__ = [
 # reading can be revisited without re-sourcing a single date.
 OperatingCalendarDate = Holiday
 
-# The source decree spans 2026, but the closure subset this gate publishes
-# begins at the pilot's materialization boundary. Coverage describes what THIS
-# dataset can actually certify, not what exists in the clipped part.
+# The shared decree table spans 2026 and 2027 (`DECREED_YEARS = {2026, 2027}`);
+# the closure subset this gate publishes runs from the pilot's materialization
+# boundary through the latest fully decreed year (2027-12-31). Coverage
+# describes what THIS dataset can actually certify, not what exists in the
+# clipped pre-pilot part or undecreed future years.
 COVERAGE_START: date = date(2026, 7, 28)
-COVERAGE_END: date = date(2026, 12, 31)
+COVERAGE_END: date = date(2027, 12, 31)
 
 # Derived, never typed: a new non-working day is added to the shared decree
 # table, and shows up here only if it falls inside the coverage window.
@@ -85,16 +85,17 @@ _CLOSED_DATES: frozenset[date] = frozenset(d.at for d in OPERATING_CALENDAR)
 
 # Generous bound on how far back `last_open_day_before` will walk before
 # concluding "no open day exists". The longest real closed run in
-# OPERATING_CALENDAR is 4 consecutive days (Thu 24 Dec - Sun 27 Dec 2026);
-# this bound only exists so a future data error (e.g. an entire month
-# marked closed) fails loudly instead of looping forever.
+# OPERATING_CALENDAR is 10 consecutive days (Sat 6 Mar - Mon 15 Mar 2027,
+# weekend + Nyepi 1949 + Idulfitri 1448 H); this bound only exists so a
+# future data error (e.g. an entire quarter marked closed) fails loudly
+# instead of looping forever.
 _MAX_LOOKBACK_DAYS: int = 60
 
 # How many days of runway before `COVERAGE_END` must remain before
-# `coverage_end_horizon_warning` starts naming the gap (L1326). The 2027
-# SKB is decreed and loaded in `backend.data.id_holidays`, but coverage stays
-# at 2026-12-31 until the pilot's window is widened on its own evidence; 45
-# days gives a real lead window to do that before ISSUANCE fails closed.
+# `coverage_end_horizon_warning` starts naming the gap (L1326). Both 2026 and
+# 2027 SKBs are decreed and loaded in `backend.data.id_holidays`; 45 days gives
+# a real lead window to source and ship the 2028 SKB decree before ISSUANCE
+# fails closed at 2027-12-31.
 COVERAGE_END_HORIZON_WARNING_DAYS: int = 45
 
 
@@ -128,7 +129,7 @@ def last_open_day_before(day: date) -> date | None:
       before ``day`` and therefore begins on the covered boundary itself.
     - no open day was found within `_MAX_LOOKBACK_DAYS` (defensive only —
       not reachable with the current `OPERATING_CALENDAR` data, whose
-      longest closed run is 4 days).
+      longest closed run is 10 days).
 
     Pure function of ``day`` alone — no wall-clock read.
     """
@@ -150,7 +151,7 @@ def coverage_end_horizon_warning(
     """A named alert once `COVERAGE_END` is within `threshold_days` of
     `today` — ``None`` while the horizon is still far away (L1326).
 
-    This does NOT invent a 2027 (or later) closure, and never widens
+    This does NOT invent a 2028 (or later) closure, and never widens
     `OPERATING_CALENDAR`: it only measures the distance to the decreed
     boundary this module already carries. Past `COVERAGE_END`, `is_open`
     and `last_open_day_before` already fail closed on their own — this

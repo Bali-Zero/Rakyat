@@ -319,7 +319,9 @@ class GarudaOrderRepository:
             )
             if outcome.replayed:
                 assert outcome.response_body is not None
-                return outcome.response_body, True
+                # A pre-upgrade replay can contain a provider capability or
+                # the old pending-resume scheme. Return the tracker response.
+                return {**outcome.response_body, "checkout_url": None}, True
 
             order_id = outcome.order_id
             if order_id is None:
@@ -334,8 +336,9 @@ class GarudaOrderRepository:
                 # Idempotency-Keys are allowed to reference the same order
                 # (no uniqueness on garuda_order_idempotency.order_id), and
                 # this also means a live `created` order gets a REAL
-                # checkout_url below (the CREATED branch calls the provider)
-                # instead of ever reaching the `pending-resume:` placeholder.
+                # checkout_url below (the CREATED branch calls the provider),
+                # while an already `awaiting_payment` order cleanly returns
+                # `checkout_url=None` for the tracker redirect.
                 existing = await conn.fetchrow(
                     """
                     SELECT order_id FROM garuda_orders
@@ -462,7 +465,6 @@ class GarudaOrderRepository:
                         order_id=order_id,
                         journal_event_id=event_id,
                         job_type="checkout_ready_email",
-                        payload={"checkout_url": checkout.checkout_url},
                     )
             checkout_url = checkout.checkout_url
             final_state = OrderState.AWAITING_PAYMENT.value
@@ -480,22 +482,9 @@ class GarudaOrderRepository:
             # offer a checkout action ONLY while the order is genuinely
             # still awaiting payment.
             final_state = row["state"]
-            if final_state == OrderState.AWAITING_PAYMENT.value:
-                checkout_row = await self._pool.fetchrow(
-                    "SELECT provider_session_id FROM garuda_orders WHERE order_id = $1", order_id
-                )
-                # Sandbox-safe placeholder: the real checkout_url isn't
-                # persisted (it's a provider capability, never journal/DB
-                # content per SM-G03) -- a genuine resume-after-crash
-                # re-fetches it from the provider by provider_session_id.
-                # Kept minimal here; flagged in the PR report as a
-                # follow-up rather than guessed (scoped to the orchestrator
-                # per the standing "returning customer" spec).
-                checkout_url = (
-                    f"pending-resume:{checkout_row['provider_session_id']}" if checkout_row else ""
-                )
-            else:
-                checkout_url = None
+            # CheckoutFlow goes to the tracker on resume. The provider URL
+            # is a capability available only on the initial checkout.
+            checkout_url = None
 
         response_body = {
             "order_id": order_id,
@@ -508,7 +497,7 @@ class GarudaOrderRepository:
                 conn,
                 key_sha256=idempotency_key_sha256,
                 response_status=201,
-                response_body=response_body,
+                response_body={**response_body, "checkout_url": None},
             )
         return response_body, False
 

@@ -81,7 +81,7 @@ class _Recorder:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        return httpx.Response(self.status, json={"ok": True})
+        return httpx.Response(self.status, json={"success": True})
 
 
 def _sender(recorder: _Recorder):
