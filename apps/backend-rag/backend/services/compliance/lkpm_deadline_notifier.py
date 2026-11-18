@@ -35,6 +35,9 @@ TAX_SUPERVISOR: str = "angel.tax@balizero.com"
 TAX_CONSULTANTS_NON_SUPERVISOR: tuple[str, ...] = (
     "kadek.tax@balizero.com",
     "dewaayu.tax@balizero.com",
+    # Owner decision 2026-11-18: Dea and Candra (LKPM team since #446) also get the unassigned-report alert
+    "dea@balizero.com",
+    "candra@balizero.com",
     # faisha.tax@balizero.com removed 2026-09-19 — offboarded, must not keep
     # receiving LKPM deadline notifications. Her 12 existing lkpm_assigned_to
     # rows still need a human reassignment decision (see PLAN.md).
