@@ -36,7 +36,6 @@ def _configure_runtime(
     scheduler = SimpleNamespace(stop=AsyncMock())
     calls: dict[str, Any] = {
         "initialize_services": AsyncMock(),
-        "initialize_plugins": AsyncMock(),
         "init_scheduler": AsyncMock(return_value=scheduler),
         "webhook_start": AsyncMock(),
         "close_checkpointer": AsyncMock(),
@@ -60,10 +59,6 @@ def _configure_runtime(
         "backend.app.setup.service_initializer": _module(
             "backend.app.setup.service_initializer",
             initialize_services=calls["initialize_services"],
-        ),
-        "backend.app.setup.plugin_initializer": _module(
-            "backend.app.setup.plugin_initializer",
-            initialize_plugins=calls["initialize_plugins"],
         ),
         "backend.app.modules.notifications.scheduler": _module(
             "backend.app.modules.notifications.scheduler",
@@ -132,7 +127,7 @@ def _configure_runtime(
 
 
 @pytest.mark.asyncio
-async def test_lifespan_success_sets_readiness_and_starts_plugins_and_scheduler(
+async def test_lifespan_success_sets_readiness_and_starts_scheduler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, calls = _configure_runtime(monkeypatch)
@@ -144,7 +139,6 @@ async def test_lifespan_success_sets_readiness_and_starts_plugins_and_scheduler(
         assert app.state.process_mode == "rag"
 
     calls["initialize_services"].assert_awaited_once_with(app)
-    calls["initialize_plugins"].assert_awaited_once_with(app)
     calls["init_scheduler"].assert_awaited_once_with(app.state.db_pool)
     calls["close_checkpointer"].assert_awaited_once()
     calls["close_crm_push"].assert_awaited_once()
@@ -178,28 +172,7 @@ async def test_lifespan_critical_service_failure_sets_failed_state_and_stops_sta
         else:
             assert app.state.startup_error == "service configuration is invalid"
 
-    calls["initialize_plugins"].assert_not_awaited()
     calls["init_scheduler"].assert_not_awaited()
-
-
-@pytest.mark.parametrize("failure_mode", ["import", "initializer"])
-@pytest.mark.asyncio
-async def test_plugin_failure_is_non_critical_and_scheduler_still_starts(
-    monkeypatch: pytest.MonkeyPatch,
-    failure_mode: str,
-) -> None:
-    app, calls = _configure_runtime(monkeypatch)
-    if failure_mode == "import":
-        monkeypatch.setitem(sys.modules, "backend.app.setup.plugin_initializer", None)
-    else:
-        calls["initialize_plugins"].side_effect = RuntimeError("plugin discovery failed")
-
-    async with app_factory.lifespan(app):
-        await app.state._init_task
-        assert app.state.plugin_registry is None
-        assert app.state.startup_complete is True
-
-    calls["init_scheduler"].assert_awaited_once_with(app.state.db_pool)
 
 
 @pytest.mark.asyncio

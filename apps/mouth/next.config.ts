@@ -873,6 +873,22 @@ const nextConfig: NextConfig = {
         destination: "/press",
         permanent: true,
       },
+      // Retired generation of the homepage and of the news index (2026-11-18,
+      // Imperator lot 17): /v2 was the pre-R19 home and /v2/news the pre-R19
+      // news list, both noindex and out of the sitemap but still served with
+      // a 200. The pages that replaced them are / and /news. Redirected rather
+      // than deleted outright so a link that was ever shared keeps working.
+      // /v2/news/<anything> never existed (404 before and after).
+      {
+        source: "/v2",
+        destination: "/",
+        permanent: true,
+      },
+      {
+        source: "/v2/news",
+        destination: "/news",
+        permanent: true,
+      },
     ];
   },
 

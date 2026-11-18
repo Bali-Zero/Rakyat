@@ -50,12 +50,7 @@ describe("formatArticleDate", () => {
 // different day on the server than in the browser.
 describe("blog/news/article date rendering is zone-pinned", () => {
   const SRC = path.resolve(__dirname, "..", "..");
-  const ROOTS = [
-    "app/(blog)",
-    "app/v2/news",
-    "app/v2/_components",
-    "components/blog",
-  ];
+  const ROOTS = ["app/(blog)", "app/v2/_components", "components/blog"];
 
   function walk(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {

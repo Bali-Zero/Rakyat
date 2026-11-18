@@ -363,13 +363,6 @@ test.describe("R19 home contact actions", () => {
       expect(c.target).toBe("_blank");
       expect(c.rel).toBe("noopener noreferrer");
     }
-    // The v2 footer must expose the same active contacts, without Telegram.
-    await page.goto("/v2");
-    await expect(page.locator("footer a[href*='t.me/']")).toHaveCount(0);
-    const live = await contacts();
-    expect(live.map((c) => c.href).sort()).toEqual(
-      r19.map((c) => c.href).sort(),
-    );
   });
 
   HANDOFFS.forEach((handoff, index) => {

@@ -7,7 +7,7 @@ All application setup is delegated to app.setup.app_factory.create_app().
 Run via: uvicorn app.main_cloud:app --host 0.0.0.0 --port 8080
 
 BACKWARD COMPATIBILITY:
-- Exports app, initialize_services, initialize_plugins, on_startup, on_shutdown
+- Exports app, initialize_services, on_startup, on_shutdown
 - Exports utility functions: _parse_history, _allowed_origins, _safe_endpoint_label
 - All exports maintain backward compatibility with existing tests and code
 """
@@ -38,7 +38,6 @@ __all__ = [
     "_parse_history",
     "_safe_endpoint_label",
     "app",
-    "initialize_plugins",
     "initialize_services",
     "on_shutdown",
     "on_startup",
@@ -47,7 +46,6 @@ __all__ = [
 
 # Backward compatibility: Import and re-export initialization functions
 # These are used by tests and other modules that import from main or main_cloud
-from backend.app.setup.plugin_initializer import initialize_plugins
 from backend.app.setup.service_initializer import initialize_services
 
 
@@ -58,13 +56,12 @@ async def on_startup() -> None:
     Startup handler - backward compatibility export.
 
     This function replicates the original startup behavior for tests.
-    It initializes AlertService and calls initialize_services/initialize_plugins.
+    It initializes AlertService and calls initialize_services.
 
     NOTE: In production, startup is handled by the lifespan context manager
     in app_factory.py. This function exists only for backward compatibility
     with tests that call on_startup() directly.
     """
-    from backend.app.setup.plugin_initializer import initialize_plugins
     from backend.app.setup.service_initializer import initialize_services
     from backend.services.monitoring.alert_service import AlertService
 
@@ -75,7 +72,6 @@ async def on_startup() -> None:
         logger.error("Failed to initialize AlertService: %s", e)
 
     await initialize_services(app)
-    await initialize_plugins(app)
 
 
 async def on_shutdown() -> None:

@@ -8,6 +8,12 @@ against the live backend contract (it sat 20 days behind once, silently).
 test rather than reimplemented, so the writer and the checker cannot drift
 apart from each other the way the schema and the backend did.
 
+Only the part of the document that mouth consumes is rendered and pinned
+(`scripts/openapi_consumed.py`): `openapi.json` stays the FULL document (the
+Visa Oracle validator reads it), `openapi.consumed.json` is the subset that
+`generate:api` renders and that the pin hashes, so a backend change outside
+mouth's closure leaves `schema.d.ts` and the pin untouched.
+
 SCOPE (stated honestly, round-2 council MINOR): this pin covers the backend
 OpenAPI JSON, not `schema.d.ts` itself — it cannot detect `openapi-typescript`
 (the separate `generate:api` rendering step) diverging from that JSON on a
@@ -23,6 +29,8 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+
+from scripts.openapi_consumed import derive_consumed, prune_openapi
 
 logger = logging.getLogger("zantara.openapi_gen")
 
@@ -54,10 +62,18 @@ def _write_schema(schema: dict[str, Any], output_path: Path) -> None:
     output_path.write_bytes(_schema_bytes(schema))
 
 
+def consumed_openapi(schema: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    """The subset of `schema` that apps/mouth consumes (see openapi_consumed)."""
+    return prune_openapi(schema, derive_consumed(repo_root / "apps" / "mouth" / "src"))
+
+
 def _write_pin(schema: dict[str, Any], repo_root: Path) -> Path:
-    """Write the drift pin next to `schema.d.ts`, read next commit."""
+    """Write the drift pin (hash of the consumed subset) next to `schema.d.ts`."""
     pin_path = repo_root / SCHEMA_PIN_RELATIVE_PATH
-    pin_path.write_text(compute_schema_sha256(schema) + "\n", encoding="utf-8")
+    pin_path.write_text(
+        compute_schema_sha256(consumed_openapi(schema, repo_root)) + "\n",
+        encoding="utf-8",
+    )
     return pin_path
 
 
@@ -78,6 +94,10 @@ def main() -> int:
     schema = app.openapi()
     _write_schema(schema=schema, output_path=output_path)
     logger.info("OpenAPI schema written to %s", output_path)
+
+    consumed_path = project_root / "openapi.consumed.json"
+    _write_schema(schema=consumed_openapi(schema, repo_root), output_path=consumed_path)
+    logger.info("Consumed OpenAPI subset written to %s", consumed_path)
 
     pin_path = _write_pin(schema=schema, repo_root=repo_root)
     logger.info("OpenAPI drift pin written to %s", pin_path)
