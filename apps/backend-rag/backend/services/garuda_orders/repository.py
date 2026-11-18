@@ -319,7 +319,9 @@ class GarudaOrderRepository:
             )
             if outcome.replayed:
                 assert outcome.response_body is not None
-                return outcome.response_body, True
+                # A pre-upgrade replay can contain a provider capability or
+                # the old pending-resume scheme. Return the tracker response.
+                return {**outcome.response_body, "checkout_url": None}, True
 
             order_id = outcome.order_id
             if order_id is None:
@@ -463,7 +465,6 @@ class GarudaOrderRepository:
                         order_id=order_id,
                         journal_event_id=event_id,
                         job_type="checkout_ready_email",
-                        payload={"checkout_url": checkout.checkout_url},
                     )
             checkout_url = checkout.checkout_url
             final_state = OrderState.AWAITING_PAYMENT.value
@@ -481,13 +482,8 @@ class GarudaOrderRepository:
             # offer a checkout action ONLY while the order is genuinely
             # still awaiting payment.
             final_state = row["state"]
-            # Provider checkout URLs are one-time capabilities never persisted on
-            # `garuda_orders` (SM-G03), and `PaymentProvider` exposes no
-            # session-URL lookup. Returning `None` on a fresh-key resume
-            # (including while still `awaiting_payment`) never fabricates a
-            # non-navigable `pending-resume:` scheme or leaks
-            # `provider_session_id`, and lets CheckoutFlow route cleanly to
-            # `/visa/voa/orders/{order_id}`.
+            # CheckoutFlow goes to the tracker on resume. The provider URL
+            # is a capability available only on the initial checkout.
             checkout_url = None
 
         response_body = {
@@ -501,7 +497,7 @@ class GarudaOrderRepository:
                 conn,
                 key_sha256=idempotency_key_sha256,
                 response_status=201,
-                response_body=response_body,
+                response_body={**response_body, "checkout_url": None},
             )
         return response_body, False
 

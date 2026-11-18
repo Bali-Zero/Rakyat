@@ -132,7 +132,7 @@ class _Recorder:
         self.requests.append(request)
         if self.boom is not None:
             raise self.boom
-        return httpx.Response(self.status, json={"ok": True})
+        return httpx.Response(self.status, json={"success": True})
 
 
 def _sender(recorder: _Recorder, **kw) -> tuple[BrevoEmailSender, httpx.AsyncClient]:

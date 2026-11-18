@@ -966,9 +966,8 @@ export const PRODUCT_CODES = [
 /**
  * Derive `intent.requested_product_code` when the selected onshore conversion /
  * status-bridging path determines it on `seq-33` (unblocking
- * `hf.visit.not-e28a-conversion`, `review.e28a.bridging-origin`, and the four
- * `el.bridging.*` rules), while keeping `UNKNOWN(NOT_ASKED)` otherwise so the
- * interview still never asks which visa the applicant wants when undecided.
+ * `hf.visit.not-e28a-conversion` and `review.e28a.bridging-origin`). Keep
+ * `UNKNOWN(NOT_ASKED)` unless the interview establishes the destination.
  */
 export function mapRequestedProductCode(facts: OracleFacts): FactValue<string> {
   if (facts.requested_product_code !== undefined) {
@@ -988,16 +987,6 @@ export function mapRequestedProductCode(facts: OracleFacts): FactValue<string> {
     facts.investment_pt_pma === "yes"
   ) {
     return known("E28A");
-  }
-  if (
-    facts.application_channel === "STATUS_BRIDGING" &&
-    purposes.value.includes("OTHER") &&
-    facts.stay_permit_code !== undefined
-  ) {
-    const stayPermit = enumFact(facts.stay_permit_code, STAY_PERMIT_CODES);
-    if (stayPermit.status === "KNOWN") {
-      return stayPermit;
-    }
   }
   return unknownFact(NOT_ASKED);
 }
@@ -1169,7 +1158,7 @@ export function mapOracleFactsToApplicantFacts(
     // already false on its purpose or sponsor premise for that walk.
     // `intent.requested_product_code` is now mapped via
     // `mapRequestedProductCode(facts)` above (unblocking seq-33's
-    // E28A conversion/bridging and BRIDGING eligibility rules).
+    // E28A conversion/bridging rules).
     "sponsor.government_invitation": booleanFact(
       facts.sponsor_government_invitation,
     ),

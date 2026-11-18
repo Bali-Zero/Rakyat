@@ -67,6 +67,7 @@ class _FakeProvider:
 class _InMemoryState:
     orders: dict[str, dict[str, Any]] = field(default_factory=dict)
     idempotency_rows: dict[bytes, dict[str, Any]] = field(default_factory=dict)
+    outbox: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
 
 class _FakeConnection:
@@ -169,6 +170,8 @@ class _FakeConnection:
             return "INSERT 0 1"
 
         if "INSERT INTO garuda_order_outbox" in query:
+            _, _, job_type, payload = args
+            self._state.outbox.append((job_type, payload))
             return "INSERT 0 1"
 
         if "UPDATE garuda_order_idempotency" in query and "completed_at" in query:
@@ -232,7 +235,14 @@ async def test_fresh_key_resume_never_returns_pending_resume_scheme() -> None:
     assert len(provider.create_calls) == 1
     order_id = body_initial["order_id"]
 
-    # 2. Same Idempotency-Key replay: returns cached HTTPS URL without extra provider call.
+    # First checkout sends the provider URL only to the browser.
+    assert state.outbox == [("checkout_ready_email", {})]
+    assert state.idempotency_rows[key_alpha]["response_body"]["checkout_url"] is None
+
+    # Same-key replay is safe even with the pre-fix persisted placeholder.
+    state.idempotency_rows[key_alpha]["response_body"]["checkout_url"] = (
+        "pending-resume:synthetic-provider-session"
+    )
     body_replay, replayed_same = await repo.create_order_and_checkout(
         result_id=result_id,
         applicant=_synthetic_applicant(),
@@ -241,7 +251,7 @@ async def test_fresh_key_resume_never_returns_pending_resume_scheme() -> None:
         canonical_payload_sha256=payload_sha,
     )
     assert replayed_same is True
-    assert body_replay == body_initial
+    assert body_replay == {**body_initial, "checkout_url": None}
     assert len(provider.create_calls) == 1
 
     # 3. Fresh Idempotency-Key while order is awaiting_payment: must NOT fabricate pending-resume:.

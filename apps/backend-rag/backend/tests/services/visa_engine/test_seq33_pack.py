@@ -189,7 +189,7 @@ def test_review_e28a_bridging_origin_requires_human_review(signed):
     )
 
 
-def test_el_bridging_four_rules_fire_for_status_bridging_with_stay_permit(signed):
+def test_el_bridging_four_rules_fire_with_an_explicit_destination(signed):
     compiled, as_of = _compiled_seq33(signed)
     walk_spec = json.loads((WALKS_DIR / "onshore_other.json").read_text(encoding="utf-8"))
     overrides = {
@@ -198,7 +198,7 @@ def test_el_bridging_four_rules_fire_for_status_bridging_with_stay_permit(signed
         "immigration.current_status_code": {"status": "KNOWN", "value": "E23"},
         "immigration.current_status_expiry": {"status": "KNOWN", "value": "2026-12-31"},
         "process.application_channel": {"status": "KNOWN", "value": "STATUS_BRIDGING"},
-        "intent.requested_product_code": {"status": "KNOWN", "value": "E23"},
+        "intent.requested_product_code": {"status": "KNOWN", "value": "E28A"},
         "intent.stay_days": {"status": "KNOWN", "value": 60},
     }
     decision = _eval_overrides(compiled, as_of, overrides, "seq33-el-bridging-4-rules")
