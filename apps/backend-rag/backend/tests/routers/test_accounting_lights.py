@@ -7,6 +7,7 @@ services/test_accounting_lights_actions_integration.py. All values invented.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
@@ -719,27 +720,79 @@ def test_a_row_without_the_new_columns_still_yields_nulls(mock_db_pool) -> None:
     assert (cand["invoice_number"], cand["service_name"]) == (None, None)
 
 
-def test_pool_sql_has_the_left_join_and_the_candidate_order_is_unchanged(mock_db_pool) -> None:
+def _txn_row() -> dict:
+    return {
+        "id": 3,
+        "txn_date": date(2026, 6, 25),
+        "amount_idr": 4_000_000,
+        "direction": "credit",
+        "description": "",
+    }
+
+
+def test_candidate_order_is_the_pools_order_among_equal_confidence(mock_db_pool) -> None:
+    """Order measured on the base: equal confidence keeps pool order. The numbers are distinct and
+    descend against the pool order, so a tie-break by number would reorder the first two."""
     _pool, conn = mock_db_pool
-    conn.fetchrow = AsyncMock(
-        return_value={
-            "id": 3,
-            "txn_date": date(2026, 6, 25),
-            "amount_idr": 4_000_000,
-            "direction": "credit",
-            "description": "TRF Contoh B",
-        }
-    )
+    conn.fetchrow = AsyncMock(return_value=_txn_row())
     rows = [
-        _inv(31, "Contoh A"),
-        _inv(32, "Contoh B"),
-        _inv(33, "Contoh C", amount=4_100_000),
+        _inv_id(31, "Contoh A", invoice_number="INV-000000-00009"),
+        _inv_id(32, "Contoh A", invoice_number="INV-000000-00001"),
+        _inv_id(
+            33,
+            "Contoh A",
+            invoice_number="INV-000000-00005",
+        ),
     ]
+    rows[2]["amount_idr"] = 4_100_000
     conn.fetch = AsyncMock(side_effect=[rows, []])
     body = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()
-    # Order measured on the code before the identity change: name match first, then exact
-    # amount in pool order, then the near amount.
-    assert [c["invoice_id"] for c in body["candidates"]] == [32, 31, 33]
-    sql = conn.fetch.await_args_list[0].args[0]
-    assert "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id" in sql
-    assert "pt.name AS service_name" in sql and "i.invoice_number" in sql
+    assert [c["invoice_id"] for c in body["candidates"]] == [31, 32, 33]
+
+
+def test_pool_query_has_the_base_join_count_plus_one_and_the_added_clause(
+    mock_db_pool,
+) -> None:
+    """Both pool variants (open, recorded) are the same text but for the WHERE predicate."""
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(return_value=_txn_row())
+    conn.fetch = AsyncMock(side_effect=[[], []])
+    _client(mock_db_pool).get(f"{BASE}/match-candidates/3")
+    sqls = [c.args[0] for c in conn.fetch.await_args_list]
+    assert len(sqls) == 2
+    # The base had 2 JOINs: `JOIN practices p` and `LEFT JOIN clients c`. One is added.
+    base_join_count = 2
+    for sql in sqls:
+        assert len(re.findall(r"\bJOIN\b", sql, flags=re.IGNORECASE)) == base_join_count + 1
+        flat = " ".join(sql.split())
+        assert "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id" in flat
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("invoice_number", "INV-000000-00001"),
+        ("invoice_issued_at", "2026-01-10"),
+        ("service_name", "Example service"),
+    ],
+)
+def test_the_matcher_carries_each_identity_value_from_the_pool_row_to_the_candidate(
+    field, value
+) -> None:
+    from backend.services.accounting.matcher import OpenInvoice, rank_candidates
+
+    inv = OpenInvoice(
+        invoice_id=1,
+        practice_id=2,
+        client_name="Contoh A",
+        amount_idr=4_000_000,
+        generated_at=date(2026, 6, 20),
+        **{field: value},
+    )
+    (cand,) = rank_candidates(
+        transfer_amount_idr=4_000_000,
+        transfer_date=date(2026, 6, 25),
+        payer_memo="",
+        open_invoices=[inv],
+    )
+    assert getattr(cand, field) == value

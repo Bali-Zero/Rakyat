@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import { Money } from "@balizero/core";
-import { CandidateIdentity } from "./CandidateIdentity";
+import { candidateIdentityParts, NO_INVOICE_NUMBER } from "./CandidateIdentity";
 import {
   accountingApi,
   type BankTransaction,
@@ -33,6 +33,7 @@ export function ConfirmModal({
   const [busy, setBusy] = useState(false);
   // A second click in the same tick lands before React re-renders.
   const inFlight = useRef(false);
+  const identity = candidateIdentityParts(candidate);
   const delta = txn.amount_idr - candidate.invoice_amount_idr;
   // A transfer net of PPh23 withholding (delta < 0 but flagged likely_withheld)
   // still SETTLES the invoice — the withheld tax is recorded separately, not a
@@ -68,7 +69,7 @@ export function ConfirmModal({
       });
       success(
         "Payment confirmed",
-        `${candidate.invoice_number ? `${candidate.invoice_number} · ` : ""}${candidate.client_name} marked ${newStatus}`,
+        `${identity.number ? `${identity.number} · ` : ""}${candidate.client_name} marked ${newStatus}`,
       );
       onConfirmed();
     } catch (err) {
@@ -107,15 +108,23 @@ export function ConfirmModal({
             <dt className="text-[var(--bz-text-2)]">Client</dt>
             <dd className="font-medium">{candidate.client_name}</dd>
           </div>
-          <div className="flex justify-between">
-            <dt className="text-[var(--bz-text-2)]">Invoice no.</dt>
-            <dd className="text-right">
-              <CandidateIdentity
-                candidate={candidate}
-                className="text-sm font-medium"
-              />
-            </dd>
-          </div>
+          {[
+            ["Invoice no.", identity.number ?? NO_INVOICE_NUMBER],
+            ["Issued", identity.date],
+            ["Service", identity.service],
+          ].map(
+            ([label, value]) =>
+              value !== null && (
+                <div key={label} className="flex justify-between gap-3">
+                  <dt className="whitespace-nowrap text-[var(--bz-text-2)]">
+                    {label}
+                  </dt>
+                  <dd className="min-w-0 break-words text-right font-medium [overflow-wrap:anywhere]">
+                    {value}
+                  </dd>
+                </div>
+              ),
+          )}
           <div className="flex justify-between">
             <dt className="text-[var(--bz-text-2)]">Invoice</dt>
             <dd className="tabular-nums">
