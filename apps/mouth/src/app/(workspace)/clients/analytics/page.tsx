@@ -755,7 +755,9 @@ export default function ClientAnalyticsPage() {
                     ? NOT_AVAILABLE
                     : formatCurrency(revenue?.total_actual || 0)
               }
-              subtitle={unavailable("revenue") ? undefined : "Actual collected"}
+              subtitle={
+                unavailable("revenue") ? undefined : "Practice prices in CRM"
+              }
               icon={DollarSign}
               color="green"
               loading={isLoading}
@@ -773,7 +775,7 @@ export default function ClientAnalyticsPage() {
               subtitle={
                 unavailable("revenue")
                   ? undefined
-                  : `${revenue?.total_actual ? Math.round((revenue.total_paid / revenue.total_actual) * 100) : 0}% collection rate`
+                  : `${revenue?.total_actual ? Math.round((revenue.total_paid / revenue.total_actual) * 100) : 0}% marked paid in CRM`
               }
               icon={Activity}
               color="blue"
@@ -789,7 +791,9 @@ export default function ClientAnalyticsPage() {
                     ? NOT_AVAILABLE
                     : formatCurrency(revenue?.total_outstanding || 0)
               }
-              subtitle={unavailable("revenue") ? undefined : "Pending payment"}
+              subtitle={
+                unavailable("revenue") ? undefined : "Not marked paid in CRM"
+              }
               icon={Clock}
               color="amber"
               loading={isLoading}
@@ -804,12 +808,19 @@ export default function ClientAnalyticsPage() {
                     ? NOT_AVAILABLE
                     : formatCurrency(revenue?.avg_per_client || 0)
               }
-              subtitle={unavailable("revenue") ? undefined : "Revenue average"}
+              subtitle={
+                unavailable("revenue") ? undefined : "CRM prices per client"
+              }
               icon={BarChart3}
               color="cyan"
               loading={isLoading}
             />
           </div>
+          <p className="text-xs text-muted-foreground mb-4">
+            These four figures add up the prices recorded on practices in the
+            CRM; older practices may have no price. Money actually received is
+            in the Monthly Breakdown, from the bank statements.
+          </p>
 
           {/* Monthly Trend Table */}
           <div className="bg-card rounded-xl border overflow-hidden">
@@ -848,12 +859,17 @@ export default function ClientAnalyticsPage() {
                         <td className="p-3">{month.period}</td>
                         {month.status === "no_statement" ||
                         month.collected === null ? (
-                          <td
-                            colSpan={3}
-                            className="p-3 text-right text-muted-foreground"
-                          >
-                            {NO_STATEMENT}
-                          </td>
+                          <>
+                            <td className="p-3 text-right text-muted-foreground">
+                              {NO_STATEMENT}
+                            </td>
+                            <td className="p-3 text-right text-muted-foreground hidden sm:table-cell">
+                              —
+                            </td>
+                            <td className="p-3 text-right text-muted-foreground">
+                              —
+                            </td>
+                          </>
                         ) : (
                           <>
                             <td className="p-3 text-right font-medium">

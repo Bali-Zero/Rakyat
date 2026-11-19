@@ -139,7 +139,7 @@ describe("a failed request is not a zero", () => {
     ])
       expectUnavailable(title);
     expect(card("Total Revenue")).toHaveTextContent(idr(2415000));
-    expect(card("Total Revenue")).toHaveTextContent("Actual collected");
+    expect(card("Total Revenue")).toHaveTextContent("Practice prices in CRM");
   });
 
   it("refresh after a failure: a recovered request shows its figures, a new failure marks only itself", async () => {
@@ -207,7 +207,12 @@ describe("a failed request is not a zero", () => {
     expect(
       within(revenueSection()).getByText(/Money received, by transfer date/),
     ).toBeInTheDocument();
-    expect(cells("2026-07")).toEqual(["2026-07", "No bank statement"]);
+    expect(cells("2026-07")).toEqual([
+      "2026-07",
+      "No bank statement",
+      "—",
+      "—",
+    ]);
     expect(cells("2026-08")).toEqual(["2026-08", "Not reconciled", "0", "3"]);
     expect(cells("2026-09")).toEqual([
       "2026-09",
@@ -217,5 +222,24 @@ describe("a failed request is not a zero", () => {
     ]);
     expect(cells("2026-10")).toEqual(["2026-10", idr(0), "0", "0"]);
     expect(cells("2026-11")).toEqual(["2026-11", idr(2415000), "1", "0"]);
+  });
+
+  it("the four revenue cards say they add up CRM practice prices, not money collected", async () => {
+    answer({ overview: OVERVIEW, revenue: REVENUE(2415000) }, []);
+    render(<ClientAnalyticsPage />);
+    await waitFor(() =>
+      expect(card("Total Revenue")).toHaveTextContent(idr(2415000)),
+    );
+    expect(card("Total Revenue")).toHaveTextContent("Practice prices in CRM");
+    expect(card("Paid")).toHaveTextContent("100% marked paid in CRM");
+    expect(card("Outstanding")).toHaveTextContent("Not marked paid in CRM");
+    expect(card("Avg per Client")).toHaveTextContent("CRM prices per client");
+    expect(
+      within(revenueSection()).getByText(
+        /These four figures add up the prices recorded on practices in the CRM/,
+      ),
+    ).toBeInTheDocument();
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/Actual collected|collection rate/);
   });
 });
