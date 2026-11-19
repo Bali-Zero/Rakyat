@@ -108,9 +108,11 @@ describe("control-centre palette boundary", () => {
     const family =
       /(?<![\w-])(?:bg|text|border|ring|divide|fill|stroke)-(?:card|muted|muted-foreground|foreground|background|popover|primary|secondary|accent|destructive|border|input)(?![\w-])/;
     const namedColour =
-      /(?<![\w-])(?:text|bg|border|ring|fill|stroke|from|to|via|outline|decoration|divide|placeholder|caret|accent|shadow)(?:-[trblxyse])?-(?:white|black|(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3})(?![\w-])/;
+      /(?<![a-z-])[a-z][a-z-]*-(?:white|black|(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3})(?:\/(?:[a-z\d.%_-]+|\[[^\]\s]+\]))?(?![\w/-])/;
+    const literalColour =
+      /#[\da-f]{3,8}|\b(?:rgba?|hsla?|oklch|oklab|lab|lch|hwb|color)\(|-\[(?:white|black|red|blue|green|yellow|orange|purple|pink|gray|grey|silver|gold|brown|cyan|magenta|navy|teal|maroon|olive|lime|aqua|fuchsia)\]/i;
     for (const { name, source } of colourFiles) {
-      expect(source, name).not.toMatch(/#[\da-f]{3,8}|rgba?\(|hsla?\(/i);
+      expect(source, name).not.toMatch(literalColour);
       expect(source, name).not.toMatch(family);
       expect(source, name).not.toMatch(namedColour);
     }
