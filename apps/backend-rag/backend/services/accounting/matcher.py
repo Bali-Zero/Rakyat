@@ -165,7 +165,8 @@ def _name_score(payer_memo: str, client_name: str) -> float:
         return _FULL_NAME_SCORE
     # token_sort (not set): a payer that is a subset of the client name earns no free 100.
     score = float(fuzz.token_sort_ratio(" ".join(payer_words), " ".join(client_words)))
-    if matched < 2:
+    if len(payer_words) < 2 or len(client_words) < 2:
+        # one word on either side (a client saved by first name only) is never evidence alone
         score = min(score, NAME_HINT_FLOOR - 1)
     return score
 

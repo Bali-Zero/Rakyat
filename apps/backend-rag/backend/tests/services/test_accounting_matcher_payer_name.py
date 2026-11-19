@@ -74,6 +74,16 @@ def test_a_different_person_with_the_same_first_name_stays_below_the_floor() -> 
     assert _name_score(CIMB, "Mario Bianchi") < NAME_HINT_FLOOR
 
 
+def test_a_misspelt_surname_on_two_words_still_reaches_the_floor() -> None:
+    line = "20261028SAHMIDJA010O0222355481 BFS FR SAHMIDJA UN Paolo Brambila"
+    assert _name_score(line, "Paolo Brambilla") >= NAME_HINT_FLOOR
+
+
+def test_a_two_word_payer_against_a_one_word_client_stays_below_the_floor() -> None:
+    line = "20261109BBBAIDJA010O0290704618 BFS FR BBBAIDJA UN GIULIANA BERTOL"
+    assert _name_score(line, "Giuliana") < NAME_HINT_FLOOR
+
+
 def test_a_line_without_a_name_keeps_the_whole_line_score() -> None:
     line = "AtmBersama TRF FR 9999999999999999 BRI Mario Rossinelli"
     old = float(fuzz.token_set_ratio(line.lower(), "mario rossinelli"))
