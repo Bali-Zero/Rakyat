@@ -116,7 +116,9 @@ class TestClockEmailRequestValidation:
 
     def test_rejects_unknown_app_literal(self) -> None:
         with pytest.raises(ValidationError) as app_err:
-            router_mod.ClockEmailOptInRequest(email="invalid", result_hash=_HASH, app="visa_match")
+            router_mod.ClockEmailOptInRequest(
+                email="invalid", result_hash=_HASH, app="visa_match"
+            )
         locs = {e["loc"] for e in app_err.value.errors()}
         assert ("app",) in locs
 

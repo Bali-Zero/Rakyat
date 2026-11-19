@@ -116,7 +116,9 @@ def _sync_service() -> SimpleNamespace:
 async def test_sync_jurnal_accepts_json_body(monkeypatch: pytest.MonkeyPatch) -> None:
     service = _sync_service()
     async with _client(_app(monkeypatch, service)) as http:
-        resp = await http.post("/api/v1/lkpm/sync-jurnal/12", json={"quarter": "Q2", "year": 2026})
+        resp = await http.post(
+            "/api/v1/lkpm/sync-jurnal/12", json={"quarter": "Q2", "year": 2026}
+        )
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["draft_id"] == 5

@@ -80,8 +80,8 @@ def app(mock_db_pool, fake_user: dict[str, str]) -> FastAPI:
     application.dependency_overrides[get_current_user] = lambda: fake_user
     application.dependency_overrides[get_database_pool] = lambda: pool
     # ensure_drive_folder uses a separate auth dep that accepts JWT OR X-Internal-Key
-    application.dependency_overrides[crm_clients_module.get_current_user_or_internal] = lambda: (
-        fake_user
+    application.dependency_overrides[crm_clients_module.get_current_user_or_internal] = (
+        lambda: fake_user
     )
     return application
 
@@ -124,15 +124,11 @@ class TestEnsureDriveFolder:
         mock_db_pool,
     ) -> None:
         _pool, conn = mock_db_pool
-        conn.fetchrow = AsyncMock(
-            return_value=_client_row(
-                id=42,
-                google_drive_folder_id="EXISTING_FOLDER_ID",
-            )
-        )
-        with patch(
-            "backend.app.utils.crm_utils.verify_client_access", new=AsyncMock(return_value=None)
-        ):
+        conn.fetchrow = AsyncMock(return_value=_client_row(
+            id=42,
+            google_drive_folder_id="EXISTING_FOLDER_ID",
+        ))
+        with patch("backend.app.utils.crm_utils.verify_client_access", new=AsyncMock(return_value=None)):
             response = client.post("/api/crm/clients/42/ensure-drive-folder")
         assert response.status_code == 200
         body = response.json()
@@ -150,37 +146,27 @@ class TestEnsureDriveFolder:
         mock_db_pool,
     ) -> None:
         _pool, conn = mock_db_pool
-        conn.fetchrow = AsyncMock(
-            return_value=_client_row(
-                id=43,
-                full_name="Bob",
-                client_type="company",
-                google_drive_folder_id=None,
-            )
-        )
+        conn.fetchrow = AsyncMock(return_value=_client_row(
+            id=43,
+            full_name="Bob",
+            client_type="company",
+            google_drive_folder_id=None,
+        ))
 
         fake_drive = MagicMock()
-        fake_drive.ensure_client_folder = AsyncMock(
-            return_value={
-                "success": True,
-                "created": True,
-                "root_folder_id": "NEW_ROOT_123",
-                "root_folder_url": "https://drive.example/123",
-                "subfolders": {
-                    "00_Profile": {"id": "x", "url": "y"},
-                    "01_Immigration": {"id": "a", "url": "b"},
-                },
-            }
-        )
-        with (
-            patch(
-                "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
-                return_value=fake_drive,
-            ),
-            patch(
-                "backend.app.utils.crm_utils.verify_client_access",
-                new=AsyncMock(return_value=None),
-            ),
+        fake_drive.ensure_client_folder = AsyncMock(return_value={
+            "success": True,
+            "created": True,
+            "root_folder_id": "NEW_ROOT_123",
+            "root_folder_url": "https://drive.example/123",
+            "subfolders": {"00_Profile": {"id": "x", "url": "y"}, "01_Immigration": {"id": "a", "url": "b"}},
+        })
+        with patch(
+            "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+            return_value=fake_drive,
+        ), patch(
+            "backend.app.utils.crm_utils.verify_client_access",
+            new=AsyncMock(return_value=None),
         ):
             response = client.post("/api/crm/clients/43/ensure-drive-folder")
         assert response.status_code == 200
@@ -197,9 +183,7 @@ class TestEnsureDriveFolder:
     ) -> None:
         _pool, conn = mock_db_pool
         conn.fetchrow = AsyncMock(return_value=None)
-        with patch(
-            "backend.app.utils.crm_utils.verify_client_access", new=AsyncMock(return_value=None)
-        ):
+        with patch("backend.app.utils.crm_utils.verify_client_access", new=AsyncMock(return_value=None)):
             response = client.post("/api/crm/clients/99999/ensure-drive-folder")
         assert response.status_code == 404
 
@@ -355,11 +339,7 @@ class TestListClients:
             response = client.get("/api/crm/clients/?assigned_to=zyxwv.assignee@example.com")
 
         assert response.status_code == 200
-        texts = [
-            r.getMessage() + (r.exc_text or "")
-            for r in caplog.records
-            if r.name.startswith("backend.")
-        ]
+        texts = [r.getMessage() + (r.exc_text or "") for r in caplog.records if r.name.startswith("backend.")]
         text = " ".join(texts)
         assert "requesting clients list" in text
         assert "zyxwv" not in text

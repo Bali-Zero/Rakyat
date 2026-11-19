@@ -100,7 +100,9 @@ async def test_pending_rejects_bad_auth(pool, published_ids):
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as ei:
-        await bridge.get_wa_media_pending(since=0, limit=50, db_pool=pool, x_bridge_auth="wrong")
+        await bridge.get_wa_media_pending(
+            since=0, limit=50, db_pool=pool, x_bridge_auth="wrong"
+        )
     assert ei.value.status_code == 401
 
 

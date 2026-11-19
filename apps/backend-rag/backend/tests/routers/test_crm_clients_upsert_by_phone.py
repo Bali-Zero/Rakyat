@@ -210,22 +210,10 @@ def test_recap_applied_when_not_manual(
 def test_multi_match_reports_count(client: TestClient, write_enabled: None, mock_db_pool) -> None:
     _pool, conn = mock_db_pool
     conn.fetch.return_value = [
-        {
-            "id": 1,
-            "full_name": "Spouse A",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
-        {
-            "id": 2,
-            "full_name": "Spouse B",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
+        {"id": 1, "full_name": "Spouse A", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
+        {"id": 2, "full_name": "Spouse B", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
     ]
     resp = client.post(
         "/api/crm/clients/upsert-by-phone",
@@ -247,22 +235,10 @@ def test_reject_ambiguous_refuses_before_any_mutation(
     (intake delivery) must never mutate or receive an arbitrary client."""
     _pool, conn = mock_db_pool
     conn.fetch.return_value = [
-        {
-            "id": 1,
-            "full_name": "Spouse A",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
-        {
-            "id": 2,
-            "full_name": "Spouse B",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
+        {"id": 1, "full_name": "Spouse A", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
+        {"id": 2, "full_name": "Spouse B", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
     ]
     resp = client.post(
         "/api/crm/clients/upsert-by-phone",
@@ -301,14 +277,8 @@ def test_archived_sole_match_readonly_and_reported(
     action `skipped_archived`) so identity resolvers fail closed on it."""
     _pool, conn = mock_db_pool
     conn.fetch.return_value = [
-        {
-            "id": 5,
-            "full_name": "Archived Person",
-            "notes": "",
-            "deleted_at": "2026-01-01",
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
+        {"id": 5, "full_name": "Archived Person", "notes": "", "deleted_at": "2026-01-01",
+         "strategic_recap_source": None, "updated_at": None},
     ]
     resp = client.post(
         "/api/crm/clients/upsert-by-phone",
@@ -340,14 +310,8 @@ def test_reject_ambiguous_single_match_still_enriches(
     ambiguous — the normal enrich path must proceed."""
     _pool, conn = mock_db_pool
     conn.fetch.return_value = [
-        {
-            "id": 4242,
-            "full_name": "Lead +6284000220",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
+        {"id": 4242, "full_name": "Lead +6284000220", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
     ]
     resp = client.post(
         "/api/crm/clients/upsert-by-phone",
@@ -449,22 +413,10 @@ def test_shared_phone_advisory_names_a_real_write_as_such(
     every firing look like a no-op."""
     _pool, conn = mock_db_pool
     conn.fetch.return_value = [
-        {
-            "id": 1,
-            "full_name": "Spouse A",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
-        {
-            "id": 2,
-            "full_name": "Spouse B",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
+        {"id": 1, "full_name": "Spouse A", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
+        {"id": 2, "full_name": "Spouse B", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
     ]
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
@@ -506,22 +458,10 @@ def test_sole_match_writes_no_advisory_at_all(
     # --- positive control: a genuine duplicate-match write must be visible
     # through this same caplog/logger wiring, via the real advisory code path.
     conn.fetch.return_value = [
-        {
-            "id": 1,
-            "full_name": "Spouse A",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
-        {
-            "id": 2,
-            "full_name": "Spouse B",
-            "notes": "",
-            "deleted_at": None,
-            "strategic_recap_source": None,
-            "updated_at": None,
-        },
+        {"id": 1, "full_name": "Spouse A", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
+        {"id": 2, "full_name": "Spouse B", "notes": "", "deleted_at": None,
+         "strategic_recap_source": None, "updated_at": None},
     ]
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         control_resp = client.post(
