@@ -116,3 +116,33 @@ describe("FilesBrowserPanel", () => {
     );
   });
 });
+
+describe("FilesBrowserPanel lazy listing", () => {
+  it("does not list the Drive folder until the panel nears the viewport", async () => {
+    let callback: IntersectionObserverCallback | null = null;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      vi.fn(function (this: unknown, cb: IntersectionObserverCallback) {
+        callback = cb;
+        return { observe: vi.fn(), disconnect: vi.fn(), unobserve: vi.fn() };
+      }),
+    );
+    try {
+      listFiles.mockResolvedValue({
+        files: [file({ id: "f-1", name: "kitas.pdf" })],
+        breadcrumb: [],
+      } as never);
+      render(<FilesBrowserPanel folderId="FOLDER_123" />);
+      expect(listFiles).not.toHaveBeenCalled();
+
+      callback!(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+      await screen.findByText("kitas.pdf");
+      expect(listFiles).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

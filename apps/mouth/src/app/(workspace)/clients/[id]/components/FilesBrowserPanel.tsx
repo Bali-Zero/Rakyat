@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ExternalLink,
@@ -9,6 +9,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useInViewOnce } from "@/hooks/useInViewOnce";
 import type { FileItem } from "@/lib/api/drive/drive.types";
 
 // Reads the client's own Google Drive folder inside kita. Listing goes through
@@ -54,12 +55,17 @@ export function FilesBrowserPanel({
   const [error, setError] = useState<string | null>(null);
 
   const current = trail[trail.length - 1];
+  // The panel sits below the documents list: list the Drive folder only once
+  // the panel nears the viewport, not on tab open.
+  const sectionRef = useRef<HTMLElement>(null);
+  const inView = useInViewOnce(sectionRef);
 
   useEffect(() => {
     setTrail([{ id: folderId, name: rootName }]);
   }, [folderId, rootName]);
 
   useEffect(() => {
+    if (!inView) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -87,10 +93,11 @@ export function FilesBrowserPanel({
     return () => {
       cancelled = true;
     };
-  }, [current.id]);
+  }, [current.id, inView]);
 
   return (
     <section
+      ref={sectionRef}
       data-testid="files-browser-panel"
       aria-label={title}
       className="mt-6 border-t border-[var(--bz-border)] pt-4"
