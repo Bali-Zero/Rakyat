@@ -1,9 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
-import { firstPartyRedirect, stageForError } from "./contract";
+import {
+  firstPartyRedirect,
+  stageForError,
+  withoutCredentialFields,
+} from "./contract";
 import type { LoginStage } from "./contract";
 
 /**
@@ -79,6 +83,28 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState("");
   const [loginStage, setLoginStage] = useState<LoginStage>("idle");
+  // False in the server's HTML and until this component has mounted.
+  const [interactive, setInteractive] = useState(false);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const pinRef = useRef<HTMLInputElement>(null);
+
+  // The credentials never travel in the address. Until React owns the form a
+  // submit is the browser's own, and a form with no method is a GET that
+  // writes its fields into the query string. Three closures, each enough alone:
+  // the form is a POST; its button stays disabled until this effect has run,
+  // which also stops the Enter key; and an address that already carries the
+  // two fields is rewritten without them. This effect is declared first so the
+  // warm-up request below never sends such an address as its referrer.
+  useEffect(() => {
+    const clean = withoutCredentialFields(globalThis.location.href);
+    if (clean !== null) {
+      globalThis.history.replaceState(globalThis.history.state, "", clean);
+    }
+    // What was typed, or filled by the browser, before React took over.
+    if (emailRef.current?.value) setEmail(emailRef.current.value);
+    if (pinRef.current?.value) setPin(pinRef.current.value);
+    setInteractive(true);
+  }, []);
 
   // Warmup: ping backend on mount so Fly.io is awake before user submits.
   useEffect(() => {
@@ -205,12 +231,17 @@ export default function LoginPage() {
             </p>
           )}
 
-          <form onSubmit={handleLogin} className="mt-7 flex flex-col gap-6">
+          <form
+            method="post"
+            onSubmit={handleLogin}
+            className="mt-7 flex flex-col gap-6"
+          >
             <div className="flex flex-col gap-1">
               <label htmlFor="email" className={LABEL}>
                 Email
               </label>
               <input
+                ref={emailRef}
                 id="email"
                 name="email"
                 type="email"
@@ -228,6 +259,7 @@ export default function LoginPage() {
                 PIN
               </label>
               <input
+                ref={pinRef}
                 id="pin"
                 name="pin"
                 type="password"
@@ -248,7 +280,7 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || !interactive}
               className="mt-1 h-12 w-full text-[13px] font-[650] tracking-[0.02em] transition-opacity disabled:opacity-55"
               style={{
                 background: "var(--bz-on-panel)",
