@@ -15,6 +15,9 @@ import {
 
 // ── Confirm modal ────────────────────────────────────────────────────────────
 
+/** What the inbox row shows for a transfer without a memo; the dialog says the same. */
+const NO_MEMO = "(no memo)";
+
 export function ConfirmModal({
   txn,
   candidate,
@@ -102,6 +105,20 @@ export function ConfirmModal({
             <dt className="text-[var(--bz-text-2)]">Transfer</dt>
             <dd className="font-medium tabular-nums">
               <Money value={txn.amount_idr} />
+            </dd>
+          </div>
+          {/* Two transfers of the same amount look alike: the date and the memo say which one
+              this dialog will record. Written as the inbox row writes them. */}
+          <div className="flex justify-between gap-3">
+            <dt className="whitespace-nowrap text-[var(--bz-text-2)]">
+              Transfer date
+            </dt>
+            <dd className="font-medium tabular-nums">{txn.txn_date}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="whitespace-nowrap text-[var(--bz-text-2)]">Memo</dt>
+            <dd className="min-w-0 break-words text-right font-medium [overflow-wrap:anywhere]">
+              {txn.description || NO_MEMO}
             </dd>
           </div>
           <div className="flex justify-between">

@@ -207,3 +207,82 @@ describe("the dialog keeps the lines it showed on the base", () => {
     expect(screen.getByText("• second reason")).toBeInTheDocument();
   });
 });
+
+describe("the transfer the dialog records: amount, date and memo of THAT transfer", () => {
+  // Two transfers of the same amount, distinguishable only by date and memo.
+  const first = {
+    id: 11,
+    amount_idr: 2415000,
+    description: "TRF CONTOH SATU INV-000000-00001",
+    txn_date: "2026-01-18",
+  };
+  const second = {
+    id: 12,
+    amount_idr: 2415000,
+    description: "TRF CONTOH DUA INV-000000-00002",
+    txn_date: "2026-01-17",
+  };
+
+  function renderFor(txn: typeof first, over = {}) {
+    return render(
+      <ConfirmModal
+        txn={txn}
+        candidate={candidate({ invoice_amount_idr: 2415000, ...over })}
+        onClose={vi.fn()}
+        onConfirmed={vi.fn()}
+      />,
+    );
+  }
+
+  it("shows the date and the memo next to the amount, labelled (guilt for the base dialog)", () => {
+    renderFor(second);
+    expect(labelled("Transfer date")).toHaveTextContent(/^2026-01-17$/);
+    expect(labelled("Memo")).toHaveTextContent(
+      /^TRF CONTOH DUA INV-000000-00002$/,
+    );
+    // Right after the amount and before the client and the invoice number.
+    const order = Array.from(document.querySelectorAll("dt")).map(
+      (dt) => dt.textContent,
+    );
+    expect(order.slice(0, 4)).toEqual([
+      "Transfer",
+      "Transfer date",
+      "Memo",
+      "Client",
+    ]);
+  });
+
+  it("of two transfers with the same amount, shows the chosen one's and none of the other's", () => {
+    renderFor(second);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(second.description);
+    expect(text).toContain(second.txn_date);
+    expect(text).not.toContain(first.description);
+    expect(text).not.toContain(first.txn_date);
+  });
+
+  it("confirming sends that transfer's id, amount, memo and date, once", async () => {
+    vi.mocked(accountingApi.confirm).mockResolvedValue({} as never);
+    renderFor(second, { practice_id: 202, invoice_id: 302 });
+    fireEvent.click(confirmButton());
+    await waitFor(() => expect(accountingApi.confirm).toHaveBeenCalledTimes(1));
+    expect(accountingApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bank_txn_id: 12,
+        practice_id: 202,
+        invoice_id: 302,
+        amount_applied_idr: 2415000,
+        payment_reference: "TRF CONTOH DUA INV-000000-00002",
+        movement_date: "2026-01-17",
+      }),
+    );
+  });
+
+  it.each([
+    ["empty", ""],
+    ["null", null],
+  ])("a %s memo reads (no memo), as in the inbox row", (_n, description) => {
+    renderFor({ ...second, description: description as never });
+    expect(labelled("Memo")).toHaveTextContent(/^\(no memo\)$/);
+  });
+});
