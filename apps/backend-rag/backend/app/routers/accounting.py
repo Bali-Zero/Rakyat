@@ -10,6 +10,7 @@ via is_crm_admin(). Money is IDR. See migration 238_accounting_asya.sql.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import os
 import tempfile
@@ -36,6 +37,7 @@ from backend.services.accounting.bank_parser import (
     parse_and_preview_cimb_statement,
     preview_cimb_statement,
 )
+from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
 from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
 from backend.services.accounting.reconcile_service import ReconcileError
@@ -543,6 +545,22 @@ async def reconciliation_inbox(
         for r in rows
     ]
     return await asyncio.to_thread(_classify_inbox, txns, open_invoices, recorded_invoices)
+
+
+def _wita_now() -> dt.datetime:
+    return dt.datetime.now(BUSINESS_TZ)
+
+
+@router.get("/done-today")
+async def done_today(
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Transfers handled today (WITA): counts by action and the latest items. Read-only."""
+    _require_accounting_access(current_user)
+    now = _wita_now()
+    async with db_pool.acquire() as conn:
+        return await load_done_today(conn, now)
 
 
 # JSON integers only (A8): a boolean, a string or a number with a fraction is a 422.

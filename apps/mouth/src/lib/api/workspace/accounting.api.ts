@@ -101,6 +101,35 @@ export interface MatchCandidatesResponse {
 /** Advice only: the screen never acts on a light by itself. */
 export type InboxLight = "green" | "recorded" | "yellow" | "red";
 
+export type DoneTodayAction = "confirmed" | "linked" | "ignored";
+
+/** One transfer handled today (GET /done-today). */
+export interface DoneTodayItem {
+  txn_id: number;
+  action: DoneTodayAction;
+  /** WITA local time, ISO with a +08:00 offset. */
+  done_at: string;
+  txn_date: string;
+  amount_idr: number;
+  description: string;
+  invoice_number: string | null;
+  client_name: string | null;
+}
+
+export interface DoneTodayResponse {
+  /** The WITA day, YYYY-MM-DD. */
+  day: string;
+  timezone: string;
+  counts: {
+    confirmed: number;
+    linked: number;
+    ignored: number;
+    total: number;
+  };
+  items: DoneTodayItem[];
+  truncated: boolean;
+}
+
 /** One unmatched incoming transfer with its light (GET /reconciliation-inbox). */
 export interface ReconciliationInboxItem {
   txn_id: number;
@@ -277,6 +306,11 @@ export const accountingApi = {
         limit: opts?.limit,
       })}`,
     );
+  },
+
+  /** What was confirmed, linked or ignored today (WITA); read-only. */
+  async getDoneToday(): Promise<DoneTodayResponse> {
+    return api.get<DoneTodayResponse>("/api/crm/accounting/done-today");
   },
 
   /** Unmatched incoming transfers with their light, newest first. */

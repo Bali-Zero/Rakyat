@@ -19,6 +19,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
     getCashout: vi.fn(),
     getBankTransactions: vi.fn(),
     getReconciliationInbox: vi.fn(),
+    getDoneToday: vi.fn(),
     linkRecorded: vi.fn(),
     ignoreTransaction: vi.fn(),
     reopenTransaction: vi.fn(),
@@ -34,7 +35,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
 const api = vi.mocked(accountingApi);
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   api.getSummary.mockResolvedValue({
     income_idr: 0,
     outgoing_idr: 0,
@@ -46,21 +47,49 @@ beforeEach(() => {
   api.getReconciliationInbox.mockResolvedValue([
     inboxItem({ txn_id: 7, description: "CONTOH TRANSFER" }),
   ]);
+  api.getBankTransactions.mockResolvedValue([
+    { id: 1, txn_date: "2026-11-16" } as never,
+  ]);
+  api.getDoneToday.mockResolvedValue({
+    day: "2026-11-18",
+    timezone: "Asia/Makassar",
+    counts: { confirmed: 0, linked: 0, ignored: 0, total: 0 },
+    items: [],
+    truncated: false,
+  });
+  api.getMatchCandidates.mockImplementation(async (id) => ({
+    txn_id: id,
+    transfer_amount_idr: 500000,
+    candidates: [],
+    recorded_candidates: [],
+  }));
 });
 
 describe("AccountingPage", () => {
-  it("U6: cashout tab, import-cashout control and inbox tab still render", async () => {
-    render(<AccountingPage />);
-    expect(await screen.findByText("No cashout rows yet.")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /import cashout pdf/i }),
-    ).toBeInTheDocument();
+  it("86: the control-centre container carries the P2 padding classes", async () => {
+    const { container } = render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    expect(container.firstElementChild).toHaveClass("px-4", "pb-2", "pt-1.5");
+    expect(container.firstElementChild).not.toHaveClass("p-6");
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: /reconciliation/i }));
+  it("U6: opens on the control centre and can enter and leave cashout", async () => {
+    render(<AccountingPage />);
     expect(await screen.findByText("CONTOH TRANSFER")).toBeInTheDocument();
     expect(
       screen.getByLabelText(/upload bank statement \(csv\)/i),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Income (in)")).toBeNull();
+    expect(screen.queryByText("Weekly Cashout")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(await screen.findByText("No cashout rows yet.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /import cashout pdf/i }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Back to reconciliation" }),
+    );
+    expect(await screen.findByText("CONTOH TRANSFER")).toBeInTheDocument();
     expect(api.importBankStatement).not.toHaveBeenCalled();
   });
 
@@ -72,6 +101,8 @@ describe("AccountingPage", () => {
       replaced: 0,
     });
     const { container } = render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
     await screen.findByText("No cashout rows yet.");
     const pdf = new File(["x"], "contoh.pdf", { type: "application/pdf" });
     const el = container.querySelector(
@@ -85,9 +116,6 @@ describe("AccountingPage", () => {
     api.previewBankStatement.mockResolvedValue(previewFixture());
     api.importBankStatement.mockResolvedValue(importFixture());
     render(<AccountingPage />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /reconciliation/i }),
-    );
     await screen.findByText("CONTOH TRANSFER");
     const inboxCalls = api.getReconciliationInbox.mock.calls.length;
     const summaryCalls = api.getSummary.mock.calls.length;

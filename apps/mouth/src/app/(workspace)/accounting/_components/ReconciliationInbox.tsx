@@ -1,19 +1,8 @@
 "use client";
 
-/**
- * Reconciliation inbox: unmatched incoming transfers, each with a light.
- *
- * A light is advice, never an action: rendering sends only the inbox GET, and
- * every write (confirm, link, ignore, reopen) waits for a click. Confirm is the
- * single writer of payment_status; Link and Ignore move no money.
- */
-
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Inbox } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
-import { Money } from "@balizero/core";
 import {
   accountingApi,
   type BankTransaction,
@@ -21,38 +10,36 @@ import {
   type MatchCandidatesResponse,
   type ReconciliationInboxItem,
 } from "@/lib/api/workspace/accounting.api";
-import { BankStatementUpload } from "./BankStatementUpload";
-import { CandidateIdentity } from "./CandidateIdentity";
+import { BankStatementUpload, BANK_FILE_INPUT_ID } from "./BankStatementUpload";
 import { ConfirmModal } from "./ConfirmModal";
+import { useDoneToday } from "./DoneTodaySection";
 import { LinkedIgnoredSection } from "./LinkedIgnoredSection";
+import { OpenedTransfer, type CandidatePick } from "./OpenedTransfer";
+import {
+  ReconciliationTabs,
+  SITUATIONS,
+  type ReconciliationTab,
+  type Situation,
+} from "./ReconciliationTabs";
+import {
+  ReconciliationBody,
+  ReconciliationMore,
+  type CentreView,
+} from "./ReconciliationViews";
+import { TransferList } from "./TransferList";
+import { ccDayDate } from "./ccFormat";
+import { useBankDate } from "./useBankDate";
 import { useWriteLock } from "./useWriteLock";
 
 type Light = "green" | "recorded" | "yellow" | "red";
-type Filter = "all" | Light;
 
-const LIGHT_LABEL: Record<Light, string> = {
-  green: "Match found",
-  recorded: "Already recorded",
-  yellow: "To check",
-  red: "No invoice",
+const SITUATION_BY_LIGHT: Record<Light, Situation> = {
+  green: "confirm",
+  recorded: "link",
+  yellow: "choose",
+  red: "nomatch",
 };
 
-const LIGHT_TONE: Record<Light, string> = {
-  green: "text-[var(--state-success)]",
-  recorded: "text-[var(--bz-accent)]",
-  yellow: "text-[var(--state-warning)]",
-  red: "text-[var(--state-danger)]",
-};
-
-const FILTERS: Array<{ key: Filter; label: string }> = [
-  { key: "all", label: "All" },
-  { key: "green", label: LIGHT_LABEL.green },
-  { key: "recorded", label: LIGHT_LABEL.recorded },
-  { key: "yellow", label: LIGHT_LABEL.yellow },
-  { key: "red", label: LIGHT_LABEL.red },
-];
-
-/** An unknown light value is shown as "To check". */
 const normalizeLight = (light: string): Light =>
   light === "green" || light === "recorded" || light === "red"
     ? light
@@ -60,107 +47,45 @@ const normalizeLight = (light: string): Light =>
 
 const MIN_REASON = 3;
 const MAX_REASON = 200;
-
-/** The server's rule: collapse whitespace, count code points. */
 const normalizeReason = (raw: string): string =>
   raw.trim().replace(/\s+/g, " ");
 
-function LightChip({ light }: { light: Light }) {
-  return (
-    <span
-      className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${LIGHT_TONE[light]}`}
-    >
-      {LIGHT_LABEL[light]}
-    </span>
-  );
-}
-
-function CandidateRow({
-  candidate,
-  suggested,
-  actionLabel,
-  disabled,
-  onAction,
-}: {
-  candidate: MatchCandidate;
-  suggested: boolean;
-  actionLabel: string;
-  disabled: boolean;
-  onAction: () => void;
-}) {
-  return (
-    <li className="flex items-center justify-between gap-3 rounded-md border bg-[var(--bz-card)] p-2">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium">
-          {candidate.client_name}
-          {suggested && (
-            <span className="ml-2 rounded bg-[var(--bz-accent)]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[var(--bz-accent)]">
-              Suggested
-            </span>
-          )}
-        </p>
-        <CandidateIdentity candidate={candidate} />
-        <p className="text-xs text-[var(--bz-text-2)]">
-          <Money value={candidate.invoice_amount_idr} /> ·{" "}
-          {(candidate.confidence * 100).toFixed(0)}% ·{" "}
-          {candidate.reasons[0] ?? ""}
-        </p>
-      </div>
-      <Button size="sm" onClick={onAction} disabled={disabled}>
-        {actionLabel}
-      </Button>
-    </li>
-  );
-}
-
-/** One group of candidates; never looks complete when the server counted more. */
-function CandidateGroup({
-  title,
-  rows,
-  count,
-  renderRow,
-}: {
-  title: string;
-  rows: MatchCandidate[];
-  count: number;
-  renderRow: (c: MatchCandidate) => React.ReactNode;
-}) {
-  const truncated = count > rows.length;
-  if (rows.length === 0 && !truncated) return null;
-  return (
-    <div>
-      <h4 className="mb-1 text-xs font-semibold uppercase text-[var(--bz-text-2)]">
-        {title}
-      </h4>
-      {rows.length > 0 && <ul className="space-y-2">{rows.map(renderRow)}</ul>}
-      {truncated && (
-        <p className="mt-1 text-xs text-[var(--bz-text-2)]">
-          {count} invoices have this amount; the {rows.length} closest are
-          shown.
-        </p>
-      )}
-    </div>
-  );
-}
+// Historical mode box: the warning edge says the mode is on; off, it sits on the hairline.
+const HISTORICAL_BOX =
+  "flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm text-[var(--cc-tx)]";
+const HISTORICAL_BOX_ON = `${HISTORICAL_BOX} border-[var(--state-warning)] bg-[var(--cc-wash)]`;
+const HISTORICAL_BOX_OFF = `${HISTORICAL_BOX} border-[var(--cc-edge)] bg-[var(--cc-card)]`;
 
 export function ReconciliationInbox({
   onConfirmed,
+  doneVersion,
+  onOpenCashout,
 }: {
   onConfirmed: () => void;
+  doneVersion: number;
+  onOpenCashout: () => void;
 }) {
   const { error, success } = useToast();
   const [items, setItems] = useState<ReconciliationInboxItem[]>([]);
-  // Status of the LATEST STARTED load. With no rows on screen it decides the text:
-  // loading line, empty message (ok) or failure (failed); rows are never replaced.
   const [loadStatus, setLoadStatus] = useState<"loading" | "ok" | "failed">(
     "loading",
   );
-  const [filter, setFilter] = useState<Filter>("all");
-  const [expandedTxn, setExpandedTxn] = useState<number | null>(null);
+  const [selectedTab, setSelectedTab] = useState<ReconciliationTab | null>(
+    null,
+  );
+  const [selectedTxn, setSelectedTxn] = useState<number | null>(null);
   const [candidates, setCandidates] = useState<MatchCandidatesResponse | null>(
     null,
   );
   const [candLoading, setCandLoading] = useState(false);
+  const [candFailed, setCandFailed] = useState(false);
+  const [chooseAnotherTxn, setChooseAnotherTxn] = useState<number | null>(null);
+  const pickRef = useRef<CandidatePick | null>(null);
+  const [pick, setPickState] = useState<CandidatePick | null>(null);
+  const setPick = (value: CandidatePick | null) => {
+    pickRef.current = value;
+    setPickState(value);
+  };
   const [modal, setModal] = useState<{
     txn: Pick<
       BankTransaction,
@@ -172,31 +97,30 @@ export function ReconciliationInbox({
   } | null>(null);
   // Historical mode: payments that arrived in the past are recorded without emails.
   const [historical, setHistorical] = useState(false);
-  // The ignore form's truth is a ref (mirrored to state for rendering): no
-  // handler decides on a value captured at render time.
   const ignoreRef = useRef<{ txnId: number; reason: string } | null>(null);
   const [ignoreForm, setIgnoreFormState] = useState<{
     txnId: number;
     reason: string;
   } | null>(null);
-  const setIgnoreForm = (v: { txnId: number; reason: string } | null) => {
-    ignoreRef.current = v;
-    setIgnoreFormState(v);
+  const setIgnoreForm = (value: { txnId: number; reason: string } | null) => {
+    ignoreRef.current = value;
+    setIgnoreFormState(value);
   };
-  // ONE lock for the whole tab: the inbox, the card and "Linked and ignored" share it.
   const lock = useWriteLock();
-  const [candFailed, setCandFailed] = useState(false);
-  // Token of the latest candidates request: a late answer for another one is dropped.
-  const candReq = useRef(0);
   const [rowError, setRowError] = useState<{
     txnId: number;
     message: string;
   } | null>(null);
-  // Bumped after every write so the "Linked and ignored" list reloads too.
   const [version, setVersion] = useState(0);
-
-  // Token of the latest reload: an older one answering late never replaces the list.
   const loadReq = useRef(0);
+  const candReq = useRef(0);
+  const {
+    data: done,
+    status: doneStatus,
+    unavailable,
+    retry: retryDone,
+  } = useDoneToday(doneVersion);
+  const bankDate = useBankDate();
 
   const load = useCallback(async () => {
     const token = ++loadReq.current;
@@ -215,14 +139,11 @@ export function ReconciliationInbox({
   }, [error]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const afterWrite = (txnId: number) => {
-    // The acted row leaves the list at once; the reload then replaces the list.
     setItems((cur) => cur.filter((it) => it.txn_id !== txnId));
-    setExpandedTxn((cur) => (cur === txnId ? null : cur));
-    // only the acted row's form closes; another row's keeps its text
     if (ignoreRef.current?.txnId === txnId) setIgnoreForm(null);
     setVersion((v) => v + 1);
     void load();
@@ -253,36 +174,97 @@ export function ReconciliationInbox({
       }
     });
 
-  const openCandidates = async (item: ReconciliationInboxItem) => {
-    const token = ++candReq.current;
-    if (expandedTxn === item.txn_id) {
-      setExpandedTxn(null);
-      return;
-    }
-    setExpandedTxn(item.txn_id);
-    setCandidates(null);
-    setCandFailed(false);
-    setCandLoading(true);
-    try {
-      const res = await accountingApi.getMatchCandidates(item.txn_id);
-      // Only the latest request, and only an answer for this very transfer.
-      if (candReq.current !== token || res.txn_id !== item.txn_id) return;
-      setCandidates(res);
-    } catch (err) {
-      if (candReq.current !== token) return;
-      setCandFailed(true);
-      error("Failed to load candidates", "Please try again");
-      logger.error(
-        `accounting candidates failed txn=${item.txn_id}`,
-        {},
-        err as Error,
-      );
-    } finally {
-      if (candReq.current === token) setCandLoading(false);
-    }
+  const counts: Record<Situation, number> = {
+    confirm: 0,
+    link: 0,
+    choose: 0,
+    nomatch: 0,
   };
+  for (const item of items) {
+    counts[SITUATION_BY_LIGHT[normalizeLight(item.light)]] += 1;
+  }
 
-  // Opening and closing the form go through the lock like every other control.
+  let activeTab: ReconciliationTab | null = null;
+  if (selectedTab === "done" && !unavailable) activeTab = "done";
+  else if (selectedTab && selectedTab !== "done" && counts[selectedTab] > 0)
+    activeTab = selectedTab;
+  else
+    activeTab = SITUATIONS.find((situation) => counts[situation] > 0) ?? null;
+
+  const activeSituation = activeTab !== "done" ? activeTab : null;
+  const rows = activeSituation
+    ? items.filter(
+        (item) =>
+          SITUATION_BY_LIGHT[normalizeLight(item.light)] === activeSituation,
+      )
+    : [];
+  const opened = activeSituation
+    ? (rows.find((item) => item.txn_id === selectedTxn) ?? rows[0] ?? null)
+    : null;
+  const openedId = opened?.txn_id ?? null;
+
+  const loadCandidates = useCallback(
+    async (item: ReconciliationInboxItem) => {
+      const token = ++candReq.current;
+      setPick(null);
+      setChooseAnotherTxn(null);
+      setCandidates(null);
+      setCandFailed(false);
+      setCandLoading(true);
+      try {
+        const response = await accountingApi.getMatchCandidates(item.txn_id);
+        if (candReq.current !== token || response.txn_id !== item.txn_id)
+          return;
+        setCandidates(response);
+        const light = normalizeLight(item.light);
+        const defaultCandidate =
+          light === "green"
+            ? response.candidates.find(
+                (candidate) =>
+                  candidate.invoice_id === item.suggestion?.invoice_id,
+              )
+            : light === "recorded"
+              ? response.recorded_candidates.find(
+                  (candidate) =>
+                    candidate.invoice_id === item.suggestion?.invoice_id,
+                )
+              : undefined;
+        setPick(
+          defaultCandidate
+            ? {
+                txnId: item.txn_id,
+                group: light === "recorded" ? "recorded" : "open",
+                candidate: defaultCandidate,
+              }
+            : null,
+        );
+      } catch (err) {
+        if (candReq.current !== token) return;
+        setCandFailed(true);
+        error("Failed to load candidates", "Please try again");
+        logger.error(
+          `accounting candidates failed txn=${item.txn_id}`,
+          {},
+          err as Error,
+        );
+      } finally {
+        if (candReq.current === token) setCandLoading(false);
+      }
+    },
+    [error],
+  );
+
+  useEffect(() => {
+    if (opened) void loadCandidates(opened);
+    else {
+      candReq.current += 1;
+      setPick(null);
+      setCandidates(null);
+      setCandLoading(false);
+      setCandFailed(false);
+    }
+  }, [openedId, loadCandidates]);
+
   const openIgnore = (txnId: number) => {
     if (!lock.isFree()) return;
     if (ignoreRef.current?.txnId === txnId) return;
@@ -295,73 +277,236 @@ export function ReconciliationInbox({
     setIgnoreForm(null);
   };
   const setIgnoreReason = (txnId: number, text: string) => {
-    const cur = ignoreRef.current;
-    if (!cur || cur.txnId !== txnId) return;
-    setIgnoreForm({ ...cur, reason: text });
+    const current = ignoreRef.current;
+    if (!current || current.txnId !== txnId) return;
+    setIgnoreForm({ ...current, reason: text });
   };
-  // Reads the ref at click time: the reason validated and sent is the ref's.
   const sendIgnore = (txnId: number) => {
-    const cur = ignoreRef.current;
-    if (!cur || cur.txnId !== txnId) return;
-    const text = normalizeReason(cur.reason);
-    const len = Array.from(text).length;
-    if (len < MIN_REASON || len > MAX_REASON) return;
+    const current = ignoreRef.current;
+    if (!current || current.txnId !== txnId) return;
+    const text = normalizeReason(current.reason);
+    const length = Array.from(text).length;
+    if (length < MIN_REASON || length > MAX_REASON) return;
     void runAction(txnId, "Transfer ignored", () =>
       accountingApi.ignoreTransaction({ bank_txn_id: txnId, reason: text }),
     );
   };
 
-  const counts: Record<Filter, number> = {
-    all: items.length,
-    green: 0,
-    recorded: 0,
-    yellow: 0,
-    red: 0,
+  const confirm = () => {
+    const current = pickRef.current;
+    if (
+      !opened ||
+      !current ||
+      current.txnId !== opened.txn_id ||
+      current.group !== "open"
+    )
+      return;
+    const txn = {
+      id: opened.txn_id,
+      amount_idr: opened.amount_idr,
+      description: opened.description,
+      txn_date: opened.txn_date,
+    };
+    if (lock.tryOpenDialog())
+      setModal({ txn, candidate: current.candidate, historical });
   };
-  for (const it of items) counts[normalizeLight(it.light)] += 1;
-  const visible = items.filter(
-    (it) => filter === "all" || normalizeLight(it.light) === filter,
-  );
+  const link = () => {
+    const current = pickRef.current;
+    if (
+      !opened ||
+      !current ||
+      current.txnId !== opened.txn_id ||
+      current.group !== "recorded"
+    )
+      return;
+    void runAction(opened.txn_id, "Transfer linked", () =>
+      accountingApi.linkRecorded({
+        bank_txn_id: opened.txn_id,
+        practice_id: current.candidate.practice_id,
+        invoice_id: current.candidate.invoice_id,
+      }),
+    );
+  };
+
   const reasonLength = Array.from(
     normalizeReason(ignoreForm?.reason ?? ""),
   ).length;
   const reasonOk = reasonLength >= MIN_REASON && reasonLength <= MAX_REASON;
+  const defaultPick =
+    opened && candidates
+      ? normalizeLight(opened.light) === "green"
+        ? candidates.candidates.find(
+            (candidate) =>
+              candidate.invoice_id === opened.suggestion?.invoice_id,
+          )
+        : normalizeLight(opened.light) === "recorded"
+          ? candidates.recorded_candidates.find(
+              (candidate) =>
+                candidate.invoice_id === opened.suggestion?.invoice_id,
+            )
+          : undefined
+      : undefined;
+  const pair =
+    opened !== null &&
+    (activeSituation === "confirm" || activeSituation === "link") &&
+    chooseAnotherTxn !== opened.txn_id &&
+    defaultPick !== undefined &&
+    pick?.candidate.invoice_id === defaultPick.invoice_id &&
+    pick.txnId === opened.txn_id;
+  const nothing =
+    activeSituation === "nomatch" &&
+    candidates !== null &&
+    candidates.candidates.length === 0 &&
+    candidates.recorded_candidates.length === 0 &&
+    (opened?.open_candidates ?? 0) <= 0 &&
+    (opened?.recorded_candidates ?? 0) <= 0;
 
-  // The upload card and the linked/ignored list stay mounted while the list reloads.
-  const frame = (content: React.ReactNode) => (
-    <div className="space-y-4">
+  let view: CentreView;
+  if (activeTab === "done") view = "done";
+  else if (items.length === 0 && loadStatus === "loading") view = "loading";
+  else if (items.length === 0 && loadStatus === "failed") view = "failed";
+  else if (
+    items.length === 0 &&
+    loadStatus === "ok" &&
+    bankDate.status === "empty"
+  )
+    view = "dayone";
+  else if (items.length === 0) view = "calm";
+  else view = "work";
+
+  const status =
+    bankDate.status === "loading" ? null : (
+      <p data-testid="cc-bank-date" className="text-sm text-[var(--cc-tx-2)]">
+        {bankDate.status === "ok" ? (
+          <>
+            Bank data through{" "}
+            <b className="font-bold text-[var(--cc-tx)]">
+              {ccDayDate(bankDate.date)}
+            </b>
+          </>
+        ) : bankDate.status === "empty" ? (
+          "No bank data yet"
+        ) : (
+          "Bank data date could not be loaded."
+        )}
+      </p>
+    );
+
+  const linkedIgnored = (
+    <LinkedIgnoredSection
+      version={version}
+      locked={lock.locked}
+      exclusive={lock.runWrite}
+      onReopened={() => {
+        void load();
+        onConfirmed();
+      }}
+    />
+  );
+  const work =
+    activeSituation && opened ? (
+      <div
+        data-testid="cc-work"
+        className="mt-5 grid h-[550px] grid-cols-[344px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-6"
+      >
+        <TransferList
+          situation={activeSituation}
+          rows={rows}
+          openedId={opened.txn_id}
+          onOpen={(txnId) => {
+            if (txnId !== opened.txn_id) setSelectedTxn(txnId);
+          }}
+        />
+        <OpenedTransfer
+          situation={activeSituation}
+          item={opened}
+          rowsCount={rows.length}
+          candidates={candidates}
+          loading={candLoading}
+          failed={candFailed}
+          pair={pair}
+          nothing={nothing}
+          pick={pick}
+          ignoreForm={ignoreForm}
+          reasonOk={reasonOk}
+          locked={lock.locked}
+          rowError={rowError?.txnId === opened.txn_id ? rowError.message : null}
+          onRetry={() => void loadCandidates(opened)}
+          onChooseAnother={() => setChooseAnotherTxn(opened.txn_id)}
+          onPick={setPick}
+          onConfirm={confirm}
+          onLink={link}
+          onSkip={() => {
+            const index = rows.findIndex((row) => row.txn_id === opened.txn_id);
+            setSelectedTxn(rows[(index + 1) % rows.length].txn_id);
+          }}
+          onIgnore={() => openIgnore(opened.txn_id)}
+          onIgnoreReason={(text) => setIgnoreReason(opened.txn_id, text)}
+          onSendIgnore={() => sendIgnore(opened.txn_id)}
+          onCancelIgnore={() => closeIgnore(opened.txn_id)}
+        />
+      </div>
+    ) : null;
+
+  return (
+    <div className="cc-root flex flex-col">
       <BankStatementUpload
+        title="Accounting"
+        status={status}
+        hideTrigger={view === "dayone"}
         locked={lock.locked}
         exclusive={lock.runWrite}
         onImported={() => {
           void load();
+          void bankDate.reload();
           onConfirmed();
         }}
       />
-      <label
-        data-testid="historical-mode"
-        className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${
-          historical
-            ? "border-[var(--state-warning)] bg-[color-mix(in_srgb,var(--state-warning)_8%,transparent)]"
-            : "border-[var(--bz-border)]"
-        }`}
-      >
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={historical}
-          disabled={lock.locked}
-          onChange={(e) => setHistorical(e.target.checked)}
+      {view !== "dayone" && (
+        <ReconciliationTabs
+          active={activeTab}
+          counts={counts}
+          loaded={items.length > 0 || loadStatus === "ok"}
+          done={done}
+          doneUnavailable={unavailable}
+          onSelect={setSelectedTab}
         />
-        <span>
-          <span className="font-medium">Historical mode: no emails</span>
-          <span className="block text-xs text-[var(--bz-text-2)]">
-            For payments that arrived in the past. Confirming records them as
-            usual and sends no email to the client or the team.
+      )}
+      {view !== "dayone" && (
+        <label
+          data-testid="historical-mode"
+          className={historical ? HISTORICAL_BOX_ON : HISTORICAL_BOX_OFF}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={historical}
+            disabled={lock.locked}
+            onChange={(e) => setHistorical(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Historical mode: no emails</span>
+            <span className="block text-xs text-[var(--cc-tx-2)]">
+              For payments that arrived in the past. Confirming records them as
+              usual and sends no email to the client or the team.
+            </span>
           </span>
-        </span>
-      </label>
-      {content}
+        </label>
+      )}
+      <ReconciliationBody
+        view={view}
+        work={work}
+        bankDate={bankDate}
+        done={done}
+        doneStatus={doneStatus}
+        doneUnavailable={unavailable}
+        linkedIgnored={linkedIgnored}
+        onRetryInbox={() => void load()}
+        onRetryDone={() => void retryDone()}
+        onShowDone={() => setSelectedTab("done")}
+        onUpload={() => document.getElementById(BANK_FILE_INPUT_ID)?.click()}
+      />
+      <ReconciliationMore onOpenCashout={onOpenCashout} />
       {modal && (
         <ConfirmModal
           txn={modal.txn}
@@ -378,250 +523,6 @@ export function ReconciliationInbox({
           }}
         />
       )}
-      <LinkedIgnoredSection
-        version={version}
-        locked={lock.locked}
-        exclusive={lock.runWrite}
-        onReopened={() => {
-          // the section refreshed itself at the reopen: no version bump here
-          void load();
-          onConfirmed();
-        }}
-      />
     </div>
-  );
-
-  if (items.length === 0 && loadStatus === "loading") {
-    return frame(
-      <div className="flex items-center justify-center p-10 text-[var(--bz-text-2)]">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading inbox…
-      </div>,
-    );
-  }
-
-  if (items.length === 0 && loadStatus === "failed") {
-    return frame(
-      <div className="rounded-lg border p-10 text-center text-[var(--bz-text-2)]">
-        <p>Could not load the inbox.</p>
-        <Button
-          className="mt-3"
-          variant="outline"
-          size="sm"
-          onClick={() => void load()}
-        >
-          Try again
-        </Button>
-      </div>,
-    );
-  }
-
-  if (items.length === 0) {
-    return frame(
-      <div className="rounded-lg border p-10 text-center text-[var(--bz-text-2)]">
-        <Inbox className="mx-auto mb-2 h-8 w-8 opacity-50" />
-        No unmatched incoming transfers. Inbox zero.
-      </div>,
-    );
-  }
-
-  return frame(
-    <>
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            aria-pressed={filter === f.key}
-            onClick={() => setFilter(f.key)}
-            className={`rounded-full border px-3 py-1 text-xs font-medium ${
-              filter === f.key
-                ? "border-[var(--bz-accent)] text-[var(--bz-text-1)]"
-                : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
-            }`}
-          >
-            {f.label} ({counts[f.key]})
-          </button>
-        ))}
-      </div>
-
-      {visible.length === 0 && (
-        <p className="rounded-lg border p-6 text-center text-sm text-[var(--bz-text-2)]">
-          No transfers in this filter.
-        </p>
-      )}
-
-      <div className="space-y-2">
-        {visible.map((item) => {
-          const light = normalizeLight(item.light);
-          const txn = {
-            id: item.txn_id,
-            amount_idr: item.amount_idr,
-            description: item.description,
-            txn_date: item.txn_date,
-          };
-          const suggestedId = item.suggestion?.invoice_id;
-          return (
-            <div
-              key={item.txn_id}
-              className="rounded-lg border"
-              data-testid={`inbox-row-${item.txn_id}`}
-            >
-              <div className="flex items-center gap-2 pr-3">
-                <button
-                  onClick={() => openCandidates(item)}
-                  aria-expanded={expandedTxn === item.txn_id}
-                  className="flex min-w-0 flex-1 items-center justify-between gap-3 p-3 text-left hover:bg-[var(--bz-card-hover)]/30"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                      {item.description || "(no memo)"}
-                    </p>
-                    <p className="text-xs text-[var(--bz-text-2)] tabular-nums">
-                      {item.txn_date}
-                    </p>
-                  </div>
-                  <LightChip light={light} />
-                  <span className="shrink-0 font-semibold tabular-nums text-[var(--state-success)]">
-                    <Money value={item.amount_idr} />
-                  </span>
-                </button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={lock.locked}
-                  onClick={() => openIgnore(item.txn_id)}
-                >
-                  Ignore
-                </Button>
-              </div>
-
-              {ignoreForm?.txnId === item.txn_id && (
-                <div className="flex flex-wrap items-center gap-2 border-t bg-[var(--bz-surface)]/20 p-3">
-                  <input
-                    type="text"
-                    aria-label="Reason for ignoring"
-                    placeholder="Why is this not a client payment?"
-                    value={ignoreForm.reason}
-                    disabled={lock.locked}
-                    onChange={(e) =>
-                      setIgnoreReason(item.txn_id, e.target.value)
-                    }
-                    className="min-w-[240px] flex-1 rounded-md border bg-[var(--bz-base)] px-2 py-1 text-sm"
-                  />
-                  <p className="basis-full text-xs text-[var(--bz-text-2)]">
-                    Ignoring moves no money. The transfer can be reopened under
-                    Linked and ignored.
-                  </p>
-                  <Button
-                    size="sm"
-                    disabled={lock.locked || !reasonOk}
-                    onClick={() => sendIgnore(item.txn_id)}
-                  >
-                    Ignore transfer
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={lock.locked}
-                    onClick={() => closeIgnore(item.txn_id)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              )}
-
-              {rowError?.txnId === item.txn_id && (
-                <p
-                  role="alert"
-                  className="border-t px-3 py-2 text-sm text-[var(--state-danger)]"
-                >
-                  {rowError.message}
-                </p>
-              )}
-
-              {expandedTxn === item.txn_id && (
-                <div className="space-y-3 border-t bg-[var(--bz-surface)]/20 p-3">
-                  {candFailed ? (
-                    <p className="py-2 text-center text-sm text-[var(--state-danger)]">
-                      Could not load the invoices for this transfer. Close the
-                      row and open it again.
-                    </p>
-                  ) : candLoading || !candidates ? (
-                    <div className="flex items-center justify-center py-4 text-[var(--bz-text-2)]">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Ranking
-                      candidates…
-                    </div>
-                  ) : (
-                    <>
-                      {light === "recorded" && (
-                        <p className="text-sm text-[var(--bz-accent)]">
-                          This payment looks already recorded. Link it instead
-                          of confirming it again.
-                        </p>
-                      )}
-                      {candidates.candidates.length === 0 &&
-                        candidates.recorded_candidates.length === 0 &&
-                        item.open_candidates <= 0 &&
-                        item.recorded_candidates <= 0 && (
-                          <p className="py-2 text-center text-sm text-[var(--bz-text-2)]">
-                            No plausible invoice match. Leave unmatched or
-                            handle manually.
-                          </p>
-                        )}
-                      <CandidateGroup
-                        title="Open invoices"
-                        rows={candidates.candidates}
-                        count={item.open_candidates}
-                        renderRow={(c) => (
-                          <CandidateRow
-                            key={c.invoice_id}
-                            candidate={c}
-                            suggested={
-                              light === "green" && c.invoice_id === suggestedId
-                            }
-                            actionLabel="Match"
-                            disabled={lock.locked}
-                            onAction={() => {
-                              if (lock.tryOpenDialog())
-                                setModal({ txn, candidate: c, historical });
-                            }}
-                          />
-                        )}
-                      />
-                      <CandidateGroup
-                        title="Already paid"
-                        rows={candidates.recorded_candidates}
-                        count={item.recorded_candidates}
-                        renderRow={(c) => (
-                          <CandidateRow
-                            key={c.invoice_id}
-                            candidate={c}
-                            suggested={
-                              light === "recorded" &&
-                              c.invoice_id === suggestedId
-                            }
-                            actionLabel="Link, no money moved"
-                            disabled={lock.locked}
-                            onAction={() =>
-                              runAction(item.txn_id, "Transfer linked", () =>
-                                accountingApi.linkRecorded({
-                                  bank_txn_id: item.txn_id,
-                                  practice_id: c.practice_id,
-                                  invoice_id: c.invoice_id,
-                                }),
-                              )
-                            }
-                          />
-                        )}
-                      />
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </>,
   );
 }
