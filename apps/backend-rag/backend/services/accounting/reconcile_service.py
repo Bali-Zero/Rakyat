@@ -159,12 +159,15 @@ async def confirm_payment(
             invoice_amount,
         )
 
-        # 3. Fill invoice payment fields, if an invoice is linked.
+        # 3. Fill invoice payment fields, if an invoice is linked. The invoice was paid when the
+        #    money landed: the transfer's date when it is known (a statement row has a date only,
+        #    so midnight UTC whatever the session time zone: the same calendar day in UTC, where
+        #    production reports group by month, and in Bali), the confirmation time otherwise.
         if invoice_id is not None:
             await conn.execute(
                 """
                 UPDATE invoices
-                SET paid_date = now(),
+                SET paid_date = COALESCE(($5::date)::timestamp AT TIME ZONE 'UTC', now()),
                     payment_method = $1,
                     payment_reference = $2,
                     paid_amount_idr = COALESCE(paid_amount_idr, 0) + $3
@@ -174,6 +177,7 @@ async def confirm_payment(
                 payment_reference,
                 amount_applied_idr,
                 invoice_id,
+                movement_date,
             )
 
         # 4. Mark the bank transaction reconciled + link.
