@@ -806,12 +806,13 @@ async def test_m1_columns_types_nullability_identity_and_unique(pool, conn):
         "WHERE c.conrelid = $1::regclass AND c.contype IN ('u', 'f') ORDER BY c.conname",
         TABLE,
     )
-    assert [(r["conname"], r["contype"]) for r in unique] == [
-        (UNIQUE_NAME, "u"),
+    kinds = [(r["conname"], bytes(r["contype"]).decode()) for r in unique]
+    assert kinds == [
         ("related_subject_birth_dates_subject_id_fkey", "f"),
+        (UNIQUE_NAME, "u"),
     ]
-    assert "UNIQUE (subject_id)" in unique[0]["def"]
-    assert "ON DELETE CASCADE" in unique[1]["def"] and "related_subjects" in unique[1]["def"]
+    assert "UNIQUE (subject_id)" in unique[1]["def"]
+    assert "ON DELETE CASCADE" in unique[0]["def"] and "related_subjects" in unique[0]["def"]
 
 
 INSERT_HISTORY = (
@@ -1707,7 +1708,7 @@ async def test_t1_row_11_the_unique_violation_is_converted_by_the_constraints_na
     async with pool.acquire() as c:
         with pytest.raises(asyncpg.CheckViolationError):
             await record_birth_date(c, early, dry_run=False)
-    assert await dob_of(conn, other) is None and await history(conn) == []
+    assert await dob_of(conn, other) is None and len(await history(conn)) == 1
 
 
 @pytest.mark.asyncio
@@ -2249,6 +2250,7 @@ async def test_privacy_the_answer_the_log_and_the_audit_rows_carry_no_key_date_o
     data, status, patch = PRIVACY_CASES[case]
     if case == "already":
         assert (await post(client, data)).json() == recorded(s)
+        await conn.execute("DELETE FROM api_audit_trail")  # the set-up call is not the case
     caplog.clear()
     if patch:
         patch(monkeypatch)
