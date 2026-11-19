@@ -2628,6 +2628,33 @@ async def test_d11_a_stored_malformed_key_is_refused_by_n4_before_the_date_rule(
     assert await ledger(conn) == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry_run", "apply"])
+async def test_d11_row_15_a_key_of_another_type_is_n4_even_when_it_is_sixteen_digits(
+    conn, detach_writes, dry_run
+):
+    # No valid passport or permit is sixteen ASCII digits (12 characters at most; a permit holds a
+    # letter), so through the route row 15 cannot tell "type checked" from "digits checked". A
+    # stored passport norm of sixteen digits, sent to the service, encodes a valid date that is not
+    # the owner's: only the type check refuses it.
+    n = nik("150680", 8960)
+    sixteen = nik("150680", 8961)
+    s = await seed_subject(conn, "person", None, [("nik", n)], dob=DOB)
+    await seed_raw_key(conn, s, "passport", sixteen)
+    request = DetachInput(
+        kind="person",
+        identifiers=(IdentifierInput("nik", n, n), IdentifierInput("passport", sixteen, sixteen)),
+        detach=("passport", sixteen),
+        documents=(),
+        basis="nik_birth_date",
+        evidence={"plan_sha256": PLAN, "files": 1},
+    )
+    assert nik_date(sixteen) == (15, 6, 80)
+    answer = await detach_identifier(conn, request, dry_run=dry_run)
+    assert answer == refused("identifier_not_nik", s)
+    assert await ledger(conn) == []
+
+
 # ── D21-D22: defences and failures ────────────────────────────────────────────
 
 WRITE_SQL = {"IS": IS_SQL, "MK": MK_SQL, "MD": MD_SQL, "IH": IH_SQL}
@@ -2944,11 +2971,25 @@ def _without(row, *names):
     return {key: value for key, value in row.items() if key not in names}
 
 
+async def read_statement_counts(conn, subject_id):
+    """(statements of one unfiltered list, statements of the subject's detail), read service."""
+    spy = _Spy()
+    reader = _SpyConn(conn, spy)
+    await related_registry_read.list_subjects(reader, q=None, kind=None, limit=50, offset=0)
+    listed = len(spy.calls)
+    await related_registry_read.get_subject(reader, subject_id)
+    return listed, len(spy.calls) - listed
+
+
 @pytest.mark.asyncio
 async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachment(
     admin, conn, clients
 ):
     s, m, k, d, listed = await read_world(conn)
+    counts_before = await read_statement_counts(conn, s)
+    # list: total, page, identifiers, document counts; S's detail: subject, merges, identifiers,
+    # documents, sightings, names, links
+    assert counts_before == (4, 7)
     before = (await admin.get(READ, params={"limit": 100})).json()
     s_before = next(r for r in before["items"] if r["id"] == s)
     assert {"type": "nik", "value": d[1], "from_subject_id": None} in s_before["identifiers"]
@@ -3025,6 +3066,9 @@ async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachm
         "merged_into": None,
     }
     assert await related_registry_read.get_subject(conn, t) is not None
+    # read statement counts unchanged: S as before; T is a record without merges, with documents
+    assert await read_statement_counts(conn, s) == counts_before
+    assert (await read_statement_counts(conn, t))[1] == 6
 
 
 @pytest.mark.asyncio
