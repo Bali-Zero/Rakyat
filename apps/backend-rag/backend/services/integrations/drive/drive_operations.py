@@ -84,6 +84,10 @@ class DriveOperationsManager:
             "q": " and ".join(query_parts),
             "pageSize": page_size,
             "fields": _DRIVE_LIST_FIELDS,
+            # Client folders live in a Shared Drive: without these two flags
+            # Drive v3 answers `files: []` (no error) for a Shared Drive parent.
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
         }
         if page_token:
             params["pageToken"] = page_token
