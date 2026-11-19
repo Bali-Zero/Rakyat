@@ -1562,6 +1562,24 @@ export interface components {
       /** Source Refs */
       source_refs: string[];
     };
+    /** RelatedRegistryDetachment */
+    RelatedRegistryDetachment: {
+      /** Basis */
+      basis: string;
+      /**
+       * Detached At
+       * Format: date-time
+       */
+      detached_at: string;
+      /** Documents Moved */
+      documents_moved: number;
+      /** From Subject Id */
+      from_subject_id: number | null;
+      /** Id Type */
+      id_type: string;
+      /** Subject Id */
+      subject_id: number;
+    };
     /** RelatedRegistryDocument */
     RelatedRegistryDocument: {
       /** Byte Size */
@@ -1606,6 +1624,8 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** Files */
+      files: number | null;
       /** From Subject Id */
       from_subject_id: number | null;
       /**
@@ -1677,6 +1697,10 @@ export interface components {
       created_at: string;
       /** Date Of Birth */
       date_of_birth: string | null;
+      /** Detached From */
+      detached_from: components["schemas"]["RelatedRegistryDetachment"][];
+      /** Detached Into */
+      detached_into: components["schemas"]["RelatedRegistryDetachment"][];
       /** Display Name */
       display_name: string | null;
       /** Documents */

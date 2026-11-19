@@ -68,6 +68,7 @@ class RelatedRegistryLink(BaseModel):
     basis: LinkBasis
     relation: LinkRelation
     created_at: datetime
+    files: int | None
     from_subject_id: int | None
 
 
@@ -109,6 +110,15 @@ class RelatedRegistryMerged(BaseModel):
     merged_at: datetime | None
 
 
+class RelatedRegistryDetachment(BaseModel):
+    subject_id: int
+    id_type: str
+    basis: str
+    documents_moved: int
+    detached_at: datetime
+    from_subject_id: int | None
+
+
 class RelatedRegistrySubjectDetail(BaseModel):
     id: int
     kind: str
@@ -126,6 +136,8 @@ class RelatedRegistrySubjectDetail(BaseModel):
     documents: list[RelatedRegistryDocument]
     merged_from: list[RelatedRegistryMerged]
     merged_into: int | None
+    detached_into: list[RelatedRegistryDetachment]
+    detached_from: list[RelatedRegistryDetachment]
 
 
 def _require_admin(user: dict[str, Any]) -> None:
