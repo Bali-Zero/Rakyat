@@ -20,7 +20,7 @@ function hrefs(container: HTMLElement): string[] {
 }
 
 describe("footers carry no /v2/ legal or company href", () => {
-  it("the v2/_components Footer (also rendered by the (blog) layout)", async () => {
+  it("the site Footer (also rendered by the (blog) layout)", async () => {
     const { Footer } = await import("./Footer");
     const { container } = render(<Footer />);
     const offenders = hrefs(container).filter((h) => V2_LEGAL_COMPANY.test(h));

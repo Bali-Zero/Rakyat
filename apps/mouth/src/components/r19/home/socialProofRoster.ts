@@ -1,4 +1,4 @@
-// apps/mouth/src/app/v2/_components/socialProofRoster.ts
+// apps/mouth/src/components/r19/home/socialProofRoster.ts
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVER-ONLY resolution of the people SocialProof shows.
 //

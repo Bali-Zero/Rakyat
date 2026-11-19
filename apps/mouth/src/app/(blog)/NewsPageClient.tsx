@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowRight, Search, Newspaper } from "lucide-react";
 import type { ArticleListItem } from "@/lib/blog/types";
-import { NewsHero } from "@/app/v2/_components/NewsHero";
+import { NewsHero } from "@/components/blog/NewsHero";
 import { RUMAH_VARS, RUMAH_CLASS } from "@/lib/theme/rumahVars";
 
 interface NewsPageClientProps {
