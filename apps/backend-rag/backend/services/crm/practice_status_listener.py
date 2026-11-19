@@ -26,6 +26,7 @@ import httpx
 from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.security.pii_log_identifier import redact_identifier_for_log
+from backend.services.accounting.reconcile_service import recorded_without_notifications
 from backend.services.crm.automation import ProcessAutomationService
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
 from backend.services.notifications.email_audit import (
@@ -198,16 +199,59 @@ class PracticeStatusListener:
             new_payment,
         )
 
+        payment_in = old_payment != "paid" and new_payment == "paid"
+        milestone = old_status != new_status and new_status in _CLIENT_NOTIFY_STATUSES
+        if (payment_in or milestone) and await self._recorded_without_notifications(
+            practice_id, payload
+        ):
+            logger.info(
+                "practice_changed: practice=%s recorded in historical mode: no notifications",
+                practice_id,
+            )
+            return
+
         # ── M4: payment_status → 'paid' ───────────────────────────────────
         # Asya changes payment_status to 'paid' (and separately moves status
         # to 'on_process'). We fire on the payment transition specifically so
         # the payment-confirmation email is decoupled from the process-start email.
-        if old_payment != "paid" and new_payment == "paid":
+        if payment_in:
             await self._on_payment_received(practice_id, data)
 
         # ── M5: status milestone transitions ─────────────────────────────
-        if old_status != new_status and new_status in _CLIENT_NOTIFY_STATUSES:
+        if milestone:
             await self._on_status_changed(practice_id, new_status, data)
+
+    async def _recorded_without_notifications(self, practice_id: int, payload: str) -> bool:
+        """True when a historical confirmation made this change: nobody is notified.
+
+        The payload is read again with its numbers as text, so the trigger's `ts` keeps its
+        microseconds. A confirmation moves the payment and never the practice's status, so a
+        change of status, or a change that leaves the payment where it was, is ordinary. If the
+        answer cannot be read, nothing is sent: an email about an old payment cannot be taken
+        back, a missing one can be sent by hand.
+        """
+        change = json.loads(payload, parse_float=str, parse_int=str)
+        if change.get("old_status") != change.get("new_status"):
+            return False
+        if change.get("old_payment") == change.get("new_payment"):
+            return False
+        try:
+            return await recorded_without_notifications(
+                self._db_pool,
+                practice_id,
+                change.get("ts"),
+                change.get("old_payment"),
+                change.get("new_payment"),
+            )
+        except Exception as exc:
+            logger.error(
+                "practice_changed: practice=%s notifications withheld, could not tell whether "
+                "the change was historical: %s",
+                practice_id,
+                exc,
+                exc_info=True,
+            )
+            return True
 
     # ── M4 handler ────────────────────────────────────────────────────────
 

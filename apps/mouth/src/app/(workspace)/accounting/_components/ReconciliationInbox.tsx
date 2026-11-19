@@ -167,7 +167,11 @@ export function ReconciliationInbox({
       "id" | "amount_idr" | "description" | "txn_date"
     >;
     candidate: MatchCandidate;
+    // The mode at the moment the dialog opened: it cannot change under the dialog.
+    historical: boolean;
   } | null>(null);
+  // Historical mode: payments that arrived in the past are recorded without emails.
+  const [historical, setHistorical] = useState(false);
   // The ignore form's truth is a ref (mirrored to state for rendering): no
   // handler decides on a value captured at render time.
   const ignoreRef = useRef<{ txnId: number; reason: string } | null>(null);
@@ -334,11 +338,35 @@ export function ReconciliationInbox({
           onConfirmed();
         }}
       />
+      <label
+        data-testid="historical-mode"
+        className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${
+          historical
+            ? "border-[var(--state-warning)] bg-[color-mix(in_srgb,var(--state-warning)_8%,transparent)]"
+            : "border-[var(--bz-border)]"
+        }`}
+      >
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={historical}
+          disabled={lock.locked}
+          onChange={(e) => setHistorical(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium">Historical mode: no emails</span>
+          <span className="block text-xs text-[var(--bz-text-2)]">
+            For payments that arrived in the past. Confirming records them as
+            usual and sends no email to the client or the team.
+          </span>
+        </span>
+      </label>
       {content}
       {modal && (
         <ConfirmModal
           txn={modal.txn}
           candidate={modal.candidate}
+          historical={modal.historical}
           onClose={() => {
             if (lock.tryCloseDialog()) setModal(null);
           }}
@@ -555,7 +583,7 @@ export function ReconciliationInbox({
                             disabled={lock.locked}
                             onAction={() => {
                               if (lock.tryOpenDialog())
-                                setModal({ txn, candidate: c });
+                                setModal({ txn, candidate: c, historical });
                             }}
                           />
                         )}

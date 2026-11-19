@@ -148,6 +148,8 @@ export interface ConfirmRequest {
   rptka_imta_idr?: number;
   margin_idr?: number;
   movement_date?: string | null;
+  /** Historical mode: recorded without emails to the client or the team. */
+  historical?: boolean;
 }
 
 export interface ConfirmResponse {
@@ -157,6 +159,7 @@ export interface ConfirmResponse {
   reconciliation_log_id: number;
   status_before: string | null;
   status_after: string;
+  historical?: boolean;
 }
 
 export interface ExportSheetResponse {

@@ -24,6 +24,7 @@ export function ConfirmModal({
   onClose,
   onConfirmed,
   exclusive,
+  historical = false,
 }: {
   txn: Pick<BankTransaction, "id" | "amount_idr" | "description" | "txn_date">;
   candidate: MatchCandidate;
@@ -31,6 +32,8 @@ export function ConfirmModal({
   onConfirmed: () => void;
   /** Shared one-write-at-a-time runner of the tab; absent: the dialog guards itself only. */
   exclusive?: (fn: () => Promise<unknown>) => Promise<unknown>;
+  /** Historical mode: the payment is recorded and nobody is emailed about it. */
+  historical?: boolean;
 }) {
   const { success, error } = useToast();
   const [busy, setBusy] = useState(false);
@@ -69,6 +72,7 @@ export function ConfirmModal({
         payment_reference: txn.description ?? undefined,
         movement_date: txn.txn_date,
         pph_withheld_idr: candidate.likely_withheld ? -delta : 0,
+        ...(historical ? { historical: true } : {}),
       });
       success(
         "Payment confirmed",
@@ -161,6 +165,16 @@ export function ConfirmModal({
             <dt className="text-[var(--bz-text-2)]">New status</dt>
             <dd className="font-semibold uppercase">{newStatus}</dd>
           </div>
+          {historical && (
+            <div className="flex justify-between gap-3">
+              <dt className="whitespace-nowrap text-[var(--bz-text-2)]">
+                Emails
+              </dt>
+              <dd className="text-right font-semibold">
+                None: historical mode
+              </dd>
+            </div>
+          )}
           {candidate.likely_withheld && (
             <p className="rounded-md bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] p-2 text-xs text-[var(--state-warning)]">
               Looks net of PPh23 withholding — the delta is recorded as withheld
@@ -178,6 +192,8 @@ export function ConfirmModal({
         <p className="mt-4 text-xs text-[var(--state-warning)]">
           Confirming records this payment on the practice, the invoice and the
           cashout. It cannot be undone from this page.
+          {historical &&
+            " Historical mode: no email goes to the client or the team."}
         </p>
 
         <div className="mt-6 flex justify-end gap-2">
