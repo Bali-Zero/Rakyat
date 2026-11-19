@@ -15,6 +15,7 @@ handled at the service layer — NOT guessed here.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -115,12 +116,59 @@ def _date_in_window(transfer_date: date, inv: OpenInvoice) -> bool:
     return abs((transfer_date - inv.generated_at).days) <= DATE_WINDOW_DAYS
 
 
+_NAME = r"([A-Za-z][A-Za-z .'-]*?)"
+_PAYER_PATTERNS = (
+    re.compile(r"\bFR\s+[A-Za-z]{4}IDJA\s+UN\s+(.+)$"),
+    re.compile(r"\bTRF FR\s+" + _NAME + r"\s+\d{8,}\b"),
+    re.compile(r"\bINCOMING SKN\s+\S+/[^/]+/" + _NAME + r"\s+[A-Za-z]?\d{6,}"),
+    re.compile(r"\bINCOMING SWIFT\s+\d+\s+" + _NAME + r"\s*/"),
+)
+_INVOICE_NUMBER = re.compile(r"INV-\d{6}-\d{5}(?!\d)")
+# Score of a payer whose every word matches a client word, with at least two matched.
+_FULL_NAME_SCORE = 97.0
+
+
+def extract_payer_name(description: str) -> str:
+    """The payer name inside a bank description line, or "" when it carries none."""
+    for pattern in _PAYER_PATTERNS:
+        found = pattern.search(description or "")
+        if found:
+            name = " ".join(found.group(1).split())
+            if re.search(r"[A-Za-z]{2}", name):
+                return name
+    return ""
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z]+", text.lower())
+
+
 def _name_score(payer_memo: str, client_name: str) -> float:
     """0-100 fuzzy score between the bank memo and the client name."""
     if not payer_memo or not client_name:
         return 0.0
-    # token_set_ratio is robust to word order / extra tokens in bank memos.
-    return float(fuzz.token_set_ratio(payer_memo.lower(), client_name.lower()))
+    payer = extract_payer_name(payer_memo)
+    if not payer:
+        # token_set_ratio is robust to word order / extra tokens in bank memos.
+        return float(fuzz.token_set_ratio(payer_memo.lower(), client_name.lower()))
+    payer_words, client_words = _words(payer), _words(client_name)
+    free = list(client_words)
+    matched = 0
+    for i, word in enumerate(payer_words):
+        # The bank cuts the name at 14 characters: the last word may be a prefix.
+        cut = i == len(payer_words) - 1 and len(word) >= 3
+        hit = next((c for c in free if c == word or (cut and c.startswith(word))), None)
+        if hit is not None:
+            free.remove(hit)
+            matched += 1
+    if matched == len(payer_words) and matched >= 2:
+        return _FULL_NAME_SCORE
+    # token_sort (not set): a payer that is a subset of the client name earns no free 100.
+    score = float(fuzz.token_sort_ratio(" ".join(payer_words), " ".join(client_words)))
+    if len(payer_words) < 2 or len(client_words) < 2:
+        # one word on either side (a client saved by first name only) is never evidence alone
+        score = min(score, NAME_HINT_FLOOR - 1)
+    return score
 
 
 def rank_candidates(
@@ -145,11 +193,19 @@ def rank_candidates(
             continue  # no amount relationship at all -> not a candidate
 
         name = _name_score(payer_memo, inv.client_name)
+        number_hit = bool(inv.invoice_number) and inv.invoice_number in _INVOICE_NUMBER.findall(
+            payer_memo or ""
+        )
+        if number_hit:
+            name = 100.0  # our own invoice number in the memo is stronger than any name
         in_window = _date_in_window(transfer_date, inv)
 
         # Blend: amount is primary (up to 0.7), name adds up to 0.25, date gates.
         confidence = amount_score
-        if name >= NAME_HINT_FLOOR:
+        if number_hit:
+            confidence += 0.25
+            reasons.append("invoice number in bank memo")
+        elif name >= NAME_HINT_FLOOR:
             confidence += (name / 100.0) * 0.25
             reasons.append(f"payer name ~ client ({name:.0f}%)")
         if not in_window:
