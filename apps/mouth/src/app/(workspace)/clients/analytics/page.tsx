@@ -632,7 +632,9 @@ export default function ClientAnalyticsPage() {
                     ? NOT_AVAILABLE
                     : overview?.new_this_week || 0
               }
-              subtitle="Active acquisition"
+              subtitle={
+                unavailable("overview") ? undefined : "Active acquisition"
+              }
               icon={TrendingUp}
               color="green"
               loading={isLoading}
@@ -647,7 +649,9 @@ export default function ClientAnalyticsPage() {
                     ? NOT_AVAILABLE
                     : overview?.by_status?.active || 0
               }
-              subtitle="Currently managed"
+              subtitle={
+                unavailable("overview") ? undefined : "Currently managed"
+              }
               icon={Activity}
               color="amber"
               loading={isLoading}
@@ -670,7 +674,7 @@ export default function ClientAnalyticsPage() {
                           : 0
                       }%`
               }
-              subtitle="Active / Total"
+              subtitle={unavailable("overview") ? undefined : "Active / Total"}
               icon={Target}
               color="purple"
               loading={isLoading}

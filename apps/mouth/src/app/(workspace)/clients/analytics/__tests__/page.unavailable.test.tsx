@@ -2,7 +2,13 @@
  * A figure whose request failed reads "Data not available", never 0: Rp 0 is a valid figure.
  * All values invented.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { formatIDR } from "@balizero/core/utils";
 
@@ -57,10 +63,12 @@ function answer(ok: Answers, failing: string[]) {
 
 const card = (title: string) =>
   screen.getByText(title, { selector: "p" }).parentElement as HTMLElement;
-const revenueSection = () =>
-  screen
-    .getByRole("heading", { name: /Revenue Analysis/ })
-    .closest("section") as HTMLElement;
+// A failed card holds its title and "Data not available", nothing else: no subtitle beside it.
+const expectUnavailable = (title: string) =>
+  expect(card(title).textContent).toBe(`${title}Data not available`);
+const section = (name: RegExp) =>
+  screen.getByRole("heading", { name }).closest("section") as HTMLElement;
+const revenueSection = () => section(/Revenue Analysis/);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -78,10 +86,8 @@ describe("a failed request is not a zero", () => {
       "Paid",
       "Outstanding",
       "Avg per Client",
-    ]) {
-      expect(card(title)).toHaveTextContent(/^.*Data not available$/);
-      expect(card(title).textContent).not.toMatch(/Rp/);
-    }
+    ])
+      expectUnavailable(title);
     const section = revenueSection();
     expect(within(section).getByRole("status")).toHaveTextContent(
       "Data not available: this part could not be loaded.",
@@ -117,9 +123,33 @@ describe("a failed request is not a zero", () => {
     await waitFor(() =>
       expect(card("Total Clients")).toHaveTextContent("Data not available"),
     );
-    for (const title of ["New This Week", "Active Clients", "Conversion Rate"])
-      expect(card(title)).toHaveTextContent("Data not available");
+    for (const title of [
+      "Total Clients",
+      "New This Week",
+      "Active Clients",
+      "Conversion Rate",
+    ])
+      expectUnavailable(title);
     expect(card("Total Revenue")).toHaveTextContent(idr(2415000));
+    expect(card("Total Revenue")).toHaveTextContent("Actual collected");
+  });
+
+  it("refresh after a failure: a recovered request shows its figures, a new failure marks only itself", async () => {
+    answer({ overview: OVERVIEW }, ["revenue"]);
+    render(<ClientAnalyticsPage />);
+    await waitFor(() => expectUnavailable("Total Revenue"));
+
+    answer({ overview: OVERVIEW, revenue: REVENUE(0) }, ["team"]);
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await waitFor(() =>
+      expect(card("Total Revenue")).toHaveTextContent(idr(0)),
+    );
+    expect(within(revenueSection()).queryByRole("status")).toBeNull();
+    expect(
+      within(section(/Team Performance/)).getByRole("status"),
+    ).toHaveTextContent("Data not available: this part could not be loaded.");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(card("Total Clients")).toHaveTextContent("7");
   });
 
   it("every request down: no figure on the page reads 0 or Rp", async () => {
