@@ -15,6 +15,7 @@ from pathlib import Path
 from backend.services.prime.zones_geojson import (
     ZONES_GEOJSON_QUERY,
     build_zones_geojson,
+    generation_errors,
     validate_zones_geojson,
 )
 
@@ -47,14 +48,13 @@ def _emit(**summary: object) -> None:
 
 def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
     manifest = _read_manifest(mouth_dir)
-    body, count, malformed = build_zones_geojson(rows)
-    errors = validate_zones_geojson(body, manifest["features"] if manifest else None)
-    if malformed:
-        errors.insert(
-            0, f"{malformed} rows carry a geometry that is not a GeoJSON object with coordinates"
-        )
+    build = build_zones_geojson(rows)
+    body, count = build.body, build.features
+    errors = generation_errors(build) + validate_zones_geojson(
+        body, manifest["features"] if manifest else None
+    )
     if errors:
-        _emit(status="invalid", errors=errors, features=count)
+        _emit(status="invalid", errors=errors, features=count, malformed=build.malformed)
         return EXIT_INVALID
 
     # The manifest carries only the 16-hex prefix, inside the file name: a full
@@ -63,7 +63,13 @@ def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
     sha16 = hashlib.sha256(body).hexdigest()[:16]
     name = f"zones-{sha16}.json"
     old_path = manifest["path"] if manifest else None
-    summary = {"sha16": sha16, "features": count, "bytes": len(body), "previous": old_path}
+    summary = {
+        "sha16": sha16,
+        "features": count,
+        "bytes": len(body),
+        "previous": old_path,
+        "degenerate_rings_dropped": build.degenerate_rings,
+    }
     if old_path == f"{WEB_PREFIX}{name}":
         _emit(status="unchanged", **summary)
         return 0

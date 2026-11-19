@@ -3,7 +3,7 @@
 import json
 import math
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 import orjson
 
@@ -95,39 +95,121 @@ def truncate_geojson_coords(geom: dict, precision: int = 6) -> None:
         geom["coordinates"] = _trunc(geom["coordinates"])
 
 
+AREA_EPSILON = 1e-12  # square degrees: about 0.01 m2 at Bali's latitude
+DEGENERATE_FLOOR = 10
+DEGENERATE_SHARE = 0.001
+
+
+class ZonesBuild(NamedTuple):
+    body: bytes
+    features: int
+    malformed: int
+    degenerate_rings: int
+    rows_with_geometry: int
+
+
+# What each row's `geometry` column becomes. The endpoint applies the same table; the
+# publisher refuses a generation with any MALFORMED row or with more dropped rings than
+# max(DEGENERATE_FLOOR, DEGENERATE_SHARE x rows with geometry), and validate_zones_geojson
+# re-checks every published ring, so no undrawable geometry reaches the file.
+#
+# | geometry column                                              | outcome                 |
+# |--------------------------------------------------------------|-------------------------|
+# | NULL or "" (ST_Simplify collapsed the zone)                  | skipped, expected       |
+# | not JSON, or JSON that is not an object                      | MALFORMED               |
+# | object whose type is not Polygon or MultiPolygon             | MALFORMED               |
+# | `coordinates` missing or not a list (false, null, 0, "", {}) | MALFORMED               |
+# | `coordinates` == [] (an EMPTY geometry)                      | skipped, expected       |
+# | a polygon that is not a non-empty list of rings, a ring that |                         |
+# | is not >= 4 positions closed, a position that is not two     |                         |
+# | finite non-bool numbers                                      | MALFORMED               |
+# | after rounding to 6 decimals, a ring of |area| < AREA_EPSILON | dropped and counted: a  |
+# |   (outer ring: its polygon goes; hole: the hole goes)        | feature left with no    |
+# |                                                              | polygon is skipped      |
+# | anything else                                                | published               |
+
+
+def _ring_area(ring: list) -> float:
+    return 0.5 * sum(
+        ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1] for i in range(len(ring) - 1)
+    )
+
+
+def _is_position(pos: Any) -> bool:
+    return (
+        isinstance(pos, list)
+        and len(pos) == 2
+        and all(_is_number(c) and math.isfinite(c) for c in pos)
+    )
+
+
+def _is_ring(ring: Any) -> bool:
+    return (
+        isinstance(ring, list)
+        and len(ring) >= 4
+        and all(_is_position(p) for p in ring)
+        and ring[0] == ring[-1]
+    )
+
+
+def _classify_geometry(geom: Any) -> tuple[str, int]:
+    """Apply the table above to one parsed geometry, rounding it and dropping its
+    zero-area rings in place. Return (outcome, rings dropped); outcome is one of
+    "ok", "empty", "degenerate", "malformed"."""
+    if not isinstance(geom, dict) or geom.get("type") not in ("Polygon", "MultiPolygon"):
+        return "malformed", 0
+    coords = geom.get("coordinates")
+    if not isinstance(coords, list):
+        return "malformed", 0
+    if not coords:
+        return "empty", 0
+    polygons = [coords] if geom["type"] == "Polygon" else coords
+    if not all(isinstance(p, list) and p and all(_is_ring(r) for r in p) for p in polygons):
+        return "malformed", 0
+    truncate_geojson_coords(geom)
+    polygons = [geom["coordinates"]] if geom["type"] == "Polygon" else geom["coordinates"]
+    kept: list[list] = []
+    dropped = 0
+    for polygon in polygons:
+        if abs(_ring_area(polygon[0])) < AREA_EPSILON:
+            dropped += len(polygon)
+            continue
+        holes = [r for r in polygon[1:] if abs(_ring_area(r)) >= AREA_EPSILON]
+        dropped += len(polygon) - 1 - len(holes)
+        kept.append([polygon[0], *holes])
+    if not kept:
+        return "degenerate", dropped
+    if dropped:
+        geom["coordinates"] = kept[0] if geom["type"] == "Polygon" else kept
+    return "ok", dropped
+
+
 def build_zones_geojson_body(rows: list[Any]) -> tuple[bytes, int]:
     """Serialise the query rows to the FeatureCollection body, sorted by id; return (body, feature count)."""
-    body, count, _malformed = build_zones_geojson(rows)
-    return body, count
+    build = build_zones_geojson(rows)
+    return build.body, build.features
 
 
-def build_zones_geojson(rows: list[Any]) -> tuple[bytes, int, int]:
-    """Like build_zones_geojson_body, plus the number of rows whose geometry could not be read.
-
-    Two skips are expected and not counted: a NULL geometry (ST_Simplify collapsed the
-    zone) and an EMPTY one (no coordinates). Anything else that is not a GeoJSON object
-    with coordinates is malformed: the endpoint skips it, the publisher refuses to publish.
-    """
+def build_zones_geojson(rows: list[Any]) -> ZonesBuild:
+    """Build the body and count what the table above skipped, dropped or found malformed."""
     features: list[bytes] = []
-    malformed = 0
+    malformed = degenerate_rings = with_geometry = 0
     for row in sorted(rows, key=lambda r: str(r["id"])):
         geom_str = row["geometry"]
-        if not geom_str:
+        if geom_str is None or geom_str == "":
             continue
+        with_geometry += 1
         try:
             geom = json.loads(geom_str)
-        except ValueError:
+        except (TypeError, ValueError):
             malformed += 1
             continue
-        if not isinstance(geom, dict) or "coordinates" not in geom:
+        outcome, dropped = _classify_geometry(geom)
+        degenerate_rings += dropped
+        if outcome == "malformed":
             malformed += 1
             continue
-        if not geom["coordinates"]:
-            continue
-        try:
-            truncate_geojson_coords(geom)
-        except Exception:
-            malformed += 1
+        if outcome != "ok":
             continue
 
         zone_type: str = row["zoning_type"] or ""
@@ -152,7 +234,22 @@ def build_zones_geojson(rows: list[Any]) -> tuple[bytes, int, int]:
             ),
         )
     body = b'{"type":"FeatureCollection","features":[' + b",".join(features) + b"]}"
-    return body, len(features), malformed
+    return ZonesBuild(body, len(features), malformed, degenerate_rings, with_geometry)
+
+
+def generation_errors(build: ZonesBuild) -> list[str]:
+    """The publisher's refusals that only the build can see (the body cannot show a dropped row)."""
+    errors = []
+    if build.malformed:
+        errors.append(
+            f"{build.malformed} rows carry a geometry that is not a well-formed Polygon or MultiPolygon"
+        )
+    allowed = max(DEGENERATE_FLOOR, DEGENERATE_SHARE * build.rows_with_geometry)
+    if build.degenerate_rings > allowed:
+        errors.append(
+            f"{build.degenerate_rings} zero-area rings dropped, more than the {allowed:.0f} allowed"
+        )
+    return errors
 
 
 def _is_number(value: Any) -> bool:
@@ -176,10 +273,8 @@ def _ring_errors(ring: Any) -> list[str]:
     errors = [e for e in (_position_error(p) for p in ring) if e]
     if not errors and ring[0] != ring[-1]:
         errors.append("ring is not closed")
-    # Collapsed to a point or a segment. Three distinct collinear positions are
-    # accepted: production serves three such zero-area rings today.
-    if not errors and len({tuple(p) for p in ring}) < 3:
-        errors.append("ring has fewer than 3 distinct positions")
+    if not errors and abs(_ring_area(ring)) < AREA_EPSILON:
+        errors.append("ring has zero area")
     return errors[:1]
 
 

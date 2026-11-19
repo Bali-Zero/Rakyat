@@ -79,23 +79,73 @@ def test_build_skips_empty_and_broken_geometry():
     assert body.count(b'"type":"Feature"') == 1
 
 
-def test_build_counts_malformed_but_not_null_or_empty_geometry():
-    empty = json.dumps({"type": "Polygon", "coordinates": []})
-    rows = [
-        row(1),
-        row(2, geometry=None),
-        row(3, geometry=empty),
-        row(4, geometry="x"),
-        row(5, geometry="[1, 2]"),
-        row(6, geometry=json.dumps({"type": "GeometryCollection", "geometries": []})),
-    ]
-    _body, count, malformed = build_zones_geojson(rows)
-    assert (count, malformed) == (1, 3)
-
-
 COLLAPSED = [[115.1, -8.6]] * 4
 SEGMENT = [[115.1, -8.6], [115.2, -8.6], [115.1, -8.6], [115.1, -8.6]]
 COLLINEAR = [[115.1, -8.6], [115.2, -8.6], [115.3, -8.6], [115.1, -8.6]]
+HOLE = [[115.14, -8.62], [115.16, -8.62], [115.16, -8.64], [115.14, -8.62]]
+
+
+def poly(*rings) -> str:
+    return json.dumps({"type": "Polygon", "coordinates": list(rings)})
+
+
+def multi(*polygons) -> str:
+    return json.dumps({"type": "MultiPolygon", "coordinates": list(polygons)})
+
+
+def raw(text: str) -> str:
+    return text
+
+
+# One row of the table in zones_geojson.py per entry:
+# geometry column -> (features, malformed, degenerate rings dropped).
+TABLE = {
+    "NULL": (None, (0, 0, 0)),
+    "empty string": ("", (0, 0, 0)),
+    "not JSON": (raw("x"), (0, 1, 0)),
+    "JSON array": (raw("[1, 2]"), (0, 1, 0)),
+    "JSON string": (raw('"Polygon"'), (0, 1, 0)),
+    "Point": (json.dumps({"type": "Point", "coordinates": [115.1, -8.6]}), (0, 1, 0)),
+    "GeometryCollection": (json.dumps({"type": "GeometryCollection", "geometries": []}), (0, 1, 0)),
+    "coordinates missing": (json.dumps({"type": "Polygon"}), (0, 1, 0)),
+    "coordinates false": (json.dumps({"type": "Polygon", "coordinates": False}), (0, 1, 0)),
+    "coordinates null": (json.dumps({"type": "Polygon", "coordinates": None}), (0, 1, 0)),
+    "coordinates 0": (json.dumps({"type": "Polygon", "coordinates": 0}), (0, 1, 0)),
+    'coordinates ""': (json.dumps({"type": "Polygon", "coordinates": ""}), (0, 1, 0)),
+    "coordinates {}": (json.dumps({"type": "Polygon", "coordinates": {}}), (0, 1, 0)),
+    "EMPTY Polygon": (poly(), (0, 0, 0)),
+    "EMPTY MultiPolygon": (multi(), (0, 0, 0)),
+    "Polygon with an empty ring": (poly([]), (0, 1, 0)),
+    "MultiPolygon with an empty polygon": (multi([RING], []), (0, 1, 0)),
+    "ring of 3 positions": (poly(RING[:3]), (0, 1, 0)),
+    "open ring": (poly(RING[:3] + [[115.3, -8.6]]), (0, 1, 0)),
+    "3-number position": (poly([[115.1, -8.6, 0], *RING[1:3], [115.1, -8.6, 0]]), (0, 1, 0)),
+    "bool position": (poly([[True, False], *RING[1:3], [True, False]]), (0, 1, 0)),
+    "string position": (poly([["a", "b"], *RING[1:3], ["a", "b"]]), (0, 1, 0)),
+    "NaN position": (raw(poly(RING).replace("115.1", "NaN")), (0, 1, 0)),
+    "Polygon whose only ring has zero area": (poly(COLLINEAR), (0, 0, 1)),
+    "Polygon collapsed to a point": (poly(COLLAPSED), (0, 0, 1)),
+    "zero-area hole": (poly(RING, COLLINEAR), (1, 0, 1)),
+    "MultiPolygon with one zero-area part": (multi([RING], [SEGMENT]), (1, 0, 1)),
+    "MultiPolygon all zero-area": (multi([COLLINEAR], [COLLAPSED]), (0, 0, 2)),
+    "good Polygon with a hole": (poly(RING, HOLE), (1, 0, 0)),
+    "good MultiPolygon": (multi([RING], [RING, HOLE]), (1, 0, 0)),
+}
+
+
+@pytest.mark.parametrize("geometry,expected", TABLE.values(), ids=TABLE.keys())
+def test_build_applies_the_geometry_table(geometry, expected):
+    build = build_zones_geojson([row(1, geometry=geometry)])
+    assert (build.features, build.malformed, build.degenerate_rings) == expected
+    if build.features:
+        assert validate_zones_geojson(build.body, None) == []
+
+
+def test_dropped_rings_leave_the_rest_of_the_geometry_untouched():
+    build = build_zones_geojson([row(1, geometry=multi([RING], [SEGMENT], [RING, COLLINEAR]))])
+    geometry = orjson.loads(build.body)["features"][0]["geometry"]
+    assert geometry == {"type": "MultiPolygon", "coordinates": [[RING], [RING]]}
+
 
 BAD = {
     "ring collapsed to a point": collection(
@@ -103,6 +153,12 @@ BAD = {
     ),
     "ring collapsed to a segment": collection(
         with_geometry({"type": "Polygon", "coordinates": [SEGMENT]})
+    ),
+    "zero-area collinear ring": collection(
+        with_geometry({"type": "Polygon", "coordinates": [COLLINEAR]})
+    ),
+    "zero-area hole": collection(
+        with_geometry({"type": "Polygon", "coordinates": [RING, COLLINEAR]})
     ),
     "empty multipolygon": collection(with_geometry({"type": "MultiPolygon", "coordinates": []})),
     "empty polygon in a multipolygon": collection(
@@ -158,11 +214,12 @@ def test_validator_rejects_each_rule(body):
 
 
 def test_validator_accepts_the_edges_the_rules_allow():
-    multi = with_geometry({"type": "MultiPolygon", "coordinates": [[RING], [RING]]})
+    multi = with_geometry({"type": "MultiPolygon", "coordinates": [[RING], [RING, HOLE]]})
     nullable = feature(max_floors=None, kdb=0.5, max_height_meters=3)
-    # Zero-area but three distinct positions: production serves three such rings.
-    collinear = with_geometry({"type": "Polygon", "coordinates": [COLLINEAR]})
-    assert validate_zones_geojson(collection(multi, nullable, collinear), None) == []
+    # The smallest area the rule allows: a right triangle of legs 1e-5 and 2e-5 degrees.
+    tiny = [[115.1, -8.6], [115.10001, -8.6], [115.10001, -8.60002], [115.1, -8.6]]
+    small = with_geometry({"type": "Polygon", "coordinates": [tiny]})
+    assert validate_zones_geojson(collection(multi, nullable, small), None) == []
 
 
 def test_shrink_guard_boundary():
@@ -240,16 +297,37 @@ def test_invalid_input_exits_2_and_writes_nothing(mouth, rows_file):
     assert not (mouth / "src/data/prime-zones.json").exists()
 
 
-def test_one_malformed_row_blocks_the_publish_and_keeps_the_last_version(mouth, rows_file, capsys):
+REFUSED = {
+    "one unreadable row": [row(i) for i in range(99)] + [row(99, geometry="{")],
+    "one row with coordinates false": [row(i) for i in range(99)]
+    + [row(99, geometry=json.dumps({"type": "Polygon", "coordinates": False}))],
+    "every polygon zero-area": [row(i, geometry=poly(COLLINEAR)) for i in range(100)],
+    "more zero-area rings than allowed": [row(i) for i in range(89)]
+    + [row(i, geometry=poly(RING, COLLINEAR)) for i in range(89, 100)],
+}
+
+
+@pytest.mark.parametrize("rows", REFUSED.values(), ids=REFUSED.keys())
+def test_a_bad_generation_keeps_the_last_version(mouth, rows_file, rows):
     publish(mouth, rows_file([row(i) for i in range(100)]))
     before = manifest(mouth)
     files = sorted(p.name for p in (mouth / "public/data/prime").iterdir())
-    capsys.readouterr()
-    rows = [row(i) for i in range(99)] + [row(99, geometry="{")]
-    assert publish(mouth, rows_file(rows, "broken.jsonl")) == 2
+    assert publish(mouth, rows_file(rows, "bad.jsonl")) == 2
     assert manifest(mouth) == before
     assert sorted(p.name for p in (mouth / "public/data/prime").iterdir()) == files
-    assert "1 rows carry a geometry" in json.loads(capsys.readouterr().out)["errors"][0]
+
+
+def test_a_few_zero_area_rings_are_dropped_and_the_rest_published(mouth, rows_file, capsys):
+    rows = [row(i) for i in range(90)] + [
+        row(i, geometry=poly(RING, COLLINEAR)) for i in range(90, 100)
+    ]
+    assert publish(mouth, rows_file(rows)) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert (summary["status"], summary["features"], summary["degenerate_rings_dropped"]) == (
+        "published",
+        100,
+        10,
+    )
 
 
 def test_shrink_keeps_the_last_valid_version(mouth, rows_file):
