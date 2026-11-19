@@ -123,6 +123,7 @@ TABLE = {
     "bool position": (poly([[True, False], *RING[1:3], [True, False]]), (0, 1, 0)),
     "string position": (poly([["a", "b"], *RING[1:3], ["a", "b"]]), (0, 1, 0)),
     "NaN position": (raw(poly(RING).replace("115.1", "NaN")), (0, 1, 0)),
+    "integer too large for a float": (raw(poly(RING).replace("115.1", "1" + "0" * 400)), (0, 1, 0)),
     "Polygon whose only ring has zero area": (poly(COLLINEAR), (0, 0, 1)),
     "Polygon collapsed to a point": (poly(COLLAPSED), (0, 0, 1)),
     "zero-area hole": (poly(RING, COLLINEAR), (1, 0, 1)),

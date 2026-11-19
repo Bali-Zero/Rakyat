@@ -139,7 +139,7 @@ def _is_position(pos: Any) -> bool:
     return (
         isinstance(pos, list)
         and len(pos) == 2
-        and all(_is_number(c) and math.isfinite(c) for c in pos)
+        and all(_is_number(c) and _is_finite(c) for c in pos)
     )
 
 
@@ -256,10 +256,18 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _is_finite(value: Any) -> bool:
+    """A JSON integer too large for a float (1e400 written as digits) is not finite either."""
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _position_error(pos: Any) -> str | None:
     if not (isinstance(pos, list) and len(pos) == 2 and all(_is_number(c) for c in pos)):
         return "position is not two numbers"
-    if not all(math.isfinite(c) for c in pos):
+    if not all(_is_finite(c) for c in pos):
         return "position is not finite"
     lng, lat = pos
     if not (LNG_RANGE[0] <= lng <= LNG_RANGE[1] and LAT_RANGE[0] <= lat <= LAT_RANGE[1]):
