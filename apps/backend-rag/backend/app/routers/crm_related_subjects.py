@@ -3,7 +3,8 @@ POST /api/crm/related-subjects/documents/register (slice 2, documents by referen
 POST /api/crm/related-subjects/names/register (slice 4A, recorded names) and
 POST /api/crm/related-subjects/links/register (slice 4B, proposed client links) and
 POST /api/crm/related-subjects/merges/register (slice 4C, merges of two subjects) and
-POST /api/crm/related-subjects/identifiers/detach (slice 4D, one key moved to a new record).
+POST /api/crm/related-subjects/identifiers/detach (slice 4D, one key moved to a new record) and
+POST /api/crm/related-subjects/birth-date/register (slice 4E, a birth date from an identity document).
 
 Auth: scoped ``X-CRM-Write-Key`` plus ``RELATED_SUBJECT_REGISTRY_ENABLED`` (default off, 503).
 
@@ -20,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Coroutine
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Annotated, Any, Literal
 
 import asyncpg
@@ -40,6 +41,7 @@ from pydantic_core import PydanticCustomError
 
 from backend.app.dependencies import get_database_pool
 from backend.app.deps.crm_service_write import verify_related_subject_write
+from backend.services.crm.related_birth_dates import BirthDateInput, record_birth_date
 from backend.services.crm.related_detach import DetachInput, detach_identifier
 from backend.services.crm.related_documents import (
     DocumentInput,
@@ -622,6 +624,101 @@ class RelatedDetachRequest(_Strict):
         )
 
 
+# ── slice 4E: birth dates ─────────────────────────────────────────────────────
+
+# Slice 4E has closed lists of its own; the lists above are not widened.
+_BIRTH_DATE_LOC = frozenset(
+    {
+        "body",
+        "subject",
+        "kind",
+        "identifiers",
+        "type",
+        "value",
+        "birth_date",
+        "document",
+        "document_kind",
+        "basis",
+        "evidence",
+        "plan_sha256",
+        "files",
+        "dry_run",
+    }
+)
+# Every code the model can raise; nothing else reaches an answer.
+_BIRTH_DATE_CODE = frozenset(
+    {
+        "missing",
+        "extra_forbidden",
+        "string_type",
+        "string_too_short",
+        "string_too_long",
+        "string_pattern_mismatch",
+        "bool_type",
+        "int_type",
+        "greater_than_equal",
+        "less_than_equal",
+        "literal_error",
+        "list_type",
+        "too_short",
+        "too_long",
+        "model_type",
+        "dict_type",
+        "json_invalid",
+        "invalid_identifier",
+        "kind_type_mismatch",
+        "duplicate_identifier",
+        "birth_date_invalid",
+        "birth_date_out_of_range",
+    }
+)
+_BIRTH_DATE_INDEX_LIMIT = {"identifiers": MAX_KEYS}
+_EARLIEST_BIRTH_DATE = date(1900, 1, 1)
+
+
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+class _PersonKeys(_SubjectKeys):
+    """The complete key set of a PERSON: ``kind`` is the one literal, a pydantic literal error at
+    ``subject.kind`` for anything else. ``_SubjectKeys`` itself is not narrowed."""
+
+    kind: Literal["person"]
+
+
+class RelatedBirthDateRequest(_Strict):
+    subject: _PersonKeys
+    birth_date: Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
+    document: _ContentHash
+    document_kind: Literal["passport_data_page", "itas", "evisa"]
+    basis: Literal["identity_document"]
+    evidence: _MergeEvidence
+    dry_run: StrictBool = True
+
+    @field_validator("birth_date")
+    @classmethod
+    def _birth_date_is_a_plausible_calendar_date(cls, value: str) -> str:
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            raise PydanticCustomError("birth_date_invalid", "invalid birth date") from None
+        if parsed < _EARLIEST_BIRTH_DATE or parsed > _utc_today():
+            raise PydanticCustomError("birth_date_out_of_range", "birth date out of range")
+        return value
+
+    def to_input(self) -> BirthDateInput:
+        return BirthDateInput(
+            kind=self.subject.kind,
+            identifiers=self.subject.prepared(),
+            birth_date=date.fromisoformat(self.birth_date),
+            document=self.document,
+            document_kind=self.document_kind,
+            basis=self.basis,
+            evidence=self.evidence.model_dump(),
+        )
+
+
 # Fixed answers: the whole failure surface is these constants. No status, code or text taken
 # from an exception or from the request ever reaches an answer.
 _ANSWER_BODIES: dict[str, bytes] = {
@@ -749,6 +846,22 @@ def _invalid_detach(errors: list[dict[str, Any]]) -> Response:
                 loc.append(part if part in _DETACH_LOC else "_")
         code = err.get("type")
         items.append({"loc": loc, "code": code if code in _DETACH_CODE else "invalid"})
+    return _fixed(422, items)
+
+
+def _invalid_birth_date(errors: list[dict[str, Any]]) -> Response:
+    """422 body of the birth-date route: closed lists of its own, never an input or a message."""
+    items = []
+    for err in errors[:50]:
+        loc: list[Any] = []
+        for part in err.get("loc", ()):
+            limit = _BIRTH_DATE_INDEX_LIMIT.get(loc[-1]) if loc else None
+            if isinstance(part, int) and not isinstance(part, bool):
+                loc.append(part if limit is not None and 0 <= part < limit else "_")
+            else:
+                loc.append(part if part in _BIRTH_DATE_LOC else "_")
+        code = err.get("type")
+        items.append({"loc": loc, "code": code if code in _BIRTH_DATE_CODE else "invalid"})
     return _fixed(422, items)
 
 
@@ -928,4 +1041,26 @@ async def detach_related_subject_identifier(
         )
     async with db_pool.acquire() as conn:
         result = await detach_identifier(conn, payload.to_input(), dry_run=payload.dry_run)
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.post("/birth-date/register", response_model=None)
+async def register_related_subject_birth_date(
+    request: Request,
+    _actor: str = Depends(verify_related_subject_write),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Record the birth date of one person record from a linked identity document (dry run by
+    default). Answers carry ids only."""
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _invalid_birth_date([{"loc": ("body",), "type": "too_long"}])
+    try:
+        payload = RelatedBirthDateRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        return _invalid_birth_date(
+            exc.errors(include_input=False, include_context=False, include_url=False)
+        )
+    async with db_pool.acquire() as conn:
+        result = await record_birth_date(conn, payload.to_input(), dry_run=payload.dry_run)
     return JSONResponse(status_code=200, content=result)
