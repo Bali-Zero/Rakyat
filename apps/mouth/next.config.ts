@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import bundleAnalyzer from "@next/bundle-analyzer";
 import path from "node:path";
+import primeZones from "./src/data/prime-zones.json";
 
 /**
  * Public-route security headers (web audit panel 2026-11-01).
@@ -213,6 +214,18 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The Prime zones map is published under a content-hashed name
+        // (backend-rag publish_zones_geojson), so a file never changes under
+        // its URL and the CDN can keep it for good.
+        source: "/data/prime/:file*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
         // Add security headers shared by every application surface.
         // The portal CSP is intentionally scoped below: a global policy must
         // not block dependencies required by independent surfaces such as Prime.
@@ -297,6 +310,15 @@ const nextConfig: NextConfig = {
   // Redirect legacy /kbli-navigator to new Next.js /kbli app
   async redirects() {
     return [
+      // The zones map used to be answered by a route that re-proxied 33 MB
+      // past the CDN's cache limit. The address stays for old callers and
+      // points at the current versioned file, so it is temporary (307): the
+      // target changes with each publish.
+      {
+        source: "/api/prime/zones-geojson",
+        destination: primeZones.path,
+        permanent: false,
+      },
       // Recruitment assessment retired after hire (2026-10-21).
       {
         source: "/interview_natalie",

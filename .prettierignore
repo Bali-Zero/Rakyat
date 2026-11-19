@@ -206,3 +206,6 @@ evidence/2026-09/agent-air-m5-infra-dynamic-workflow-3c2-1ca98371/reviews/**
 
 # Verbatim council/ground-truth receipts inside evidence packs (must stay byte-identical to the seat output)
 evidence/**/council/
+
+# Published Prime zones map: generated, one 33 MB line, content-hashed (backend-rag publish_zones_geojson)
+apps/mouth/public/data/prime/
