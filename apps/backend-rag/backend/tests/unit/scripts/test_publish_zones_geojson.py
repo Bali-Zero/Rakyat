@@ -176,7 +176,7 @@ def test_publish_writes_file_and_manifest(mouth, rows_file, capsys):
     m = manifest(mouth)
     body = (mouth / "public/data/prime" / m["path"].rsplit("/", 1)[1]).read_bytes()
     digest = hashlib.sha256(body).hexdigest()
-    assert m["sha256"] == digest
+    assert "sha256" not in m
     assert m["path"] == f"/data/prime/zones-{digest[:16]}.json"
     assert (m["features"], m["bytes"], m["previous"]) == (2, len(body), None)
     assert json.loads(capsys.readouterr().out)["status"] == "published"

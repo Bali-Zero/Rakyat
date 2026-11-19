@@ -23,7 +23,6 @@ describe("prime zones manifest and its data file", () => {
   it("names the file by the first 16 hex of its content hash", () => {
     const body = readFileSync(file);
     const digest = createHash("sha256").update(body).digest("hex");
-    expect(manifest.sha256).toBe(digest);
     expect(manifest.path).toBe(`/data/prime/zones-${digest.slice(0, 16)}.json`);
     expect(manifest.bytes).toBe(body.length);
   });
