@@ -117,7 +117,7 @@ async def import_statement(
     stamps = [t.posted_at for t in txns if t.posted_at is not None]  # all of them, by the guard
     first_at, last_at = min(stamps), max(stamps)
     opening, closing = statement.opening_balance, statement.closing_balance
-    kept = ("Payment Date", "Payment Type", "Other Reference", "Bank Reference", "Cheque Number")
+    kept = statement.kept_columns
     filename = None if source_filename is None else source_filename[:_SOURCE_FILENAME_MAX]
 
     try:
@@ -141,7 +141,7 @@ async def import_statement(
                      closing_balance_idr, txn_count, account_number, account_name,
                      period_first_at, period_last_at, opening_balance, closing_balance,
                      order_decided_by)
-                VALUES ('cimb_niaga', 'csv', 'parsed', TRUE, $1,
+                VALUES ($15, $16, 'parsed', TRUE, $1,
                         $2, $3, $4, $5,
                         $6, $7, $8, $9,
                         $10, $11, $12, $13,
@@ -151,7 +151,7 @@ async def import_statement(
                 uploaded_by, filename, first_at.date(), last_at.date(), _round_idr(opening),
                 _round_idr(closing), len(txns), account, statement.account_name,
                 first_at, last_at, opening, closing,
-                statement.order_decided_by,
+                statement.order_decided_by, statement.bank_code, statement.source_format,
             )
             inserted_rows = await conn.fetch(
                 """

@@ -1002,3 +1002,23 @@ async def test_i10_forward_sql_stays_inside_the_runner_rules() -> None:
         assert banned not in text
     assert "SET LOCK_TIMEOUT = '5S'" in text and "SET STATEMENT_TIMEOUT = '60S'" in text
     assert ACCOUNT  # imported for the synthetic builder
+
+
+# ── the PDF readers store through the same path ─────────────────────────────
+
+
+@pytest.mark.parametrize("bank", ["mandiri", "permata"])
+async def test_pdf_statements_store_their_bank_and_format_and_reimport_is_idempotent(db, bank) -> None:
+    from backend.services.accounting.bank_pdf_readers import parse_mandiri_pages, parse_permata_pages
+    from backend.tests.services.test_accounting_bank_pdf_readers import P_DAYS, _mandiri, _permata
+
+    conn, _ = db
+    stmt = parse_mandiri_pages([_mandiri()]) if bank == "mandiri" else parse_permata_pages([_permata(P_DAYS)])
+    first = await _import(conn, stmt, "a.pdf")
+    assert first.rows_inserted == len(stmt.transactions) and not first.nothing_new
+    row = await conn.fetchrow("SELECT bank_code, source_format, account_number FROM bank_statements")
+    assert (row["bank_code"], row["source_format"]) == (f"bank_{bank}", "pdf")
+    assert row["account_number"] == stmt.account_number
+    again = await _import(conn, stmt, "a.pdf")
+    assert again.nothing_new and again.rows_duplicate == len(stmt.transactions)
+    assert await _counts(conn) == (1, len(stmt.transactions))

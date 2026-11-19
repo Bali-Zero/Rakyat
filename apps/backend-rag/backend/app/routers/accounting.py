@@ -32,10 +32,10 @@ from backend.services.accounting import (
     reconcile_service,
 )
 from backend.services.accounting.bank_import_service import BankImportError
-from backend.services.accounting.bank_parser import (
-    BankParseError,
-    parse_and_preview_cimb_statement,
-    preview_cimb_statement,
+from backend.services.accounting.bank_parser import BankParseError
+from backend.services.accounting.bank_pdf_readers import (
+    parse_and_preview_statement,
+    preview_statement,
 )
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
@@ -197,17 +197,18 @@ async def import_cashout_pdf(
     }
 
 
-# ── Bank statement preview (CIMB OCTO Biz CSV) — read-only ───────────────────
+# ── Bank statement preview (CIMB CSV, Mandiri PDF, Permata PDF) — read-only ───────────────────
 
 
-async def _read_statement_upload(file: UploadFile) -> str:
+async def _read_statement_upload(file: UploadFile) -> bytes:
     """The upload checks shared by the preview and the import handler (spec I8), in order:
-    `.csv` filename, read up to the limit plus one byte, empty, 413 over the limit, UTF-8.
-    Nothing of the file or its name goes into an error."""
+    `.csv` or `.pdf` filename, read up to the limit plus one byte, empty, 413 over the limit.
+    The format is then detected from the bytes, not the name. Nothing of the file or its
+    name goes into an error."""
     # No default name: an empty filename is refused like any other name without the suffix.
-    filename = file.filename or ""
-    if not filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=422, detail="only .csv bank statements are accepted")
+    filename = (file.filename or "").lower()
+    if not filename.endswith((".csv", ".pdf")):
+        raise HTTPException(status_code=422, detail="only .csv or .pdf bank statements are accepted")
 
     # limit + 1 byte: enough to detect an oversized upload without loading it whole
     data = await file.read(_MAX_BANK_STATEMENT_BYTES + 1)
@@ -215,45 +216,41 @@ async def _read_statement_upload(file: UploadFile) -> str:
         raise HTTPException(status_code=422, detail="empty file")
     if len(data) > _MAX_BANK_STATEMENT_BYTES:
         raise HTTPException(status_code=413, detail="file too large (max 2 MB)")
-
-    try:
-        return data.decode("utf-8")  # one BOM is left in the text, the parser removes exactly one
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=422, detail="file is not valid UTF-8 text") from exc
+    return data
 
 
 @router.post("/bank-statement/preview")
 async def preview_bank_statement(
-    file: UploadFile = File(..., description="CIMB OCTO Biz 'Account Statement Summary' CSV"),
+    file: UploadFile = File(..., description="CIMB Niaga CSV, Bank Mandiri PDF or Bank Permata PDF statement"),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Parse a CIMB statement CSV and return a summary report. Writes nothing."""
+    """Parse a bank statement and return a summary report. Writes nothing."""
     _require_accounting_access(current_user)
-    text = await _read_statement_upload(file)
+    data = await _read_statement_upload(file)
 
     try:
         # off the event loop: parse + report in one total call
-        return await asyncio.to_thread(preview_cimb_statement, text)
+        return await asyncio.to_thread(preview_statement, data)
     except BankParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/bank-statement/import")
 async def import_bank_statement(
-    file: UploadFile = File(..., description="CIMB OCTO Biz 'Account Statement Summary' CSV"),
+    file: UploadFile = File(..., description="CIMB Niaga CSV, Bank Mandiri PDF or Bank Permata PDF statement"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Store a CIMB statement: the preview report plus the import result.
+    """Store a bank statement: the preview report plus the import result.
 
     All or nothing, and a transaction is never stored twice (see bank_import_service).
     The only database write goes through `import_statement`.
     """
     _require_accounting_access(current_user)
-    text = await _read_statement_upload(file)
+    data = await _read_statement_upload(file)
 
     try:
-        statement, report = await asyncio.to_thread(parse_and_preview_cimb_statement, text)
+        statement, report = await asyncio.to_thread(parse_and_preview_statement, data)
     except BankParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

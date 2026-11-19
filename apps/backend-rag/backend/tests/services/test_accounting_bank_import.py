@@ -243,7 +243,7 @@ def _cases():
     big = b"x" * 64
     return [
         ("outsider", OUTSIDER, GOOD, "s.csv", None),
-        ("filename", ADMIN, GOOD, "s.pdf", None),
+        ("filename", ADMIN, GOOD, "s.txt", None),
         ("empty", ADMIN, b"", "s.csv", None),
         ("not_utf8", ADMIN, b"\xff\xfe\x00bad", "s.csv", None),
         ("unparseable", ADMIN, b"a,b\n1,2\n", "s.csv", None),

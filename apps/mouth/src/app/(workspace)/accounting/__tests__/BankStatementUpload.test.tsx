@@ -50,10 +50,26 @@ beforeEach(() => {
 });
 
 describe("BankStatementUpload", () => {
+  it("U0: the input takes a PDF as well as a CSV, a PDF is previewed like a CSV, and the page names the formats", async () => {
+    preview.mockResolvedValue(previewFixture());
+    render(<BankStatementUpload onImported={vi.fn()} />);
+    expect(input().getAttribute("accept")).toMatch(/\.csv/);
+    expect(input().getAttribute("accept")).toMatch(/\.pdf/);
+    expect(
+      screen.getByText(/CIMB Niaga CSV, Bank Mandiri PDF and Bank Permata PDF/),
+    ).toBeInTheDocument();
+    const pdf = new File(["contoh"], "statement-0000000000.pdf", {
+      type: "application/pdf",
+    });
+    choose(pdf);
+    await screen.findByRole("button", { name: /import 3 transactions/i });
+    expect(preview).toHaveBeenCalledWith(pdf);
+  });
+
   it("U1: preview on choose; import is not called until the user clicks Import", async () => {
     preview.mockResolvedValue(previewFixture());
     render(<BankStatementUpload onImported={vi.fn()} />);
-    expect(screen.getByLabelText(/upload bank statement \(csv\)/i)).toBe(
+    expect(screen.getByLabelText(/upload bank statement \(csv or pdf\)/i)).toBe(
       input(),
     );
     const f = csv();

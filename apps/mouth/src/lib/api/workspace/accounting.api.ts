@@ -404,7 +404,7 @@ export const accountingApi = {
   },
 
   /**
-   * Preview a CIMB statement CSV (max 2 MB, admin only). Stores nothing; returns
+   * Preview a bank statement (CIMB CSV, Mandiri or Permata PDF; max 2 MB, admin only). Stores nothing; returns
    * the report of the statement. 422 carries a fixed-text `detail`.
    */
   async previewBankStatement(file: File): Promise<BankStatementPreview> {
@@ -415,7 +415,7 @@ export const accountingApi = {
   },
 
   /**
-   * Store a CIMB statement CSV: the preview report plus an `import` result.
+   * Store a bank statement: the preview report plus an `import` result.
    * Idempotent: sending the same file again stores nothing new.
    */
   async importBankStatement(file: File): Promise<BankStatementImportResponse> {
