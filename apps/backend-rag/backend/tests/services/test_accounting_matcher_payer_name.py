@@ -62,6 +62,13 @@ def test_a_cut_surname_reaches_the_floor_where_the_whole_line_did_not() -> None:
     assert _name_score(CIMB, "Mario Rossinelli") >= NAME_HINT_FLOOR
 
 
+def test_a_long_name_cut_by_the_bank_is_matched_by_its_words_not_by_fuzz() -> None:
+    line = "20261104BBBAIDJA010O0290704618 BFS FR BBBAIDJA UN ANNA DI ROSSET"
+    client = "Anna Di Rossetti Lombardini Montalcini"
+    assert fuzz.token_sort_ratio("anna di rosset", client.lower()) < NAME_HINT_FLOOR
+    assert _name_score(line, client) >= NAME_HINT_FLOOR
+
+
 def test_word_order_is_free() -> None:
     assert _name_score(CIMB, "Rossinelli Mario") >= NAME_HINT_FLOOR
 
