@@ -55,7 +55,9 @@ type Source = "overview" | "team" | "revenue" | "processes" | "trend";
  * and a failed load must not be mistaken for one.
  */
 const NOT_AVAILABLE = "Data not available";
-// A month before the first confirmed payment: nothing was recorded, which is not Rp 0.
+// A month whose bank statement is not imported has no figure, and a month whose transfers are
+// still waiting to be reconciled is not a known zero: neither reads Rp 0.
+const NO_STATEMENT = "No bank statement";
 const NOT_RECONCILED = "Not reconciled";
 
 const Unavailable = () => (
@@ -90,12 +92,15 @@ interface RevenueSummary {
   total_paid: number;
   total_outstanding: number;
   avg_per_client: number;
-  // Money received in each month, by the date the transfer landed. null: the month ends
-  // before the first confirmed payment, so nothing was recorded (not a zero).
+  // Money received in each month, by the date the transfer landed, from the imported bank
+  // statements. no_statement: nothing imported for the month (collected null). partial:
+  // transfers are still waiting to be reconciled, so the figure is not final.
   by_month: Array<{
     period: string;
+    status: "no_statement" | "partial" | "complete";
     collected: number | null;
     payments: number | null;
+    to_reconcile: number;
   }>;
   forecast_next_month: number;
 }
@@ -811,7 +816,9 @@ export default function ClientAnalyticsPage() {
             <div className="p-4 border-b">
               <h3 className="text-sm font-semibold">Monthly Breakdown</h3>
               <p className="text-xs text-muted-foreground mt-1">
-                Money received, by transfer date
+                Money received, by transfer date, from the imported bank
+                statements. A month is final when no transfer is left to
+                reconcile.
               </p>
             </div>
             {isLoading ? (
@@ -830,26 +837,59 @@ export default function ClientAnalyticsPage() {
                       <th className="text-right p-3 font-medium hidden sm:table-cell">
                         Payments
                       </th>
+                      <th className="text-right p-3 font-medium">
+                        To reconcile
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {revenue?.by_month?.map((month, idx) => (
                       <tr key={idx} className="hover:bg-muted/50">
                         <td className="p-3">{month.period}</td>
-                        {month.collected === null ? (
+                        {month.status === "no_statement" ||
+                        month.collected === null ? (
                           <td
-                            colSpan={2}
+                            colSpan={3}
                             className="p-3 text-right text-muted-foreground"
                           >
-                            {NOT_RECONCILED}
+                            {NO_STATEMENT}
                           </td>
                         ) : (
                           <>
-                            <td className="p-3 text-right font-medium text-[var(--state-success)]">
-                              {formatCurrency(month.collected)}
+                            <td className="p-3 text-right font-medium">
+                              {month.status === "partial" &&
+                              month.collected === 0 ? (
+                                <span className="text-muted-foreground font-normal">
+                                  {NOT_RECONCILED}
+                                </span>
+                              ) : (
+                                <span
+                                  className={
+                                    month.status === "complete"
+                                      ? "text-[var(--state-success)]"
+                                      : undefined
+                                  }
+                                >
+                                  {formatCurrency(month.collected)}
+                                  {month.status === "partial" && (
+                                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                      (partial)
+                                    </span>
+                                  )}
+                                </span>
+                              )}
                             </td>
                             <td className="p-3 text-right hidden sm:table-cell">
                               {month.payments}
+                            </td>
+                            <td
+                              className={`p-3 text-right ${
+                                month.to_reconcile > 0
+                                  ? "text-[var(--state-warning)] font-medium"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              {month.to_reconcile}
                             </td>
                           </>
                         )}
