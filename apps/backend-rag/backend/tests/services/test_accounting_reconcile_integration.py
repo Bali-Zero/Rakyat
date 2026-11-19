@@ -22,6 +22,7 @@ import asyncpg
 import pytest
 from asyncpg.exceptions import CheckViolationError
 
+from backend.core.pg_json_codec import init_asyncpg_connection
 from backend.services.accounting.cashout_service import cashbook_summary
 from backend.services.accounting.reconcile_service import ReconcileError, confirm_payment
 
@@ -82,6 +83,18 @@ async def _try_connect() -> asyncpg.Connection | None:
         return None
 
 
+async def _connect(dbname: str) -> asyncpg.Connection:
+    """A connection to the test database, shaped like a production pool connection.
+
+    It registers the jsonb/json codec every production pool registers. Without it a
+    pre-encoded string reaches Postgres as JSON text and is stored correctly HERE, while
+    production stores it as a JSON string scalar: reconciliation_log.invoice_ids held "[5]".
+    """
+    conn = await asyncpg.connect(_base_dsn(), database=dbname)
+    await init_asyncpg_connection(conn)
+    return conn
+
+
 async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     """Create an ephemeral DB with the migration applied + minimal stubs.
 
@@ -95,7 +108,7 @@ async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     await admin.execute(f'CREATE DATABASE "{dbname}"')
     await admin.close()
     user = os.environ.get("USER", "postgres")
-    conn = await asyncpg.connect(_base_dsn(), database=dbname)
+    conn = await _connect(dbname)
     await conn.execute(STUBS)
     await conn.execute(_forward_sql_of(MIGRATION_238))
     await conn.execute(_forward_sql_of(MIGRATION_239))
@@ -185,6 +198,12 @@ async def test_confirm_payment_full_side_effects() -> None:
         assert rl["status_after"] == "paid"
         assert int(rl["amount_applied_idr"]) == 4_000_000
         assert rl["practice_id"] == pid
+        # the invoice list is a JSON ARRAY, read back as a list through the production codec
+        assert rl["invoice_ids"] == [iid]
+        assert await conn.fetchval(
+            "SELECT jsonb_typeof(invoice_ids) FROM reconciliation_log WHERE id=$1",
+            result.reconciliation_log_id,
+        ) == "array"
     finally:
         await _drop_db(conn, dbname, user)
 
@@ -437,9 +456,9 @@ async def test_c1_two_concurrent_confirmations_of_one_bank_transaction_succeed_e
     bank transaction's lock; B (another practice) then arrives. With the lock B must wait and
     then be refused; without it B would finish first and both would pay."""
     conn, dbname, user = await _fresh_db()
-    holder = await asyncpg.connect(_base_dsn(), database=dbname)
-    conn_a = await asyncpg.connect(_base_dsn(), database=dbname)
-    conn_b = await asyncpg.connect(_base_dsn(), database=dbname)
+    holder = await _connect(dbname)
+    conn_a = await _connect(dbname)
+    conn_b = await _connect(dbname)
     try:
         (pa, pb), (ia, ib), txid = await _world(conn, practices=2)
         tx = holder.transaction()
@@ -543,8 +562,14 @@ async def test_p1_without_a_given_invoice_actual_price_stays_null() -> None:
     conn, dbname, user = await _fresh_db()
     try:
         (pid,), (iid,), txid = await _world(conn)
-        await _confirm(conn, txid, pid, None)
+        result = await _confirm(conn, txid, pid, None)
         assert await _price(conn, pid) is None
+        # no invoice named: the list is an EMPTY ARRAY, not a JSON string
+        rl = await conn.fetchrow(
+            "SELECT invoice_ids, jsonb_typeof(invoice_ids) AS kind FROM reconciliation_log WHERE id=$1",
+            result.reconciliation_log_id,
+        )
+        assert (rl["invoice_ids"], rl["kind"]) == ([], "array")
     finally:
         await _drop_db(conn, dbname, user)
 
