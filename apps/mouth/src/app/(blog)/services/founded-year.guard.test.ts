@@ -7,11 +7,9 @@ const read = (rel: string) =>
 
 const SURFACES = {
   "services/page.tsx": read("./page.tsx"),
-  "v2/FunnelFeature.tsx": read("../../v2/_components/FunnelFeature.tsx"),
-  "v2/HeroCarousel.tsx": read("../../v2/_components/HeroCarousel.tsx"),
 };
 
-describe("public founded year is 2020 on /services and /v2", () => {
+describe("public founded year is 2020 on /services", () => {
   for (const [name, src] of Object.entries(SURFACES)) {
     it(`${name} never states a founding year of 2006 or 2019`, () => {
       expect(src).not.toMatch(/since\s+(2006|2019)/i);

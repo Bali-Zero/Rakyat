@@ -151,13 +151,42 @@ class TestGarudaReadsTheSameTable:
             h for h in HOLIDAYS if COVERAGE_START <= h.at <= COVERAGE_END
         )
 
-    def test_the_voa_gate_still_carries_exactly_its_four_days(self) -> None:
+    def test_the_voa_gate_carries_the_late_2026_days_then_the_decreed_2027_days(self) -> None:
         assert [h.at for h in OPERATING_CALENDAR] == [
             date(2026, 8, 17),
             date(2026, 8, 25),
             date(2026, 12, 24),
             date(2026, 12, 25),
+            date(2027, 1, 1),
+            date(2027, 1, 5),
+            date(2027, 2, 5),
+            date(2027, 2, 6),
+            date(2027, 3, 8),
+            date(2027, 3, 9),
+            date(2027, 3, 10),
+            date(2027, 3, 11),
+            date(2027, 3, 12),
+            date(2027, 3, 15),
+            date(2027, 3, 25),
+            date(2027, 3, 26),
+            date(2027, 3, 28),
+            date(2027, 5, 1),
+            date(2027, 5, 6),
+            date(2027, 5, 17),
+            date(2027, 5, 18),
+            date(2027, 5, 19),
+            date(2027, 5, 20),
+            date(2027, 6, 1),
+            date(2027, 6, 6),
+            date(2027, 8, 15),
+            date(2027, 8, 17),
+            date(2027, 12, 24),
+            date(2027, 12, 25),
+            date(2027, 12, 26),
         ]
+        dates_2027 = [h.at for h in OPERATING_CALENDAR if h.at.year == 2027]
+        assert len(dates_2027) == 26
+        assert dates_2027 == [h.at for h in HOLIDAYS if h.at.year == 2027]
 
     def test_clipping_hides_the_earlier_decreed_dates_from_the_voa_gate_only(self) -> None:
         # They exist in the shared table (so a deadline moves off them) and are outside the VOA

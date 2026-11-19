@@ -17,6 +17,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
 import { extractDriveFileId } from "./utils";
+import { isImmigrationDocType } from "./immigration-doc-type";
 import { permitDisplay } from "./permit-label";
 import { COMPLETED_PILL, CURRENT_PILL } from "./permit-status-pills";
 import { AiRecap } from "./AiRecap";
@@ -253,14 +254,7 @@ export function ImmigrationTab({
   const isImmigrationDocument = (d: ClientDocument) =>
     !isPassport(d) &&
     (d.document_category === "immigration" ||
-      d.document_type?.toLowerCase().includes("kitas") ||
-      d.document_type?.toLowerCase().includes("kitap") ||
-      d.document_type?.toLowerCase().includes("visa") ||
-      d.document_type?.toLowerCase().includes("permit") ||
-      d.document_type?.toLowerCase().includes("imta") ||
-      d.document_type?.toLowerCase().includes("rptka") ||
-      d.document_type?.toLowerCase().includes("evisa") ||
-      d.document_type?.toLowerCase().includes("voa") ||
+      isImmigrationDocType(d.document_type) ||
       isItkDocument(d) ||
       isEpoDocument(d));
   // Live only: a removed, archived or rejected document is neither current,

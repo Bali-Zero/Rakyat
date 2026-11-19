@@ -1,6 +1,6 @@
 """Related-subjects registry, slice 3: the read-only admin routes on a real PostgreSQL.
 
-Each test builds a throwaway schema in the TEST database (migrations 361 and 362 forward parts
+Each test builds a throwaway schema in the TEST database (migrations 361, 362 and 365 forward parts
 plus the audit table), seeds invented rows (``Zz`` / ``ZZ`` conventions) and calls the real router
 behind the real middleware stack. Nothing here is a real person, company or document.
 """
@@ -34,6 +34,7 @@ from backend.middleware.hybrid_auth import ROLE_BOUNDARY_DETAIL, HybridAuthMiddl
 from backend.middleware.request_tracing import RequestTracingMiddleware
 from backend.services.crm.related_identifiers import canonical_form
 from backend.services.monitoring.activity_logger import activity_logger
+from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
 
 MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
 BASE = "/api/crm/related-registry"
@@ -43,12 +44,22 @@ REGISTRY_TABLES = (
     "related_documents",
     "related_document_sightings",
     "related_subject_documents",
+    "related_subject_links",
+    "related_subject_merges",
 )
 
 ADMIN = {"email": "zz-admin@example.test", "user_id": 1, "role": "admin"}
 STAFF = {"email": "zz-staff@example.test", "user_id": 2, "role": "team_member"}
 CLIENT = {"email": "zz-client@example.test", "user_id": 3, "role": "client"}
 PARTNER = {"email": "zz-partner@example.test", "user_id": 4, "role": "partner"}
+
+CLIENTS_SCHEMA = """
+CREATE TABLE clients (
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    full_name text NOT NULL,
+    deleted_at timestamptz
+);
+"""
 
 AUDIT_SCHEMA = """
 CREATE TABLE api_audit_trail (
@@ -119,14 +130,28 @@ async def pool():
     schema = "related_registry_read_" + uuid4().hex
     await admin.execute(f'CREATE SCHEMA "{schema}"')
     created = await asyncpg.create_pool(
-        dsn, min_size=1, max_size=6, server_settings={"search_path": schema}
+        dsn,
+        min_size=1,
+        max_size=6,
+        server_settings={"search_path": schema},
+        init=init_prod_shaped_connection,
+        statement_cache_size=0,
+        max_inactive_connection_lifetime=30.0,
     )
     try:
         async with created.acquire() as c:
-            for migration in ("361_related_subjects_registry.sql", "362_related_documents.sql"):
+            for migration in (
+                "361_related_subjects_registry.sql",
+                "362_related_documents.sql",
+                "365_related_subject_names.sql",
+                "366_related_evidence_objects.sql",
+                "367_related_subject_links.sql",
+                "369_related_subject_merges.sql",
+            ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
             await c.execute(AUDIT_SCHEMA)
+            await c.execute(CLIENTS_SCHEMA)
             await c.execute(WRITE_LOG_SQL)
         yield created
         async with created.acquire() as c:
@@ -341,12 +366,16 @@ async def test_t3_list_without_q_orders_pages_and_counts(admin, seeded):
     assert row["kind"] == "person" and row["nationality"] == "ZZ-land"
     assert row["date_of_birth"] == "1990-01-02" and row["document_count"] == 3
     assert row["identifiers"] == [
-        {"type": "passport", "value": ZZ_PASSPORT_RAW},
-        {"type": "permit", "value": ZZ_PERMIT_RAW},
+        {"type": "passport", "value": ZZ_PASSPORT_RAW, "from_subject_id": None},
+        {"type": "permit", "value": ZZ_PERMIT_RAW, "from_subject_id": None},
+        {"type": "passport", "value": "ZZ77777M7", "from_subject_id": seeded["merged"]},
     ]
     assert set(row) == {
-        "id", "kind", "display_name", "date_of_birth", "nationality", "identifiers", "document_count",
+        "id", "kind", "display_name", "name_source", "date_of_birth", "nationality", "identifiers",
+        "document_count", "links_count",
     }  # fmt: skip
+    assert row["links_count"] == 0
+    assert row["name_source"] == "registration"
 
     page = await admin.get(BASE, params={"limit": 3, "offset": 2})
     assert ids_of(page) == [seeded[k] for k in ORDER[2:5]]
@@ -429,7 +458,7 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
     assert body["display_name"] == "ZzAaa Person" and body["sex"] == "F"
     assert body["nationality"] == "ZZ-land" and body["date_of_birth"] == "1990-01-02"
     assert "created_at" in body and "evidence" not in body and "created_by" not in body
-    assert [i["type"] for i in body["identifiers"]] == ["passport", "permit"]
+    assert [i["type"] for i in body["identifiers"]] == ["passport", "permit", "passport"]
     assert [d["sha256"] for d in body["documents"]] == [SHA1, SHA2, SHA3]
     first, second, third = body["documents"]
     assert first["drive_file_ids"] == [REF1, REF2]
@@ -439,11 +468,18 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
     assert first["first_seen_on"] == "2026-01-05"
     assert set(first) == {
         "sha256", "doc_type", "mime_type", "byte_size", "first_seen_on", "drive_file_ids",
+        "from_subject_id",
     }  # fmt: skip
+    assert body["merged_from"] == [
+        {"subject_id": seeded["merged"], "basis": None, "merged_at": None}
+    ]
+    assert body["merged_into"] is None
 
     missing = await admin.get(f"{BASE}/999999")
     assert missing.status_code == 404 and missing.json() == {"detail": "Subject not found"}
     assert (await admin.get(f"{BASE}/0")).status_code == 422
+    merged = await admin.get(f"{BASE}/{seeded['merged']}")
+    assert merged.status_code == 200 and merged.json()["merged_into"] == seeded["aaa"]
 
 
 # ── T8 ────────────────────────────────────────────────────────────────────────
@@ -453,10 +489,12 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
 async def test_t8_merged_subject_is_absent_from_list_and_total(admin, seeded):
     resp = await admin.get(BASE, params={"limit": 100})
     assert seeded["merged"] not in ids_of(resp) and resp.json()["total"] == 9
+    # the merged-away record is never listed itself, but its survivor is now found through the
+    # record's name and identifier (slice 4C); its pointer has no history row (LEFT JOIN)
     by_name = await admin.get(BASE, params={"q": "ZzMerged"})
-    assert by_name.json() == {"items": [], "total": 0, "limit": 50, "offset": 0}
+    assert ids_of(by_name) == [seeded["aaa"]] and by_name.json()["total"] == 1
     by_id = await admin.get(BASE, params={"q": "ZZ77777"})
-    assert by_id.json()["total"] == 0
+    assert ids_of(by_id) == [seeded["aaa"]] and by_id.json()["total"] == 1
     kind = await admin.get(BASE, params={"kind": "person", "limit": 100})
     assert seeded["merged"] not in ids_of(kind) and kind.json()["total"] == 7
     # opened by id, a merged subject is returned like any other
@@ -504,6 +542,8 @@ async def test_t9_no_protected_value_in_logs_and_q_is_masked_in_the_audit_row(
 
 # ── T10 ───────────────────────────────────────────────────────────────────────
 
+# SQL constants that are clauses spliced into the statements, not statements of their own
+FRAGMENTS = {"_MATCH_SQL", "_EFFECTIVE_SQL"}
 FORBIDDEN_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|TRUNCATE|MERGE|ALTER|DROP|CREATE)\b", re.I)
 
 
@@ -527,16 +567,18 @@ def _sql_constants(module) -> list[str]:
 
 def test_t10_every_sql_text_of_the_service_is_a_plain_select():
     constants = _sql_constants(service_module)
-    assert len(constants) >= 7
+    assert len(constants) >= 10
     for sql in constants:
         assert not FORBIDDEN_SQL.search(sql), sql[:60]
         assert not re.search(r"\bWITH\b", sql, re.I), sql[:60]
     statements = [
         value
         for attr, value in vars(service_module).items()
-        if attr.endswith("_SQL") and attr != "_MATCH_SQL"
+        if attr.endswith("_SQL") and attr not in FRAGMENTS
     ]
-    assert len(statements) == 7
+    # slice 4A added the recorded-names statement of the detail page, slice 4B the links
+    # statement, slice 4C the members statement of the detail page: 10 complete statements
+    assert len(statements) == 10
     for sql in statements:
         assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
     # the executed statements are exactly the module's constants (no inline SQL in a call)
@@ -608,3 +650,15 @@ async def test_t12_database_error_is_a_fixed_503_and_nothing_leaks(
     assert any(r.name == route_module.__name__ for r in records), "capture saw no router record"
     text = " ".join(_record_text(r) for r in records).casefold()
     assert BOOM_VALUE.casefold() not in text and "zz boom" not in text
+
+
+# ── the production jsonb codec ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guard_the_module_pool_carries_the_production_jsonb_codec(conn):
+    # a native container round-trips as itself; a pre-serialised string comes back as a STRING,
+    # which is the double-encoding signature of the 2026-08-27 incident class
+    assert await conn.fetchval("SELECT $1::jsonb", {"a": 1}) == {"a": 1}
+    assert await conn.fetchval("SELECT $1::jsonb", '{"a": 1}') == '{"a": 1}'
+    assert await conn.fetchval("SELECT jsonb_typeof($1::jsonb)", '{"a": 1}') == "string"

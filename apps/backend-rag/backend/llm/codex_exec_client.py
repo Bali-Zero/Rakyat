@@ -9,10 +9,8 @@ OpenAI API key. The current authorization is narrower: this module may be used
 only by the human-run offline evidence harness. The ruling does not authorize
 a service credential, runtime wiring, real client text, traffic, deployment,
 or cutover. The council's runtime-risk analysis stays recorded as history.
-`OPENAI_WA_PROVIDER_API_KEY` (the sibling `openai_responses_client.py`'s
-credential) is not provisioned under this ruling; that client stays in-tree
-as a DORMANT, reviewed alternative — this module does not import it, replace
-it, or delete it.
+`OPENAI_WA_PROVIDER_API_KEY` (the credential of the former Responses client,
+removed 2026-11-18) is not provisioned under this ruling.
 
 ⚠️ THIS FILE HAS ZERO WIRING. Nothing in `backend/services/rag/agentic/` or
 any other live module imports it. No config flag, no gateway branch, no
@@ -21,8 +19,8 @@ trusting this comment. Any live use still requires a separate runtime design,
 security/privacy review, context-parity evidence, and explicit activation
 authorization; none is supplied by this file or ruling.
 
-Design mirrors `openai_responses_client.py`'s discipline (read that module's
-docstring first): a property-based `available` that never raises on
+Design follows the discipline of the former Responses client (removed
+2026-11-18): a property-based `available` that never raises on
 construction, a typed exception hierarchy so a caller can distinguish
 failure classes without ever seeing raw remote/subprocess content, and
 "fail-closed on shape, not just on transport/exit-code" applied to a
@@ -349,12 +347,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Model governance — same GPT-5.6 family as the sibling Responses client
-# (CLAUDE.md §5), duplicated here rather than imported: this module and
-# `openai_responses_client.py` are two independent, offline, no-wiring
-# adapters — coupling them via a shared import would make an edit to one
-# silently affect the other's model allowlist, which neither module's own
-# docstring would then accurately describe. `MODEL_TERRA` (balanced) is the
+# Model governance — GPT-5.6 family (CLAUDE.md §5), the same family the
+# former Responses client used (removed 2026-11-18). `MODEL_TERRA` (balanced) is the
 # default per the mandate; `MODEL_SOL`/`MODEL_LUNA` remain reachable via an
 # explicit `generate(model=...)` call.
 # ---------------------------------------------------------------------------
@@ -854,7 +848,7 @@ class CodexExecClient:
 
     OFFLINE, NO-WIRING (see module docstring). There is no live caller of
     this class in this repo today. Never instantiate this expecting a
-    persistent resource to manage — unlike `OpenAIResponsesClient`, there is
+    persistent resource to manage — there is
     no persistent connection object; every `generate()` call spawns and
     reaps its own subprocess and its own temp `cwd`.
     """
@@ -887,8 +881,7 @@ class CodexExecClient:
             CodexExecModelNotAllowedError: `model` is not one of
                 `_ALLOWED_MODELS`.
             ValueError: `timeout_s` is not a finite positive number (`bool`
-                excluded — same subtype trap `openai_responses_client.py`
-                guards against, since `isinstance(True, int)` is `True` in
+                excluded — a subtype trap, since `isinstance(True, int)` is `True` in
                 Python).
         """
         if model not in _ALLOWED_MODELS:

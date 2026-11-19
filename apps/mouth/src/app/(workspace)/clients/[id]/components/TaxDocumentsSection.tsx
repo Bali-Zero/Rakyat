@@ -14,11 +14,18 @@ import { FilesBrowserPanel } from "./FilesBrowserPanel";
 //
 // Folder names come from services/crm/drive_taxonomy.py (backend): an
 // individual keeps tax papers in 03_Company_and_Tax (legacy alias 03_Tax), a
-// company in 02_Tax_Returns_and_Payments; a company's tax_dept_folder_id
-// (kind "restricted_tax" in /drive-sources) wins over both.
+// company in 02_Tax_Returns_and_Payments (legacy alias
+// 03_DICHIARAZIONI_E_RICEVUTE_FISCALI, COMPANY_ALIASES in drive_taxonomy.py);
+// a company's tax_dept_folder_id (kind "restricted_tax" in /drive-sources)
+// wins over all of them.
 
 export const PERSONAL_TAX_FOLDERS = ["03_Company_and_Tax", "03_Tax"] as const;
 export const COMPANY_TAX_FOLDER = "02_Tax_Returns_and_Payments";
+/** Searched in this order, before falling back to the company root. */
+export const COMPANY_TAX_FOLDERS = [
+  COMPANY_TAX_FOLDER,
+  "03_DICHIARAZIONI_E_RICEVUTE_FISCALI",
+] as const;
 
 type Resolved =
   | { status: "loading" }
@@ -70,7 +77,7 @@ async function resolveCompany(companyId: number): Promise<Resolved> {
     return { status: "ready", folderId: taxId, rootName: "Tax folder" };
   const rootId = idOf("primary");
   if (!rootId) return { status: "none" };
-  const sub = await findSubfolder(rootId, [COMPANY_TAX_FOLDER]);
+  const sub = await findSubfolder(rootId, COMPANY_TAX_FOLDERS);
   if (sub) return { status: "ready", folderId: sub.id, rootName: sub.name };
   return {
     status: "ready",

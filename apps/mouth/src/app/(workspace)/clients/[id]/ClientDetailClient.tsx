@@ -87,6 +87,7 @@ import { earlyKey, takeEarly } from "./components/early-fetch";
 import { startClientDetailEarly } from "./prefetch";
 import { TabSkeleton } from "./components/TabSkeleton";
 import { ClientDetailSkeleton } from "./components/ClientDetailSkeleton";
+import { isImmigrationDocType } from "./components/immigration-doc-type";
 
 /*
  * Only Overview is in this chunk. Every other tab and every modal is its own
@@ -536,14 +537,7 @@ export function ClientDetailClient({
     d.document_type?.toLowerCase().includes("passport");
   const isImmigrationDoc = (d: ClientDocument) =>
     d.document_category === "immigration" ||
-    d.document_type?.toLowerCase().includes("kitas") ||
-    d.document_type?.toLowerCase().includes("kitap") ||
-    d.document_type?.toLowerCase().includes("visa") ||
-    d.document_type?.toLowerCase().includes("permit") ||
-    d.document_type?.toLowerCase().includes("imta") ||
-    d.document_type?.toLowerCase().includes("rptka") ||
-    d.document_type?.toLowerCase().includes("evisa") ||
-    d.document_type?.toLowerCase().includes("voa");
+    isImmigrationDocType(d.document_type);
   const isCompanyDoc = (d: ClientDocument) => d.document_category === "pma";
   // The row-23 guard: only LIVE general documents are grouped by category.
   const generalDocuments = documents.filter(
@@ -1232,6 +1226,8 @@ export function ClientDetailClient({
               day={profileDay!}
               documents={documentRows}
               documentsByCategory={documentsByCategory}
+              clientFolderId={client.google_drive_folder_id}
+              companyLinks={company_links ?? []}
               formatDate={formatDate}
               onAddClick={() => setActiveModal("add_document")}
               onEditClick={(doc) => {

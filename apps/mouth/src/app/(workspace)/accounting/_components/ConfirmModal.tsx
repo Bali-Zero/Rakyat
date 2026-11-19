@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import { Money } from "@balizero/core";
+import { candidateIdentityParts, NO_INVOICE_NUMBER } from "./CandidateIdentity";
 import {
   accountingApi,
   type BankTransaction,
@@ -32,6 +33,7 @@ export function ConfirmModal({
   const [busy, setBusy] = useState(false);
   // A second click in the same tick lands before React re-renders.
   const inFlight = useRef(false);
+  const identity = candidateIdentityParts(candidate);
   const delta = txn.amount_idr - candidate.invoice_amount_idr;
   // A transfer net of PPh23 withholding (delta < 0 but flagged likely_withheld)
   // still SETTLES the invoice — the withheld tax is recorded separately, not a
@@ -67,7 +69,7 @@ export function ConfirmModal({
       });
       success(
         "Payment confirmed",
-        `${candidate.client_name} marked ${newStatus}`,
+        `${identity.number ? `${identity.number} · ` : ""}${candidate.client_name} marked ${newStatus}`,
       );
       onConfirmed();
     } catch (err) {
@@ -82,13 +84,13 @@ export function ConfirmModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl border bg-card p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-xl border border-[var(--bz-border)] bg-[var(--bz-card)] p-6 shadow-xl">
         <div className="flex items-start justify-between">
           <h3 className="text-lg font-semibold">Confirm payment match</h3>
           <button
             onClick={onClose}
             disabled={busy}
-            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)] disabled:opacity-50"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
@@ -97,23 +99,40 @@ export function ConfirmModal({
 
         <dl className="mt-4 space-y-2 text-sm">
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Transfer</dt>
+            <dt className="text-[var(--bz-text-2)]">Transfer</dt>
             <dd className="font-medium tabular-nums">
               <Money value={txn.amount_idr} />
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Client</dt>
+            <dt className="text-[var(--bz-text-2)]">Client</dt>
             <dd className="font-medium">{candidate.client_name}</dd>
           </div>
+          {[
+            ["Invoice no.", identity.number ?? NO_INVOICE_NUMBER],
+            ["Issued", identity.date],
+            ["Service", identity.service],
+          ].map(
+            ([label, value]) =>
+              value !== null && (
+                <div key={label} className="flex justify-between gap-3">
+                  <dt className="whitespace-nowrap text-[var(--bz-text-2)]">
+                    {label}
+                  </dt>
+                  <dd className="min-w-0 break-words text-right font-medium [overflow-wrap:anywhere]">
+                    {value}
+                  </dd>
+                </div>
+              ),
+          )}
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Invoice</dt>
+            <dt className="text-[var(--bz-text-2)]">Invoice</dt>
             <dd className="tabular-nums">
               <Money value={candidate.invoice_amount_idr} />
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Delta</dt>
+            <dt className="text-[var(--bz-text-2)]">Delta</dt>
             <dd
               className={`tabular-nums ${delta < 0 ? "text-[var(--state-warning)]" : "text-[var(--state-success)]"}`}
             >
@@ -122,7 +141,7 @@ export function ConfirmModal({
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">New status</dt>
+            <dt className="text-[var(--bz-text-2)]">New status</dt>
             <dd className="font-semibold uppercase">{newStatus}</dd>
           </div>
           {candidate.likely_withheld && (
@@ -133,11 +152,16 @@ export function ConfirmModal({
           )}
         </dl>
 
-        <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+        <ul className="mt-3 space-y-1 text-xs text-[var(--bz-text-2)]">
           {candidate.reasons.map((reason, i) => (
             <li key={i}>• {reason}</li>
           ))}
         </ul>
+
+        <p className="mt-4 text-xs text-[var(--state-warning)]">
+          Confirming records this payment on the practice, the invoice and the
+          cashout. It cannot be undone from this page.
+        </p>
 
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose} disabled={busy}>

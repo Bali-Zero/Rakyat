@@ -301,6 +301,25 @@ async def test_database_error_is_reported_not_raised():
     assert result["notified"] is False and result["error"] == "RuntimeError"
 
 
+def test_digest_sends_accounting_to_confirm_on_the_accounting_page():
+    _, body = _build_digest(
+        [
+            {
+                "invoice_number": "INV-T-9",
+                "service_name": "svc",
+                "amount_idr": 1,
+                "payment_status": "unpaid",
+                "assigned_to": "a",
+                "days_unpaid": 3,
+            }
+        ],
+        "13 November 2026",
+    )
+    assert "confirm it on the Accounting page" in body
+    assert "https://kita.balizero.com/accounting" in body
+    assert "update the payment status in the CRM" not in body
+
+
 def test_digest_escapes_html():
     _, body = _build_digest(
         [

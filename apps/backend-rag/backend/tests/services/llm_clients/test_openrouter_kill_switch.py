@@ -72,23 +72,6 @@ async def test_check_credits_blocked_when_disabled():
     fake_http.get.assert_not_awaited()
 
 
-def test_provider_unavailable_when_disabled():
-    """The provider registry must not advertise a gated egress as available."""
-    from backend.llm.providers.openrouter import OpenRouterProvider
-
-    provider = OpenRouterProvider.__new__(OpenRouterProvider)
-    provider._available = True
-    provider._client = MagicMock()
-
-    with patch("backend.app.core.config.settings") as mock_settings:
-        mock_settings.openrouter_enabled = False
-        assert provider.is_available is False
-
-    with patch("backend.app.core.config.settings") as mock_settings:
-        mock_settings.openrouter_enabled = True
-        assert provider.is_available is True
-
-
 @pytest.mark.asyncio
 async def test_complete_allowed_when_enabled():
     """Innocence check: with the flag explicitly ON the call goes through."""

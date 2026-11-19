@@ -133,6 +133,12 @@ PUBLIC_REQUESTS: list[tuple[str, str, str, dict]] = [
         "/api/visa/voa/orders/ord_abc123/browser-return-observations",
         {"json": {}},
     ),
+    (
+        "resume_order_checkout",
+        "POST",
+        "/api/visa/voa/orders/ord_abc123/checkout-session",
+        {},
+    ),
     ("receive_payment_webhook", "POST", "/api/visa/voa/webhooks/payment", {"content": b"{}"}),
 ]
 

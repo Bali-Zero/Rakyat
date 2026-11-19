@@ -3,7 +3,7 @@ import { montserrat } from "@balizero/core/fonts/montserrat";
 import { NavShell, BZLogo } from "@balizero/core";
 import { SessionInit } from "@/components/funnel/SessionInit";
 import { HeaderWhatsAppCTA } from "@/components/funnel/HeaderWhatsAppCTA";
-import { MobileNav } from "@/app/v2/_components/MobileNav";
+import { MobileNav } from "@/components/site/MobileNav";
 import { getFunnelNavItems } from "@/components/funnel/funnel-nav";
 import { VisaFooter } from "./_components/VisaFooter";
 

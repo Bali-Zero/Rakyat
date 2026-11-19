@@ -300,15 +300,23 @@ def _finite_int(value: Any) -> int:
     return int(number) if number.is_finite() else 0
 
 
+def _iso(value: Any) -> str | None:
+    """An ISO 8601 string when the stored value has `isoformat`, else None."""
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else None
+
+
 async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> list[OpenInvoice]:
     """The invoices of one pool (a SELECT; the predicate is one of the two constants above)."""
     rows = await conn.fetch(
         f"""
         SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
                i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
-               c.full_name AS client_name
+               c.full_name AS client_name,
+               i.invoice_number, pt.name AS service_name
         FROM invoices i
         JOIN practices p ON i.practice_id = p.id
+        LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
         LEFT JOIN clients c ON p.client_id = c.id
         WHERE {_RECORDED_POOL_SQL if recorded else _OPEN_POOL_SQL}
         """
@@ -321,6 +329,9 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
             amount_idr=_finite_int(r["amount_idr"]),
             generated_at=r["generated_at"].date() if r["generated_at"] else None,
             pph_expected_idr=_finite_int(r["pph_expected_idr"]),
+            invoice_number=r.get("invoice_number"),
+            invoice_issued_at=_iso(r["generated_at"]),
+            service_name=r.get("service_name"),
         )
         for r in rows
     ]
@@ -336,6 +347,9 @@ def _candidate_json(c: MatchCandidate) -> dict[str, Any]:
         "reasons": c.reasons,
         "amount_delta_idr": c.amount_delta_idr,
         "likely_withheld": c.likely_withheld,
+        "invoice_number": c.invoice_number,
+        "invoice_issued_at": c.invoice_issued_at,
+        "service_name": c.service_name,
     }
 
 
@@ -441,6 +455,10 @@ async def confirm_reconciliation(
 
         await invalidate_cache("zantara:crm_practices_stats:*")
         await invalidate_cache("zantara:crm_clients_stats:*")
+        # actual_price can be filled by the confirm: the revenue report reads it.
+        from backend.app.routers.crm_practices import REVENUE_GROWTH_CACHE_NAMESPACE
+
+        await invalidate_cache(f"zantara:{REVENUE_GROWTH_CACHE_NAMESPACE}:*")
     except Exception as cache_exc:  # cache failure must not fail the write
         logger.warning("accounting confirm cache invalidation failed: %s", cache_exc)
 

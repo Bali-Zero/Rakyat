@@ -9,12 +9,18 @@ This manifest makes it structurally impossible to repeat that mistake.
 Each router is declared ONCE with its process_groups. The include_*
 functions read this manifest instead of maintaining separate import lists.
 
+Registration ORDER is data too (it decides which of two overlapping paths wins),
+so each registration target has an order list below. A router that is declared
+but not yet listed in an order list is still registered, after the listed ones,
+in manifest order: forgetting the order list can no longer cause a 404.
+
 HOW TO ADD A NEW ROUTER:
   1. Create your router file in backend/app/routers/
   2. Add a RouterEntry below (alphabetical order)
   3. Set process_groups: {"api"} for light, {"rag"} for heavy, {"api","rag"} for both
-  4. Run: PYTHONPATH=. pytest backend/tests/setup/ -q
-  5. Done. No other file needs editing.
+  4. Optional: add its key to the _ORDER_* lists if its position matters
+  5. Run: PYTHONPATH=. pytest backend/tests/setup/ -q
+  6. Done. No other file needs editing.
 """
 
 from __future__ import annotations
@@ -41,6 +47,8 @@ class RouterEntry:
         tags: Descriptive tags for documentation/filtering.
         import_path: Full import path override (for module routers not in
                     backend.app.routers). If None, uses f"backend.app.routers.{name}".
+        import_when_disabled: Import the module even when `condition` is False
+                    (it was always imported before the manifest drove registration).
     """
 
     name: str
@@ -50,6 +58,7 @@ class RouterEntry:
     condition: Callable[[], bool] | None = None
     tags: tuple[str, ...] = ()
     import_path: str | None = None
+    import_when_disabled: bool = False
 
 
 # Valid process groups — enforce typo prevention
@@ -177,6 +186,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
         attr="router",
         process_groups=_API,
         condition=_is_debug_enabled,
+        import_when_disabled=True,
         tags=("debug",),
     ),
     RouterEntry(
@@ -184,6 +194,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
         attr="v1_router",
         process_groups=_API,
         condition=_is_debug_enabled,
+        import_when_disabled=True,
         tags=("debug",),
     ),
     # ── Documents ──
@@ -532,6 +543,107 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
 # audio — included separately in app_factory.py
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# REGISTRATION ORDER
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# One list per registration target: "full" = monolith (create_app, every entry),
+# "api" = main_api, "rag" = main_rag. Token = router module name, or name:attr
+# when the entry's attr is not "router". Order is what the hand-written
+# include_* functions had; do not sort it.
+
+_ORDER_FULL = """
+auth health nusantara_health olympus:internal_router handlers debug debug:v1_router agent
+lam_memory agents autonomous_agents autonomous_execution autonomous_lab agentic_rag
+kg_agentic conversations session collective_memory episodic_memory experience skill
+metabolic_health federation feedback funnel lead_capture visa_check funnel_email garuda_voa
+garuda_voa_public garuda_orders_router garuda_portal_auth garuda_documents_router
+garuda_staff_router garuda_assignment_targets crm_clients intake_review
+crm_clients_documents crm_company crm_enhanced crm_enhanced_documents crm_guardian_drive
+crm_enhanced_alerts crm_intelligence accounting crm_interactions crm_notifications
+crm_practices crm_related_subjects crm_related_registry_read crm_shared_memory crm_tax_pilot
+crm_analytics team_invites_messaging partners channel_health channels omnichannel
+workspace_inbox observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout
+hr_people intake_gate notifications notifications_admin cron_notifiers portal portal_admin
+portal_billing portal_dashboard portal_drive portal_family portal_invite portal_matters
+portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
+compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
+wr2_publish workspace_analytics research_control ingest legal_ingest oracle_ingest naga
+oracle_universal kbli_notebook kbli_notebook_chat preview websocket telegram twitter
+twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
+wa_broker wa_inbox wa_package instagram_chat instagram_chat:webhook_router intel_lake intel
+intel_scraper intel_analytics intel_observability webhooks messaging_identity zoho_email
+google_drive documents_proxy team_drive sheets admin_crm_kg admin_drive_auth
+admin_drive_health admin_email_health admin_pii admin_rate_limit admin_drive_refresh
+admin_drive_setup admin_self_healing admin_zoho_auth frontend_metrics llm_costs newsletter
+blog_ask article_composer asset_upload news performance prime prime_v2 dynamic_pricing dream
+identity knowledge knowledge_visa knowledge_activity team team_activity team_analytics media
+voice image_generation query_analytics workflow_analytics workflow_queue monitoring_rag
+admin_conversation_cleanup admin_practice_auto_create admin_logs admin_team_activity
+dashboard dashboard_featured_articles dashboard_summary cell_status event_bus bridge
+guardian visa_oracle visa_oracle_evaluate visa_oracle_testing
+""".split()
+
+_ORDER_API = """
+accounting auth health nusantara_health olympus:internal_router handlers debug
+debug:v1_router autonomous_lab session federation feedback funnel lead_capture visa_check
+funnel_email garuda_voa garuda_voa_public garuda_orders_router garuda_portal_auth
+garuda_documents_router garuda_staff_router garuda_assignment_targets experience skill
+metabolic_health crm_clients_documents crm_company crm_enhanced_documents
+crm_enhanced_alerts crm_guardian_drive crm_intelligence crm_interactions crm_notifications
+crm_related_subjects crm_related_registry_read crm_shared_memory crm_tax_pilot crm_analytics
+team_invites_messaging partners channel_health channels omnichannel workspace_inbox
+observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout hr_people intake_gate
+notifications notifications_admin cron_notifiers portal portal_admin portal_billing
+portal_dashboard portal_drive portal_family portal_invite portal_matters
+portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
+compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
+wr2_publish workspace_analytics research_control preview websocket telegram twitter
+twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
+wa_broker wa_inbox instagram_chat instagram_chat:webhook_router webhooks messaging_identity
+zoho_email google_drive documents_proxy dynamic_pricing team_drive sheets admin_crm_kg
+admin_drive_auth admin_drive_health admin_email_health admin_pii admin_rate_limit
+admin_drive_refresh admin_drive_setup admin_self_healing admin_zoho_auth frontend_metrics
+llm_costs newsletter article_composer asset_upload performance prime prime_v2 team
+team_activity team_analytics media image_generation intel_lake intel_observability
+query_analytics workflow_analytics workflow_queue admin_conversation_cleanup
+admin_practice_auto_create admin_logs admin_team_activity cell_status event_bus bridge
+guardian knowledge_activity visa_oracle visa_oracle_evaluate visa_oracle_testing
+""".split()
+
+_ORDER_RAG = """
+health handlers admin_rate_limit admin_self_healing agent lam_memory agents
+autonomous_agents autonomous_execution agentic_rag kg_agentic conversations
+collective_memory episodic_memory crm_clients intake_review crm_enhanced crm_practices
+ingest legal_ingest oracle_ingest naga oracle_universal intel intel_scraper intel_analytics
+intel_lake intel_observability kbli_notebook kbli_notebook_chat blog_ask news
+dynamic_pricing dream identity knowledge knowledge_visa voice whatsapp_chat wa_package
+dashboard dashboard_featured_articles dashboard_summary monitoring_rag
+""".split()
+
+_ORDERS: dict[str, list[str]] = {"full": _ORDER_FULL, "api": _ORDER_API, "rag": _ORDER_RAG}
+
+
+def _key(entry: RouterEntry) -> str:
+    return entry.name if entry.attr == "router" else f"{entry.name}:{entry.attr}"
+
+
+def ordered_entries(target: str) -> tuple[RouterEntry, ...]:
+    """Entries of a registration target in registration order, conditions NOT applied.
+
+    target: "full" (every entry), "api" or "rag". Entries named in the target's
+    order list come first, in that order; the rest follow in manifest order.
+    """
+    if target not in _ORDERS:
+        raise ValueError(f"Unknown registration target '{target}'. Valid: {sorted(_ORDERS)}")
+    members = {
+        _key(e): e for e in ROUTER_MANIFEST if target == "full" or target in e.process_groups
+    }
+    listed = [k for k in _ORDERS[target] if k in members]
+    rest = [k for k in members if k not in set(listed)]
+    return tuple(members[k] for k in (*listed, *rest))
+
+
 def routers_for_group(group: str, *, include_disabled: bool = False) -> tuple[RouterEntry, ...]:
     """Return all routers declared for a given process group.
 
@@ -576,5 +688,14 @@ def validate_manifest() -> list[str]:
         if key in seen:
             errors.append(f"Duplicate router entry: name={entry.name}, attr={entry.attr}")
         seen.add(key)
+
+    # Every order-list token must name a declared entry that belongs to its target
+    for target, tokens in _ORDERS.items():
+        valid = {_key(e) for e in ROUTER_MANIFEST if target == "full" or target in e.process_groups}
+        for token in tokens:
+            if token not in valid:
+                errors.append(f"Order list '{target}' names '{token}', not a router of that target")
+        if len(tokens) != len(set(tokens)):
+            errors.append(f"Order list '{target}' has duplicate tokens")
 
     return errors

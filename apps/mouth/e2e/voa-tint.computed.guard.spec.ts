@@ -183,6 +183,7 @@ const DECLINED_BODY = {
 
 const ORDER_BODY = {
   order_id: ORDER_ID_TRACKER,
+  result_id: RESULT_ID_ACCEPT,
   order_state: "awaiting_payment",
   price_idr: 2_500_000,
   browser_observation: "browser_not_returned",

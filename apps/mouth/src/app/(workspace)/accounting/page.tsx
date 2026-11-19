@@ -61,7 +61,7 @@ function SummaryCards({ summary }: { summary: CashbookSummary | null }) {
       label: "Net",
       value: summary?.net_idr ?? 0,
       icon: Wallet,
-      tone: "text-foreground",
+      tone: "text-[var(--bz-text-1)]",
     },
     {
       label: "Bali Zero margin",
@@ -75,9 +75,12 @@ function SummaryCards({ summary }: { summary: CashbookSummary | null }) {
       {cards.map((c) => {
         const Icon = c.icon;
         return (
-          <div key={c.label} className="rounded-lg border bg-card p-4">
+          <div
+            key={c.label}
+            className="rounded-lg border bg-[var(--bz-card)] p-4"
+          >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className="text-xs font-medium text-[var(--bz-text-2)]">
                 {c.label}
               </span>
               <Icon className={`h-4 w-4 ${c.tone}`} />
@@ -100,7 +103,7 @@ function SummaryCards({ summary }: { summary: CashbookSummary | null }) {
 function CashoutTable({ rows }: { rows: CashoutRow[] }) {
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border p-10 text-center text-muted-foreground">
+      <div className="rounded-lg border p-10 text-center text-[var(--bz-text-2)]">
         No cashout rows yet.
       </div>
     );
@@ -108,7 +111,7 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+        <thead className="bg-[var(--bz-surface)]/50 text-left text-xs uppercase text-[var(--bz-text-2)]">
           <tr>
             <th className="px-3 py-2 font-medium">Date</th>
             <th className="px-3 py-2 font-medium">Name</th>
@@ -123,14 +126,14 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
         </thead>
         <tbody className="divide-y">
           {rows.map((r) => (
-            <tr key={r.id} className="hover:bg-muted/30">
-              <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
+            <tr key={r.id} className="hover:bg-[var(--bz-card-hover)]/30">
+              <td className="whitespace-nowrap px-3 py-2 tabular-nums text-[var(--bz-text-2)]">
                 {r.movement_date ?? "—"}
               </td>
               <td className="px-3 py-2 font-medium">
                 {r.client_name ?? r.counterparty ?? "—"}
               </td>
-              <td className="px-3 py-2 text-muted-foreground">
+              <td className="px-3 py-2 text-[var(--bz-text-2)]">
                 {r.type === "cashout_worksheet" && (
                   <span
                     className="mr-1.5 inline-block rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--state-warning)]"
@@ -156,7 +159,7 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
               <td className="px-3 py-2 text-right font-medium tabular-nums">
                 <Money value={r.final_price_idr || r.amount_idr} />
               </td>
-              <td className="max-w-[200px] truncate px-3 py-2 text-muted-foreground">
+              <td className="max-w-[200px] truncate px-3 py-2 text-[var(--bz-text-2)]">
                 {r.description ?? ""}
               </td>
             </tr>
@@ -310,8 +313,8 @@ export default function AccountingPage() {
           onClick={() => setTab("cashout")}
           className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
             tab === "cashout"
-              ? "border-b-2 border-[var(--bz-accent)] text-foreground"
-              : "text-muted-foreground hover:text-foreground"
+              ? "border-b-2 border-[var(--bz-accent)] text-[var(--bz-text-1)]"
+              : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
           }`}
         >
           <TableProperties className="h-4 w-4" /> Weekly Cashout
@@ -320,8 +323,8 @@ export default function AccountingPage() {
           onClick={() => setTab("inbox")}
           className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
             tab === "inbox"
-              ? "border-b-2 border-[var(--bz-accent)] text-foreground"
-              : "text-muted-foreground hover:text-foreground"
+              ? "border-b-2 border-[var(--bz-accent)] text-[var(--bz-text-1)]"
+              : "text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
           }`}
         >
           <Inbox className="h-4 w-4" /> Reconciliation
@@ -330,7 +333,7 @@ export default function AccountingPage() {
 
       {tab === "cashout" ? (
         loading ? (
-          <div className="flex items-center justify-center p-10 text-muted-foreground">
+          <div className="flex items-center justify-center p-10 text-[var(--bz-text-2)]">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading cashout…
           </div>
         ) : (

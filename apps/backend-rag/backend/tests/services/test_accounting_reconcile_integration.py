@@ -37,9 +37,15 @@ MIGRATION_239 = (
 STUBS = """
 CREATE TABLE IF NOT EXISTS team_members (id VARCHAR PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, full_name VARCHAR);
+-- Real types: models.py PracticeType (id int PK, code VARCHAR(50) NOT NULL UNIQUE, name
+-- VARCHAR(255) NOT NULL) and Practice.practice_type_id (nullable int FK, migration 157 note,
+-- ci_bootstrap_schema.py:703). The pool query LEFT JOINs them.
+CREATE TABLE IF NOT EXISTS practice_types (
+    id SERIAL PRIMARY KEY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);
 CREATE TABLE IF NOT EXISTS practices (
     id SERIAL PRIMARY KEY, client_id INT, payment_status VARCHAR DEFAULT 'unpaid',
-    paid_amount NUMERIC DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT now());
+    practice_type_id INT REFERENCES practice_types(id),
+    paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE IF NOT EXISTS invoices (
     id SERIAL PRIMARY KEY, practice_id INT UNIQUE, invoice_number VARCHAR,
     amount_idr BIGINT, generated_at TIMESTAMPTZ DEFAULT now());
@@ -497,5 +503,106 @@ async def test_c4_a_confirmation_without_a_bank_transaction_is_unchanged() -> No
         snap = await _snapshot(conn)
         assert snap[0] == [(pid, "paid", 8_000_000)] and snap[2] == 2 and snap[3] == 2
         assert snap[4] == [(txid, "unmatched", None, None)]  # the bank row is untouched
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+# ── actual_price fill and invoice ownership on confirm (P1, P2) ──────────────
+
+
+async def _price(conn, pid):
+    return await conn.fetchval("SELECT actual_price FROM practices WHERE id = $1", pid)
+
+
+@pytest.mark.asyncio
+async def test_p1_a_given_invoice_fills_a_null_actual_price() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        assert await _price(conn, pid) is None
+        await _confirm(conn, txid, pid, iid)
+        assert await _price(conn, pid) == 4_000_000
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p1_a_non_null_actual_price_is_kept() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        await conn.execute("UPDATE practices SET actual_price = 1234500 WHERE id = $1", pid)
+        await _confirm(conn, txid, pid, iid)
+        assert await _price(conn, pid) == 1_234_500
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p1_without_a_given_invoice_actual_price_stays_null() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        await _confirm(conn, txid, pid, None)
+        assert await _price(conn, pid) is None
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+async def _forbid_any_write(conn) -> None:
+    """From now on ANY write to the confirm's tables raises, so a write made before a refusal shows."""
+    await conn.execute(
+        "CREATE FUNCTION forbid_write() RETURNS trigger LANGUAGE plpgsql AS"
+        " $$ BEGIN RAISE EXCEPTION 'table written'; END $$"
+    )
+    for t in ("practices", "invoices", "weekly_cashout", "bank_transactions", "reconciliation_log"):
+        await conn.execute(
+            f"CREATE TRIGGER no_write_{t} BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON {t}"
+            " FOR EACH STATEMENT EXECUTE FUNCTION forbid_write()"
+        )
+
+
+@pytest.mark.asyncio
+async def test_p2_an_invoice_of_another_practice_is_refused_before_any_write() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (p1, p2), (i1, i2), txid = await _world(conn, practices=2)
+        await _forbid_any_write(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match="does not belong"):
+            await _confirm(conn, txid, p1, i2)
+        assert await _snapshot(conn) == before
+        assert await _price(conn, p1) is None
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p2_a_missing_invoice_is_refused_before_any_write() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        await _forbid_any_write(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match="not found"):
+            await _confirm(conn, txid, pid, iid + 1000)
+        assert await _snapshot(conn) == before
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p2_a_non_finite_invoice_amount_is_refused_before_any_write() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        # the stub column is BIGINT and cannot hold NaN: widen it in this test only
+        await conn.execute("ALTER TABLE invoices ALTER COLUMN amount_idr TYPE NUMERIC")
+        await conn.execute("UPDATE invoices SET amount_idr = 'NaN' WHERE id = $1", iid)
+        await _forbid_any_write(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match="no usable amount"):
+            await _confirm(conn, txid, pid, iid)
+        assert await _snapshot(conn) == before
     finally:
         await _drop_db(conn, dbname, user)

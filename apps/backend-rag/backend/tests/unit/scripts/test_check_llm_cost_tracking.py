@@ -29,7 +29,6 @@ def test_detects_paid_client_without_tracking(tmp_path):
 
 def test_whitelist_includes_ollama_files():
     assert any("ollama_client.py" in s for s in WHITELIST_SUBSTRINGS)
-    assert any("llm/providers/ollama" in s for s in WHITELIST_SUBSTRINGS)
 
 
 def test_tracked_file_passes(tmp_path):

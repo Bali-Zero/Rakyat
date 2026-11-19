@@ -2,8 +2,9 @@
  * Related-subjects registry (read-only, CRM admins) — typed wrapper.
  *
  * Backend: apps/backend-rag/backend/app/routers/crm_related_registry_read.py.
- * The search text travels only as the query key `q`; detail paths are built
- * from numeric subject ids and nothing else.
+ * The search text travels only as the query key `q`; the link filter is the
+ * closed value `linked=true|false`; detail paths are built from numeric
+ * subject ids and nothing else.
  */
 
 import { api } from "@/lib/api";
@@ -17,10 +18,14 @@ export type RegistryDetail =
 export type RegistryDocument = components["schemas"]["RelatedRegistryDocument"];
 export type RegistryIdentifier =
   components["schemas"]["RelatedRegistryIdentifier"];
+export type RegistryLink = components["schemas"]["RelatedRegistryLink"];
+export type RegistryMerged = components["schemas"]["RelatedRegistryMerged"];
+export type RegistryLinked = "true" | "false";
 
 export interface RegistryListParams {
   q?: string;
   kind?: RegistryKind;
+  linked?: RegistryLinked;
   limit?: number;
   offset?: number;
 }
@@ -31,6 +36,7 @@ export const listRegistry = (params: RegistryListParams = {}) => {
   const query = new URLSearchParams();
   if (params.q) query.set("q", params.q);
   if (params.kind) query.set("kind", params.kind);
+  if (params.linked) query.set("linked", params.linked);
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   if (params.offset !== undefined) query.set("offset", String(params.offset));
   const text = query.toString();

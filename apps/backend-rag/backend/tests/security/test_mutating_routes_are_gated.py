@@ -336,6 +336,27 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
     ),
     IntentionalPublicMutation(
         "POST",
+        "/api/crm/related-subjects/names/register",
+        "related-subject names registry (slice 4A) — same X-CRM-Write-Key + "
+        "RELATED_SUBJECT_REGISTRY_ENABLED gate as register, checked in-router "
+        "(crm_related_subjects.py); flag off = 503.",
+    ),
+    IntentionalPublicMutation(
+        "POST",
+        "/api/crm/related-subjects/links/register",
+        "related-subject links registry (slice 4B) — same X-CRM-Write-Key + "
+        "RELATED_SUBJECT_REGISTRY_ENABLED gate as register, checked in-router "
+        "(crm_related_subjects.py); flag off = 503.",
+    ),
+    IntentionalPublicMutation(
+        "POST",
+        "/api/crm/related-subjects/merges/register",
+        "related-subject merges registry (slice 4C) — same X-CRM-Write-Key + "
+        "RELATED_SUBJECT_REGISTRY_ENABLED gate as register, checked in-router "
+        "(crm_related_subjects.py); flag off = 503.",
+    ),
+    IntentionalPublicMutation(
+        "POST",
         "/api/crm/internal/clients/{client_id}/documents/upload",
         "wa-mirror intake document upload — same X-CRM-Write-Key gate as upsert-by-phone.",
     ),
@@ -688,6 +709,19 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
         "`record_browser_return_observation(order_id=..., result_id=actor, "
         "...)`; an order that is not the caller's raises `OrderNotFound` -> "
         "404, never written.",
+    ),
+    IntentionalPublicMutation(
+        "POST",
+        "/api/visa/voa/orders/{order_id}/checkout-session",
+        "Tracker 'Pay now' (garuda_orders_router.py::resume_order_checkout). "
+        "Same `_require_magic_session_actor` in-router gate as the two "
+        "/api/visa/voa/orders rows above, and the same ownership scope: "
+        "`repository.resume_checkout(order_id=..., result_id=actor)` raises "
+        "`OrderNotFound` -> 404 for an order that is not the caller's. POST "
+        "by contract, but it mutates nothing: it reads the order's own "
+        "provider session and returns its URL in this response only. No "
+        "order, journal, outbox or idempotency row is written and no "
+        "provider session is ever created.",
     ),
     IntentionalPublicMutation(
         "POST",

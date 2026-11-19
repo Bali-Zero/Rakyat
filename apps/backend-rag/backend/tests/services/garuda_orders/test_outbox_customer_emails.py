@@ -12,9 +12,11 @@ the module's own `_STATES_WORTH_*` reasoning in `outbox_handlers.py`.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import uuid
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -27,6 +29,7 @@ from backend.services.garuda_orders.outbox_handlers import (
     BrevoEmailSender,
     CheckoutReadyEmailHandler,
     EmailSendFailed,
+    OrderEmailFacts,
     PaymentExpiredEmailHandler,
     PaymentFailedEmailHandler,
     PracticeReceivedEmailHandler,
@@ -91,7 +94,7 @@ class _Recorder:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        return httpx.Response(self.status, json={"ok": True})
+        return httpx.Response(self.status, json={"success": True})
 
 
 def _sender(recorder: _Recorder):
@@ -202,16 +205,44 @@ async def test_checkout_ready_resolves_without_sending_once_paid(pool, caplog):
     )
 
 
-async def test_checkout_ready_raises_without_a_checkout_url(pool):
-    order_id = await _seed_order(pool, state="awaiting_payment")
+@pytest.mark.parametrize(
+    ("job_payload", "offers_direct_payment"),
+    [
+        ({}, False),
+        ({"checkout_url": "https://pay.example.invalid/session"}, True),
+        ({"checkout_url": "pending-resume:specimen"}, False),
+    ],
+    ids=["new-job", "legacy-https", "invalid-link"],
+)
+async def test_checkout_ready_links_to_the_tracker(monkeypatch, job_payload, offers_direct_payment):
+    monkeypatch.setenv("GARUDA_TRACKER_BASE_URL", "https://tracker.example.invalid/visa/voa/orders")
+    order_id = "ord_specimen"
     rec = _Recorder()
     sender, client = _sender(rec)
-    try:
-        with pytest.raises(EmailSendFailed):
-            await CheckoutReadyEmailHandler(pool, sender)(_job(order_id, "checkout_ready_email"))
-    finally:
-        await client.aclose()
-    assert rec.requests == []
+    handler = CheckoutReadyEmailHandler(None, sender)
+    monkeypatch.setattr(
+        handler,
+        "_load",
+        AsyncMock(
+            return_value=OrderEmailFacts(
+                order_id=order_id,
+                email=RECIPIENT,
+                case_type="issuance",
+                price_idr=790000,
+                state="awaiting_payment",
+                late_case_open=False,
+            )
+        ),
+    )
+    async with client:
+        await handler(_job(order_id, "checkout_ready_email", job_payload))
+
+    assert len(rec.requests) == 1
+    payload = json.loads(rec.requests[0].read())
+    assert payload["to"] == RECIPIENT
+    assert f"https://tracker.example.invalid/visa/voa/orders/{order_id}" in payload["body"]
+    assert ("Complete my payment" in payload["body"]) is offers_direct_payment
+    assert "pending-resume:" not in payload["body"]
 
 
 async def test_checkout_ready_raises_on_a_missing_order(pool):
@@ -402,9 +433,7 @@ async def test_practice_received_sends_for_a_paid_order_with_its_practice(pool):
     rec = _Recorder()
     sender, client = _sender(rec)
     try:
-        await PracticeReceivedEmailHandler(pool, sender)(
-            _job(order_id, "practice_received_email")
-        )
+        await PracticeReceivedEmailHandler(pool, sender)(_job(order_id, "practice_received_email"))
     finally:
         await client.aclose()
     assert len(rec.requests) == 1
@@ -430,8 +459,7 @@ async def test_practice_received_resolves_without_sending_once_refunded(pool, ca
         await client.aclose()
     assert rec.requests == []
     assert any(
-        "practice_received_email resolved WITHOUT sending" in r.getMessage()
-        for r in caplog.records
+        "practice_received_email resolved WITHOUT sending" in r.getMessage() for r in caplog.records
     )
 
 
@@ -474,17 +502,7 @@ async def test_practice_received_raises_when_the_practice_row_is_missing(pool):
 @pytest.mark.parametrize(
     ("handler_cls", "job_type", "state", "needs_practice", "payload"),
     [
-        # checkout_ready is the one job whose payload is load-bearing: the
-        # handler raises without a `checkout_url` (see
-        # `test_checkout_ready_raises_without_a_checkout_url`), so a payload-less
-        # case here would fail on that instead of testing the logs.
-        (
-            CheckoutReadyEmailHandler,
-            "checkout_ready_email",
-            "awaiting_payment",
-            False,
-            {"checkout_url": "https://checkout.invalid/inv_specimen"},
-        ),
+        (CheckoutReadyEmailHandler, "checkout_ready_email", "awaiting_payment", False, None),
         (PaymentFailedEmailHandler, "payment_failed_email", "failed", False, None),
         (PaymentExpiredEmailHandler, "payment_expired_email", "expired", False, None),
         (RefundEmailHandler, "refund_email", "refunded", False, None),
@@ -628,9 +646,7 @@ async def test_terminal_notice_is_still_sent_when_no_late_payment_case_is_open(
         (RefundEmailHandler, "refund_email"),
     ],
 )
-async def test_the_stale_state_branch_logs_no_applicant_pii(
-    pool, caplog, handler_cls, job_type
-):
+async def test_the_stale_state_branch_logs_no_applicant_pii(pool, caplog, handler_cls, job_type):
     marker_email = f"pii-stale-{uuid.uuid4().hex}@example.invalid"
     # `paid` warrants none of these three notices, so each takes its stale-state
     # early return.
@@ -693,8 +709,7 @@ async def test_a_sender_failure_leaks_no_applicant_pii_into_its_error(pool, capl
     surfaced = str(raised.value) + "\n".join(r.getMessage() for r in caplog.records)
     assert surfaced.strip(), "the failure surfaced no text at all — nothing to diagnose from"
     assert "500" in surfaced, (
-        "the error names neither the status nor anything else actionable: "
-        f"{surfaced!r}"
+        f"the error names neither the status nor anything else actionable: {surfaced!r}"
     )
     for label, secret in (
         ("applicant email", marker_email),
@@ -702,6 +717,4 @@ async def test_a_sender_failure_leaks_no_applicant_pii_into_its_error(pool, capl
         ("passport number", "Z9345678"),
         ("phone", "+009900000017"),
     ):
-        assert secret not in surfaced, (
-            f"the sender-failure path surfaced the {label}: {surfaced!r}"
-        )
+        assert secret not in surfaced, f"the sender-failure path surfaced the {label}: {surfaced!r}"

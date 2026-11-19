@@ -9,12 +9,13 @@
  * table. The page has no role check of its own: the server's answer decides.
  *
  * Answers that may update the page: only the latest list request for the
- * current search, kind and offset, and only the detail request for the
+ * current search, kind, client-link filter and offset, and only the detail request for the
  * subject currently selected. A superseded answer, error included, is ignored
  * (the effect cleanup flips a per-request flag). The search text is sent only
  * as the query key `q` and is never logged.
  */
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -22,6 +23,7 @@ import {
   listRegistry,
   type RegistryDetail,
   type RegistryKind,
+  type RegistryLinked,
   type RegistryRow,
 } from "@/lib/api/related-registry/related-registry";
 import { cn } from "@/lib/utils";
@@ -50,9 +52,18 @@ const KIND_OPTIONS: ReadonlyArray<{ value: KindFilter; label: string }> = [
   { value: "company", label: "Companies" },
 ];
 
+type LinkedFilter = "all" | RegistryLinked;
+
+const LINKED_OPTIONS: ReadonlyArray<{ value: LinkedFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "true", label: "Linked" },
+  { value: "false", label: "Not linked" },
+];
+
 interface ListQuery {
   q: string;
   kind: KindFilter;
+  linked: LinkedFilter;
   offset: number;
 }
 
@@ -73,6 +84,79 @@ function driveUrl(fileId: string): string {
   return `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
 }
 
+/** Sources whose name was read from a document: a lead for a person, not a fact. */
+const OCR_MARKS: Readonly<Record<string, string>> = {
+  ocr_corroborated: "OCR",
+  ocr_single: "OCR, one file",
+};
+const OCR_TITLE =
+  "This name was read from a document by OCR. It is not verified.";
+
+const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  manual: "entered by hand",
+  mrz_corrected: "corrected from the passport MRZ",
+  registration: "registration",
+  ocr_corroborated: "OCR",
+  ocr_single: "OCR, one file",
+};
+
+/** How a link was proposed: the producer's basis, shown as a short label. */
+const BASIS_LABELS: Readonly<Record<string, string>> = {
+  drive_folder: "Drive folder",
+  whatsapp_phone: "WhatsApp phone",
+  identity: "Identity",
+  manual: "Entered by hand",
+};
+
+/** How a merge was decided: the history row's basis, shown as a short label. */
+const MERGE_BASIS_LABELS: Readonly<Record<string, string>> = {
+  permit_stamp: "Permit stamp",
+  same_identity: "Same identity",
+  manual: "Entered by hand",
+};
+
+/** The mark on an item that belongs to a record merged into the opened subject. */
+function FromMark({ id }: { id?: number | null }) {
+  if (id === null || id === undefined) return null;
+  return (
+    <span
+      data-testid="from-mark"
+      className="ml-2 align-middle text-[11px] text-[var(--tx-secondary)]"
+    >
+      {`from merged record #${id}`}
+    </span>
+  );
+}
+
+/** The mark on a list row of a subject that has at least one proposed client link. */
+function ClientMark({ count }: { count?: number | null }) {
+  if (!count || count <= 0) return null;
+  return (
+    <span
+      data-testid="client-mark"
+      title="This subject is proposed as linked to a CRM client. Not confirmed."
+      className="ml-2 border border-[var(--line-control)] px-1.5 py-0.5 align-middle text-[10px] font-[650] uppercase tracking-[0.08em] text-[var(--tx-secondary)]"
+    >
+      Client
+    </span>
+  );
+}
+
+/** The mark beside a name read by OCR; nothing for any other source. */
+function NameMark({ source }: { source?: string | null }) {
+  const label = source ? OCR_MARKS[source] : undefined;
+  if (!label) return null;
+  return (
+    <span
+      data-testid="name-mark"
+      title={OCR_TITLE}
+      className="ml-2 border border-[var(--line-control)] px-1.5 py-0.5 align-middle text-[10px] font-[650] uppercase tracking-[0.08em] text-[var(--tx-secondary)]"
+    >
+      {label}
+    </span>
+  );
+}
+
 const CELL = "px-3 py-2 align-top text-[13px] text-[var(--tx-pure)]";
 const HEAD =
   "px-3 py-2 text-left text-[10px] font-[650] uppercase tracking-[0.12em] text-[var(--tx-secondary)]";
@@ -86,6 +170,7 @@ export default function RelatedRegistryPage() {
   const [query, setQuery] = useState<ListQuery>({
     q: "",
     kind: "all",
+    linked: "all",
     offset: 0,
   });
 
@@ -140,6 +225,7 @@ export default function RelatedRegistryPage() {
     listRegistry({
       q: query.q || undefined,
       kind: query.kind === "all" ? undefined : query.kind,
+      linked: query.linked === "all" ? undefined : query.linked,
       limit: LIMIT,
       offset: query.offset,
     })
@@ -194,6 +280,18 @@ export default function RelatedRegistryPage() {
       prev.kind === kind ? prev : { ...prev, kind, offset: 0 },
     );
 
+  const setLinked = (linked: LinkedFilter) =>
+    setQuery((prev) =>
+      prev.linked === linked ? prev : { ...prev, linked, offset: 0 },
+    );
+
+  const shownLinks = detail?.links ?? [];
+  const linksTotal = detail?.links_total ?? shownLinks.length;
+  const mergedFrom = detail?.merged_from ?? [];
+  const mergedInto = detail?.merged_into ?? null;
+  const shownNames = detail?.names ?? [];
+  const namesTotal = detail?.names_total ?? shownNames.length;
+
   const pageStart = total === 0 ? 0 : query.offset + 1;
   const pageEnd = Math.min(query.offset + LIMIT, total);
 
@@ -209,16 +307,37 @@ export default function RelatedRegistryPage() {
       <DeskStrip
         className="mb-4"
         filters={
-          <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {KIND_OPTIONS.map((option) => (
-              <StatePill
-                key={option.value}
-                tone="wait"
-                label={option.label}
-                pressed={query.kind === option.value}
-                onClick={() => setKind(option.value)}
-              />
-            ))}
+          <div className="flex min-w-0 items-center gap-4 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div
+              role="group"
+              aria-label="Subject kind"
+              className="flex items-center gap-1.5"
+            >
+              {KIND_OPTIONS.map((option) => (
+                <StatePill
+                  key={option.value}
+                  tone="wait"
+                  label={option.label}
+                  pressed={query.kind === option.value}
+                  onClick={() => setKind(option.value)}
+                />
+              ))}
+            </div>
+            <div
+              role="group"
+              aria-label="Client link"
+              className="flex items-center gap-1.5"
+            >
+              {LINKED_OPTIONS.map((option) => (
+                <StatePill
+                  key={option.value}
+                  tone="wait"
+                  label={option.label}
+                  pressed={query.linked === option.value}
+                  onClick={() => setLinked(option.value)}
+                />
+              ))}
+            </div>
           </div>
         }
         right={
@@ -274,7 +393,11 @@ export default function RelatedRegistryPage() {
                         selectedId === row.id && "bg-[var(--bz-card-hover)]",
                       )}
                     >
-                      <td className={CELL}>{row.display_name ?? "—"}</td>
+                      <td className={CELL}>
+                        {row.display_name ?? "—"}
+                        <NameMark source={row.name_source} />
+                        <ClientMark count={row.links_count} />
+                      </td>
                       <td className={CELL}>{row.kind}</td>
                       <td className={CELL}>
                         {shown.map((identifier) => (
@@ -351,7 +474,50 @@ export default function RelatedRegistryPage() {
                 style={SERIF_SECTION}
               >
                 {detail.display_name ?? `Unnamed subject #${detail.id}`}
+                <NameMark source={detail.name_source} />
               </h2>
+              {mergedInto !== null && (
+                <Notice tone="wait" role="status">
+                  {`This record was merged into subject #${mergedInto}. `}
+                  <button
+                    type="button"
+                    data-testid="open-survivor"
+                    onClick={() => setSelectedId(mergedInto)}
+                    className={cn("text-[var(--bz-copper)] underline", FOCUS)}
+                  >
+                    {`Open subject #${mergedInto}`}
+                  </button>
+                </Notice>
+              )}
+              {mergedFrom.length > 0 && (
+                <div data-testid="registry-merged-from">
+                  <p className="text-[13px] text-[var(--tx-secondary)]">
+                    {mergedFrom.length === 1
+                      ? "1 record merged into this one"
+                      : `${mergedFrom.length} records merged into this one`}
+                  </p>
+                  <ul className="text-[13px] text-[var(--tx-pure)]">
+                    {mergedFrom.map((merged) => (
+                      <li
+                        key={merged.subject_id}
+                        data-testid="registry-merged-record"
+                      >
+                        {[
+                          `#${merged.subject_id}`,
+                          merged.basis
+                            ? (MERGE_BASIS_LABELS[merged.basis] ?? null)
+                            : null,
+                          merged.merged_at
+                            ? merged.merged_at.slice(0, 10)
+                            : null,
+                        ]
+                          .filter((part) => part !== null)
+                          .join(" · ")}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px] text-[var(--tx-pure)]">
                 <dt className="text-[var(--tx-secondary)]">Kind</dt>
                 <dd>{detail.kind}</dd>
@@ -372,12 +538,87 @@ export default function RelatedRegistryPage() {
               </dl>
 
               <div>
+                <h3 className={HEAD}>Names</h3>
+                {shownNames.length === 0 ? (
+                  <p className="text-[13px] text-[var(--tx-secondary)]">
+                    No names.
+                  </p>
+                ) : (
+                  <ul className="text-[13px] text-[var(--tx-pure)]">
+                    {shownNames.map((entry, index) => (
+                      <li
+                        key={`${index}:${entry.source}:${entry.name}`}
+                        data-testid="registry-name"
+                      >
+                        {entry.name} · {SOURCE_LABELS[entry.source] ?? "—"} ·{" "}
+                        {entry.created_at.slice(0, 10)}
+                        <FromMark id={entry.from_subject_id} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {namesTotal > shownNames.length && (
+                  <p
+                    data-testid="registry-names-truncated"
+                    className="text-[13px] text-[var(--tx-secondary)]"
+                  >
+                    {`Showing ${shownNames.length} of ${namesTotal} names.`}
+                  </p>
+                )}
+              </div>
+
+              {shownLinks.length > 0 && (
+                <div data-testid="registry-clients">
+                  <h3 className={HEAD}>Clients</h3>
+                  <p className="text-[13px] text-[var(--tx-secondary)]">
+                    Proposed from documents, not confirmed.
+                  </p>
+                  <ul className="text-[13px] text-[var(--tx-pure)]">
+                    {shownLinks.map((link, index) => (
+                      <li
+                        key={`${index}:${link.client_id}:${link.basis}`}
+                        data-testid="registry-client"
+                      >
+                        {link.client_live ? (
+                          <Link
+                            href={`/clients/${link.client_id}`}
+                            className={cn(
+                              "text-[var(--bz-copper)] underline",
+                              FOCUS,
+                            )}
+                          >
+                            {link.client_name ?? `Client #${link.client_id}`}
+                          </Link>
+                        ) : (
+                          <span className="text-[var(--tx-secondary)]">
+                            Client no longer in the CRM
+                          </span>
+                        )}{" "}
+                        · {BASIS_LABELS[link.basis] ?? "—"} ·{" "}
+                        {link.created_at.slice(0, 10)}
+                        <FromMark id={link.from_subject_id} />
+                      </li>
+                    ))}
+                  </ul>
+                  {linksTotal > shownLinks.length && (
+                    <p
+                      data-testid="registry-clients-truncated"
+                      className="text-[13px] text-[var(--tx-secondary)]"
+                    >
+                      {`Showing ${shownLinks.length} of ${linksTotal} clients.`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div>
                 <h3 className={HEAD}>Identifiers</h3>
                 <ul className="text-[13px] text-[var(--tx-pure)]">
                   {detail.identifiers.map((identifier) => (
-                    <li
-                      key={`${identifier.type}:${identifier.value}`}
-                    >{`${identifier.type.toUpperCase()} ${identifier.value}`}</li>
+                    <li key={`${identifier.type}:${identifier.value}`}>
+                      {`${identifier.type.toUpperCase()} ${identifier.value}`}
+                      <FromMark id={identifier.from_subject_id} />
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -400,6 +641,7 @@ export default function RelatedRegistryPage() {
                           {doc.doc_type ?? "—"} · {doc.mime_type ?? "—"} ·{" "}
                           {humanSize(doc.byte_size)} · first seen{" "}
                           {doc.first_seen_on ?? "—"}
+                          <FromMark id={doc.from_subject_id} />
                         </div>
                         {doc.drive_file_ids.map((fileId) => (
                           <div key={fileId}>

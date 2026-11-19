@@ -70,7 +70,7 @@
 **KITAS (Temporary Stay Permit)**
 
 - E23 - Working KITAS Offshore: IDR 34.500.000
-- E23 - Working KITAS Onshore: IDR 36.000.000
+- E23 - Working KITAS Onshore: IDR 36.500.000
 - E23 - Impresariat KITAS (E23, 180 days) Offshore: IDR 25.800.000
 - E23 - Impresariat KITAS (E23, 180 days) Onshore: IDR 27.500.000
 - E28A - Investor KITAS Offshore: IDR 17.000.000 (PT PMA directors & shareholders)

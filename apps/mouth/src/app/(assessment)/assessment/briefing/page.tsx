@@ -90,7 +90,8 @@ export default function BriefingPage() {
                 berpikir, menjawab, dan mengambil keputusan
               </strong>{" "}
               tanpa intervensi manusia untuk 70% operasi harian. Sistem itu
-              bernama <strong className="text-accent-red-brand">Nuzantara</strong>.
+              bernama{" "}
+              <strong className="text-accent-red-brand">Nuzantara</strong>.
             </p>
           </section>
 
@@ -201,7 +202,7 @@ Waktu total: ~3 detik. Tanpa manusia.`}</pre>
 CLOUD (Vercel)                          │ - Sentinel (03:00)           │
 ┌─────────────────────┐                 │ - KB Ingest (05:00)          │
 │ Frontend Next.js 16 │                 │ - Drive polling (setiap 5m)  │
-│ - kita.balizero.com │                 │ - RAG Canary (setiap 6j)     │
+│ - internal workspace│                 │ - RAG Canary (setiap 6j)     │
 │ - 8 subdomain       │                 └──────────────────────────────┘
 │ - 2.800+ artikel    │
 │ - 1.563 halaman KBLI│                 Kedua Mac saling terhubung via SSH.

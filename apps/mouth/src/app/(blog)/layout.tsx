@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { R19Presentation } from "@/components/r19/R19Presentation";
 import { BlogNav } from "@/app/(blog)/_components/BlogNav";
-import { ZantaraFAB } from "@/app/v2/_components/ZantaraFAB";
-import { Footer } from "@/app/v2/_components/Footer";
+import { ZantaraFAB } from "@/components/site/ZantaraFAB";
+import { Footer } from "@/components/site/Footer";
 import { I18nProvider } from "@/i18n";
 
 export default function BlogLayout({ children }: { children: ReactNode }) {

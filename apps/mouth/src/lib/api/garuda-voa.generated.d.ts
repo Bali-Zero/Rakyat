@@ -161,6 +161,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/visa/voa/orders/{order_id}/checkout-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Opaque order identifier; never personal data or an authorization credential. */
+                order_id: components["parameters"]["OrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-serve the order's bound provider checkout for the tracker's Pay now
+         * @description Owner decision 2026-11-18. For an `awaiting_payment` order only, asks the order's own payment provider, at request time, whether the ONE checkout session bound at OP-01 is still open and returns its URL in this response alone. It performs no transition and writes nothing: no order, journal, outbox, idempotency or inbox row, and the URL is never persisted or logged. It never creates a provider session; a session that is paid, expired, of unknown status, about to expire, or served by an adapter that cannot re-read it is refused with CHECKOUT_NOT_RESUMABLE. Same authority as getOrderAndPractice: the creator-bound session, non-owned orders answering exactly like absent ones. No Idempotency-Key: nothing is created, so a repeat costs one provider read.
+         */
+        post: operations["resumeOrderCheckout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/visa/voa/orders/{order_id}/browser-return-observations": {
         parameters: {
             query?: never;
@@ -489,6 +512,13 @@ export interface components {
              */
             checkout_url: string | null;
         };
+        CheckoutResumption: {
+            /**
+             * Format: uri
+             * @description `https:` provider checkout page of the order's bound session, on the adapter's own checkout host. A creator-bound capability: returned only here, never persisted, never logged, never present in getOrderAndPractice.
+             */
+            checkout_url: string;
+        };
         PracticeView: {
             practice_id: components["schemas"]["OpaqueId"];
             state: components["schemas"]["PracticeState"];
@@ -532,6 +562,8 @@ export interface components {
         };
         OrderView: {
             order_id: components["schemas"]["OpaqueId"];
+            /** @description The order's own result_id_ref, which equals the caller's magic-session result id (the ownership predicate). It lets the tracker link a closed order back to /visa/voa/checkout/{result_id}; it carries no capability. */
+            result_id: components["schemas"]["ResultId"];
             order_state: components["schemas"]["OrderState"];
             /** @description The one all-inclusive integer IDR price from apps/backend-rag/backend/services/garuda_flow/pricing.py:price_for_case. */
             price_idr: number;
@@ -699,6 +731,13 @@ export interface components {
             retryable: false;
             /** @constant */
             message_key: "garuda_voa.error.invalid_state_transition";
+        } | {
+            /** @constant */
+            code: "CHECKOUT_NOT_RESUMABLE";
+            /** @constant */
+            retryable: false;
+            /** @constant */
+            message_key: "garuda_voa.error.checkout_not_resumable";
         } | {
             /** @constant */
             code: "UNSUPPORTED_DOCUMENT_MEDIA_TYPE";
@@ -1902,6 +1941,125 @@ export interface operations {
                 };
             };
             /** @description Temporary storage/service failure. Code is SERVICE_UNAVAILABLE. */
+            503: {
+                headers: {
+                    /** @description This representation must never be stored by a shared or private cache. */
+                    "Cache-Control"?: "no-store, private";
+                    /** @description The opaque result path must never be sent as a referrer. */
+                    "Referrer-Policy"?: "no-referrer";
+                    /** @description The result must never be indexed or archived. */
+                    "X-Robots-Tag"?: "noindex, nofollow, noarchive";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resumeOrderCheckout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Opaque order identifier; never personal data or an authorization credential. */
+                order_id: components["parameters"]["OrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bound session is open; its provider checkout URL. */
+            200: {
+                headers: {
+                    /** @description This representation must never be stored by a shared or private cache. */
+                    "Cache-Control"?: "no-store, private";
+                    /** @description The opaque result path must never be sent as a referrer. */
+                    "Referrer-Policy"?: "no-referrer";
+                    /** @description The result must never be indexed or archived. */
+                    "X-Robots-Tag"?: "noindex, nofollow, noarchive";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutResumption"];
+                };
+            };
+            /** @description Account session required. Code is SESSION_REQUIRED. */
+            401: {
+                headers: {
+                    /** @description This representation must never be stored by a shared or private cache. */
+                    "Cache-Control"?: "no-store, private";
+                    /** @description The opaque result path must never be sent as a referrer. */
+                    "Referrer-Policy"?: "no-referrer";
+                    /** @description The result must never be indexed or archived. */
+                    "X-Robots-Tag"?: "noindex, nofollow, noarchive";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Surface disabled or non-enumerating malformed/absent/non-owned order. */
+            404: {
+                headers: {
+                    /** @description This representation must never be stored by a shared or private cache. */
+                    "Cache-Control"?: "no-store, private";
+                    /** @description The opaque result path must never be sent as a referrer. */
+                    "Referrer-Policy"?: "no-referrer";
+                    /** @description The result must never be indexed or archived. */
+                    "X-Robots-Tag"?: "noindex, nofollow, noarchive";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The order is not awaiting payment (INVALID_STATE_TRANSITION), or its bound provider session cannot be re-served (CHECKOUT_NOT_RESUMABLE). */
+            409: {
+                headers: {
+                    /** @description This representation must never be stored by a shared or private cache. */
+                    "Cache-Control"?: "no-store, private";
+                    /** @description The opaque result path must never be sent as a referrer. */
+                    "Referrer-Policy"?: "no-referrer";
+                    /** @description The result must never be indexed or archived. */
+                    "X-Robots-Tag"?: "noindex, nofollow, noarchive";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request rate limited. Code is RATE_LIMITED. */
+            429: {
+                headers: {
+                    /** @description This representation must never be stored by a shared or private cache. */
+                    "Cache-Control"?: "no-store, private";
+                    /** @description The opaque result path must never be sent as a referrer. */
+                    "Referrer-Policy"?: "no-referrer";
+                    /** @description The result must never be indexed or archived. */
+                    "X-Robots-Tag"?: "noindex, nofollow, noarchive";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unexpected internal failure. Code is INTERNAL_ERROR. */
+            500: {
+                headers: {
+                    /** @description This representation must never be stored by a shared or private cache. */
+                    "Cache-Control"?: "no-store, private";
+                    /** @description The opaque result path must never be sent as a referrer. */
+                    "Referrer-Policy"?: "no-referrer";
+                    /** @description The result must never be indexed or archived. */
+                    "X-Robots-Tag"?: "noindex, nofollow, noarchive";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Order lane not wired, or the provider could not answer or answered a URL off its checkout hosts. */
             503: {
                 headers: {
                     /** @description This representation must never be stored by a shared or private cache. */

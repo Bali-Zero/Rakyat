@@ -20,7 +20,6 @@ import logging
 
 from fastapi import FastAPI
 
-from backend.app.setup.plugin_initializer import initialize_plugins
 from backend.app.setup.service_initializer import initialize_services
 from backend.services.monitoring.alert_service import AlertService
 
@@ -45,4 +44,3 @@ def register_startup_handlers(app: FastAPI) -> None:
             logger.error("Failed to initialize AlertService: %s", e)
 
         await initialize_services(app)
-        await initialize_plugins(app)

@@ -244,3 +244,52 @@ describe("TaxTab renders Tax Documents", () => {
     );
   });
 });
+
+describe("TaxDocumentsSection — legacy company tax folder", () => {
+  it("uses 03_DICHIARAZIONI_E_RICEVUTE_FISCALI when neither tax_dept nor 02_Tax_Returns_and_Payments exists", async () => {
+    driveSources.mockResolvedValue(
+      sources(9, [{ url: url("COMPANY_9"), kinds: ["primary"] }]),
+    );
+    drive({
+      COMPANY_9: [
+        folder("LEGAL_9", "01_Legal_and_Licensing"),
+        folder("LEGACY_9", "03_DICHIARAZIONI_E_RICEVUTE_FISCALI"),
+      ],
+      LEGACY_9: [file("FILE_4", "legacy-spt.pdf")],
+    });
+    render(
+      <TaxDocumentsSection
+        clientFolderId={null}
+        companyLinks={[link(9, "PT Nine")]}
+      />,
+    );
+
+    await screen.findByText("legacy-spt.pdf");
+    expect(listedIds()).toContain("LEGACY_9");
+    expect(
+      screen.queryByText("Tax folder not found, showing company folder"),
+    ).toBeNull();
+  });
+
+  it("still prefers 02_Tax_Returns_and_Payments over the legacy alias", async () => {
+    driveSources.mockResolvedValue(
+      sources(9, [{ url: url("COMPANY_9"), kinds: ["primary"] }]),
+    );
+    drive({
+      COMPANY_9: [
+        folder("LEGACY_9", "03_DICHIARAZIONI_E_RICEVUTE_FISCALI"),
+        folder("CTAX_9", "02_Tax_Returns_and_Payments"),
+      ],
+      CTAX_9: [file("FILE_3", "pph.pdf")],
+    });
+    render(
+      <TaxDocumentsSection
+        clientFolderId={null}
+        companyLinks={[link(9, "PT Nine")]}
+      />,
+    );
+
+    await screen.findByText("pph.pdf");
+    expect(listedIds()).not.toContain("LEGACY_9");
+  });
+});
