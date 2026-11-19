@@ -13,6 +13,7 @@ from backend.services.accounting.bank_pdf_readers import (
     detect_pdf_format,
     extract_pdf_pages,
     parse_and_preview_statement,
+    parse_bni_pages,
     parse_mandiri_pages,
     parse_permata_pages,
     preview_statement,
@@ -20,6 +21,7 @@ from backend.services.accounting.bank_pdf_readers import (
 from backend.tests.fixtures.bank_pdf_builder import (
     ACCOUNT,
     NAME,
+    bni_page,
     mandiri_page,
     permata_page,
     words_to_pdf,
@@ -375,3 +377,100 @@ def test_the_import_endpoint_refuses_an_unknown_pdf_with_a_fixed_message(mock_db
     assert resp.status_code == 422 and "bank statement this page reads" in resp.json()["detail"]
     _, conn = mock_db_pool
     conn.execute.assert_not_called()
+
+
+# ── BNI ─────────────────────────────────────────────────────────────────────
+
+# opening 1,000,000.00; credit 500,000.00, debit 120,000.00, fee 25,000.00 -> 1,355,000.00
+B_ROWS = [
+    ("07/11/2025", "10.00.58", "906849", "Setoran masuk", "500,000.00", "C", "1,500,000.00"),
+    ("13/11/2025", "10.58.31", "985452", "Transfer keluar", "120,000.00", "D", "1,380,000.00"),
+    ("13/11/2025", "00.00.00", "985452", "Biaya adm rek", "25,000.00", "D", "1,355,000.00"),
+]
+
+
+def _bni(rows=B_ROWS, **kw):
+    args = {
+        "beginning": "1,000,000.00",
+        "total_debit": "145,000.00",
+        "total_credit": "500,000.00",
+    } | kw
+    return bni_page(rows, **args)
+
+
+def test_bni_inquiry_reads_exact_rows_with_time_and_journal() -> None:
+    stmt = parse_bni_pages([_bni()])
+    assert (stmt.bank_code, stmt.source_format) == ("bni", "pdf")
+    assert (stmt.account_number, stmt.account_name) == (ACCOUNT, NAME)
+    t = stmt.transactions
+    assert [x.posted_at for x in t] == [
+        datetime(2025, 11, 7, 10, 0, 58),
+        datetime(2025, 11, 13, 10, 58, 31),
+        datetime(2025, 11, 13),
+    ]
+    assert (t[0].debit, t[0].credit, t[0].balance) == (
+        Decimal(0),
+        Decimal("500000.00"),
+        Decimal("1500000.00"),
+    )
+    assert t[1].description == "Transfer keluar" and t[0].raw_row == {"Journal No.": "906849"}
+    assert stmt.opening_balance == Decimal("1000000.00") and stmt.closing_balance == Decimal(
+        "1355000.00"
+    )
+    assert check_running_balance(t) == [] and t[2].kind == "bank_fee"
+
+
+def test_bni_a_later_stamp_in_file_order_is_not_a_reason_to_reorder() -> None:
+    # the 00.00.00 fee follows a 10:58 row: the balance chain decides, not the clock
+    assert [x.balance for x in parse_bni_pages([_bni()]).transactions][-1] == Decimal("1355000.00")
+
+
+def test_bni_account_statement_print_with_k_flag_and_a_last_row_without_balance() -> None:
+    rows = [(*B_ROWS[0][:5], "K", "1,500,000.00"), B_ROWS[1], (*B_ROWS[2][:6], None)]
+    stmt = parse_bni_pages([_bni(rows, variant="statement", ending="1,355,000.00", counts=(2, 1))])
+    assert [x.credit for x in stmt.transactions][0] == Decimal("500000.00")
+    assert stmt.transactions[-1].balance == Decimal("1355000.00")
+    assert stmt.opening_balance == Decimal("1000000.00")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"currency": "USD"},
+        {"total_debit": "145,001.00"},
+        {"total_credit": "500,001.00"},
+        {"beginning": "1,000,001.00"},
+    ],
+    ids=["not_idr", "debit_total", "credit_total", "beginning"],
+)
+def test_bni_refuses_what_does_not_add_up(kwargs) -> None:
+    with pytest.raises(BankParseError):
+        parse_bni_pages([_bni(**kwargs)])
+
+
+def test_bni_a_statement_print_refuses_wrong_counts_or_ending() -> None:
+    rows = [B_ROWS[0], B_ROWS[1], (*B_ROWS[2][:6], None)]
+    ok = {"variant": "statement", "ending": "1,355,000.00", "counts": (2, 1)}
+    parse_bni_pages([_bni(rows, **ok)])
+    for bad in ({"counts": (3, 1)}, {"ending": "1,355,001.00"}):
+        with pytest.raises(BankParseError):
+            parse_bni_pages([_bni(rows, **{**ok, **bad})])
+
+
+def test_bni_a_blank_currency_is_read_a_foreign_one_is_not() -> None:
+    assert parse_bni_pages([_bni(currency="")]).bank_code == "bni"
+    with pytest.raises(BankParseError, match="IDR"):
+        parse_bni_pages([_bni(currency="EUR")])
+
+
+def test_bni_an_unreadable_amount_is_refused_not_guessed() -> None:
+    rows = [(*B_ROWS[0][:4], "500,0000.00", *B_ROWS[0][5:]), *B_ROWS[1:]]
+    with pytest.raises(BankParseError):
+        parse_bni_pages([_bni(rows)])
+
+
+def test_bni_detection_and_synthetic_pdf_end_to_end() -> None:
+    assert detect_pdf_format([_bni()]) == "bni"
+    stmt, report = parse_and_preview_statement(words_to_pdf([_bni()]))
+    assert stmt.bank_code == "bni" and report["row_count"] == 3
+    assert report["total_debit"] == "145000.00" and report["balance_check"]["ok"] is True
