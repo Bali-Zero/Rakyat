@@ -2250,7 +2250,9 @@ async def test_privacy_the_answer_the_log_and_the_audit_rows_carry_no_key_date_o
     data, status, patch = PRIVACY_CASES[case]
     if case == "already":
         assert (await post(client, data)).json() == recorded(s)
-        await conn.execute("DELETE FROM api_audit_trail")  # the set-up call is not the case
+        async with unmeasured(conn):  # the set-up call is not the case
+            await conn.execute("DELETE FROM api_audit_trail")
+            await conn.execute("DELETE FROM write_log WHERE tbl = 'api_audit_trail'")
     caplog.clear()
     if patch:
         patch(monkeypatch)
