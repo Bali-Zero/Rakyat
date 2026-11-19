@@ -84,11 +84,15 @@ class DriveOperationsManager:
             "q": " and ".join(query_parts),
             "pageSize": page_size,
             "fields": _DRIVE_LIST_FIELDS,
+        }
+        if folder_id:
             # Client folders live in a Shared Drive: without these two flags
             # Drive v3 answers `files: []` (no error) for a Shared Drive parent.
-            "supportsAllDrives": True,
-            "includeItemsFromAllDrives": True,
-        }
+            # Only for a folder listing: a root listing / free-text query must
+            # not widen to every Shared Drive (team_drive.py non-admin filter
+            # only drops folders, so files would leak through).
+            params["supportsAllDrives"] = True
+            params["includeItemsFromAllDrives"] = True
         if page_token:
             params["pageToken"] = page_token
 

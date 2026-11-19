@@ -55,3 +55,16 @@ async def test_list_files_keeps_shared_drive_flags_when_paginating():
     assert params["pageToken"] == "PAGE_2"
     assert params.get("supportsAllDrives") is True
     assert params.get("includeItemsFromAllDrives") is True
+
+
+@pytest.mark.parametrize("q", [None, "name contains 'x'"])
+async def test_list_files_without_folder_does_not_widen_to_all_drives(q):
+    """Root listing / free-text query (GET /api/drive/files without folder_id)
+    must NOT pull items from every Shared Drive: the non-admin filter in
+    team_drive.py only drops folders, so files would leak through."""
+    mgr, http = _manager()
+    await mgr.list_files(USER, q=q)
+
+    params = http.get.call_args.kwargs["params"]
+    assert "includeItemsFromAllDrives" not in params
+    assert "supportsAllDrives" not in params
