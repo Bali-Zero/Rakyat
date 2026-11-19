@@ -108,6 +108,19 @@ const BASIS_LABELS: Readonly<Record<string, string>> = {
   manual: "Entered by hand",
 };
 
+/**
+ * What each basis asserts, in the producer's words: where a link comes from, never how the
+ * subject and the client are related. The order is the order of the legend.
+ */
+const BASIS_MEANINGS: Readonly<Record<string, string>> = {
+  drive_folder: "files of this subject sit in the client's Drive folder.",
+  whatsapp_phone:
+    "files of this subject arrived in the WhatsApp thread of the client's phone.",
+  identity:
+    "an identifier or identity datum of this subject equals one held by the client.",
+  manual: "a staff member entered this link.",
+};
+
 /** How a merge was decided: the history row's basis, shown as a short label. */
 const MERGE_BASIS_LABELS: Readonly<Record<string, string>> = {
   permit_stamp: "Permit stamp",
@@ -287,6 +300,9 @@ export default function RelatedRegistryPage() {
 
   const shownLinks = detail?.links ?? [];
   const linksTotal = detail?.links_total ?? shownLinks.length;
+  const shownBases = Object.keys(BASIS_MEANINGS).filter((basis) =>
+    shownLinks.some((link) => link.basis === basis),
+  );
   const mergedFrom = detail?.merged_from ?? [];
   const mergedInto = detail?.merged_into ?? null;
   const shownNames = detail?.names ?? [];
@@ -573,6 +589,24 @@ export default function RelatedRegistryPage() {
                   <p className="text-[13px] text-[var(--tx-secondary)]">
                     Proposed from documents, not confirmed.
                   </p>
+                  {shownBases.length > 0 && (
+                    <div
+                      data-testid="registry-basis-legend"
+                      className="text-[12px] text-[var(--tx-secondary)]"
+                    >
+                      <ul>
+                        {shownBases.map((basis) => (
+                          <li key={basis} data-testid="registry-basis-meaning">
+                            {`${BASIS_LABELS[basis]}: ${BASIS_MEANINGS[basis]}`}
+                          </li>
+                        ))}
+                      </ul>
+                      <p data-testid="registry-basis-caveat">
+                        A basis says where a link comes from, not how the
+                        subject and the client are related.
+                      </p>
+                    </div>
+                  )}
                   <ul className="text-[13px] text-[var(--tx-pure)]">
                     {shownLinks.map((link, index) => (
                       <li

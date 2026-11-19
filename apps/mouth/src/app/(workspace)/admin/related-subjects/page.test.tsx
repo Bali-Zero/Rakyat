@@ -607,6 +607,64 @@ describe("related subjects registry page", () => {
     ]);
   });
 
+  it("F30 the legend says what each basis shown asserts, once and in a fixed order, and what no basis says", async () => {
+    await openDetail(
+      withLinks([
+        linkOf({ client_id: 1, basis: "whatsapp_phone" }),
+        linkOf({ client_id: 2, basis: "drive_folder" }),
+        linkOf({ client_id: 3, basis: "whatsapp_phone" }),
+        linkOf({ client_id: 4, basis: "zz_unknown_basis" }),
+      ]),
+    );
+    const legend = within(screen.getByTestId("registry-clients")).getByTestId(
+      "registry-basis-legend",
+    );
+    expect(
+      within(legend)
+        .getAllByTestId("registry-basis-meaning")
+        .map((e) => e.textContent),
+    ).toEqual([
+      "Drive folder: files of this subject sit in the client's Drive folder.",
+      "WhatsApp phone: files of this subject arrived in the WhatsApp thread of the client's phone.",
+    ]);
+    expect(
+      within(legend).getByTestId("registry-basis-caveat").textContent,
+    ).toBe(
+      "A basis says where a link comes from, not how the subject and the client are related.",
+    );
+    // the entries themselves are unchanged: the legend is beside them, not inside
+    expect(
+      screen.getAllByTestId("registry-client").map((e) => e.textContent),
+    ).toEqual([
+      "ZzClient One · WhatsApp phone · 2026-03-04",
+      "ZzClient One · Drive folder · 2026-03-04",
+      "ZzClient One · WhatsApp phone · 2026-03-04",
+      "ZzClient One · — · 2026-03-04",
+    ]);
+  });
+
+  it("F31 the other two bases have their sentence", async () => {
+    await openDetail(
+      withLinks([
+        linkOf({ client_id: 1, basis: "manual" }),
+        linkOf({ client_id: 2, basis: "identity" }),
+      ]),
+    );
+    expect(
+      screen.getAllByTestId("registry-basis-meaning").map((e) => e.textContent),
+    ).toEqual([
+      "Identity: an identifier or identity datum of this subject equals one held by the client.",
+      "Entered by hand: a staff member entered this link.",
+    ]);
+  });
+
+  it("F32 links of an unknown basis alone show the block and no legend", async () => {
+    await openDetail(withLinks([linkOf({ basis: "zz_unknown_basis" })]));
+    expect(screen.getByTestId("registry-clients")).toBeTruthy();
+    expect(screen.queryByTestId("registry-basis-legend")).toBeNull();
+    expect(screen.queryByTestId("registry-basis-caveat")).toBeNull();
+  });
+
   const MERGED_AT = "2026-02-03T08:00:00Z";
   const mergedRecord = (over: Record<string, unknown> = {}) => ({
     subject_id: 11,
