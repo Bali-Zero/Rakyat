@@ -580,13 +580,16 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
     )
 
 
-# ── BNI (BNIdirect "Transaction Inquiry" and "Account Statement") ───────────
+# ── BNI (BNIdirect "Transaction Inquiry") ───────────────────────────────────
 
 _BNI_DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
 _BNI_TIME_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}")
 _BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*?)\s*\(\s*([A-Za-z]*)\s*\)")
 _BNI_AMT = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})"
 _BNI_CREDIT, _BNI_DEBIT = ("C", "K"), ("D",)
+_BNI_STATEMENT_REFUSED = (
+    "BNI Account Statement prints are not read: download the Transaction Inquiry from BNIdirect"
+)
 
 
 @dataclass
@@ -621,13 +624,11 @@ def _bni_cells(
     no_h: Word | None,
     top0: float,
 ) -> tuple[list[list[Word]], list[list[Word]], list[list[Word]], list[list[Word]]]:
-    """Dates, times, description words and journal words of each row (by flag), with every word
-    placed by the layout and none by proximity. A print with a row-number column (Transaction
-    Inquiry) cuts rows at the numbers; one without (Account Statement) centres every cell on the flag
-    line, so the description lines are cut into runs centred on each flag (one cut or refusal)
-    and the other cells are taken from the flag's own line. A row that
-    does not come out with exactly one flag, date and time, text that fits no row, or any other
-    count, refuses the file."""
+    """Dates, times, description words and journal words of each row (by flag), every word placed
+    by the layout and none by proximity: the Transaction Inquiry numbers its rows, a row is the
+    span from its number to the next, and each span must hold exactly one flag, date and time.
+    Text above the first number of a page (a description carried over a page break), a date that
+    falls outside its span, or any other count refuses the file."""
     _, amt_h, desc_h = cols
     header_tops = [w.top for w in words if w.text.lower() in ("db/cr", "db/c")]
     # page chrome: the title, address and account lines (and the footer) repeat, anywhere on a page
@@ -666,108 +667,50 @@ def _bni_cells(
             journal[k].append(w)
 
     unplaced = "a statement row block cannot be told apart: text does not fit one row"
-    if no_h is not None:
-        marks = sorted(
-            w.top
-            for w in body
-            if w.text.isdigit() and no_h.x0 - 8 <= w.x0 <= no_h.x0 + 12 and w.x1 < desc_h.x0 - 40
-        )
-        if len(marks) != n:
-            raise BankParseError(unplaced)
-        edges = [m - 3 for m in marks] + [float("inf")]
-        for k, f in enumerate(flags):
-            if not edges[k] <= f.top < edges[k + 1]:
-                raise BankParseError(unplaced)
-        for w in body:
-            if w.top < edges[0]:
-                if _BNI_DATE_RE.fullmatch(w.text) or _BNI_TIME_RE.fullmatch(w.text) or in_desc(w):
-                    raise BankParseError(unplaced)
-                continue
-            k = max(j for j in range(n) if edges[j] <= w.top)
-            place(k, w)
-        for k in range(n):
-            if len(dates[k]) != 1 or len(times[k]) != 1:
-                raise BankParseError(unplaced)
-        return dates, times, desc, journal
-
-    # No row number and no vertical gap tells where one description ends: the cells of a row are
-    # vertically centred on its flag line. Cut the description lines into consecutive runs, one
-    # per flag, each centred on its flag (a page break may drop a chrome band into the middle of a
-    # row: the lines after the band carry on the run above it). Exactly one cut may fit, else refuse.
-    lines = _lines([w for w in body if in_desc(w)], tol=2.0)
-    ltops = [line[0].top for line in lines]
-
-    carry = [False]  # whether a run may cross a chrome band (tried only when none fits otherwise)
-
-    def fits(i: int, j: int, f: Word) -> bool:  # lines[i:j] as the description of flag f
-        if i >= j:
-            return False
-        run = ltops[i:j]
-        for lo, hi in bands:  # lines after a band continue the row above it
-            if run[0] < lo and run[-1] > hi:
-                if not carry[0] or run[-1] - hi > 60:
-                    return False
-                run = [t for t in run if t < lo]
-        return abs((run[0] + run[-1]) / 2 - f.top) <= 4 and run[0] - 3 <= f.top <= run[-1] + 3
-
-    memo: dict[tuple[int, int], list[list[int]]] = {}
-
-    def cuts(i: int, k: int) -> list[list[int]]:  # up to two ways to place lines[i:] on flags[k:]
-        if (i, k) in memo:
-            return memo[(i, k)]
-        out: list[list[int]] = []
-        if k == n:
-            out = [[]] if i == len(lines) else []
-        else:
-            for j in range(i + 1, len(lines) + 1):
-                if fits(i, j, flags[k]):
-                    out += [[j, *rest] for rest in cuts(j, k + 1)]
-                    if len(out) > 1:
-                        break
-        memo[(i, k)] = out[:2]
-        return out[:2]
-
-    found = cuts(0, 0)
-    if not found:
-        carry[0] = True
-        memo.clear()
-        found = cuts(0, 0)
-    if len(found) != 1:
+    if no_h is None:
         raise BankParseError(unplaced)
-    start = 0
-    for k, end in enumerate(found[0]):
-        desc[k] = [w for line in lines[start:end] for w in line]
-        start = end
+    marks = sorted(
+        w.top
+        for w in body
+        if w.text.isdigit() and no_h.x0 - 8 <= w.x0 <= no_h.x0 + 12 and w.x1 < desc_h.x0 - 40
+    )
+    if len(marks) != n:
+        raise BankParseError(unplaced)
+    edges = [m - 3 for m in marks] + [float("inf")]
+    for k, f in enumerate(flags):
+        if not edges[k] <= f.top < edges[k + 1]:
+            raise BankParseError(unplaced)
     for w in body:
-        if in_desc(w):
+        if w.top < edges[0]:
+            # text above the page's first row number: a description carried over a page break
+            if _BNI_DATE_RE.fullmatch(w.text) or _BNI_TIME_RE.fullmatch(w.text) or in_desc(w):
+                raise BankParseError(unplaced)
             continue
-        owners = [k for k, f in enumerate(flags) if abs(w.top - f.top) <= 3]
-        if len(owners) == 1:
-            place(owners[0], w)
+        place(max(j for j in range(n) if edges[j] <= w.top), w)
     for k in range(n):
-        if not 1 <= len(dates[k]) <= 2 or not 1 <= len(times[k]) <= 2:
+        if len(dates[k]) != 1 or len(times[k]) != 1:
             raise BankParseError(unplaced)
     return dates, times, desc, journal
 
 
 def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
-    """BNI 'Transaction Inquiry' / 'Account Statement' pages -> ParsedStatement (file order).
+    """BNI 'Transaction Inquiry' pages -> ParsedStatement (file order).
 
-    The page scale differs between prints, so the columns are read from the header row. A row is
-    anchored on its Db/Cr flag (C or K credit, D debit); its amount is the amount left of the flag,
-    its balance the amount right of it. The 'Transaction Inquiry' header prints the beginning
-    balance and both totals; the 'Account Statement' prints the beginning balance as a lone
-    balance before the first row and, at the end, the ending balance and totals with row counts
-    (its last row carries no balance of its own: it must equal the ending balance)."""
+    The page scale differs between files, so the columns are read from the header row. A row is
+    anchored on its Db/Cr flag (C or K credit, D debit); its amount is the amount left of the
+    flag, its balance the amount right of it. The header prints the beginning balance and both
+    totals. The 'Account Statement' print is not read: its descriptions can run over a page
+    break and cannot be placed on a row without guessing."""
+    first_page = " ".join(w.text for w in pages[0])
+    if "ACCOUNT STATEMENT" in first_page and "TRANSACTION INQUIRY" not in first_page:
+        raise BankParseError(_BNI_STATEMENT_REFUSED)
     cols: tuple[Word, Word, Word | None] | None = None  # flag header, amount header, journal header
     account: tuple[str, str, str] | None = None
     text_all = " ".join(" ".join(w.text for w in _lines_flat(p)) for p in pages)
     begin_m = _bni_find(text_all, rf"Beginning Balance\s*:\s*{_BNI_AMT}")
-    tdeb_m = _bni_find(text_all, rf"Total Deb(?:it|et)\s*:\s*(\d+\s+)?{_BNI_AMT}")
-    tcred_m = _bni_find(text_all, rf"Total Credit\s*:\s*(\d+\s+)?{_BNI_AMT}")
-    end_m = _bni_find(text_all, rf"Ending Balance\s*:\s*{_BNI_AMT}")
+    tdeb_m = _bni_find(text_all, rf"Total Debit\s*:\s*{_BNI_AMT}")
+    tcred_m = _bni_find(text_all, rf"Total Credit\s*:\s*{_BNI_AMT}")
     rows: list[_BniRow] = []
-    lone: Decimal | None = None
     no_h: Word | None = None  # the row-number header: only some prints have one
     for page_no, words in enumerate(pages):
         flag_h = next((w for w in words if w.text.lower() in ("db/cr", "db/c")), None)
@@ -804,12 +747,17 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
         flag_h, amt_h, _ = cols
         # the header row repeats anywhere on later pages: only page 1's marks where rows start
         top0 = flag_h.top + 2 if page_no == 0 else -1.0
-        if account is None:
-            for line in _lines(words):
-                m = _BNI_ACCOUNT_RE.search(" ".join(w.text for w in line))
-                if m and re.search(r"Account", " ".join(w.text for w in line)):
-                    account = (m.group(1), m.group(2).strip(), m.group(3).upper())
-                    break
+        for line in _lines(words):  # every page that prints an account must print the first one
+            m = _BNI_ACCOUNT_RE.search(" ".join(w.text for w in line))
+            if m and re.search(r"Account", " ".join(w.text for w in line)):
+                seen = (m.group(1), m.group(2).strip(), m.group(3).upper())
+                if account is None:
+                    account = seen
+                elif seen[0] != account[0] or seen[2] != account[2]:
+                    raise BankParseError(
+                        "file holds more than one account: upload one statement per file"
+                    )
+                break
         flags = sorted(
             (
                 w
@@ -821,17 +769,6 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
             key=lambda w: w.top,
         )
         amounts = [w for w in words if _AMOUNT_RE.fullmatch(w.text) and w.top > top0]
-        if page_no == 0 and (begin_m is None):  # 'Account Statement': a lone balance before row 1
-            first = flags[0].top if flags else float("inf")
-            loose = [
-                w
-                for w in amounts
-                if w.x0 >= flag_h.x1
-                and w.top < first - 3
-                and not any(abs(w.top - f.top) <= 3 for f in flags)
-            ]
-            if len(loose) == 1:
-                lone = _amount(loose[0].text)
         if not flags:
             continue
 
@@ -875,27 +812,23 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
         raise BankParseError(_NO_ROWS if account else "statement header has no account")
     if account[2] not in ("IDR", ""):
         raise BankParseError(_NOT_IDR)
-    beginning = _amount(begin_m.group(1)) if begin_m else lone
-    if beginning is None:
-        raise BankParseError("statement has no beginning balance")
-    if tdeb_m is None or tcred_m is None:
-        raise BankParseError("statement has no printed totals")
-    total_debit, total_credit = _amount(tdeb_m.group(2)), _amount(tcred_m.group(2))
-    if (
-        sum((r.debit for r in rows), Decimal(0)) != total_debit
-        or sum((r.credit for r in rows), Decimal(0)) != total_credit
-    ):
-        raise BankParseError("statement rows do not add up to the totals printed in it")
-    for m, side in ((tdeb_m, "debit"), (tcred_m, "credit")):
-        if m.group(1) and int(m.group(1)) != sum(1 for r in rows if getattr(r, side) > 0):
-            raise BankParseError("statement row count does not match the count printed in it")
+    if begin_m is None or tdeb_m is None or tcred_m is None:
+        raise BankParseError("statement has no beginning balance or printed totals")
+    beginning = _amount(begin_m.group(1))
+    total_debit, total_credit = _amount(tdeb_m.group(1)), _amount(tcred_m.group(1))
+    wrong = [
+        side
+        for side, got, printed in (
+            ("debit", sum((r.debit for r in rows), Decimal(0)), total_debit),
+            ("credit", sum((r.credit for r in rows), Decimal(0)), total_credit),
+        )
+        if got != printed
+    ]
+    if wrong:
+        raise BankParseError(
+            f"statement rows do not add up to the printed total ({' and '.join(wrong)})"
+        )
     closing = beginning + total_credit - total_debit
-    if end_m is not None and _amount(end_m.group(1)) != closing:
-        raise BankParseError("statement does not end at its printed ending balance")
-    if rows[-1].balance is None and end_m is not None:
-        before = rows[-2].balance if len(rows) > 1 else beginning
-        if before is not None and before + rows[-1].credit - rows[-1].debit == closing:
-            rows[-1].balance = closing
     if any(r.balance is None for r in rows):
         raise BankParseError("a statement row has no balance")
     rows = _orient(rows, beginning, closing)

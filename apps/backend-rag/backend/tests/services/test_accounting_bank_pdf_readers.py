@@ -426,14 +426,6 @@ def test_bni_a_later_stamp_in_file_order_is_not_a_reason_to_reorder() -> None:
     assert [x.balance for x in parse_bni_pages([_bni()]).transactions][-1] == Decimal("1355000.00")
 
 
-def test_bni_account_statement_print_with_k_flag_and_a_last_row_without_balance() -> None:
-    rows = [(*B_ROWS[0][:5], "K", "1,500,000.00"), B_ROWS[1], (*B_ROWS[2][:6], None)]
-    stmt = parse_bni_pages([_bni(rows, variant="statement", ending="1,355,000.00", counts=(2, 1))])
-    assert [x.credit for x in stmt.transactions][0] == Decimal("500000.00")
-    assert stmt.transactions[-1].balance == Decimal("1355000.00")
-    assert stmt.opening_balance == Decimal("1000000.00")
-
-
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -447,15 +439,6 @@ def test_bni_account_statement_print_with_k_flag_and_a_last_row_without_balance(
 def test_bni_refuses_what_does_not_add_up(kwargs) -> None:
     with pytest.raises(BankParseError):
         parse_bni_pages([_bni(**kwargs)])
-
-
-def test_bni_a_statement_print_refuses_wrong_counts_or_ending() -> None:
-    rows = [B_ROWS[0], B_ROWS[1], (*B_ROWS[2][:6], None)]
-    ok = {"variant": "statement", "ending": "1,355,000.00", "counts": (2, 1)}
-    parse_bni_pages([_bni(rows, **ok)])
-    for bad in ({"counts": (3, 1)}, {"ending": "1,355,001.00"}):
-        with pytest.raises(BankParseError):
-            parse_bni_pages([_bni(rows, **{**ok, **bad})])
 
 
 def test_bni_a_blank_currency_is_read_a_foreign_one_is_not() -> None:
@@ -484,11 +467,8 @@ _LONG = [
 ]
 
 
-@pytest.mark.parametrize("variant", ["inquiry", "statement"])
-def test_bni_a_long_description_stays_whole_next_to_a_short_one(variant) -> None:
-    kw = {"variant": variant, "ending": "1,355,000.00", "counts": (2, 1)}
-    rows = _LONG if variant == "inquiry" else [*_LONG[:2], (*_LONG[2][:6], None)]
-    stmt = parse_bni_pages([_bni(rows, **kw)])
+def test_bni_a_long_description_stays_whole_next_to_a_short_one() -> None:
+    stmt = parse_bni_pages([_bni(_LONG)])
     assert [t.description for t in stmt.transactions] == ["ALPHA A1 A2 A3", "BETA", "GAMMA G1"]
 
 
@@ -502,16 +482,53 @@ def test_bni_a_date_that_falls_outside_its_row_number_block_is_refused() -> None
         parse_bni_pages([moved])
 
 
-def test_bni_a_statement_description_not_centred_on_its_row_is_refused() -> None:
-    page = _bni(_LONG, variant="statement", ending="1,355,000.00", counts=(2, 1))
-    # slide one description line off the centre of its row: no cut of the lines fits any more
-    shifted = [dataclasses.replace(w, top=w.top + 14) if w.text == "ALPHA" else w for w in page]
-    with pytest.raises(BankParseError, match="row block"):
-        parse_bni_pages([shifted])
-
-
 def test_bni_text_above_the_first_row_number_is_refused() -> None:
     page = _bni()
     page.append(Word("orphan", 270, 300, 214.5))  # a description line above row 1's number
     with pytest.raises(BankParseError, match="row block"):
         parse_bni_pages([page])
+
+
+def test_bni_the_printed_totals_are_checked_against_the_rows_side_by_side() -> None:
+    # both totals up by one leave beginning + credits - debits unchanged: only the comparison of
+    # the rows with each printed total can refuse it, and the message names each side that fails
+    with pytest.raises(BankParseError, match=r"\(debit and credit\)"):
+        parse_bni_pages([_bni(total_debit="145,001.00", total_credit="500,001.00")])
+
+
+def test_bni_the_account_statement_print_is_refused_with_a_pointer_to_the_inquiry() -> None:
+    with pytest.raises(BankParseError, match="download the Transaction Inquiry"):
+        parse_bni_pages([_bni(title="ACCOUNT STATEMENT")])
+    with pytest.raises(BankParseError, match="download the Transaction Inquiry"):
+        parse_and_preview_statement(words_to_pdf([_bni(title="ACCOUNT STATEMENT")]))
+
+
+def _bni_two_pages(second_account: str = ACCOUNT, **kw):
+    first = _bni(B_ROWS[:2])
+    second = _bni(B_ROWS[2:], start_no=3, table_header=False, account=second_account, **kw)
+    return [first, second]
+
+
+def test_bni_a_second_page_continues_the_same_account() -> None:
+    stmt = parse_bni_pages(_bni_two_pages())
+    assert len(stmt.transactions) == 3 and stmt.account_number == ACCOUNT
+
+
+def test_bni_a_second_page_printing_another_account_is_refused() -> None:
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages(_bni_two_pages("0000000002"))
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_and_preview_statement(words_to_pdf(_bni_two_pages("0000000002")))
+
+
+def test_bni_a_description_carried_over_a_page_break_never_lands_on_another_row() -> None:
+    rows = [(*B_ROWS[0][:3], "ALPHA\nA1\nA2\nA3", *B_ROWS[0][4:]), *B_ROWS[1:]]
+    # the same rows, with the last line of row 1 printed at the top of page 2, above row 2's number
+    first = [w for w in _bni(rows[:1]) if w.text != "A3"]
+    second = _bni(rows[1:], start_no=2, table_header=False)
+    carried = [*second, Word("A3", 263, 220, 214.0)]
+    with pytest.raises(BankParseError, match="row block"):
+        parse_bni_pages([first, carried])
+    # control: the page break between two whole rows reads fine
+    whole = parse_bni_pages([_bni(rows[:1]), second])
+    assert [t.description for t in whole.transactions][0] == "ALPHA A1 A2 A3"

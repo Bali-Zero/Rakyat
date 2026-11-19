@@ -247,84 +247,50 @@ def bni_page(
     currency: str = "IDR",
     account: str = ACCOUNT,
     name: str = NAME,
-    variant: str = "inquiry",
-    ending: str | None = None,
-    counts: tuple[int, int] = (0, 0),
+    start_no: int = 1,
+    table_header: bool = True,
+    title: str = "TRANSACTION INQUIRY",
 ) -> list[Word]:
-    """'inquiry' prints the beginning balance and totals in the header, times on the row's flag
-    line; 'statement' prints a lone balance before the first row, and ending, counts and totals
-    after the last."""
+    """A Transaction Inquiry page: the account block with the beginning balance and totals (it
+    repeats on every page), the table header (only where `table_header`), then the rows numbered
+    from `start_no`, each description from its number's line downwards."""
     words = [_n("Account", 257, 110), _n("Information", 302, 110)]
     cur = f"( {currency} )" if currency else "( )"
-    head = [_n("Account", 97, 156), _n(":", 202, 156), _n(f"{account}/{name.split()[0]}", 213, 156)]
-    head += [_n(p, 300 + 40 * i, 156) for i, p in enumerate(name.split()[1:] + cur.split())]
-    words += head
-    if variant == "inquiry":
-        words += [_n("TRANSACTION", 246, 130), _n("INQUIRY", 327, 130)]
-        for label, value, y in (
-            ("Beginning Balance", beginning, 176),
-            ("Total Debit", total_debit, 188),
-            ("Total Credit", total_credit, 198),
-        ):
-            words += [_n(t, 97 + 40 * i, y) for i, t in enumerate(label.split())] + [
-                _n(":", 202, y)
-            ]
-            words.append(_n(value, 213, y))
-    else:
-        words += [_n("ACCOUNT", 231, 88), _n("STATEMENT", 282, 88)]
-    top = 210.0
     words += [
-        _n("Post", 129, top),
-        _n("Date", 150, top),
-        _n("Journal", 224, top),
-        _n("Amount", 410, top),
-        _n("Db/Cr", 451, top),
-        _n("Balance", 486, top),
+        _n("Account", 97, 156),
+        _n(":", 202, 156),
+        _n(f"{account}/{name.split()[0]}", 213, 156),
     ]
-    if variant == "inquiry":
-        words += [_n("No.", 250, top), _n("No.", 97, top)]
+    words += [_n(p, 300 + 40 * i, 156) for i, p in enumerate(name.split()[1:] + cur.split())]
+    words += [_n(t, 246 + 81 * i, 130) for i, t in enumerate(title.split())]
+    for label, value, y in (
+        ("Beginning Balance", beginning, 176),
+        ("Total Debit", total_debit, 188),
+        ("Total Credit", total_credit, 198),
+    ):
+        words += [_n(t, 97 + 40 * i, y) for i, t in enumerate(label.split())] + [_n(":", 202, y)]
+        words.append(_n(value, 213, y))
+    top = 210.0
+    if table_header:
+        words += [
+            _n("Post", 129, top),
+            _n("Date", 150, top),
+            _n("Journal", 224, top),
+            _n("Amount", 410, top),
+            _n("Db/Cr", 451, top),
+            _n("Balance", 486, top),
+            _n("No.", 250, top),
+            _n("No.", 97, top),
+        ]
     y = top + 8
-    if variant == "statement":
-        words.append(_n(beginning, 480, y))
-        y += 12
-    # inquiry: row number, then the description from the number's line downwards (top aligned);
-    # statement: no number, and every cell centred on the flag line, 14 pt between two rows
     for i, (date, time, journal, desc, amount, flag, balance) in enumerate(rows):
         lines = desc.split("\n")
-        extent = 9 * (len(lines) - 1)
-        if variant == "statement":
-            first = y + (14 if i else 0)
-            anchor = first + extent / 2
-            y = first + extent + 9
-        else:
-            first = anchor = y
-            words.append(_n(str(i + 1), 96, anchor))
-            y = anchor + max(30, extent + 12)
-        words += [_n(date, 110, anchor), _n(time, 152, anchor), _n(journal, 223, anchor)]
+        words.append(_n(str(start_no + i), 96, y))
+        words += [_n(date, 110, y), _n(time, 152, y), _n(journal, 223, y)]
         for k, line in enumerate(lines):
-            words += [_n(t, 263 + 30 * j, first + 9 * k) for j, t in enumerate(line.split())]
-        words += [_na(amount, 445, anchor), _n(flag, 456, anchor)]
+            words += [_n(t, 263 + 30 * j, y + 9 * k) for j, t in enumerate(line.split())]
+        words += [_na(amount, 445, y), _n(flag, 456, y)]
         if balance is not None:
-            words.append(_n(balance, 480, anchor))
-    if variant == "statement":
-        words += [
-            _n("Ending", 162, y),
-            _n("Balance", 186, y),
-            _n(":", 213, y),
-            _na(ending or "", 500, y),
-        ]
-        words += [
-            _n("Total", 174, y + 14),
-            _n("Debet", 192, y + 14),
-            _n(":", 213, y + 14),
-            _n(str(counts[0]), 225, y + 14),
-            _n(total_debit, 272, y + 14),
-        ]
-        words += [
-            _n("Total", 174, y + 28),
-            _n("Credit", 192, y + 28),
-            _n(":", 213, y + 28),
-            _n(str(counts[1]), 225, y + 28),
-            _n(total_credit, 272, y + 28),
-        ]
+            words.append(_n(balance, 480, y))
+        y += max(30, 9 * (len(lines) - 1) + 12)
     return words
