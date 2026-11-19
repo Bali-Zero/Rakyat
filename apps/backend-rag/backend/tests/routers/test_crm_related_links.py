@@ -547,6 +547,7 @@ async def test_l1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "related_document_sightings",
             "related_subject_documents",
             "related_subject_names",
+            "related_subject_detachments",
         }
         assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
 

@@ -3255,6 +3255,15 @@ async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachm
     t_detail = (await admin.get(f"{READ}/{t}")).json()
     created = t_detail.pop("created_at")
     assert created
+    (split,) = t_detail.pop("detached_from")
+    assert split.pop("detached_at")
+    assert split == {
+        "subject_id": s,
+        "id_type": "nik",
+        "basis": "nik_birth_date",
+        "documents_moved": len(listed),
+        "from_subject_id": None,
+    }
     assert t_detail == {
         "id": t,
         "kind": "person",
@@ -3282,11 +3291,12 @@ async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachm
         ],
         "merged_from": [],
         "merged_into": None,
+        "detached_into": [],
     }
     assert await related_registry_read.get_subject(conn, t) is not None
     # read statement counts unchanged: S as before; T is a record without merges, with documents
     assert await read_statement_counts(conn, s) == counts_before
-    assert (await read_statement_counts(conn, t))[1] == 6
+    assert (await read_statement_counts(conn, t))[1] == 7
 
 
 @pytest.mark.asyncio

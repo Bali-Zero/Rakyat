@@ -1281,6 +1281,7 @@ async def test_m15_golden_bodies_of_a_subject_in_no_merge(admin, conn, clients):
                 "basis": "identity",
                 "relation": "unknown",
                 "created_at": "2026-01-03T00:00:00Z",
+                "files": None,
                 "from_subject_id": None,
             }
         ],
@@ -1303,6 +1304,8 @@ async def test_m15_golden_bodies_of_a_subject_in_no_merge(admin, conn, clients):
         ],
         "merged_from": [],
         "merged_into": None,
+        "detached_into": [],
+        "detached_from": [],
     }
 
 
