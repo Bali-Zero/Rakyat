@@ -1009,7 +1009,10 @@ async def test_i10_forward_sql_stays_inside_the_runner_rules() -> None:
 
 @pytest.mark.parametrize("bank", ["mandiri", "permata"])
 async def test_pdf_statements_store_their_bank_and_format_and_reimport_is_idempotent(db, bank) -> None:
-    from backend.services.accounting.bank_pdf_readers import parse_mandiri_pages, parse_permata_pages
+    from backend.services.accounting.bank_pdf_readers import (
+        parse_mandiri_pages,
+        parse_permata_pages,
+    )
     from backend.tests.services.test_accounting_bank_pdf_readers import P_DAYS, _mandiri, _permata
 
     conn, _ = db
@@ -1022,3 +1025,70 @@ async def test_pdf_statements_store_their_bank_and_format_and_reimport_is_idempo
     again = await _import(conn, stmt, "a.pdf")
     assert again.nothing_new and again.rows_duplicate == len(stmt.transactions)
     assert await _counts(conn) == (1, len(stmt.transactions))
+
+
+# ── Permata days: balances are derived from the file's row order ─────────────
+
+
+def _permata_statement(days, closing):
+    from backend.services.accounting.bank_pdf_readers import parse_permata_pages
+    from backend.tests.fixtures.bank_pdf_builder import permata_page
+
+    return parse_permata_pages([permata_page(days, closing=closing)])
+
+
+_CR = (1, "03-Dec-2025", "374", "0.00", "100.00", ["ALPHA"])
+_DB = (2, "03-Dec-2025", "427", "50.00", "0.00", ["BETA"])
+_REVERSAL = (2, "03-Dec-2025", "427", "100.00", "0.00", ["BETA"])
+_FEE = (3, "04-Dec-2025", "427", "50.00", "0.00", ["FEE"])
+
+
+def _day(rows, opening="1,000.00", debit="50.00", credit="100.00"):
+    return ("03-Dec-2025", opening, rows, debit, credit)
+
+
+async def test_permata_the_same_day_listed_in_another_order_is_refused_and_adds_nothing(db) -> None:
+    conn, _ = db
+    first = _permata_statement([_day([_CR, _DB])], ("31-Dec-2025", "1,050.00"))
+    swapped = _permata_statement([_day([_DB, _CR])], ("31-Dec-2025", "1,050.00"))
+    await _import(conn, first, "a.pdf")
+    with pytest.raises(BankImportError, match="different order"):
+        await _import(conn, swapped, "b.pdf")
+    assert await _counts(conn) == (1, 2)
+
+
+async def test_permata_a_partial_day_then_the_full_day_adds_only_the_new_rows(db) -> None:
+    conn, _ = db
+    partial = _permata_statement([_day([_CR], debit="0.00")], ("03-Dec-2025", "1,100.00"))
+    full = _permata_statement([_day([_CR, _DB])], ("03-Dec-2025", "1,050.00"))
+    assert (await _import(conn, partial, "a.pdf")).rows_inserted == 1
+    result = await _import(conn, full, "b.pdf")
+    assert (result.rows_inserted, result.rows_duplicate) == (1, 1)
+    assert (await _counts(conn))[1] == 2
+    # and the partial file again, after the full one, changes nothing
+    assert (await _import(conn, partial, "a.pdf")).nothing_new
+    assert (await _counts(conn))[1] == 2
+
+
+async def test_permata_the_same_file_twice_adds_nothing(db) -> None:
+    conn, _ = db
+    stmt = _permata_statement([_day([_CR, _DB])], ("03-Dec-2025", "1,050.00"))
+    await _import(conn, stmt, "a.pdf")
+    assert (await _import(conn, stmt, "a.pdf")).nothing_new
+    assert await _counts(conn) == (1, 2)
+
+
+async def test_permata_two_identical_rows_of_one_day_survive_both_files(db) -> None:
+    conn, _ = db
+    rows = [_CR, _REVERSAL, (3, "03-Dec-2025", "374", "0.00", "100.00", ["ALPHA"])]
+    day = _day(rows, debit="100.00", credit="200.00")
+    short = _permata_statement([day], ("03-Dec-2025", "1,100.00"))
+    longer = _permata_statement(
+        [day, ("04-Dec-2025", "1,100.00", [(4, "04-Dec-2025", "427", "50.00", "0.00", ["FEE"])], "50.00", "0.00")],
+        ("04-Dec-2025", "1,050.00"),
+    )
+    await _import(conn, short, "a.pdf")
+    assert (await _counts(conn))[1] == 3
+    assert (await _import(conn, longer, "b.pdf")).rows_inserted == 1
+    assert (await _import(conn, short, "a.pdf")).nothing_new
+    assert (await _counts(conn))[1] == 4

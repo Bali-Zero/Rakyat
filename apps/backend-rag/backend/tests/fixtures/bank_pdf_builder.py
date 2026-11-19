@@ -44,6 +44,7 @@ def mandiri_page(
     account: str = ACCOUNT,
     name: str = NAME,
     currency: str = "IDR",
+    gap: float | None = None,
 ) -> list[Word]:
     words = [
         _w("Account", 32, 27),
@@ -102,24 +103,34 @@ def mandiri_page(
         _w("Credit", 449, 292),
         _w("Balance", 533, 292),
     ]
-    for i, (day, time, remark, debit, credit, balance) in enumerate(rows):
-        y = 320.0 + 80 * i
+    # Real Kopra layout: remark lines 9 pt apart, the amounts on the middle remark line, the date
+    # 5 pt above them and the time 5 pt below, and about 30 pt of empty space before the next row.
+    y = 308.0
+    between = 32.0 if gap is None else gap
+    for day, time, remark, debit, credit, balance in rows:
+        n = max(len(remark), 1)
+        amount_y = y + 9 * (n // 2)
         d, mon, year = day.split()
         words += [
-            _w(d, 34, y - 5),
-            _w(mon, 45, y - 5),
-            _w(year + ",", 62, y - 5),
-            _w(time, 34, y + 5),
+            _w(d, 34, amount_y - 5),
+            _w(mon, 45, amount_y - 5),
+            _w(year + ",", 62, amount_y - 5),
+            _w(time, 34, amount_y + 5),
+            _w("-", 239, amount_y),
         ]
-        words += [_w("-", 239, y)]
-        words += [_amt(debit, 395, y), _amt(credit, 480, y), _amt(balance, 575, y)]
+        words += [
+            _amt(debit, 395, amount_y),
+            _amt(credit, 480, amount_y),
+            _amt(balance, 575, amount_y),
+        ]
         for k, line in enumerate(remark):
             for j, token in enumerate(line.split()):
-                words.append(_w(token, 119 + 30 * j, y - 9 + 18 * k))
+                words.append(_w(token, 119 + 30 * j, y + 9 * k))
+        y = max(y + 9 * (n - 1), amount_y + 5) + between
     words += [
         _w("For", 158, 799),
-        _w("further", 168, 799),
-        _w("questions,", 187, 799),
+        _w("further", 181, 799),
+        _w("questions,", 215, 799),
         _w("Page", 499, 799),
     ]
     return words

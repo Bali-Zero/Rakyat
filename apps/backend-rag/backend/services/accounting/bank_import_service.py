@@ -82,6 +82,35 @@ async def _finalize_statement(
     )
 
 
+async def _refuse_reordered_days(
+    conn: Any, account: str, txns: list[Any], ordinals: list[int]
+) -> None:
+    """For a statement whose balances are derived from the rows before them (Permata), the same
+    movements listed in another order get other balances, so they would be stored a second time.
+    On every day of the statement that the account already stores, the stored rows and the
+    statement's rows of that day must agree: one set contains the other (a partial day before the
+    full day, or the full day before a partial one). Anything else is refused, whole."""
+    mine: dict[Any, set[tuple[Any, ...]]] = {}
+    for t, n in zip(txns, ordinals, strict=True):
+        mine.setdefault(t.posted_at.date(), set()).add((t.posted_at, t.debit, t.credit, t.balance, n))
+    stored_rows = await conn.fetch(
+        "SELECT posted_at, debit, credit, balance, dup_ordinal FROM bank_transactions "
+        "WHERE bank_account_id = $1 AND posted_at IS NOT NULL AND posted_at::date = ANY($2::date[])",
+        account, list(mine),
+    )
+    stored: dict[Any, set[tuple[Any, ...]]] = {}
+    for r in stored_rows:
+        stored.setdefault(r["posted_at"].date(), set()).add(
+            (r["posted_at"], r["debit"], r["credit"], r["balance"], r["dup_ordinal"])
+        )
+    for day, rows in stored.items():
+        if not (rows <= mine[day] or mine[day] <= rows):
+            raise BankImportError(
+                "this statement lists a day's transactions in a different order than the "
+                "statement already stored; nothing was imported"
+            )
+
+
 async def import_statement(
     conn: Any,
     statement: ParsedStatement,
@@ -125,6 +154,8 @@ async def import_statement(
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", account, _LOCK_NAMESPACE
             )
+            if statement.balances_derived:
+                await _refuse_reordered_days(conn, account, txns, ordinals)
             # I5 (a), part 1: what the account already stores inside the new statement's
             # SETTLED period (up to, not including, its last instant minus the jitter)
             settled_end = last_at - TIMESTAMP_JITTER

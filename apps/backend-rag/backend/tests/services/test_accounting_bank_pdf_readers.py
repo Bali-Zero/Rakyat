@@ -89,10 +89,11 @@ def test_mandiri_a_file_listed_newest_first_is_turned_around() -> None:
     [
         {"currency": "USD"},
         {"total_debit": "2,525,001.00"},
+        {"total_credit": "1,000,001.00"},
         {"closing": "8,475,001.00"},
         {"opening": "10,000,001.00"},
     ],
-    ids=["not_idr", "totals", "closing", "opening"],
+    ids=["not_idr", "debit_total", "credit_total", "closing", "opening"],
 )
 def test_mandiri_refuses_what_does_not_add_up(kwargs) -> None:
     with pytest.raises(BankParseError):
@@ -129,6 +130,43 @@ def test_mandiri_a_row_with_two_amounts_on_one_side_is_refused() -> None:
         parse_mandiri_pages(
             [_mandiri(rows, closing="10,000,000.00", total_debit="5.00", total_credit="5.00")]
         )
+
+
+def test_mandiri_a_long_remark_stays_whole_next_to_a_short_one() -> None:
+    rows = [
+        ("16 Nov 2026", "14:11:00", ["ALPHA", "A1", "A2", "A3", "A4"], "100.00", "0.00", "900.00"),
+        ("16 Nov 2026", "16:02:00", ["BETA"], "0.00", "200.00", "1,100.00"),
+        ("17 Nov 2026", "09:00:00", ["GAMMA", "G1"], "0.00", "50.00", "1,150.00"),
+    ]
+    page = mandiri_page(
+        rows, opening="1,000.00", closing="1,150.00", total_debit="100.00", total_credit="250.00"
+    )
+    stmt = parse_mandiri_pages([page])
+    assert [t.description for t in stmt.transactions] == ["ALPHA A1 A2 A3 A4", "BETA", "GAMMA G1"]
+    assert [(t.debit, t.credit) for t in stmt.transactions][0] == (Decimal(100), Decimal(0))
+
+
+def test_mandiri_rows_drawn_with_no_gap_are_refused_not_guessed() -> None:
+    page = mandiri_page(
+        M_ROWS,
+        opening="10,000,000.00",
+        closing="8,475,000.00",
+        total_debit="2,525,000.00",
+        total_credit="1,000,000.00",
+        gap=3.0,
+    )
+    with pytest.raises(BankParseError, match="row block"):
+        parse_mandiri_pages([page])
+
+
+def test_mandiri_a_block_without_an_amount_line_or_with_stray_text_is_refused() -> None:
+    page = _mandiri()
+    stray = [*page, Word("STRAY", 350, 500, 520)]  # text in the amount area, outside any amount
+    with pytest.raises(BankParseError, match="row block"):
+        parse_mandiri_pages([stray])
+    lone_text = [*page, Word("lost", 120, 560, 530)]  # a remark with no date, time or amounts
+    with pytest.raises(BankParseError, match="row block"):
+        parse_mandiri_pages([lone_text])
 
 
 # ── Permata ─────────────────────────────────────────────────────────────────
@@ -189,7 +227,15 @@ def test_permata_the_row_number_does_not_leak_into_the_date() -> None:
 
 @pytest.mark.parametrize(
     "mutation",
-    ["currency", "closing", "day_total", "opening_chain", "no_closing", "no_rows"],
+    [
+        "currency",
+        "closing",
+        "day_total",
+        "day_credit_total",
+        "opening_chain",
+        "no_closing",
+        "no_rows",
+    ],
 )
 def test_permata_refuses_what_does_not_add_up(mutation) -> None:
     days, closing, kw = [list(d) for d in P_DAYS], ("31-Dec-2025", "7,992,500.00"), {}
@@ -197,6 +243,8 @@ def test_permata_refuses_what_does_not_add_up(mutation) -> None:
         kw["currency"] = "EUR"
     elif mutation == "closing":
         closing = ("31-Dec-2025", "7,992,501.00")
+    elif mutation == "day_credit_total":
+        days[1][4] = "1,000,001.00"
     elif mutation == "day_total":
         days[0][3] = "3,007,501.00"
     elif mutation == "opening_chain":

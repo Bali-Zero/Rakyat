@@ -257,10 +257,36 @@ def _mandiri_left_tokens(
     return dates, times
 
 
+# Kopra leaves clear space between two rows: measured on real statements the lines of one row
+# sit at most ~10 pt apart and the next row starts 30 pt or more below the last line of the
+# previous one. A new block therefore starts at a vertical gap over _BLOCK_GAP.
+_BLOCK_GAP = 20.0
+
+
+def _mandiri_blocks(body: list[Word]) -> list[list[Word]]:
+    """The body words grouped into row blocks by vertical gaps (never by proximity to an anchor)."""
+    blocks: list[list[Word]] = []
+    last_top = None
+    for line in _lines(body, tol=2.0):
+        if last_top is None or line[0].top - last_top > _BLOCK_GAP:
+            blocks.append([])
+        blocks[-1].extend(line)
+        last_top = max(w.top for w in line)
+    return blocks
+
+
 def _mandiri_rows(body: list[Word]) -> list[_MandiriRow]:
-    anchors: list[tuple[float, Decimal, Decimal, Decimal]] = []
-    amounts = [w for w in body if w.x0 >= _AMOUNT_X and _AMOUNT_RE.fullmatch(w.text)]
-    for line in _lines(amounts, tol=2.0):
+    rows: list[_MandiriRow] = []
+    for block in _mandiri_blocks(body):
+        amount_lines = [
+            line
+            for line in _lines([w for w in block if w.x0 >= _AMOUNT_X], tol=2.0)
+            if any(_AMOUNT_RE.fullmatch(w.text) for w in line)
+        ]
+        stray = [w for w in block if w.x0 >= _AMOUNT_X and not _AMOUNT_RE.fullmatch(w.text)]
+        if len(amount_lines) != 1 or stray:
+            raise BankParseError("a statement row block does not have exactly one amount line")
+        line = amount_lines[0]
         cols = (
             [w for w in line if w.x1 < _DEBIT_CREDIT_SPLIT],
             [w for w in line if _DEBIT_CREDIT_SPLIT <= w.x1 < _CREDIT_BALANCE_SPLIT],
@@ -270,49 +296,25 @@ def _mandiri_rows(body: list[Word]) -> list[_MandiriRow]:
             raise BankParseError(
                 "a statement row does not have one debit, credit and balance amount"
             )
-        anchors.append((line[0].top, *(_amount(c[0].text) for c in cols)))
-    if not anchors:
-        return []
-
-    def nearest(top: float) -> int:
-        return min(range(len(anchors)), key=lambda k: abs(anchors[k][0] - top))
-
-    dates, times = _mandiri_left_tokens(body)
-    day_of: list[list[date]] = [[] for _ in anchors]
-    time_of: list[list[str]] = [[] for _ in anchors]
-    for top, d in dates:
-        day_of[nearest(top)].append(d)
-    for top, t in times:
-        time_of[nearest(top)].append(t)
-    remark_words: list[list[Word]] = [[] for _ in anchors]
-    ref_words: list[list[Word]] = [[] for _ in anchors]
-    for w in body:
-        if _REMARK_X <= w.x0 < _REF_X:
-            remark_words[nearest(w.top)].append(w)
-        elif _REF_X <= w.x0 < _AMOUNT_X:
-            ref_words[nearest(w.top)].append(w)
-
-    rows: list[_MandiriRow] = []
-    for k, (top, debit, credit, balance) in enumerate(anchors):
-        if len(day_of[k]) != 1 or len(time_of[k]) != 1:
-            raise BankParseError("a statement row does not have exactly one posting date and time")
+        debit, credit, balance = (_amount(c[0].text) for c in cols)
+        dates, times = _mandiri_left_tokens(block)
+        left = [w for w in block if w.x0 < _REMARK_X]
+        if len(dates) != 1 or len(times) != 1 or len(left) != 4:
+            raise BankParseError(
+                "a statement row block does not have exactly one posting date and time"
+            )
         if debit > 0 and credit > 0:
             raise BankParseError("row has both a debit and a credit amount")
-        h, m, s = (int(x) for x in time_of[k][0].split(":"))
+        h, m, s = (int(x) for x in times[0][1].split(":"))
+        day = dates[0][1]
         try:
-            posted = datetime(day_of[k][0].year, day_of[k][0].month, day_of[k][0].day, h, m, s)
+            posted = datetime(day.year, day.month, day.day, h, m, s)
         except ValueError:
             raise BankParseError("a posting time in the statement is not a real time") from None
+        remark = [w for w in block if _REMARK_X <= w.x0 < _REF_X]
+        ref = [w for w in block if _REF_X <= w.x0 < _AMOUNT_X]
         rows.append(
-            _MandiriRow(
-                top,
-                posted,
-                debit,
-                credit,
-                balance,
-                _text(ref_words[k]),
-                _text(remark_words[k]),
-            )
+            _MandiriRow(line[0].top, posted, debit, credit, balance, _text(ref), _text(remark))
         )
     return rows
 
@@ -345,7 +347,7 @@ def parse_mandiri_pages(pages: list[list[Word]]) -> ParsedStatement:
             header = page_header
         elif page_header != header:
             raise BankParseError("file holds more than one account: upload one statement per file")
-        foot = min((w.top for w in words if w.text.startswith("questions")), default=float("inf"))
+        foot = min((w.top for w in words if "questions" in w.text), default=float("inf"))
         rows += _mandiri_rows([w for w in words if table + 6 < w.top < foot - 3])
     if header is None:
         raise BankParseError("statement has no header")
@@ -569,6 +571,7 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
         order_decided_by="balance_chain",
         bank_code="bank_permata",
         source_format="pdf",
+        balances_derived=True,
         kept_columns=_PERMATA_KEPT,
     )
 
