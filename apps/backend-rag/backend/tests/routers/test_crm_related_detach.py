@@ -2414,6 +2414,30 @@ async def test_d8_d9_every_reason_has_its_exact_body_in_both_modes(client, conn,
     assert await ledger(conn) == [] and await digests(conn) == before
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry_run", "apply"])
+async def test_d9_n3_an_owner_left_a_passport_and_a_permit_detaches(client, conn, clients, dry_run):
+    # N3 refuses only when EVERY key left is a permit: the common production owner holds a
+    # passport, a permit and a national number, and keeps the passport and the permit
+    p, q, d = (
+        ("passport", passport(4245020)),
+        ("permit", permit(4245020)),
+        ("nik", nik("150680", 5020)),
+    )
+    s = await seed_subject(conn, "person", "ZzDecision Three Keys", [p, q, d], dob=DOB)
+    await seed_document(conn, s, 424502001)
+    resp = await post(client, req((p, q, d), d, [doc(424502001)], dry_run=dry_run))
+    if dry_run:
+        assert resp.json() == would(s)
+        assert await ledger(conn) == []
+        return
+    (h,) = await history(conn)
+    t = h["to_id"]
+    assert resp.json() == detached(s, t)
+    assert await keys_of(conn, t) == [d] and await keys_of(conn, s) == sorted([p, q])
+    assert await docs_of(conn, t) == [doc(424502001)] and await docs_of(conn, s) == []
+
+
 async def precedence_world(conn):
     """Seeded states holding two refusals at once: name -> (request, the earlier reason, owner)."""
     out: dict = {}
