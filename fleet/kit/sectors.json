@@ -1,0 +1,535 @@
+{
+  "_doc": "Exhaustive, disjoint ownership partition of the Rakyat tree (24 sectors). Resolution order: (1) backend service package rule, (2) backend test mirror rule, (3) backend router rule, (4) most specific path rule (exact file, directory prefix, or glob). Validated by resolve_sectors.py --check: every tracked file has exactly one owner. Revision 2 (2026-11-19) applies the reconnaissance corrections: shared app/utils and platform helpers go to be-platform, domain API clients and hooks of the frontend go to their product sectors, KBLI/LLMS content logic goes to fe-public, loose backend services go to their domain. Revision 3 (final plan): be-hr-compliance split into be-hr and be-compliance (team_* routers to be-hr), be-intake-portal split into be-intake and be-portal, new fe-garuda, HR tests follow their subject.",
+  "backend_root": "apps/backend-rag/backend/",
+  "sectors": [
+    {
+      "id": "be-rag-core",
+      "name": "Zantara RAG core (retrieval, agentic reasoning, routing)",
+      "kind": "backend",
+      "line": "zantara",
+      "service_pkgs": [
+        "rag",
+        "search",
+        "routing",
+        "classification",
+        "response",
+        "tools",
+        "caching",
+        "communication"
+      ],
+      "router_regex": "^(agentic_rag|blog_ask|monitoring_rag|query_analytics|kbli_notebook|kbli_notebook_chat|conversations|session|websocket|handlers|feedback)$",
+      "prefixes": [
+        "apps/backend-rag/backend/tests/unit/rag/",
+        "apps/backend-rag/backend/tests/unit/response/",
+        "apps/backend-rag/backend/services/kbli_*",
+        "apps/backend-rag/backend/tests/*test_kbli_*"
+      ]
+    },
+    {
+      "id": "be-knowledge",
+      "name": "Knowledge graph, ingestion, memory, core NLP primitives",
+      "kind": "backend",
+      "line": "zantara",
+      "service_pkgs": [
+        "knowledge_graph",
+        "kg_monitoring",
+        "ingestion",
+        "memory",
+        "autonomous_agents",
+        "misc"
+      ],
+      "router_regex": "^(kg_agentic|collective_memory|episodic_memory|lam_memory|knowledge_activity|ingest|legal_ingest|oracle_ingest|autonomous_agents|crm_shared_memory)$",
+      "prefixes": [
+        "apps/backend-rag/backend/core/",
+        "apps/backend-rag/backend/kb/",
+        "apps/backend-rag/backend/agents/",
+        "apps/backend-rag/backend/conversation/",
+        "apps/backend-rag/backend/tests/core/",
+        "apps/backend-rag/backend/tests/unit/core/",
+        "apps/backend-rag/backend/tests/kb/",
+        "apps/backend-rag/backend/tests/unit/kb/",
+        "apps/backend-rag/backend/tests/unit/agents/",
+        "apps/backend-rag/backend/tests/conversation/"
+      ]
+    },
+    {
+      "id": "be-llm-organs",
+      "name": "LLM layer, prompts, cost tracking, deliberation and skill organs",
+      "kind": "backend",
+      "line": "zantara",
+      "service_pkgs": [
+        "llm_clients",
+        "council",
+        "cognitive",
+        "observability",
+        "experience",
+        "skill",
+        "skill_coach",
+        "agents"
+      ],
+      "router_regex": "^(llm_costs|skill|experience|autonomous_execution|agent|agents)$",
+      "prefixes": [
+        "apps/backend-rag/backend/llm/",
+        "apps/backend-rag/backend/prompts/",
+        "apps/backend-rag/backend/app/agents/",
+        "apps/backend-rag/backend/tests/llm/",
+        "apps/backend-rag/backend/tests/unit/llm/",
+        "apps/backend-rag/backend/tests/unit/prompts/"
+      ]
+    },
+    {
+      "id": "be-crm",
+      "name": "CRM, leads, team analytics, Drive guardian",
+      "kind": "backend",
+      "line": "crm",
+      "service_pkgs": [
+        "crm",
+        "crm_guardian",
+        "lead_capture",
+        "journey",
+        "analytics"
+      ],
+      "router_regex": "^(crm_.*|team|team_invites_messaging|lead_capture|guardian|partners|funnel|funnel_email|workspace_analytics|workspace_inbox|dashboard|dashboard_featured_articles|dashboard_summary|admin_crm_kg|admin_practice_auto_create|messaging_identity|analytics)$",
+      "prefixes": [
+        "apps/backend-rag/backend/app/modules/crm/",
+        "apps/backend-rag/backend/app/modules/identity/",
+        "apps/backend-rag/backend/app/utils/crm_utils.py",
+        "apps/backend-rag/backend/app/services/crm/",
+        "apps/backend-rag/backend/services/crm_assignment_routing.py",
+        "apps/backend-rag/backend/tests/*test_crm_assignment_routing*"
+      ]
+    },
+    {
+      "id": "be-visa",
+      "name": "Visa engine, Visa Oracle, visa research corpus",
+      "kind": "backend",
+      "line": "visa",
+      "service_pkgs": [
+        "visa_engine",
+        "visa_check",
+        "visa_oracle",
+        "visa_unified",
+        "oracle"
+      ],
+      "router_regex": "^(visa_.*|oracle_universal|e33_cases|knowledge_visa)$",
+      "prefixes": [
+        "apps/backend-rag/backend/scripts/visa_engine/",
+        "apps/backend-rag/backend/tests/scripts/visa_engine/",
+        "research/visa/",
+        "research/legal/",
+        "docs/policies/",
+        "scripts/enrich_visa_oracle_stay_rules.py",
+        "scripts/fix_visa_oracle_e28_points.py",
+        "apps/backend-rag/backend/services/visa_oracle_testing.py",
+        "apps/backend-rag/backend/tests/*test_visa_oracle_testing*"
+      ]
+    },
+    {
+      "id": "be-intake",
+      "name": "Document intake, OCR/multimodal, PII, backup",
+      "kind": "backend",
+      "line": "intake",
+      "service_pkgs": [
+        "intake",
+        "documents",
+        "multimodal",
+        "pii",
+        "backup"
+      ],
+      "router_regex": "^(intake_.*|documents_proxy|admin_pii|asset_upload|media)$",
+      "prefixes": []
+    },
+    {
+      "id": "be-portal",
+      "name": "Client portal services and routers",
+      "kind": "backend",
+      "line": "crm",
+      "service_pkgs": [
+        "portal"
+      ],
+      "router_regex": "^(portal.*)$",
+      "prefixes": []
+    },
+    {
+      "id": "be-channels",
+      "name": "Channels and comms (WhatsApp, email, Telegram, events, integrations)",
+      "kind": "backend",
+      "line": "channels",
+      "service_pkgs": [
+        "channels",
+        "notifications",
+        "mail_loop",
+        "newsletter",
+        "wa_copilot",
+        "bridge",
+        "events",
+        "workflow",
+        "integrations"
+      ],
+      "router_regex": "^(whatsapp_.*|wa_.*|telegram|instagram_chat|twitter|webhooks|zoho_email|admin_zoho_auth|admin_email_health|omnichannel|channel_health|channels|bridge|event_bus|newsletter|cron_notifiers|workflow_.*|google_drive|team_drive|admin_drive_.*|sheets)$",
+      "prefixes": [
+        "apps/backend-rag/backend/channels/",
+        "apps/backend-rag/backend/app/modules/notifications/",
+        "apps/backend-rag/backend/tests/channels/",
+        "apps/backend-rag/backend/tests/unit/channels/",
+        "apps/backend-rag/backend/services/whatsapp_*",
+        "apps/backend-rag/backend/tests/*test_whatsapp_*"
+      ]
+    },
+    {
+      "id": "be-garuda-finance",
+      "name": "GARUDA VOA product, payments, invoicing, accounting, pricing",
+      "kind": "backend",
+      "line": "garuda",
+      "service_pkgs": [
+        "garuda_flow",
+        "garuda_orders",
+        "garuda_ops",
+        "garuda_portal",
+        "garuda_documents",
+        "garuda_artifacts",
+        "mata_garuda",
+        "payments",
+        "invoicing",
+        "accounting",
+        "pricing"
+      ],
+      "router_regex": "^(garuda_.*|accounting|dynamic_pricing|lkpm|tax_calendar_public)$",
+      "prefixes": [
+        "apps/backend-rag/backend/app/modules/accounting/",
+        "products/garuda-voa/"
+      ]
+    },
+    {
+      "id": "be-hr",
+      "name": "HR and payroll (staff cards, payroll, leave, bonuses, team activity)",
+      "kind": "backend",
+      "line": "hr",
+      "service_pkgs": [
+        "hr"
+      ],
+      "router_regex": "^(hr|hr_.*|team_activity|team_analytics|admin_team_activity)$",
+      "prefixes": [
+        "apps/backend-rag/backend/app/utils/hr_utils.py",
+        "apps/backend-rag/backend/app/services/hr/",
+        "apps/backend-rag/backend/tests/unit/app/services/hr/",
+        "apps/backend-rag/backend/tests/unit/utils/test_hr_utils.py",
+        "apps/backend-rag/backend/tests/migrations/test_hr_*",
+        "apps/backend-rag/backend/tests/migrations/test_migrate_hr_*"
+      ]
+    },
+    {
+      "id": "be-compliance",
+      "name": "Compliance obligations, predictive expiry engine, alerts, LKPM service",
+      "kind": "backend",
+      "line": "money",
+      "service_pkgs": [
+        "compliance"
+      ],
+      "router_regex": "^(compliance_.*)$",
+      "prefixes": [
+        "apps/backend-rag/backend/tests/compliance/"
+      ]
+    },
+    {
+      "id": "be-warroom-intel",
+      "name": "War Room editorial pipeline, intel, research engines, publishing",
+      "kind": "backend",
+      "line": "content",
+      "service_pkgs": [
+        "intel",
+        "naga",
+        "autonomous_lab",
+        "publisher",
+        "article_composer",
+        "canva_renderer",
+        "canva_renderer_v2",
+        "sota_loop",
+        "war_room",
+        "federation_alerts",
+        "research",
+        "research_os",
+        "dossier_fanout",
+        "review",
+        "learner",
+        "measurer",
+        "hardening",
+        "layout",
+        "visual",
+        "prime",
+        "olympus",
+        "scraping",
+        "social",
+        "data"
+      ],
+      "router_regex": "^(intel|intel_.*|naga|news|war_room_dashboard|wr2_publish|article_composer|autonomous_lab|research_control|prime|prime_v2|olympus|dream|image_generation|federation|preview)$",
+      "prefixes": [
+        "apps/backend-rag/backend/tests/unit/research_os/",
+        "apps/backend-rag/backend/services/article_*",
+        "apps/backend-rag/backend/services/content_guards.py",
+        "apps/backend-rag/backend/services/cover_images.py",
+        "apps/backend-rag/backend/tests/*test_article_*",
+        "apps/backend-rag/backend/tests/*test_content_guards*",
+        "apps/backend-rag/backend/tests/*test_cover_images*"
+      ]
+    },
+    {
+      "id": "be-platform",
+      "name": "Backend platform shell (app bootstrap, auth, middleware, shared utils, security, deploy config, test infra)",
+      "kind": "backend",
+      "line": "platform",
+      "service_pkgs": [
+        "security",
+        "monitoring",
+        "common"
+      ],
+      "router_regex": "^.*$",
+      "prefixes": [
+        "apps/backend-rag/",
+        "apps/backend-rag/backend/app/utils/",
+        "apps/backend-rag/backend/app/services/local_audio/",
+        "apps/backend-rag/backend/app/services/api_key_auth.py",
+        "apps/backend-rag/backend/app/services/internal_email.py",
+        "apps/backend-rag/backend/app/services/log_ring_buffer.py",
+        "apps/backend-rag/backend/app/services/metrics_pusher.py",
+        "apps/backend-rag/backend/app/services/audio_service.py"
+      ]
+    },
+    {
+      "id": "be-db",
+      "name": "Database layer and migrations",
+      "kind": "backend",
+      "line": "platform",
+      "service_pkgs": [],
+      "router_regex": null,
+      "prefixes": [
+        "apps/backend-rag/backend/db/",
+        "apps/backend-rag/backend/migrations/",
+        "apps/backend-rag/backend/tests/db/",
+        "apps/backend-rag/backend/tests/migrations/",
+        "apps/backend-rag/backend/tests/unit/db/",
+        "apps/backend-rag/migrate-local.sh",
+        "apps/backend-rag/docker-compose.test.yml",
+        "apps/backend-rag/docker-compose.sandbox.yml"
+      ]
+    },
+    {
+      "id": "be-ops-scripts",
+      "name": "Operator scripts, cures, ingestion CLIs, launchd, sandbox",
+      "kind": "backend",
+      "line": "ops",
+      "service_pkgs": [],
+      "router_regex": null,
+      "prefixes": [
+        "apps/backend-rag/backend/scripts/",
+        "apps/backend-rag/scripts/",
+        "apps/backend-rag/deploy/",
+        "apps/backend-rag/sandbox/",
+        "apps/backend-rag/docs/",
+        "apps/backend-rag/data/",
+        "apps/backend-rag/training-data/",
+        "apps/backend-rag/monitoring/",
+        "apps/backend-rag/backend/tests/scripts/",
+        "apps/backend-rag/backend/tests/unit/scripts/",
+        "apps/backend-rag/backfill_hash.py",
+        "apps/backend-rag/extract_ocean_db.py",
+        "apps/backend-rag/tmp_backfill_portal_company_links.py",
+        "apps/backend-rag/LIBRARY_CLEANUP_SCRIPT.sh",
+        "apps/backend-rag/MAC_PERFORMANCE_QUICK_FIX.sh",
+        "apps/backend-rag/setup_telegram_bot.sh"
+      ]
+    },
+    {
+      "id": "fe-workspace-clients",
+      "name": "Team workspace: clients and process (CRM UI)",
+      "kind": "frontend",
+      "line": "crm",
+      "prefixes": [
+        "apps/mouth/src/app/(workspace)/clients/",
+        "apps/mouth/src/app/(workspace)/process/",
+        "apps/mouth/src/components/crm/",
+        "apps/mouth/src/components/process/",
+        "apps/mouth/src/components/documents/",
+        "apps/mouth/src/lib/crm/",
+        "apps/mouth/src/lib/api/crm/",
+        "apps/mouth/src/lib/api/related-registry/",
+        "apps/mouth/src/hooks/useCrm*",
+        "apps/mouth/src/hooks/useClientDetail*",
+        "apps/mouth/src/hooks/useProcessTimeline*",
+        "apps/mouth/src/hooks/__tests__/useCrm*"
+      ]
+    },
+    {
+      "id": "fe-workspace-ops",
+      "name": "Team workspace: intelligence, HR, accounting, admin, dashboards, second-home, garuda-voa",
+      "kind": "frontend",
+      "line": "workspace",
+      "prefixes": [
+        "apps/mouth/src/app/(workspace)/",
+        "apps/mouth/src/components/workspace/",
+        "apps/mouth/src/components/hr/",
+        "apps/mouth/src/components/admin/",
+        "apps/mouth/src/components/garuda/",
+        "apps/mouth/src/components/omnichannel/",
+        "apps/mouth/src/components/agents/",
+        "apps/mouth/src/components/cell/",
+        "apps/mouth/src/components/insights/",
+        "apps/mouth/src/lib/hr/",
+        "apps/mouth/src/lib/workspace/",
+        "apps/mouth/src/lib/secondhome-studio/",
+        "apps/mouth/src/app/agents/",
+        "apps/mouth/src/lib/api/hr/",
+        "apps/mouth/src/lib/api/workspace/",
+        "apps/mouth/src/lib/api/admin/",
+        "apps/mouth/src/lib/api/team/",
+        "apps/mouth/src/lib/api/dashboard/",
+        "apps/mouth/src/lib/api/partners/",
+        "apps/mouth/src/lib/api/secondhome/",
+        "apps/mouth/src/lib/api/drive/",
+        "apps/mouth/src/lib/api/omnichannel/",
+        "apps/mouth/src/lib/api/whatsapp/",
+        "apps/mouth/src/lib/api/conversations/",
+        "apps/mouth/src/lib/api/knowledge/",
+        "apps/mouth/src/lib/api/workflow/",
+        "apps/mouth/src/lib/api/intelligence.api*"
+      ]
+    },
+    {
+      "id": "fe-portal",
+      "name": "Client portal and login",
+      "kind": "frontend",
+      "line": "portal",
+      "prefixes": [
+        "apps/mouth/src/app/portal/",
+        "apps/mouth/src/components/portal/",
+        "apps/mouth/src/lib/portal/",
+        "apps/mouth/src/app/login/",
+        "apps/mouth/src/lib/api/portal/",
+        "apps/mouth/src/hooks/usePortal*",
+        "apps/mouth/src/hooks/useVault*"
+      ]
+    },
+    {
+      "id": "fe-visa",
+      "name": "Visa Oracle and visa pages",
+      "kind": "frontend",
+      "line": "visa",
+      "prefixes": [
+        "apps/mouth/src/app/(visa-oracle)/",
+        "apps/mouth/src/app/visa/",
+        "apps/mouth/src/components/visa/",
+        "apps/mouth/src/lib/visa-oracle/"
+      ]
+    },
+    {
+      "id": "fe-garuda",
+      "name": "GARUDA VOA screens (customer funnel and staff desk)",
+      "kind": "frontend",
+      "line": "money",
+      "prefixes": [
+        "apps/mouth/src/app/visa/voa/",
+        "apps/mouth/src/app/(workspace)/garuda-voa/",
+        "apps/mouth/src/components/garuda/"
+      ]
+    },
+    {
+      "id": "fe-public",
+      "name": "Public site: blog, marketing, KBLI, SEO, content corpus, static assets",
+      "kind": "frontend",
+      "line": "content",
+      "prefixes": [
+        "apps/mouth/src/app/(blog)/",
+        "apps/mouth/src/app/(marketing)/",
+        "apps/mouth/src/app/(assessment)/",
+        "apps/mouth/src/app/(book)/",
+        "apps/mouth/src/app/(tax-calendar)/",
+        "apps/mouth/src/app/(nuzantara)/",
+        "apps/mouth/src/app/kbli/",
+        "apps/mouth/src/app/kbli-explorer/",
+        "apps/mouth/src/app/property/",
+        "apps/mouth/src/app/taxes/",
+        "apps/mouth/src/app/prime/",
+        "apps/mouth/src/app/chat/",
+        "apps/mouth/src/app/feed/",
+        "apps/mouth/src/components/blog/",
+        "apps/mouth/src/components/kbli/",
+        "apps/mouth/src/components/maps/",
+        "apps/mouth/src/components/seo/",
+        "apps/mouth/src/components/site/",
+        "apps/mouth/src/components/funnel/",
+        "apps/mouth/src/components/book/",
+        "apps/mouth/src/components/chat/",
+        "apps/mouth/src/components/terminal/",
+        "apps/mouth/src/components/services/",
+        "apps/mouth/src/components/trust/",
+        "apps/mouth/src/components/nav/",
+        "apps/mouth/src/components/lead/",
+        "apps/mouth/src/components/partners/",
+        "apps/mouth/src/components/search/",
+        "apps/mouth/src/components/optimization/",
+        "apps/mouth/src/lib/blog/",
+        "apps/mouth/src/lib/seo/",
+        "apps/mouth/src/content/",
+        "apps/mouth/src/data/",
+        "apps/mouth/public/",
+        "apps/mouth/data/",
+        "apps/mouth/scripts/",
+        "apps/kbli-navigator/",
+        "data/",
+        "source_documents",
+        "apps/mouth/src/lib/api/chat/",
+        "apps/mouth/src/lib/api/blog/",
+        "apps/mouth/src/lib/api/prime/",
+        "apps/mouth/src/lib/api/kbli.api*",
+        "apps/mouth/src/lib/api/articles.api*",
+        "apps/mouth/src/lib/kbli-*",
+        "apps/mouth/src/lib/llms-*",
+        "apps/mouth/src/hooks/useChat*"
+      ]
+    },
+    {
+      "id": "fe-platform",
+      "name": "Frontend platform (API client core, BFF routes, auth, UI kit, config, e2e, design system)",
+      "kind": "frontend",
+      "line": "platform",
+      "prefixes": [
+        "apps/mouth/",
+        "packages/core/",
+        "package.json",
+        "package-lock.json"
+      ]
+    },
+    {
+      "id": "py-packages",
+      "name": "Python packages: cell-core, crm-cell, research-os-core",
+      "kind": "packages",
+      "line": "platform",
+      "prefixes": [
+        "packages/cell-core/",
+        "apps/crm-cell/",
+        "packages/research-os-core/",
+        "research/operations/"
+      ]
+    },
+    {
+      "id": "governance-ci",
+      "name": "CI/CD, governance lints, perimeter, security exceptions, fleet coordination kit",
+      "kind": "crosscut",
+      "line": "platform",
+      "prefixes": [
+        ".github/",
+        "scripts/",
+        "infra/",
+        ".security/",
+        "PERIMETER.txt",
+        ".gitignore",
+        ".prettierignore",
+        ".dockerignore",
+        ".gitattributes",
+        ".secrets.baseline",
+        "fleet/"
+      ]
+    }
+  ],
+  "router_default": "be-platform"
+}

@@ -107,6 +107,10 @@ scripts/ci/test_perimeter_check.py
 scripts/ci/check_mouth_workspace_deps.py
 scripts/ci/test_check_mouth_workspace_deps.py
 
+# Fleet kit (fleet/): the partition, rules of engagement and per-machine workflow that the owner's machines read when they
+# work on this repository in parallel. Consumer: Claude Code sessions; no app imports it, no image ships it.
+fleet/
+
 # Moved to backstage: tests that read paths outside this repository. They stay at the source commit;
 # whole files first, then single test functions removed from the copies here.
 apps/backend-rag/backend/tests/integration/test_intel_lake_e2e_probe_smoke.py

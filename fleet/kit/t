@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Run ONE command against the isolated test stack, and nothing else.
+#   fleet/kit/t 'cd apps/backend-rag && PYTHONPATH=.:../crm-cell pytest backend/tests/unit/x -n 2'
+#   fleet/kit/t pytest -x path/to/test.py
+# It exports the test environment (test-env.sh), then refuses to run (exit 3) if any database or Redis variable in
+# the environment points anywhere except the isolated stack: Postgres on localhost:5433, Redis on localhost:6380.
+# Values are never printed, only variable names. Run it from the repository root (or a worktree root).
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$(bash "$HERE/test-env.sh")"
+bad=0
+while IFS= read -r name; do
+  val="${!name-}"
+  [ -z "$val" ] && continue
+  case "$name" in
+    REDIS_URL|*_REDIS_URL) re='^rediss?://([^@/]*@)?(localhost|127\.0\.0\.1):6380(/|$)' ;;
+    *) re='^postgres(ql)?(\+[a-z0-9]+)?://([^@/]*@)?(localhost|127\.0\.0\.1):5433/' ;;
+  esac
+  if ! printf '%s' "$val" | grep -Eq "$re"; then
+    echo "t: refusing to run: $name does not point at the isolated test stack" >&2
+    bad=1
+  fi
+done < <(compgen -e | grep -E '(DATABASE_URL|_DSN|PG_URL|POSTGRES_URL|REDIS_URL)$' | grep -v '^SENTRY_DSN$' || true)
+[ "$bad" = 0 ] || exit 3
+if ! (exec 3<>/dev/tcp/127.0.0.1/5433) 2>/dev/null; then
+  echo "t: note: nothing listens on localhost:5433; start the isolated stack (TOOLCHAIN.md section 3) for database tests" >&2
+fi
+if [ $# -eq 1 ]; then exec bash -c "$1"; else exec "$@"; fi
