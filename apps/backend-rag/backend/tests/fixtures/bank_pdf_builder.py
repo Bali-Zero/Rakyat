@@ -277,22 +277,35 @@ def bni_page(
         _n("Post", 129, top),
         _n("Date", 150, top),
         _n("Journal", 224, top),
-        _n("No.", 250, top),
         _n("Amount", 410, top),
         _n("Db/Cr", 451, top),
         _n("Balance", 486, top),
     ]
+    if variant == "inquiry":
+        words += [_n("No.", 250, top), _n("No.", 97, top)]
     y = top + 8
     if variant == "statement":
         words.append(_n(beginning, 480, y))
         y += 12
+    # inquiry: row number, then the description from the number's line downwards (top aligned);
+    # statement: no number, and every cell centred on the flag line, 14 pt between two rows
     for i, (date, time, journal, desc, amount, flag, balance) in enumerate(rows):
-        words += [_n(str(i + 1), 96, y), _n(date, 110, y), _n(time, 152, y), _n(journal, 223, y)]
-        words += [_n(t, 263 + 30 * j, y) for j, t in enumerate(desc.split())]
-        words += [_na(amount, 445, y), _n(flag, 456, y)]
+        lines = desc.split("\n")
+        extent = 9 * (len(lines) - 1)
+        if variant == "statement":
+            first = y + (14 if i else 0)
+            anchor = first + extent / 2
+            y = first + extent + 9
+        else:
+            first = anchor = y
+            words.append(_n(str(i + 1), 96, anchor))
+            y = anchor + max(30, extent + 12)
+        words += [_n(date, 110, anchor), _n(time, 152, anchor), _n(journal, 223, anchor)]
+        for k, line in enumerate(lines):
+            words += [_n(t, 263 + 30 * j, first + 9 * k) for j, t in enumerate(line.split())]
+        words += [_na(amount, 445, anchor), _n(flag, 456, anchor)]
         if balance is not None:
-            words.append(_n(balance, 480, y))
-        y += 30
+            words.append(_n(balance, 480, anchor))
     if variant == "statement":
         words += [
             _n("Ending", 162, y),
