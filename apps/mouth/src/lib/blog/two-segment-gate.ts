@@ -1,3 +1,5 @@
+import { SERVICES_DATA } from "@/data/services_data";
+
 import { CATEGORY_SEO } from "./category-seo";
 
 /**
@@ -35,6 +37,18 @@ export const PUBLIC_TWO_SEGMENT_ROUTES: Readonly<
   "visa-oracle": ["privacy", "unlock"],
 };
 
+/**
+ * The values a `"*"` route really accepts, for the routes whose parameter
+ * comes from a static table bundled with the app. Each list is read from the
+ * table the page itself renders from, so a service added there is served
+ * without touching this file. Routes not listed here (`book`, `kbli`) keep
+ * passing every value: their parameters are not known before rendering.
+ */
+export const STATIC_PARAM_VALUES: Readonly<Record<string, readonly string[]>> =
+  {
+    services: Object.keys(SERVICES_DATA),
+  };
+
 export type TwoSegmentVerdict = "pass" | "not-found";
 
 /**
@@ -57,7 +71,15 @@ export function classifyTwoSegmentPath(routePath: string): TwoSegmentVerdict {
   )
     ? PUBLIC_TWO_SEGMENT_ROUTES[first]
     : undefined;
-  if (own === "*" || own?.includes(second)) return "pass";
+  if (own === "*") {
+    const known = Object.prototype.hasOwnProperty.call(
+      STATIC_PARAM_VALUES,
+      first,
+    )
+      ? STATIC_PARAM_VALUES[first]
+      : undefined;
+    if (!known || known.includes(second)) return "pass";
+  } else if (own?.includes(second)) return "pass";
 
   return Object.prototype.hasOwnProperty.call(CATEGORY_SEO, first)
     ? "pass"
