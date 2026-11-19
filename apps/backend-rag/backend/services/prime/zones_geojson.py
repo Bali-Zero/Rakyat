@@ -97,17 +97,37 @@ def truncate_geojson_coords(geom: dict, precision: int = 6) -> None:
 
 def build_zones_geojson_body(rows: list[Any]) -> tuple[bytes, int]:
     """Serialise the query rows to the FeatureCollection body, sorted by id; return (body, feature count)."""
+    body, count, _malformed = build_zones_geojson(rows)
+    return body, count
+
+
+def build_zones_geojson(rows: list[Any]) -> tuple[bytes, int, int]:
+    """Like build_zones_geojson_body, plus the number of rows whose geometry could not be read.
+
+    Two skips are expected and not counted: a NULL geometry (ST_Simplify collapsed the
+    zone) and an EMPTY one (no coordinates). Anything else that is not a GeoJSON object
+    with coordinates is malformed: the endpoint skips it, the publisher refuses to publish.
+    """
     features: list[bytes] = []
+    malformed = 0
     for row in sorted(rows, key=lambda r: str(r["id"])):
         geom_str = row["geometry"]
         if not geom_str:
             continue
         try:
             geom = json.loads(geom_str)
+        except ValueError:
+            malformed += 1
+            continue
+        if not isinstance(geom, dict) or "coordinates" not in geom:
+            malformed += 1
+            continue
+        if not geom["coordinates"]:
+            continue
+        try:
             truncate_geojson_coords(geom)
         except Exception:
-            continue
-        if not geom.get("coordinates"):
+            malformed += 1
             continue
 
         zone_type: str = row["zoning_type"] or ""
@@ -131,7 +151,8 @@ def build_zones_geojson_body(rows: list[Any]) -> tuple[bytes, int]:
                 },
             ),
         )
-    return b'{"type":"FeatureCollection","features":[' + b",".join(features) + b"]}", len(features)
+    body = b'{"type":"FeatureCollection","features":[' + b",".join(features) + b"]}"
+    return body, len(features), malformed
 
 
 def _is_number(value: Any) -> bool:
@@ -155,6 +176,10 @@ def _ring_errors(ring: Any) -> list[str]:
     errors = [e for e in (_position_error(p) for p in ring) if e]
     if not errors and ring[0] != ring[-1]:
         errors.append("ring is not closed")
+    # Collapsed to a point or a segment. Three distinct collinear positions are
+    # accepted: production serves three such zero-area rings today.
+    if not errors and len({tuple(p) for p in ring}) < 3:
+        errors.append("ring has fewer than 3 distinct positions")
     return errors[:1]
 
 
@@ -168,7 +193,11 @@ def _geometry_errors(geom: Any) -> list[str]:
         polygons = coords if isinstance(coords, list) else None
     else:
         return [f"geometry type {kind!r} is not Polygon or MultiPolygon"]
-    if not isinstance(polygons, list) or not all(isinstance(p, list) and p for p in polygons):
+    if (
+        not isinstance(polygons, list)
+        or not polygons
+        or not all(isinstance(p, list) and p for p in polygons)
+    ):
         return ["geometry coordinates are malformed"]
     errors: list[str] = []
     for polygon in polygons:

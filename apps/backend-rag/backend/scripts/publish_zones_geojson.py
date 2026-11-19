@@ -14,7 +14,7 @@ from pathlib import Path
 
 from backend.services.prime.zones_geojson import (
     ZONES_GEOJSON_QUERY,
-    build_zones_geojson_body,
+    build_zones_geojson,
     validate_zones_geojson,
 )
 
@@ -47,8 +47,12 @@ def _emit(**summary: object) -> None:
 
 def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
     manifest = _read_manifest(mouth_dir)
-    body, count = build_zones_geojson_body(rows)
+    body, count, malformed = build_zones_geojson(rows)
     errors = validate_zones_geojson(body, manifest["features"] if manifest else None)
+    if malformed:
+        errors.insert(
+            0, f"{malformed} rows carry a geometry that is not a GeoJSON object with coordinates"
+        )
     if errors:
         _emit(status="invalid", errors=errors, features=count)
         return EXIT_INVALID

@@ -9,6 +9,7 @@ import pytest
 
 from backend.scripts import publish_zones_geojson as cli
 from backend.services.prime.zones_geojson import (
+    build_zones_geojson,
     build_zones_geojson_body,
     validate_zones_geojson,
 )
@@ -78,7 +79,35 @@ def test_build_skips_empty_and_broken_geometry():
     assert body.count(b'"type":"Feature"') == 1
 
 
+def test_build_counts_malformed_but_not_null_or_empty_geometry():
+    empty = json.dumps({"type": "Polygon", "coordinates": []})
+    rows = [
+        row(1),
+        row(2, geometry=None),
+        row(3, geometry=empty),
+        row(4, geometry="x"),
+        row(5, geometry="[1, 2]"),
+        row(6, geometry=json.dumps({"type": "GeometryCollection", "geometries": []})),
+    ]
+    _body, count, malformed = build_zones_geojson(rows)
+    assert (count, malformed) == (1, 3)
+
+
+COLLAPSED = [[115.1, -8.6]] * 4
+SEGMENT = [[115.1, -8.6], [115.2, -8.6], [115.1, -8.6], [115.1, -8.6]]
+COLLINEAR = [[115.1, -8.6], [115.2, -8.6], [115.3, -8.6], [115.1, -8.6]]
+
 BAD = {
+    "ring collapsed to a point": collection(
+        with_geometry({"type": "Polygon", "coordinates": [COLLAPSED]})
+    ),
+    "ring collapsed to a segment": collection(
+        with_geometry({"type": "Polygon", "coordinates": [SEGMENT]})
+    ),
+    "empty multipolygon": collection(with_geometry({"type": "MultiPolygon", "coordinates": []})),
+    "empty polygon in a multipolygon": collection(
+        with_geometry({"type": "MultiPolygon", "coordinates": [[RING], []]})
+    ),
     "not json": b"{",
     "not a collection": b'{"type":"Feature"}',
     "no features": collection(),
@@ -131,7 +160,9 @@ def test_validator_rejects_each_rule(body):
 def test_validator_accepts_the_edges_the_rules_allow():
     multi = with_geometry({"type": "MultiPolygon", "coordinates": [[RING], [RING]]})
     nullable = feature(max_floors=None, kdb=0.5, max_height_meters=3)
-    assert validate_zones_geojson(collection(multi, nullable), None) == []
+    # Zero-area but three distinct positions: production serves three such rings.
+    collinear = with_geometry({"type": "Polygon", "coordinates": [COLLINEAR]})
+    assert validate_zones_geojson(collection(multi, nullable, collinear), None) == []
 
 
 def test_shrink_guard_boundary():
@@ -207,6 +238,18 @@ def test_invalid_input_exits_2_and_writes_nothing(mouth, rows_file):
     assert publish(mouth, rows_file([row(1, geometry=None)])) == 2
     assert not (mouth / "public").exists()
     assert not (mouth / "src/data/prime-zones.json").exists()
+
+
+def test_one_malformed_row_blocks_the_publish_and_keeps_the_last_version(mouth, rows_file, capsys):
+    publish(mouth, rows_file([row(i) for i in range(100)]))
+    before = manifest(mouth)
+    files = sorted(p.name for p in (mouth / "public/data/prime").iterdir())
+    capsys.readouterr()
+    rows = [row(i) for i in range(99)] + [row(99, geometry="{")]
+    assert publish(mouth, rows_file(rows, "broken.jsonl")) == 2
+    assert manifest(mouth) == before
+    assert sorted(p.name for p in (mouth / "public/data/prime").iterdir()) == files
+    assert "1 rows carry a geometry" in json.loads(capsys.readouterr().out)["errors"][0]
 
 
 def test_shrink_keeps_the_last_valid_version(mouth, rows_file):
