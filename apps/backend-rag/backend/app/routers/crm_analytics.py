@@ -320,44 +320,78 @@ async def get_revenue_summary(
             total_paid = float(row["total_paid"] or 0)
             total_outstanding = total_actual - total_paid
 
-            # Monthly breakdown (last 6 months)
+            # Monthly breakdown (last 6 months): the money received in each month, by the date
+            # the transfer landed, read from the imported bank statements. A client transfer
+            # counts once staff reconcile it: confirmed as a payment ('matched') or linked to a
+            # payment already recorded ('manual'). Transfers still in the inbox ('unmatched') are
+            # counted apart, so a month is never shown as complete while they wait; 'ignored'
+            # rows are not client money. A month with no imported statement has no figure.
+            window_start = _months_ago(5).date()
+            window_end = _next_month_start(_months_ago(0)).date()
+            bank_params: list[Any] = [window_start, window_end]
+            scope_sql = ""
+            if assigned_filter:
+                scope_idx = len(bank_params) + 1
+                scope_sql = f"""
+                    AND EXISTS (
+                        SELECT 1 FROM practices sp JOIN clients sc ON sc.id = sp.client_id
+                        WHERE sp.id = bt.matched_practice_id
+                          AND sc.assigned_to = ANY(${scope_idx}::text[])
+                    )
+                """
+                bank_params.append(assigned_filter)
+            month_rows = await conn.fetch(
+                f"""
+                SELECT to_char(date_trunc('month', bt.txn_date), 'YYYY-MM') AS period,
+                       COALESCE(SUM(bt.amount_idr) FILTER (
+                           WHERE bt.direction = 'credit'
+                             AND bt.reconciled_status IN ('matched', 'manual')
+                             {scope_sql}
+                       ), 0) AS collected,
+                       COUNT(*) FILTER (
+                           WHERE bt.direction = 'credit'
+                             AND bt.reconciled_status IN ('matched', 'manual')
+                             {scope_sql}
+                       ) AS payments,
+                       COUNT(*) FILTER (
+                           WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'
+                       ) AS to_reconcile
+                FROM bank_transactions bt
+                WHERE bt.txn_date >= $1 AND bt.txn_date < $2
+                GROUP BY 1
+                """,
+                *bank_params,
+            )
+            in_bank = {row["period"]: row for row in month_rows}
             months = []
             for i in range(5, -1, -1):
-                month_start = _months_ago(i)
-                month_end = _next_month_start(month_start)
-                month_label = month_start.strftime("%Y-%m")
-
-                # Placeholder indices must follow the (optional) assigned-filter
-                # param, not be hardcoded to $2/$3 — otherwise an admin with no
-                # filter (params == []) makes the date params $1/$2 while the SQL
-                # still references $2/$3, and $3 is never bound → asyncpg raises
-                # IndeterminateDatatypeError ("could not determine data type of
-                # parameter $1") and the whole endpoint 503s for every admin.
-                start_idx = len(params) + 1
-                end_idx = len(params) + 2
-                month_query = f"""
-                    SELECT
-                        COALESCE(SUM(p.actual_price), 0) as revenue,
-                        COALESCE(SUM(CASE WHEN p.payment_status = 'paid' THEN p.actual_price ELSE 0 END), 0) as paid
-                    FROM practices p
-                    JOIN clients c ON p.client_id = c.id
-                    {where_clause}
-                    {"AND" if where_clause else "WHERE"} p.created_at >= ${start_idx} AND p.created_at < ${end_idx}
-                """
-                month_params = [*params, month_start, month_end]
-                month_row = await conn.fetchrow(month_query, *month_params)
-
+                label = _months_ago(i).strftime("%Y-%m")
+                row = in_bank.get(label)
+                if row is None:
+                    months.append(
+                        {
+                            "period": label,
+                            "status": "no_statement",
+                            "collected": None,
+                            "payments": None,
+                            "to_reconcile": 0,
+                        }
+                    )
+                    continue
+                to_reconcile = int(row["to_reconcile"])
                 months.append(
                     {
-                        "period": month_label,
-                        "revenue": float(month_row["revenue"] or 0),
-                        "paid": float(month_row["paid"] or 0),
-                    },
+                        "period": label,
+                        "status": "partial" if to_reconcile else "complete",
+                        "collected": float(row["collected"]),
+                        "payments": int(row["payments"]),
+                        "to_reconcile": to_reconcile,
+                    }
                 )
 
             # Average per client
             client_count = (
-                await conn.fetchval(f"SELECT COUNT(*) FROM clients {where_clause}", *params) or 1
+                await conn.fetchval(f"SELECT COUNT(*) FROM clients c {where_clause}", *params) or 1
             )  # Avoid division by zero
 
             avg_per_client = total_actual / client_count

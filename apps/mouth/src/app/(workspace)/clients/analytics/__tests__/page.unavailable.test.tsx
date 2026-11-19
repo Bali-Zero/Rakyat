@@ -37,7 +37,15 @@ const REVENUE = (v: number) => ({
   total_paid: v,
   total_outstanding: 0,
   avg_per_client: v,
-  by_month: [{ period: "2026-01", revenue: v, paid: v, target: 0 }],
+  by_month: [
+    {
+      period: "2026-01",
+      status: "complete",
+      collected: v,
+      payments: v ? 1 : 0,
+      to_reconcile: 0,
+    },
+  ],
   forecast_next_month: 0,
 });
 
@@ -162,5 +170,52 @@ describe("a failed request is not a zero", () => {
     const text = document.body.textContent ?? "";
     expect(text).not.toMatch(/Rp/);
     expect(text).not.toMatch(/\b0%/);
+  });
+
+  it("the monthly table: no statement and transfers still to reconcile never read as a known Rp 0", async () => {
+    const month = (
+      period: string,
+      status: string,
+      collected: number | null,
+      payments: number | null,
+      to_reconcile: number,
+    ) => ({ period, status, collected, payments, to_reconcile });
+    answer(
+      {
+        overview: OVERVIEW,
+        revenue: {
+          ...REVENUE(2415000),
+          by_month: [
+            month("2026-07", "no_statement", null, null, 0),
+            month("2026-08", "partial", 0, 0, 3),
+            month("2026-09", "partial", 700000, 1, 2),
+            month("2026-10", "complete", 0, 0, 0),
+            month("2026-11", "complete", 2415000, 1, 0),
+          ],
+        },
+      },
+      [],
+    );
+    render(<ClientAnalyticsPage />);
+    const table = await within(revenueSection()).findByRole("table");
+    const row = (period: string) =>
+      within(table).getByText(period).closest("tr") as HTMLElement;
+    const cells = (period: string) =>
+      Array.from(row(period).querySelectorAll("td")).map((td) =>
+        (td.textContent ?? "").replace(/\s+/g, " "),
+      );
+    expect(
+      within(revenueSection()).getByText(/Money received, by transfer date/),
+    ).toBeInTheDocument();
+    expect(cells("2026-07")).toEqual(["2026-07", "No bank statement"]);
+    expect(cells("2026-08")).toEqual(["2026-08", "Not reconciled", "0", "3"]);
+    expect(cells("2026-09")).toEqual([
+      "2026-09",
+      `${idr(700000)}(partial)`,
+      "1",
+      "2",
+    ]);
+    expect(cells("2026-10")).toEqual(["2026-10", idr(0), "0", "0"]);
+    expect(cells("2026-11")).toEqual(["2026-11", idr(2415000), "1", "0"]);
   });
 });
