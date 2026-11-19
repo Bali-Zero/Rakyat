@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Bank statement upload (CIMB CSV) for the Reconciliation inbox.
+ * Bank statement upload for the Reconciliation inbox: a CIMB Niaga CSV, a Bank
+ * Mandiri PDF or a Bank Permata PDF (the server detects which from the content).
  *
  * Two steps, one File: choosing a file calls preview (stores nothing) and shows
  * the report; Import then sends THE SAME File object that was previewed. Import
@@ -174,17 +175,24 @@ export function BankStatementUpload({
         ref={inputRef}
         id={BANK_FILE_INPUT_ID}
         type="file"
-        accept=".csv,text/csv"
+        accept=".csv,text/csv,.pdf,application/pdf"
         disabled={busy}
         className="sr-only"
         tabIndex={-1}
-        aria-label="Upload bank statement (CSV)"
+        aria-label="Upload bank statement (CSV or PDF)"
         data-testid="bank-statement-input"
         onChange={(e) => {
           void handleChoose(e.target.files?.[0]);
           e.target.value = "";
         }}
       />
+
+      {!panel && !hideTrigger && (
+        <p className="mt-2 text-xs text-[var(--bz-text-2)]">
+          Reads CIMB Niaga CSV, Bank Mandiri PDF and Bank Permata PDF statements
+          (IDR).
+        </p>
+      )}
 
       {panel && (
         <section

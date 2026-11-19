@@ -643,7 +643,7 @@ class TestBankStatementPreview:
             _STATEMENT_FIXTURE.read_bytes(),
         )
         assert resp.status_code == 422
-        assert resp.json()["detail"] == "only .csv bank statements are accepted"
+        assert resp.json()["detail"] == "only .csv or .pdf bank statements are accepted"
 
     @pytest.mark.parametrize(
         ("filename", "status"),

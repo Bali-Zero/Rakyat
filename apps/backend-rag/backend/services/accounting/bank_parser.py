@@ -272,6 +272,16 @@ class ParsedStatement:
     metadata: dict[str, str]
     transactions: list[ParsedTxn]  # oldest first
     order_decided_by: str = "default"  # 'timestamps' | 'balance_chain' | 'default'
+    # What the importer stores about the file: which bank, which format, and which of the row's
+    # raw cells it keeps (the other readers live in bank_pdf_readers.py).
+    bank_code: str = "cimb_niaga"
+    source_format: str = "csv"
+    # True when the format prints no balance per row and the reader derived each one from the
+    # day's printed opening balance (Permata): a row's balance then depends on the rows before it.
+    balances_derived: bool = False
+    kept_columns: tuple[str, ...] = (
+        "Payment Date", "Payment Type", "Other Reference", "Bank Reference", "Cheque Number",
+    )
 
     @property
     def opening_balance(self) -> Decimal:

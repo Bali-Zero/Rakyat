@@ -77,7 +77,7 @@ describe("AccountingPage", () => {
     render(<AccountingPage />);
     expect(await screen.findByText("CONTOH TRANSFER")).toBeInTheDocument();
     expect(
-      screen.getByLabelText(/upload bank statement \(csv\)/i),
+      screen.getByLabelText(/upload bank statement \(csv or pdf\)/i),
     ).toBeInTheDocument();
     expect(screen.queryByText("Income (in)")).toBeNull();
     expect(screen.queryByText("Weekly Cashout")).toBeNull();
