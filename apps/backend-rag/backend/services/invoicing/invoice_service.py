@@ -40,6 +40,7 @@ from backend.services.invoicing.entities import (
 )
 from backend.services.invoicing.invoice_company import fetch_bill_to
 from backend.services.invoicing.invoice_generator import InvoiceGenerator
+from backend.services.invoicing.pph import PphWithholding, pph_from_metadata
 from backend.services.notifications.email_audit import (
     format_send_error,
     log_email_attempt,
@@ -150,6 +151,15 @@ RETURNING issuer_entity_key, issuer_routed_at
 """
 
 
+def _row_pph(practice_row: Any, practice_id: int) -> PphWithholding | None:
+    """The PPh on a practice row; rows read without ``metadata`` have none."""
+    try:
+        metadata = practice_row.get("metadata")
+    except (AttributeError, KeyError, TypeError):
+        return None
+    return pph_from_metadata(metadata, practice_id=practice_id)
+
+
 class InvoiceAutomationService:
     """Handles automated invoice generation and distribution via Zoho Email or SMTP fallback."""
 
@@ -236,7 +246,13 @@ class InvoiceAutomationService:
                     discount_amount_float = 0.0
                 if discount_amount_float > quoted_price_float:
                     discount_amount_float = quoted_price_float
-                final_amount_float = quoted_price_float - discount_amount_float
+                dpp_float = quoted_price_float - discount_amount_float
+                # K127: optional PPh chosen by the tax team (practices.metadata.pph).
+                # The client transfers DPP - PPh, so that is TOTAL DUE, the email
+                # amount and invoices.amount_idr (see _persist_invoice).
+                pph = pph_from_metadata(practice_data.get("metadata"), practice_id=practice_id)
+                pph_amount = pph.amount_on(dpp_float) if pph else 0
+                final_amount_float = dpp_float - pph_amount
 
                 pdf_bytes = self.invoice_generator.generate(
                     practice_id=practice_id,
@@ -255,6 +271,8 @@ class InvoiceAutomationService:
                     discount_reason=discount_reason_value,
                     entity=issuer_decision.entity,
                     **bill_to,
+                    pph_label=pph.label if pph else None,
+                    pph_amount=float(pph_amount),
                 )
 
                 filename = f"Invoice_{invoice_number}.pdf"
@@ -389,6 +407,16 @@ class InvoiceAutomationService:
                 "accounting_notified": asya_notified,
                 "source": "local_pdf",
             }
+            if pph:
+                # Snapshot of the withholding printed on this PDF. invoices has no
+                # jsonb column, so it lives with the rest of the invoice in
+                # practices.documents.invoice.
+                invoice_info["pph"] = {
+                    "dpp": round(dpp_float),
+                    "pph_type": pph.type,
+                    "pph_rate": float(pph.rate_percent),
+                    "pph_amount": pph_amount,
+                }
 
             await self._update_practice_with_invoice(
                 practice_id=practice_id,
@@ -830,13 +858,14 @@ class InvoiceAutomationService:
             # that have not yet applied migration 158.
             try:
                 practice_row = await conn.fetchrow(
-                    "SELECT client_id, quoted_price, discount_amount FROM practices WHERE id = $1",
+                    "SELECT client_id, quoted_price, discount_amount, metadata"
+                    " FROM practices WHERE id = $1",
                     practice_id,
                 )
             except Exception as fetch_exc:
                 if getattr(fetch_exc, "sqlstate", None) == "42703":
                     practice_row = await conn.fetchrow(
-                        "SELECT client_id, quoted_price FROM practices WHERE id = $1",
+                        "SELECT client_id, quoted_price, metadata FROM practices WHERE id = $1",
                         practice_id,
                     )
                 else:
@@ -856,13 +885,19 @@ class InvoiceAutomationService:
             except (AttributeError, KeyError, TypeError):
                 discount = 0.0
             discount = max(0.0, min(discount, quoted))
-            # amount_idr stores the post-discount total; discount_amount_idr mirrors the discount.
+            # amount_idr stores what the client must pay: the post-discount total, less
+            # the PPh it withholds when the tax team chose one (K127) — the TOTAL DUE on
+            # the PDF. Outstanding = amount_idr - paid_amount_idr (unpaid notifier,
+            # portal billing, reconciliation) stays right for a client that withholds.
+            # discount_amount_idr mirrors the discount.
+            pph = _row_pph(practice_row, practice_id)
+            payable = quoted - discount - (pph.amount_on(quoted - discount) if pph else 0)
             args = (
                 practice_id,
                 practice_row["client_id"],
                 invoice_info.get("invoice_number") or None,
                 invoice_info.get("source", "local_pdf"),
-                quoted - discount,
+                payable,
                 discount,
                 invoice_info.get("invoice_drive_id") or None,
                 invoice_info.get("invoice_drive_link") or None,
