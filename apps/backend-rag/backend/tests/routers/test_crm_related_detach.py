@@ -3403,6 +3403,47 @@ async def test_d33_each_guard_alone_aborts_with_its_message_and_changes_nothing(
     assert await digests(conn) == faulted
 
 
+# The clauses of checks 4 and 6 that the faults above never make the FIRST failing guard: T's one
+# key of another type (4), a link on T, a record merged into T, T merged (6).
+SUB_CLAUSE_FAULTS = {
+    "4_the_key_of_t_has_another_type": (
+        "UPDATE related_subject_identifiers SET id_type = 'passport' WHERE subject_id = $1",
+        "undo 4 key",
+    ),
+    "6_a_link_on_t": (
+        "INSERT INTO related_subject_links (subject_id, client_id, basis, evidence, created_by) "
+        "VALUES ($1, 424242, 'identity', '{}'::jsonb, 'zz')",
+        "undo 6 name, link, pointer",
+    ),
+    "6_a_record_merged_into_t": (
+        "INSERT INTO related_subjects (kind, merged_into, evidence, created_by) "
+        "VALUES ('person', $1, '{}'::jsonb, 'zz')",
+        "undo 6 name, link, pointer",
+    ),
+    "6_t_merged_into_the_bystander": (
+        "UPDATE related_subjects SET merged_into = $2 WHERE id = $1",
+        "undo 6 name, link, pointer",
+    ),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", sorted(SUB_CLAUSE_FAULTS))
+async def test_d33_each_clause_of_checks_4_and_6_alone_aborts_with_its_message(
+    conn, detach_writes, fault
+):
+    s, t, by, _listed, _before = await undo_world(conn)
+    sql, message = SUB_CLAUSE_FAULTS[fault]
+    async with unmeasured(conn):
+        await conn.execute(sql, *((t, by) if "$2" in sql else (t,)))
+    faulted = await digests(conn)
+    async with unmeasured(conn):
+        with pytest.raises(asyncpg.PostgresError) as raised:
+            await conn.execute(undo_block(s, t))
+    assert str(raised.value) == message
+    assert await digests(conn) == faulted
+
+
 # ── D23: concurrency (T4), driven by the controller ───────────────────────────
 #
 # S9 (a documents registration re-sending a listed hash resolves before the detachment commits and
