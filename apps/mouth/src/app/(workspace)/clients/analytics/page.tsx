@@ -55,6 +55,8 @@ type Source = "overview" | "team" | "revenue" | "processes" | "trend";
  * and a failed load must not be mistaken for one.
  */
 const NOT_AVAILABLE = "Data not available";
+// A month before the first confirmed payment: nothing was recorded, which is not Rp 0.
+const NOT_RECONCILED = "Not reconciled";
 
 const Unavailable = () => (
   <p role="status" className="text-muted-foreground text-center py-8 text-sm">
@@ -88,11 +90,12 @@ interface RevenueSummary {
   total_paid: number;
   total_outstanding: number;
   avg_per_client: number;
+  // Money received in each month, by the date the transfer landed. null: the month ends
+  // before the first confirmed payment, so nothing was recorded (not a zero).
   by_month: Array<{
     period: string;
-    revenue: number;
-    paid: number;
-    target: number;
+    collected: number | null;
+    payments: number | null;
   }>;
   forecast_next_month: number;
 }
@@ -807,6 +810,9 @@ export default function ClientAnalyticsPage() {
           <div className="bg-card rounded-xl border overflow-hidden">
             <div className="p-4 border-b">
               <h3 className="text-sm font-semibold">Monthly Breakdown</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Money received, by transfer date
+              </p>
             </div>
             {isLoading ? (
               <div className="flex justify-center py-8">
@@ -820,10 +826,9 @@ export default function ClientAnalyticsPage() {
                   <thead className="bg-muted">
                     <tr>
                       <th className="text-left p-3 font-medium">Period</th>
-                      <th className="text-right p-3 font-medium">Revenue</th>
-                      <th className="text-right p-3 font-medium">Paid</th>
+                      <th className="text-right p-3 font-medium">Received</th>
                       <th className="text-right p-3 font-medium hidden sm:table-cell">
-                        Collection %
+                        Payments
                       </th>
                     </tr>
                   </thead>
@@ -831,18 +836,23 @@ export default function ClientAnalyticsPage() {
                     {revenue?.by_month?.map((month, idx) => (
                       <tr key={idx} className="hover:bg-muted/50">
                         <td className="p-3">{month.period}</td>
-                        <td className="p-3 text-right font-medium">
-                          {formatCurrency(month.revenue)}
-                        </td>
-                        <td className="p-3 text-right text-[var(--state-success)]">
-                          {formatCurrency(month.paid)}
-                        </td>
-                        <td className="p-3 text-right hidden sm:table-cell">
-                          {month.revenue > 0
-                            ? Math.round((month.paid / month.revenue) * 100)
-                            : 0}
-                          %
-                        </td>
+                        {month.collected === null ? (
+                          <td
+                            colSpan={2}
+                            className="p-3 text-right text-muted-foreground"
+                          >
+                            {NOT_RECONCILED}
+                          </td>
+                        ) : (
+                          <>
+                            <td className="p-3 text-right font-medium text-[var(--state-success)]">
+                              {formatCurrency(month.collected)}
+                            </td>
+                            <td className="p-3 text-right hidden sm:table-cell">
+                              {month.payments}
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))}
                   </tbody>

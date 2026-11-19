@@ -37,7 +37,7 @@ const REVENUE = (v: number) => ({
   total_paid: v,
   total_outstanding: 0,
   avg_per_client: v,
-  by_month: [{ period: "2026-01", revenue: v, paid: v, target: 0 }],
+  by_month: [{ period: "2026-01", collected: v, payments: v ? 1 : 0 }],
   forecast_next_month: 0,
 });
 
@@ -162,5 +162,35 @@ describe("a failed request is not a zero", () => {
     const text = document.body.textContent ?? "";
     expect(text).not.toMatch(/Rp/);
     expect(text).not.toMatch(/\b0%/);
+  });
+
+  it("the monthly table shows the money received by transfer date; an unrecorded month is not Rp 0", async () => {
+    answer(
+      {
+        overview: OVERVIEW,
+        revenue: {
+          ...REVENUE(2415000),
+          by_month: [
+            { period: "2026-08", collected: null, payments: null },
+            { period: "2026-09", collected: 0, payments: 0 },
+            { period: "2026-10", collected: 2415000, payments: 1 },
+          ],
+        },
+      },
+      [],
+    );
+    render(<ClientAnalyticsPage />);
+    const table = await within(revenueSection()).findByRole("table");
+    const row = (period: string) =>
+      within(table).getByText(period).closest("tr") as HTMLElement;
+    expect(
+      within(revenueSection()).getByText("Money received, by transfer date"),
+    ).toBeInTheDocument();
+    expect(row("2026-08")).toHaveTextContent("Not reconciled");
+    expect(row("2026-08").textContent).not.toMatch(/Rp/);
+    expect(row("2026-09")).toHaveTextContent(idr(0));
+    expect(row("2026-09")).not.toHaveTextContent("Not reconciled");
+    expect(row("2026-10")).toHaveTextContent(idr(2415000));
+    expect(row("2026-10")).toHaveTextContent("1");
   });
 });

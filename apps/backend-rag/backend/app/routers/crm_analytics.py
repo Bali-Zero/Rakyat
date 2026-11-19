@@ -320,44 +320,69 @@ async def get_revenue_summary(
             total_paid = float(row["total_paid"] or 0)
             total_outstanding = total_actual - total_paid
 
-            # Monthly breakdown (last 6 months)
+            # Monthly breakdown (last 6 months): the money received in each month, by the date
+            # it landed. The accounts count a month by the transfers that arrived in it, so this
+            # reads the confirmed payments of the cash ledger (weekly_cashout rows of type
+            # invoice_payment, written by the reconciliation with the transfer's date), never the
+            # month a practice was created. A month that ends before the first confirmed payment
+            # has no record at all: it reads None ("not reconciled"), never 0.
+            first_payment = await conn.fetchval(
+                """
+                SELECT min(movement_date) FROM weekly_cashout
+                WHERE type = 'invoice_payment' AND direction = 'in' AND reversed_by_id IS NULL
+                """
+            )
+            window_start = _months_ago(5)
+            window_end = _next_month_start(_months_ago(0))
+            ledger_params: list[Any] = [window_start.date(), window_end.date()]
+            scope_sql = ""
+            if assigned_filter:
+                scope_idx = len(ledger_params) + 1
+                scope_sql = f"""
+                    AND EXISTS (
+                        SELECT 1 FROM practices sp JOIN clients sc ON sc.id = sp.client_id
+                        WHERE sp.id = wc.linked_practice_id
+                          AND sc.assigned_to = ANY(${scope_idx}::text[])
+                    )
+                """
+                ledger_params.append(assigned_filter)
+            month_rows = await conn.fetch(
+                f"""
+                SELECT to_char(date_trunc('month', wc.movement_date), 'YYYY-MM') AS period,
+                       COALESCE(SUM(wc.amount_idr), 0) AS collected,
+                       COUNT(*) AS payments
+                FROM weekly_cashout wc
+                WHERE wc.type = 'invoice_payment' AND wc.direction = 'in'
+                  AND wc.reversed_by_id IS NULL
+                  AND wc.movement_date >= $1 AND wc.movement_date < $2
+                  {scope_sql}
+                GROUP BY 1
+                """,
+                *ledger_params,
+            )
+            received = {row["period"]: row for row in month_rows}
             months = []
             for i in range(5, -1, -1):
                 month_start = _months_ago(i)
-                month_end = _next_month_start(month_start)
-                month_label = month_start.strftime("%Y-%m")
-
-                # Placeholder indices must follow the (optional) assigned-filter
-                # param, not be hardcoded to $2/$3 — otherwise an admin with no
-                # filter (params == []) makes the date params $1/$2 while the SQL
-                # still references $2/$3, and $3 is never bound → asyncpg raises
-                # IndeterminateDatatypeError ("could not determine data type of
-                # parameter $1") and the whole endpoint 503s for every admin.
-                start_idx = len(params) + 1
-                end_idx = len(params) + 2
-                month_query = f"""
-                    SELECT
-                        COALESCE(SUM(p.actual_price), 0) as revenue,
-                        COALESCE(SUM(CASE WHEN p.payment_status = 'paid' THEN p.actual_price ELSE 0 END), 0) as paid
-                    FROM practices p
-                    JOIN clients c ON p.client_id = c.id
-                    {where_clause}
-                    {"AND" if where_clause else "WHERE"} p.created_at >= ${start_idx} AND p.created_at < ${end_idx}
-                """
-                month_params = [*params, month_start, month_end]
-                month_row = await conn.fetchrow(month_query, *month_params)
-
+                label = month_start.strftime("%Y-%m")
+                recorded = (
+                    first_payment is not None
+                    and first_payment < _next_month_start(month_start).date()
+                )
+                row = received.get(label)
                 months.append(
                     {
-                        "period": month_label,
-                        "revenue": float(month_row["revenue"] or 0),
-                        "paid": float(month_row["paid"] or 0),
+                        "period": label,
+                        "collected": (float(row["collected"]) if row else 0.0)
+                        if recorded
+                        else None,
+                        "payments": (int(row["payments"]) if row else 0) if recorded else None,
                     },
                 )
 
             # Average per client
             client_count = (
-                await conn.fetchval(f"SELECT COUNT(*) FROM clients {where_clause}", *params) or 1
+                await conn.fetchval(f"SELECT COUNT(*) FROM clients c {where_clause}", *params) or 1
             )  # Avoid division by zero
 
             avg_per_client = total_actual / client_count
