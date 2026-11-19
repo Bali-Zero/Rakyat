@@ -2003,3 +2003,333 @@ describe("ported reconciliation contract", () => {
     });
   });
 });
+
+describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
+  const transferAmount = (txnId: number) => 1_000_000 + txnId;
+
+  const candidatesForTransfer = (txnId: number) => {
+    const makeCandidate = (slot: 1 | 2 | 3) => {
+      const identity = txnId * 10 + slot;
+      return candidate({
+        invoice_id: 10_000 + identity,
+        practice_id: 20_000 + identity,
+        client_name: `ACCOUNT ${identity}`,
+        invoice_number: `TEST-${identity}`,
+        invoice_issued_at: `2026-03-${String(slot).padStart(2, "0")}T00:00:00Z`,
+        service_name: `SERVICE ${identity}`,
+        invoice_amount_idr: 500_000 + identity,
+        reasons: [`fixture reason ${identity}`],
+      });
+    };
+    const firstOpen = makeCandidate(1);
+    const suggestedOpen = makeCandidate(2);
+    const recordedCandidate = makeCandidate(3);
+    return {
+      txn_id: txnId,
+      transfer_amount_idr: transferAmount(txnId),
+      candidates: [firstOpen, suggestedOpen],
+      recorded_candidates: [recordedCandidate],
+    };
+  };
+
+  const transfer = (
+    txnId: number,
+    light: "green" | "recorded" | "yellow" | "red",
+  ) => {
+    const answer = candidatesForTransfer(txnId);
+    return inboxItem({
+      txn_id: txnId,
+      txn_date: `2026-02-${String(txnId - 100).padStart(2, "0")}`,
+      amount_idr: transferAmount(txnId),
+      description: `TRANSFER ${txnId}`,
+      light,
+      open_candidates: 2,
+      recorded_candidates: 1,
+      suggestion: answer.candidates[1],
+    });
+  };
+
+  const twelve = () => [
+    transfer(101, "green"),
+    transfer(102, "green"),
+    transfer(103, "green"),
+    transfer(104, "recorded"),
+    transfer(105, "recorded"),
+    transfer(106, "recorded"),
+    transfer(107, "yellow"),
+    transfer(108, "yellow"),
+    transfer(109, "yellow"),
+    transfer(110, "red"),
+    transfer(111, "red"),
+    transfer(112, "red"),
+  ];
+
+  it("71: confirms the third transfer with its complete identity and after-effect", async () => {
+    const initial = twelve();
+    const reload = deferred<ReturnType<typeof twelve>>();
+    api.getReconciliationInbox
+      .mockResolvedValueOnce(initial)
+      .mockReturnValueOnce(reload.promise);
+    api.getMatchCandidates.mockImplementation(async (txnId) =>
+      candidatesForTransfer(txnId),
+    );
+    const onConfirmed = renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    fireEvent.click(row(103));
+    await waitFor(() =>
+      expect(row(103)).toHaveAttribute("aria-current", "true"),
+    );
+    await within(opened()).findByText("TEST-1032", { exact: false });
+    expect(opened()).toHaveTextContent("Rp1.000.103");
+    expect(opened()).toHaveTextContent("TRANSFER 103");
+    expect(opened()).toHaveTextContent("Received Tue 3 Feb 2026");
+
+    fireEvent.click(
+      within(opened()).getByRole("button", { name: "Confirm payment" }),
+    );
+    const dialog = screen
+      .getByText("Confirm payment match")
+      .closest("div.fixed");
+    expect(dialog).not.toBeNull();
+    expect(dialog).toHaveTextContent("Rp 1.000.103");
+    expect(dialog).toHaveTextContent("TEST-1032");
+    expect(dialog).toHaveTextContent("ACCOUNT 1032");
+    expect(api.confirm).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
+    await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledWith({
+      bank_txn_id: 103,
+      practice_id: 21_032,
+      invoice_id: 11_032,
+      amount_applied_idr: 1_000_103,
+      new_status: "paid",
+      payment_method: "bank_transfer",
+      payment_reference: "TRANSFER 103",
+      movement_date: "2026-02-03",
+      pph_withheld_idr: 0,
+    });
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("inbox-row-103")).toBeNull(),
+    );
+    expect(row(101)).toBeInTheDocument();
+    expect(row(102)).toBeInTheDocument();
+    expect(row(101)).toHaveAttribute("aria-current", "true");
+    expect(opened()).toHaveTextContent("TRANSFER 101");
+    expect(screen.getByTestId("cc-count-confirm")).toHaveTextContent("2");
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("72: links the second transfer with its exact ids and after-effect", async () => {
+    const initial = twelve();
+    const reload = deferred<ReturnType<typeof twelve>>();
+    api.getReconciliationInbox
+      .mockResolvedValueOnce(initial)
+      .mockReturnValueOnce(reload.promise);
+    api.getMatchCandidates.mockImplementation(async (txnId) =>
+      candidatesForTransfer(txnId),
+    );
+    const onConfirmed = renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    await openTab("link", "TRANSFER 104");
+    fireEvent.click(row(105));
+    await waitFor(() =>
+      expect(row(105)).toHaveAttribute("aria-current", "true"),
+    );
+    fireEvent.click(
+      within(await screen.findByTestId("cc-cand-11053")).getByRole("radio"),
+    );
+    fireEvent.click(
+      within(opened()).getByRole("button", {
+        name: "Link, no money moved",
+      }),
+    );
+
+    await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
+    expect(api.linkRecorded).toHaveBeenCalledWith({
+      bank_txn_id: 105,
+      practice_id: 21_053,
+      invoice_id: 11_053,
+    });
+    expect(api.confirm).not.toHaveBeenCalled();
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("inbox-row-105")).toBeNull(),
+    );
+    expect(row(104)).toBeInTheDocument();
+    expect(row(106)).toBeInTheDocument();
+    expect(row(104)).toHaveAttribute("aria-current", "true");
+    expect(opened()).toHaveTextContent("TRANSFER 104");
+    expect(screen.getByTestId("cc-count-link")).toHaveTextContent("2");
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("73: ignores the third transfer with its exact id and after-effect", async () => {
+    const initial = twelve();
+    const reload = deferred<ReturnType<typeof twelve>>();
+    api.getReconciliationInbox
+      .mockResolvedValueOnce(initial)
+      .mockReturnValueOnce(reload.promise);
+    api.getMatchCandidates.mockImplementation(async (txnId) =>
+      candidatesForTransfer(txnId),
+    );
+    const onConfirmed = renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    await openTab("nomatch", "TRANSFER 110");
+    fireEvent.click(row(112));
+    await waitFor(() =>
+      expect(row(112)).toHaveAttribute("aria-current", "true"),
+    );
+    await screen.findByTestId("cc-cand-11121");
+    fireEvent.click(within(opened()).getByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "duplicate test transfer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(1));
+    expect(api.ignoreTransaction).toHaveBeenCalledWith({
+      bank_txn_id: 112,
+      reason: "duplicate test transfer",
+    });
+    expect(api.confirm).not.toHaveBeenCalled();
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("inbox-row-112")).toBeNull(),
+    );
+    expect(row(110)).toBeInTheDocument();
+    expect(row(111)).toBeInTheDocument();
+    expect(row(110)).toHaveAttribute("aria-current", "true");
+    expect(opened()).toHaveTextContent("TRANSFER 110");
+    expect(screen.getByTestId("cc-count-nomatch")).toHaveTextContent("2");
+    expect(screen.queryByTestId("cc-ignore-form")).toBeNull();
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("74: keeps a failed link on the second transfer only", async () => {
+    api.getReconciliationInbox.mockResolvedValueOnce(twelve());
+    api.getMatchCandidates.mockImplementation(async (txnId) =>
+      candidatesForTransfer(txnId),
+    );
+    api.linkRecorded.mockRejectedValueOnce(new Error("link target failed"));
+    renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    await openTab("link", "TRANSFER 104");
+    fireEvent.click(row(105));
+    fireEvent.click(
+      within(await screen.findByTestId("cc-cand-11053")).getByRole("radio"),
+    );
+    fireEvent.click(
+      within(opened()).getByRole("button", {
+        name: "Link, no money moved",
+      }),
+    );
+
+    expect(await within(opened()).findByRole("alert")).toHaveTextContent(
+      "link target failed",
+    );
+    expect(row(105)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(opened()).getByRole("button", {
+          name: "Link, no money moved",
+        }),
+      ).toBeEnabled(),
+    );
+    expect(api.linkRecorded).toHaveBeenCalledTimes(1);
+    expect(api.linkRecorded).toHaveBeenCalledWith({
+      bank_txn_id: 105,
+      practice_id: 21_053,
+      invoice_id: 11_053,
+    });
+
+    fireEvent.click(row(104));
+    await screen.findByTestId("cc-cand-11043");
+    expect(within(opened()).queryByRole("alert")).toBeNull();
+    expect(opened()).not.toHaveTextContent("link target failed");
+
+    fireEvent.click(row(105));
+    await screen.findByTestId("cc-cand-11053");
+    void within(opened()).queryByText("link target failed");
+  });
+
+  it("75: Skip for now advances through three rows and wraps", async () => {
+    api.getReconciliationInbox.mockResolvedValueOnce(twelve());
+    api.getMatchCandidates.mockImplementation(async (txnId) =>
+      candidatesForTransfer(txnId),
+    );
+    renderInbox();
+    await screen.findByText("TRANSFER 101");
+    await openTab("choose", "TRANSFER 107");
+    await screen.findByTestId("cc-cand-11071");
+    api.getMatchCandidates.mockClear();
+
+    fireEvent.click(
+      within(opened()).getByRole("button", { name: "Skip for now" }),
+    );
+    await screen.findByTestId("cc-cand-11081");
+    expect(row(108)).toHaveAttribute("aria-current", "true");
+    expect(row(109)).not.toHaveAttribute("aria-current");
+    expect(api.getMatchCandidates).toHaveBeenCalledTimes(1);
+    expect(api.getMatchCandidates).toHaveBeenLastCalledWith(108);
+    api.getMatchCandidates.mockClear();
+
+    fireEvent.click(
+      within(opened()).getByRole("button", { name: "Skip for now" }),
+    );
+    await screen.findByTestId("cc-cand-11091");
+    expect(row(109)).toHaveAttribute("aria-current", "true");
+    expect(api.getMatchCandidates).toHaveBeenCalledTimes(1);
+    expect(api.getMatchCandidates).toHaveBeenLastCalledWith(109);
+    api.getMatchCandidates.mockClear();
+
+    fireEvent.click(
+      within(opened()).getByRole("button", { name: "Skip for now" }),
+    );
+    await screen.findByTestId("cc-cand-11071");
+    expect(row(107)).toHaveAttribute("aria-current", "true");
+    expect(api.getMatchCandidates).toHaveBeenCalledTimes(1);
+    expect(api.getMatchCandidates).toHaveBeenLastCalledWith(107);
+  });
+
+  it("76: Try again reloads candidates for the failed non-first transfer", async () => {
+    api.getReconciliationInbox.mockResolvedValueOnce(twelve());
+    let targetAttempts = 0;
+    api.getMatchCandidates.mockImplementation(async (txnId) => {
+      if (txnId === 108 && targetAttempts++ === 0)
+        throw new Error("candidate target failed");
+      return candidatesForTransfer(txnId);
+    });
+    renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    await openTab("choose", "TRANSFER 107");
+    await screen.findByTestId("cc-cand-11071");
+    fireEvent.click(row(108));
+    expect(
+      await within(opened()).findByText(
+        "Could not load the invoices for this transfer.",
+      ),
+    ).toBeInTheDocument();
+    expect(row(108)).toHaveAttribute("aria-current", "true");
+    api.getMatchCandidates.mockClear();
+
+    fireEvent.click(
+      within(opened()).getByRole("button", { name: "Try again" }),
+    );
+    const targetCandidate = await screen.findByTestId("cc-cand-11081");
+    expect(targetCandidate).toHaveTextContent("TEST-1081");
+    expect(opened()).toHaveTextContent("TRANSFER 108");
+    expect(api.getMatchCandidates).toHaveBeenCalledTimes(1);
+    expect(api.getMatchCandidates).toHaveBeenLastCalledWith(108);
+  });
+});
