@@ -794,7 +794,7 @@ async def test_r5_t6_a_subject_in_no_detachment_gets_two_empty_lists(admin, seed
 
 
 @pytest.mark.asyncio
-async def test_r5_t7_no_digest_hash_evidence_or_actor_in_the_response(pool, admin, seeded):
+async def test_r5_t7_no_digest_hash_evidence_or_actor_in_the_response(pool, conn, admin, seeded):
     async with _unmeasured(pool) as c:
         src = await _seed_subject(c, "person", "ZzSplit Source", [])
         tgt = await _seed_subject(c, "person", "ZzSplit Target", [])
@@ -805,6 +805,11 @@ async def test_r5_t7_no_digest_hash_evidence_or_actor_in_the_response(pool, admi
         for secret in (OWNER_DIGEST, MOVED_HASH_1, MOVED_HASH_2, PLAN_DIGEST, DETACH_CREATED_BY):
             assert secret not in text, secret
         assert "plan_sha256" not in text and "owner_keys" not in text and "created_by" not in text
+    # the model would drop an extra key, so the service answer itself is read too
+    for sid in (src, tgt):
+        raw = repr(await service_module.get_subject(conn, sid))
+        for secret in (OWNER_DIGEST, MOVED_HASH_1, MOVED_HASH_2, PLAN_DIGEST, DETACH_CREATED_BY):
+            assert secret not in raw, secret
 
 
 @pytest.mark.asyncio
