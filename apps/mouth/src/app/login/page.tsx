@@ -117,10 +117,17 @@ export default function LoginPage() {
     e.preventDefault();
     if (busy) return;
 
+    // What the fields hold now, not only what reached the state: a password
+    // manager may fill them after mount without an input event. Synced in the
+    // same render, so the re-render does not wipe what the person sees.
+    const sentEmail = emailRef.current?.value ?? email;
+    const sentPin = pinRef.current?.value ?? pin;
+    if (sentEmail !== email) setEmail(sentEmail);
+    if (sentPin !== pin) setPin(sentPin);
     setLoginStage("authenticating");
 
     try {
-      const loginResponse = await api.login(email, pin);
+      const loginResponse = await api.login(sentEmail, sentPin);
 
       setLoginStage("success");
 

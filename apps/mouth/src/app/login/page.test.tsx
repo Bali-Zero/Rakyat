@@ -846,4 +846,29 @@ describe("credentials stay out of the address", () => {
     await act(async () => root?.unmount());
     host.remove();
   });
+
+  it("a fill that arrives after mount without an input event is what is sent, and stays in the fields", async () => {
+    mockLogin.mockReturnValueOnce(new Promise(() => {}));
+    const { container } = render(<LoginPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Enter" })).toBeEnabled(),
+    );
+    const email = container.querySelector("#email") as HTMLInputElement;
+    const pin = container.querySelector("#pin") as HTMLInputElement;
+    // The native setter: React's own value tracker never hears of it, as with
+    // a password manager that writes the field and fires nothing.
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    setValue.call(email, "late@example.com");
+    setValue.call(pin, "864200");
+    fireEvent.submit(container.querySelector("form")!);
+
+    await waitFor(() =>
+      expect(mockLogin).toHaveBeenCalledWith("late@example.com", "864200"),
+    );
+    expect(email.value).toBe("late@example.com");
+    expect(pin.value).toBe("864200");
+  });
 });
