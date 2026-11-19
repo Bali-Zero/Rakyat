@@ -37,6 +37,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from pydantic import ValidationError
 
 import backend.app.routers.crm_related_registry_read as read_module
 import backend.app.routers.crm_related_subjects as route_module
@@ -1754,6 +1755,10 @@ D_CASES = {
         _mut(lambda d: d["owner"].update(identifiers=keys([D_OWN]))),
         [([], "owner_keeps_no_identifier")],
     ),
+    "b1_before_b2": (
+        _mut(lambda d: (d.update(documents=[H1, H1]), d["detach"].update(value=NX))),
+        [([], "duplicate_document")],
+    ),
     "forty_one_documents": (
         _mut(lambda d: d.update(documents=list(FORTY_ONE))),
         [(["documents"], "too_long")],
@@ -1918,6 +1923,29 @@ def _sanitised(errors):
     resp = route_module._invalid_detach(errors)
     assert resp.status_code == 422
     return json.loads(resp.body)["detail"]
+
+
+def _model_errors(raw):
+    """The sanitised 422 items of a raw body, through the route's own strict model."""
+    with pytest.raises(ValidationError) as raised:
+        route_module.RelatedDetachRequest.model_validate_json(raw)
+    return _sanitised(
+        raised.value.errors(include_input=False, include_context=False, include_url=False)
+    )
+
+
+@pytest.mark.parametrize(
+    "owner,detach,documents,code",
+    [
+        (K_OWN, ("nik", NX), [H1, H1], "duplicate_document"),  # B1 before B2
+        ((D_OWN,), D_OWN, [H1, H1], "duplicate_document"),  # B1 before B3
+        ((D_OWN,), ("nik", NX), [], "detach_not_in_owner"),  # B2 before B3
+    ],
+    ids=["b1_before_b2", "b1_before_b3", "b2_before_b3"],
+)
+def test_d5_on_a_body_holding_two_b_errors_the_earlier_one_answers(owner, detach, documents, code):
+    raw = json.dumps(req(owner, detach, documents))
+    assert _model_errors(raw) == [{"loc": [], "code": code}]
 
 
 def test_d5_the_sanitiser_keeps_closed_names_indexes_below_their_limits_and_codes():
@@ -2565,6 +2593,24 @@ async def test_d10_the_earlier_refusal_wins_on_a_state_holding_two(client, conn,
     for name, (data, reason, s) in (await precedence_world(conn)).items():
         resp = await post(client, {**data, "dry_run": dry_run})
         assert resp.json() == refused(reason, s), (name, resp.json())
+    assert await ledger(conn) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry_run", "apply"])
+async def test_d10_r3_before_r5_and_r5_before_n1(client, conn, clients, dry_run):
+    n = 4246010
+    y = await seed_subject(conn, "person", "ZzPrecedence Survivor", [("passport", passport(n))])
+    # a merged company record holding exactly K: R5 (kind) before N1 (merged)
+    p, d = ("passport", passport(n + 1)), ("nik", nik("150680", 6011))
+    await seed_subject(conn, "company", None, [p, d], merged=y)
+    resp = await post(client, req((p, d), d, dry_run=dry_run))
+    assert resp.json() == not_registered("kind_differs"), resp.json()
+    # a company record holding K and one key more: R3 (set) before R5 (kind)
+    p, d, q = ("passport", passport(n + 2)), ("nik", nik("150680", 6012)), ("permit", permit(n + 2))
+    await seed_subject(conn, "company", None, [p, d, q])
+    resp = await post(client, req((p, d), d, dry_run=dry_run))
+    assert resp.json() == not_registered("set_differs"), resp.json()
     assert await ledger(conn) == []
 
 
@@ -4178,6 +4224,7 @@ B_IDS = {
     "owner_identifiers_empty": (NO, H1, H2),
     "owner_twenty_one_identifiers": (NO, H1, H2, *(passport(7474800 + i) for i in range(21))),
     "b1_duplicate_document": (PO, NO, H1),
+    "b1_before_b2": (PO, NO, NX, H1),
     "b2_detach_not_in_owner": (PO, NO, NX, H1, H2),
     "b3_owner_keeps_no_identifier": (NO, H1, H2),
     "forty_one_documents": (PO, NO, *FORTY_ONE),
