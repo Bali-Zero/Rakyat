@@ -9,8 +9,12 @@ import pytest
 
 from backend.scripts import publish_zones_geojson as cli
 from backend.services.prime.zones_geojson import (
+    GRID,
     build_zones_geojson,
     build_zones_geojson_body,
+    growth_errors,
+    on_grid,
+    ring_doubled_area,
     validate_zones_geojson,
 )
 
@@ -83,6 +87,17 @@ COLLAPSED = [[115.1, -8.6]] * 4
 SEGMENT = [[115.1, -8.6], [115.2, -8.6], [115.1, -8.6], [115.1, -8.6]]
 COLLINEAR = [[115.1, -8.6], [115.2, -8.6], [115.3, -8.6], [115.1, -8.6]]
 HOLE = [[115.14, -8.62], [115.16, -8.62], [115.16, -8.64], [115.14, -8.62]]
+# Two triangles of equal area traversed in opposite directions: signed areas cancel exactly.
+FIGURE_EIGHT = [
+    [115.1, -8.6],
+    [115.2, -8.7],
+    [115.2, -8.6],
+    [115.1, -8.7],
+    [115.1, -8.6],
+]
+SLIVER = [[115.1, -8.6], [115.100001, -8.6], [115.1, -8.599999], [115.1, -8.6]]
+_R3 = [[(114100000 + 100 * i) / 1000000, (-9100000 + 100 * i) / 1000000] for i in range(1000)]
+R3_RING = [*_R3, _R3[0]]
 
 
 def poly(*rings) -> str:
@@ -106,6 +121,15 @@ TABLE = {
     "JSON array": (raw("[1, 2]"), (0, 1, 0)),
     "JSON string": (raw('"Polygon"'), (0, 1, 0)),
     "Point": (json.dumps({"type": "Point", "coordinates": [115.1, -8.6]}), (0, 1, 0)),
+    "Point with empty coordinates (M3 before S2)": (
+        json.dumps({"type": "Point", "coordinates": []}),
+        (0, 1, 0),
+    ),
+    "longitude out of range (M7)": (poly([[200, -8.6], *RING[1:3], [200, -8.6]]), (0, 1, 0)),
+    "latitude out of range (M7)": (poly([[115.1, -91], *RING[1:3], [115.1, -91]]), (0, 1, 0)),
+    "figure-eight with exactly cancelling lobes": (poly(FIGURE_EIGHT), (0, 0, 1)),
+    "sliver of doubled area 1 is published": (poly(SLIVER), (1, 0, 0)),
+    "gate r3: 1,000-point collinear ring": (poly(R3_RING), (0, 0, 1)),
     "GeometryCollection": (json.dumps({"type": "GeometryCollection", "geometries": []}), (0, 1, 0)),
     "coordinates missing": (json.dumps({"type": "Polygon"}), (0, 1, 0)),
     "coordinates false": (json.dumps({"type": "Polygon", "coordinates": False}), (0, 1, 0)),
@@ -274,7 +298,7 @@ def test_publish_writes_file_and_manifest(mouth, rows_file, capsys):
 def test_publish_keeps_previous_and_deletes_older(mouth, rows_file):
     data = mouth / "public/data/prime"
     paths = []
-    for n in (1, 2, 3):
+    for n in (10, 11, 12):  # under the 125% growth guard
         assert publish(mouth, rows_file([row(i) for i in range(n)])) == 0
         paths.append(manifest(mouth)["path"].rsplit("/", 1)[1])
     assert manifest(mouth)["previous"] == f"/data/prime/{paths[1]}"
@@ -339,12 +363,12 @@ def test_shrink_keeps_the_last_valid_version(mouth, rows_file):
 
 
 def test_check_exit_codes_and_no_writes(mouth, rows_file):
-    first = rows_file([row(1)])
+    first = rows_file([row(i) for i in range(10)])
     assert publish(mouth, first, "--check") == 10
     assert not (mouth / "public").exists()
     publish(mouth, first)
     assert publish(mouth, first, "--check") == 0
-    assert publish(mouth, rows_file([row(1), row(2)], "b.jsonl"), "--check") == 10
+    assert publish(mouth, rows_file([row(i) for i in range(11)], "b.jsonl"), "--check") == 10
     assert publish(mouth, rows_file([row(1, geometry=None)], "c.jsonl"), "--check") == 2
 
 
@@ -353,3 +377,112 @@ def test_print_sql_wraps_the_query(capsys):
     out = capsys.readouterr().out
     assert out.startswith("SELECT row_to_json(t)::text FROM (")
     assert "l.id" in out and out.rstrip().endswith(") t")
+
+
+# ---- spec section 8: exact arithmetic, precedence, growth guard, cleanup ----
+
+
+@pytest.mark.parametrize(
+    "k",
+    [
+        -180_000_000,
+        -90_000_000,
+        0,
+        90_000_000,
+        180_000_000,
+        114_000_000,
+        116_000_000,
+        -9_200_000,
+        -7_800_000,
+    ],
+)
+def test_integer_recovery_at_the_boundaries(k):
+    c = round(k / GRID, 6)
+    assert on_grid(c) and round(c * GRID) == k
+
+
+def test_integer_recovery_on_seeded_samples():
+    rnd = random.Random(490)
+    for _ in range(100_000):
+        k = rnd.randint(-180_000_000, 180_000_000)
+        c = round(k / GRID, 6)
+        assert on_grid(c) and round(c * GRID) == k
+
+
+def test_grid_predicate_rejects_off_grid_values():
+    assert not on_grid(115.1234567) and not on_grid(115.0000005)
+
+
+def _grid(k: int) -> float:
+    return round(k / GRID, 6)
+
+
+def test_random_collinear_rings_are_all_degenerate():
+    rnd = random.Random(1)
+    for _ in range(300):
+        x0, y0 = rnd.randint(114_500_000, 115_500_000), rnd.randint(-8_900_000, -8_100_000)
+        dx, dy = 0, 0
+        while (dx, dy) == (0, 0):
+            dx, dy = rnd.randint(-50, 50), rnd.randint(-50, 50)
+        ts = [rnd.randint(0, 2000) for _ in range(rnd.randint(3, 1999))]
+        ring = [[_grid(x0 + dx * s), _grid(y0 + dy * s)] for s in ts]
+        ring.append(ring[0])
+        build = build_zones_geojson([row(1, geometry=poly(ring))])
+        assert (build.features, build.malformed, build.degenerate_rings) == (0, 0, 1)
+
+
+def test_random_non_degenerate_rings_are_all_published():
+    rnd = random.Random(2)
+    done = 0
+    while done < 300:
+        pts = [
+            [rnd.randint(114_500_000, 115_500_000), rnd.randint(-8_900_000, -8_100_000)]
+            for _ in range(rnd.choice((3, 4)))
+        ]
+        ring = [[_grid(x), _grid(y)] for x, y in pts] + [[_grid(pts[0][0]), _grid(pts[0][1])]]
+        if ring_doubled_area(ring) == 0:
+            continue
+        build = build_zones_geojson([row(1, geometry=poly(ring))])
+        assert (build.features, build.malformed, build.degenerate_rings) == (1, 0, 0)
+        assert validate_zones_geojson(build.body, None) == []
+        done += 1
+
+
+def test_validator_rejects_an_off_grid_position():
+    off = [[115.1234567, -8.6], [115.2, -8.6], [115.2, -8.7], [115.1234567, -8.6]]
+    body = collection(with_geometry({"type": "Polygon", "coordinates": [off]}))
+    assert any("grid" in e for e in validate_zones_geojson(body, None))
+
+
+def test_growth_guard_boundaries():
+    assert growth_errors(125, 100) == []
+    assert growth_errors(126, 100)
+    assert growth_errors(64_000_000, None) == []
+    assert growth_errors(64_000_001, None)
+    assert growth_errors(64_000_001, 60_000_000)
+
+
+def test_a_padded_ring_over_the_growth_margin_is_refused(mouth, rows_file):
+    publish(mouth, rows_file([row(i) for i in range(10)]))
+    before = manifest(mouth)
+    padded = [*RING[:3], *([RING[0]] * 2000), RING[0]]
+    rows = [row(i) for i in range(9)] + [row(9, geometry=poly(padded))]
+    assert publish(mouth, rows_file(rows, "padded.jsonl")) == 2
+    assert manifest(mouth) == before
+
+
+def test_a_cleanup_failure_after_the_manifest_is_reported_not_fatal(
+    mouth, rows_file, capsys, monkeypatch
+):
+    for n in (10, 11):
+        publish(mouth, rows_file([row(i) for i in range(n)], f"r{n}.jsonl"))
+    capsys.readouterr()
+
+    def refuse(self, *a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(cli.Path, "unlink", refuse)
+    assert publish(mouth, rows_file([row(i) for i in range(12)], "r12.jsonl")) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "published" and len(summary["cleanup_errors"]) == 1
+    assert manifest(mouth)["features"] == 12

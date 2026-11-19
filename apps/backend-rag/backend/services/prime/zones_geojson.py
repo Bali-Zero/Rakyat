@@ -95,9 +95,11 @@ def truncate_geojson_coords(geom: dict, precision: int = 6) -> None:
         geom["coordinates"] = _trunc(geom["coordinates"])
 
 
-AREA_EPSILON = 1e-12  # square degrees: about 0.01 m2 at Bali's latitude
+GRID = 1_000_000  # coordinates are rounded to 6 decimals, so they are integers on this grid
 DEGENERATE_FLOOR = 10
 DEGENERATE_SHARE = 0.001
+GROWTH_SHARE = 1.25
+MAX_BYTES = 64_000_000
 
 
 class ZonesBuild(NamedTuple):
@@ -108,31 +110,49 @@ class ZonesBuild(NamedTuple):
     rows_with_geometry: int
 
 
-# What each row's `geometry` column becomes. The endpoint applies the same table; the
-# publisher refuses a generation with any MALFORMED row or with more dropped rings than
-# max(DEGENERATE_FLOOR, DEGENERATE_SHARE x rows with geometry), and validate_zones_geojson
-# re-checks every published ring, so no undrawable geometry reaches the file.
+# What each row's `geometry` column becomes: the spec of Rakyat #490 (PASS-SPEC 2026-11-19).
+# The endpoint applies the same table. Phase 1 tests the rows in this order and the first
+# that applies is the outcome; a row none applies to goes to phase 2.
 #
-# | geometry column                                              | outcome                 |
-# |--------------------------------------------------------------|-------------------------|
-# | NULL or "" (ST_Simplify collapsed the zone)                  | skipped, expected       |
-# | not JSON, or JSON that is not an object                      | MALFORMED               |
-# | object whose type is not Polygon or MultiPolygon             | MALFORMED               |
-# | `coordinates` missing or not a list (false, null, 0, "", {}) | MALFORMED               |
-# | `coordinates` == [] (an EMPTY geometry)                      | skipped, expected       |
-# | a polygon that is not a non-empty list of rings, a ring that |                         |
-# | is not >= 4 positions closed, a position that is not two     |                         |
-# | finite non-bool numbers                                      | MALFORMED               |
-# | after rounding to 6 decimals, a ring of |area| < AREA_EPSILON | dropped and counted: a  |
-# |   (outer ring: its polygon goes; hole: the hole goes)        | feature left with no    |
-# |                                                              | polygon is skipped      |
-# | anything else                                                | published               |
+# | row | geometry column                                                    | outcome  |
+# |-----|--------------------------------------------------------------------|----------|
+# | S1  | NULL or ""                                                         | skip     |
+# | M1  | not JSON                                                           | MALFORMED|
+# | M2  | JSON that is not an object                                         | MALFORMED|
+# | M3  | type not exactly "Polygon" or "MultiPolygon"                       | MALFORMED|
+# | M4  | coordinates missing or not an array (false, null, 0, "", {})       | MALFORMED|
+# | S2  | coordinates == [] (EMPTY)                                          | skip     |
+# | M5  | not a non-empty array of polygons, each a non-empty array of rings | MALFORMED|
+# | M6  | a ring not >= 4 positions with first == last; a position not two  |          |
+# |     | finite non-bool numbers                                            | MALFORMED|
+# | M7  | a position outside lng [-180, 180] or lat [-90, 90]                | MALFORMED|
+#
+# Phase 2 rounds every coordinate to the grid, then drops each ring whose doubled area,
+# computed EXACTLY with integers on the grid, is 0: an outer ring takes its polygon (D1),
+# a hole goes alone (D2); both are counted. A feature left with no polygon is skipped
+# (S3); anything else is published (OK).
+#
+# The publisher refuses a generation with any MALFORMED row, more dropped rings than
+# max(DEGENERATE_FLOOR, DEGENERATE_SHARE x rows with geometry), a validator error, fewer
+# than 95% of the previous features, or more than GROWTH_SHARE x the previous bytes (or
+# MAX_BYTES in any case). Not checked, by design: self-intersection of a ring with a
+# non-zero area, ring orientation, holes outside their shell, overlaps, repeated
+# positions, tiny but non-zero areas, vertex counts (the size guard bounds the total).
 
 
-def _ring_area(ring: list) -> float:
-    return 0.5 * sum(
-        ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1] for i in range(len(ring) - 1)
-    )
+def on_grid(c: float) -> bool:
+    """True iff c is already a multiple of 1e-6 as rounding writes it: exact, no tolerance."""
+    return round(c, 6) == c
+
+
+def ring_doubled_area(ring: list) -> int:
+    """Twice the signed area of a closed ring of on-grid positions, in grid units, exactly.
+
+    Every coordinate is first turned into its integer on the grid (exact for |c| <= 180,
+    the float product is within 3e-8 of the integer), so collinear rings give 0 whatever
+    their length, which a float shoelace does not."""
+    pts = [(round(x * GRID), round(y * GRID)) for x, y in ring]
+    return sum(pts[i][0] * pts[i + 1][1] - pts[i + 1][0] * pts[i][1] for i in range(len(pts) - 1))
 
 
 def _is_position(pos: Any) -> bool:
@@ -140,6 +160,8 @@ def _is_position(pos: Any) -> bool:
         isinstance(pos, list)
         and len(pos) == 2
         and all(_is_number(c) and _is_finite(c) for c in pos)
+        and -180 <= pos[0] <= 180
+        and -90 <= pos[1] <= 90
     )
 
 
@@ -153,9 +175,9 @@ def _is_ring(ring: Any) -> bool:
 
 
 def _classify_geometry(geom: Any) -> tuple[str, int]:
-    """Apply the table above to one parsed geometry, rounding it and dropping its
-    zero-area rings in place. Return (outcome, rings dropped); outcome is one of
-    "ok", "empty", "degenerate", "malformed"."""
+    """Apply the table above to one parsed geometry (M2..M7, S2, then phase 2), rounding it
+    and dropping its zero-area rings in place. Return (outcome, rings dropped); outcome is
+    one of "ok", "empty", "degenerate", "malformed"."""
     if not isinstance(geom, dict) or geom.get("type") not in ("Polygon", "MultiPolygon"):
         return "malformed", 0
     coords = geom.get("coordinates")
@@ -171,10 +193,10 @@ def _classify_geometry(geom: Any) -> tuple[str, int]:
     kept: list[list] = []
     dropped = 0
     for polygon in polygons:
-        if abs(_ring_area(polygon[0])) < AREA_EPSILON:
+        if ring_doubled_area(polygon[0]) == 0:
             dropped += len(polygon)
             continue
-        holes = [r for r in polygon[1:] if abs(_ring_area(r)) >= AREA_EPSILON]
+        holes = [r for r in polygon[1:] if ring_doubled_area(r) != 0]
         dropped += len(polygon) - 1 - len(holes)
         kept.append([polygon[0], *holes])
     if not kept:
@@ -252,6 +274,19 @@ def generation_errors(build: ZonesBuild) -> list[str]:
     return errors
 
 
+def growth_errors(body_bytes: int, previous_bytes: int | None) -> list[str]:
+    """The visitor downloads and parses the whole body: a version much larger than the last
+    one waits for a human, and the last valid version stays served."""
+    errors = []
+    if body_bytes > MAX_BYTES:
+        errors.append(f"body is {body_bytes} bytes, over the {MAX_BYTES} cap")
+    if previous_bytes and body_bytes > GROWTH_SHARE * previous_bytes:
+        errors.append(
+            f"body grew from {previous_bytes} to {body_bytes} bytes, over {GROWTH_SHARE:.0%} of the last version"
+        )
+    return errors
+
+
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
@@ -272,6 +307,8 @@ def _position_error(pos: Any) -> str | None:
     lng, lat = pos
     if not (LNG_RANGE[0] <= lng <= LNG_RANGE[1] and LAT_RANGE[0] <= lat <= LAT_RANGE[1]):
         return f"position {lng},{lat} outside the Bali bounding box"
+    if not (on_grid(lng) and on_grid(lat)):
+        return f"position {lng},{lat} is not on the 1e-6 grid"
     return None
 
 
@@ -281,7 +318,7 @@ def _ring_errors(ring: Any) -> list[str]:
     errors = [e for e in (_position_error(p) for p in ring) if e]
     if not errors and ring[0] != ring[-1]:
         errors.append("ring is not closed")
-    if not errors and abs(_ring_area(ring)) < AREA_EPSILON:
+    if not errors and ring_doubled_area(ring) == 0:
         errors.append("ring has zero area")
     return errors[:1]
 

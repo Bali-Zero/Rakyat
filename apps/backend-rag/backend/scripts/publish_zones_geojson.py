@@ -16,6 +16,7 @@ from backend.services.prime.zones_geojson import (
     ZONES_GEOJSON_QUERY,
     build_zones_geojson,
     generation_errors,
+    growth_errors,
     validate_zones_geojson,
 )
 
@@ -50,8 +51,10 @@ def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
     manifest = _read_manifest(mouth_dir)
     build = build_zones_geojson(rows)
     body, count = build.body, build.features
-    errors = generation_errors(build) + validate_zones_geojson(
-        body, manifest["features"] if manifest else None
+    errors = (
+        generation_errors(build)
+        + validate_zones_geojson(body, manifest["features"] if manifest else None)
+        + growth_errors(len(body), manifest.get("bytes") if manifest else None)
     )
     if errors:
         _emit(status="invalid", errors=errors, features=count, malformed=build.malformed)
@@ -88,10 +91,18 @@ def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
     }
     _atomic_write(mouth_dir / MANIFEST, (json.dumps(new_manifest, indent=2) + "\n").encode("utf-8"))
 
+    # The new version is valid and named by the manifest from here on: a cleanup failure
+    # is reported, it does not turn a successful publish into a failure.
     keep = {name, Path(old_path).name if old_path else None}
+    cleanup_errors = []
     for stale in data_dir.glob("zones-*.json"):
         if stale.name not in keep:
-            stale.unlink()
+            try:
+                stale.unlink()
+            except OSError as exc:
+                cleanup_errors.append(f"{stale.name}: {exc.strerror or exc}")
+    if cleanup_errors:
+        summary["cleanup_errors"] = cleanup_errors
     _emit(status="published", **summary)
     return 0
 
