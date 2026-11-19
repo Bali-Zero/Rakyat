@@ -11,6 +11,7 @@ from backend.app.routers import prime
 
 ROWS = [
     {
+        "id": 1,
         "geometry": (
             '{"type":"Polygon","coordinates":'
             "[[[115.1234567891,-8.6543219876],[115.2,-8.7],[115.1234567891,-8.6543219876]]]}"
@@ -23,6 +24,7 @@ ROWS = [
     },
     # No geometry and unparseable geometry: both rows are skipped.
     {
+        "id": 2,
         "geometry": None,
         "zoning_type": "R-2",
         "kodszn": "R-2",
@@ -31,6 +33,7 @@ ROWS = [
         "master_kdb": None,
     },
     {
+        "id": 3,
         "geometry": "not json",
         "zoning_type": "R-2",
         "kodszn": "R-2",
@@ -40,6 +43,7 @@ ROWS = [
     },
     # Unknown zone code, no building data: default colour, height and KDB.
     {
+        "id": 4,
         "geometry": (
             '{"type":"MultiPolygon","coordinates":[[[[115.3,-8.5],[115.31,-8.51],[115.3,-8.5]]]]}'
         ),
