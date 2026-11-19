@@ -1277,6 +1277,36 @@ async def test_d18_the_same_apply_again_then_a_dry_run_are_already_detached_and_
 
 
 @pytest.mark.asyncio
+async def test_d18_a_repeat_of_the_same_list_in_another_order_is_already_detached(
+    client, conn, clients
+):
+    # W(d) compares the SORTED list: the order a request sends is not part of the request
+    s = await seed_owner(conn)
+    k, d = owner_keys()
+    listed = owner_docs()
+    first = await post(client, req(k, d, sorted(listed)))
+    (h,) = await history(conn)
+    t = h["to_id"]
+    assert first.json() == detached(s, t)
+    other_order = sorted(listed, reverse=True)
+    assert other_order != list(h["moved_documents"])
+    # an apply sent unsorted, repeated sorted
+    s2 = await seed_owner(conn, 4242011, docs=(1, 2, 3))
+    k2, d2 = owner_keys(4242011)
+    unsorted = sorted(owner_docs(4242011, (1, 2, 3)), reverse=True)
+    second = await post(client, req(k2, d2, unsorted))
+    t2 = second.json()["to_id"]
+    assert second.json() == detached(s2, t2)
+    await forget_writes(conn)
+    for dry_run in (True, False):
+        again = await post(client, req(k, d, other_order, dry_run=dry_run))
+        assert again.json() == already(s, t, dry_run), dry_run
+        again = await post(client, req(k2, d2, sorted(unsorted), dry_run=dry_run))
+        assert again.json() == already(s2, t2, dry_run), dry_run
+    assert await ledger(conn) == []
+
+
+@pytest.mark.asyncio
 async def test_d19_other_documents_two_owners_and_a_first_request_after_a_second_detachment(
     client, conn, clients
 ):
