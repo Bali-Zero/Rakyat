@@ -2,7 +2,8 @@
 POST /api/crm/related-subjects/documents/register (slice 2, documents by reference) and
 POST /api/crm/related-subjects/names/register (slice 4A, recorded names) and
 POST /api/crm/related-subjects/links/register (slice 4B, proposed client links) and
-POST /api/crm/related-subjects/merges/register (slice 4C, merges of two subjects).
+POST /api/crm/related-subjects/merges/register (slice 4C, merges of two subjects) and
+POST /api/crm/related-subjects/identifiers/detach (slice 4D, one key moved to a new record).
 
 Auth: scoped ``X-CRM-Write-Key`` plus ``RELATED_SUBJECT_REGISTRY_ENABLED`` (default off, 503).
 
@@ -39,6 +40,7 @@ from pydantic_core import PydanticCustomError
 
 from backend.app.dependencies import get_database_pool
 from backend.app.deps.crm_service_write import verify_related_subject_write
+from backend.services.crm.related_detach import DetachInput, detach_identifier
 from backend.services.crm.related_documents import (
     DocumentInput,
     DocumentsInput,
@@ -557,6 +559,69 @@ class RelatedMergesRegisterRequest(_Strict):
         )
 
 
+# ── slice 4D: detachments ─────────────────────────────────────────────────────
+
+# Slice 4D has closed lists of its own; the lists above are not widened.
+_DETACH_LOC = frozenset(
+    {
+        "body",
+        "owner",
+        "detach",
+        "kind",
+        "identifiers",
+        "type",
+        "value",
+        "documents",
+        "basis",
+        "evidence",
+        "plan_sha256",
+        "files",
+        "dry_run",
+    }
+)
+_DETACH_CODE = _MERGES_CODE | {
+    "duplicate_document",
+    "detach_not_in_owner",
+    "owner_keeps_no_identifier",
+}
+_DETACH_INDEX_LIMIT = {"identifiers": MAX_KEYS, "documents": MAX_DOCUMENTS}
+
+_ContentHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+class RelatedDetachRequest(_Strict):
+    owner: _SubjectKeys
+    detach: _KeyIn
+    documents: Annotated[list[_ContentHash], Field(max_length=MAX_DOCUMENTS)]
+    basis: Literal["nik_birth_date"]
+    evidence: _MergeEvidence
+    dry_run: StrictBool = True
+
+    @model_validator(mode="after")
+    def _detach_fits_owner(self) -> RelatedDetachRequest:
+        if len(set(self.documents)) != len(self.documents):
+            raise PydanticCustomError("duplicate_document", "duplicate document")
+        keys = {i.key for i in self.owner.prepared()}
+        if self._detach_key() not in keys:
+            raise PydanticCustomError("detach_not_in_owner", "detach not in owner")
+        if len(keys) == 1:
+            raise PydanticCustomError("owner_keeps_no_identifier", "owner keeps no identifier")
+        return self
+
+    def _detach_key(self) -> tuple[str, str]:
+        return (self.detach.type, canonicalize(self.detach.type, self.detach.value))
+
+    def to_input(self) -> DetachInput:
+        return DetachInput(
+            kind=self.owner.kind,
+            identifiers=self.owner.prepared(),
+            detach=self._detach_key(),
+            documents=tuple(sorted(self.documents)),
+            basis=self.basis,
+            evidence=self.evidence.model_dump(),
+        )
+
+
 # Fixed answers: the whole failure surface is these constants. No status, code or text taken
 # from an exception or from the request ever reaches an answer.
 _ANSWER_BODIES: dict[str, bytes] = {
@@ -668,6 +733,22 @@ def _invalid_merges(errors: list[dict[str, Any]]) -> Response:
                 loc.append(part if part in _MERGES_LOC else "_")
         code = err.get("type")
         items.append({"loc": loc, "code": code if code in _MERGES_CODE else "invalid"})
+    return _fixed(422, items)
+
+
+def _invalid_detach(errors: list[dict[str, Any]]) -> Response:
+    """422 body of the detach route: closed lists of its own, never an input or a message."""
+    items = []
+    for err in errors[:50]:
+        loc: list[Any] = []
+        for part in err.get("loc", ()):
+            limit = _DETACH_INDEX_LIMIT.get(loc[-1]) if loc else None
+            if isinstance(part, int) and not isinstance(part, bool):
+                loc.append(part if limit is not None and 0 <= part < limit else "_")
+            else:
+                loc.append(part if part in _DETACH_LOC else "_")
+        code = err.get("type")
+        items.append({"loc": loc, "code": code if code in _DETACH_CODE else "invalid"})
     return _fixed(422, items)
 
 
@@ -825,4 +906,26 @@ async def register_related_subject_merge(
         )
     async with db_pool.acquire() as conn:
         result = await record_merge(conn, payload.to_input(), dry_run=payload.dry_run)
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.post("/identifiers/detach", response_model=None)
+async def detach_related_subject_identifier(
+    request: Request,
+    _actor: str = Depends(verify_related_subject_write),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Response:
+    """Move one key and the listed documents of a person record to a new record (dry run by
+    default). Answers carry ids only."""
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _invalid_detach([{"loc": ("body",), "type": "too_long"}])
+    try:
+        payload = RelatedDetachRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        return _invalid_detach(
+            exc.errors(include_input=False, include_context=False, include_url=False)
+        )
+    async with db_pool.acquire() as conn:
+        result = await detach_identifier(conn, payload.to_input(), dry_run=payload.dry_run)
     return JSONResponse(status_code=200, content=result)
