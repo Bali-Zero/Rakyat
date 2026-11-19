@@ -46,6 +46,7 @@ export const inboxItem = (
   txn_date: "2026-01-05",
   amount_idr: 500000,
   description: "TRANSFER CONTOH",
+  company_key: null,
   light: "yellow",
   open_candidates: 0,
   open_strong: 0,
