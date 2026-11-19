@@ -3044,6 +3044,24 @@ async def test_d17_after_every_t1_outcome_only_the_rows_the_ledger_names_changed
         "11_internal_error": 500,
     }.get(outcome, 200)
     assert resp.status_code == expected_status, resp.text
+    t = None
+    if outcome in ("8_already_detached", "10_detached"):
+        (h,) = await history(conn)
+        t = h["to_id"]
+    expected_body = {
+        "1_flag_off": {"detail": "registry_unavailable"},
+        "2_no_key": {"detail": "unauthorized"},
+        "3_database_error": {"detail": "database_error"},
+        "4_too_long": _validation([(["body"], "too_long")]),
+        "5_invalid": _validation([(["basis"], "literal_error")]),
+        "6_none_owned": not_registered("none_owned"),
+        "7_document_not_on_owner": refused("document_not_on_owner", s),
+        "8_already_detached": already(s, t),
+        "9_would_detach": would(s),
+        "10_detached": detached(s, t),
+        "11_internal_error": {"detail": "internal_error"},
+    }[outcome]
+    assert resp.json() == expected_body, (outcome, resp.text)
     log = await ledger(conn)
     if outcome == "10_detached":
         assert {(e[0], e[1]) for e in log} == DETACH_WRITES
