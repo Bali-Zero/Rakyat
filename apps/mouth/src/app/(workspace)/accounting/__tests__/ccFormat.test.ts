@@ -23,9 +23,42 @@ describe("control-centre date formats", () => {
   });
 
   it("shows invalid strings raw and missing values as empty", () => {
-    expect(ccD("2026-02-30")).toBe("2026-02-30");
-    expect(ccMon("not-a-date")).toBe("");
-    expect(ccShort("not-a-date")).toBe("not-a-date");
-    expect(ccFull(null)).toBe("");
+    expect(ccD("not-a-date"), "D: invalid string").toBe("not-a-date");
+    expect(ccD("2026-02-30"), "D: impossible date").toBe("2026-02-30");
+    expect(ccD(null), "D: null").toBe("");
+    expect(ccD(undefined), "D: undefined").toBe("");
+
+    expect(ccMon("not-a-date"), "MON: invalid string").toBe("");
+    expect(ccMon("2026-02-30"), "MON: impossible date").toBe("");
+    expect(ccMon(null), "MON: null").toBe("");
+    expect(ccMon(undefined), "MON: undefined").toBe("");
+
+    expect(ccShort("not-a-date"), "SHORT: invalid string").toBe("not-a-date");
+    expect(ccShort("2026-02-30"), "SHORT: impossible date").toBe("2026-02-30");
+    expect(ccShort(null), "SHORT: null").toBe("");
+    expect(ccShort(undefined), "SHORT: undefined").toBe("");
+
+    expect(ccDayDate("not-a-date"), "DAYDATE: invalid string").toBe(
+      "not-a-date",
+    );
+    expect(ccDayDate("2026-02-30"), "DAYDATE: impossible date").toBe(
+      "2026-02-30",
+    );
+    expect(ccDayDate(null), "DAYDATE: null").toBe("");
+    expect(ccDayDate(undefined), "DAYDATE: undefined").toBe("");
+
+    expect(ccFull("not-a-date"), "FULL: invalid string").toBe("not-a-date");
+    expect(ccFull("2026-02-30"), "FULL: impossible date").toBe("2026-02-30");
+    expect(ccFull(null), "FULL: null").toBe("");
+    expect(ccFull(undefined), "FULL: undefined").toBe("");
+
+    expect(ccInv("not-a-date", "2026-11-16"), "INV: invalid string").toBe(
+      "not-a-date",
+    );
+    expect(ccInv("2026-02-30", "2026-11-16"), "INV: impossible date").toBe(
+      "2026-02-30",
+    );
+    expect(ccInv(null, "2026-11-16"), "INV: null").toBe("");
+    expect(ccInv(undefined, "2026-11-16"), "INV: undefined").toBe("");
   });
 });
