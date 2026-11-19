@@ -38,9 +38,12 @@ function declaredProperties(source: string): Set<string> {
 
 function referencedVariables(source: string): string[] {
   return [
-    ...Array.from(source.matchAll(/var\((--[\w-]+)\)/g), (match) => match[1]),
     ...Array.from(
-      source.matchAll(/\b[a-z][\w-]*-\((--[\w-]+)\)/g),
+      source.matchAll(/var\(\s*(--[\w-]+)(?:\s*,[^)]*)?\)/g),
+      (match) => match[1],
+    ),
+    ...Array.from(
+      source.matchAll(/\b[a-z][\w-]*-\((?:[\w-]+:)?(--[\w-]+)\)/g),
       (match) => match[1],
     ),
   ];
@@ -105,7 +108,7 @@ describe("control-centre palette boundary", () => {
     const family =
       /(?<![\w-])(?:bg|text|border|ring|divide|fill|stroke)-(?:card|muted|muted-foreground|foreground|background|popover|primary|secondary|accent|destructive|border|input)(?![\w-])/;
     const namedColour =
-      /(?<![\w-])(?:text-white|bg-black|(?:text|bg|border|ring|fill|stroke|from|to|via|outline|decoration|divide|placeholder|caret|accent|shadow)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3})(?![\w-])/;
+      /(?<![\w-])(?:text|bg|border|ring|fill|stroke|from|to|via|outline|decoration|divide|placeholder|caret|accent|shadow)(?:-[trblxyse])?-(?:white|black|(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3})(?![\w-])/;
     for (const { name, source } of colourFiles) {
       expect(source, name).not.toMatch(/#[\da-f]{3,8}|rgba?\(|hsla?\(/i);
       expect(source, name).not.toMatch(family);

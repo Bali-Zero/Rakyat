@@ -1252,9 +1252,57 @@ describe("ported reconciliation contract", () => {
   });
 
   it("44: ignore counts code points after collapsing whitespace", async () => {
-    for (const [reason, expected, checksThresholds] of [
-      ["  🧾   ok ", "🧾 ok", true],
-      ["  a  \t b ", "a b", false],
+    const reasonAtLimit = "😀".repeat(200);
+    const atLimit = render(
+      <ReconciliationInbox
+        onConfirmed={vi.fn()}
+        doneVersion={0}
+        onOpenCashout={vi.fn()}
+      />,
+    );
+    await ready();
+    const atLimitInput = await openIgnore();
+    const atLimitSend = screen.getByRole("button", {
+      name: "Ignore transfer",
+    });
+    fireEvent.change(atLimitInput, { target: { value: "😀😀" } });
+    expect(atLimitSend).toBeDisabled();
+    fireEvent.change(atLimitInput, { target: { value: "😀😀😀" } });
+    expect(atLimitSend).toBeEnabled();
+    fireEvent.change(atLimitInput, { target: { value: reasonAtLimit } });
+    expect(atLimitSend).toBeEnabled();
+    fireEvent.click(atLimitSend);
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(1));
+    expect(api.ignoreTransaction).toHaveBeenCalledWith({
+      bank_txn_id: 1,
+      reason: reasonAtLimit,
+    });
+    atLimit.unmount();
+
+    api.ignoreTransaction.mockClear();
+    const overLimit = render(
+      <ReconciliationInbox
+        onConfirmed={vi.fn()}
+        doneVersion={0}
+        onOpenCashout={vi.fn()}
+      />,
+    );
+    await ready();
+    const overLimitInput = await openIgnore();
+    const overLimitSend = screen.getByRole("button", {
+      name: "Ignore transfer",
+    });
+    fireEvent.change(overLimitInput, {
+      target: { value: "😀".repeat(201) },
+    });
+    expect(overLimitSend).toBeDisabled();
+    fireEvent.click(overLimitSend);
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
+    overLimit.unmount();
+
+    for (const [reason, expected] of [
+      ["  🧾   ok ", "🧾 ok"],
+      ["  a  \t b ", "a b"],
     ] as const) {
       api.ignoreTransaction.mockClear();
       const { unmount } = render(
@@ -1267,18 +1315,6 @@ describe("ported reconciliation contract", () => {
       await ready();
       const input = await openIgnore();
       const send = screen.getByRole("button", { name: "Ignore transfer" });
-      if (checksThresholds) {
-        fireEvent.change(input, { target: { value: "😀😀" } });
-        expect(send).toBeDisabled();
-        fireEvent.change(input, { target: { value: "😀😀😀" } });
-        expect(send).toBeEnabled();
-        fireEvent.change(input, { target: { value: "😀".repeat(200) } });
-        expect(send).toBeEnabled();
-        fireEvent.change(input, { target: { value: "😀".repeat(201) } });
-        expect(send).toBeDisabled();
-        fireEvent.click(send);
-        expect(api.ignoreTransaction).not.toHaveBeenCalled();
-      }
       fireEvent.change(input, { target: { value: reason } });
       expect(send).toBeEnabled();
       fireEvent.click(send);
@@ -1932,6 +1968,38 @@ describe("ported reconciliation contract", () => {
     await waitFor(() => {
       expect(reason).toBeEnabled();
       expect(cancel).toBeEnabled();
+    });
+  });
+
+  it("70: confirming a hand-picked invoice overrides the suggested invoice", async () => {
+    api.getMatchCandidates.mockResolvedValue({
+      ...candidatesFor(1),
+      candidates: [openOne, openTwo],
+    });
+    renderInbox();
+    await ready();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another" }),
+    );
+    fireEvent.click(
+      within(await screen.findByTestId("cc-cand-13")).getByRole("radio"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm payment" }));
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+    expect(api.confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
+
+    await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledWith({
+      bank_txn_id: 1,
+      practice_id: 23,
+      invoice_id: 13,
+      amount_applied_idr: 500000,
+      new_status: "paid",
+      payment_method: "bank_transfer",
+      payment_reference: "ROW GREEN",
+      movement_date: "2026-01-05",
+      pph_withheld_idr: 0,
     });
   });
 });

@@ -421,10 +421,28 @@ describe("Accounting control centre", () => {
   it("renders date blocks, empty memos and raw dates", async () => {
     renderCentre();
     await ready();
-    expect(screen.getByTestId("inbox-row-1")).toHaveTextContent("16Nov");
+    const validRow = screen.getByTestId("inbox-row-1");
+    expect(validRow).toHaveTextContent("16Nov");
+    expect(within(validRow).getByText("16")).toBeInTheDocument();
+    expect(within(validRow).getByText("Nov")).toBeInTheDocument();
     fireEvent.click(tab("choose"));
-    expect(screen.getByTestId("inbox-row-5")).toHaveTextContent("raw date");
-    expect(screen.getByTestId("inbox-row-5")).toHaveTextContent("(no memo)");
+    const rawRow = screen.getByTestId("inbox-row-5");
+    expect(rawRow).toHaveTextContent("raw date");
+    expect(rawRow).toHaveTextContent("(no memo)");
+    expect((rawRow.textContent ?? "").match(/raw date/g)).toHaveLength(1);
+    expect(within(rawRow).getByText("raw date")).toHaveClass("text-xs");
+    expect(
+      Array.from(rawRow.querySelectorAll("span")).some((element) =>
+        element.classList.contains("mt-[3px]"),
+      ),
+    ).toBe(false);
+    expect(
+      Array.from(rawRow.querySelectorAll("b")).some(
+        (element) =>
+          element.classList.contains("font-serif") &&
+          element.classList.contains("text-xl"),
+      ),
+    ).toBe(false);
   });
 
   it("marks only the opened row", async () => {
