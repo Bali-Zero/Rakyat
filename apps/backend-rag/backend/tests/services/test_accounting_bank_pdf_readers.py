@@ -254,6 +254,8 @@ def test_the_csv_path_is_unchanged() -> None:
 @pytest.mark.parametrize(
     "data",
     [b"%PDF-1.4 not really a pdf", b"%PDF-", words_to_pdf([[]]), b"\xff\xfe\x00bad", b"a,b\n1,2\n"],
+    # fixed ids: a drawn PDF differs on every run, and parallel workers must collect the same names
+    ids=["not-a-pdf", "pdf-header-only", "blank-pdf", "not-utf8", "unknown-csv"],
 )
 def test_unreadable_or_unknown_files_are_a_plain_refusal(data) -> None:
     with pytest.raises(BankParseError):
