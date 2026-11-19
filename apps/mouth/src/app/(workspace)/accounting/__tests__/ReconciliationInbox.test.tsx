@@ -2256,10 +2256,6 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
     await screen.findByTestId("cc-cand-11043");
     expect(within(opened()).queryByRole("alert")).toBeNull();
     expect(opened()).not.toHaveTextContent("link target failed");
-
-    fireEvent.click(row(105));
-    await screen.findByTestId("cc-cand-11053");
-    void within(opened()).queryByText("link target failed");
   });
 
   it("75: Skip for now advances through three rows and wraps", async () => {
@@ -2331,5 +2327,206 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
     expect(opened()).toHaveTextContent("TRANSFER 108");
     expect(api.getMatchCandidates).toHaveBeenCalledTimes(1);
     expect(api.getMatchCandidates).toHaveBeenLastCalledWith(108);
+  });
+
+  it("77: confirming keeps the dialog transfer across a tab switch", async () => {
+    const initial = twelve();
+    const reload = deferred<ReturnType<typeof twelve>>();
+    api.getReconciliationInbox
+      .mockResolvedValueOnce(initial)
+      .mockReturnValueOnce(reload.promise);
+    api.getMatchCandidates.mockImplementation(async (txnId) =>
+      candidatesForTransfer(txnId),
+    );
+    const onConfirmed = renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    fireEvent.click(row(103));
+    await within(opened()).findByText("TEST-1032", { exact: false });
+    fireEvent.click(
+      within(opened()).getByRole("button", { name: "Confirm payment" }),
+    );
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+
+    fireEvent.click(tab("link"));
+    await waitFor(() =>
+      expect(tab("link")).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm paid$/ }));
+
+    await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledWith({
+      bank_txn_id: 103,
+      practice_id: 21_032,
+      invoice_id: 11_032,
+      amount_applied_idr: 1_000_103,
+      new_status: "paid",
+      payment_method: "bank_transfer",
+      payment_reference: "TRANSFER 103",
+      movement_date: "2026-02-03",
+      pph_withheld_idr: 0,
+    });
+    expect(api.linkRecorded).not.toHaveBeenCalled();
+    expect(api.ignoreTransaction).not.toHaveBeenCalled();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("cc-count-confirm")).toHaveTextContent("2"),
+    );
+    expect(screen.getByTestId("cc-count-link")).toHaveTextContent("3");
+    const transfers = within(screen.getByRole("list", { name: "Transfers" }));
+    expect(transfers.getAllByRole("listitem")).toHaveLength(3);
+    expect(row(104)).toBeInTheDocument();
+    expect(row(105)).toBeInTheDocument();
+    expect(row(106)).toBeInTheDocument();
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("78: the ignore form and hidden footer stay with the second transfer", async () => {
+    api.getReconciliationInbox.mockResolvedValueOnce(twelve());
+    api.getMatchCandidates.mockImplementation(async (txnId) =>
+      candidatesForTransfer(txnId),
+    );
+    renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    await openTab("choose", "TRANSFER 107");
+    await screen.findByTestId("cc-cand-11071");
+    fireEvent.click(row(108));
+    await screen.findByTestId("cc-cand-11081");
+    fireEvent.click(within(opened()).getByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "second transfer reason" },
+    });
+
+    expect(within(opened()).getByTestId("cc-ignore-form")).toBeInTheDocument();
+    expect(within(opened()).queryByTestId("cc-foot")).toBeNull();
+    expect(
+      within(opened()).queryByRole("button", { name: "Confirm payment" }),
+    ).toBeNull();
+    expect(
+      within(opened()).queryByRole("button", { name: "Skip for now" }),
+    ).toBeNull();
+    expect(
+      within(opened()).queryByRole("button", { name: /^Ignore$/ }),
+    ).toBeNull();
+
+    fireEvent.click(row(107));
+    await screen.findByTestId("cc-cand-11071");
+    expect(within(opened()).queryByTestId("cc-ignore-form")).toBeNull();
+    expect(within(opened()).getByTestId("cc-foot")).toBeInTheDocument();
+    expect(
+      within(opened()).getByRole("button", { name: "Confirm payment" }),
+    ).toBeInTheDocument();
+    expect(
+      within(opened()).getByRole("button", { name: "Skip for now" }),
+    ).toBeInTheDocument();
+    expect(
+      within(opened()).getByRole("button", { name: /^Ignore$/ }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(row(108));
+    const restoredForm = await within(opened()).findByTestId("cc-ignore-form");
+    expect(
+      within(restoredForm).getByLabelText("Reason for ignoring"),
+    ).toHaveValue("second transfer reason");
+    expect(within(opened()).queryByTestId("cc-foot")).toBeNull();
+  });
+
+  it("79: positive item counts keep empty No match answers in table view", async () => {
+    api.getReconciliationInbox.mockResolvedValueOnce([
+      inboxItem({
+        txn_id: 201,
+        light: "red",
+        description: "OPEN COUNT TRANSFER",
+        open_candidates: 2,
+        recorded_candidates: 0,
+      }),
+      inboxItem({
+        txn_id: 202,
+        light: "red",
+        description: "RECORDED COUNT TRANSFER",
+        open_candidates: 0,
+        recorded_candidates: 1,
+      }),
+    ]);
+    api.getMatchCandidates.mockImplementation(async (txnId) => ({
+      txn_id: txnId,
+      transfer_amount_idr: transferAmount(txnId),
+      candidates: [],
+      recorded_candidates: [],
+    }));
+    renderInbox();
+
+    await screen.findByText("OPEN COUNT TRANSFER");
+    await within(opened()).findByText("Open invoices");
+    expect(opened()).not.toHaveTextContent("Nothing found");
+    expect(opened()).toHaveTextContent(
+      "2 invoices have this amount; the 0 closest are shown.",
+    );
+
+    fireEvent.click(row(202));
+    await within(opened()).findByText("Already paid");
+    expect(opened()).not.toHaveTextContent("Nothing found");
+    expect(opened()).toHaveTextContent(
+      "1 invoices have this amount; the 0 closest are shown.",
+    );
+  });
+
+  it("80: Suggested stays in the matching candidate group and situation tab", async () => {
+    const ids = [101, 104, 107, 110] as const;
+    const lights = ["green", "recorded", "yellow", "red"] as const;
+    const suggestions = new Map<
+      number,
+      ReturnType<typeof candidatesForTransfer>["candidates"][number]
+    >(ids.map((txnId) => [txnId, candidatesForTransfer(txnId).candidates[1]]));
+    api.getReconciliationInbox.mockResolvedValueOnce(
+      ids.map((txnId, index) => ({
+        ...transfer(txnId, lights[index]),
+        open_candidates: 1,
+        recorded_candidates: 1,
+        suggestion: suggestions.get(txnId)!,
+      })),
+    );
+    api.getMatchCandidates.mockImplementation(async (txnId) => {
+      const suggested = suggestions.get(txnId)!;
+      return {
+        txn_id: txnId,
+        transfer_amount_idr: transferAmount(txnId),
+        candidates: [suggested],
+        recorded_candidates: [suggested],
+      };
+    });
+    renderInbox();
+    await screen.findByText("TRANSFER 101");
+
+    const suggestedIn = (heading: "Open invoices" | "Already paid") => {
+      const group = within(opened())
+        .getByRole("heading", { name: heading })
+        .closest("div");
+      if (!group) throw new Error(`Missing ${heading} group`);
+      return within(group).queryAllByText("Suggested");
+    };
+
+    fireEvent.click(
+      await within(opened()).findByRole("button", { name: "Choose another" }),
+    );
+    expect(suggestedIn("Open invoices")).toHaveLength(1);
+    expect(suggestedIn("Already paid")).toHaveLength(0);
+
+    await openTab("link", "TRANSFER 104");
+    fireEvent.click(
+      await within(opened()).findByRole("button", { name: "Choose another" }),
+    );
+    expect(suggestedIn("Open invoices")).toHaveLength(0);
+    expect(suggestedIn("Already paid")).toHaveLength(1);
+
+    await openTab("choose", "TRANSFER 107");
+    await within(opened()).findByRole("heading", { name: "Open invoices" });
+    expect(within(opened()).queryAllByText("Suggested")).toHaveLength(0);
+
+    await openTab("nomatch", "TRANSFER 110");
+    await within(opened()).findByRole("heading", { name: "Open invoices" });
+    expect(within(opened()).queryAllByText("Suggested")).toHaveLength(0);
   });
 });

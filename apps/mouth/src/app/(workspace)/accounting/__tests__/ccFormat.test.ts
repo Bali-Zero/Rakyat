@@ -22,6 +22,15 @@ describe("control-centre date formats", () => {
     expect(ccInv("2025-11-06", "2026-11-16")).toBe("6 Nov 2025");
   });
 
+  it("84: every one-digit day format stays unpadded", () => {
+    expect(ccD("2026-11-06")).toBe("6");
+    expect(ccShort("2026-11-06")).toBe("6 Nov");
+    expect(ccDayDate("2026-11-06")).toBe("Fri 6 Nov");
+    expect(ccFull("2026-11-06")).toBe("Fri 6 Nov 2026");
+    expect(ccInv("2026-11-06", "2026-11-16")).toBe("6 Nov");
+    expect(ccInv("2025-11-06", "2026-11-16")).toBe("6 Nov 2025");
+  });
+
   it("shows invalid strings raw and missing values as empty", () => {
     expect(ccD("not-a-date"), "D: invalid string").toBe("not-a-date");
     expect(ccD("2026-02-30"), "D: impossible date").toBe("2026-02-30");

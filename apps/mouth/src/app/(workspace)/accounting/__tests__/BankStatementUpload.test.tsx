@@ -273,4 +273,39 @@ describe("BankStatementUpload", () => {
     expect(doImport).not.toHaveBeenCalled();
     expect(input()).toBeEnabled();
   });
+
+  it("81: the upload panel exists only for a phase, message, report or outcome", async () => {
+    const heldPreview = deferred<ReturnType<typeof previewFixture>>();
+    preview.mockReturnValueOnce(heldPreview.promise);
+    render(<BankStatementUpload onImported={vi.fn()} />);
+    expect(screen.queryByRole("region", { name: "Bank statement" })).toBeNull();
+
+    choose(csv());
+    const previewPanel = await screen.findByRole("region", {
+      name: "Bank statement",
+    });
+    expect(previewPanel).toHaveTextContent("Reading statement…");
+
+    await act(async () => heldPreview.reject(new Error("preview message")));
+    expect(screen.getByRole("alert")).toHaveTextContent("preview message");
+    expect(
+      screen.getByRole("region", { name: "Bank statement" }),
+    ).toBeInTheDocument();
+
+    preview.mockResolvedValueOnce(previewFixture());
+    choose(csv());
+    const importButton = await screen.findByRole("button", {
+      name: /import 3 transactions/i,
+    });
+    expect(
+      screen.getByRole("region", { name: "Bank statement" }),
+    ).toHaveTextContent("CONTOH PT");
+
+    doImport.mockResolvedValueOnce(importFixture());
+    fireEvent.click(importButton);
+    await screen.findByText("3 new transactions stored, 0 already stored.");
+    expect(
+      screen.getByRole("region", { name: "Bank statement" }),
+    ).toBeInTheDocument();
+  });
 });

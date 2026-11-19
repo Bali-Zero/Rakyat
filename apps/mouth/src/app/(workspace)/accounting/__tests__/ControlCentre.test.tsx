@@ -9,6 +9,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
 import { ReconciliationInbox } from "../_components/ReconciliationInbox";
+import { CcAmount } from "../_components/CcAmount";
 import {
   candidate,
   importFixture,
@@ -788,6 +789,35 @@ describe("Accounting control centre", () => {
     expect(screen.getByTestId("cc-bank-date")).toHaveTextContent(
       "Bank data date could not be loaded.",
     );
+  });
+
+  it("82: a non-array bank response is failed and keeps the empty inbox calm", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    api.getBankTransactions.mockResolvedValueOnce({} as never);
+    renderCentre();
+
+    expect(await screen.findByTestId("cc-calm")).toBeInTheDocument();
+    expect(screen.getByTestId("cc-bank-date")).toHaveTextContent(
+      "Bank data date could not be loaded.",
+    );
+    expect(screen.queryByTestId("cc-dayone")).toBeNull();
+  });
+
+  it("83: negative amounts put the minus before Rp and positive amounts do not", () => {
+    render(
+      <div>
+        <span data-testid="negative-amount">
+          <CcAmount value={-1234} />
+        </span>
+        <span data-testid="positive-amount">
+          <CcAmount value={1234} />
+        </span>
+      </div>,
+    );
+
+    expect(screen.getByTestId("negative-amount")).toHaveTextContent("-Rp1.234");
+    expect(screen.getByTestId("positive-amount")).toHaveTextContent("Rp1.234");
+    expect(screen.getByTestId("positive-amount")).not.toHaveTextContent("-");
   });
 
   it("hides the bank line while its request is loading", async () => {

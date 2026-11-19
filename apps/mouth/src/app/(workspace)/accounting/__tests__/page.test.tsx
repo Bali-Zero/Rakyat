@@ -66,6 +66,13 @@ beforeEach(() => {
 });
 
 describe("AccountingPage", () => {
+  it("86: the control-centre container carries the P2 padding classes", async () => {
+    const { container } = render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    expect(container.firstElementChild).toHaveClass("px-4", "pb-2", "pt-1.5");
+    expect(container.firstElementChild).not.toHaveClass("p-6");
+  });
+
   it("U6: opens on the control centre and can enter and leave cashout", async () => {
     render(<AccountingPage />);
     expect(await screen.findByText("CONTOH TRANSFER")).toBeInTheDocument();
