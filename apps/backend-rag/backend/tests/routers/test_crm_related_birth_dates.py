@@ -2257,7 +2257,7 @@ def _defence_sd(mp):
 
 
 def _defence_ib(mp):
-    mp.setattr(birth_module, "_HISTORY_SQL", "SELECT 1 WHERE false")
+    mp.setattr(birth_module, "_HISTORY_SQL", "SELECT 1 WHERE false AND $1::bigint IS NOT NULL")
 
 
 def submitted_values(data) -> list[str]:
