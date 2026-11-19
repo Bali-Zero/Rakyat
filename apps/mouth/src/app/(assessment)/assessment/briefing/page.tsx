@@ -90,7 +90,8 @@ export default function BriefingPage() {
                 berpikir, menjawab, dan mengambil keputusan
               </strong>{" "}
               tanpa intervensi manusia untuk 70% operasi harian. Sistem itu
-              bernama <strong className="text-accent-red-brand">Nuzantara</strong>.
+              bernama{" "}
+              <strong className="text-accent-red-brand">Nuzantara</strong>.
             </p>
           </section>
 
