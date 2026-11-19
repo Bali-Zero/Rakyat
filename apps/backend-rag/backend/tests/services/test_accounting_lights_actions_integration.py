@@ -9,7 +9,6 @@ written. All names and amounts are invented.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
 from datetime import date
@@ -28,7 +27,7 @@ from backend.services.accounting.reconcile_service import (
     reopen_transaction,
 )
 from backend.tests.services.test_accounting_reconcile_integration import (
-    _base_dsn,
+    _connect,
     _drop_db,
     _fresh_db,
 )
@@ -118,8 +117,14 @@ async def db():
         await _drop_db(conn, dbname, user)
 
 
-def _ids(raw) -> list:
-    return json.loads(raw) if raw is not None else None
+def _ids(raw) -> list | None:
+    """The invoice list exactly as the production codec decodes it: a list, never a string.
+
+    It used to be `json.loads(raw)`, which turned the JSON string "[5]" that production
+    stored into [5] and so hid the double encoding.
+    """
+    assert raw is None or isinstance(raw, list), f"invoice_ids decoded as {type(raw).__name__}"
+    return raw
 
 
 # ── A1 link ──────────────────────────────────────────────────────────────────────────────
@@ -603,9 +608,9 @@ class _Conns:
         self.conn, self.dbname = conn, dbname
 
     async def __aenter__(self):
-        self.holder = await asyncpg.connect(_base_dsn(), database=self.dbname)
-        self.a = await asyncpg.connect(_base_dsn(), database=self.dbname)
-        self.b = await asyncpg.connect(_base_dsn(), database=self.dbname)
+        self.holder = await _connect(self.dbname)
+        self.a = await _connect(self.dbname)
+        self.b = await _connect(self.dbname)
         return self
 
     async def __aexit__(self, *exc):

@@ -15,7 +15,6 @@ Cash-basis, IDR. The accountant has already chosen the match; this records it.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -268,7 +267,9 @@ async def confirm_payment(
             RETURNING id
             """,
             bank_txn_id,
-            json.dumps([invoice_id] if invoice_id is not None else []),
+            # A list, never json.dumps(...): the pool's jsonb codec encodes it, and a
+            # pre-encoded string would be stored as a JSON string scalar (core/pg_json_codec.py).
+            [invoice_id] if invoice_id is not None else [],
             practice_id,
             cashout_id,
             confirmed_by,
@@ -406,7 +407,7 @@ async def link_recorded(
             RETURNING id
             """,
             bank_txn_id,
-            json.dumps([invoice_id]),
+            [invoice_id],  # a list: see confirm_payment
             practice_id,
             linked_by,
             LINK_NOTE,
