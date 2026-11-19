@@ -443,7 +443,8 @@ export function ReconciliationInbox({
           rows={rows}
           openedId={opened.txn_id}
           onOpen={(txnId) => {
-            if (txnId !== opened.txn_id) setSelectedTxn(txnId);
+            // A dialog or a pending write acts on the opened transfer: it stays opened.
+            if (txnId !== opened.txn_id && lock.isFree()) setSelectedTxn(txnId);
           }}
         />
         <OpenedTransfer

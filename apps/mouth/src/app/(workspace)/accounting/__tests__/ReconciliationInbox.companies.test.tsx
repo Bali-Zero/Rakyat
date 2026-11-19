@@ -196,7 +196,7 @@ describe("the companies strip", () => {
   });
 });
 
-describe("the companies strip, corrections of gate round 1", () => {
+describe("the companies strip, corrections of the gate rounds", () => {
   it("choosing the other accounts shows their transfers", async () => {
     api.getCompanies.mockResolvedValue([
       ...COMPANIES,
@@ -250,6 +250,45 @@ describe("the companies strip, corrections of gate round 1", () => {
       expect(card(key)).toBeDisabled();
     fireEvent.click(card("co_dua"));
     expect(card("all")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("another transfer cannot be opened while the confirm dialog is open", async () => {
+    const pick = candidate({ invoice_id: 11, practice_id: 21 });
+    api.getReconciliationInbox.mockResolvedValue(
+      [1, 2].map((txn_id) =>
+        inboxItem({
+          txn_id,
+          light: "green",
+          description: `HIJAU ${txn_id}`,
+          company_key: "co_satu",
+          open_candidates: 1,
+          suggestion: pick,
+        }),
+      ),
+    );
+    api.confirm.mockResolvedValue({} as never);
+    renderInbox();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm payment" }),
+    );
+    await screen.findByText("Confirm payment match");
+    expect(screen.getByTestId("inbox-row-1")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    fireEvent.click(screen.getByTestId("inbox-row-2"));
+    expect(screen.getByTestId("inbox-row-1")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(screen.getByTestId("inbox-row-2")).not.toHaveAttribute(
+      "aria-current",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Confirm (paid|partial)$/ }),
+    );
+    await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
+    expect(api.confirm.mock.calls[0][0].bank_txn_id).toBe(1);
   });
 });
 
