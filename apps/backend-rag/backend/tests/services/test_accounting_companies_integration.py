@@ -112,6 +112,18 @@ async def test_a_longer_number_holding_a_companys_digits_is_another_account(db) 
     assert (got[OTHER_KEY]["statements"], got[OTHER_KEY]["to_reconcile"]) == (4, 4)
 
 
+async def test_a_statement_without_an_account_number_is_other(db) -> None:
+    sid = await _statement(db, None, date(2026, 11, 4))
+    await _txn(db, sid)
+    got = _by_key(await load_companies(db))
+    other = got[OTHER_KEY]
+    assert (other["statements"], other["to_reconcile"], other["data_through"]) == (
+        1,
+        1,
+        "2026-11-04",
+    )
+
+
 async def test_a_statement_without_a_period_end_counts_but_dates_nothing(db) -> None:
     first = ENTITIES[KEYS[0]]
     sid = await _statement(db, first.bank_account_number, None)

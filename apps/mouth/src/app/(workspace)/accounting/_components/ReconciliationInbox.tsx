@@ -493,16 +493,14 @@ export function ReconciliationInbox({
           onConfirmed();
         }}
       />
-      {view !== "dayone" && (
-        <CompanyStrip
-          companies={companies}
-          selected={company}
-          locked={lock.locked}
-          onSelect={(key) => {
-            if (lock.isFree()) setCompany(key);
-          }}
-        />
-      )}
+      <CompanyStrip
+        companies={companies}
+        selected={company}
+        locked={lock.locked}
+        onSelect={(key) => {
+          if (lock.isFree()) setCompany(key);
+        }}
+      />
       {view !== "dayone" && (
         <ReconciliationTabs
           active={activeTab}

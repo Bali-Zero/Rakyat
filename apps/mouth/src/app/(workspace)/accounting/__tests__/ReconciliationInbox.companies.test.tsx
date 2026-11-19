@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   accountingApi,
@@ -289,6 +295,60 @@ describe("the companies strip, corrections of the gate rounds", () => {
     );
     await waitFor(() => expect(api.confirm).toHaveBeenCalledTimes(1));
     expect(api.confirm.mock.calls[0][0].bank_txn_id).toBe(1);
+  });
+});
+
+describe("the companies strip, corrections of the gate on the spec", () => {
+  it("shows every company before the first statement is imported", async () => {
+    api.getReconciliationInbox.mockResolvedValue([]);
+    api.getCompanies.mockResolvedValue(
+      COMPANIES.map((c) => ({
+        ...c,
+        data_through: null,
+        statements: 0,
+        to_reconcile: 0,
+      })),
+    );
+    renderInbox();
+    await screen.findByTestId("cc-dayone");
+    for (const key of ["all", "co_satu", "co_dua", "co_tiga"])
+      expect(card(key)).toBeInTheDocument();
+    expect(card("co_satu")).toHaveTextContent("No statement yet");
+  });
+
+  it("while a write is pending the company and the opened transfer cannot change", async () => {
+    let release!: (value: unknown) => void;
+    api.ignoreTransaction.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }) as never,
+    );
+    renderInbox();
+    await screen.findAllByText("SATU A");
+    fireEvent.click(await screen.findByRole("button", { name: "Ignore" }));
+    fireEvent.change(screen.getByLabelText("Reason for ignoring"), {
+      target: { value: "not a client payment" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ignore transfer" }));
+    await waitFor(() => expect(api.ignoreTransaction).toHaveBeenCalledTimes(1));
+    const opened = api.ignoreTransaction.mock.calls[0][0].bank_txn_id;
+    for (const key of ["all", "co_satu", "co_dua", "co_tiga"])
+      expect(card(key)).toBeDisabled();
+    fireEvent.click(card("co_dua"));
+    expect(card("all")).toHaveAttribute("aria-checked", "true");
+    const other = opened === 1 ? 3 : 1;
+    fireEvent.click(screen.getByTestId(`inbox-row-${other}`));
+    expect(screen.getByTestId(`inbox-row-${opened}`)).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    await act(async () => {
+      release({
+        bank_txn_id: opened,
+        reconciled_status: "ignored",
+        reconciliation_log_id: 1,
+      });
+    });
   });
 });
 
