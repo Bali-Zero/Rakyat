@@ -3802,10 +3802,22 @@ QRAW1, QRAW2 = passport(7474031), passport(7474032)  # probes of the two raw bod
 NAME_OWNER, NAME_BYSTANDER = "ZzProbeOwnerName", "ZzProbeBystander"
 STORED_DATE = DOB.isoformat()  # the owner's stored birth date
 FP_OWN, FP_W = keys_sha256(K_OWN), keys_sha256(K_W)  # the history rows' key digests
+# "never a date" (3.2): the stored date as DDMMYY, the DDMMYY digits each probe national number
+# encodes, and each (day, month, two-digit year) the rule compares, as Python and as JSON prints it
+_PROBE_NIKS = (NO, N2B, N3, N4, NCO, NMG, NPL, NNN, NND, NIV, NMT, NWT)
+_RULE_DATES = {(DOB.day, DOB.month, DOB.year % 100)} | ({nik_date(n) for n in _PROBE_NIKS} - {None})
+DATE_PROBES = tuple(
+    sorted(
+        {DOB.strftime("%d%m%y")}
+        | {n[6:12] for n in _PROBE_NIKS}
+        | {str(x) for x in _RULE_DATES}
+        | {json.dumps(list(x)) for x in _RULE_DATES}
+    )
+)
 STORED_PROBES = (
     NAME_OWNER, NAME_BYSTANDER, STORED_DATE, FP_OWN, FP_W, H1, H2, H3, H4,
     PO, NO, PB, P2A, N2B, P3, N3, Q3, P4, N4, Q4, PCO, NCO, PMG, NMG, QPL, NPL,
-    NNN, PNN, PND, NND, PIV, NIV, PMT, NMT, PWF, NWT,
+    NNN, PNN, PND, NND, PIV, NIV, PMT, NMT, PWF, NWT, *DATE_PROBES,
 )  # fmt: skip
 SENTINEL = "d30-sentinel"
 
@@ -4223,6 +4235,25 @@ def test_d31_teeth_a_hash_its_digit_form_and_a_key_digest_are_caught_in_a_log_re
     for value in (H1, H1.upper(), _digits(H1), FP_OWN, STORED_DATE, _digits(STORED_DATE)):
         assert privacy.leaks(forbidden, privacy.log_surface([_record(extra={"v": value})])), value
     assert privacy.leaks(forbidden, privacy.log_surface([_record()])) == []
+
+
+def test_d31_teeth_a_date_the_rule_reads_is_caught_in_a_log_line_and_in_an_answer():
+    assert set(DATE_PROBES) <= set(STORED_PROBES)
+    assert DATE_PROBES == (
+        "(12, 3, 77)", "(15, 6, 80)", "000377", "120377", "150680", "[12, 3, 77]", "[15, 6, 80]",
+    )  # fmt: skip
+    forbidden = privacy.probe_forms(DATE_PROBES)
+    owner_date = (DOB.day, DOB.month, DOB.year % 100)
+    for value in (nik_date(NO), owner_date):  # a line that formats the compared tuple
+        line = logging.LogRecord("zz.teeth", logging.INFO, __file__, 1, "zz %s", (value,), None)
+        assert privacy.leaks(forbidden, privacy.log_surface([line])), value
+    for value in (DOB.strftime("%d%m%y"), NO[6:12], NIV[6:12]):
+        assert privacy.leaks(forbidden, privacy.log_surface([_record(extra={"v": value})])), value
+    for answer in ({"encoded": list(nik_date(NO))}, {"dob": DOB.strftime("%d%m%y")}):
+        assert privacy.leaks(forbidden, privacy.response_surface(json.dumps(answer))), answer
+    assert privacy.leaks(forbidden, privacy.log_surface([_record()])) == []
+    clean = json.dumps({"outcome": "detached", "from_id": 2, "to_id": 16, "dry_run": False})
+    assert privacy.leaks(forbidden, privacy.response_surface(clean)) == []
 
 
 def test_d31_teeth_an_undeclared_run_in_a_raw_body_is_caught():
