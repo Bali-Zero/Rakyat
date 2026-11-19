@@ -521,6 +521,34 @@ def test_bni_a_second_page_printing_another_account_is_refused() -> None:
         parse_and_preview_statement(words_to_pdf(_bni_two_pages("0000000002")))
 
 
+def test_bni_a_second_account_block_on_the_same_page_is_refused() -> None:
+    first = _bni(B_ROWS[:2])
+    below = [
+        dataclasses.replace(w, top=w.top + 400)
+        for w in _bni(B_ROWS[2:], start_no=3, table_header=False, account="0000000002")
+    ]
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages([first + below])
+
+
+def test_bni_a_second_account_line_spelt_differently_is_refused() -> None:
+    first = _bni(B_ROWS)
+    y = max(w.top for w in first) + 40
+    other = [
+        Word("Account", 97, 130, y),
+        Word("No.", 133, 150, y),
+        Word(":", 202, 205, y),
+        Word("0000000002", 213, 270, y),
+    ]
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages([first + other])
+
+
+def test_bni_a_page_printing_the_same_account_in_another_currency_is_refused() -> None:
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages(_bni_two_pages(currency="USD"))
+
+
 def test_bni_a_description_carried_over_a_page_break_never_lands_on_another_row() -> None:
     rows = [(*B_ROWS[0][:3], "ALPHA\nA1\nA2\nA3", *B_ROWS[0][4:]), *B_ROWS[1:]]
     # the same rows, with the last line of row 1 printed at the top of page 2, above row 2's number

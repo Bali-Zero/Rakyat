@@ -585,6 +585,8 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
 _BNI_DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
 _BNI_TIME_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}")
 _BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*?)\s*\(\s*([A-Za-z]*)\s*\)")
+_BNI_ANY_ACCOUNT_RE = re.compile(r"\bAccount(?:\s+No\.?)?\s*:\s*(\d{6,})")
+_BNI_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]*)\s*\)")
 _BNI_AMT = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})"
 _BNI_CREDIT, _BNI_DEBIT = ("C", "K"), ("D",)
 _BNI_STATEMENT_REFUSED = (
@@ -747,17 +749,26 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
         flag_h, amt_h, _ = cols
         # the header row repeats anywhere on later pages: only page 1's marks where rows start
         top0 = flag_h.top + 2 if page_no == 0 else -1.0
-        for line in _lines(words):  # every page that prints an account must print the first one
-            m = _BNI_ACCOUNT_RE.search(" ".join(w.text for w in line))
-            if m and re.search(r"Account", " ".join(w.text for w in line)):
-                seen = (m.group(1), m.group(2).strip(), m.group(3).upper())
-                if account is None:
-                    account = seen
-                elif seen[0] != account[0] or seen[2] != account[2]:
-                    raise BankParseError(
-                        "file holds more than one account: upload one statement per file"
-                    )
-                break
+        # every "Account : <number>" line of every page, in any spelling, must print the first
+        # account's number and currency (not only a page's first line)
+        for line in _lines(words):
+            text = " ".join(w.text for w in line)
+            any_account = _BNI_ANY_ACCOUNT_RE.search(text)
+            if not any_account:
+                continue
+            m = _BNI_ACCOUNT_RE.search(text)
+            if account is None:
+                if not m:
+                    raise BankParseError("statement header has no account")
+                account = (m.group(1), m.group(2).strip(), m.group(3).upper())
+                continue
+            cur = _BNI_CURRENCY_RE.search(text)
+            if any_account.group(1) != account[0] or (
+                (cur.group(1).upper() if cur else None) != account[2]
+            ):
+                raise BankParseError(
+                    "file holds more than one account: upload one statement per file"
+                )
         flags = sorted(
             (
                 w
