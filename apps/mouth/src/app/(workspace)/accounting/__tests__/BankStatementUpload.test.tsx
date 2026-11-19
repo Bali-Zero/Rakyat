@@ -56,7 +56,9 @@ describe("BankStatementUpload", () => {
     expect(input().getAttribute("accept")).toMatch(/\.csv/);
     expect(input().getAttribute("accept")).toMatch(/\.pdf/);
     expect(
-      screen.getByText(/CIMB Niaga CSV, Bank Mandiri PDF and Bank Permata PDF/),
+      screen.getByText(
+        /CIMB Niaga CSV, Bank Mandiri, BNI and Bank Permata PDF/,
+      ),
     ).toBeInTheDocument();
     const pdf = new File(["contoh"], "statement-0000000000.pdf", {
       type: "application/pdf",

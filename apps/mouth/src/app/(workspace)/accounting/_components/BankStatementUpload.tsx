@@ -2,7 +2,7 @@
 
 /**
  * Bank statement upload for the Reconciliation inbox: a CIMB Niaga CSV, a Bank
- * Mandiri PDF or a Bank Permata PDF (the server detects which from the content).
+ * Mandiri, BNI or Bank Permata PDF (the server detects which from the content).
  *
  * Two steps, one File: choosing a file calls preview (stores nothing) and shows
  * the report; Import then sends THE SAME File object that was previewed. Import
@@ -189,8 +189,8 @@ export function BankStatementUpload({
 
       {!panel && !hideTrigger && (
         <p className="mt-2 text-xs text-[var(--bz-text-2)]">
-          Reads CIMB Niaga CSV, Bank Mandiri PDF and Bank Permata PDF statements
-          (IDR).
+          Reads CIMB Niaga CSV, Bank Mandiri, BNI and Bank Permata PDF
+          statements (IDR).
         </p>
       )}
 
