@@ -37,7 +37,11 @@ from backend.services.accounting.bank_parser import (
     parse_and_preview_cimb_statement,
     preview_cimb_statement,
 )
-from backend.services.accounting.companies import company_key_for_account, load_companies
+from backend.services.accounting.companies import (
+    OTHER_KEY,
+    company_key_for_account,
+    load_companies,
+)
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
 from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
@@ -544,7 +548,8 @@ async def reconciliation_inbox(
             "txn_date": r["txn_date"],
             "amount_idr": int(r["amount_idr"]),
             "description": r["description"] or "",
-            "company_key": company_key_for_account(r["account_number"]),
+            # Same rule as the companies strip: an account no company owns is "other".
+            "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
         }
         for r in rows
     ]

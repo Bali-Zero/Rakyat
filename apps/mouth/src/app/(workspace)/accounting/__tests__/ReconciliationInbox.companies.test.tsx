@@ -196,6 +196,63 @@ describe("the companies strip", () => {
   });
 });
 
+describe("the companies strip, corrections of gate round 1", () => {
+  it("choosing the other accounts shows their transfers", async () => {
+    api.getCompanies.mockResolvedValue([
+      ...COMPANIES,
+      company({
+        key: "other",
+        company_name: "Other accounts",
+        bank_name: null,
+        account_number: null,
+        data_through: "2026-01-10",
+        statements: 1,
+        to_reconcile: 1,
+      }),
+    ]);
+    api.getReconciliationInbox.mockResolvedValue([
+      ...ITEMS,
+      inboxItem({
+        txn_id: 9,
+        light: "yellow",
+        description: "LAIN A",
+        company_key: "other",
+      }),
+    ]);
+    renderInbox();
+    await screen.findAllByText("SATU A");
+    fireEvent.click(card("other"));
+    expect(card("other")).toHaveAttribute("aria-checked", "true");
+    expect((await screen.findAllByText("LAIN A")).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("cc-work")).toBeInTheDocument();
+    expect(screen.queryByText("SATU A")).not.toBeInTheDocument();
+  });
+
+  it("the company cannot change while the confirm dialog is open", async () => {
+    const pick = candidate({ invoice_id: 11, practice_id: 21 });
+    api.getReconciliationInbox.mockResolvedValue([
+      inboxItem({
+        txn_id: 1,
+        light: "green",
+        description: "SATU HIJAU",
+        company_key: "co_satu",
+        open_candidates: 1,
+        suggestion: pick,
+      }),
+      ...ITEMS.slice(2),
+    ]);
+    renderInbox();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm payment" }),
+    );
+    await screen.findByText("Confirm payment match");
+    for (const key of ["all", "co_satu", "co_dua", "co_tiga"])
+      expect(card(key)).toBeDisabled();
+    fireEvent.click(card("co_dua"));
+    expect(card("all")).toHaveAttribute("aria-checked", "true");
+  });
+});
+
 describe("companyStatus", () => {
   it("names the date and what waits, or that nothing is imported", () => {
     expect(companyStatus(COMPANIES[0])).toMatch(

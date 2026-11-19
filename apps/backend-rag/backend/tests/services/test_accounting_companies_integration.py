@@ -101,6 +101,17 @@ async def test_a_statement_of_an_unknown_account_is_reported_as_other(db) -> Non
     assert other["company_name"] == "Other accounts"
 
 
+async def test_a_longer_number_holding_a_companys_digits_is_another_account(db) -> None:
+    first = ENTITIES[KEYS[0]]
+    digits = "".join(c for c in first.bank_account_number if c.isdigit())
+    for account in (f"9{digits}", f"{digits}9", digits[1:], digits[:-1]):
+        sid = await _statement(db, account, date(2026, 11, 2))
+        await _txn(db, sid)
+    got = _by_key(await load_companies(db))
+    assert (got[first.key]["statements"], got[first.key]["to_reconcile"]) == (0, 0)
+    assert (got[OTHER_KEY]["statements"], got[OTHER_KEY]["to_reconcile"]) == (4, 4)
+
+
 async def test_a_statement_without_a_period_end_counts_but_dates_nothing(db) -> None:
     first = ENTITIES[KEYS[0]]
     sid = await _statement(db, first.bank_account_number, None)

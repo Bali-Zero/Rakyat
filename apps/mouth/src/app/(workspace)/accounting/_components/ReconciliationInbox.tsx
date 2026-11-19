@@ -496,7 +496,10 @@ export function ReconciliationInbox({
         <CompanyStrip
           companies={companies}
           selected={company}
-          onSelect={setCompany}
+          locked={lock.locked}
+          onSelect={(key) => {
+            if (lock.isFree()) setCompany(key);
+          }}
         />
       )}
       {view !== "dayone" && (

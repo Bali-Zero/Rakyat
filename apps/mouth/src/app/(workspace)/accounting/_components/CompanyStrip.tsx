@@ -48,6 +48,7 @@ const CARD_OFF = `${CARD} border-[var(--cc-edge)] bg-[var(--cc-card)] hover:bg-[
 function Card({
   testId,
   selected,
+  disabled,
   title,
   detail,
   status,
@@ -55,6 +56,7 @@ function Card({
 }: {
   testId: string;
   selected: boolean;
+  disabled: boolean;
   title: string;
   detail: string;
   status: string;
@@ -66,6 +68,7 @@ function Card({
       role="radio"
       aria-checked={selected}
       data-testid={testId}
+      disabled={disabled}
       onClick={onClick}
       className={selected ? CARD_ON : CARD_OFF}
     >
@@ -93,10 +96,13 @@ export function companyStatus(row: AccountingCompany): string {
 export function CompanyStrip({
   companies,
   selected,
+  locked = false,
   onSelect,
 }: {
   companies: CompaniesState;
   selected: string | null;
+  /** A write is pending or a dialog is open: the company cannot change under it. */
+  locked?: boolean;
   onSelect: (key: string | null) => void;
 }) {
   if (companies.status === "failed" && companies.rows.length === 0)
@@ -120,6 +126,7 @@ export function CompanyStrip({
       <Card
         testId="cc-company-all"
         selected={selected === null}
+        disabled={locked}
         title="All companies"
         detail={`${companies.rows.length} bank accounts`}
         status={`${waiting} to reconcile`}
@@ -130,6 +137,7 @@ export function CompanyStrip({
           key={row.key}
           testId={`cc-company-${row.key}`}
           selected={selected === row.key}
+          disabled={locked}
           title={row.company_name}
           detail={[row.bank_name, row.account_number]
             .filter(Boolean)

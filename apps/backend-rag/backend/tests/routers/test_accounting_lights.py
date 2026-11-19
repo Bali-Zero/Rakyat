@@ -352,11 +352,21 @@ def test_each_inbox_transfer_names_the_company_whose_account_received_it(mock_db
             2, 1_000_000, "x", account="".join(c for c in second.bank_account_number if c.isdigit())
         ),
         _tx(1, 1_000_000, "x", account="999000111"),  # an account no company owns
-        _tx(0, 1_000_000, "x", account=None),  # a transfer without a statement account
+        _tx(0, 1_000_000, "x", account=None),  # a statement without an account number
+        # a company's digits inside a longer number are another account, never that company
+        _tx(5, 1_000_000, "x", account=f"9{first.bank_account_number}"),
+        _tx(6, 1_000_000, "x", account=f"{first.bank_account_number}9"),
     ]
     _inbox_conn(mock_db_pool, txns, [], [])
     items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
-    assert [i["company_key"] for i in items] == [first.key, second.key, None, None]
+    assert [i["company_key"] for i in items] == [
+        first.key,
+        second.key,
+        "other",
+        "other",
+        "other",
+        "other",
+    ]
 
 
 def test_inbox_classification_runs_off_the_event_loop(mock_db_pool, monkeypatch) -> None:

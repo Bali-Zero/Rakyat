@@ -24,7 +24,11 @@ def _digits(value: str | None) -> str:
 
 
 def company_key_for_account(account_number: str | None) -> str | None:
-    """The issuing company owning this bank account, or None when no company does."""
+    """The issuing company owning this bank account, or None when no company does.
+
+    Equality of the whole digit string, never containment: an account whose digits only
+    start or end with a company's is another account.
+    """
     digits = _digits(account_number)
     if not digits:
         return None
@@ -90,8 +94,7 @@ async def load_companies(conn: asyncpg.Connection) -> list[dict[str, Any]]:
         entry["statements"] += int(row["statements"])
     for row in waiting:
         key = company_key_for_account(row["account_number"]) or OTHER_KEY
-        if key in per_key:
-            per_key[key]["to_reconcile"] += int(row["to_reconcile"])
+        per_key[key]["to_reconcile"] += int(row["to_reconcile"])
     for entry in per_key.values():
         if entry["data_through"] is not None:
             entry["data_through"] = entry["data_through"].isoformat()
