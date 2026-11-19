@@ -1450,7 +1450,38 @@ async def t3_world(conn):
     w["r5"] = (k5, d5)
     # N8: a listed hash not on the owner
     w["n8_doc"] = doc(4243999)
+    # N1, N3-N7: one owner each, refused before DC
+    y = await seed_subject(conn, "person", "ZzT3 Survivor", [("passport", passport(4243906))])
+    k6, d6 = owner_keys(4243006)
+    w["n1"] = (k6, d6, await seed_subject(conn, "person", None, k6, dob=DOB, merged=y))
+    k7 = (("permit", permit(4243007)), ("nik", nik("150680", 3007)))
+    w["n3"] = (k7, k7[1], await seed_subject(conn, "person", None, k7, dob=DOB))
+    k8, _ = owner_keys(4243008)
+    w["n4"] = (k8, k8[0], await seed_subject(conn, "person", None, k8, dob=DOB))
+    k9, d9 = owner_keys(4243009)
+    w["n5"] = (k9, d9, await seed_subject(conn, "person", None, k9, dob=None))
+    k10, d10 = owner_keys(4243010, "000377")
+    w["n6"] = (k10, d10, await seed_subject(conn, "person", None, k10, dob=DOB))
+    k11, d11 = owner_keys(4243011, "120377")
+    w["n7"] = (k11, d11, await seed_subject(conn, "person", None, k11, dob=DOB))
+    # W' at the candidate read: d on a record a history row names, another list
+    k12, d12 = owner_keys(4243012)
+    s12 = await seed_subject(conn, "person", "ZzT3 Twelve", [k12[0]], dob=DOB)
+    t12 = await seed_subject(conn, "person", None, [d12])
+    await seed_document(conn, t12, 4243912)
+    await seed_detach_history(conn, s12, t12, fingerprint(*k12), [doc(4243912)])
+    w["w_prime"] = (k12, d12, s12, t12)
     return w
+
+
+def _refusal_row(name, reason):
+    """A T3 row refused by the judge before DC: dry O, KF, RW; apply O, L, O, KF."""
+    return (
+        lambda w: req(w[name][0], w[name][1]),
+        lambda w: refused(reason, w[name][2]),
+        ["O", "KF", "RW"],
+        ["O", "L", "O", "KF"],
+    )
 
 
 T3_ROWS = {
@@ -1493,6 +1524,18 @@ T3_ROWS = {
         lambda w: refused("document_not_on_owner", w["s"]),
         ["O", "KF", "RW", "DC"],
         ["O", "L", "O", "KF", "DC"],
+    ),
+    "n1": _refusal_row("n1", "owner_is_merged"),
+    "n3": _refusal_row("n3", "owner_left_permit_only"),
+    "n4": _refusal_row("n4", "identifier_not_nik"),
+    "n5": _refusal_row("n5", "owner_has_no_birth_date"),
+    "n6": _refusal_row("n6", "nik_date_invalid"),
+    "n7": _refusal_row("n7", "nik_date_matches"),
+    "w_prime_at_the_candidate_read": (
+        lambda w: req(w["w_prime"][0], w["w_prime"][1], []),
+        lambda w: refused("detached_with_other_documents", w["w_prime"][2], w["w_prime"][3]),
+        ["O", "WH"],
+        ["O", "WH"],
     ),
 }
 
@@ -2839,8 +2882,10 @@ async def test_d22_the_owners_read_again_under_the_lock_give_t2s_answers(pool, c
     await seed_detach_history(conn, s, x, keys_sha256([k[0], d]), [])
     answer, spy = await _with_owner_rows(pool, data, two)
     assert answer == already(s, x)
+    assert spy.names() == ["O", "L", "O", "WH"] and spy.args_of(WH_SQL) == [(x,)]
     answer, spy = await _with_owner_rows(pool, {**data, "documents": owner_docs()}, two)
     assert answer == refused("detached_with_other_documents", s, x)
+    assert spy.names() == ["O", "L", "O", "WH"] and spy.args_of(WH_SQL) == [(x,)]
     # one owner X other than the candidate: KF(X), no lock on X, set_differs
     y = await seed_subject(conn, "person", None, [("nik", nik("150680", 9102))])
     answer, spy = await _with_owner_rows(pool, data, [row(y, "nik", d[1])])
@@ -2851,6 +2896,13 @@ async def test_d22_the_owners_read_again_under_the_lock_give_t2s_answers(pool, c
     k_rows = [{"id_type": t, "id_norm": v} for t, v in (k[0], d)]
     with pytest.raises(DetachInconsistent):
         await _with_owner_rows(pool, data, [row(y, "nik", d[1])], kf=k_rows)
+    defence = _Spy()
+    defence.replace[(O_SQL, 2)] = [row(y, "nik", d[1])]
+    defence.replace[(KF_SQL, 1)] = k_rows
+    async with pool.acquire() as c:
+        with pytest.raises(DetachInconsistent):
+            await detach_identifier(_SpyConn(c, defence), detach_input(data), dry_run=False)
+    assert defence.names() == ["O", "L", "O", "KF"] and defence.args_of(KF_SQL) == [(y,)]
     assert await ledger(conn) == [] and await keys_of(conn, s) == sorted(k)
 
 
