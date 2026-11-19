@@ -272,6 +272,17 @@ class XenditPaymentProvider:
         if not isinstance(event_id, str) or not event_id:
             raise WebhookUnparseable("callback body missing invoice id")
 
+        # EVENT IDENTITY CARRIES THE LIFECYCLE STATUS. The payment inbox dedups
+        # on `(provider, provider_event_id)` and the handlers answer OP-09
+        # "duplicate" on that conflict BEFORE any state logic, so an identity of
+        # the bare invoice id made an EXPIRED/FAILED callback swallow a late PAID
+        # for the same invoice (no OP-F05 case, no staff page) and a PAID swallow
+        # its REFUND. Identity is therefore `<invoice>:paid`, `<invoice>:expired`,
+        # `<invoice>:failed`, `<invoice>:refund:<refund id>`: a redelivery of the
+        # same lifecycle event still dedups, a different one is its own event.
+        # (SETTLED, a later stage of the same payment, is not accepted by this
+        # parser; if it ever is, it MUST map to `<invoice>:paid`, never its own
+        # identity, or handle_paid_event would see a second payment: false OP-08.)
         if status == "PAID":
             # THE INVOICE ID, NOT THE PAYMENT ID, and the difference is a money
             # path. `provider_charge_id` is what `garuda_orders` stores, what an
@@ -288,7 +299,7 @@ class XenditPaymentProvider:
             if not isinstance(amount, int | float):
                 raise WebhookUnparseable("PAID callback missing a numeric amount")
             return NormalizedPaidEvent(
-                provider_event_id=str(event_id),
+                provider_event_id=f"{event_id}:paid",
                 provider_charge_id=str(charge_id),
                 provider_session_id=str(session_id),
                 amount_idr=int(amount),
@@ -310,7 +321,7 @@ class XenditPaymentProvider:
             else:
                 mapped = map_provider_failure_code("xendit", raw_code, _FAILURE_CODE_MAP)
             return NormalizedFailureEvent(
-                provider_event_id=str(event_id),
+                provider_event_id=f"{event_id}:{str(status).lower()}",
                 provider_session_id=str(session_id),
                 failure=mapped,
             )
@@ -321,7 +332,7 @@ class XenditPaymentProvider:
             # invoice ids.
             charge_id = body.get("id")
             return NormalizedRefundEvent(
-                provider_event_id=str(event_id),
+                provider_event_id=f"{event_id}:refund:{refund_id}",
                 provider_refund_id=str(refund_id),
                 provider_charge_id=str(charge_id),
                 provider_session_id=str(session_id),

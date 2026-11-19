@@ -258,9 +258,13 @@ export function AppSidebar({
       <Link
         key={item.href}
         href={item.href}
-        // Protected RSC prefetches can race portal auth hydration in WebKit.
-        // Explicit clicks keep normal client-side navigation semantics.
-        prefetch={isPortal ? false : undefined}
+        // No speculative prefetch on either surface. Portal: protected RSC
+        // prefetches can race auth hydration in WebKit. Workspace: the rail
+        // puts ~13 links in the viewport, and their route prefetches
+        // (/dashboard, /intelligence, /clients, ...) competed with the open
+        // page's own data on first load (measured 2026-11-18 on
+        // /clients/{id}). Explicit clicks keep client-side navigation.
+        prefetch={false}
         className={sharedClassName}
         style={sharedStyle}
       >
@@ -345,8 +349,8 @@ export function AppSidebar({
       >
         <Link
           href={isPortal ? "/portal" : "/dashboard"}
-          // Apply the same protected-route rule to the workspace home link.
-          prefetch={isPortal ? false : undefined}
+          // Same rule as the rail items: no speculative prefetch.
+          prefetch={false}
           aria-label="Bali Zero — workspace home"
           className={cn(
             "flex items-center transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",

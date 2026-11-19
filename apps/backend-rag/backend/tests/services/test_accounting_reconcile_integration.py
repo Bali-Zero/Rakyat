@@ -15,13 +15,14 @@ import asyncio
 import os
 import re
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import asyncpg
 import pytest
 from asyncpg.exceptions import CheckViolationError
 
+from backend.core.pg_json_codec import init_asyncpg_connection
 from backend.services.accounting.cashout_service import cashbook_summary
 from backend.services.accounting.reconcile_service import ReconcileError, confirm_payment
 
@@ -82,6 +83,18 @@ async def _try_connect() -> asyncpg.Connection | None:
         return None
 
 
+async def _connect(dbname: str) -> asyncpg.Connection:
+    """A connection to the test database, shaped like a production pool connection.
+
+    It registers the jsonb/json codec every production pool registers. Without it a
+    pre-encoded string reaches Postgres as JSON text and is stored correctly HERE, while
+    production stores it as a JSON string scalar: reconciliation_log.invoice_ids held "[5]".
+    """
+    conn = await asyncpg.connect(_base_dsn(), database=dbname)
+    await init_asyncpg_connection(conn)
+    return conn
+
+
 async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     """Create an ephemeral DB with the migration applied + minimal stubs.
 
@@ -95,7 +108,7 @@ async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     await admin.execute(f'CREATE DATABASE "{dbname}"')
     await admin.close()
     user = os.environ.get("USER", "postgres")
-    conn = await asyncpg.connect(_base_dsn(), database=dbname)
+    conn = await _connect(dbname)
     await conn.execute(STUBS)
     await conn.execute(_forward_sql_of(MIGRATION_238))
     await conn.execute(_forward_sql_of(MIGRATION_239))
@@ -157,7 +170,8 @@ async def test_confirm_payment_full_side_effects() -> None:
         inv = await conn.fetchrow(
             "SELECT paid_date, payment_method, payment_reference, paid_amount_idr FROM invoices WHERE id=$1", iid
         )
-        assert inv["paid_date"] is not None
+        # paid on the transfer's day, not on the day of the confirmation
+        assert inv["paid_date"] == datetime(2026, 6, 25, tzinfo=timezone.utc)
         assert inv["payment_reference"] == "CIMB-REF-123"
         assert int(inv["paid_amount_idr"]) == 4_000_000
 
@@ -185,6 +199,12 @@ async def test_confirm_payment_full_side_effects() -> None:
         assert rl["status_after"] == "paid"
         assert int(rl["amount_applied_idr"]) == 4_000_000
         assert rl["practice_id"] == pid
+        # the invoice list is a JSON ARRAY, read back as a list through the production codec
+        assert rl["invoice_ids"] == [iid]
+        assert await conn.fetchval(
+            "SELECT jsonb_typeof(invoice_ids) FROM reconciliation_log WHERE id=$1",
+            result.reconciliation_log_id,
+        ) == "array"
     finally:
         await _drop_db(conn, dbname, user)
 
@@ -244,6 +264,49 @@ async def test_confirm_payment_without_movement_date_uses_db_clock() -> None:
         rl = await conn.fetchrow("SELECT status_before, status_after FROM reconciliation_log WHERE id=$1",
                                  result.reconciliation_log_id)
         assert rl["status_before"] == "unpaid" and rl["status_after"] == "paid"
+
+        # no transfer date given: the invoice is paid at the confirmation's own time
+        paid_now = await conn.fetchval(
+            "SELECT paid_date = (SELECT confirmed_at FROM reconciliation_log WHERE id = $2)"
+            " FROM invoices WHERE id = $1",
+            iid, result.reconciliation_log_id,
+        )
+        assert paid_now is True
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_zone", ["UTC", "Asia/Makassar", "America/Los_Angeles"])
+async def test_the_invoice_is_paid_on_the_transfer_day_whatever_the_session_time_zone(
+    session_zone: str,
+) -> None:
+    """A transfer of 1 November is paid on 1 November, never on 31 October.
+
+    Production reports group by month in UTC: a midnight taken in the session's zone would move a
+    first-of-the-month payment into the previous month wherever the session is east of UTC.
+    """
+    conn, dbname, user = await _fresh_db()
+    try:
+        await conn.execute(f"SET TIME ZONE '{session_zone}'")
+        cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Placeholder') RETURNING id")
+        pid = await conn.fetchval(
+            "INSERT INTO practices (client_id, payment_status) VALUES ($1, 'unpaid') RETURNING id", cid
+        )
+        iid = await conn.fetchval(
+            "INSERT INTO invoices (practice_id, invoice_number, amount_idr) VALUES ($1, 'INV-TZ', 1000000) RETURNING id",
+            pid,
+        )
+        await confirm_payment(
+            conn, bank_txn_id=None, practice_id=pid, invoice_id=iid, amount_applied_idr=1_000_000,
+            new_status="paid", confirmed_by="staff@example.test", movement_date=date(2026, 11, 1),
+        )
+        paid = await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid)
+        assert paid == datetime(2026, 11, 1, tzinfo=timezone.utc)
+        month_utc = await conn.fetchval(
+            "SELECT to_char(paid_date AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM invoices WHERE id = $1", iid
+        )
+        assert month_utc == "2026-11-01"
     finally:
         await _drop_db(conn, dbname, user)
 
@@ -437,9 +500,9 @@ async def test_c1_two_concurrent_confirmations_of_one_bank_transaction_succeed_e
     bank transaction's lock; B (another practice) then arrives. With the lock B must wait and
     then be refused; without it B would finish first and both would pay."""
     conn, dbname, user = await _fresh_db()
-    holder = await asyncpg.connect(_base_dsn(), database=dbname)
-    conn_a = await asyncpg.connect(_base_dsn(), database=dbname)
-    conn_b = await asyncpg.connect(_base_dsn(), database=dbname)
+    holder = await _connect(dbname)
+    conn_a = await _connect(dbname)
+    conn_b = await _connect(dbname)
     try:
         (pa, pb), (ia, ib), txid = await _world(conn, practices=2)
         tx = holder.transaction()
@@ -543,8 +606,14 @@ async def test_p1_without_a_given_invoice_actual_price_stays_null() -> None:
     conn, dbname, user = await _fresh_db()
     try:
         (pid,), (iid,), txid = await _world(conn)
-        await _confirm(conn, txid, pid, None)
+        result = await _confirm(conn, txid, pid, None)
         assert await _price(conn, pid) is None
+        # no invoice named: the list is an EMPTY ARRAY, not a JSON string
+        rl = await conn.fetchrow(
+            "SELECT invoice_ids, jsonb_typeof(invoice_ids) AS kind FROM reconciliation_log WHERE id=$1",
+            result.reconciliation_log_id,
+        )
+        assert (rl["invoice_ids"], rl["kind"]) == ([], "array")
     finally:
         await _drop_db(conn, dbname, user)
 

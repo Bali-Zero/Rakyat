@@ -78,6 +78,37 @@ export function firstPartyRedirect(
   return u.href;
 }
 
+/** The names of the two form fields, which are also query keys a browser would write. */
+export const CREDENTIAL_FIELDS = ["email", "pin"] as const;
+
+/**
+ * The same address without the two credential fields, or null when it carries
+ * neither.
+ *
+ * A form with no `method` is a GET: submitted by the browser itself, before
+ * React owns the page, it navigates to `/login?email=…&pin=…`. The form is now
+ * a POST and cannot be submitted before the page is interactive, but an address
+ * written that way earlier can still sit in a tab or a bookmark, and the page
+ * must not keep showing it. Everything else in the address is kept, `?redirect=`
+ * first of all.
+ */
+export function withoutCredentialFields(href: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(href);
+  } catch {
+    return null;
+  }
+  let found = false;
+  for (const field of CREDENTIAL_FIELDS) {
+    if (u.searchParams.has(field)) {
+      u.searchParams.delete(field);
+      found = true;
+    }
+  }
+  return found ? u.pathname + u.search + u.hash : null;
+}
+
 /**
  * Which plate an error deserves.
  *

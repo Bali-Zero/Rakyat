@@ -2530,3 +2530,81 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
     expect(within(opened()).queryAllByText("Suggested")).toHaveLength(0);
   });
 });
+
+describe("historical mode: recorded without emails", () => {
+  const ORDINARY = {
+    bank_txn_id: 1,
+    practice_id: 21,
+    invoice_id: 11,
+    amount_applied_idr: 500000,
+    new_status: "paid",
+    payment_method: "bank_transfer",
+    payment_reference: "ROW GREEN",
+    movement_date: "2026-01-05",
+    pph_withheld_idr: 0,
+  };
+  beforeEach(() => {
+    api.getReconciliationInbox.mockResolvedValue([
+      inboxItem({
+        txn_id: 1,
+        light: "green",
+        description: "ROW GREEN",
+        suggestion: candidate(),
+      }),
+    ]);
+    api.getMatchCandidates.mockResolvedValue({
+      txn_id: 1,
+      transfer_amount_idr: 500000,
+      candidates: [candidate()],
+      recorded_candidates: [],
+    });
+    api.confirm.mockResolvedValue({} as never);
+  });
+  const toggle = () =>
+    screen.getByRole("checkbox", { name: /Historical mode: no emails/ });
+  const openDialog = async () => {
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm payment" }),
+    );
+    expect(screen.getByText("Confirm payment match")).toBeInTheDocument();
+  };
+
+  it("is off by default, and the dialog says nothing about emails (innocence)", async () => {
+    renderInbox();
+    expect(await screen.findByText("ROW GREEN")).toBeInTheDocument();
+    expect(toggle()).not.toBeChecked();
+    await openDialog();
+    expect(screen.queryByText("Emails", { selector: "dt" })).toBeNull();
+    expect(screen.queryByText(/Historical mode: no email goes/)).toBeNull();
+  });
+
+  it("on: the dialog says no emails and Confirm sends historical: true with the same request", async () => {
+    const onConfirmed = renderInbox();
+    expect(await screen.findByText("ROW GREEN")).toBeInTheDocument();
+    fireEvent.click(toggle());
+    expect(toggle()).toBeChecked();
+    await openDialog();
+    expect(
+      screen.getByText("Emails", { selector: "dt" }).parentElement,
+    ).toHaveTextContent("None: historical mode");
+    expect(
+      screen.getByText(
+        /Historical mode: no email goes to the client or the team\./,
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm paid" }));
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledWith({ ...ORDINARY, historical: true });
+  });
+
+  it("the dialog keeps the mode it opened with: ticking the box under it changes nothing", async () => {
+    const onConfirmed = renderInbox();
+    expect(await screen.findByText("ROW GREEN")).toBeInTheDocument();
+    await openDialog();
+    fireEvent.click(toggle());
+    expect(screen.queryByText("Emails", { selector: "dt" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm paid" }));
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledWith(ORDINARY);
+  });
+});

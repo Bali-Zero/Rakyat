@@ -1562,6 +1562,24 @@ export interface components {
       /** Source Refs */
       source_refs: string[];
     };
+    /** RelatedRegistryDetachment */
+    RelatedRegistryDetachment: {
+      /** Basis */
+      basis: string;
+      /**
+       * Detached At
+       * Format: date-time
+       */
+      detached_at: string;
+      /** Documents Moved */
+      documents_moved: number;
+      /** From Subject Id */
+      from_subject_id: number | null;
+      /** Id Type */
+      id_type: string;
+      /** Subject Id */
+      subject_id: number;
+    };
     /** RelatedRegistryDocument */
     RelatedRegistryDocument: {
       /** Byte Size */
@@ -1572,6 +1590,8 @@ export interface components {
       drive_file_ids: string[];
       /** First Seen On */
       first_seen_on: string | null;
+      /** From Subject Id */
+      from_subject_id: number | null;
       /** Mime Type */
       mime_type: string | null;
       /** Sha256 */
@@ -1579,10 +1599,52 @@ export interface components {
     };
     /** RelatedRegistryIdentifier */
     RelatedRegistryIdentifier: {
+      /** From Subject Id */
+      from_subject_id: number | null;
       /** Type */
       type: string;
       /** Value */
       value: string;
+    };
+    /** RelatedRegistryLink */
+    RelatedRegistryLink: {
+      /**
+       * Basis
+       * @enum {string}
+       */
+      basis: "drive_folder" | "whatsapp_phone" | "identity" | "manual";
+      /** Client Id */
+      client_id: number;
+      /** Client Live */
+      client_live: boolean;
+      /** Client Name */
+      client_name: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Files */
+      files: number | null;
+      /** From Subject Id */
+      from_subject_id: number | null;
+      /**
+       * Relation
+       * @enum {string}
+       */
+      relation:
+        | "unknown"
+        | "self"
+        | "spouse"
+        | "child"
+        | "parent"
+        | "sibling"
+        | "other_family"
+        | "director"
+        | "commissioner"
+        | "shareholder"
+        | "employee"
+        | "sponsor";
     };
     /** RelatedRegistryListOut */
     RelatedRegistryListOut: {
@@ -1595,6 +1657,15 @@ export interface components {
       /** Total */
       total: number;
     };
+    /** RelatedRegistryMerged */
+    RelatedRegistryMerged: {
+      /** Basis */
+      basis: ("permit_stamp" | "same_identity" | "manual") | null;
+      /** Merged At */
+      merged_at: string | null;
+      /** Subject Id */
+      subject_id: number;
+    };
     /** RelatedRegistryName */
     RelatedRegistryName: {
       /**
@@ -1602,6 +1673,8 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** From Subject Id */
+      from_subject_id: number | null;
       /** Name */
       name: string;
       /**
@@ -1624,6 +1697,10 @@ export interface components {
       created_at: string;
       /** Date Of Birth */
       date_of_birth: string | null;
+      /** Detached From */
+      detached_from: components["schemas"]["RelatedRegistryDetachment"][];
+      /** Detached Into */
+      detached_into: components["schemas"]["RelatedRegistryDetachment"][];
       /** Display Name */
       display_name: string | null;
       /** Documents */
@@ -1634,6 +1711,14 @@ export interface components {
       identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
       /** Kind */
       kind: string;
+      /** Links */
+      links: components["schemas"]["RelatedRegistryLink"][];
+      /** Links Total */
+      links_total: number;
+      /** Merged From */
+      merged_from: components["schemas"]["RelatedRegistryMerged"][];
+      /** Merged Into */
+      merged_into: number | null;
       /** Name Source */
       name_source:
         | (
@@ -1667,6 +1752,8 @@ export interface components {
       identifiers: components["schemas"]["RelatedRegistryIdentifier"][];
       /** Kind */
       kind: string;
+      /** Links Count */
+      links_count: number;
       /** Name Source */
       name_source:
         | (

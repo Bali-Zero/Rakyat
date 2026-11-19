@@ -15,7 +15,6 @@ Cash-basis, IDR. The accountant has already chosen the match; this records it.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -29,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 # Mirrors crm_practices PAYMENT_STATUS_VALUES — keep in sync.
 PAYMENT_STATUS_VALUES = ("unpaid", "partial", "paid")
+
+# The note of a confirmation recorded in historical mode: a payment that arrived in the past,
+# reconciled now. The practice listener sends no email for the change it made.
+HISTORICAL_NOTE = "historical: recorded without notifications"
 
 
 @dataclass
@@ -70,16 +73,25 @@ async def confirm_payment(
     rptka_imta_idr: int = 0,
     margin_idr: int = 0,
     movement_date: date | None = None,
+    historical: bool = False,
 ) -> ConfirmResult:
     """Confirm a payment match in one transaction. Returns the audit ids.
 
     `new_status` must be one of PAYMENT_STATUS_VALUES. `amount_applied_idr` is
     what actually landed (net of withholding/fees); the gross is recorded via
-    the decomposition + pph/fee fields.
+    the decomposition + pph/fee fields. `historical` records the same rows and
+    marks the audit row with HISTORICAL_NOTE, so no email follows the change
+    (see recorded_without_notifications). A historical confirmation runs in a transaction of
+    its own: the listener recognises its change by the transaction's instant, which another
+    change made in the same transaction would share.
     """
     if new_status not in PAYMENT_STATUS_VALUES:
         raise ReconcileError(
             f"new_status must be one of {PAYMENT_STATUS_VALUES}, got {new_status!r}"
+        )
+    if historical and conn.is_in_transaction():
+        raise ReconcileError(
+            "a historical confirmation runs in a transaction of its own, not inside another"
         )
 
     # D4 guard: the price decomposition must reconcile to the recorded final
@@ -160,12 +172,15 @@ async def confirm_payment(
             invoice_amount,
         )
 
-        # 3. Fill invoice payment fields, if an invoice is linked.
+        # 3. Fill invoice payment fields, if an invoice is linked. The invoice was paid when the
+        #    money landed: the transfer's date when it is known (a statement row has a date only,
+        #    so midnight UTC whatever the session time zone: the same calendar day in UTC, where
+        #    production reports group by month, and in Bali), the confirmation time otherwise.
         if invoice_id is not None:
             await conn.execute(
                 """
                 UPDATE invoices
-                SET paid_date = now(),
+                SET paid_date = COALESCE(($5::date)::timestamp AT TIME ZONE 'UTC', now()),
                     payment_method = $1,
                     payment_reference = $2,
                     paid_amount_idr = COALESCE(paid_amount_idr, 0) + $3
@@ -175,6 +190,7 @@ async def confirm_payment(
                 payment_reference,
                 amount_applied_idr,
                 invoice_id,
+                movement_date,
             )
 
         # 4. Mark the bank transaction reconciled + link.
@@ -263,12 +279,14 @@ async def confirm_payment(
             INSERT INTO reconciliation_log
                 (bank_txn_id, invoice_ids, practice_id, cashout_id, confirmed_by,
                  confirmed_at, status_before, status_after, amount_applied_idr,
-                 pph_delta_idr, bank_fee_delta_idr)
-            VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8, $9, $10)
+                 pph_delta_idr, bank_fee_delta_idr, note)
+            VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8, $9, $10, $11)
             RETURNING id
             """,
             bank_txn_id,
-            json.dumps([invoice_id] if invoice_id is not None else []),
+            # A list, never json.dumps(...): the pool's jsonb codec encodes it, and a
+            # pre-encoded string would be stored as a JSON string scalar (core/pg_json_codec.py).
+            [invoice_id] if invoice_id is not None else [],
             practice_id,
             cashout_id,
             confirmed_by,
@@ -277,12 +295,13 @@ async def confirm_payment(
             amount_applied_idr,
             pph_withheld_idr,
             bank_fee_idr,
+            HISTORICAL_NOTE if historical else None,
         )
 
     logger.info(
-        "Reconcile confirm: practice=%s invoice=%s %s->%s amount=%s by=%s recon=%s",
+        "Reconcile confirm: practice=%s invoice=%s %s->%s amount=%s by=%s recon=%s historical=%s",
         practice_id, invoice_id, status_before, new_status, amount_applied_idr,
-        confirmed_by, recon_id,
+        confirmed_by, recon_id, historical,
     )
     return ConfirmResult(
         practice_id=practice_id,
@@ -291,6 +310,44 @@ async def confirm_payment(
         reconciliation_log_id=recon_id,
         status_before=status_before,
         status_after=new_status,
+    )
+
+
+async def recorded_without_notifications(
+    pool: asyncpg.Pool,
+    practice_id: int,
+    change_ts: str | int | None,
+    payment_before: str | None,
+    payment_after: str | None,
+) -> bool:
+    """Whether the practice change stamped `change_ts` was made by a historical confirmation.
+
+    The practice trigger stamps its payload with EXTRACT(EPOCH FROM NOW()) and confirm_payment
+    writes its audit row with confirmed_at = now() in the same transaction, so both carry the
+    same instant. `change_ts` is that stamp as the payload's TEXT (a float would round the
+    microseconds). The audit row must also record the same payment transition as the change:
+    the instant names a transaction, the transition names the change inside it. No stamp: an
+    ordinary change.
+    """
+    if change_ts is None:
+        return False
+    return bool(
+        await pool.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM reconciliation_log
+                WHERE practice_id = $1 AND note = $2
+                  AND extract(epoch FROM confirmed_at) = $3::numeric
+                  AND status_before IS NOT DISTINCT FROM $4::text
+                  AND status_after IS NOT DISTINCT FROM $5::text
+            )
+            """,
+            practice_id,
+            HISTORICAL_NOTE,
+            str(change_ts),
+            payment_before,
+            payment_after,
+        )
     )
 
 
@@ -406,7 +463,7 @@ async def link_recorded(
             RETURNING id
             """,
             bank_txn_id,
-            json.dumps([invoice_id]),
+            [invoice_id],  # a list: see confirm_payment
             practice_id,
             linked_by,
             LINK_NOTE,

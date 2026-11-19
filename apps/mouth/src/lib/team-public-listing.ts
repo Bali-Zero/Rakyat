@@ -130,7 +130,7 @@ export function isPubliclyListed(
  *
  * But an unknown slug is NOT anonymous. Two consumers resolve a name as
  * `rosterBySlug(slug)?.name ?? slug` (`(blog)/about/page.tsx`,
- * `v2/_components/socialProofRoster.ts`), so an entry spelled `{ slug: "faysha" }`
+ * `components/r19/home/socialProofRoster.ts`), so an entry spelled `{ slug: "faysha" }`
  * would miss the roster, fall back to printing the SLUG, and publish the excluded
  * person as visible text with every test green. So the slug is checked against
  * the excluded NAMES and aliases too, not only against the exact slug list.

@@ -50,6 +50,12 @@ const MAX_REASON = 200;
 const normalizeReason = (raw: string): string =>
   raw.trim().replace(/\s+/g, " ");
 
+// Historical mode box: the warning edge says the mode is on; off, it sits on the hairline.
+const HISTORICAL_BOX =
+  "flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm text-[var(--cc-tx)]";
+const HISTORICAL_BOX_ON = `${HISTORICAL_BOX} border-[var(--state-warning)] bg-[var(--cc-wash)]`;
+const HISTORICAL_BOX_OFF = `${HISTORICAL_BOX} border-[var(--cc-edge)] bg-[var(--cc-card)]`;
+
 export function ReconciliationInbox({
   onConfirmed,
   doneVersion,
@@ -86,7 +92,11 @@ export function ReconciliationInbox({
       "id" | "amount_idr" | "description" | "txn_date"
     >;
     candidate: MatchCandidate;
+    // The mode at the moment the dialog opened: it cannot change under the dialog.
+    historical: boolean;
   } | null>(null);
+  // Historical mode: payments that arrived in the past are recorded without emails.
+  const [historical, setHistorical] = useState(false);
   const ignoreRef = useRef<{ txnId: number; reason: string } | null>(null);
   const [ignoreForm, setIgnoreFormState] = useState<{
     txnId: number;
@@ -297,7 +307,8 @@ export function ReconciliationInbox({
       description: opened.description,
       txn_date: opened.txn_date,
     };
-    if (lock.tryOpenDialog()) setModal({ txn, candidate: current.candidate });
+    if (lock.tryOpenDialog())
+      setModal({ txn, candidate: current.candidate, historical });
   };
   const link = () => {
     const current = pickRef.current;
@@ -461,6 +472,27 @@ export function ReconciliationInbox({
           onSelect={setSelectedTab}
         />
       )}
+      {view !== "dayone" && (
+        <label
+          data-testid="historical-mode"
+          className={historical ? HISTORICAL_BOX_ON : HISTORICAL_BOX_OFF}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={historical}
+            disabled={lock.locked}
+            onChange={(e) => setHistorical(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Historical mode: no emails</span>
+            <span className="block text-xs text-[var(--cc-tx-2)]">
+              For payments that arrived in the past. Confirming records them as
+              usual and sends no email to the client or the team.
+            </span>
+          </span>
+        </label>
+      )}
       <ReconciliationBody
         view={view}
         work={work}
@@ -479,6 +511,7 @@ export function ReconciliationInbox({
         <ConfirmModal
           txn={modal.txn}
           candidate={modal.candidate}
+          historical={modal.historical}
           onClose={() => {
             if (lock.tryCloseDialog()) setModal(null);
           }}

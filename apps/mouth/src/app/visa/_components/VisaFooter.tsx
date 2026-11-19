@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Footer } from "@/app/v2/_components/Footer";
+import { Footer } from "@/components/site/Footer";
 
 // The visa segment also hosts self-contained product screens that bring their own
 // theme and must not offer marketing exits mid-flow: the GARUDA VOA checkout,

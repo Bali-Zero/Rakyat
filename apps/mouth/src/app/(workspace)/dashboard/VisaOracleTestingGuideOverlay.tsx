@@ -15,6 +15,7 @@ import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { useAfterPageIdle } from "@/hooks/useAfterPageIdle";
 import { testingApi } from "../intelligence/visa-oracle/testing/api";
 import type { CampaignData } from "../intelligence/visa-oracle/testing/types";
 import { baliDate, bannerProgress } from "./VisaOracleTestingBanner";
@@ -60,13 +61,18 @@ export function VisaOracleTestingGuideOverlay({
   const primaryRef = useRef<HTMLAnchorElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
+  // Mounted on every Kita page but never part of the first screen: ask only
+  // once the open page has loaded and gone idle, so this request does not
+  // compete with the page's own data (measured 2026-11-18 on /clients/{id}:
+  // 1.2 s, fired alongside the client profile).
+  const pageIdle = useAfterPageIdle();
   const { data, isError } = useQuery<CampaignData>({
     queryKey: ["visa-oracle-testing-banner", identity],
     queryFn: () => testingApi.load(),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     retry: false,
-    enabled: Boolean(identity),
+    enabled: Boolean(identity) && pageIdle,
   });
 
   const current = now();

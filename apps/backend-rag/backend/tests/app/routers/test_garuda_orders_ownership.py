@@ -366,6 +366,7 @@ class TestGetOrderOwnership:
         body = resp.json()
         assert body == {
             "order_id": "ord_get_owned_by_a_0000",
+            "result_id": "result-a-get-own-00000",
             "order_state": "created",
             "price_idr": 790_000,
             "browser_observation": "browser_not_returned",

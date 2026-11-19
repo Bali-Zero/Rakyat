@@ -335,6 +335,16 @@ const en = {
    */
   "lead.context.pageLabel": "Page",
   "lead.context.pageValue": "Visa on Arrival — eligibility wizard",
+  /**
+   * The failed/expired order panel on the tracker. `safetyBody` carries the
+   * safety instruction (money may already have left: talk to us BEFORE paying
+   * again) and must keep that meaning in both columns.
+   */
+  "order.closed.failed.heading": "This checkout couldn't be completed.",
+  "order.closed.expired.heading": "This checkout session expired.",
+  "order.closed.safetyBody":
+    "If money has already left your account, contact us first: a consultant can verify your payment status before you try again. Otherwise you can start a new checkout from the same check.",
+  "order.closed.payAgain": "Pay again",
 } as const;
 
 export type VoaCopyKey = keyof typeof en;
@@ -659,6 +669,11 @@ const id: Record<VoaCopyKey, string> = {
     "Konsultan dapat memastikan kasus Anda secara manual segera.",
   "lead.context.pageLabel": "Page",
   "lead.context.pageValue": "Visa on Arrival — eligibility wizard",
+  "order.closed.failed.heading": "Pembayaran ini tidak dapat diselesaikan.",
+  "order.closed.expired.heading": "Sesi pembayaran ini telah kedaluwarsa.",
+  "order.closed.safetyBody":
+    "Jika uang sudah keluar dari rekening Anda, hubungi kami terlebih dahulu: konsultan dapat memeriksa status pembayaran Anda sebelum Anda mencoba lagi. Jika belum, Anda dapat memulai pembayaran baru dari pengecekan yang sama.",
+  "order.closed.payAgain": "Bayar lagi",
 };
 
 export const VOA_COPY: Record<VoaLocale, Record<VoaCopyKey, string>> = {

@@ -4,7 +4,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/v2/_components/Footer", () => ({
+vi.mock("@/components/site/Footer", () => ({
   Footer: () => <footer data-guard="site-footer" />,
 }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/visa/clock" }));
@@ -15,7 +15,7 @@ vi.mock("@balizero/core", () => ({
 vi.mock("@balizero/core/fonts/montserrat", () => ({
   montserrat: { variable: "font-guard" },
 }));
-vi.mock("@/app/v2/_components/MobileNav", () => ({ MobileNav: () => null }));
+vi.mock("@/components/site/MobileNav", () => ({ MobileNav: () => null }));
 vi.mock("@/components/funnel/SessionInit", () => ({ SessionInit: () => null }));
 vi.mock("@/components/funnel/HeaderWhatsAppCTA", () => ({
   HeaderWhatsAppCTA: () => null,

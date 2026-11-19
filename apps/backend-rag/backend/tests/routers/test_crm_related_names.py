@@ -90,6 +90,14 @@ CREATE TABLE session_tracking (
 );
 """
 
+CLIENTS_SCHEMA = """
+CREATE TABLE clients (
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    full_name text NOT NULL,
+    deleted_at timestamptz
+);
+"""
+
 # Every row write to any table of the schema is recorded; the teardown of the `pool` fixture
 # accepts nothing but the audit-trail INSERT and the writes a test declares through `writes`.
 WRITE_LOG_SQL = """
@@ -164,10 +172,14 @@ async def pool(writes):
                 "361_related_subjects_registry.sql",
                 "362_related_documents.sql",
                 "365_related_subject_names.sql",
+                "367_related_subject_links.sql",
+                "369_related_subject_merges.sql",
+                "370_related_subject_detachments.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
             await c.execute(AUDIT_SCHEMA)
+            await c.execute(CLIENTS_SCHEMA)
             await c.execute(WRITE_LOG_SQL)
         yield created
         async with created.acquire() as c:
@@ -420,6 +432,9 @@ async def test_n1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "related_documents",
             "related_document_sightings",
             "related_subject_documents",
+            "related_subject_links",
+            "related_subject_merges",
+            "related_subject_detachments",
         }
         assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
 
@@ -1468,6 +1483,9 @@ def test_n14_the_route_is_registered_where_the_two_existing_ones_are():
         ("/api/crm/related-subjects/register", ("POST",)),
         ("/api/crm/related-subjects/documents/register", ("POST",)),
         ("/api/crm/related-subjects/names/register", ("POST",)),
+        ("/api/crm/related-subjects/links/register", ("POST",)),
+        ("/api/crm/related-subjects/merges/register", ("POST",)),
+        ("/api/crm/related-subjects/identifiers/detach", ("POST",)),
     }
     assert route_module.router.route_class is route_module._SealedRoute
 
@@ -1649,13 +1667,14 @@ async def test_n12_list_and_detail_carry_the_effective_name_and_its_source(admin
 
 
 @pytest.mark.asyncio
-async def test_n12_every_names_item_holds_exactly_three_fields(admin, conn):
+async def test_n12_every_names_item_holds_exactly_four_fields(admin, conn):
     sid = await seed_subject(conn, "person", "ZzReg Name", [("passport", P1)])
     await seed_name(conn, sid, "ZZ ROW", "ocr_corroborated", at=T0)
     detail = (await admin.get(f"{READ}/{sid}")).json()
     assert [n["source"] for n in detail["names"]] == ["registration", "ocr_corroborated"]
     for item in detail["names"]:
-        assert set(item) == {"name", "source", "created_at"}
+        assert set(item) == {"name", "source", "created_at", "from_subject_id"}
+        assert item["from_subject_id"] is None
         assert item["source"] is not None
         assert datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")).tzinfo
     assert detail["names"][0]["name"] == "ZzReg Name"

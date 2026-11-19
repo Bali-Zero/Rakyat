@@ -31,6 +31,7 @@ Q_MAX = 64
 class RelatedRegistryIdentifier(BaseModel):
     type: str
     value: str
+    from_subject_id: int | None
 
 
 NameSource = Literal["manual", "mrz_corrected", "registration", "ocr_corroborated", "ocr_single"]
@@ -40,6 +41,35 @@ class RelatedRegistryName(BaseModel):
     name: str
     source: NameSource
     created_at: datetime
+    from_subject_id: int | None
+
+
+LinkBasis = Literal["drive_folder", "whatsapp_phone", "identity", "manual"]
+LinkRelation = Literal[
+    "unknown",
+    "self",
+    "spouse",
+    "child",
+    "parent",
+    "sibling",
+    "other_family",
+    "director",
+    "commissioner",
+    "shareholder",
+    "employee",
+    "sponsor",
+]
+
+
+class RelatedRegistryLink(BaseModel):
+    client_id: int
+    client_name: str | None
+    client_live: bool
+    basis: LinkBasis
+    relation: LinkRelation
+    created_at: datetime
+    files: int | None
+    from_subject_id: int | None
 
 
 class RelatedRegistrySubjectRow(BaseModel):
@@ -51,6 +81,7 @@ class RelatedRegistrySubjectRow(BaseModel):
     nationality: str | None
     identifiers: list[RelatedRegistryIdentifier]
     document_count: int
+    links_count: int
 
 
 class RelatedRegistryListOut(BaseModel):
@@ -67,6 +98,25 @@ class RelatedRegistryDocument(BaseModel):
     byte_size: int
     first_seen_on: date | None
     drive_file_ids: list[str]
+    from_subject_id: int | None
+
+
+MergeBasis = Literal["permit_stamp", "same_identity", "manual"]
+
+
+class RelatedRegistryMerged(BaseModel):
+    subject_id: int
+    basis: MergeBasis | None
+    merged_at: datetime | None
+
+
+class RelatedRegistryDetachment(BaseModel):
+    subject_id: int
+    id_type: str
+    basis: str
+    documents_moved: int
+    detached_at: datetime
+    from_subject_id: int | None
 
 
 class RelatedRegistrySubjectDetail(BaseModel):
@@ -76,12 +126,18 @@ class RelatedRegistrySubjectDetail(BaseModel):
     name_source: NameSource | None
     names: list[RelatedRegistryName]
     names_total: int
+    links: list[RelatedRegistryLink]
+    links_total: int
     date_of_birth: date | None
     nationality: str | None
     sex: str | None
     created_at: datetime
     identifiers: list[RelatedRegistryIdentifier]
     documents: list[RelatedRegistryDocument]
+    merged_from: list[RelatedRegistryMerged]
+    merged_into: int | None
+    detached_into: list[RelatedRegistryDetachment]
+    detached_from: list[RelatedRegistryDetachment]
 
 
 def _require_admin(user: dict[str, Any]) -> None:
@@ -115,6 +171,7 @@ def _unavailable(outcome: str) -> HTTPException:
 async def list_registry(
     q: str | None = Query(None),
     kind: Literal["person", "company"] | None = Query(None),
+    linked: Literal["true", "false"] | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=100000),
     user: dict[str, Any] = Depends(get_current_user),
@@ -126,7 +183,12 @@ async def list_registry(
     try:
         async with pool.acquire() as conn:
             result = await related_registry_read.list_subjects(
-                conn, q=text, kind=kind, limit=limit, offset=offset
+                conn,
+                q=text,
+                kind=kind,
+                limit=limit,
+                offset=offset,
+                linked=None if linked is None else linked == "true",
             )
     except (asyncpg.PostgresError, OSError, asyncpg.InterfaceError) as exc:
         raise _unavailable(type(exc).__name__) from None
@@ -142,7 +204,7 @@ async def get_registry_subject(
     user: dict[str, Any] = Depends(get_current_user),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """Open one registry subject with its identifiers and documents (CRM admins only)."""
+    """Open one registry subject with its own and its merged-in records' rows (CRM admins only)."""
     _require_admin(user)
     try:
         async with pool.acquire() as conn:
@@ -153,6 +215,10 @@ async def get_registry_subject(
         logger.info("related registry detail: subject=%d outcome=not_found", subject_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
     logger.info(
-        "related registry detail: subject=%d documents=%d", subject_id, len(result["documents"])
+        "related registry detail: subject=%d documents=%d links=%d merged=%d",
+        subject_id,
+        len(result["documents"]),
+        len(result["links"]),
+        len(result["merged_from"]),
     )
     return result

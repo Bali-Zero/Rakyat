@@ -14,7 +14,7 @@ import { HomeJournal, JournalPending } from "@/components/r19/home/HomeJournal";
 import { Team } from "@/components/r19/home/Team";
 import { Contact } from "@/components/r19/home/Contact";
 import { Footer } from "@/components/r19/home/Footer";
-import { ZantaraFAB } from "../v2/_components/ZantaraFAB";
+import { ZantaraFAB } from "@/components/site/ZantaraFAB";
 import "@/components/r19/home/home.css";
 
 // Incremental Static Regeneration, not per-request rendering. The journal

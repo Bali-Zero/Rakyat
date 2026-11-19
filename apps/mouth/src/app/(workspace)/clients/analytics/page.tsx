@@ -47,6 +47,25 @@ import { formatIDR, formatIDRCompact } from "@balizero/core/utils";
 // TYPES
 // ================================================
 
+/** The five requests this page makes; each figure belongs to exactly one. */
+type Source = "overview" | "team" | "revenue" | "processes" | "trend";
+
+/**
+ * What a figure reads when its request failed. Never a 0: Rp 0 and 0 clients are real values,
+ * and a failed load must not be mistaken for one.
+ */
+const NOT_AVAILABLE = "Data not available";
+// A month whose bank statement is not imported has no figure, and a month whose transfers are
+// still waiting to be reconciled is not a known zero: neither reads Rp 0.
+const NO_STATEMENT = "No bank statement";
+const NOT_RECONCILED = "Not reconciled";
+
+const Unavailable = () => (
+  <p role="status" className="text-muted-foreground text-center py-8 text-sm">
+    {NOT_AVAILABLE}: this part could not be loaded.
+  </p>
+);
+
 interface ClientOverview {
   total_clients: number;
   new_this_month: number;
@@ -73,11 +92,15 @@ interface RevenueSummary {
   total_paid: number;
   total_outstanding: number;
   avg_per_client: number;
+  // Money received in each month, by the date the transfer landed, from the imported bank
+  // statements. no_statement: nothing imported for the month (collected null). partial:
+  // transfers are still waiting to be reconciled, so the figure is not final.
   by_month: Array<{
     period: string;
-    revenue: number;
-    paid: number;
-    target: number;
+    status: "no_statement" | "partial" | "complete";
+    collected: number | null;
+    payments: number | null;
+    to_reconcile: number;
   }>;
   forecast_next_month: number;
 }
@@ -361,6 +384,9 @@ export default function ClientAnalyticsPage() {
   const [processTypes, setProcessTypes] = useState<ProcessTypeMetric[]>([]);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [funnel, setFunnel] = useState<FunnelStage[]>([]);
+  // The sources whose last request failed; their figures read NOT_AVAILABLE.
+  const [failed, setFailed] = useState<ReadonlySet<Source>>(() => new Set());
+  const unavailable = (source: Source) => failed.has(source);
 
   // Detect viewport size
   useEffect(() => {
@@ -381,22 +407,50 @@ export default function ClientAnalyticsPage() {
     try {
       setIsLoading(true);
 
-      const [overviewRes, teamRes, revenueRes, processRes, trendRes] =
-        await Promise.all([
-          api.get<ClientOverview>("/api/crm/analytics/clients/overview"),
-          api.get<TeamPerformance[]>("/api/crm/analytics/team/performance"),
-          api.get<RevenueSummary>("/api/crm/analytics/revenue/summary"),
-          api.get<ProcessTypeMetric[]>("/api/crm/analytics/processes/by-type"),
-          api.get<TrendPoint[]>(
-            `/api/crm/analytics/clients/trend?months=${TREND_LOOKBACK_MONTHS}`,
-          ),
-        ]);
+      // Each request settles on its own: one failure must not blank the others, and the
+      // figures of a failed one must say so instead of showing 0.
+      const settled = await Promise.allSettled([
+        api.get<ClientOverview>("/api/crm/analytics/clients/overview"),
+        api.get<TeamPerformance[]>("/api/crm/analytics/team/performance"),
+        api.get<RevenueSummary>("/api/crm/analytics/revenue/summary"),
+        api.get<ProcessTypeMetric[]>("/api/crm/analytics/processes/by-type"),
+        api.get<TrendPoint[]>(
+          `/api/crm/analytics/clients/trend?months=${TREND_LOOKBACK_MONTHS}`,
+        ),
+      ]);
+      const down = new Set<Source>();
+      const take = <T,>(
+        result: PromiseSettledResult<T>,
+        source: Source,
+      ): T | null => {
+        if (result.status === "fulfilled") return result.value;
+        down.add(source);
+        logger.error(
+          `Failed to load analytics: ${source}`,
+          {},
+          result.reason as Error,
+        );
+        return null;
+      };
+      const overviewRes = take(settled[0], "overview");
+      const teamRes = take(settled[1], "team");
+      const revenueRes = take(settled[2], "revenue");
+      const processRes = take(settled[3], "processes");
+      const trendRes = take(settled[4], "trend");
 
       setOverview(overviewRes);
-      setTeamPerformance(teamRes);
+      setTeamPerformance(teamRes ?? []);
       setRevenue(revenueRes);
-      setProcessTypes(processRes);
-      setTrend(trendRes);
+      setProcessTypes(processRes ?? []);
+      setTrend(trendRes ?? []);
+      setFailed(down);
+      if (down.size > 0) {
+        showError(
+          "Some analytics could not be loaded",
+          `The affected figures read "${NOT_AVAILABLE}"`,
+        );
+      }
+      if (!overviewRes) setFunnel([]);
 
       // Generate funnel data from overview
       if (overviewRes?.by_status) {
@@ -561,9 +615,17 @@ export default function ClientAnalyticsPage() {
               title="Total Clients"
               aria-label="Total Clients"
               value={
-                isLoading ? "-" : formatCompact(overview?.total_clients || 0)
+                isLoading
+                  ? "-"
+                  : unavailable("overview")
+                    ? NOT_AVAILABLE
+                    : formatCompact(overview?.total_clients || 0)
               }
-              subtitle={`+${overview?.new_this_month || 0} this month`}
+              subtitle={
+                unavailable("overview")
+                  ? undefined
+                  : `+${overview?.new_this_month || 0} this month`
+              }
               icon={Users}
               color="blue"
               loading={isLoading}
@@ -571,8 +633,16 @@ export default function ClientAnalyticsPage() {
             <StatCard
               title="New This Week"
               aria-label="New This Week"
-              value={isLoading ? "-" : overview?.new_this_week || 0}
-              subtitle="Active acquisition"
+              value={
+                isLoading
+                  ? "-"
+                  : unavailable("overview")
+                    ? NOT_AVAILABLE
+                    : overview?.new_this_week || 0
+              }
+              subtitle={
+                unavailable("overview") ? undefined : "Active acquisition"
+              }
               icon={TrendingUp}
               color="green"
               loading={isLoading}
@@ -580,8 +650,16 @@ export default function ClientAnalyticsPage() {
             <StatCard
               title="Active Clients"
               aria-label="Active Clients"
-              value={isLoading ? "-" : overview?.by_status?.active || 0}
-              subtitle="Currently managed"
+              value={
+                isLoading
+                  ? "-"
+                  : unavailable("overview")
+                    ? NOT_AVAILABLE
+                    : overview?.by_status?.active || 0
+              }
+              subtitle={
+                unavailable("overview") ? undefined : "Currently managed"
+              }
               icon={Activity}
               color="amber"
               loading={isLoading}
@@ -592,17 +670,19 @@ export default function ClientAnalyticsPage() {
               value={
                 isLoading
                   ? "-"
-                  : `${
-                      overview?.by_status?.active && overview?.total_clients
-                        ? Math.round(
-                            (overview.by_status.active /
-                              overview.total_clients) *
-                              100,
-                          )
-                        : 0
-                    }%`
+                  : unavailable("overview")
+                    ? NOT_AVAILABLE
+                    : `${
+                        overview?.by_status?.active && overview?.total_clients
+                          ? Math.round(
+                              (overview.by_status.active /
+                                overview.total_clients) *
+                                100,
+                            )
+                          : 0
+                      }%`
               }
-              subtitle="Active / Total"
+              subtitle={unavailable("overview") ? undefined : "Active / Total"}
               icon={Target}
               color="purple"
               loading={isLoading}
@@ -621,6 +701,8 @@ export default function ClientAnalyticsPage() {
                 <div className="flex justify-center py-8">
                   <Loader2 className="w-8 h-8 animate-spin" />
                 </div>
+              ) : unavailable("overview") ? (
+                <Unavailable />
               ) : funnel.length > 0 ? (
                 <FunnelChart data={funnel} />
               ) : (
@@ -640,6 +722,8 @@ export default function ClientAnalyticsPage() {
                 <div className="flex justify-center py-8">
                   <Loader2 className="w-8 h-8 animate-spin" />
                 </div>
+              ) : unavailable("trend") ? (
+                <Unavailable />
               ) : revenueSparkline.length > 0 ? (
                 <MiniSparkline data={revenueSparkline} />
               ) : (
@@ -665,9 +749,15 @@ export default function ClientAnalyticsPage() {
               title="Total Revenue"
               aria-label="Total Revenue"
               value={
-                isLoading ? "-" : formatCurrency(revenue?.total_actual || 0)
+                isLoading
+                  ? "-"
+                  : unavailable("revenue")
+                    ? NOT_AVAILABLE
+                    : formatCurrency(revenue?.total_actual || 0)
               }
-              subtitle="Actual collected"
+              subtitle={
+                unavailable("revenue") ? undefined : "Practice prices in CRM"
+              }
               icon={DollarSign}
               color="green"
               loading={isLoading}
@@ -675,8 +765,18 @@ export default function ClientAnalyticsPage() {
             <StatCard
               title="Paid"
               aria-label="Paid"
-              value={isLoading ? "-" : formatCurrency(revenue?.total_paid || 0)}
-              subtitle={`${revenue?.total_actual ? Math.round((revenue.total_paid / revenue.total_actual) * 100) : 0}% collection rate`}
+              value={
+                isLoading
+                  ? "-"
+                  : unavailable("revenue")
+                    ? NOT_AVAILABLE
+                    : formatCurrency(revenue?.total_paid || 0)
+              }
+              subtitle={
+                unavailable("revenue")
+                  ? undefined
+                  : `${revenue?.total_actual ? Math.round((revenue.total_paid / revenue.total_actual) * 100) : 0}% marked paid in CRM`
+              }
               icon={Activity}
               color="blue"
               loading={isLoading}
@@ -687,9 +787,13 @@ export default function ClientAnalyticsPage() {
               value={
                 isLoading
                   ? "-"
-                  : formatCurrency(revenue?.total_outstanding || 0)
+                  : unavailable("revenue")
+                    ? NOT_AVAILABLE
+                    : formatCurrency(revenue?.total_outstanding || 0)
               }
-              subtitle="Pending payment"
+              subtitle={
+                unavailable("revenue") ? undefined : "Not marked paid in CRM"
+              }
               icon={Clock}
               color="amber"
               loading={isLoading}
@@ -698,34 +802,54 @@ export default function ClientAnalyticsPage() {
               title="Avg per Client"
               aria-label="Avg per Client"
               value={
-                isLoading ? "-" : formatCurrency(revenue?.avg_per_client || 0)
+                isLoading
+                  ? "-"
+                  : unavailable("revenue")
+                    ? NOT_AVAILABLE
+                    : formatCurrency(revenue?.avg_per_client || 0)
               }
-              subtitle="Revenue average"
+              subtitle={
+                unavailable("revenue") ? undefined : "CRM prices per client"
+              }
               icon={BarChart3}
               color="cyan"
               loading={isLoading}
             />
           </div>
+          <p className="text-xs text-muted-foreground mb-4">
+            These four figures add up the prices recorded on practices in the
+            CRM; older practices may have no price. Money actually received is
+            in the Monthly Breakdown, from the bank statements.
+          </p>
 
           {/* Monthly Trend Table */}
           <div className="bg-card rounded-xl border overflow-hidden">
             <div className="p-4 border-b">
               <h3 className="text-sm font-semibold">Monthly Breakdown</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Money received, by transfer date, from the imported bank
+                statements. A month is final when no transfer is left to
+                reconcile.
+              </p>
             </div>
             {isLoading ? (
               <div className="flex justify-center py-8">
                 <Loader2 className="w-8 h-8 animate-spin" />
               </div>
+            ) : unavailable("revenue") ? (
+              <Unavailable />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted">
                     <tr>
                       <th className="text-left p-3 font-medium">Period</th>
-                      <th className="text-right p-3 font-medium">Revenue</th>
-                      <th className="text-right p-3 font-medium">Paid</th>
+                      <th className="text-right p-3 font-medium">Received</th>
                       <th className="text-right p-3 font-medium hidden sm:table-cell">
-                        Collection %
+                        Payments
+                      </th>
+                      <th className="text-right p-3 font-medium">
+                        To reconcile
                       </th>
                     </tr>
                   </thead>
@@ -733,18 +857,58 @@ export default function ClientAnalyticsPage() {
                     {revenue?.by_month?.map((month, idx) => (
                       <tr key={idx} className="hover:bg-muted/50">
                         <td className="p-3">{month.period}</td>
-                        <td className="p-3 text-right font-medium">
-                          {formatCurrency(month.revenue)}
-                        </td>
-                        <td className="p-3 text-right text-[var(--state-success)]">
-                          {formatCurrency(month.paid)}
-                        </td>
-                        <td className="p-3 text-right hidden sm:table-cell">
-                          {month.revenue > 0
-                            ? Math.round((month.paid / month.revenue) * 100)
-                            : 0}
-                          %
-                        </td>
+                        {month.status === "no_statement" ||
+                        month.collected === null ? (
+                          <>
+                            <td className="p-3 text-right text-muted-foreground">
+                              {NO_STATEMENT}
+                            </td>
+                            <td className="p-3 text-right text-muted-foreground hidden sm:table-cell">
+                              —
+                            </td>
+                            <td className="p-3 text-right text-muted-foreground">
+                              —
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="p-3 text-right font-medium">
+                              {month.status === "partial" &&
+                              month.collected === 0 ? (
+                                <span className="text-muted-foreground font-normal">
+                                  {NOT_RECONCILED}
+                                </span>
+                              ) : (
+                                <span
+                                  className={
+                                    month.status === "complete"
+                                      ? "text-[var(--state-success)]"
+                                      : undefined
+                                  }
+                                >
+                                  {formatCurrency(month.collected)}
+                                  {month.status === "partial" && (
+                                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                      (partial)
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right hidden sm:table-cell">
+                              {month.payments}
+                            </td>
+                            <td
+                              className={`p-3 text-right ${
+                                month.to_reconcile > 0
+                                  ? "text-[var(--state-warning)] font-medium"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              {month.to_reconcile}
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -768,6 +932,8 @@ export default function ClientAnalyticsPage() {
               <div className="flex justify-center py-8">
                 <Loader2 className="w-8 h-8 animate-spin" />
               </div>
+            ) : unavailable("team") ? (
+              <Unavailable />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs sm:text-sm">
@@ -856,6 +1022,8 @@ export default function ClientAnalyticsPage() {
               <div className="flex justify-center py-8">
                 <Loader2 className="w-8 h-8 animate-spin" />
               </div>
+            ) : unavailable("processes") ? (
+              <Unavailable />
             ) : (
               <div className="space-y-3">
                 {processTypes
@@ -892,6 +1060,8 @@ export default function ClientAnalyticsPage() {
               <div className="flex justify-center py-8">
                 <Loader2 className="w-8 h-8 animate-spin" />
               </div>
+            ) : unavailable("overview") ? (
+              <Unavailable />
             ) : nationalityData.length > 0 ? (
               <div className="space-y-3">
                 {nationalityData.map((item, idx) => (

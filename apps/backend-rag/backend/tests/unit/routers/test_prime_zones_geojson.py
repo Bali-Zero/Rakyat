@@ -11,9 +11,10 @@ from backend.app.routers import prime
 
 ROWS = [
     {
+        "id": 1,
         "geometry": (
             '{"type":"Polygon","coordinates":'
-            "[[[115.1234567891,-8.6543219876],[115.2,-8.7],[115.1234567891,-8.6543219876]]]}"
+            "[[[115.1234567891,-8.6543219876],[115.2,-8.7],[115.25,-8.6],[115.1234567891,-8.6543219876]]]}"
         ),
         "zoning_type": "K-1: Perdagangan dan Jasa",
         "kodszn": "K-1",
@@ -23,6 +24,7 @@ ROWS = [
     },
     # No geometry and unparseable geometry: both rows are skipped.
     {
+        "id": 2,
         "geometry": None,
         "zoning_type": "R-2",
         "kodszn": "R-2",
@@ -31,6 +33,7 @@ ROWS = [
         "master_kdb": None,
     },
     {
+        "id": 3,
         "geometry": "not json",
         "zoning_type": "R-2",
         "kodszn": "R-2",
@@ -40,8 +43,9 @@ ROWS = [
     },
     # Unknown zone code, no building data: default colour, height and KDB.
     {
+        "id": 4,
         "geometry": (
-            '{"type":"MultiPolygon","coordinates":[[[[115.3,-8.5],[115.31,-8.51],[115.3,-8.5]]]]}'
+            '{"type":"MultiPolygon","coordinates":[[[[115.3,-8.5],[115.31,-8.51],[115.32,-8.5],[115.3,-8.5]]]]}'
         ),
         "zoning_type": "ZZ-9: Zona Uji",
         "kodszn": None,
@@ -60,7 +64,14 @@ EXPECTED = {
             "type": "Feature",
             "geometry": {
                 "type": "Polygon",
-                "coordinates": [[[115.123457, -8.654322], [115.2, -8.7], [115.123457, -8.654322]]],
+                "coordinates": [
+                    [
+                        [115.123457, -8.654322],
+                        [115.2, -8.7],
+                        [115.25, -8.6],
+                        [115.123457, -8.654322],
+                    ]
+                ],
             },
             "properties": {
                 "zone_code": "K-1",
@@ -75,7 +86,7 @@ EXPECTED = {
             "type": "Feature",
             "geometry": {
                 "type": "MultiPolygon",
-                "coordinates": [[[[115.3, -8.5], [115.31, -8.51], [115.3, -8.5]]]],
+                "coordinates": [[[[115.3, -8.5], [115.31, -8.51], [115.32, -8.5], [115.3, -8.5]]]],
             },
             "properties": {
                 "zone_code": "ZZ-9",

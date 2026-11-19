@@ -13,7 +13,7 @@ type Redirect = {
 // search results, emails) from becoming a 404 when a page is renamed or
 // removed. This file puts the table itself under test: its size, its shape,
 // and the absence of a source that two entries claim.
-const EXPECTED_ENTRY_COUNT = 114;
+const EXPECTED_ENTRY_COUNT = 115;
 
 // Two-hop paths that already exist in the table. They are not loops (each ends
 // on a real page after two permanent redirects) and are recorded here so a NEW
@@ -22,6 +22,9 @@ const KNOWN_CHAINS = [
   "/immigration/e33f-spouse-dependent-kitas-guide",
   "/immigration/e33e-child-dependent-kitas-guide",
 ];
+
+// The one entry that is temporary on purpose: its target is a versioned file.
+const TEMPORARY_SOURCE = "/api/prime/zones-geojson";
 
 async function table(): Promise<Redirect[]> {
   expect(nextConfig.redirects).toBeDefined();
@@ -59,7 +62,7 @@ describe("next.config.ts redirects table", () => {
         r.destination.startsWith("/"),
         `${r.source} -> ${r.destination}`,
       ).toBe(true);
-      expect(r.permanent, r.source).toBe(true);
+      expect(r.permanent, r.source).toBe(r.source !== TEMPORARY_SOURCE);
       expect(r.source, "self redirect").not.toBe(r.destination);
     }
   });
@@ -127,7 +130,10 @@ describe("retired /v2 generation of the homepage and news index", () => {
       "/v2/company/careers",
       "/v2/company/press",
     ]) {
-      expect(redirects.some((r) => r.source === source), source).toBe(true);
+      expect(
+        redirects.some((r) => r.source === source),
+        source,
+      ).toBe(true);
     }
     // /v2/news/<slug> was a 404 before this change and stays one: no wildcard.
     expect(entryFor(redirects, "/v2/news/some-slug")).toBeUndefined();

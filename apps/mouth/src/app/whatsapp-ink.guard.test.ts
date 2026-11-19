@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { R19_VARS } from "@/components/r19/presentation";
@@ -81,9 +81,8 @@ const SWEEP_ALLOWLIST = new Set([
     "apps",
     "mouth",
     "src",
-    "app",
-    "v2",
-    "_components",
+    "components",
+    "site",
     "NavWhatsAppCTA.tsx",
   ),
 ]);
@@ -185,6 +184,11 @@ describe("WhatsApp accent ink guard", () => {
     // files under apps/mouth/src + packages/core; a handful would mean the
     // roots/extensions are wrong, not that the repo shrank.
     expect(SWEPT_FILES.length).toBeGreaterThan(500);
+  });
+
+  it("every allowlisted file exists (a moved file must not leave a dead exemption)", () => {
+    const missing = [...SWEEP_ALLOWLIST].filter((file) => !existsSync(file));
+    expect(missing).toEqual([]);
   });
 
   it("no surface anywhere under apps/mouth/src or packages/core pairs a WhatsApp-green fill with light ink", () => {

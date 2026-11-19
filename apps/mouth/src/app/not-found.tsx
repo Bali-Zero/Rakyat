@@ -2,7 +2,7 @@ import { I18nProvider } from "@/i18n";
 import { R19Presentation } from "@/components/r19/R19Presentation";
 import { NotFoundBody } from "@/components/r19/NotFoundBody";
 import { BlogNav } from "@/app/(blog)/_components/BlogNav";
-import { Footer } from "@/app/v2/_components/Footer";
+import { Footer } from "@/components/site/Footer";
 
 // Root-level 404: matched for any path that isn't claimed by ANY route (e.g.
 // three-plus unknown segments) — `(blog)/not-found.tsx` handles the ones

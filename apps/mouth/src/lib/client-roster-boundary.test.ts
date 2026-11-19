@@ -171,7 +171,7 @@ describe("the roster does not cross the client boundary", () => {
     // pass while checking absolutely nothing.
     expect(files.length).toBeGreaterThan(200);
     expect(
-      files.some((f) => f.endsWith("app/v2/_components/socialProofRoster.ts")),
+      files.some((f) => f.endsWith("components/r19/home/socialProofRoster.ts")),
     ).toBe(true);
     expect(files.some((f) => f.endsWith("data/team-roster.ts"))).toBe(true);
   });
@@ -257,7 +257,7 @@ describe("the roster does not cross the client boundary", () => {
 
   it("the server resolver is not a client module and owns the exclusion", () => {
     const src = readFileSync(
-      join(SRC, "app/v2/_components/socialProofRoster.ts"),
+      join(SRC, "components/r19/home/socialProofRoster.ts"),
       "utf8",
     );
     expect(isClientModule(src)).toBe(false);

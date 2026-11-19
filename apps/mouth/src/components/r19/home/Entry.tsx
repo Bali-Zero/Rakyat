@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { NavWhatsAppCTA } from "@/app/v2/_components/NavWhatsAppCTA";
+import { NavWhatsAppCTA } from "@/components/site/NavWhatsAppCTA";
 import { WhatsAppLeadButton } from "@/components/lead/WhatsAppLeadButton";
 import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
 

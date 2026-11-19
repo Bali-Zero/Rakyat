@@ -12,7 +12,8 @@ import json
 import logging
 import os
 import re
-from datetime import date
+from contextlib import asynccontextmanager
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -44,12 +45,23 @@ REGISTRY_TABLES = (
     "related_documents",
     "related_document_sightings",
     "related_subject_documents",
+    "related_subject_links",
+    "related_subject_merges",
+    "related_subject_detachments",
 )
 
 ADMIN = {"email": "zz-admin@example.test", "user_id": 1, "role": "admin"}
 STAFF = {"email": "zz-staff@example.test", "user_id": 2, "role": "team_member"}
 CLIENT = {"email": "zz-client@example.test", "user_id": 3, "role": "client"}
 PARTNER = {"email": "zz-partner@example.test", "user_id": 4, "role": "partner"}
+
+CLIENTS_SCHEMA = """
+CREATE TABLE clients (
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    full_name text NOT NULL,
+    deleted_at timestamptz
+);
+"""
 
 AUDIT_SCHEMA = """
 CREATE TABLE api_audit_trail (
@@ -135,10 +147,14 @@ async def pool():
                 "362_related_documents.sql",
                 "365_related_subject_names.sql",
                 "366_related_evidence_objects.sql",
+                "367_related_subject_links.sql",
+                "369_related_subject_merges.sql",
+                "370_related_subject_detachments.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
             await c.execute(AUDIT_SCHEMA)
+            await c.execute(CLIENTS_SCHEMA)
             await c.execute(WRITE_LOG_SQL)
         yield created
         async with created.acquire() as c:
@@ -353,13 +369,15 @@ async def test_t3_list_without_q_orders_pages_and_counts(admin, seeded):
     assert row["kind"] == "person" and row["nationality"] == "ZZ-land"
     assert row["date_of_birth"] == "1990-01-02" and row["document_count"] == 3
     assert row["identifiers"] == [
-        {"type": "passport", "value": ZZ_PASSPORT_RAW},
-        {"type": "permit", "value": ZZ_PERMIT_RAW},
+        {"type": "passport", "value": ZZ_PASSPORT_RAW, "from_subject_id": None},
+        {"type": "permit", "value": ZZ_PERMIT_RAW, "from_subject_id": None},
+        {"type": "passport", "value": "ZZ77777M7", "from_subject_id": seeded["merged"]},
     ]
     assert set(row) == {
         "id", "kind", "display_name", "name_source", "date_of_birth", "nationality", "identifiers",
-        "document_count",
+        "document_count", "links_count",
     }  # fmt: skip
+    assert row["links_count"] == 0
     assert row["name_source"] == "registration"
 
     page = await admin.get(BASE, params={"limit": 3, "offset": 2})
@@ -443,7 +461,7 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
     assert body["display_name"] == "ZzAaa Person" and body["sex"] == "F"
     assert body["nationality"] == "ZZ-land" and body["date_of_birth"] == "1990-01-02"
     assert "created_at" in body and "evidence" not in body and "created_by" not in body
-    assert [i["type"] for i in body["identifiers"]] == ["passport", "permit"]
+    assert [i["type"] for i in body["identifiers"]] == ["passport", "permit", "passport"]
     assert [d["sha256"] for d in body["documents"]] == [SHA1, SHA2, SHA3]
     first, second, third = body["documents"]
     assert first["drive_file_ids"] == [REF1, REF2]
@@ -453,11 +471,18 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
     assert first["first_seen_on"] == "2026-01-05"
     assert set(first) == {
         "sha256", "doc_type", "mime_type", "byte_size", "first_seen_on", "drive_file_ids",
+        "from_subject_id",
     }  # fmt: skip
+    assert body["merged_from"] == [
+        {"subject_id": seeded["merged"], "basis": None, "merged_at": None}
+    ]
+    assert body["merged_into"] is None
 
     missing = await admin.get(f"{BASE}/999999")
     assert missing.status_code == 404 and missing.json() == {"detail": "Subject not found"}
     assert (await admin.get(f"{BASE}/0")).status_code == 422
+    merged = await admin.get(f"{BASE}/{seeded['merged']}")
+    assert merged.status_code == 200 and merged.json()["merged_into"] == seeded["aaa"]
 
 
 # ── T8 ────────────────────────────────────────────────────────────────────────
@@ -467,10 +492,12 @@ async def test_t7_detail_identifiers_documents_and_drive_ids(admin, seeded):
 async def test_t8_merged_subject_is_absent_from_list_and_total(admin, seeded):
     resp = await admin.get(BASE, params={"limit": 100})
     assert seeded["merged"] not in ids_of(resp) and resp.json()["total"] == 9
+    # the merged-away record is never listed itself, but its survivor is now found through the
+    # record's name and identifier (slice 4C); its pointer has no history row (LEFT JOIN)
     by_name = await admin.get(BASE, params={"q": "ZzMerged"})
-    assert by_name.json() == {"items": [], "total": 0, "limit": 50, "offset": 0}
+    assert ids_of(by_name) == [seeded["aaa"]] and by_name.json()["total"] == 1
     by_id = await admin.get(BASE, params={"q": "ZZ77777"})
-    assert by_id.json()["total"] == 0
+    assert ids_of(by_id) == [seeded["aaa"]] and by_id.json()["total"] == 1
     kind = await admin.get(BASE, params={"kind": "person", "limit": 100})
     assert seeded["merged"] not in ids_of(kind) and kind.json()["total"] == 7
     # opened by id, a merged subject is returned like any other
@@ -552,8 +579,10 @@ def test_t10_every_sql_text_of_the_service_is_a_plain_select():
         for attr, value in vars(service_module).items()
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     ]
-    # slice 4A added the recorded-names statement of the detail page: 8 complete statements
-    assert len(statements) == 8
+    # slice 4A added the recorded-names statement of the detail page, slice 4B the links
+    # statement, slice 4C the members statement of the detail page, the file-count slice the
+    # detachments statement: 11 complete statements
+    assert len(statements) == 11
     for sql in statements:
         assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
     # the executed statements are exactly the module's constants (no inline SQL in a call)
@@ -637,3 +666,175 @@ async def test_guard_the_module_pool_carries_the_production_jsonb_codec(conn):
     assert await conn.fetchval("SELECT $1::jsonb", {"a": 1}) == {"a": 1}
     assert await conn.fetchval("SELECT $1::jsonb", '{"a": 1}') == '{"a": 1}'
     assert await conn.fetchval("SELECT jsonb_typeof($1::jsonb)", '{"a": 1}') == "string"
+
+
+# ── R5: file count per client link, detachments on the subject ───────────────
+
+OWNER_DIGEST = "ab12" * 16
+MOVED_HASH_1, MOVED_HASH_2 = "e5" * 32, "f6" * 32
+PLAN_DIGEST = "cd34" * 16
+DETACH_CREATED_BY = "zz-detach-seed-actor"
+DETACHED_AT = datetime(2026, 4, 5, 9, 0, tzinfo=UTC)
+
+
+@asynccontextmanager
+async def _unmeasured(pool):
+    """Seed outside the write-log measurement, as the `seeded` fixture does."""
+    async with pool.acquire() as c:
+        mark = await c.fetchval("SELECT coalesce(max(id), 0) FROM write_log")
+        yield c
+        await c.execute("DELETE FROM write_log WHERE id > $1", mark)
+
+
+async def _seed_link(c, sid, client_id, evidence, *, basis="drive_folder", day=1):
+    await c.execute(
+        "INSERT INTO related_subject_links (subject_id, client_id, basis, evidence, created_by, "
+        "created_at) VALUES ($1, $2, $3, $4::jsonb, 'zz-seed', $5)",
+        sid, client_id, basis, evidence, datetime(2026, 3, day, 10, 0, tzinfo=UTC),
+    )  # fmt: skip
+
+
+async def _seed_detachment(
+    c, from_id, to_id, *, moved=(MOVED_HASH_1, MOVED_HASH_2), at=DETACHED_AT
+):
+    await c.execute(
+        "INSERT INTO related_subject_detachments (from_id, to_id, id_type, owner_keys_sha256, "
+        "moved_documents, basis, evidence, created_by, created_at) "
+        "VALUES ($1, $2, 'nik', $3, $4, 'nik_birth_date', $5::jsonb, $6, $7)",
+        from_id, to_id, OWNER_DIGEST, list(moved), {"plan_sha256": PLAN_DIGEST, "n": len(moved)},
+        DETACH_CREATED_BY, at,
+    )  # fmt: skip
+
+
+def _link_files(resp) -> dict[int, int | None]:
+    return {link["client_id"]: link["files"] for link in resp.json()["links"]}
+
+
+@pytest.mark.asyncio
+async def test_r5_t1_t2_link_files_is_the_evidence_number_or_none(pool, admin, seeded):
+    cases = {
+        501: {"files": 3, "plan_sha256": PLAN_DIGEST},
+        502: {"files": 1},
+        503: {},
+        504: {"files": "3"},
+        505: {"files": 1.5},
+        506: {"files": -2},
+        507: {"files": None},
+        508: {"files": 99999999999},
+    }
+    async with _unmeasured(pool) as c:
+        for client_id, evidence in cases.items():
+            await _seed_link(c, seeded["aaa"], client_id, evidence)
+    resp = await admin.get(f"{BASE}/{seeded['aaa']}")
+    assert resp.status_code == 200
+    assert _link_files(resp) == {
+        501: 3, 502: 1, 503: None, 504: None, 505: None, 506: None, 507: None, 508: None,
+    }  # fmt: skip
+
+
+@pytest.mark.asyncio
+async def test_r5_t3_survivor_shows_the_files_of_the_earliest_row_of_the_pair(pool, admin, seeded):
+    async with _unmeasured(pool) as c:
+        await _seed_link(c, seeded["merged"], 511, {"files": 5}, day=1)
+        await _seed_link(c, seeded["aaa"], 511, {"files": 2}, day=2)
+    body = (await admin.get(f"{BASE}/{seeded['aaa']}")).json()
+    assert body["links_total"] == 1
+    assert body["links"][0]["files"] == 5
+    assert body["links"][0]["from_subject_id"] == seeded["merged"]
+
+
+@pytest.mark.asyncio
+async def test_r5_t4_detached_from_and_detached_into_carry_counts_dates_and_ids(
+    pool, admin, seeded
+):
+    async with _unmeasured(pool) as c:
+        src = await _seed_subject(c, "person", "ZzSplit Source", [])
+        tgt = await _seed_subject(c, "person", "ZzSplit Target", [("nik", "3201 0000 0000 0002")])
+        await _seed_detachment(c, src, tgt)
+    expected = {
+        "id_type": "nik",
+        "basis": "nik_birth_date",
+        "documents_moved": 2,
+        "from_subject_id": None,
+    }
+    on_target = (await admin.get(f"{BASE}/{tgt}")).json()
+    assert on_target["detached_into"] == []
+    (row,) = on_target["detached_from"]
+    assert row.pop("detached_at").startswith("2026-04-05T09:00:00")
+    assert row == {"subject_id": src, **expected}
+    on_source = (await admin.get(f"{BASE}/{src}")).json()
+    assert on_source["detached_from"] == []
+    (row,) = on_source["detached_into"]
+    assert row.pop("detached_at").startswith("2026-04-05T09:00:00")
+    assert row == {"subject_id": tgt, **expected}
+
+
+@pytest.mark.asyncio
+async def test_r5_t5_a_members_detachment_shows_on_the_survivor_with_the_member_id(
+    pool, admin, seeded
+):
+    async with _unmeasured(pool) as c:
+        out = await _seed_subject(c, "person", "ZzSplit Out", [])
+        other = await _seed_subject(c, "person", "ZzSplit Other", [])
+        await _seed_detachment(c, seeded["merged"], out, moved=(MOVED_HASH_1,))
+        await _seed_detachment(c, other, seeded["aaa"], at=DETACHED_AT.replace(day=6))
+    body = (await admin.get(f"{BASE}/{seeded['aaa']}")).json()
+    assert [
+        (r["subject_id"], r["from_subject_id"], r["documents_moved"]) for r in body["detached_into"]
+    ] == [(out, seeded["merged"], 1)]
+    assert [(r["subject_id"], r["from_subject_id"]) for r in body["detached_from"]] == [
+        (other, None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_r5_t6_a_subject_in_no_detachment_gets_two_empty_lists(admin, seeded):
+    body = (await admin.get(f"{BASE}/{seeded['bbb1']}")).json()
+    assert body["detached_into"] == [] and body["detached_from"] == []
+
+
+@pytest.mark.asyncio
+async def test_r5_t7_no_digest_hash_evidence_or_actor_in_the_response(pool, conn, admin, seeded):
+    async with _unmeasured(pool) as c:
+        src = await _seed_subject(c, "person", "ZzSplit Source", [])
+        tgt = await _seed_subject(c, "person", "ZzSplit Target", [])
+        await _seed_detachment(c, src, tgt)
+        await _seed_link(c, src, 521, {"files": 4, "plan_sha256": PLAN_DIGEST})
+    for sid in (src, tgt):
+        text = (await admin.get(f"{BASE}/{sid}")).text
+        for secret in (OWNER_DIGEST, MOVED_HASH_1, MOVED_HASH_2, PLAN_DIGEST, DETACH_CREATED_BY):
+            assert secret not in text, secret
+        assert "plan_sha256" not in text and "owner_keys" not in text and "created_by" not in text
+    # the model would drop an extra key, so the service answer itself is read too
+    for sid in (src, tgt):
+        raw = repr(await service_module.get_subject(conn, sid))
+        for secret in (OWNER_DIGEST, MOVED_HASH_1, MOVED_HASH_2, PLAN_DIGEST, DETACH_CREATED_BY):
+            assert secret not in raw, secret
+
+
+@pytest.mark.asyncio
+async def test_r5_t8_the_response_validates_against_the_models_with_exact_keys(pool, admin, seeded):
+    async with _unmeasured(pool) as c:
+        src = await _seed_subject(c, "person", "ZzSplit Source", [])
+        tgt = await _seed_subject(c, "person", "ZzSplit Target", [])
+        await _seed_detachment(c, src, tgt)
+        await _seed_link(c, src, 531, {"files": 2})
+    body = (await admin.get(f"{BASE}/{src}")).json()
+    parsed = route_module.RelatedRegistrySubjectDetail.model_validate(body)
+    assert parsed.links[0].files == 2
+    assert parsed.detached_into[0].documents_moved == 2
+    assert set(body["detached_into"][0]) == set(route_module.RelatedRegistryDetachment.model_fields)
+    assert "files" in body["links"][0]
+
+
+@pytest.mark.asyncio
+async def test_r5_t9_the_detachment_rows_are_bounded(pool, admin, seeded, monkeypatch):
+    monkeypatch.setattr(service_module, "MAX_DETAIL_LINKS", 2)
+    async with _unmeasured(pool) as c:
+        src = await _seed_subject(c, "person", "ZzSplit Source", [])
+        for day in (1, 2, 3):
+            tgt = await _seed_subject(c, "person", f"ZzSplit Target {day}", [])
+            await _seed_detachment(c, src, tgt, at=DETACHED_AT.replace(day=day))
+    body = (await admin.get(f"{BASE}/{src}")).json()
+    assert len(body["detached_into"]) == 2
+    assert [r["detached_at"][:10] for r in body["detached_into"]] == ["2026-04-01", "2026-04-02"]
