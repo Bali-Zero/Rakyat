@@ -20,7 +20,7 @@ from backend.app.deps.crm_access import get_practices_user_filter
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
 from backend.app.services.internal_email import send_internal_email
 from backend.app.utils.client_pools import caller_pool_peers
-from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
+from backend.app.utils.crm_utils import COMPANY_CREATE_ROLES, is_crm_admin, verify_client_access
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_database_operation, log_success
@@ -112,10 +112,22 @@ async def _resolve_invoice_company_http(
     name: str | None,
     npwp: str | None,
     current_user: dict,
+    allow_tax_create: bool = False,
 ) -> int:
     # Creating a company and linking it mutates the client, so it takes the same
     # write permission as the client link route (admin, or the client's owner).
-    await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
+    # Exception (DAI-156): on a NEW process (``allow_tax_create=True``, passed by
+    # create_practice only) the tax team (``COMPANY_CREATE_ROLES``) may name the
+    # invoice company for a client it does not own; the client must still exist.
+    # PATCH keeps the owner/admin rule. Deliberately a role check, not
+    # ``can_create_company``: that helper may grow beyond the tax team (pools).
+    tax_create = allow_tax_create and (
+        is_crm_admin(current_user)
+        or (current_user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
+    )
+    await verify_client_access(
+        client_id, current_user, conn, allow_assigned=True, write=not tax_create
+    )
     try:
         async with conn.transaction():
             return await invoice_company_service.resolve_invoice_company(
@@ -748,6 +760,7 @@ async def create_practice(
                         name=practice.invoice_company_name,
                         npwp=practice.invoice_company_npwp,
                         current_user=current_user,
+                        allow_tax_create=True,
                     )
                     await conn.execute(
                         "UPDATE practices SET invoice_company_id = $1 WHERE id = $2",

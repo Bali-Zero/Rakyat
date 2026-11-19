@@ -408,6 +408,65 @@ async def test_company_and_link_writes_need_write_access_to_the_client(pool: asy
     assert plain.invoice_company_id is None
 
 
+TAX_LEAD = {"email": "synthetic.taxlead@example.invalid", "role": "tax lead"}
+CONSULTANT = {"email": "synthetic.consultant@example.invalid", "role": "consultant"}
+
+
+@pytest.mark.asyncio
+async def test_tax_lead_names_the_invoice_company_on_a_new_process_for_any_client(
+    pool: asyncpg.Pool,
+) -> None:
+    # DAI-156: the tax team is not the client's owner but may create the process
+    # with its invoice company; practice, company and link are all saved.
+    person = await client(pool, assigned_to=STAFF["email"])
+    created = await create(pool, person, user=TAX_LEAD, invoice_company_name="PT Synthetic Pajak")
+    assert created.invoice_company_id is not None
+    assert await counts(pool) == (1, 1, 1)
+    assert (
+        await pool.fetchval(
+            "SELECT created_by FROM companies WHERE id=$1", created.invoice_company_id
+        )
+        == TAX_LEAD["email"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_tax_role_and_tax_patch_still_need_write_access(pool: asyncpg.Pool) -> None:
+    person = await client(pool, assigned_to=STAFF["email"])
+    with pytest.raises(HTTPException) as caught:
+        await create(pool, person, user=CONSULTANT, invoice_company_name="PT Synthetic Bukan")
+    assert caught.value.status_code == 403
+    assert await counts(pool) == (0, 0, 0)
+
+    created = await create(pool, person, user=STAFF)
+    with pytest.raises(HTTPException) as caught:
+        await crm_practices.update_practice(
+            request=None,
+            practice_id=created.id,
+            updates=PracticeUpdate(invoice_company_name="PT Synthetic Patch Pajak"),
+            db_pool=pool,
+            current_user=TAX_LEAD,
+        )
+    assert caught.value.status_code == 403
+    assert await counts(pool) == (0, 0, 1)
+
+
+@pytest.mark.asyncio
+async def test_pool_member_without_tax_role_still_needs_write_access(
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from backend.app.utils import client_pools
+
+    reception = {"email": "synthetic.reception@example.invalid", "role": "reception"}
+    peers = frozenset({reception["email"], "synthetic.poolpeer@example.invalid"})
+    monkeypatch.setattr(client_pools, "caller_pool_peers", lambda _user: peers)
+    person = await client(pool, assigned_to=STAFF["email"])
+    with pytest.raises(HTTPException) as caught:
+        await create(pool, person, user=reception, invoice_company_name="PT Synthetic Pool")
+    assert caught.value.status_code == 403
+    assert await counts(pool) == (0, 0, 0)
+
+
 @pytest.mark.asyncio
 async def test_npwp_only_patch_is_rejected_and_never_clears_the_company(pool: asyncpg.Pool) -> None:
     person = await client(pool)
