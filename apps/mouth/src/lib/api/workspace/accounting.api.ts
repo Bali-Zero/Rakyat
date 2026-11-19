@@ -130,12 +130,28 @@ export interface DoneTodayResponse {
   truncated: boolean;
 }
 
+/** One issuing company with its bank account and imported-statement coverage (GET /companies). */
+export interface AccountingCompany {
+  /** An issuing-entity key, or "other" for imported accounts no company owns. */
+  key: string;
+  company_name: string;
+  bank_name: string | null;
+  account_number: string | null;
+  /** Last day covered by an imported statement (YYYY-MM-DD), null when none is imported. */
+  data_through: string | null;
+  statements: number;
+  /** Incoming transfers of this account still waiting to be reconciled. */
+  to_reconcile: number;
+}
+
 /** One unmatched incoming transfer with its light (GET /reconciliation-inbox). */
 export interface ReconciliationInboxItem {
   txn_id: number;
   txn_date: string;
   amount_idr: number;
   description: string;
+  /** The issuing company whose bank account received it; null when no company owns the account. */
+  company_key: string | null;
   light: InboxLight;
   open_candidates: number;
   open_strong: number;
@@ -311,6 +327,11 @@ export const accountingApi = {
   /** What was confirmed, linked or ignored today (WITA); read-only. */
   async getDoneToday(): Promise<DoneTodayResponse> {
     return api.get<DoneTodayResponse>("/api/crm/accounting/done-today");
+  },
+
+  /** The issuing companies, each with its bank account and how far its statements reach. */
+  async getCompanies(): Promise<AccountingCompany[]> {
+    return api.get<AccountingCompany[]>("/api/crm/accounting/companies");
   },
 
   /** Unmatched incoming transfers with their light, newest first. */

@@ -37,6 +37,11 @@ from backend.services.accounting.bank_pdf_readers import (
     parse_and_preview_statement,
     preview_statement,
 )
+from backend.services.accounting.companies import (
+    OTHER_KEY,
+    company_key_for_account,
+    load_companies,
+)
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
 from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
@@ -500,6 +505,7 @@ def _classify_inbox(
                 "txn_date": tx["txn_date"],
                 "amount_idr": tx["amount_idr"],
                 "description": tx["description"],
+                "company_key": tx["company_key"],
                 "light": res.light,
                 "open_candidates": res.open_candidates,
                 "open_strong": res.open_strong,
@@ -513,19 +519,20 @@ def _classify_inbox(
 
 @router.get("/reconciliation-inbox")
 async def reconciliation_inbox(
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(200, ge=1, le=1000),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
-    """Unmatched incoming transfers, newest first, each with its light. Advice only."""
+    """Unmatched incoming transfers, newest first, each with its light and company. Advice only."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, txn_date, amount_idr, description
-            FROM bank_transactions
-            WHERE direction = 'credit' AND reconciled_status = 'unmatched'
-            ORDER BY txn_date DESC, id DESC
+            SELECT bt.id, bt.txn_date, bt.amount_idr, bt.description, bs.account_number
+            FROM bank_transactions bt
+            LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
+            WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'
+            ORDER BY bt.txn_date DESC, bt.id DESC
             LIMIT $1
             """,
             limit,
@@ -538,10 +545,23 @@ async def reconciliation_inbox(
             "txn_date": r["txn_date"],
             "amount_idr": int(r["amount_idr"]),
             "description": r["description"] or "",
+            # Same rule as the companies strip: an account no company owns is "other".
+            "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
         }
         for r in rows
     ]
     return await asyncio.to_thread(_classify_inbox, txns, open_invoices, recorded_invoices)
+
+
+@router.get("/companies")
+async def companies(
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """The issuing companies with bank, account and how far their imported statements reach."""
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        return await load_companies(conn)
 
 
 def _wita_now() -> dt.datetime:
