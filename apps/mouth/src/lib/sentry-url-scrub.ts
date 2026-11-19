@@ -19,6 +19,13 @@ const QUERY_FIELDS = new Set([
 ]);
 const URL_FIELDS = new Set(["url", "http.url", "url.full"]);
 const URL_HEADERS = new Set(["referer", "referrer", "link", "location"]);
+/**
+ * A navigation breadcrumb (`category: "navigation"`) carries the two addresses
+ * of a history change as `data.from` and `data.to`, path AND query, and the SDK
+ * filters neither. `/clients?q=<typed text>` from the command palette and an
+ * old `/login?email=…&pin=…` rewritten on load would both reach the next event.
+ */
+const NAVIGATION_URL_FIELDS = new Set(["from", "to"]);
 const SEARCH_PARAM_KEYS = new Set(["search", "q"]);
 const MAX_DEPTH = 12;
 
@@ -76,6 +83,21 @@ function scrub(value: unknown, depth: number): unknown {
       out[key] = PLACEHOLDER;
     } else if (QUERY_FIELDS.has(key) && typeof v === "string") {
       out[key] = PLACEHOLDER;
+    } else if (
+      key === "data" &&
+      source.category === "navigation" &&
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v)
+    ) {
+      out[key] = Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([field, x]) => [
+          field,
+          NAVIGATION_URL_FIELDS.has(field) && typeof x === "string"
+            ? pathOnlyUrl(x)
+            : scrub(x, depth + 1),
+        ]),
+      );
     } else if (key.toLowerCase() === "headers") {
       out[key] = scrubHeaders(v);
     } else if (URL_FIELDS.has(key) && typeof v === "string") {

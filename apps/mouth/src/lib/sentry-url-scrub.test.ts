@@ -109,4 +109,33 @@ describe("scrubSentryUrls", () => {
     expect(out.name).toBe("GET https://kita.example/clients");
     expect(out.attributes["http.query"]).toBe("[REDACTED]");
   });
+
+  it("keeps only the path of both addresses of a navigation breadcrumb (guilt)", () => {
+    const out = scrubSentryUrls({
+      category: "navigation",
+      data: {
+        from: "/login?email=fixture%40example.com&pin=135790&redirect=%2Fclients",
+        to: `https://kita.example/clients?q=${VALUE}`,
+      },
+    });
+    expect(out).toEqual({
+      category: "navigation",
+      data: { from: "/login", to: "https://kita.example/clients" },
+    });
+    expect(JSON.stringify(out)).not.toContain("135790");
+    expect(JSON.stringify(out)).not.toContain(VALUE);
+  });
+
+  it("leaves from/to of other breadcrumbs and clean navigations alone (innocence)", () => {
+    const other = {
+      category: "console",
+      data: { from: "a?b=c", to: "d?e=f", arguments: ["x"] },
+    };
+    expect(scrubSentryUrls(other)).toEqual(other);
+    const clean = {
+      category: "navigation",
+      data: { from: "/login", to: "/dashboard" },
+    };
+    expect(scrubSentryUrls(clean)).toEqual(clean);
+  });
 });
