@@ -45,3 +45,5 @@ COMMENT ON TABLE related_subject_birth_dates IS
     'History of birth dates recorded on registry subjects from an identity document, insert-only by application restriction. Holds the date and the document hash: never logged, returned or audited.';
 
 -- === ROLLBACK ===
+
+DROP TABLE IF EXISTS related_subject_birth_dates;
