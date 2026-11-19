@@ -174,6 +174,7 @@ async def pool(writes):
                 "365_related_subject_names.sql",
                 "367_related_subject_links.sql",
                 "369_related_subject_merges.sql",
+                "370_related_subject_detachments.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)

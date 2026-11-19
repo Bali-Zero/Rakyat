@@ -33,7 +33,16 @@ def _gabungan_pdf_bytes() -> bytes:
         ["NEW CASHOUT 6 MARCH 2026", "", "", "", "", "", "", ""],
         header,
         ["CLIENT ONE", "C1", "Rp1.000.000", "", "", "Rp600.000", "Rp2.300.000", ""],
-        ["CLIENT TWO", "C1 - Urgent", "Rp1.000.000", "Rp800.000", "", "Rp600.000", "Rp3.300.000", ""],
+        [
+            "CLIENT TWO",
+            "C1 - Urgent",
+            "Rp1.000.000",
+            "Rp800.000",
+            "",
+            "Rp600.000",
+            "Rp3.300.000",
+            "",
+        ],
         ["NEW CASHOUT 13 MARCH 2026", "", "", "", "", "", "", ""],
         header,
         ["CLIENT THREE", "C1", "Rp1.000.000", "", "", "Rp600.000", "Rp2.300.000", ""],
@@ -135,8 +144,11 @@ class TestMatchCandidates:
         _pool, conn = mock_db_pool
         conn.fetchrow = AsyncMock(
             return_value={
-                "id": 1, "txn_date": "2026-06-25", "amount_idr": 4000000,
-                "direction": "debit", "description": "outgoing",
+                "id": 1,
+                "txn_date": "2026-06-25",
+                "amount_idr": 4000000,
+                "direction": "debit",
+                "description": "outgoing",
             }
         )
         client = TestClient(_build_app(mock_db_pool, asya_user), raise_server_exceptions=False)
@@ -152,7 +164,9 @@ class TestMatchCandidates:
 class TestConfirm:
     def test_outsider_denied(self, mock_db_pool, outsider_user) -> None:
         client = TestClient(_build_app(mock_db_pool, outsider_user), raise_server_exceptions=False)
-        resp = client.post("/api/crm/accounting/confirm", json={"practice_id": 1, "amount_applied_idr": 100})
+        resp = client.post(
+            "/api/crm/accounting/confirm", json={"practice_id": 1, "amount_applied_idr": 100}
+        )
         assert resp.status_code == 403
 
     def test_bad_status_422(self, mock_db_pool, asya_user) -> None:
@@ -187,9 +201,10 @@ class TestConfirm:
         confirm_mock = AsyncMock(return_value=fake_result)
         cache_mock = AsyncMock()
 
-        with patch(
-            "backend.app.routers.accounting.reconcile_service.confirm_payment", confirm_mock
-        ), patch("backend.core.cache.invalidate_cache", cache_mock):
+        with (
+            patch("backend.app.routers.accounting.reconcile_service.confirm_payment", confirm_mock),
+            patch("backend.core.cache.invalidate_cache", cache_mock),
+        ):
             client = TestClient(_build_app(mock_db_pool, asya_user), raise_server_exceptions=False)
             resp = client.post(
                 "/api/crm/accounting/confirm",
@@ -231,13 +246,18 @@ class TestConfirm:
         mixed = {"id": "asya", "email": "Admin@Example.Test", "role": "user"}
         confirm_mock = AsyncMock(
             return_value=ConfirmResult(
-                practice_id=1, invoice_id=None, cashout_id=1,
-                reconciliation_log_id=1, status_before="unpaid", status_after="paid",
+                practice_id=1,
+                invoice_id=None,
+                cashout_id=1,
+                reconciliation_log_id=1,
+                status_before="unpaid",
+                status_after="paid",
             )
         )
-        with patch(
-            "backend.app.routers.accounting.reconcile_service.confirm_payment", confirm_mock
-        ), patch("backend.core.cache.invalidate_cache", AsyncMock()):
+        with (
+            patch("backend.app.routers.accounting.reconcile_service.confirm_payment", confirm_mock),
+            patch("backend.core.cache.invalidate_cache", AsyncMock()),
+        ):
             client = TestClient(_build_app(mock_db_pool, mixed), raise_server_exceptions=False)
             resp = client.post(
                 "/api/crm/accounting/confirm",
@@ -252,18 +272,28 @@ class TestConfirm:
 
         confirm_mock = AsyncMock(
             return_value=ConfirmResult(
-                practice_id=10, invoice_id=5, cashout_id=77,
-                reconciliation_log_id=88, status_before="unpaid", status_after="paid",
+                practice_id=10,
+                invoice_id=5,
+                cashout_id=77,
+                reconciliation_log_id=88,
+                status_before="unpaid",
+                status_after="paid",
             )
         )
         cache_mock = AsyncMock()
-        with patch(
-            "backend.app.routers.accounting.reconcile_service.confirm_payment", confirm_mock
-        ), patch("backend.core.cache.invalidate_cache", cache_mock):
+        with (
+            patch("backend.app.routers.accounting.reconcile_service.confirm_payment", confirm_mock),
+            patch("backend.core.cache.invalidate_cache", cache_mock),
+        ):
             client = TestClient(_build_app(mock_db_pool, asya_user), raise_server_exceptions=False)
             resp = client.post(
                 "/api/crm/accounting/confirm",
-                json={"practice_id": 10, "invoice_id": 5, "amount_applied_idr": 100, "new_status": "paid"},
+                json={
+                    "practice_id": 10,
+                    "invoice_id": 5,
+                    "amount_applied_idr": 100,
+                    "new_status": "paid",
+                },
             )
         assert resp.status_code == 200
         invalidated = {c.args[0] for c in cache_mock.await_args_list}
@@ -325,9 +355,7 @@ class TestExportSheet:
         assert write_mock.await_count == 1
         assert write_mock.await_args.args[0] == "sheet-abc-123"
 
-    def test_custom_tab_env_used_in_write_range(
-        self, mock_db_pool, asya_user, monkeypatch
-    ) -> None:
+    def test_custom_tab_env_used_in_write_range(self, mock_db_pool, asya_user, monkeypatch) -> None:
         # ACCOUNTING_EXPORT_SHEET_TAB overrides the default 'Cashout' tab, so a
         # fresh sheet whose tab is still 'Sheet1' works without renaming.
         monkeypatch.setenv("ACCOUNTING_EXPORT_SHEET_ID", "sheet-abc-123")
@@ -359,9 +387,7 @@ class TestExportSheet:
         conn.fetch = AsyncMock(return_value=[])
 
         class FakeSheets:
-            write_range = AsyncMock(
-                side_effect=FileNotFoundError("Google credentials not found.")
-            )
+            write_range = AsyncMock(side_effect=FileNotFoundError("Google credentials not found."))
 
         with patch(
             "backend.services.integrations.sheets_service.SheetsService",
@@ -413,9 +439,9 @@ class TestImportCashout:
         them with the import sentinel, and reports the weeks back."""
         _pool, conn = mock_db_pool
         # asyncpg-style command tags: delete reports 0 prior rows, each insert 1.
-        conn.execute = AsyncMock(side_effect=lambda *a, **k: (
-            "DELETE 0" if "DELETE" in a[0] else "INSERT 0 1"
-        ))
+        conn.execute = AsyncMock(
+            side_effect=lambda *a, **k: "DELETE 0" if "DELETE" in a[0] else "INSERT 0 1"
+        )
 
         with patch("backend.core.cache.invalidate_cache", AsyncMock()):
             client = TestClient(_build_app(mock_db_pool, asya_user), raise_server_exceptions=False)
@@ -489,7 +515,9 @@ class TestBankStatementPreview:
     def test_success_returns_report_and_writes_nothing(self, mock_db_pool, asya_user) -> None:
         pool, conn = mock_db_pool
         # BOM-prefixed upload, as the bank's export may carry one
-        resp = self._post(mock_db_pool, asya_user, b"\xef\xbb\xbf" + _STATEMENT_FIXTURE.read_bytes())
+        resp = self._post(
+            mock_db_pool, asya_user, b"\xef\xbb\xbf" + _STATEMENT_FIXTURE.read_bytes()
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["account"] == {"number": "700000000001", "name": "PT CONTOH UJI"}
@@ -624,9 +652,15 @@ class TestBankStatementPreview:
         """A hand-built multipart body: the test client cannot send `filename=""`."""
         boundary = "XTESTBOUNDARYX"
         payload = (
-            f"--{boundary}\r\nContent-Disposition: {disposition}\r\n"
-            "Content-Type: application/pdf\r\n\r\n"
-        ).encode() + body + b"\r\n" + extra + f"--{boundary}--\r\n".encode()
+            (
+                f"--{boundary}\r\nContent-Disposition: {disposition}\r\n"
+                "Content-Type: application/pdf\r\n\r\n"
+            ).encode()
+            + body
+            + b"\r\n"
+            + extra
+            + f"--{boundary}--\r\n".encode()
+        )
         client = TestClient(_build_app(mock_db_pool, user), raise_server_exceptions=False)
         return client.post(
             self.URL,
@@ -639,7 +673,9 @@ class TestBankStatementPreview:
     ) -> None:
         # gate round 4: `filename=""` used to be replaced by a default ending in .csv
         resp = self._post_raw(
-            mock_db_pool, asya_user, 'form-data; name="file"; filename=""',
+            mock_db_pool,
+            asya_user,
+            'form-data; name="file"; filename=""',
             _STATEMENT_FIXTURE.read_bytes(),
         )
         assert resp.status_code == 422
@@ -660,7 +696,9 @@ class TestBankStatementPreview:
     )
     def test_filename_suffix_rule(self, mock_db_pool, asya_user, filename, status) -> None:
         resp = self._post_raw(
-            mock_db_pool, asya_user, f'form-data; name="file"; filename="{filename}"',
+            mock_db_pool,
+            asya_user,
+            f'form-data; name="file"; filename="{filename}"',
             _STATEMENT_FIXTURE.read_bytes(),
         )
         assert resp.status_code == status
@@ -668,7 +706,9 @@ class TestBankStatementPreview:
     def test_part_content_type_is_ignored(self, mock_db_pool, asya_user) -> None:
         # _post_raw labels the part application/pdf; only the filename suffix and the bytes count
         resp = self._post_raw(
-            mock_db_pool, asya_user, 'form-data; name="file"; filename="a.csv"',
+            mock_db_pool,
+            asya_user,
+            'form-data; name="file"; filename="a.csv"',
             _STATEMENT_FIXTURE.read_bytes(),
         )
         assert resp.status_code == 200
@@ -681,8 +721,11 @@ class TestBankStatementPreview:
             b"Content-Type: text/csv\r\n\r\nnot a statement\r\n"
         )
         resp = self._post_raw(
-            mock_db_pool, asya_user, 'form-data; name="file"; filename="a.csv"',
-            _STATEMENT_FIXTURE.read_bytes(), extra=second,
+            mock_db_pool,
+            asya_user,
+            'form-data; name="file"; filename="a.csv"',
+            _STATEMENT_FIXTURE.read_bytes(),
+            extra=second,
         )
         assert resp.status_code == 422
         assert "no 'Post Date' header row found" in resp.json()["detail"]

@@ -112,7 +112,7 @@ def test_a_fresh_undispatched_row_is_not_degraded(app: FastAPI, client: TestClie
 
 @pytest.mark.unit
 def test_GUILT_no_pool_reads_unknown_not_healthy(app: FastAPI, client: TestClient) -> None:
-    """"I could not look" must never be spelled like "nothing is wrong"."""
+    """ "I could not look" must never be spelled like "nothing is wrong"."""
     body = client.get("/health/garuda-outbox").json()
     assert body["status"] == "unknown"
     assert body["degraded"] is None

@@ -188,6 +188,7 @@ async def pool(writes):
                 "362_related_documents.sql",
                 "365_related_subject_names.sql",
                 "367_related_subject_links.sql",
+                "370_related_subject_detachments.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -1271,6 +1272,7 @@ LINK_FIELDS = {
     "basis",
     "relation",
     "created_at",
+    "files",
     "from_subject_id",
 }
 
@@ -1280,7 +1282,7 @@ def _ids(resp):
 
 
 @pytest.mark.asyncio
-async def test_l11_the_detail_carries_links_with_exactly_seven_fields_in_order(
+async def test_l11_the_detail_carries_links_with_exactly_eight_fields_in_order(
     admin, conn, clients
 ):
     sid = await seed_subject(conn, "person", "ZzL11 Person", [("passport", P1)])
@@ -1470,18 +1472,20 @@ async def test_l12_a_populated_list_page_runs_at_most_four_selects(conn, clients
 
 
 @pytest.mark.asyncio
-async def test_l12_the_detail_runs_at_most_six_selects(conn, clients):
+async def test_l12_the_detail_runs_at_most_seven_selects(conn, clients):
     sid = await seed_subject(conn, "person", "ZzL12 Person", [("passport", P1)])
     await _seed_document(conn, sid, 1)
     await seed_link(conn, sid, LIVE1)
     counting = _CountingConn(conn)
     detail = await related_registry_read.get_subject(counting, sid)
     assert detail["links_total"] == 1 and len(detail["documents"]) == 1
-    assert counting.statements == 6  # subject, identifiers, documents, sightings, names, links
+    assert (
+        counting.statements == 7
+    )  # subject, identifiers, documents, sightings, names, links, detachments
     bare = await seed_subject(conn, "person", None, [("passport", P2)])
     counting = _CountingConn(conn)
     await related_registry_read.get_subject(counting, bare)
-    assert counting.statements == 5  # no documents, so no sightings statement
+    assert counting.statements == 6  # no documents, so no sightings statement
 
 
 def _sql_constants(module) -> list[str]:
@@ -1507,7 +1511,7 @@ FORBIDDEN_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|TRUNCATE|MERGE|ALTER|DROP|C
 GUARDED_NAME = "CASE WHEN c.id IS NOT NULL AND c.deleted_at IS NULL THEN c.full_name END"
 
 
-def test_l12_static_census_is_ten_plain_selects_and_the_guarded_name():
+def test_l12_static_census_is_eleven_plain_selects_and_the_guarded_name():
     service = related_registry_read
     for sql in _sql_constants(service):
         assert not FORBIDDEN_SQL.search(sql), sql[:60]
@@ -1517,11 +1521,13 @@ def test_l12_static_census_is_ten_plain_selects_and_the_guarded_name():
         for attr, value in vars(service).items()
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     }
-    assert len(statements) == 10
+    assert len(statements) == 11
     for attr, sql in statements.items():
         assert sql.lstrip().upper().startswith("SELECT"), attr
-        # no read statement selects the producer's evidence or the registry actor
-        assert not re.search(r"\b(evidence|created_by)\b", sql, re.I), attr
+        # no read statement selects the producer's evidence or the registry actor, but the one
+        # whole number of files of a link (evidence->'files', never a name, hash or reference)
+        text = sql.replace("l.evidence->'files'", "").replace("l.evidence->>'files'", "")
+        assert not re.search(r"\b(evidence|created_by)\b", text, re.I), attr
     # the client name leaves the database only through the guarded CASE, and nowhere else
     links_sql = statements["_LINKS_SQL"]
     assert GUARDED_NAME in links_sql

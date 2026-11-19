@@ -43,9 +43,7 @@ def test_revoke_all_clears_cookies():
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "revoke_all_sessions"
     )
     called = {
-        c.func.id
-        for c in ast.walk(fn)
-        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        c.func.id for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
     }
     assert "clear_auth_cookies" in called
 
@@ -163,9 +161,7 @@ def test_revoke_all_emits_clear_cookie_headers():
         )
     assert out["success"] is True
     set_cookies = [
-        v.decode("latin-1")
-        for k, v in response.raw_headers
-        if k.lower() == b"set-cookie"
+        v.decode("latin-1") for k, v in response.raw_headers if k.lower() == b"set-cookie"
     ]
     assert any("nz_access_token=" in c for c in set_cookies)
 

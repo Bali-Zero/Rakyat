@@ -69,9 +69,7 @@ def _media_payload(phone_number_id: str, *, media=True):
                     {
                         "value": {
                             "metadata": {"phone_number_id": phone_number_id},
-                            "contacts": [
-                                {"profile": {"name": "Marina"}, "wa_id": "62811"}
-                            ],
+                            "contacts": [{"profile": {"name": "Marina"}, "wa_id": "62811"}],
                             "messages": [msg],
                         }
                     }
@@ -100,9 +98,7 @@ async def test_publishes_one_per_official_media(monkeypatch):
     calls = _capture_publish(monkeypatch)
     monkeypatch.setattr(wc, "_get_db_pool", lambda req: _StubPool())
 
-    await wc._ingest_meta_inbox_media(
-        _media_payload(META_INBOX_PHONE_NUMBER_ID), _StubRequest()
-    )
+    await wc._ingest_meta_inbox_media(_media_payload(META_INBOX_PHONE_NUMBER_ID), _StubRequest())
 
     assert len(calls) == 1
     channel, payload = calls[0]
@@ -129,9 +125,7 @@ async def test_no_token_needed_on_fly(monkeypatch):
     monkeypatch.setattr(wc, "_get_db_pool", lambda req: _StubPool())
     monkeypatch.setattr(wc.settings, "whatsapp_api_token", "", raising=False)
 
-    await wc._ingest_meta_inbox_media(
-        _media_payload(META_INBOX_PHONE_NUMBER_ID), _StubRequest()
-    )
+    await wc._ingest_meta_inbox_media(_media_payload(META_INBOX_PHONE_NUMBER_ID), _StubRequest())
     assert len(calls) == 1
 
 
@@ -160,7 +154,5 @@ async def test_skipped_when_no_pool(monkeypatch):
     calls = _capture_publish(monkeypatch)
     monkeypatch.setattr(wc, "_get_db_pool", lambda req: None)
 
-    await wc._ingest_meta_inbox_media(
-        _media_payload(META_INBOX_PHONE_NUMBER_ID), _StubRequest()
-    )
+    await wc._ingest_meta_inbox_media(_media_payload(META_INBOX_PHONE_NUMBER_ID), _StubRequest())
     assert calls == []

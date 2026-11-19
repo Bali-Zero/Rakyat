@@ -2240,6 +2240,7 @@ FORBIDDEN_TABLES = (
 ALLOWED_NAMING_THE_TABLE = {
     "services/crm/related_detach.py",
     "app/routers/crm_related_subjects.py",
+    "services/crm/related_registry_read.py",
 }
 
 
@@ -3206,7 +3207,7 @@ async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachm
     counts_before = await read_statement_counts(conn, s)
     # list: total, page, identifiers, document counts; S's detail: subject, merges, identifiers,
     # documents, sightings, names, links
-    assert counts_before == (4, 7)
+    assert counts_before == (4, 8)
     before = (await admin.get(READ, params={"limit": 100})).json()
     s_before = next(r for r in before["items"] if r["id"] == s)
     assert {"type": "nik", "value": d[1], "from_subject_id": None} in s_before["identifiers"]

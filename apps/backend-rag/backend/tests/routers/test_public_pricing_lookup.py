@@ -73,9 +73,7 @@ def test_price_matches_the_ssot_exactly(client: TestClient) -> None:
         "E33",  # the visa code alone
     ],
 )
-def test_near_miss_keys_are_404_never_a_guessed_row(
-    client: TestClient, near_miss: str
-) -> None:
+def test_near_miss_keys_are_404_never_a_guessed_row(client: TestClient, near_miss: str) -> None:
     """`/search` scores and guesses; this route must not.
 
     A page rendering "the price" from an approximate match would publish a
@@ -83,9 +81,7 @@ def test_near_miss_keys_are_404_never_a_guessed_row(
     fall back to its pinned literal, which is the safe failure.
     """
     resp = client.get("/api/pricing/service", params={"key": near_miss})
-    assert resp.status_code == 404, (
-        f"{near_miss!r} resolved to {resp.text} — the lookup guessed"
-    )
+    assert resp.status_code == 404, f"{near_miss!r} resolved to {resp.text} — the lookup guessed"
 
 
 def test_unknown_key_is_404(client: TestClient) -> None:
@@ -118,11 +114,7 @@ def test_sibling_pricing_routes_stay_authenticated(sibling: str) -> None:
 def test_no_prefix_entry_swallows_the_pricing_family() -> None:
     """Guards the shape, not just today's paths: a later `prefix` entry on
     /api/pricing would silently re-open the siblings this test protects."""
-    offenders = [
-        e
-        for e in PUBLIC_ENDPOINTS
-        if e.match != "exact" and "/api/pricing" in e.prefix
-    ]
+    offenders = [e for e in PUBLIC_ENDPOINTS if e.match != "exact" and "/api/pricing" in e.prefix]
     assert not offenders, f"prefix-matched pricing entries: {offenders}"
 
 
@@ -184,7 +176,9 @@ def test_compliance_retainer_key_returns_the_sheet_row(client: TestClient, key: 
 
 
 @pytest.mark.parametrize("key", COMPLIANCE_RETAINER_KEYS)
-def test_compliance_retainer_cadence_and_confirmed_price_notes(client: TestClient, key: str) -> None:
+def test_compliance_retainer_cadence_and_confirmed_price_notes(
+    client: TestClient, key: str
+) -> None:
     body = client.get("/api/pricing/service", params={"key": key}).json()
 
     expected_validity = "monthly" if key in MONTHLY_RETAINER_KEYS else None

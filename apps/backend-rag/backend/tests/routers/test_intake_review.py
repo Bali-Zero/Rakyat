@@ -92,23 +92,30 @@ async def seed(pool: asyncpg.Pool) -> AsyncIterator[dict]:
         # two synthetic clients with distinct assigned_to
         cid_owner = await conn.fetchval(
             "INSERT INTO clients (full_name, assigned_to) VALUES ($1,$2) RETURNING id",
-            f"{tag}-owner", TEAM_OWNER["email"],
+            f"{tag}-owner",
+            TEAM_OWNER["email"],
         )
         cid_other = await conn.fetchval(
             "INSERT INTO clients (full_name, assigned_to) VALUES ($1,$2) RETURNING id",
-            f"{tag}-other", TEAM_OTHER["email"],
+            f"{tag}-other",
+            TEAM_OTHER["email"],
         )
         created["clients"] += [cid_owner, cid_other]
 
         async def mk_proposal(
-            entity_resolution: dict, source: str = "whatsapp", received_by: str | None = None,
+            entity_resolution: dict,
+            source: str = "whatsapp",
+            received_by: str | None = None,
             stage_output: dict | None = None,
         ) -> int:
             bh = uuid.uuid4().hex + uuid.uuid4().hex  # 64-char
             inst = await conn.fetchval(
                 """INSERT INTO document_instances (blob_hash, pipeline_version, blob_path, first_source)
                    VALUES ($1,$2,$3,$4) RETURNING id""",
-                bh[:64], PIPELINE, f"/tmp/{tag}.pdf", source,
+                bh[:64],
+                PIPELINE,
+                f"/tmp/{tag}.pdf",
+                source,
             )
             created["instances"].append(inst)
             ikey = f"{source}|{tag}|{bh[:64]}|{PIPELINE}|{uuid.uuid4().hex[:6]}"
@@ -117,7 +124,12 @@ async def seed(pool: asyncpg.Pool) -> AsyncIterator[dict]:
                    (instance_id, source, source_ref, blob_path, blob_hash, pipeline_version,
                     status, stage_output, intake_key, received_by)
                    VALUES ($1,$2,$3,$4,$5,$6,'done',$7::jsonb,$8,$9) RETURNING id""",
-                inst, source, f"{tag}-ref", f"/tmp/{tag}.pdf", bh[:64], PIPELINE,
+                inst,
+                source,
+                f"{tag}-ref",
+                f"/tmp/{tag}.pdf",
+                bh[:64],
+                PIPELINE,
                 # NATIVE dict, not json.dumps (2026-08-31). This fixture's pool is
                 # now the production-shaped one, which registers the jsonb codec --
                 # so a pre-serialized string is encoded a SECOND time and lands as a
@@ -128,10 +140,13 @@ async def seed(pool: asyncpg.Pool) -> AsyncIterator[dict]:
                 # lands, and the test fails `assert 90 in []`. Found in CI Backend
                 # Shard 3, not locally -- this repo's local Postgres has no `clients`
                 # table, so the test ERRORS here and can never reproduce the red.
-                (stage_output if stage_output is not None else
-                 {"ocr": {"pages": [{"page": 1, "text": "NPWP 09.x"}]},
-                  "doc_type": "npwp"}),
-                ikey, received_by,
+                (
+                    stage_output
+                    if stage_output is not None
+                    else {"ocr": {"pages": [{"page": 1, "text": "NPWP 09.x"}]}, "doc_type": "npwp"}
+                ),
+                ikey,
+                received_by,
             )
             created["queues"].append(qid)
             pid = await conn.fetchval(
@@ -139,12 +154,21 @@ async def seed(pool: asyncpg.Pool) -> AsyncIterator[dict]:
                    (queue_id, doc_index, pipeline_version, routing_key,
                     entity_resolution, routing, commit_gate, status)
                    VALUES ($1,0,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,'review_pending') RETURNING id""",
-                qid, PIPELINE, f"{tag}-{uuid.uuid4().hex[:6]}",
+                qid,
+                PIPELINE,
+                f"{tag}-{uuid.uuid4().hex[:6]}",
                 entity_resolution,
-                {"doc_type": "npwp",
-                 "fields": {"npwp_number": {"value": "09.254.294.3-407.000",
-                                            "confidence": 0.85, "source_page": 1}},
-                 "type_confidence": 0.97},
+                {
+                    "doc_type": "npwp",
+                    "fields": {
+                        "npwp_number": {
+                            "value": "09.254.294.3-407.000",
+                            "confidence": 0.85,
+                            "source_page": 1,
+                        }
+                    },
+                    "type_confidence": 0.97,
+                },
                 {"requires_human": True, "auto_commit_eligible": False},
             )
             created["proposals"].append(pid)
@@ -157,25 +181,34 @@ async def seed(pool: asyncpg.Pool) -> AsyncIterator[dict]:
         #   p_nomatch → received_by=OWNER  (NO_MATCH but OWNER's chat → owner sees)
         #   p_null    → received_by=NULL   (shared business line + Drive → admin-only)
         p_owner = await mk_proposal(
-            {"decision": "AUTO_ATTACH", "score": 0.95,
-             "candidates": [{"client_id": cid_owner, "score": 0.95}]},
-            received_by=TEAM_OWNER["email"])
+            {
+                "decision": "AUTO_ATTACH",
+                "score": 0.95,
+                "candidates": [{"client_id": cid_owner, "score": 0.95}],
+            },
+            received_by=TEAM_OWNER["email"],
+        )
         p_other = await mk_proposal(
             # LIVE resolver shape (routing.py): {"table","id","name"} — NOT
             # "client_id". Regression for the dead radio-list bug: the reader
             # must resolve this shape into entity_candidates.
-            {"decision": "LINK_CANDIDATE", "score": 0.80,
-             "candidates": [{"table": "clients", "id": cid_other,
-                             "name": f"{tag}-other", "score": 0.80}]},
-            received_by=TEAM_OTHER["email"])
+            {
+                "decision": "LINK_CANDIDATE",
+                "score": 0.80,
+                "candidates": [
+                    {"table": "clients", "id": cid_other, "name": f"{tag}-other", "score": 0.80}
+                ],
+            },
+            received_by=TEAM_OTHER["email"],
+        )
         p_nomatch = await mk_proposal(
-            {"decision": "NO_MATCH", "candidates": []},
-            received_by=TEAM_OWNER["email"])
+            {"decision": "NO_MATCH", "candidates": []}, received_by=TEAM_OWNER["email"]
+        )
         # p_null is a Drive doc on the shared line (received_by=NULL) — admin-only
         # AND now also source-gated OUT of the WhatsApp-only review queue.
         p_null = await mk_proposal(
-            {"decision": "NO_MATCH", "candidates": []},
-            source="drive", received_by=None)
+            {"decision": "NO_MATCH", "candidates": []}, source="drive", received_by=None
+        )
         # CURRENT pipeline: OCR text lives in classify.ocr_text_per_page; the
         # ocr stage only writes a marker with NO pages. The detail reader must
         # still surface the text (regression for the empty-review-area bug).
@@ -184,24 +217,39 @@ async def seed(pool: asyncpg.Pool) -> AsyncIterator[dict]:
             received_by=TEAM_OWNER["email"],
             stage_output={
                 "ocr": {"deferred_to": "classify"},
-                "classify": {"ocr_text_per_page": [
-                    {"via": "response", "page": 0,
-                     "text": "MINISTRY OF LAW AND HUMAN RIGHTS REPUBLIC OF INDONESIA"}]},
-                "doc_type": "kitas"})
+                "classify": {
+                    "ocr_text_per_page": [
+                        {
+                            "via": "response",
+                            "page": 0,
+                            "text": "MINISTRY OF LAW AND HUMAN RIGHTS REPUBLIC OF INDONESIA",
+                        }
+                    ]
+                },
+                "doc_type": "kitas",
+            },
+        )
         # A genuinely OCR-less doc: neither ocr.pages nor classify text → None.
         p_no_ocr = await mk_proposal(
             {"decision": "NO_MATCH", "candidates": []},
             received_by=TEAM_OWNER["email"],
-            stage_output={"ocr": {"deferred_to": "classify"},
-                          "classify": {"ocr_text_per_page": []},
-                          "doc_type": "unknown"})
+            stage_output={
+                "ocr": {"deferred_to": "classify"},
+                "classify": {"ocr_text_per_page": []},
+                "doc_type": "unknown",
+            },
+        )
 
     yield {
         "tag": tag,
-        "cid_owner": cid_owner, "cid_other": cid_other,
-        "p_owner": p_owner, "p_other": p_other, "p_nomatch": p_nomatch,
+        "cid_owner": cid_owner,
+        "cid_other": cid_other,
+        "p_owner": p_owner,
+        "p_other": p_other,
+        "p_nomatch": p_nomatch,
         "p_null": p_null,
-        "p_classify_ocr": p_classify_ocr, "p_no_ocr": p_no_ocr,
+        "p_classify_ocr": p_classify_ocr,
+        "p_no_ocr": p_no_ocr,
         "created": created,
     }
 
@@ -219,6 +267,7 @@ async def seed(pool: asyncpg.Pool) -> AsyncIterator[dict]:
 
 def _make_app(pool: asyncpg.Pool, user: dict) -> FastAPI:
     from backend.app.routers import intake_review
+
     app = FastAPI()
     app.include_router(intake_review.router)
     app.dependency_overrides[get_current_user] = lambda: user
@@ -246,12 +295,14 @@ async def _crm_counts(pool: asyncpg.Pool, tag: str) -> tuple[int, int]:
     """
     async with pool.acquire() as conn:
         c = await conn.fetchval(
-            "SELECT count(*) FROM clients WHERE full_name LIKE $1", f"{tag}%",
+            "SELECT count(*) FROM clients WHERE full_name LIKE $1",
+            f"{tag}%",
         )
         p = await conn.fetchval(
             """SELECT count(*) FROM practices pr
                JOIN clients cl ON cl.id = pr.client_id
-               WHERE cl.full_name LIKE $1""", f"{tag}%",
+               WHERE cl.full_name LIKE $1""",
+            f"{tag}%",
         )
     return c, p
 
@@ -386,9 +437,7 @@ async def test_queue_source_allowlist_env_readmits_drive(pool, seed, monkeypatch
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
         # Default allowlist (whatsapp only): Drive is gated → empty.
-        r_default = await cl.get(
-            "/api/intake/review/queue", params={"source": "drive", "limit": 1}
-        )
+        r_default = await cl.get("/api/intake/review/queue", params={"source": "drive", "limit": 1})
         assert r_default.status_code == 200, r_default.text
         assert r_default.json()["total"] == 0
 
@@ -423,12 +472,12 @@ async def test_queue_team_rbac_filter(pool, seed):
 async def test_queue_decision_filter(pool, seed):
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
-        r = await cl.get("/api/intake/review/queue",
-                         params={"decision": "NO_MATCH", "limit": 200})
+        r = await cl.get("/api/intake/review/queue", params={"decision": "NO_MATCH", "limit": 200})
     assert r.status_code == 200
     decisions = {it["decision"] for it in r.json()["items"]}
     assert decisions == {"NO_MATCH"} or seed["p_nomatch"] in {
-        it["proposal_id"] for it in r.json()["items"]}
+        it["proposal_id"] for it in r.json()["items"]
+    }
 
 
 async def test_detail_admin(pool, seed):
@@ -517,8 +566,10 @@ async def test_claim_rbac_own_chat(pool, seed):
         r_ok = await cl.post(f"/api/intake/review/{seed['p_nomatch']}/claim")
         assert r_ok.status_code == 200, r_ok.text
         # cleanup: release so teardown deletes cleanly
-        await cl.post(f"/api/intake/review/{seed['p_nomatch']}/release",
-                      params={"claim_token": r_ok.json()["claim_token"]})
+        await cl.post(
+            f"/api/intake/review/{seed['p_nomatch']}/release",
+            params={"claim_token": r_ok.json()["claim_token"]},
+        )
 
 
 async def test_claim_release_and_race(pool, seed):
@@ -542,8 +593,7 @@ async def test_claim_release_and_race(pool, seed):
         token = token2  # subsequent release must present the CURRENT token
 
         # release with token → back to review_pending
-        r3 = await cl.post(f"/api/intake/review/{pid}/release",
-                           params={"claim_token": token})
+        r3 = await cl.post(f"/api/intake/review/{pid}/release", params={"claim_token": token})
         assert r3.status_code == 200, r3.text
         assert r3.json()["status"] == "review_pending"
 
@@ -551,8 +601,9 @@ async def test_claim_release_and_race(pool, seed):
         r4 = await cl.post(f"/api/intake/review/{pid}/claim")
         assert r4.status_code == 200, r4.text
         # cleanup: release again so teardown deletes cleanly
-        await cl.post(f"/api/intake/review/{pid}/release",
-                      params={"claim_token": r4.json()["claim_token"]})
+        await cl.post(
+            f"/api/intake/review/{pid}/release", params={"claim_token": r4.json()["claim_token"]}
+        )
 
 
 async def test_claim_idempotent_same_user_live_lease(pool, seed):
@@ -571,7 +622,8 @@ async def test_claim_idempotent_same_user_live_lease(pool, seed):
         tok1 = r1.json()["claim_token"]
         async with pool.acquire() as conn:
             exp1 = await conn.fetchval(
-                "SELECT lease_expires_at FROM document_routing_proposal WHERE id=$1", pid)
+                "SELECT lease_expires_at FROM document_routing_proposal WHERE id=$1", pid
+            )
 
         # re-open -> re-claim by the SAME user on a LIVE lease -> 200 (was 409)
         r2 = await cl.post(f"/api/intake/review/{pid}/claim")
@@ -583,22 +635,21 @@ async def test_claim_idempotent_same_user_live_lease(pool, seed):
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT claim_token, lease_expires_at, lease_owner "
-                "FROM document_routing_proposal WHERE id=$1", pid)
+                "FROM document_routing_proposal WHERE id=$1",
+                pid,
+            )
         assert str(row["claim_token"]) == tok2
         assert row["lease_expires_at"] >= exp1
         assert row["lease_owner"] == TEAM_OWNER["email"]
 
         # approve/reject still validate against the LATEST token the page holds
-        ra = await cl.post(f"/api/intake/review/{pid}/approve",
-                           json={"claim_token": tok2})
+        ra = await cl.post(f"/api/intake/review/{pid}/approve", json={"claim_token": tok2})
         assert ra.status_code == 200, ra.text  # dry-run, P0#5 token accepted
         # the OLD token is now stale -> reject with tok1 must be rejected
-        rj_old = await cl.post(f"/api/intake/review/{pid}/reject",
-                               json={"claim_token": tok1})
+        rj_old = await cl.post(f"/api/intake/review/{pid}/reject", json={"claim_token": tok1})
         assert rj_old.status_code == 403, rj_old.text
         # cleanup: release with the current token
-        await cl.post(f"/api/intake/review/{pid}/release",
-                      params={"claim_token": tok2})
+        await cl.post(f"/api/intake/review/{pid}/release", params={"claim_token": tok2})
 
 
 async def test_claim_different_user_live_lease_409(pool, seed):
@@ -619,12 +670,12 @@ async def test_claim_different_user_live_lease_409(pool, seed):
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT lease_owner, claim_token FROM document_routing_proposal WHERE id=$1", pid)
+            "SELECT lease_owner, claim_token FROM document_routing_proposal WHERE id=$1", pid
+        )
     assert row["lease_owner"] == ADMIN["email"]
     assert str(row["claim_token"]) == admin_token
     async with _client(_make_app(pool, ADMIN)) as cl3:
-        await cl3.post(f"/api/intake/review/{pid}/release",
-                       params={"claim_token": admin_token})
+        await cl3.post(f"/api/intake/review/{pid}/release", params={"claim_token": admin_token})
 
 
 async def test_claim_steal_expired_lease(pool, seed):
@@ -639,7 +690,9 @@ async def test_claim_steal_expired_lease(pool, seed):
     async with pool.acquire() as conn:
         await conn.execute(
             "UPDATE document_routing_proposal SET lease_expires_at=$2 WHERE id=$1",
-            pid, datetime.now(timezone.utc) - timedelta(minutes=5))
+            pid,
+            datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
 
     other_app = _make_app(pool, TEAM_OTHER)
     async with _client(other_app) as cl_other:
@@ -648,8 +701,7 @@ async def test_claim_steal_expired_lease(pool, seed):
         new_token = r2.json()["claim_token"]
         assert new_token != admin_token
         assert r2.json()["lease_owner"] == TEAM_OTHER["email"]
-        await cl_other.post(f"/api/intake/review/{pid}/release",
-                            params={"claim_token": new_token})
+        await cl_other.post(f"/api/intake/review/{pid}/release", params={"claim_token": new_token})
 
 
 # OFFSETS, not absolute instants. A `datetime.now(...) + timedelta(minutes=5)`
@@ -687,9 +739,7 @@ async def test_active_claim_guard_rejects_missing_expired_foreign_and_malformed_
     """
     from backend.app.routers.intake_review import _require_active_claim
 
-    lease_expires_at = (
-        None if lease_offset is None else datetime.now(timezone.utc) + lease_offset
-    )
+    lease_expires_at = None if lease_offset is None else datetime.now(timezone.utc) + lease_offset
 
     active_token = uuid.uuid4()
     prop = {
@@ -772,9 +822,7 @@ def test_no_parametrize_in_this_module_freezes_an_absolute_instant() -> None:
     # Guilt: innocence plus a blindness guard still cannot distinguish a working
     # detector from one whose isinstance() never matches anything.
     class _Guilty:
-        pytestmark = [
-            pytest.mark.parametrize("lease", [(datetime.now(timezone.utc),)]).mark
-        ]
+        pytestmark = [pytest.mark.parametrize("lease", [(datetime.now(timezone.utc),)]).mark]
 
     guilty, _ = _frozen_instants([("_Guilty", _Guilty)])
     assert guilty, "the detector missed a datetime baked into a parametrize"
@@ -839,8 +887,9 @@ async def test_release_wrong_token_409(pool, seed):
     async with _client(app) as cl:
         await cl.post(f"/api/intake/review/{pid}/claim")
         # team user without the token cannot release (and isn't owner)
-        bad = await cl.post(f"/api/intake/review/{pid}/release",
-                            params={"claim_token": str(uuid.uuid4())})
+        bad = await cl.post(
+            f"/api/intake/review/{pid}/release", params={"claim_token": str(uuid.uuid4())}
+        )
         # admin force-release ignores token mismatch BUT here token is wrong AND
         # admin path force-releases regardless → assert it releases (admin force).
         assert bad.status_code == 200  # admin force-release
@@ -850,19 +899,18 @@ async def test_release_wrong_token_409(pool, seed):
     team_app = _make_app(pool, TEAM_OTHER)
     async with _client(team_app) as cl2:
         # other has no access to this NO_MATCH proposal → release pre-check
-        bad2 = await cl2.post(f"/api/intake/review/{pid}/release",
-                              params={"claim_token": str(uuid.uuid4())})
+        bad2 = await cl2.post(
+            f"/api/intake/review/{pid}/release", params={"claim_token": str(uuid.uuid4())}
+        )
         assert bad2.status_code in (403, 409)
     # cleanup
     async with _client(_make_app(pool, ADMIN)) as cl3:
-        await cl3.post(f"/api/intake/review/{pid}/release",
-                       params={"claim_token": tok})
+        await cl3.post(f"/api/intake/review/{pid}/release", params={"claim_token": tok})
 
 
 async def _proposal_status(pool: asyncpg.Pool, pid: int) -> str:
     async with pool.acquire() as conn:
-        return await conn.fetchval(
-            "SELECT status FROM document_routing_proposal WHERE id=$1", pid)
+        return await conn.fetchval("SELECT status FROM document_routing_proposal WHERE id=$1", pid)
 
 
 async def test_reject_transitions_to_rejected(pool, seed):
@@ -881,7 +929,9 @@ async def test_reject_transitions_to_rejected(pool, seed):
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT status, lease_owner, lease_expires_at, claim_token, claimed_at "
-            "FROM document_routing_proposal WHERE id=$1", pid)
+            "FROM document_routing_proposal WHERE id=$1",
+            pid,
+        )
     assert row["status"] == "rejected"
     assert row["lease_owner"] is None
     assert row["lease_expires_at"] is None
@@ -895,8 +945,9 @@ async def test_reject_clears_lease_not_reclaimable(pool, seed):
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
         rc = await cl.post(f"/api/intake/review/{pid}/claim")
-        await cl.post(f"/api/intake/review/{pid}/reject",
-                      json={"claim_token": rc.json()["claim_token"]})
+        await cl.post(
+            f"/api/intake/review/{pid}/reject", json={"claim_token": rc.json()["claim_token"]}
+        )
         # terminal 'rejected' is not 'review_pending' → claim's WHERE no longer matches
         rcl = await cl.post(f"/api/intake/review/{pid}/claim")
     assert rcl.status_code == 409, rcl.text
@@ -924,12 +975,12 @@ async def test_reject_non_admin_token_enforcement(pool, seed):
         no_tok = await cl.post(f"/api/intake/review/{pid}/reject", json={})
         assert no_tok.status_code == 400, no_tok.text
         # wrong token → 403
-        wrong = await cl.post(f"/api/intake/review/{pid}/reject",
-                              json={"claim_token": str(uuid.uuid4())})
+        wrong = await cl.post(
+            f"/api/intake/review/{pid}/reject", json={"claim_token": str(uuid.uuid4())}
+        )
         assert wrong.status_code == 403, wrong.text
         # correct token → 200
-        ok = await cl.post(f"/api/intake/review/{pid}/reject",
-                           json={"claim_token": token})
+        ok = await cl.post(f"/api/intake/review/{pid}/reject", json={"claim_token": token})
         assert ok.status_code == 200, ok.text
     assert await _proposal_status(pool, pid) == "rejected"
 
@@ -940,8 +991,9 @@ async def test_reject_idempotent_noop(pool, seed):
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
         rc = await cl.post(f"/api/intake/review/{pid}/claim")
-        r1 = await cl.post(f"/api/intake/review/{pid}/reject",
-                           json={"claim_token": rc.json()["claim_token"]})
+        r1 = await cl.post(
+            f"/api/intake/review/{pid}/reject", json={"claim_token": rc.json()["claim_token"]}
+        )
         assert r1.status_code == 200, r1.text
         # second reject — proposal is terminal, not review_claimed → 409
         r2 = await cl.post(f"/api/intake/review/{pid}/reject", json={})
@@ -962,14 +1014,16 @@ async def test_reject_writes_no_crm_rows(pool, seed):
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
         rc = await cl.post(f"/api/intake/review/{pid}/claim")
-        rr = await cl.post(f"/api/intake/review/{pid}/reject",
-                           json={"claim_token": rc.json()["claim_token"]})
+        rr = await cl.post(
+            f"/api/intake/review/{pid}/reject", json={"claim_token": rc.json()["claim_token"]}
+        )
     assert rr.status_code == 200, rr.text
     after = await _crm_counts(pool, seed["tag"])
     assert after == before, f"CRM mutated by reject! {before} -> {after}"
     async with pool.acquire() as conn:
         n_audit = await conn.fetchval(
-            "SELECT count(*) FROM intake_commit_audit WHERE proposal_id=$1", pid)
+            "SELECT count(*) FROM intake_commit_audit WHERE proposal_id=$1", pid
+        )
     assert n_audit == 1, "reject must write exactly ONE forensic audit row (outcome='rejected')"
 
 
@@ -980,8 +1034,9 @@ async def test_reject_not_flag_gated(pool, seed, monkeypatch):
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
         rc = await cl.post(f"/api/intake/review/{pid}/claim")
-        rr = await cl.post(f"/api/intake/review/{pid}/reject",
-                           json={"claim_token": rc.json()["claim_token"]})
+        rr = await cl.post(
+            f"/api/intake/review/{pid}/reject", json={"claim_token": rc.json()["claim_token"]}
+        )
     assert rr.status_code == 200, rr.text
     assert rr.json()["status"] == "rejected"
 
@@ -1032,6 +1087,7 @@ async def test_approve_dry_run_never_calls_crm_pusher(pool, seed, monkeypatch):
         raise AssertionError("CRM pusher must not be called on a dry-run approve")
 
     from backend.services.intake import crm_push
+
     monkeypatch.setattr(crm_push, "push_committed_document", _sentinel)
 
     app = _make_app(pool, ADMIN)
@@ -1059,8 +1115,9 @@ async def test_zero_crm_write(pool, seed):
         await cl.get("/api/intake/review/queue", params={"limit": 200})
         await cl.get(f"/api/intake/review/{pid}")
         rc = await cl.post(f"/api/intake/review/{pid}/claim")
-        await cl.post(f"/api/intake/review/{pid}/release",
-                      params={"claim_token": rc.json()["claim_token"]})
+        await cl.post(
+            f"/api/intake/review/{pid}/release", params={"claim_token": rc.json()["claim_token"]}
+        )
         await cl.post(f"/api/intake/review/{pid}/approve")
         await cl.post(f"/api/intake/review/{pid}/reject")
     after = await _crm_counts(pool, seed["tag"])
@@ -1070,6 +1127,7 @@ async def test_zero_crm_write(pool, seed):
 async def test_router_registered_in_full_app(pool):
     """Mount via include_routers (registration parity, scar PR #422)."""
     from backend.app.setup.router_registration import include_routers
+
     app = FastAPI()
     include_routers(app)
     paths = {r.path for r in iter_leaf_routes(app) if hasattr(r, "path")}
@@ -1089,14 +1147,17 @@ async def test_blob_endpoint_rbac_and_content(pool, seed, tmp_path, monkeypatch)
         qrow = await conn.fetchrow(
             "SELECT q.id AS qid, q.instance_id FROM intake_queue q "
             "JOIN document_routing_proposal p ON p.queue_id = q.id WHERE p.id=$1",
-            pid)
+            pid,
+        )
         await conn.execute(
-            "UPDATE intake_queue SET blob_path=$2 WHERE id=$1", qrow["qid"], str(blob))
+            "UPDATE intake_queue SET blob_path=$2 WHERE id=$1", qrow["qid"], str(blob)
+        )
         # mime_type lives on document_instances (migration 212) and drives the
         # FileResponse media_type via the LEFT JOIN in _require_own_chat_or_admin.
         await conn.execute(
             "UPDATE document_instances SET mime_type='application/pdf' WHERE id=$1",
-            qrow["instance_id"])
+            qrow["instance_id"],
+        )
 
     # Own-chat receiver (non-admin) → 200, exact bytes, no-store, pdf media type.
     owner_app = _make_app(pool, TEAM_OWNER)
@@ -1303,8 +1364,9 @@ async def test_clients_search_endpoint(pool, seed):
     than min_length=2 is rejected by FastAPI param validation (422)."""
     app = _make_app(pool, TEAM_OWNER)
     async with _client(app) as cl:
-        r = await cl.get("/api/intake/review/clients/search",
-                         params={"q": seed["tag"], "limit": 25})
+        r = await cl.get(
+            "/api/intake/review/clients/search", params={"q": seed["tag"], "limit": 25}
+        )
         assert r.status_code == 200, r.text
         items = r.json()["items"]
         ids = {it["client_id"] for it in items}
@@ -1358,7 +1420,9 @@ async def test_reject_writes_audit_row(pool, seed):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT committed_by, dry_run, outcome, plan "
-            "FROM intake_commit_audit WHERE proposal_id=$1", pid)
+            "FROM intake_commit_audit WHERE proposal_id=$1",
+            pid,
+        )
     assert len(rows) == 1, f"expected exactly 1 audit row, got {len(rows)}"
     row = rows[0]
     assert row["outcome"] == "rejected"
@@ -1387,7 +1451,9 @@ async def test_approve_practice_explicit_archive_only(pool, seed, monkeypatch):
         await conn.execute(
             "UPDATE document_routing_proposal "
             "SET routing = routing || '{\"practice_id\": 999999999}'::jsonb "
-            "WHERE id=$1", pid)
+            "WHERE id=$1",
+            pid,
+        )
 
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
@@ -1453,7 +1519,10 @@ async def test_candidate_ids_routing_fallback_and_companies_excluded(pool, seed)
             "    jsonb_build_object('table','companies','id',$2::int,'name','co'))), "
             "routing = routing || jsonb_build_object('client_id', $3::int) "
             "WHERE id=$1",
-            pid, seed["cid_other"], seed["cid_owner"])
+            pid,
+            seed["cid_other"],
+            seed["cid_owner"],
+        )
 
     app = _make_app(pool, ADMIN)
     async with _client(app) as cl:
@@ -1463,7 +1532,8 @@ async def test_candidate_ids_routing_fallback_and_companies_excluded(pool, seed)
         ids = [c["client_id"] for c in cands]
         assert seed["cid_owner"] in ids, f"routing.client_id fallback missing: {cands}"
         assert seed["cid_other"] not in ids, (
-            f"companies-table id leaked into clients lookup: {cands}")
+            f"companies-table id leaked into clients lookup: {cands}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1494,9 +1564,7 @@ def test_delivery_aware_status_committed_path(push_status, expected):
     from backend.app.routers.intake_review import _delivery_aware_status
 
     out = _delivery_aware_status("routed", {"status": push_status})
-    assert out == expected, (
-        f"push status {push_status!r}: got {out!r}, expected {expected!r}"
-    )
+    assert out == expected, f"push status {push_status!r}: got {out!r}, expected {expected!r}"
 
 
 def test_delivery_aware_status_leaves_non_routed_untouched():
@@ -1507,10 +1575,7 @@ def test_delivery_aware_status_leaves_non_routed_untouched():
     # review_claimed is the dry-run/blocked base — never rewritten even if a
     # (defensive) push_info were present.
     assert _delivery_aware_status("review_claimed", None) == "review_claimed"
-    assert (
-        _delivery_aware_status("review_claimed", {"status": "unreachable"})
-        == "review_claimed"
-    )
+    assert _delivery_aware_status("review_claimed", {"status": "unreachable"}) == "review_claimed"
 
 
 def test_delivery_aware_status_no_push_info_is_noop():
