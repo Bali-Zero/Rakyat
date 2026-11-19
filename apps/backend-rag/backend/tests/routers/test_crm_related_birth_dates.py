@@ -1712,6 +1712,31 @@ async def test_t1_row_11_the_unique_violation_is_converted_by_the_constraints_na
 
 
 @pytest.mark.asyncio
+async def test_t1_row_11_a_unique_violation_of_another_constraint_is_the_database_error(
+    pool, enabled, auth_on, audit_logger, birth_writes, monkeypatch, conn
+):
+    """A unique violation named otherwise than UNIQUE(subject_id) is NOT converted: the service
+    re-raises it, the route answers the fixed 503 and the transaction is rolled back."""
+    s = await seed_person(conn, 4308022)
+    other = await seed_person(conn, 4308023)
+    await seed_history(conn, other, document=doc_of(4308022), birth=date(1960, 5, 5))
+    async with unmeasured(conn):
+        await conn.execute(
+            "CREATE UNIQUE INDEX zz_other_unique ON related_subject_birth_dates (document_sha256)"
+        )
+    before = await digests(conn)
+    data = req(ids_of(4308022), doc_of(4308022))
+    async with pool.acquire() as c:
+        with pytest.raises(asyncpg.UniqueViolationError) as exc:
+            await record_birth_date(c, birth_input(data), dry_run=False)
+    assert exc.value.constraint_name == "zz_other_unique"
+    resp, _ = await run_spied(pool, monkeypatch, data)
+    assert resp.status_code == 503 and resp.json() == {"detail": "database_error"}
+    assert await dob_of(conn, s) is None and len(await history(conn)) == 1
+    assert await digests(conn) == before and await ledger(conn) == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("which", ["after_sd", "after_ib"])
 async def test_t1_a_failure_after_each_write_leaves_the_before_state(
     pool, conn, birth_writes, which
@@ -2173,94 +2198,269 @@ async def test_undo_refuses_on_any_detachment_even_one_that_began_before_the_bir
 
 
 # ── privacy: no key, date or hash in an answer, a log line or an audit row ────
+# Every case carries ITS OWN complete probes: each submitted value (keys, date, document hash, plan
+# hash) and each relevant STORED value (keys, dates, document hashes of the records it touches).
 
-PROBE_KEY = passport(4312001)
-PROBES = (
-    PROBE_KEY,
-    doc_of(4312001),
-    B,
-    "19770312",
-    "12031977",
-    "12-03-1977",
-    "12/03/1977",
-    B2,
-    PLAN,
-)
+
+def date_forms(value) -> list[str]:
+    """ISO, compact and day-first renderings of a date (a date or a YYYY-MM-DD string)."""
+    text = value if isinstance(value, str) else value.isoformat()
+    y, m, d = text.split("-")
+    return [text, y + m + d, d + m + y, f"{d}-{m}-{y}", f"{d}/{m}/{y}"]
+
+
+STORED_DOB = date(1960, 5, 5)
+N_PLAIN, N_DIFF, N_SAME, N_NODOC = 4312001, 4312002, 4312003, 4312004
+N_MTARGET, N_MERGED, N_COMPANY, N_HIST = 4312005, 4312006, 4312007, 4312008
+N_TWO_A, N_TWO_B, N_WIDE, N_NONE = 4312009, 4312010, 4312011, 4312999
+PROBE_KEY = passport(N_PLAIN)
 
 
 async def privacy_world(conn):
-    s = await seed_person(conn, 4312001)
-    await seed_person(conn, 4312002, dob=date(1960, 5, 5))
-    await seed_person(conn, 4312003, dob=B_DATE)
-    await seed_person(conn, 4312004, tags=())
-    return s
+    await seed_person(conn, N_PLAIN)
+    await seed_person(conn, N_DIFF, dob=STORED_DOB)
+    await seed_person(conn, N_SAME, dob=B_DATE)
+    await seed_person(conn, N_NODOC, tags=())
+    target = await seed_person(conn, N_MTARGET)
+    await seed_person(conn, N_MERGED, merged=target)
+    await seed_person(conn, N_COMPANY, kind="company")
+    hist = await seed_person(conn, N_HIST)
+    await seed_history(conn, hist, document=doc_of(N_HIST), birth=STORED_DOB)
+    await seed_person(conn, N_TWO_A)
+    await seed_person(conn, N_TWO_B)
+    await seed_person(conn, N_WIDE, extra=(("permit", permit(N_WIDE)),))
 
 
-def _boom_database(mp):
-    async def boom(*a, **k):
-        raise asyncpg.PostgresError(f"boom {PROBE_KEY} {doc_of(4312001)} {B}")
+def _boom(exc_type):
+    def patch(mp):
+        async def boom(*a, **k):
+            raise exc_type(f"boom {PROBE_KEY} {doc_of(N_PLAIN)} {B}")
 
-    mp.setattr(route_module, "record_birth_date", boom)
+        mp.setattr(route_module, "record_birth_date", boom)
 
-
-def _boom_inconsistent(mp):
-    async def boom(*a, **k):
-        raise BirthDateInconsistent(f"boom {PROBE_KEY} {doc_of(4312001)} {B}")
-
-    mp.setattr(route_module, "record_birth_date", boom)
+    return patch
 
 
 def _boom_parser(mp):
     def boom(cls, *a, **k):
-        raise RuntimeError(f"boom {PROBE_KEY} {doc_of(4312001)} {B}")
+        raise RuntimeError(f"boom {PROBE_KEY} {doc_of(N_PLAIN)} {B}")
 
     mp.setattr(route_module.RelatedBirthDateRequest, "model_validate_json", classmethod(boom))
 
 
-P1 = ids_of(4312001)
+def _defence_sd(mp):
+    mp.setattr(
+        birth_module,
+        "_SET_DATE_SQL",
+        "UPDATE related_subjects SET date_of_birth = $2 WHERE id = $1 AND false RETURNING id",
+    )
+
+
+def _defence_ib(mp):
+    mp.setattr(birth_module, "_HISTORY_SQL", "SELECT 1 WHERE false")
+
+
+def submitted_values(data) -> list[str]:
+    out = [PLAN]
+    subject = data.get("subject")
+    if isinstance(subject, dict):
+        out += [i["value"] for i in subject.get("identifiers", []) if isinstance(i, dict)]
+    for name in ("document", "birth_date"):
+        if isinstance(data.get(name), str):
+            out += date_forms(data[name]) if name == "birth_date" else [data[name]]
+    return out
+
+
+def pcase(data, status, *, stored=(), expect=None, flag=True, key=KEY, patch=None, **kw):
+    raw = kw.get("raw")
+    body = raw if raw is not None else data
+    probes = kw.get("probes") or submitted_values(data)
+    return {
+        "body": body, "status": status, "expect": expect, "flag": flag, "key": key,
+        "patch": patch, "nopool": kw.get("nopool", False), "first": kw.get("first", False),
+        "probes": [*probes, *stored],
+    }  # fmt: skip
+
+
+def stored_of(n, *, dob=None, extra=()):
+    out = [passport(n), doc_of(n), *extra]
+    if dob is not None:
+        out += date_forms(dob)
+    return out
+
+
+P1 = ids_of(N_PLAIN)
+G = req(P1, doc_of(N_PLAIN))
+WIDE_ALL = (*ids_of(N_WIDE), ("permit", permit(N_WIDE)))
 PRIVACY_CASES = {
-    "recorded_dry": (req(P1, doc_of(4312001), dry_run=True), 200, None),
-    "recorded": (req(P1, doc_of(4312001)), 200, None),
-    "already": (req(P1, doc_of(4312001)), 200, None),
-    "differs": (req(ids_of(4312002), doc_of(4312002), birth=B), 200, None),
-    "same_without_document": (req(ids_of(4312003), doc_of(4312999)), 200, None),
-    "no_document": (req(ids_of(4312004), doc_of(4312001)), 200, None),
-    "not_registered": (req(ids_of(4312999), doc_of(4312001)), 200, None),
-    "invalid_date": (req(P1, doc_of(4312001), birth="1977-02-30"), 422, None),
-    "invalid_company": (
-        req(P1, doc_of(4312001), subject={"kind": "company", "identifiers": keys(P1)}),
+    # rows 1 and 2, 4: the gates and the size cap
+    "row1_flag_off": pcase(G, 503, expect={"detail": "registry_unavailable"}, flag=False),
+    "row1_no_pool": pcase(G, 503, expect={"detail": "registry_unavailable"}, nopool=True),
+    "row2_wrong_key": pcase(G, 401, expect={"detail": "unauthorized"}, key="wrong-key"),
+    "row2_no_key": pcase(G, 401, expect={"detail": "unauthorized"}, key=None),
+    "row4_oversize": pcase(
+        G,
         422,
-        None,
+        raw=json.dumps(G).encode() + b" " * (route_module.MAX_BODY_BYTES + 1),
+        expect={"detail": [{"loc": ["body"], "code": "too_long"}]},
+    ),  # fmt: skip
+    # row 5: invalid bodies, each with its own submitted values
+    "row5_invalid_date": pcase(req(P1, doc_of(N_PLAIN), birth="1977-02-30"), 422),
+    "row5_out_of_range": pcase(req(P1, doc_of(N_PLAIN), birth="1899-12-31"), 422),
+    "row5_future_date": pcase(req(P1, doc_of(N_PLAIN), birth="2026-11-20"), 422),
+    "row5_company_kind": pcase(
+        req(P1, doc_of(N_PLAIN), subject={"kind": "company", "identifiers": keys(P1)}), 422
     ),
-    "hostile_field": (req(P1, doc_of(4312001), **{B: 1, "document_": PROBE_KEY}), 422, None),
-    "raw_garbage": (f'{{"subject": "{PROBE_KEY}", "birth_date": "{B}" '.encode(), 422, None),
-    "service_database_error": (req(P1, doc_of(4312001)), 503, _boom_database),
-    "service_inconsistent": (req(P1, doc_of(4312001)), 500, _boom_inconsistent),
-    "parser_raises": (req(P1, doc_of(4312001)), 500, _boom_parser),
+    "row5_unknown_field": pcase(
+        req(ids_of(N_DIFF), doc_of(N_DIFF), date_of_birth=B2),
+        422,
+        stored=stored_of(N_DIFF, dob=STORED_DOB),
+        probes=[*submitted_values(G), *date_forms(B2)],
+    ),  # fmt: skip
+    "row5_hostile_field": pcase(
+        req(P1, doc_of(N_PLAIN), **{B: 1, "document_": PROBE_KEY}), 422, stored=stored_of(N_PLAIN)
+    ),
+    "row5_raw_garbage": pcase(
+        G,
+        422,
+        raw=f'{{"subject": "{PROBE_KEY}", "birth_date": "{B}" '.encode(),
+        probes=[PROBE_KEY, *date_forms(B)],
+    ),  # fmt: skip
+    # row 6: the subject is not resolved (R1-R5)
+    "r1_none_owned": pcase(
+        req(ids_of(N_NONE), doc_of(N_PLAIN)),
+        200,
+        expect={"reason": "none_owned"},
+        stored=stored_of(N_PLAIN),
+    ),  # fmt: skip
+    "r2_two_owners": pcase(
+        req((*ids_of(N_TWO_A), *ids_of(N_TWO_B)), doc_of(N_TWO_A)),
+        200,
+        expect={"reason": "two_owners"},
+        stored=stored_of(N_TWO_A) + stored_of(N_TWO_B),
+    ),  # fmt: skip
+    "r3_subset": pcase(
+        req(ids_of(N_WIDE), doc_of(N_WIDE)),
+        200,
+        expect={"reason": "set_differs"},
+        stored=stored_of(N_WIDE, extra=[permit(N_WIDE)]),
+    ),  # fmt: skip
+    "r4_partial_overlap": pcase(
+        req((*ids_of(N_WIDE), ("permit", permit(N_NONE))), doc_of(N_WIDE)),
+        200,
+        expect={"reason": "partial_overlap"},
+        stored=stored_of(N_WIDE, extra=[permit(N_WIDE)]),
+    ),  # fmt: skip
+    "r5_company": pcase(
+        req(ids_of(N_COMPANY), doc_of(N_COMPANY)),
+        200,
+        expect={"reason": "kind_differs"},
+        stored=stored_of(N_COMPANY),
+    ),  # fmt: skip
+    # row 7: refused (N1-N4)
+    "n1_merged": pcase(
+        req(ids_of(N_MERGED), doc_of(N_MERGED)),
+        200,
+        expect={"reason": "subject_is_merged"},
+        stored=stored_of(N_MERGED),
+    ),  # fmt: skip
+    "n2_differs": pcase(
+        req(ids_of(N_DIFF), doc_of(N_DIFF)),
+        200,
+        expect={"reason": "birth_date_differs"},
+        stored=stored_of(N_DIFF, dob=STORED_DOB),
+    ),  # fmt: skip
+    "n3_history_exists": pcase(
+        req(ids_of(N_HIST), doc_of(N_HIST)),
+        200,
+        expect={"reason": "history_exists"},
+        stored=stored_of(N_HIST, dob=STORED_DOB),
+    ),  # fmt: skip
+    "n4_document_not_on_subject": pcase(
+        req(ids_of(N_NODOC), doc_of(N_PLAIN)),
+        200,
+        expect={"reason": "document_not_on_subject"},
+        stored=stored_of(N_NODOC) + stored_of(N_PLAIN),
+    ),  # fmt: skip
+    # row 8: already recorded (W), apply and dry run
+    "w_already_apply": pcase(
+        G,
+        200,
+        expect={"outcome": "already_recorded", "dry_run": False},
+        first=True,
+        stored=stored_of(N_PLAIN, dob=B_DATE),
+    ),  # fmt: skip
+    "w_already_dry": pcase(
+        req(ids_of(N_SAME), doc_of(N_SAME), dry_run=True),
+        200,
+        expect={"outcome": "already_recorded", "dry_run": True},
+        stored=stored_of(N_SAME, dob=B_DATE),
+    ),  # fmt: skip
+    # rows 9 and 10
+    "row9_recorded_dry": pcase(
+        req(P1, doc_of(N_PLAIN), dry_run=True),
+        200,
+        expect={"outcome": "recorded", "dry_run": True},
+        stored=stored_of(N_PLAIN),
+    ),  # fmt: skip
+    "row10_recorded": pcase(
+        G, 200, expect={"outcome": "recorded", "dry_run": False}, stored=stored_of(N_PLAIN)
+    ),
+    # rows 3 and 11
+    "row3_database_error": pcase(
+        G, 503, expect={"detail": "database_error"}, patch=_boom(asyncpg.PostgresError)
+    ),
+    "row11_inconsistent": pcase(
+        G, 500, expect={"detail": "internal_error"}, patch=_boom(BirthDateInconsistent)
+    ),
+    "row11_parser_raises": pcase(G, 500, expect={"detail": "internal_error"}, patch=_boom_parser),
+    "row11_defence_sd_no_row": pcase(
+        G, 500, expect={"detail": "internal_error"}, patch=_defence_sd, stored=stored_of(N_PLAIN)
+    ),
+    "row11_defence_ib_unique": pcase(
+        req(ids_of(N_HIST), doc_of(N_HIST)),
+        500,
+        expect={"detail": "internal_error"},
+        patch=_defence_ib,
+        stored=stored_of(N_HIST, dob=STORED_DOB),
+    ),  # fmt: skip
 }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", sorted(PRIVACY_CASES))
 async def test_privacy_the_answer_the_log_and_the_audit_rows_carry_no_key_date_or_hash(
-    case, client, conn, caplog, monkeypatch, today
+    case, pool, auth_on, audit_logger, birth_writes, conn, caplog, monkeypatch, today
 ):
     caplog.set_level(logging.DEBUG)
-    s = await privacy_world(conn)
-    data, status, patch = PRIVACY_CASES[case]
-    if case == "already":
-        assert (await post(client, data)).json() == recorded(s)
-        async with unmeasured(conn):  # the set-up call is not the case
-            await conn.execute("DELETE FROM api_audit_trail")
-            await conn.execute("DELETE FROM write_log WHERE tbl = 'api_audit_trail'")
-    caplog.clear()
-    if patch:
-        patch(monkeypatch)
-    low = await conn.fetchval("SELECT clock_timestamp()::timestamp")
-    resp = await post(client, data)
-    high = await conn.fetchval("SELECT clock_timestamp()::timestamp")
-    assert resp.status_code == status, (case, resp.status_code, resp.text[:120])
-    forbidden = privacy.probe_forms(PROBES)
+    spec = PRIVACY_CASES[case]
+    await privacy_world(conn)
+    monkeypatch.setattr(settings, "related_subject_registry_enabled", spec["flag"], raising=False)
+    monkeypatch.setattr(settings, "wa_mirror_crm_write_key", KEY, raising=False)
+    as_identity(monkeypatch, None)
+    headers = {k: v for k, v in HEADERS.items() if k != "X-CRM-Write-Key"}
+    if spec["key"] is not None:
+        headers["X-CRM-Write-Key"] = spec["key"]
+    async with make_client(None if spec["nopool"] else pool) as c:
+        if spec["first"]:
+            assert (await post(c, spec["body"], headers=HEADERS)).json()["outcome"] == "recorded"
+            async with unmeasured(conn):  # the set-up call is not the case
+                await conn.execute("DELETE FROM api_audit_trail")
+                await conn.execute("DELETE FROM write_log WHERE tbl = 'api_audit_trail'")
+        caplog.clear()
+        if spec["patch"]:
+            spec["patch"](monkeypatch)
+        low = await conn.fetchval("SELECT clock_timestamp()::timestamp")
+        resp = await post(c, spec["body"], headers=headers)
+        high = await conn.fetchval("SELECT clock_timestamp()::timestamp")
+    assert resp.status_code == spec["status"], (case, resp.status_code, resp.text[:120])
+    if spec["expect"]:
+        body = resp.json()
+        if spec["status"] == 422:
+            assert body == spec["expect"], case
+        else:
+            assert {k: body.get(k) for k in spec["expect"]} == spec["expect"], case
+    forbidden = privacy.probe_forms(spec["probes"])
     assert privacy.leaks(forbidden, privacy.response_surface(resp.text)) == [], case
     records = [r for r in caplog.records if not privacy.is_http_client_logger(r.name)]
     assert privacy.leaks(forbidden, privacy.log_surface(records)) == [], case
@@ -2275,20 +2475,87 @@ async def test_privacy_the_answer_the_log_and_the_audit_rows_carry_no_key_date_o
     assert privacy.leaks(forbidden, privacy.audit_texts(rows, types)) == [], case
 
 
-def test_privacy_teeth_a_date_a_hash_and_a_key_are_caught_on_every_surface():
-    forbidden = privacy.probe_forms(PROBES)
-    for value in (B, "19770312", doc_of(4312001), doc_of(4312001).upper(), PROBE_KEY):
-        record = logging.LogRecord(
-            "zz.teeth", logging.INFO, __file__, 1, "teeth %s", (value,), None
-        )
-        assert privacy.leaks(forbidden, privacy.log_surface([record])), value
-        assert privacy.leaks(forbidden, privacy.response_surface(json.dumps({"x": value}))), value
-    clean = json.dumps(recorded(7))
-    assert privacy.leaks(forbidden, privacy.response_surface(clean)) == []
-    line = logging.LogRecord(
-        "zz.teeth", logging.INFO, __file__, 1, SERVICE_FORMAT, ("recorded", 7, True), None
+AUDIT_TYPES = {
+    "id": "integer",
+    "error_message": "text",
+    "created_at": "timestamp without time zone",
+}
+
+
+def _planted(value):
+    """The three surfaces a leak can reach, each carrying ``value``."""
+    record = logging.LogRecord("zz.teeth", logging.INFO, __file__, 1, "teeth %s", (value,), None)
+    row = {"id": 1, "error_message": f"boom {value}", "created_at": datetime.now()}
+    return (
+        privacy.log_surface([record]),
+        privacy.response_surface(json.dumps({"x": value})),
+        privacy.audit_texts([row], AUDIT_TYPES),
     )
-    assert privacy.leaks(forbidden, privacy.log_surface([line])) == []
+
+
+@pytest.mark.parametrize("case", sorted(PRIVACY_CASES))
+def test_privacy_teeth_every_value_of_every_case_is_caught_on_every_surface(case):
+    probes = PRIVACY_CASES[case]["probes"]
+    forbidden = privacy.probe_forms(probes)
+    assert probes
+    for value in probes:
+        for surface in _planted(value):
+            assert privacy.leaks(forbidden, surface), (case, "a planted value was not caught")
+        for surface in _planted(value.upper()):
+            assert privacy.leaks(forbidden, surface), (case, "an upper-cased value was not caught")
+    clean = (
+        privacy.log_surface(
+            [
+                logging.LogRecord(
+                    "zz.teeth",
+                    logging.INFO,
+                    __file__,
+                    1,
+                    SERVICE_FORMAT,
+                    ("recorded", 7, True),
+                    None,
+                )
+            ]
+        ),
+        privacy.response_surface(json.dumps(recorded(7))),
+        privacy.audit_texts(
+            [{"id": 1, "error_message": "boom", "created_at": datetime.now()}], AUDIT_TYPES
+        ),
+    )
+    for surface in clean:
+        assert privacy.leaks(forbidden, surface) == [], case
+
+
+def test_privacy_teeth_the_blind_spots_the_gate_found_are_in_their_cases_probes():
+    differs = {p.casefold() for p in PRIVACY_CASES["n2_differs"]["probes"]}
+    assert {passport(N_DIFF).casefold(), doc_of(N_DIFF), *date_forms(STORED_DOB)} <= differs
+    invalid = PRIVACY_CASES["row5_invalid_date"]["probes"]
+    assert "1977-02-30" in invalid and doc_of(N_PLAIN) in invalid and PROBE_KEY in invalid
+    unknown = PRIVACY_CASES["row5_unknown_field"]["probes"]
+    assert set(date_forms(B2)) <= set(unknown)
+
+
+def test_privacy_the_matrix_covers_every_outcome_row_and_every_refusal():
+    names = set(PRIVACY_CASES)
+    assert {
+        "row1_flag_off",
+        "row1_no_pool",
+        "row2_wrong_key",
+        "row2_no_key",
+        "row4_oversize",
+    } <= names
+    assert {
+        "r1_none_owned",
+        "r2_two_owners",
+        "r3_subset",
+        "r4_partial_overlap",
+        "r5_company",
+    } <= names
+    assert {"n1_merged", "n2_differs", "n3_history_exists", "n4_document_not_on_subject"} <= names
+    assert {"w_already_apply", "w_already_dry", "row9_recorded_dry", "row10_recorded"} <= names
+    assert {"row3_database_error", "row11_inconsistent", "row11_parser_raises"} <= names
+    assert {"row11_defence_sd_no_row", "row11_defence_ib_unique"} <= names
+    assert any(n.startswith("row5_") for n in names)
 
 
 # ── the write measurement and the module's own inventories ────────────────────
