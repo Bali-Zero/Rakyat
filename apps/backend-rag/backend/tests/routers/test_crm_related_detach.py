@@ -2557,6 +2557,9 @@ for _mm, _last in enumerate(MONTH_DAYS, start=1):
         (f"{_last + 40:02d}{_mm:02d}77", (_last, _mm, 77)),
         (f"{_last + 41:02d}{_mm:02d}77", None),
     ]
+# rows 7-9 above day 72: no day of any month, whatever the encoding (a rule that takes DD modulo
+# 40 agrees with T6 on every DD up to 72 and accepts 81-99)
+NIK_DATE_ROWS += [(f"{_dd:02d}0377", None) for _dd in range(73, 100)]
 
 
 @pytest.mark.parametrize("ddmmyy,expected", NIK_DATE_ROWS)
@@ -2616,6 +2619,10 @@ for _mm, _last in enumerate(MONTH_DAYS, start=1):
         (f"{_last:02d}{_mm:02d}77", date(1977, 3, 12), "pass"),
         (f"{_last + 1:02d}{_mm:02d}77", date(1977, 3, 12), "nik_date_invalid"),
     ]
+T6_ROUTE_ROWS += [
+    ("810377", date(1977, 3, 12), "nik_date_invalid"),
+    ("990377", date(1977, 3, 12), "nik_date_invalid"),
+]
 
 
 @pytest.mark.asyncio
