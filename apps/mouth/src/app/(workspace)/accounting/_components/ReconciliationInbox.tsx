@@ -11,6 +11,7 @@ import {
   type ReconciliationInboxItem,
 } from "@/lib/api/workspace/accounting.api";
 import { BankStatementUpload, BANK_FILE_INPUT_ID } from "./BankStatementUpload";
+import { CompanyStrip, useCompanies } from "./CompanyStrip";
 import { ConfirmModal } from "./ConfirmModal";
 import { useDoneToday } from "./DoneTodaySection";
 import { LinkedIgnoredSection } from "./LinkedIgnoredSection";
@@ -44,6 +45,9 @@ const normalizeLight = (light: string): Light =>
   light === "green" || light === "recorded" || light === "red"
     ? light
     : "yellow";
+
+// The whole waiting list is loaded, not the newest page: counts per company must be complete.
+const INBOX_LIMIT = 1000;
 
 const MIN_REASON = 3;
 const MAX_REASON = 200;
@@ -121,12 +125,15 @@ export function ReconciliationInbox({
     retry: retryDone,
   } = useDoneToday(doneVersion);
   const bankDate = useBankDate();
+  const companies = useCompanies();
+  // The company whose transfers the page shows; null shows every company.
+  const [company, setCompany] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = ++loadReq.current;
     setLoadStatus("loading");
     try {
-      const rows = await accountingApi.getReconciliationInbox();
+      const rows = await accountingApi.getReconciliationInbox(INBOX_LIMIT);
       if (loadReq.current !== token) return;
       setItems(rows);
       setLoadStatus("ok");
@@ -147,6 +154,7 @@ export function ReconciliationInbox({
     if (ignoreRef.current?.txnId === txnId) setIgnoreForm(null);
     setVersion((v) => v + 1);
     void load();
+    void companies.reload();
     onConfirmed();
   };
 
@@ -180,7 +188,11 @@ export function ReconciliationInbox({
     choose: 0,
     nomatch: 0,
   };
-  for (const item of items) {
+  const scoped =
+    company === null
+      ? items
+      : items.filter((item) => item.company_key === company);
+  for (const item of scoped) {
     counts[SITUATION_BY_LIGHT[normalizeLight(item.light)]] += 1;
   }
 
@@ -193,7 +205,7 @@ export function ReconciliationInbox({
 
   const activeSituation = activeTab !== "done" ? activeTab : null;
   const rows = activeSituation
-    ? items.filter(
+    ? scoped.filter(
         (item) =>
           SITUATION_BY_LIGHT[normalizeLight(item.light)] === activeSituation,
       )
@@ -371,26 +383,42 @@ export function ReconciliationInbox({
     bankDate.status === "empty"
   )
     view = "dayone";
-  else if (items.length === 0) view = "calm";
+  else if (scoped.length === 0) view = "calm";
   else view = "work";
 
-  const status =
-    bankDate.status === "loading" ? null : (
-      <p data-testid="cc-bank-date" className="text-sm text-[var(--cc-tx-2)]">
-        {bankDate.status === "ok" ? (
-          <>
-            Bank data through{" "}
-            <b className="font-bold text-[var(--cc-tx)]">
-              {ccDayDate(bankDate.date)}
-            </b>
-          </>
-        ) : bankDate.status === "empty" ? (
-          "No bank data yet"
-        ) : (
-          "Bank data date could not be loaded."
-        )}
-      </p>
-    );
+  const selectedCompany =
+    company === null
+      ? null
+      : (companies.rows.find((row) => row.key === company) ?? null);
+  const status = selectedCompany ? (
+    <p data-testid="cc-bank-date" className="text-sm text-[var(--cc-tx-2)]">
+      {selectedCompany.data_through ? (
+        <>
+          {selectedCompany.company_name}: bank data through{" "}
+          <b className="font-bold text-[var(--cc-tx)]">
+            {ccDayDate(selectedCompany.data_through)}
+          </b>
+        </>
+      ) : (
+        `${selectedCompany.company_name}: no statement yet`
+      )}
+    </p>
+  ) : bankDate.status === "loading" ? null : (
+    <p data-testid="cc-bank-date" className="text-sm text-[var(--cc-tx-2)]">
+      {bankDate.status === "ok" ? (
+        <>
+          Bank data through{" "}
+          <b className="font-bold text-[var(--cc-tx)]">
+            {ccDayDate(bankDate.date)}
+          </b>
+        </>
+      ) : bankDate.status === "empty" ? (
+        "No bank data yet"
+      ) : (
+        "Bank data date could not be loaded."
+      )}
+    </p>
+  );
 
   const linkedIgnored = (
     <LinkedIgnoredSection
@@ -399,6 +427,7 @@ export function ReconciliationInbox({
       exclusive={lock.runWrite}
       onReopened={() => {
         void load();
+        void companies.reload();
         onConfirmed();
       }}
     />
@@ -459,9 +488,17 @@ export function ReconciliationInbox({
         onImported={() => {
           void load();
           void bankDate.reload();
+          void companies.reload();
           onConfirmed();
         }}
       />
+      {view !== "dayone" && (
+        <CompanyStrip
+          companies={companies}
+          selected={company}
+          onSelect={setCompany}
+        />
+      )}
       {view !== "dayone" && (
         <ReconciliationTabs
           active={activeTab}

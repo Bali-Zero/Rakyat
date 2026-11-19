@@ -44,8 +44,16 @@ def _inv(invoice_id: int, name: str, amount: int = 4_000_000, gen=datetime(2026,
     }
 
 
-def _tx(txn_id: int, amount: int, memo: str | None, day=date(2026, 6, 25)) -> dict:
-    return {"id": txn_id, "txn_date": day, "amount_idr": amount, "description": memo}
+def _tx(
+    txn_id: int, amount: int, memo: str | None, day=date(2026, 6, 25), account: str | None = None
+) -> dict:
+    return {
+        "id": txn_id,
+        "txn_date": day,
+        "amount_idr": amount,
+        "description": memo,
+        "account_number": account,
+    }
 
 
 # ── the admin guard ──────────────────────────────────────────────────────────────────────
@@ -56,6 +64,27 @@ def test_inbox_is_admin_only(mock_db_pool) -> None:
     assert resp.status_code == 403
     _pool, conn = mock_db_pool
     conn.fetch.assert_not_called()
+
+
+def test_companies_is_admin_only(mock_db_pool) -> None:
+    resp = _client(mock_db_pool, OUTSIDER).get(f"{BASE}/companies")
+    assert resp.status_code == 403
+    _pool, conn = mock_db_pool
+    conn.fetch.assert_not_called()
+
+
+def test_companies_lists_every_issuing_company_with_only_selects(mock_db_pool) -> None:
+    from backend.services.invoicing.entities import ENTITIES
+
+    _pool, conn = mock_db_pool
+    conn.fetch = AsyncMock(side_effect=[[], []])
+    resp = _client(mock_db_pool).get(f"{BASE}/companies")
+    assert resp.status_code == 200
+    assert [c["key"] for c in resp.json()] == list(ENTITIES)
+    sqls = [c.args[0] for c in conn.fetch.await_args_list]
+    assert len(sqls) == 2 and all(s.lstrip().upper().startswith("SELECT") for s in sqls)
+    for name in ("execute", "fetchrow", "fetchval"):
+        assert not getattr(conn, name).called, name
 
 
 @pytest.mark.parametrize(("path", "body"), ACTIONS)
@@ -203,7 +232,8 @@ def test_malformed_bodies_are_422_before_the_handler_runs(mock_db_pool, path, bo
 
 
 @pytest.mark.parametrize(
-    ("limit", "status"), [(0, 422), (1, 200), (200, 200), (500, 200), (501, 422), (-1, 422)]
+    ("limit", "status"),
+    [(0, 422), (1, 200), (200, 200), (500, 200), (1000, 200), (1001, 422), (-1, 422)],
 )
 def test_inbox_limit_bounds(mock_db_pool, limit, status) -> None:
     resp = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox?limit={limit}")
@@ -247,6 +277,7 @@ def test_inbox_shape_and_each_light(mock_db_pool) -> None:
             "txn_date",
             "amount_idr",
             "description",
+            "company_key",
             "light",
             "open_candidates",
             "open_strong",
@@ -301,10 +332,31 @@ def test_inbox_handler_issues_only_selects_and_asks_for_credits_unmatched_newest
     sqls = [c.args[0] for c in conn.fetch.await_args_list]
     assert len(sqls) == 3 and all(s.lstrip().upper().startswith("SELECT") for s in sqls)
     first = " ".join(sqls[0].split())
-    assert "direction = 'credit' AND reconciled_status = 'unmatched'" in first
-    assert "ORDER BY txn_date DESC, id DESC LIMIT $1" in first
+    assert "bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'" in first
+    assert "ORDER BY bt.txn_date DESC, bt.id DESC LIMIT $1" in first
+    assert "LEFT JOIN bank_statements bs ON bs.id = bt.statement_id" in first
     assert "<> 'paid'" in sqls[1] and "= 'paid'" in sqls[2] and "<> 'paid'" not in sqls[2]
     conn.transaction.assert_not_called()  # no transaction is opened by the read route
+
+
+def test_each_inbox_transfer_names_the_company_whose_account_received_it(mock_db_pool) -> None:
+    from backend.services.invoicing.entities import ENTITIES
+
+    keys = list(ENTITIES)
+    first, second = ENTITIES[keys[0]], ENTITIES[keys[1]]
+    txns = [
+        # the statement's number carries a currency suffix, the company's has none
+        _tx(3, 1_000_000, "x", account=f"{first.bank_account_number}-IDR"),
+        # the company's number has dashes or spaces the statement's has not, or the reverse
+        _tx(
+            2, 1_000_000, "x", account="".join(c for c in second.bank_account_number if c.isdigit())
+        ),
+        _tx(1, 1_000_000, "x", account="999000111"),  # an account no company owns
+        _tx(0, 1_000_000, "x", account=None),  # a transfer without a statement account
+    ]
+    _inbox_conn(mock_db_pool, txns, [], [])
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert [i["company_key"] for i in items] == [first.key, second.key, None, None]
 
 
 def test_inbox_classification_runs_off_the_event_loop(mock_db_pool, monkeypatch) -> None:
