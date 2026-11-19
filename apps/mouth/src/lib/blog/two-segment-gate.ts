@@ -38,15 +38,18 @@ export const PUBLIC_TWO_SEGMENT_ROUTES: Readonly<
 };
 
 /**
- * The values a `"*"` route really accepts, for the routes whose parameter
- * comes from a static table bundled with the app. Each list is read from the
- * table the page itself renders from, so a service added there is served
- * without touching this file. Routes not listed here (`book`, `kbli`) keep
- * passing every value: their parameters are not known before rendering.
+ * The second segments a `"*"` route really serves, for the routes whose
+ * parameter comes from a static table bundled with the app: the table's keys
+ * (read from the table the page renders from, so a service added there is
+ * served without touching this file) plus the static pages that sit beside
+ * the `[slug]` folder. `two-segment-gate.services.test.ts` reads those static
+ * pages from the file tree, so a new one without a row here turns it red.
+ * Routes not listed here (`book`, `kbli`) keep passing every value: their
+ * parameters are not known before rendering.
  */
 export const STATIC_PARAM_VALUES: Readonly<Record<string, readonly string[]>> =
   {
-    services: Object.keys(SERVICES_DATA),
+    services: [...Object.keys(SERVICES_DATA), "compliance"],
   };
 
 export type TwoSegmentVerdict = "pass" | "not-found";
