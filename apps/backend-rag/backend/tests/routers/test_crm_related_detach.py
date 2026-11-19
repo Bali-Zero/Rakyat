@@ -1066,6 +1066,28 @@ async def test_d2_the_checks_refuse_each_bad_value_and_two_rows_of_one_from_id_p
         assert typed == "object"
 
 
+ALLOWED_ID_TYPES = ("passport", "permit", "nik", "npwp", "nib", "ahu")
+
+
+@pytest.mark.asyncio
+async def test_d2_every_allowed_type_is_accepted_and_a_long_or_non_hex_digest_is_refused(
+    pool, conn
+):
+    s = await seed_subject(conn, "person", "ZzD2 Types", [("passport", passport(4242211))])
+    targets = [await seed_subject(conn, "person", None, []) for _ in ALLOWED_ID_TYPES]
+    fp = "ab" * 32
+    async with unmeasured(conn):
+        for bad in ("a" * 65, "g" * 64):
+            with pytest.raises(asyncpg.CheckViolationError):
+                await conn.execute(
+                    INSERT_HISTORY, s, targets[0], "nik", bad, [], "nik_birth_date", {}
+                )
+        for t, id_type in zip(targets, ALLOWED_ID_TYPES, strict=True):
+            await conn.execute(INSERT_HISTORY, s, t, id_type, fp, [], "nik_birth_date", {})
+        rows = await conn.fetch("SELECT id_type FROM related_subject_detachments ORDER BY id")
+    assert [r["id_type"] for r in rows] == list(ALLOWED_ID_TYPES)
+
+
 @pytest.mark.asyncio
 async def test_d3_deleting_the_new_record_or_the_owner_removes_the_history_row(pool, conn):
     s = await seed_subject(conn, "person", "ZzD3 Owner", [("passport", passport(4242301))])
