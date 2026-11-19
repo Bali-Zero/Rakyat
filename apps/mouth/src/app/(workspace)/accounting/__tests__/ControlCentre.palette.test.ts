@@ -4,6 +4,12 @@ import { describe, expect, it } from "vitest";
 
 const root = join(process.cwd(), "src/app/(workspace)/accounting");
 const palette = readFileSync(join(root, "control-centre.css"), "utf8");
+const darkPaletteMatch = palette.match(
+  /\[data-theme="operative-dark"\] \.cc-root\s*\{([\s\S]*?)\}/,
+);
+const lightPalette = darkPaletteMatch
+  ? palette.replace(darkPaletteMatch[0], "")
+  : palette;
 const componentNames = [
   "ReconciliationInbox.tsx",
   "ReconciliationTabs.tsx",
@@ -24,6 +30,29 @@ const colourFiles = [
   { name: "page.tsx", source: readFileSync(join(root, "page.tsx"), "utf8") },
 ];
 
+function declaredProperties(source: string): Set<string> {
+  return new Set(
+    Array.from(source.matchAll(/^\s*(--cc-[\w-]+)\s*:/gm), (match) => match[1]),
+  );
+}
+
+function referencedVariables(source: string): string[] {
+  return [
+    ...Array.from(source.matchAll(/var\((--[\w-]+)\)/g), (match) => match[1]),
+    ...Array.from(
+      source.matchAll(/\b[a-z][\w-]*-\((--[\w-]+)\)/g),
+      (match) => match[1],
+    ),
+  ];
+}
+
+function lucideImportClauses(source: string): string[] {
+  return Array.from(
+    source.matchAll(/import\s+([^;]+?)\s+from\s+["']lucide-react["']\s*;?/g),
+    (match) => match[1].trim(),
+  );
+}
+
 describe("control-centre palette boundary", () => {
   it("gives every non-button border inside Done today the hairline", () => {
     expect(palette).toMatch(
@@ -32,16 +61,11 @@ describe("control-centre palette boundary", () => {
   });
 
   it("declares every control-centre custom property used by components", () => {
-    const declared = new Set(
-      Array.from(palette.matchAll(/(--cc-[\w-]+)\s*:/g), (match) => match[1]),
-    );
+    const declared = declaredProperties(lightPalette);
     const used = new Set(
-      components.flatMap(({ source }) =>
-        Array.from(
-          source.matchAll(/var\((--cc-[\w-]+)\)/g),
-          (match) => match[1],
-        ),
-      ),
+      components
+        .flatMap(({ source }) => referencedVariables(source))
+        .filter((property) => property.startsWith("--cc-")),
     );
     expect(used.size).toBeGreaterThan(10);
     for (const property of used)
@@ -49,10 +73,13 @@ describe("control-centre palette boundary", () => {
   });
 
   it("has the operative-dark selector and every theme-dependent K2 property", () => {
-    const dark = palette.match(
-      /\[data-theme="operative-dark"\] \.cc-root\s*\{([\s\S]*?)\}/,
-    )?.[1];
+    const dark = darkPaletteMatch?.[1];
     expect(dark).toBeDefined();
+    const darkDeclarations = declaredProperties(dark ?? "");
+    const artProperties = Array.from(declaredProperties(palette)).filter(
+      (property) => property.startsWith("--cc-art-"),
+    );
+    expect(artProperties.length).toBeGreaterThan(0);
     for (const property of [
       "--cc-card",
       "--cc-wash",
@@ -69,16 +96,9 @@ describe("control-centre palette boundary", () => {
       "--cc-link-ink",
       "--cc-choose-ink",
       "--cc-nomatch-ink",
-      "--cc-art-tile",
-      "--cc-art-sky",
-      "--cc-art-sun",
-      "--cc-art-hill1",
-      "--cc-art-hill3",
-      "--cc-art-sheet",
-      "--cc-art-sheet-line",
-      "--cc-art-sheet-head",
+      ...artProperties,
     ])
-      expect(dark, property).toContain(property);
+      expect(darkDeclarations.has(property), property).toBe(true);
   });
 
   it("keeps literals and unsupported colour utilities out of components", () => {
@@ -94,10 +114,7 @@ describe("control-centre palette boundary", () => {
     for (const { name, source } of components) {
       expect(source, name).not.toContain("dark:");
       expect(source, name).not.toMatch(/\$\{[^}]*var\(/);
-      const variables = Array.from(
-        source.matchAll(/var\((--[\w-]+)\)/g),
-        (m) => m[1],
-      );
+      const variables = referencedVariables(source);
       for (const variable of variables) {
         expect(
           variable.startsWith("--cc-") ||
@@ -116,21 +133,13 @@ describe("control-centre palette boundary", () => {
 
   it("keeps lucide out of glyphs and limits other control-centre imports to Loader2", () => {
     const glyph = components.find(({ name }) => name === "CcGlyph.tsx");
-    expect(glyph?.source).not.toContain('from "lucide-react"');
+    expect(glyph?.source).not.toMatch(
+      /(?:from\s+|import\s*)["']lucide-react["']/,
+    );
     for (const { name, source } of components) {
       if (name === "CcGlyph.tsx") continue;
-      const imported = Array.from(
-        source.matchAll(/import\s*\{([^}]*)\}\s*from\s*"lucide-react"/g),
-        (match) =>
-          match[1]
-            .split(",")
-            .map((part) => part.trim())
-            .filter(Boolean),
-      ).flat();
-      expect(
-        imported.every((value) => value === "Loader2"),
-        name,
-      ).toBe(true);
+      for (const clause of lucideImportClauses(source))
+        expect(clause, name).toMatch(/^\{\s*Loader2\s*,?\s*\}$/);
     }
   });
 });

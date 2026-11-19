@@ -427,14 +427,31 @@ describe("DoneTodaySection", () => {
   });
 
   it("F7: no write method is called and no control is disabled", async () => {
-    render(<DoneTodaySection version={0} />);
+    const { unmount } = render(<DoneTodaySection version={0} />);
     await loaded(1);
     open();
     for (const [name, fn] of Object.entries(api)) {
       if (name !== "getDoneToday") expect(fn, name).not.toHaveBeenCalled();
     }
     expect(screen.queryAllByRole("alert")).toHaveLength(0);
-    for (const b of screen.queryAllByRole("button")) expect(b).toBeEnabled();
+    let checkedControls = 0;
+    for (const b of screen.queryAllByRole("button")) {
+      expect(b).toBeEnabled();
+      checkedControls += 1;
+    }
+
+    unmount();
+    api.getDoneToday.mockRejectedValueOnce(new Error("boom"));
+    render(<DoneTodaySection version={1} />);
+    await screen.findByRole("button", { name: "Try again" });
+    for (const b of screen.getAllByRole("button")) {
+      expect(b).toBeEnabled();
+      checkedControls += 1;
+    }
+    expect(checkedControls).toBeGreaterThan(0);
+    for (const [name, fn] of Object.entries(api)) {
+      if (name !== "getDoneToday") expect(fn, name).not.toHaveBeenCalled();
+    }
     expect(source).not.toContain("useWriteLock");
     expect(source).not.toContain("useToast");
   });
