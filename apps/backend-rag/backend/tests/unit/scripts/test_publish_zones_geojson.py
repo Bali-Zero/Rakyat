@@ -486,3 +486,21 @@ def test_a_cleanup_failure_after_the_manifest_is_reported_not_fatal(
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "published" and len(summary["cleanup_errors"]) == 1
     assert manifest(mouth)["features"] == 12
+
+
+def test_a_listing_failure_during_cleanup_is_reported_not_fatal(
+    mouth, rows_file, capsys, monkeypatch
+):
+    publish(mouth, rows_file([row(i) for i in range(10)]))
+    capsys.readouterr()
+
+    def broken_glob(self, pattern):
+        raise OSError(5, "Input/output error")
+        yield  # pragma: no cover - makes this a generator like Path.glob
+
+    monkeypatch.setattr(cli.Path, "glob", broken_glob)
+    assert publish(mouth, rows_file([row(i) for i in range(11)], "r11.jsonl")) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "published"
+    assert summary["cleanup_errors"] == ["listing public/data/prime: Input/output error"]
+    assert manifest(mouth)["features"] == 11

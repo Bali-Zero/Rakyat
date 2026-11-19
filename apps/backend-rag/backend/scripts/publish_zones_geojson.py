@@ -95,12 +95,16 @@ def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
     # is reported, it does not turn a successful publish into a failure.
     keep = {name, Path(old_path).name if old_path else None}
     cleanup_errors = []
-    for stale in data_dir.glob("zones-*.json"):
-        if stale.name not in keep:
-            try:
-                stale.unlink()
-            except OSError as exc:
-                cleanup_errors.append(f"{stale.name}: {exc.strerror or exc}")
+    try:
+        stale_files = [p for p in data_dir.glob("zones-*.json") if p.name not in keep]
+    except OSError as exc:  # listing the directory failed: nothing is deleted, the publish stands
+        stale_files = []
+        cleanup_errors.append(f"listing {DATA_SUBDIR}: {exc.strerror or exc}")
+    for stale in stale_files:
+        try:
+            stale.unlink()
+        except OSError as exc:
+            cleanup_errors.append(f"{stale.name}: {exc.strerror or exc}")
     if cleanup_errors:
         summary["cleanup_errors"] = cleanup_errors
     _emit(status="published", **summary)
