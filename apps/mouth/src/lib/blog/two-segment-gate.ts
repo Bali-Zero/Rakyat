@@ -1,3 +1,5 @@
+import { SERVICES_DATA } from "@/data/services_data";
+
 import { CATEGORY_SEO } from "./category-seo";
 
 /**
@@ -35,6 +37,21 @@ export const PUBLIC_TWO_SEGMENT_ROUTES: Readonly<
   "visa-oracle": ["privacy", "unlock"],
 };
 
+/**
+ * The second segments a `"*"` route really serves, for the routes whose
+ * parameter comes from a static table bundled with the app: the table's keys
+ * (read from the table the page renders from, so a service added there is
+ * served without touching this file) plus the static pages that sit beside
+ * the `[slug]` folder. `two-segment-gate.services.test.ts` reads those static
+ * pages from the file tree, so a new one without a row here turns it red.
+ * Routes not listed here (`book`, `kbli`) keep passing every value: their
+ * parameters are not known before rendering.
+ */
+export const STATIC_PARAM_VALUES: Readonly<Record<string, readonly string[]>> =
+  {
+    services: [...Object.keys(SERVICES_DATA), "compliance"],
+  };
+
 export type TwoSegmentVerdict = "pass" | "not-found";
 
 /**
@@ -57,7 +74,15 @@ export function classifyTwoSegmentPath(routePath: string): TwoSegmentVerdict {
   )
     ? PUBLIC_TWO_SEGMENT_ROUTES[first]
     : undefined;
-  if (own === "*" || own?.includes(second)) return "pass";
+  if (own === "*") {
+    const known = Object.prototype.hasOwnProperty.call(
+      STATIC_PARAM_VALUES,
+      first,
+    )
+      ? STATIC_PARAM_VALUES[first]
+      : undefined;
+    if (!known || known.includes(second)) return "pass";
+  } else if (own?.includes(second)) return "pass";
 
   return Object.prototype.hasOwnProperty.call(CATEGORY_SEO, first)
     ? "pass"
