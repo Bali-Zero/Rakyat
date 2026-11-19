@@ -604,6 +604,152 @@ def _bni_find(text: str, pattern: str) -> re.Match[str] | None:
     return re.search(pattern, text)
 
 
+_BNI_HEADER_WORDS = frozenset(
+    ("Post", "Posting", "Date", "Effective", "Branch", "Journal", "No.", "Transaction",
+     "Description", "Amount", "Db/Cr", "DB/C", "DB/CR", "R", "Balance")
+)  # fmt: skip
+_BNI_CHROME_WORDS = frozenset(
+    ("Account", "Period", "Beginning", "Total", "Information", "TRANSACTION", "INQUIRY",
+     "ACCOUNT", "STATEMENT", "Page", "Ending", "Type")
+)  # fmt: skip
+
+
+def _bni_cells(
+    words: list[Word],
+    flags: list[Word],
+    cols: tuple[Word, Word, Word | None],
+    no_h: Word | None,
+    top0: float,
+) -> tuple[list[list[Word]], list[list[Word]], list[list[Word]], list[list[Word]]]:
+    """Dates, times, description words and journal words of each row (by flag), with every word
+    placed by the layout and none by proximity. A print with a row-number column (Transaction
+    Inquiry) cuts rows at the numbers; one without (Account Statement) centres every cell on the flag
+    line, so the description lines are cut into runs centred on each flag (one cut or refusal)
+    and the other cells are taken from the flag's own line. A row that
+    does not come out with exactly one flag, date and time, text that fits no row, or any other
+    count, refuses the file."""
+    _, amt_h, desc_h = cols
+    header_tops = [w.top for w in words if w.text.lower() in ("db/cr", "db/c")]
+    # page chrome: the title, address and account lines (and the footer) repeat, anywhere on a page
+    tops = sorted(w.top for w in words if w.text in _BNI_CHROME_WORDS and w.x0 < 330)
+    bands: list[tuple[float, float]] = []
+    for t in tops:
+        if bands and t - bands[-1][1] <= 30:
+            bands[-1] = (bands[-1][0], t)
+        else:
+            bands.append((t, t))
+    bands = [(lo - 6, hi + 12) for lo, hi in bands]
+    body = [
+        w
+        for w in words
+        if w.top > top0
+        and not any(lo <= w.top <= hi for lo, hi in bands)
+        and not (w.text in _BNI_HEADER_WORDS and any(-10 <= w.top - t <= 14 for t in header_tops))
+    ]
+    n = len(flags)
+    dates: list[list[Word]] = [[] for _ in flags]
+    times: list[list[Word]] = [[] for _ in flags]
+    desc: list[list[Word]] = [[] for _ in flags]
+    journal: list[list[Word]] = [[] for _ in flags]
+
+    def in_desc(w: Word) -> bool:
+        return desc_h.x1 - 1 <= w.x0 < amt_h.x0 - 2 and not _AMOUNT_RE.fullmatch(w.text)
+
+    def place(k: int, w: Word) -> None:
+        if _BNI_DATE_RE.fullmatch(w.text):
+            dates[k].append(w)
+        elif _BNI_TIME_RE.fullmatch(w.text):
+            times[k].append(w)
+        elif in_desc(w):
+            desc[k].append(w)
+        elif _bni_in_journal_column(cols, w) and w.text.isdigit():
+            journal[k].append(w)
+
+    unplaced = "a statement row block cannot be told apart: text does not fit one row"
+    if no_h is not None:
+        marks = sorted(
+            w.top
+            for w in body
+            if w.text.isdigit() and no_h.x0 - 8 <= w.x0 <= no_h.x0 + 12 and w.x1 < desc_h.x0 - 40
+        )
+        if len(marks) != n:
+            raise BankParseError(unplaced)
+        edges = [m - 3 for m in marks] + [float("inf")]
+        for k, f in enumerate(flags):
+            if not edges[k] <= f.top < edges[k + 1]:
+                raise BankParseError(unplaced)
+        for w in body:
+            if w.top < edges[0]:
+                if _BNI_DATE_RE.fullmatch(w.text) or _BNI_TIME_RE.fullmatch(w.text) or in_desc(w):
+                    raise BankParseError(unplaced)
+                continue
+            k = max(j for j in range(n) if edges[j] <= w.top)
+            place(k, w)
+        for k in range(n):
+            if len(dates[k]) != 1 or len(times[k]) != 1:
+                raise BankParseError(unplaced)
+        return dates, times, desc, journal
+
+    # No row number and no vertical gap tells where one description ends: the cells of a row are
+    # vertically centred on its flag line. Cut the description lines into consecutive runs, one
+    # per flag, each centred on its flag (a page break may drop a chrome band into the middle of a
+    # row: the lines after the band carry on the run above it). Exactly one cut may fit, else refuse.
+    lines = _lines([w for w in body if in_desc(w)], tol=2.0)
+    ltops = [line[0].top for line in lines]
+
+    carry = [False]  # whether a run may cross a chrome band (tried only when none fits otherwise)
+
+    def fits(i: int, j: int, f: Word) -> bool:  # lines[i:j] as the description of flag f
+        if i >= j:
+            return False
+        run = ltops[i:j]
+        for lo, hi in bands:  # lines after a band continue the row above it
+            if run[0] < lo and run[-1] > hi:
+                if not carry[0] or run[-1] - hi > 60:
+                    return False
+                run = [t for t in run if t < lo]
+        return abs((run[0] + run[-1]) / 2 - f.top) <= 4 and run[0] - 3 <= f.top <= run[-1] + 3
+
+    memo: dict[tuple[int, int], list[list[int]]] = {}
+
+    def cuts(i: int, k: int) -> list[list[int]]:  # up to two ways to place lines[i:] on flags[k:]
+        if (i, k) in memo:
+            return memo[(i, k)]
+        out: list[list[int]] = []
+        if k == n:
+            out = [[]] if i == len(lines) else []
+        else:
+            for j in range(i + 1, len(lines) + 1):
+                if fits(i, j, flags[k]):
+                    out += [[j, *rest] for rest in cuts(j, k + 1)]
+                    if len(out) > 1:
+                        break
+        memo[(i, k)] = out[:2]
+        return out[:2]
+
+    found = cuts(0, 0)
+    if not found:
+        carry[0] = True
+        memo.clear()
+        found = cuts(0, 0)
+    if len(found) != 1:
+        raise BankParseError(unplaced)
+    start = 0
+    for k, end in enumerate(found[0]):
+        desc[k] = [w for line in lines[start:end] for w in line]
+        start = end
+    for w in body:
+        if in_desc(w):
+            continue
+        owners = [k for k, f in enumerate(flags) if abs(w.top - f.top) <= 3]
+        if len(owners) == 1:
+            place(owners[0], w)
+    for k in range(n):
+        if not 1 <= len(dates[k]) <= 2 or not 1 <= len(times[k]) <= 2:
+            raise BankParseError(unplaced)
+    return dates, times, desc, journal
+
+
 def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
     """BNI 'Transaction Inquiry' / 'Account Statement' pages -> ParsedStatement (file order).
 
@@ -622,6 +768,7 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
     end_m = _bni_find(text_all, rf"Ending Balance\s*:\s*{_BNI_AMT}")
     rows: list[_BniRow] = []
     lone: Decimal | None = None
+    no_h: Word | None = None  # the row-number header: only some prints have one
     for page_no, words in enumerate(pages):
         flag_h = next((w for w in words if w.text.lower() in ("db/cr", "db/c")), None)
         if flag_h is not None:
@@ -642,11 +789,19 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
                 None,
             )
             cols = (flag_h, amt_h, nxt or jr_h)
+            no_h = next(
+                (
+                    w
+                    for w in words
+                    if w.text == "No." and w.x0 < 120 and abs(w.top - flag_h.top) < 12
+                ),
+                None,
+            )
         if cols is None:
             if page_no == 0:
                 raise BankParseError("statement page has no transaction table")
             continue
-        flag_h, amt_h, desc_h = cols
+        flag_h, amt_h, _ = cols
         # the header row repeats anywhere on later pages: only page 1's marks where rows start
         top0 = flag_h.top + 2 if page_no == 0 else -1.0
         if account is None:
@@ -680,35 +835,7 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
         if not flags:
             continue
 
-        tops = [f.top for f in flags]
-
-        dates: list[list[Word]] = [[] for _ in flags]
-        times: list[list[Word]] = [[] for _ in flags]
-        desc: list[list[Word]] = [[] for _ in flags]
-        journal: list[list[Word]] = [[] for _ in flags]
-        for w in words:
-            if w.top <= top0:
-                continue
-            k = min(range(len(tops)), key=lambda j: abs(tops[j] - w.top))
-            # a date or time sits on the row's flag line or just below it (a row may print the
-            # time under the date); the row owns the stamps that follow its flag line
-            own = max((j for j, f in enumerate(flags) if f.top <= w.top + 8), default=k)
-            if _BNI_DATE_RE.fullmatch(w.text):
-                dates[own].append(w)
-            elif _BNI_TIME_RE.fullmatch(w.text):
-                times[own].append(w)
-            elif (
-                desc_h.x1 - 1 <= w.x0 < amt_h.x0 - 2
-                and not _AMOUNT_RE.fullmatch(w.text)
-                and abs(w.top - flags[k].top) < 30
-            ):
-                desc[k].append(w)
-            elif (
-                _bni_in_journal_column(cols, w)
-                and w.text.isdigit()
-                and abs(w.top - flags[k].top) <= 6
-            ):
-                journal[k].append(w)
+        dates, times, desc, journal = _bni_cells(words, flags, cols, no_h, top0)
         for k, f in enumerate(flags):
             if not dates[k] or not times[k]:
                 raise BankParseError("a statement row does not have a posting date and time")

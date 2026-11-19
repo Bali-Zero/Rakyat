@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime
 from decimal import Decimal
 
@@ -474,3 +475,43 @@ def test_bni_detection_and_synthetic_pdf_end_to_end() -> None:
     stmt, report = parse_and_preview_statement(words_to_pdf([_bni()]))
     assert stmt.bank_code == "bni" and report["row_count"] == 3
     assert report["total_debit"] == "145000.00" and report["balance_check"]["ok"] is True
+
+
+_LONG = [
+    ("07/11/2025", "10.00.58", "906849", "ALPHA\nA1\nA2\nA3", "500,000.00", "C", "1,500,000.00"),
+    ("13/11/2025", "10.58.31", "985452", "BETA", "120,000.00", "D", "1,380,000.00"),
+    ("13/11/2025", "00.00.00", "985452", "GAMMA\nG1", "25,000.00", "D", "1,355,000.00"),
+]
+
+
+@pytest.mark.parametrize("variant", ["inquiry", "statement"])
+def test_bni_a_long_description_stays_whole_next_to_a_short_one(variant) -> None:
+    kw = {"variant": variant, "ending": "1,355,000.00", "counts": (2, 1)}
+    rows = _LONG if variant == "inquiry" else [*_LONG[:2], (*_LONG[2][:6], None)]
+    stmt = parse_bni_pages([_bni(rows, **kw)])
+    assert [t.description for t in stmt.transactions] == ["ALPHA A1 A2 A3", "BETA", "GAMMA G1"]
+
+
+def test_bni_a_date_that_falls_outside_its_row_number_block_is_refused() -> None:
+    page = _bni(_LONG)
+    moved = [
+        dataclasses.replace(w, top=w.top - 12) if w.text == "13/11/2025" and w.top > 250 else w
+        for w in page
+    ]
+    with pytest.raises(BankParseError, match="row block"):
+        parse_bni_pages([moved])
+
+
+def test_bni_a_statement_description_not_centred_on_its_row_is_refused() -> None:
+    page = _bni(_LONG, variant="statement", ending="1,355,000.00", counts=(2, 1))
+    # slide one description line off the centre of its row: no cut of the lines fits any more
+    shifted = [dataclasses.replace(w, top=w.top + 14) if w.text == "ALPHA" else w for w in page]
+    with pytest.raises(BankParseError, match="row block"):
+        parse_bni_pages([shifted])
+
+
+def test_bni_text_above_the_first_row_number_is_refused() -> None:
+    page = _bni()
+    page.append(Word("orphan", 270, 300, 214.5))  # a description line above row 1's number
+    with pytest.raises(BankParseError, match="row block"):
+        parse_bni_pages([page])
