@@ -1901,6 +1901,22 @@ async def test_d5_the_bounds_and_permitted_raw_forms_are_accepted(client, conn, 
     assert (await post(client, req(K_OWN, D_OWN, [], dry_run=True))).json() == would(s)
 
 
+MALFORMED_CODES = {
+    b"{not json": "json_invalid",
+    b"": "json_invalid",
+    b"[1, 2]": "model_type",
+    b"null": "model_type",
+    b" " * route_module.MAX_BODY_BYTES: "json_invalid",
+}
+
+
+@pytest.mark.parametrize(
+    "raw", list(MALFORMED_CODES), ids=["text", "empty", "list", "null", "limit"]
+)
+def test_d5_each_malformed_raw_body_has_its_exact_sanitised_item(raw):
+    assert _model_errors(raw) == [{"loc": [], "code": MALFORMED_CODES[raw]}]
+
+
 @pytest.mark.asyncio
 async def test_d5_malformed_json_and_oversize_body(client, conn, clients):
     for raw in (b"{not json", b"", b"[1, 2]", b"null"):
@@ -1912,11 +1928,13 @@ async def test_d5_malformed_json_and_oversize_body(client, conn, clients):
             and body[0]["loc"] == []
             and body[0]["code"] in {"json_invalid", "model_type"}
         )
+        assert resp.json() == _validation([([], MALFORMED_CODES[raw])]), raw
     big = await post(client, b" " * (route_module.MAX_BODY_BYTES + 1))
     assert big.status_code == 422
     assert big.json() == {"detail": [{"loc": ["body"], "code": "too_long"}]}
     exact = await post(client, b" " * route_module.MAX_BODY_BYTES)
     assert exact.json()["detail"][0]["loc"] == []  # at the limit the body is parsed, not refused
+    assert exact.json() == _validation([([], "json_invalid")])
 
 
 def _sanitised(errors):
