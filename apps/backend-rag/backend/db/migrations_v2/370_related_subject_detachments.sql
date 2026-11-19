@@ -54,3 +54,5 @@ COMMENT ON TABLE related_subject_detachments IS
     'History of detachments of registry subjects (one key and listed documents moved from from_id to the new record to_id), insert-only by application restriction. owner_keys_sha256 is a digest of key values: never logged, returned or audited.';
 
 -- === ROLLBACK ===
+
+DROP TABLE IF EXISTS related_subject_detachments;
