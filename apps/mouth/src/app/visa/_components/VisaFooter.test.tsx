@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockPath = "/visa/clock";
 vi.mock("next/navigation", () => ({ usePathname: () => mockPath }));
-vi.mock("@/app/v2/_components/Footer", () => ({
+vi.mock("@/components/site/Footer", () => ({
   Footer: ({ funnel }: { funnel?: string }) => (
     <footer data-guard="site-footer" data-funnel={funnel} />
   ),

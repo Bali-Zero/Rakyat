@@ -3,8 +3,8 @@ import { NavShell, BZLogo } from "@balizero/core";
 import { SessionInit } from "@/components/funnel/SessionInit";
 import { KBLIHeaderCTA } from "./_components/KBLIHeaderCTA";
 import { getFunnelNavItems } from "@/components/funnel/funnel-nav";
-import { MobileNav } from "@/app/v2/_components/MobileNav";
-import { Footer } from "@/app/v2/_components/Footer";
+import { MobileNav } from "@/components/site/MobileNav";
+import { Footer } from "@/components/site/Footer";
 
 export default function KBLILayout({
   children,

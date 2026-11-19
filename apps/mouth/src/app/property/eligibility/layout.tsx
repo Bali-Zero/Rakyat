@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { NavShell, BZLogo } from "@balizero/core";
 import { SessionInit } from "@/components/funnel/SessionInit";
 import { HeaderWhatsAppCTA } from "@/components/funnel/HeaderWhatsAppCTA";
-import { MobileNav } from "@/app/v2/_components/MobileNav";
+import { MobileNav } from "@/components/site/MobileNav";
 import { getFunnelNavItems } from "@/components/funnel/funnel-nav";
-import { Footer } from "@/app/v2/_components/Footer";
+import { Footer } from "@/components/site/Footer";
 import { R19Presentation } from "@/components/r19/R19Presentation";
 
 // C1 (gate-7596-report.md v2, REWORK-BUILD): the previous description
