@@ -225,12 +225,24 @@ class PracticeStatusListener:
         """True when a historical confirmation made this change: nobody is notified.
 
         The payload is read again with its numbers as text, so the trigger's `ts` keeps its
-        microseconds. If the answer cannot be read, nothing is sent: an email about an old
-        payment cannot be taken back, a missing one can be sent by hand.
+        microseconds. A confirmation moves the payment and never the practice's status, so a
+        change of status, or a change that leaves the payment where it was, is ordinary. If the
+        answer cannot be read, nothing is sent: an email about an old payment cannot be taken
+        back, a missing one can be sent by hand.
         """
-        change_ts = json.loads(payload, parse_float=str, parse_int=str).get("ts")
+        change = json.loads(payload, parse_float=str, parse_int=str)
+        if change.get("old_status") != change.get("new_status"):
+            return False
+        if change.get("old_payment") == change.get("new_payment"):
+            return False
         try:
-            return await recorded_without_notifications(self._db_pool, practice_id, change_ts)
+            return await recorded_without_notifications(
+                self._db_pool,
+                practice_id,
+                change.get("ts"),
+                change.get("old_payment"),
+                change.get("new_payment"),
+            )
         except Exception as exc:
             logger.error(
                 "practice_changed: practice=%s notifications withheld, could not tell whether "

@@ -81,11 +81,17 @@ async def confirm_payment(
     what actually landed (net of withholding/fees); the gross is recorded via
     the decomposition + pph/fee fields. `historical` records the same rows and
     marks the audit row with HISTORICAL_NOTE, so no email follows the change
-    (see recorded_without_notifications).
+    (see recorded_without_notifications). A historical confirmation runs in a transaction of
+    its own: the listener recognises its change by the transaction's instant, which another
+    change made in the same transaction would share.
     """
     if new_status not in PAYMENT_STATUS_VALUES:
         raise ReconcileError(
             f"new_status must be one of {PAYMENT_STATUS_VALUES}, got {new_status!r}"
+        )
+    if historical and conn.is_in_transaction():
+        raise ReconcileError(
+            "a historical confirmation runs in a transaction of its own, not inside another"
         )
 
     # D4 guard: the price decomposition must reconcile to the recorded final
@@ -304,14 +310,20 @@ async def confirm_payment(
 
 
 async def recorded_without_notifications(
-    pool: asyncpg.Pool, practice_id: int, change_ts: str | int | None
+    pool: asyncpg.Pool,
+    practice_id: int,
+    change_ts: str | int | None,
+    payment_before: str | None,
+    payment_after: str | None,
 ) -> bool:
     """Whether the practice change stamped `change_ts` was made by a historical confirmation.
 
     The practice trigger stamps its payload with EXTRACT(EPOCH FROM NOW()) and confirm_payment
     writes its audit row with confirmed_at = now() in the same transaction, so both carry the
     same instant. `change_ts` is that stamp as the payload's TEXT (a float would round the
-    microseconds). No stamp: an ordinary change.
+    microseconds). The audit row must also record the same payment transition as the change:
+    the instant names a transaction, the transition names the change inside it. No stamp: an
+    ordinary change.
     """
     if change_ts is None:
         return False
@@ -322,11 +334,15 @@ async def recorded_without_notifications(
                 SELECT 1 FROM reconciliation_log
                 WHERE practice_id = $1 AND note = $2
                   AND extract(epoch FROM confirmed_at) = $3::numeric
+                  AND status_before IS NOT DISTINCT FROM $4::text
+                  AND status_after IS NOT DISTINCT FROM $5::text
             )
             """,
             practice_id,
             HISTORICAL_NOTE,
             str(change_ts),
+            payment_before,
+            payment_after,
         )
     )
 

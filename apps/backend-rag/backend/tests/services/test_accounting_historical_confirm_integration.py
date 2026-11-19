@@ -22,6 +22,7 @@ import pytest
 from backend.core.pg_json_codec import init_asyncpg_connection
 from backend.services.accounting.reconcile_service import (
     HISTORICAL_NOTE,
+    ReconcileError,
     confirm_payment,
     recorded_without_notifications,
 )
@@ -222,11 +223,15 @@ async def test_the_stamp_must_match_to_the_microsecond() -> None:
         payload = await db.confirm(pid, iid, txid, historical=True)
         stamp = json.loads(payload, parse_float=str)["ts"]
 
-        assert await recorded_without_notifications(db.pool, pid, stamp) is True
+        ask = recorded_without_notifications
+        assert await ask(db.pool, pid, stamp, "unpaid", "paid") is True
         off = str(Decimal(stamp) + Decimal("0.000001"))
-        assert await recorded_without_notifications(db.pool, pid, off) is False
-        assert await recorded_without_notifications(db.pool, pid, None) is False
-        assert await recorded_without_notifications(db.pool, pid + 1, stamp) is False
+        assert await ask(db.pool, pid, off, "unpaid", "paid") is False
+        assert await ask(db.pool, pid, None, "unpaid", "paid") is False
+        assert await ask(db.pool, pid + 1, stamp, "unpaid", "paid") is False
+        # the same instant with another payment transition is another change
+        assert await ask(db.pool, pid, stamp, "partial", "paid") is False
+        assert await ask(db.pool, pid, stamp, "unpaid", "partial") is False
 
 
 @pytest.mark.asyncio
@@ -260,3 +265,99 @@ async def test_a_change_without_a_stamp_is_ordinary_and_asks_nothing() -> None:
     await listener._handle_notification(payload)
     listener._on_payment_received.assert_awaited_once()
     pool.fetchval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_historical_confirmation_inside_another_transaction_is_refused() -> None:
+    """Its change is recognised by the transaction's instant: it may not share a transaction."""
+    async with _Db() as db:
+        pid, iid, txid = await db.seed(1)
+        with pytest.raises(ReconcileError, match="transaction of its own"):
+            async with db.conn.transaction():
+                await confirm_payment(
+                    db.conn,
+                    bank_txn_id=txid,
+                    practice_id=pid,
+                    invoice_id=iid,
+                    amount_applied_idr=1_500_000,
+                    new_status="paid",
+                    confirmed_by="staff@example.test",
+                    historical=True,
+                )
+        assert (
+            await db.conn.fetchval("SELECT payment_status FROM practices WHERE id = $1", pid)
+            == "unpaid"
+        )
+        assert await db.conn.fetchval("SELECT count(*) FROM reconciliation_log") == 0
+        assert (
+            await db.conn.fetchval(
+                "SELECT reconciled_status FROM bank_transactions WHERE id = $1", txid
+            )
+            != "matched"
+        )
+
+
+async def _historical_change_in_open_transaction(
+    db: _Db, pid: int, before: str, after: str
+) -> None:
+    """What a historical confirmation leaves inside a transaction: its change and its audit row."""
+    await db.conn.execute("UPDATE practices SET payment_status = $2 WHERE id = $1", pid, after)
+    await db.conn.execute(
+        "INSERT INTO reconciliation_log (practice_id, status_before, status_after, note)"
+        " VALUES ($1, $2, $3, $4)",
+        pid,
+        before,
+        after,
+        HISTORICAL_NOTE,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_payment_sharing_the_instant_of_a_historical_one_still_notifies() -> None:
+    """Innocence across one transaction: a historical partial, then an ordinary paid."""
+    async with _Db() as db:
+        pid, iid, txid = await db.seed(1)
+        async with db.conn.transaction():
+            await _historical_change_in_open_transaction(db, pid, "unpaid", "partial")
+            await confirm_payment(
+                db.conn,
+                bank_txn_id=txid,
+                practice_id=pid,
+                invoice_id=iid,
+                amount_applied_idr=1_000_000,
+                new_status="paid",
+                confirmed_by="staff@example.test",
+            )
+        first = await asyncio.wait_for(db.notes.get(), timeout=10)
+        second = await asyncio.wait_for(db.notes.get(), timeout=10)
+        stamps = {json.loads(n, parse_float=str)["ts"] for n in (first, second)}
+        assert len(stamps) == 1, "both changes carry the transaction's instant"
+        assert (json.loads(second)["old_payment"], json.loads(second)["new_payment"]) == (
+            "partial",
+            "paid",
+        )
+
+        listener = _listener(db.pool)
+        await listener._handle_notification(second)
+        listener._on_payment_received.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_status_change_sharing_the_instant_of_a_historical_payment_still_notifies() -> None:
+    """The historical payment stays silent; the ordinary move to on_process keeps its emails."""
+    async with _Db() as db:
+        pid, _iid, _txid = await db.seed(1)
+        async with db.conn.transaction():
+            await _historical_change_in_open_transaction(db, pid, "unpaid", "paid")
+            await db.conn.execute("UPDATE practices SET status = 'on_process' WHERE id = $1", pid)
+        payment = await asyncio.wait_for(db.notes.get(), timeout=10)
+        status = await asyncio.wait_for(db.notes.get(), timeout=10)
+        assert json.loads(status)["new_status"] == "on_process"
+
+        listener = _listener(db.pool)
+        await listener._handle_notification(payment)
+        listener._on_payment_received.assert_not_awaited()
+        listener._on_status_changed.assert_not_awaited()
+        await listener._handle_notification(status)
+        listener._on_status_changed.assert_awaited_once()
+        assert listener._on_status_changed.await_args.args[:2] == (pid, "on_process")
