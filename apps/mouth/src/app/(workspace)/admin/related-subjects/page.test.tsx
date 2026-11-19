@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/api/error-handler";
@@ -861,5 +868,126 @@ describe("related subjects registry page", () => {
       "#16",
     ]);
     expect(screen.getByText("6 records merged into this one")).toBeTruthy();
+  });
+
+  const detachRow = (over: Record<string, unknown> = {}) => ({
+    subject_id: 31,
+    id_type: "nik",
+    basis: "nik_birth_date",
+    documents_moved: 2,
+    detached_at: "2026-04-05T09:00:00Z",
+    from_subject_id: null,
+    ...over,
+  });
+  const withDetach = (over: Record<string, unknown>) => ({
+    ...DETAIL_A,
+    ...over,
+  });
+
+  it("F40 a link shows its file count: 1 file, 3 files, nothing for null or absent", async () => {
+    await openDetail(
+      withLinks([
+        linkOf({ files: 1 }),
+        linkOf({ client_id: 424243, files: 3 }),
+        linkOf({ client_id: 424244, files: null }),
+        linkOf({ client_id: 424245 }),
+      ]),
+    );
+    const entries = screen.getAllByTestId("registry-client");
+    expect(entries[0].textContent).toBe(
+      "ZzClient One · Drive folder · 2026-03-04 · 1 file",
+    );
+    expect(
+      within(entries[1]).getByTestId("registry-client-files").textContent,
+    ).toBe(" · 3 files");
+    expect(
+      within(entries[2]).queryByTestId("registry-client-files"),
+    ).toBeNull();
+    expect(
+      within(entries[3]).queryByTestId("registry-client-files"),
+    ).toBeNull();
+  });
+
+  it("F41 the files caveat shows only when a shown link has a count", async () => {
+    await openDetail(withLinks([linkOf({ files: 2 })]));
+    expect(screen.getByTestId("registry-files-caveat").textContent).toBe(
+      "The file count is how many files the proposal was read from; one file is the weakest support.",
+    );
+    cleanup();
+    await openDetail(withLinks([linkOf({ files: null }), linkOf()]));
+    expect(screen.queryByTestId("registry-files-caveat")).toBeNull();
+  });
+
+  it("F42 a detached_from row says the split and its button opens the source subject", async () => {
+    await openDetail(withDetach({ detached_from: [detachRow()] }));
+    const row = screen.getByTestId("registry-detached-from");
+    expect(row.textContent).toContain("Split off subject #31 on 2026-04-05");
+    expect(row.textContent).toContain("NIK");
+    expect(row.textContent).toContain(
+      "encodes a birth date that differs from this person's",
+    );
+    expect(row.textContent).toContain("2 documents moved.");
+    const before = apiMock.get.mock.calls.length;
+    fireEvent.click(screen.getByTestId("open-detached-source"));
+    await settle();
+    expect(apiMock.get.mock.calls.slice(before).map((c) => c[0])).toEqual([
+      "/api/crm/related-registry/31",
+    ]);
+  });
+
+  it("F43 a detached_into row says the split and its button opens the new record", async () => {
+    await openDetail(
+      withDetach({ detached_into: [detachRow({ documents_moved: 1 })] }),
+    );
+    const row = screen.getByTestId("registry-detached-into");
+    expect(row.textContent).toContain(
+      "Subject #31 was split off this record on 2026-04-05",
+    );
+    expect(row.textContent).toContain("1 document moved.");
+    const before = apiMock.get.mock.calls.length;
+    fireEvent.click(screen.getByTestId("open-detached-record"));
+    await settle();
+    expect(apiMock.get.mock.calls.slice(before).map((c) => c[0])).toEqual([
+      "/api/crm/related-registry/31",
+    ]);
+  });
+
+  it("F44 no detachment block when both lists are empty or absent", async () => {
+    await openDetail(withDetach({ detached_from: [], detached_into: [] }));
+    expect(screen.queryByTestId("registry-detachments")).toBeNull();
+    cleanup();
+    await openDetail(DETAIL_A);
+    expect(screen.queryByTestId("registry-detachments")).toBeNull();
+  });
+
+  it("F45 an unknown basis renders without meaning text and the rest still shows", async () => {
+    await openDetail(
+      withDetach({
+        detached_from: [
+          detachRow({ basis: "something_new", id_type: "kitas" }),
+        ],
+      }),
+    );
+    const text = screen.getByTestId("registry-detached-from").textContent ?? "";
+    expect(text).toContain("Split off subject #31 on 2026-04-05");
+    expect(text).toContain("KITAS");
+    expect(text).not.toContain("birth date");
+    expect(text).toContain("2 documents moved.");
+    expect(screen.getByTestId("open-detached-source")).toBeTruthy();
+  });
+
+  it("F46 a detachment of a merged member carries the from-merged-record mark", async () => {
+    await openDetail(
+      withDetach({
+        detached_into: [detachRow({ from_subject_id: 11 })],
+        detached_from: [detachRow({ subject_id: 32, from_subject_id: null })],
+      }),
+    );
+    const into = screen.getByTestId("registry-detached-into");
+    expect(within(into).getByTestId("from-mark").textContent).toBe(
+      "from merged record #11",
+    );
+    const from = screen.getByTestId("registry-detached-from");
+    expect(within(from).queryByTestId("from-mark")).toBeNull();
   });
 });

@@ -1,8 +1,10 @@
-"""Read-only access to the related-subjects registry (tables of migrations 361, 362, 365, 367 and
-369, and ``clients``, SELECT only, to show the name of a linked client).
+"""Read-only access to the related-subjects registry (tables of migrations 361, 362, 365, 367, 369
+and 370, and ``clients``, SELECT only, to show the name of a linked client).
 
 Every statement here is a SELECT with bound parameters; no user text is interpolated into SQL.
-Evidence columns (``evidence``, ``created_by``) are never selected. Nothing in this module logs.
+Evidence columns (``evidence``, ``created_by``) are never selected, with ONE exception: the whole
+NUMBER of files a client link rests on (``related_subject_links.evidence->'files'``), never a file
+name, hash or reference. Nothing in this module logs.
 
 A merged-away record points at its survivor (``related_subjects.merged_into``, one level, set by the
 merge route and never recursed here). The "member set" of a subject S is S plus the rows whose
@@ -184,12 +186,15 @@ LIMIT $2
 # One link per (client, basis), the earliest kept; the total is of the de-duplicated set.
 _LINKS_SQL = """
 SELECT x.subject_id, x.client_id, x.client_name, x.client_live, x.basis, x.relation, x.created_at,
-       count(*) OVER () AS n
+       x.files, count(*) OVER () AS n
 FROM (
     SELECT l.subject_id, l.client_id,
            CASE WHEN c.id IS NOT NULL AND c.deleted_at IS NULL THEN c.full_name END AS client_name,
            (c.id IS NOT NULL AND c.deleted_at IS NULL) AS client_live,
            l.basis, l.relation, l.created_at, l.id,
+           CASE WHEN jsonb_typeof(l.evidence->'files') = 'number'
+                     AND (l.evidence->>'files') ~ '^[0-9]{1,9}$'
+                THEN (l.evidence->>'files')::int END AS files,
            row_number() OVER (
                PARTITION BY l.client_id, l.basis ORDER BY l.created_at ASC, l.id ASC
            ) AS rn
@@ -218,6 +223,17 @@ JOIN related_documents d ON d.sha256 = x.sha256
 WHERE x.rn = 1
 ORDER BY x.doc_type ASC NULLS LAST, x.sha256 ASC
 LIMIT $3
+"""
+
+# Detachments touching the member set ($1): the split-off history of migration 370. Counts only;
+# the owner key digest, the moved document hashes, evidence and created_by are never selected.
+_DETACHMENTS_SQL = """
+SELECT id, from_id, to_id, id_type, basis, created_at,
+       cardinality(moved_documents) AS documents_moved
+FROM related_subject_detachments
+WHERE from_id = ANY($1::bigint[]) OR to_id = ANY($1::bigint[])
+ORDER BY created_at, id
+LIMIT $2
 """
 
 _SIGHTINGS_SQL = """
@@ -369,10 +385,29 @@ async def get_subject(conn: asyncpg.Connection, subject_id: int) -> dict[str, An
             "basis": r["basis"],
             "relation": r["relation"],
             "created_at": r["created_at"],
+            "files": r["files"],
             "from_subject_id": origin(r["subject_id"]),
         }
         for r in link_rows
     ]
+    member_set = set(ids)
+    detached_into: list[dict[str, Any]] = []
+    detached_from: list[dict[str, Any]] = []
+    for d in await conn.fetch(_DETACHMENTS_SQL, ids, MAX_DETAIL_LINKS):
+        common = {
+            "id_type": d["id_type"],
+            "basis": d["basis"],
+            "documents_moved": d["documents_moved"],
+            "detached_at": d["created_at"],
+        }
+        if d["from_id"] in member_set:
+            detached_into.append(
+                {"subject_id": d["to_id"], **common, "from_subject_id": origin(d["from_id"])}
+            )
+        if d["to_id"] in member_set:
+            detached_from.append(
+                {"subject_id": d["from_id"], **common, "from_subject_id": origin(d["to_id"])}
+            )
     return {
         "id": row["id"],
         "kind": row["kind"],
@@ -393,4 +428,6 @@ async def get_subject(conn: asyncpg.Connection, subject_id: int) -> dict[str, An
             for m in member_rows
         ],
         "merged_into": row["merged_into"],
+        "detached_into": detached_into,
+        "detached_from": detached_from,
     }

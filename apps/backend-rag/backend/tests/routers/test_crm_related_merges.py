@@ -203,6 +203,7 @@ async def pool(writes):
                 "365_related_subject_names.sql",
                 "367_related_subject_links.sql",
                 "369_related_subject_merges.sql",
+                "370_related_subject_detachments.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -1139,16 +1140,16 @@ async def test_m14_the_detail_statement_counts(conn, clients):
         assert await related_registry_read.get_subject(counting, sid) is not None
         return counting.statements
 
-    # no documents: subject, members, identifiers, documents, names, links
-    assert await count(survivor) == 6
+    # no documents: subject, members, identifiers, documents, names, links, detachments
+    assert await count(survivor) == 7
     await seed_document(conn, member, 61)
     # a survivor with documents: one more (the sightings)
-    assert await count(survivor) == 7
-    # a subject in no merge keeps today's 5 and 6; so does a merged-away record opened by id
-    assert await count(bare) == 5
+    assert await count(survivor) == 8
+    # a subject in no merge keeps today's 5 and 6 plus the detachments read; so does a merged-away record
+    assert await count(bare) == 6
     await seed_document(conn, plain, 62)
-    assert await count(plain) == 6
-    assert await count(member) == 6
+    assert await count(plain) == 7
+    assert await count(member) == 7
 
 
 def _sql_constants(module) -> list[str]:
@@ -1173,18 +1174,19 @@ FRAGMENTS = {"_MATCH_SQL", "_EFFECTIVE_SQL"}
 WRITING_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|TRUNCATE|MERGE|ALTER|DROP|CREATE)\b", re.I)
 
 
-def test_m14_static_census_is_ten_plain_selects_without_the_merge_word_or_evidence():
+def test_m14_static_census_is_eleven_plain_selects_without_the_merge_word_or_evidence():
     service = related_registry_read
     for sql in _sql_constants(service):
         assert not WRITING_SQL.search(sql), sql[:60]
         assert not re.search(r"\bWITH\b", sql, re.I), sql[:60]
-        assert not re.search(r"\b(evidence|created_by)\b", sql, re.I), sql[:60]
+        text = sql.replace("l.evidence->'files'", "").replace("l.evidence->>'files'", "")
+        assert not re.search(r"\b(evidence|created_by)\b", text, re.I), sql[:60]
     statements = {
         attr: value
         for attr, value in vars(service).items()
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     }
-    assert len(statements) == 10
+    assert len(statements) == 11
     for attr, sql in statements.items():
         assert sql.lstrip().upper().startswith("SELECT"), attr
         assert not re.search(r"\bMERGE\b", sql, re.I), attr
@@ -1279,6 +1281,7 @@ async def test_m15_golden_bodies_of_a_subject_in_no_merge(admin, conn, clients):
                 "basis": "identity",
                 "relation": "unknown",
                 "created_at": "2026-01-03T00:00:00Z",
+                "files": None,
                 "from_subject_id": None,
             }
         ],
@@ -1301,6 +1304,8 @@ async def test_m15_golden_bodies_of_a_subject_in_no_merge(admin, conn, clients):
         ],
         "merged_from": [],
         "merged_into": None,
+        "detached_into": [],
+        "detached_from": [],
     }
 
 

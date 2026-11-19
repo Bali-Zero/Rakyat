@@ -2240,6 +2240,7 @@ FORBIDDEN_TABLES = (
 ALLOWED_NAMING_THE_TABLE = {
     "services/crm/related_detach.py",
     "app/routers/crm_related_subjects.py",
+    "services/crm/related_registry_read.py",
 }
 
 
@@ -3206,7 +3207,7 @@ async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachm
     counts_before = await read_statement_counts(conn, s)
     # list: total, page, identifiers, document counts; S's detail: subject, merges, identifiers,
     # documents, sightings, names, links
-    assert counts_before == (4, 7)
+    assert counts_before == (4, 8)
     before = (await admin.get(READ, params={"limit": 100})).json()
     s_before = next(r for r in before["items"] if r["id"] == s)
     assert {"type": "nik", "value": d[1], "from_subject_id": None} in s_before["identifiers"]
@@ -3254,6 +3255,15 @@ async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachm
     t_detail = (await admin.get(f"{READ}/{t}")).json()
     created = t_detail.pop("created_at")
     assert created
+    (split,) = t_detail.pop("detached_from")
+    assert split.pop("detached_at")
+    assert split == {
+        "subject_id": s,
+        "id_type": "nik",
+        "basis": "nik_birth_date",
+        "documents_moved": len(listed),
+        "from_subject_id": None,
+    }
     assert t_detail == {
         "id": t,
         "kind": "person",
@@ -3281,11 +3291,12 @@ async def test_d24_the_list_the_rows_the_search_and_both_details_after_a_detachm
         ],
         "merged_from": [],
         "merged_into": None,
+        "detached_into": [],
     }
     assert await related_registry_read.get_subject(conn, t) is not None
     # read statement counts unchanged: S as before; T is a record without merges, with documents
     assert await read_statement_counts(conn, s) == counts_before
-    assert (await read_statement_counts(conn, t))[1] == 6
+    assert (await read_statement_counts(conn, t))[1] == 7
 
 
 @pytest.mark.asyncio

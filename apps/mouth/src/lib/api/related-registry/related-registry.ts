@@ -13,12 +13,25 @@ import type { components } from "@/lib/api/schema";
 export type RegistryKind = "person" | "company";
 export type RegistryList = components["schemas"]["RelatedRegistryListOut"];
 export type RegistryRow = components["schemas"]["RelatedRegistrySubjectRow"];
-export type RegistryDetail =
-  components["schemas"]["RelatedRegistrySubjectDetail"];
+export type RegistryDetachment =
+  components["schemas"]["RelatedRegistryDetachment"];
+export type RegistryLink = Omit<
+  components["schemas"]["RelatedRegistryLink"],
+  "files"
+> & { files?: number | null };
+// The detachment lists and the file count are optional here: the page must
+// render when an older backend omits them.
+export type RegistryDetail = Omit<
+  components["schemas"]["RelatedRegistrySubjectDetail"],
+  "links" | "detached_into" | "detached_from"
+> & {
+  links: RegistryLink[];
+  detached_into?: RegistryDetachment[];
+  detached_from?: RegistryDetachment[];
+};
 export type RegistryDocument = components["schemas"]["RelatedRegistryDocument"];
 export type RegistryIdentifier =
   components["schemas"]["RelatedRegistryIdentifier"];
-export type RegistryLink = components["schemas"]["RelatedRegistryLink"];
 export type RegistryMerged = components["schemas"]["RelatedRegistryMerged"];
 export type RegistryLinked = "true" | "false";
 

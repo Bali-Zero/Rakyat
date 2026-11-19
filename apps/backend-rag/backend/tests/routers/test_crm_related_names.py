@@ -174,6 +174,7 @@ async def pool(writes):
                 "365_related_subject_names.sql",
                 "367_related_subject_links.sql",
                 "369_related_subject_merges.sql",
+                "370_related_subject_detachments.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -433,6 +434,7 @@ async def test_n1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "related_subject_documents",
             "related_subject_links",
             "related_subject_merges",
+            "related_subject_detachments",
         }
         assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
 

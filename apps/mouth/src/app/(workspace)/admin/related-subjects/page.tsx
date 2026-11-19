@@ -128,6 +128,20 @@ const MERGE_BASIS_LABELS: Readonly<Record<string, string>> = {
   manual: "Entered by hand",
 };
 
+/** What a detachment basis asserts; an unknown basis shows no meaning text. */
+const DETACH_BASIS_MEANINGS: Readonly<Record<string, string>> = {
+  nik_birth_date:
+    "the national id number (NIK) encodes a birth date that differs from this person's, so the number belongs to someone else",
+};
+
+function detachIdType(idType: string): string {
+  return idType.toUpperCase();
+}
+
+function documentsMoved(count: number): string {
+  return `${count} ${count === 1 ? "document" : "documents"} moved.`;
+}
+
 /** The mark on an item that belongs to a record merged into the opened subject. */
 function FromMark({ id }: { id?: number | null }) {
   if (id === null || id === undefined) return null;
@@ -305,6 +319,11 @@ export default function RelatedRegistryPage() {
   );
   const mergedFrom = detail?.merged_from ?? [];
   const mergedInto = detail?.merged_into ?? null;
+  const detachedFrom = detail?.detached_from ?? [];
+  const detachedInto = detail?.detached_into ?? [];
+  const anyFileCount = shownLinks.some(
+    (link) => typeof link.files === "number" && link.files >= 1,
+  );
   const shownNames = detail?.names ?? [];
   const namesTotal = detail?.names_total ?? shownNames.length;
 
@@ -534,6 +553,60 @@ export default function RelatedRegistryPage() {
                   </ul>
                 </div>
               )}
+              {(detachedFrom.length > 0 || detachedInto.length > 0) && (
+                <div data-testid="registry-detachments">
+                  <ul className="text-[13px] text-[var(--tx-pure)]">
+                    {detachedFrom.map((row, index) => (
+                      <li
+                        key={`from:${index}:${row.subject_id}`}
+                        data-testid="registry-detached-from"
+                      >
+                        {`Split off subject #${row.subject_id} on ${row.detached_at.slice(0, 10)}: ${detachIdType(row.id_type)}${
+                          DETACH_BASIS_MEANINGS[row.basis]
+                            ? `, ${DETACH_BASIS_MEANINGS[row.basis]}`
+                            : ""
+                        }. ${documentsMoved(row.documents_moved)} `}
+                        <button
+                          type="button"
+                          data-testid="open-detached-source"
+                          onClick={() => setSelectedId(row.subject_id)}
+                          className={cn(
+                            "text-[var(--bz-copper)] underline",
+                            FOCUS,
+                          )}
+                        >
+                          {`Open subject #${row.subject_id}`}
+                        </button>
+                        <FromMark id={row.from_subject_id} />
+                      </li>
+                    ))}
+                    {detachedInto.map((row, index) => (
+                      <li
+                        key={`into:${index}:${row.subject_id}`}
+                        data-testid="registry-detached-into"
+                      >
+                        {`Subject #${row.subject_id} was split off this record on ${row.detached_at.slice(0, 10)}: ${detachIdType(row.id_type)}${
+                          DETACH_BASIS_MEANINGS[row.basis]
+                            ? `, ${DETACH_BASIS_MEANINGS[row.basis]}`
+                            : ""
+                        }. ${documentsMoved(row.documents_moved)} `}
+                        <button
+                          type="button"
+                          data-testid="open-detached-record"
+                          onClick={() => setSelectedId(row.subject_id)}
+                          className={cn(
+                            "text-[var(--bz-copper)] underline",
+                            FOCUS,
+                          )}
+                        >
+                          {`Open subject #${row.subject_id}`}
+                        </button>
+                        <FromMark id={row.from_subject_id} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px] text-[var(--tx-pure)]">
                 <dt className="text-[var(--tx-secondary)]">Kind</dt>
                 <dd>{detail.kind}</dd>
@@ -589,6 +662,15 @@ export default function RelatedRegistryPage() {
                   <p className="text-[13px] text-[var(--tx-secondary)]">
                     Proposed from documents, not confirmed.
                   </p>
+                  {anyFileCount && (
+                    <p
+                      data-testid="registry-files-caveat"
+                      className="text-[13px] text-[var(--tx-secondary)]"
+                    >
+                      The file count is how many files the proposal was read
+                      from; one file is the weakest support.
+                    </p>
+                  )}
                   {shownBases.length > 0 && (
                     <div
                       data-testid="registry-basis-legend"
@@ -630,6 +712,11 @@ export default function RelatedRegistryPage() {
                         )}{" "}
                         · {BASIS_LABELS[link.basis] ?? "—"} ·{" "}
                         {link.created_at.slice(0, 10)}
+                        {typeof link.files === "number" && link.files >= 1 && (
+                          <span data-testid="registry-client-files">
+                            {` · ${link.files} ${link.files === 1 ? "file" : "files"}`}
+                          </span>
+                        )}
                         <FromMark id={link.from_subject_id} />
                       </li>
                     ))}
