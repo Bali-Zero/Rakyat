@@ -411,6 +411,9 @@ class ConfirmRequest(BaseModel):
     rptka_imta_idr: int = 0
     margin_idr: int = 0
     movement_date: date | None = None
+    # Historical mode: a payment that arrived in the past, reconciled now. The same rows are
+    # written; the practice listener sends no email to the client or the team for it.
+    historical: bool = False
 
 
 @router.post("/confirm")
@@ -445,6 +448,7 @@ async def confirm_reconciliation(
                 rptka_imta_idr=payload.rptka_imta_idr,
                 margin_idr=payload.margin_idr,
                 movement_date=payload.movement_date,
+                historical=payload.historical,
             )
         except ReconcileError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -469,6 +473,7 @@ async def confirm_reconciliation(
         "reconciliation_log_id": result.reconciliation_log_id,
         "status_before": result.status_before,
         "status_after": result.status_after,
+        "historical": payload.historical,
     }
 
 
