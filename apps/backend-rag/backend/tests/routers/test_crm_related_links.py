@@ -1541,8 +1541,13 @@ def test_l12_static_census_is_thirteen_plain_selects_and_the_guarded_name():
     assert GUARDED_NAME in links_sql
     assert links_sql.replace(GUARDED_NAME, "").count("full_name") == 0
     assert "LEFT JOIN clients c ON c.id = l.client_id" in links_sql
+    # slice 4F: the suggestion statement COMPARES the client name (after its FROM clients) and its
+    # select list holds booleans only: the name is never selected
+    suggestions = statements["_SUGGESTIONS_SQL"]
+    assert "full_name" not in suggestions.split("FROM clients c")[0]
+    assert suggestions.count("c.full_name") == 1
     for attr, sql in statements.items():
-        if attr != "_LINKS_SQL":
+        if attr not in {"_LINKS_SQL", "_SUGGESTIONS_SQL"}:
             assert "full_name" not in sql, attr
 
 
