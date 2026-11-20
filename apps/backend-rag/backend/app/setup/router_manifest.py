@@ -170,6 +170,9 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(
         name="crm_related_registry_read", process_groups=_API, tags=("crm-related-registry",)
     ),
+    RouterEntry(
+        name="crm_related_link_reviews", process_groups=_API, tags=("crm-related-registry",)
+    ),
     RouterEntry(name="crm_shared_memory", process_groups=_API, tags=("crm",)),
     RouterEntry(name="crm_tax_pilot", process_groups=_API, tags=("crm", "pilot", "tax")),
     # ── Conversations / Memory ──
@@ -561,8 +564,8 @@ garuda_voa_public garuda_orders_router garuda_portal_auth garuda_documents_route
 garuda_staff_router garuda_assignment_targets crm_clients intake_review
 crm_clients_documents crm_company crm_enhanced crm_enhanced_documents crm_guardian_drive
 crm_enhanced_alerts crm_intelligence accounting crm_interactions crm_notifications
-crm_practices crm_related_subjects crm_related_registry_read crm_shared_memory crm_tax_pilot
-crm_analytics team_invites_messaging partners channel_health channels omnichannel
+crm_practices crm_related_subjects crm_related_registry_read crm_related_link_reviews
+crm_shared_memory crm_tax_pilot crm_analytics team_invites_messaging partners channel_health channels omnichannel
 workspace_inbox observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout
 hr_people intake_gate notifications notifications_admin cron_notifiers portal portal_admin
 portal_billing portal_dashboard portal_drive portal_family portal_invite portal_matters
@@ -591,7 +594,8 @@ funnel_email garuda_voa garuda_voa_public garuda_orders_router garuda_portal_aut
 garuda_documents_router garuda_staff_router garuda_assignment_targets experience skill
 metabolic_health crm_clients_documents crm_company crm_enhanced_documents
 crm_enhanced_alerts crm_guardian_drive crm_intelligence crm_interactions crm_notifications
-crm_related_subjects crm_related_registry_read crm_shared_memory crm_tax_pilot crm_analytics
+crm_related_subjects crm_related_registry_read crm_related_link_reviews crm_shared_memory
+crm_tax_pilot crm_analytics
 team_invites_messaging partners channel_health channels omnichannel workspace_inbox
 observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout hr_people intake_gate
 notifications notifications_admin cron_notifiers portal portal_admin portal_billing
