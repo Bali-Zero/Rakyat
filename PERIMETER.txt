@@ -218,6 +218,7 @@ scripts/tests/test_vercel_should_build.sh	carried from the source tree with a da
 .github/workflows/tests.yml
 .github/workflows/verifikator-live.yml
 scripts/ci/test_required_checks_contract.py
+scripts/verifikator/config.json
 scripts/verifikator/run.mjs
 scripts/verifikator/run.test.mjs
 

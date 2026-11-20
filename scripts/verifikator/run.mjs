@@ -6,9 +6,12 @@
 //   2. For a served PR that touches a public route: does the page load with status < 400, zero console errors,
 //      a main CTA, a header and a footer, on desktop and on mobile?  (HALAMAN OK / CATATAN / REGRESI)
 //      Header = <header>, [role=banner] or a <nav> before <main>. Footer = <footer> or [role=contentinfo].
-//      A missing landmark is REGRESI only when the route's baseline (verifikator-out/baseline.json, the landmarks
-//      seen on the previous run, carried by actions/cache) had it. Missing then and now, or no baseline yet:
-//      CATATAN. A gap that already existed is a backlog item, not something a recent PR broke.
+//      A missing landmark is REGRESI only when the route's baseline (verifikator-out/baseline.json, carried by
+//      actions/cache) has it. The baseline is sticky: a landmark seen once stays expected, and stays REGRESI on
+//      every run until it is back or its entry is removed by hand (VERIFIKATOR_BASELINE_FORGET). Never seen, or
+//      no baseline yet: CATATAN. A gap that already existed is a backlog item, not something a recent PR broke.
+//      The main-CTA check skips the routes listed in scripts/verifikator/config.json (ctaExempt, with a reason);
+//      landmarks are still checked there.
 // Anything it cannot measure is reported as BELUM DIUKUR with the reason. It never claims a page "looks right":
 // the semantic check stays with a human, who has the screenshots.
 //
@@ -20,6 +23,8 @@
 // Env:   GH_TOKEN (gh reads)  TODOIST_API_TOKEN (optional)  GITHUB_REPOSITORY  GITHUB_STEP_SUMMARY
 //        VERIFIKATOR_OUT (default ./verifikator-out; baseline.json is read from and written back to it)
 //        VERIFIKATOR_DAYS (default 7)  VERIFIKATOR_MAX_PRS (default 15)
+//        VERIFIKATOR_BASELINE_FORGET  comma-separated "<route>" or "<route>#header|footer": baseline entries removed
+//                                    before judging, so a landmark dropped on purpose stops being expected.
 //        VERIFIKATOR_SKIP_BROWSER=1  skip Playwright (routes become BELUM DIUKUR); for runs from hosts that cannot
 //                                    reach balizero.com.
 //        VERIFIKATOR_FRONTEND_COMMIT / VERIFIKATOR_BACKEND_SHA  use a served commit read by hand when the health
@@ -365,6 +370,7 @@ const NETWORK_ERR = /ERR_(TUNNEL_CONNECTION_FAILED|PROXY|NAME_NOT_RESOLVED|INTER
 const CTA_TEXT = /whatsapp|contact|book|consult|get started|start now|talk to|hubungi|konsultasi|chat with/i;
 const CTA_HREF = /wa\.me\/|api\.whatsapp\.com|whatsapp:/i;
 const BASELINE_FILE = "baseline.json";
+const CONFIG_FILE = new URL("./config.json", import.meta.url);
 
 // Runs in the page. Header: <header>, [role=banner], or a <nav> that comes before <main> in document order
 // (article layouts carry the site navigation in a bare <nav>). Footer: <footer> or [role=contentinfo].
@@ -448,15 +454,68 @@ function measurable(v) {
   return !v.navError && v.status !== null && v.status < 400;
 }
 
-// The next baseline: the previous one, with every route/viewport measured this run overwritten.
-// Judgement always uses the previous baseline, never a value written earlier in the same run.
+// The next baseline: the previous one plus what this run measured. Sticky: a landmark seen once stays expected
+// (true) whatever later runs show; only forgetBaseline() takes it back. lastSeen keeps the date each landmark was
+// last observed, for the REGRESI message. Judgement always uses the previous baseline, never a value written
+// earlier in the same run.
 export function nextBaseline(prev, views, today) {
   const routes = structuredClone(prev?.routes || {});
   for (const v of views) {
     if (!v.route || !measurable(v)) continue;
-    routes[v.route] = { ...(routes[v.route] || {}), [v.viewport]: { header: v.header, footer: v.footer, checkedAt: today } };
+    const old = routes[v.route]?.[v.viewport] || {};
+    const entry = { checkedAt: today, lastSeen: { ...(old.lastSeen || {}) } };
+    for (const [key] of LANDMARKS) {
+      entry[key] = old[key] === true || v[key] === true;
+      if (v[key]) entry.lastSeen[key] = today;
+      else if (old[key] === true && !entry.lastSeen[key]) entry.lastSeen[key] = old.checkedAt || "?"; // pre-lastSeen file
+    }
+    routes[v.route] = { ...(routes[v.route] || {}), [v.viewport]: entry };
   }
-  return { version: 1, updatedAt: today, routes };
+  return { version: 2, updatedAt: today, routes };
+}
+
+// Manual removal: "<route>" drops the whole route, "<route>#footer" only that landmark's expectation.
+export function forgetBaseline(baseline, spec) {
+  const removed = [];
+  if (!baseline || !spec) return { baseline, removed };
+  const out = structuredClone(baseline);
+  for (const item of spec.split(",").map((x) => x.trim()).filter(Boolean)) {
+    const [route, landmark] = item.split("#");
+    if (!out.routes[route]) continue;
+    if (!landmark) {
+      delete out.routes[route];
+      removed.push(route);
+      continue;
+    }
+    for (const entry of Object.values(out.routes[route])) {
+      entry[landmark] = false;
+      if (entry.lastSeen) delete entry.lastSeen[landmark];
+    }
+    removed.push(item);
+  }
+  return { baseline: out, removed };
+}
+
+// scripts/verifikator/config.json: { ctaExempt: [{ route, reason }] }. Every exemption must say why.
+export function loadConfig(file = CONFIG_FILE) {
+  const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+  const ctaExempt = cfg.ctaExempt || [];
+  for (const e of ctaExempt) {
+    if (typeof e.route !== "string" || !e.route.startsWith("/") || typeof e.reason !== "string" || !e.reason.trim()) {
+      throw new Error(`config ctaExempt butuh route dan reason: ${JSON.stringify(e)}`);
+    }
+  }
+  return { ctaExempt };
+}
+
+function normPath(p) {
+  return p.length > 1 ? p.replace(/\/+$/, "") : p;
+}
+
+// Matches the requested route or, after a redirect, the final path.
+export function ctaExemption(v, config) {
+  const paths = [v.route, v.finalUrl ? new URL(v.finalUrl).pathname : null].filter(Boolean).map(normPath);
+  return (config?.ctaExempt || []).find((e) => paths.includes(normPath(e.route))) || null;
 }
 
 const LANDMARKS = [
@@ -464,10 +523,11 @@ const LANDMARKS = [
   ["footer", "footer (<footer>/[role=contentinfo])"],
 ];
 
-export function judgeViews(views, baseline = null) {
+export function judgeViews(views, baseline = null, config = null) {
   if (views.some((v) => v.network)) {
-    return { verdict: V.UNMEASURED, reason: "jaringan runner tidak menjangkau balizero.com", notes: [] };
+    return { verdict: V.UNMEASURED, reason: "jaringan runner tidak menjangkau balizero.com", notes: [], exempt: [] };
   }
+  const exempt = new Set();
   const fails = [];
   const notes = [];
   for (const v of views) {
@@ -481,18 +541,21 @@ export function judgeViews(views, baseline = null) {
       continue;
     }
     if (v.consoleErrors.length) fails.push(`${tag}: ${v.consoleErrors.length} console error ("${v.consoleErrors[0].slice(0, 80)}")`);
-    if (!v.cta) fails.push(`${tag}: CTA utama hilang`);
+    const ex = ctaExemption(v, config);
+    if (ex) exempt.add(`${ex.route}: ${ex.reason}`);
+    else if (!v.cta) fails.push(`${tag}: CTA utama hilang`);
     const before = baseline?.routes?.[v.route]?.[v.viewport];
     for (const [key, label] of LANDMARKS) {
       if (v[key]) continue;
-      if (before?.[key] === true) fails.push(`${tag}: ${label} hilang — ada di baseline ${before.checkedAt || "?"}`);
-      else if (before) notes.push(`${tag}: ${label} hilang — sudah hilang di baseline ${before.checkedAt || "?"}`);
+      if (before?.[key] === true) fails.push(`${tag}: ${label} hilang — terakhir terlihat ${before.lastSeen?.[key] || before.checkedAt || "?"} (baseline lengket)`);
+      else if (before) notes.push(`${tag}: ${label} hilang — belum pernah terlihat (dicek terakhir ${before.checkedAt || "?"})`);
       else notes.push(`${tag}: ${label} hilang — belum ada baseline untuk rute ini`);
     }
   }
-  if (fails.length) return { verdict: V.REG, reason: fails.join("; "), notes };
-  if (notes.length) return { verdict: V.NOTE, reason: "", notes };
-  return { verdict: V.OK, reason: "", notes };
+  const ex = [...exempt];
+  if (fails.length) return { verdict: V.REG, reason: fails.join("; "), notes, exempt: ex };
+  if (notes.length) return { verdict: V.NOTE, reason: "", notes, exempt: ex };
+  return { verdict: V.OK, reason: "", notes, exempt: ex };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -536,9 +599,9 @@ function renderReport(ctx) {
   }
   const noted = rows.filter((r) => r.notes?.length);
   lines.push("", "**Catatan**");
-  if (!noted.length) lines.push("- tidak ada landmark yang hilang tanpa baseline atau yang memang sudah hilang sebelumnya");
+  if (!noted.length) lines.push("- tidak ada landmark yang hilang tanpa pernah terlihat");
   else {
-    lines.push("_Landmark yang hilang tetapi tidak baru hilang (sudah hilang di baseline, atau rute belum punya baseline). Bukan regresi PR ini; backlog perbaikan layout._");
+    lines.push("_Landmark yang hilang tetapi belum pernah terlihat di rute ini (atau rute belum punya baseline). Bukan regresi PR ini; backlog perbaikan layout._");
     for (const r of noted) for (const n of r.notes) lines.push(`- #${r.number}: ${n}`);
   }
   lines.push("", "**Kontrol ancestry**");
@@ -547,7 +610,9 @@ function renderReport(ctx) {
   lines.push(`- frontend commit: \`${served.frontend || "—"}\` dari ${served.frontendSource || "— (gagal)"}`);
   lines.push(`- backend build_sha: \`${served.backend || "—"}\` dari ${served.backendSource || "— (gagal)"}`);
   for (const e of served.errors) lines.push(`- health tidak terjangkau dari host ini: ${e}`);
-  lines.push(`- baseline landmark: ${baselineInfo.before} → ${baselineInfo.after}`);
+  lines.push(`- baseline landmark (lengket): ${baselineInfo.before} → ${baselineInfo.after}`);
+  if (baselineInfo.forgotten.length) lines.push(`- dihapus manual dari baseline (VERIFIKATOR_BASELINE_FORGET): ${baselineInfo.forgotten.join(", ")}`);
+  for (const e of ctx.config.ctaExempt) lines.push(`- cek CTA dikecualikan: ${e.route} — ${e.reason} (landmark tetap dicek)`);
   lines.push(`- daftar PR: ${source}${SKIP_BROWSER ? " · browser dilewati (VERIFIKATOR_SKIP_BROWSER=1)" : ""}`);
   if (skipped.length) lines.push(`- ${skipped.length} PR merged lain di luar batas ${MAX_PRS} (prioritas rendah): ${skipped.map((p) => `#${p.number}`).join(", ")}`);
   lines.push("", "_Verdict mesin: status, console, CTA utama, header, footer (landmark dibandingkan dengan baseline). Apakah halaman benar secara isi tetap dicek manusia lewat screenshot di artifact._");
@@ -620,7 +685,10 @@ async function main() {
   const skipped = listed.filter((p) => !picked.some((x) => x.pr.number === p.number));
 
   const baselineFile = path.join(OUT, BASELINE_FILE);
-  const { baseline, note: baselineNote } = readBaseline(baselineFile);
+  const config = loadConfig();
+  const read = readBaseline(baselineFile);
+  const { baseline, removed: forgotten } = forgetBaseline(read.baseline, process.env.VERIFIKATOR_BASELINE_FORGET);
+  const baselineNote = read.note;
   const measuredViews = [];
 
   const served = await servedCommits();
@@ -672,7 +740,7 @@ async function main() {
         const allViews = [];
         for (let i = 0; i < urls.length; i++) allViews.push(...(await checkPage(b, urls[i], pr.number, i)));
         measuredViews.push(...allViews);
-        const j = judgeViews(allViews, baseline);
+        const j = judgeViews(allViews, baseline, config);
         row.verdict = j.verdict;
         row.notes = j.notes;
         if (j.verdict === V.UNMEASURED) {
@@ -683,8 +751,9 @@ async function main() {
           const cta = allViews.find((v) => v.cta)?.cta;
           const moved = [...new Set(allViews.filter((v) => v.finalUrl && v.finalUrl !== v.url).map((v) => `→ ${new URL(v.finalUrl).pathname}`))];
           const navHeader = allViews.some((v) => v.headerVia === "nav") ? "header = <nav> sebelum <main>" : null;
+          const exRef = j.exempt.length ? `CTA dikecualikan (${j.exempt.join("; ")})` : null;
           const noteRef = j.notes.length ? `${j.notes.length} catatan landmark (lihat Catatan)` : null;
-          row.evidence = [j.reason, `status ${stat}`, ...moved, `CTA: ${cta ? `"${cta}"` : "tidak terdeteksi"}`, navHeader, noteRef, shots.join(", ") || null].filter(Boolean).join(" · ");
+          row.evidence = [j.reason, `status ${stat}`, ...moved, `CTA: ${cta ? `"${cta}"` : "tidak terdeteksi"}`, exRef, navHeader, noteRef, shots.join(", ") || null].filter(Boolean).join(" · ");
         }
       }
     }
@@ -694,9 +763,9 @@ async function main() {
 
   const next = nextBaseline(baseline, measuredViews, today);
   fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + "\n");
-  const baselineInfo = { before: baselineNote, after: `${Object.keys(next.routes).length} rute ditulis ke ${BASELINE_FILE}` };
+  const baselineInfo = { before: baselineNote, after: `${Object.keys(next.routes).length} rute ditulis ke ${BASELINE_FILE}`, forgotten };
 
-  const ctx = { rows, served, ctrl, today, totalMerged, skipped, source, baselineInfo };
+  const ctx = { rows, served, ctrl, today, totalMerged, skipped, source, baselineInfo, config };
   const report = renderReport(ctx);
   fs.writeFileSync(path.join(OUT, "report.md"), report);
   fs.writeFileSync(path.join(OUT, "report.json"), JSON.stringify({ ...ctx, skipped: skipped.map((p) => p.number) }, null, 2));

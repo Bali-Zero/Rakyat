@@ -13,7 +13,7 @@ import path from "node:path";
 
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), "verifikator-test-"));
 process.env.VERIFIKATOR_OUT = OUT;
-const { checkPage, judgeViews, loadPlaywright, nextBaseline, readBaseline } = await import("./run.mjs");
+const { checkPage, forgetBaseline, judgeViews, loadConfig, loadPlaywright, nextBaseline, readBaseline } = await import("./run.mjs");
 
 const CTA = `<a href="https://wa.me/620000000">Chat on WhatsApp</a>`;
 const page = ({ header = "<header>Bali Zero</header>", main = `<main><h1>T</h1>${CTA}</main>`, footer = "<footer>©</footer>", script = "" } = {}) =>
@@ -28,6 +28,7 @@ const ROUTES = {
   "/no-cta": () => page({ main: "<main><h1>T</h1><p>no call to action</p></main>" }),
   "/console-error": () => page({ script: `<script>console.error("boom")</script>` }),
   "/toggle": () => page({ footer: state.toggleFooter ? "<footer>©</footer>" : "" }),
+  "/exempt-no-cta": () => page({ main: "<main><h1>Hasil</h1></main>", footer: "" }),
 };
 
 let server;
@@ -57,9 +58,16 @@ after(async () => {
   fs.rmSync(OUT, { recursive: true, force: true });
 });
 
-async function verdictFor(route, baseline = null) {
+async function verdictFor(route, baseline = null, config = null) {
   const views = await checkPage(browser, route, 1, 0, origin);
-  return { views, ...judgeViews(views, baseline) };
+  return { views, ...judgeViews(views, baseline, config) };
+}
+
+// Each run's baseline goes through the file, as it does between CI runs via the cache.
+function roundTrip(b) {
+  const file = path.join(OUT, "baseline.json");
+  fs.writeFileSync(file, JSON.stringify(b));
+  return readBaseline(file).baseline;
 }
 
 describe("page checker against fixtures", () => {
@@ -94,27 +102,58 @@ describe("page checker against fixtures", () => {
     assert.ok(r.notes.every((n) => /footer .* hilang — belum ada baseline/.test(n)));
   });
 
-  it("no footer, and already missing in the baseline → still CATATAN", async () => {
+  it("no footer, and never seen in the baseline → still CATATAN", async () => {
     const first = await verdictFor("/no-footer");
-    const baseline = nextBaseline(null, first.views, "2026-11-13");
+    const baseline = roundTrip(nextBaseline(null, first.views, "2026-11-13"));
     const r = await verdictFor("/no-footer", baseline);
     assert.equal(r.verdict, "CATATAN", r.reason);
-    assert.ok(r.notes.every((n) => /sudah hilang di baseline 2026-11-13/.test(n)));
+    assert.ok(r.notes.every((n) => /belum pernah terlihat \(dicek terakhir 2026-11-13\)/.test(n)));
   });
 
-  it("footer present in the baseline and now gone → REGRESI (baseline round-trips through the file)", async () => {
+  it("footer seen, then gone two runs in a row → REGRESI both times; back → OK", async () => {
     state.toggleFooter = true;
     const week1 = await verdictFor("/toggle");
     assert.equal(week1.verdict, "HALAMAN OK", week1.reason);
-    const file = path.join(OUT, "baseline.json");
-    fs.writeFileSync(file, JSON.stringify(nextBaseline(null, week1.views, "2026-11-13")));
-    const { baseline } = readBaseline(file);
+    const base1 = roundTrip(nextBaseline(null, week1.views, "2026-11-13"));
 
     state.toggleFooter = false;
-    const week2 = await verdictFor("/toggle", baseline);
+    const week2 = await verdictFor("/toggle", base1);
     assert.equal(week2.verdict, "REGRESI");
-    assert.match(week2.reason, /desktop: footer .* hilang — ada di baseline 2026-11-13/);
-    assert.match(week2.reason, /mobile: footer .* hilang — ada di baseline 2026-11-13/);
+    assert.match(week2.reason, /desktop: footer .* hilang — terakhir terlihat 2026-11-13 \(baseline lengket\)/);
+    assert.match(week2.reason, /mobile: footer .* hilang — terakhir terlihat 2026-11-13/);
+    const base2 = roundTrip(nextBaseline(base1, week2.views, "2026-11-20"));
+    assert.equal(base2.routes["/toggle"].desktop.footer, true, "a missing run does not clear the expectation");
+
+    const week3 = await verdictFor("/toggle", base2);
+    assert.equal(week3.verdict, "REGRESI", "still REGRESI on the second consecutive run");
+    assert.match(week3.reason, /footer .* hilang — terakhir terlihat 2026-11-13 \(baseline lengket\)/);
+    const base3 = roundTrip(nextBaseline(base2, week3.views, "2026-11-27"));
+
+    state.toggleFooter = true;
+    const week4 = await verdictFor("/toggle", base3);
+    assert.equal(week4.verdict, "HALAMAN OK", week4.reason);
+  });
+
+  it("footer gone and its entry removed by hand → CATATAN", async () => {
+    state.toggleFooter = true;
+    const base1 = roundTrip(nextBaseline(null, (await verdictFor("/toggle")).views, "2026-11-13"));
+    const { baseline, removed } = forgetBaseline(base1, "/toggle#footer");
+    assert.deepEqual(removed, ["/toggle#footer"]);
+    state.toggleFooter = false;
+    const r = await verdictFor("/toggle", roundTrip(baseline));
+    assert.equal(r.verdict, "CATATAN", r.reason);
+    state.toggleFooter = true;
+  });
+
+  it("CTA exemption: no CTA is not REGRESI, but the missing footer is still reported", async () => {
+    const config = { ctaExempt: [{ route: "/exempt-no-cta", reason: "halaman hasil" }] };
+    const without = await verdictFor("/exempt-no-cta");
+    assert.equal(without.verdict, "REGRESI");
+    assert.match(without.reason, /CTA utama hilang/);
+    const r = await verdictFor("/exempt-no-cta", null, config);
+    assert.equal(r.verdict, "CATATAN", r.reason);
+    assert.deepEqual(r.exempt, ["/exempt-no-cta: halaman hasil"]);
+    assert.ok(r.notes.every((n) => /footer .* hilang/.test(n)));
   });
 
   it("main CTA missing → REGRESI", async () => {
@@ -149,10 +188,10 @@ describe("baseline (no browser)", () => {
     assert.match(r.note, /tidak terbaca/);
   });
 
-  test("nextBaseline keeps unmeasured routes and viewports, overwrites measured ones", () => {
+  test("nextBaseline is sticky, keeps unmeasured routes and viewports, skips unrendered pages", () => {
     const prev = { routes: { "/a": { desktop: { header: true, footer: true, checkedAt: "old" }, mobile: { header: true, footer: false, checkedAt: "old" } }, "/b": { desktop: { header: false, footer: true, checkedAt: "old" } } } };
     const next = nextBaseline(prev, [view({ footer: false }), view({ route: "/c", navError: "timeout" })], "new");
-    assert.deepEqual(next.routes["/a"].desktop, { header: true, footer: false, checkedAt: "new" });
+    assert.deepEqual(next.routes["/a"].desktop, { header: true, footer: true, checkedAt: "new", lastSeen: { header: "new", footer: "old" } });
     assert.equal(next.routes["/a"].mobile.checkedAt, "old");
     assert.ok(next.routes["/b"]);
     assert.equal(next.routes["/c"], undefined);
@@ -163,9 +202,41 @@ describe("baseline (no browser)", () => {
     const baseline = { routes: { "/a": { desktop: { header: false, footer: true, checkedAt: "2026-11-13" } } } };
     const r = judgeViews([view({ header: false, footer: false })], baseline);
     assert.equal(r.verdict, "REGRESI");
-    assert.match(r.reason, /footer .* ada di baseline/);
+    assert.match(r.reason, /footer .* terakhir terlihat 2026-11-13 \(baseline lengket\)/);
     assert.equal(r.notes.length, 1);
-    assert.match(r.notes[0], /header .* sudah hilang di baseline/);
+    assert.match(r.notes[0], /header .* belum pernah terlihat/);
+  });
+
+  test("forgetBaseline drops a whole route or one landmark, and ignores unknown routes", () => {
+    const b = { routes: { "/a": { desktop: { header: true, footer: true, checkedAt: "d", lastSeen: { header: "d", footer: "d" } } }, "/b": { desktop: { header: true, footer: true } } } };
+    const one = forgetBaseline(b, " /a#footer , /zzz ");
+    assert.deepEqual(one.removed, ["/a#footer"]);
+    assert.equal(one.baseline.routes["/a"].desktop.footer, false);
+    assert.equal(one.baseline.routes["/a"].desktop.header, true);
+    assert.equal(b.routes["/a"].desktop.footer, true, "input not mutated");
+    assert.equal(forgetBaseline(b, "/b").baseline.routes["/b"], undefined);
+  });
+
+  test("a CTA exemption never exempts a landmark the baseline expects", () => {
+    const config = { ctaExempt: [{ route: "/a", reason: "r" }] };
+    const baseline = { routes: { "/a": { desktop: { header: true, footer: true, checkedAt: "2026-11-13" } } } };
+    const r = judgeViews([view({ cta: null, footer: false })], baseline, config);
+    assert.equal(r.verdict, "REGRESI");
+    assert.doesNotMatch(r.reason, /CTA/);
+    assert.match(r.reason, /footer/);
+  });
+
+  test("the exemption also matches after a redirect, and with a trailing slash", () => {
+    const config = { ctaExempt: [{ route: "/assessment/briefing", reason: "r" }] };
+    const r = judgeViews([view({ route: "/old", finalUrl: "https://balizero.com/assessment/briefing/", cta: null })], null, config);
+    assert.equal(r.verdict, "HALAMAN OK", r.reason);
+  });
+
+  test("config.json exempts /assessment/briefing from the CTA check, with its reason; entries need a reason", () => {
+    assert.deepEqual(loadConfig().ctaExempt, [{ route: "/assessment/briefing", reason: "noindex, halaman hasil assessment, bukan halaman konversi" }]);
+    const bad = path.join(OUT, "bad-config.json");
+    fs.writeFileSync(bad, JSON.stringify({ ctaExempt: [{ route: "/x" }] }));
+    assert.throws(() => loadConfig(bad), /butuh route dan reason/);
   });
 
   test("a network failure stays BELUM DIUKUR whatever the baseline says", () => {
