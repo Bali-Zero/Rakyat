@@ -1,0 +1,55 @@
+name: Verifikator live (weekly, read-only)
+
+# Every Friday 11:17 WITA: for the last 7 days of merged PRs, is each one served in production (git ancestry against
+# balizero.com/api/health and the backend build_sha), and do its public pages load cleanly on desktop and mobile?
+# Read-only: no deploy, no PR comment, no repo write. The one optional write is a Todoist task (TODOIST_API_TOKEN).
+# Never opens kita.balizero.com, my.balizero.com, /portal, /api, /login or (workspace) routes.
+on:
+  schedule:
+    - cron: "17 3 * * 5" # 03:17 UTC = 11:17 WITA, Friday
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: verifikator-live
+  cancel-in-progress: false
+
+jobs:
+  verifikator:
+    name: Verifikator live
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # ancestry needs full history
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Playwright only, installed out of tree: the workspace's full npm ci is not needed for a read-only probe.
+      - name: Install Playwright chromium
+        run: |
+          npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/pw" playwright@1.64.1
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+
+      - name: Run verifikator
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TODOIST_API_TOKEN: ${{ secrets.TODOIST_API_TOKEN }}
+          PLAYWRIGHT_MODULE_DIR: ${{ runner.temp }}/pw
+          VERIFIKATOR_OUT: verifikator-out
+        run: node scripts/verifikator/run.mjs
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verifikator-${{ github.run_id }}
+          path: ./verifikator-out
+          retention-days: 90
+          if-no-files-found: warn
