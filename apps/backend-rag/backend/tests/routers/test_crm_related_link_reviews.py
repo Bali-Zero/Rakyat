@@ -1333,7 +1333,7 @@ async def test_t8_the_detail_grows_by_at_most_two_selects(conn):
 # ── T9 privacy ────────────────────────────────────────────────────────────────
 
 CLIENT_NAME = "ZzPrivClient Probe"
-CLIENT_PASSPORT = "ZZPRIVP77"
+CLIENT_PASSPORT = "ZZPRIVP778899"
 CLIENT_BIRTH = "1966-02-03"
 PROTOCOL = {"subject_id", "client_id", "decision", "relation"}
 
@@ -1347,6 +1347,8 @@ def body_tokens(raw, extra=()):
     out = {s for s in strings if 4 <= len(s) <= 200 and s not in PROTOCOL} | {
         str(i) for i in ints if len(str(i)) >= 4
     }
+    if isinstance(raw, dict) and isinstance(raw.get("subject_id"), int):
+        out.discard(str(raw["subject_id"]))  # the log line names the validated subject id (2.3)
     return out | set(extra)
 
 
@@ -1439,13 +1441,13 @@ async def test_t9_post_answer_log_and_audit_row_carry_nothing_from_the_request(
 
 GET_CASES = {
     "matching": {
-        "subject_ids": [("passport", "ZZGETMATCH1")],
-        "passport": "ZZGETMATCH1",
+        "subject_ids": [("passport", "ZZGM987654")],
+        "passport": "ZZGM987654",
         "client_name": "ZzGet Match",
     },
     "non_matching": {
-        "subject_ids": [("passport", "ZZGETSUBJ2")],
-        "passport": "ZZGETCLIE9",
+        "subject_ids": [("passport", "ZZGS123456")],
+        "passport": "ZZGC654321",
         "dob": date(1971, 8, 9),
         "client_name": "ZzGet Client Other",
     },
@@ -1494,7 +1496,7 @@ async def test_t9_get_adds_closed_fields_only_and_never_a_copy_of_the_client_car
         "passport_equal", "passport_one_char_apart", "nik_encodes_client_birth_date", "birth_date_equal"
     }  # fmt: skip
     assert set(link["review"]) == {"decision", "relation", "decided_by", "decided_at"}
-    client_values = {CLIENT_PASSPORT, "ZZGETMATCH1", "ZZGETCLIE9", "1971-08-09", "19710809"}
+    client_values = {CLIENT_PASSPORT, "ZZGM987654", "ZZGC654321", "1971-08-09", "19710809"}
     scrubbed = {
         k: v
         for k, v in data.items()
