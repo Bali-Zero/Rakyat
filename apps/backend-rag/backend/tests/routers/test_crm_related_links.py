@@ -101,6 +101,8 @@ CLIENTS_SCHEMA = """
 CREATE TABLE clients (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     full_name text NOT NULL,
+    passport_number varchar(100),
+    date_of_birth date,
     deleted_at timestamptz
 );
 CREATE TABLE client_family_members (
@@ -189,6 +191,7 @@ async def pool(writes):
                 "365_related_subject_names.sql",
                 "367_related_subject_links.sql",
                 "370_related_subject_detachments.sql",
+                "372_related_subject_link_reviews.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
