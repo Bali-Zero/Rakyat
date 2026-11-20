@@ -341,12 +341,14 @@ describe("TaxDocumentsSection — write permissions for associated team members"
       TAXDEPT_9: [file("FILE_C1", "company-spt.pdf")],
     });
 
+    const onRefresh = vi.fn();
     render(
       <TaxTab
         clientId={7}
         formatDate={(d) => d}
         client={{ id: 7, google_drive_folder_id: "FOLDER_123" } as Client}
         companyLinks={[link(9, "PT Nine")]}
+        onRefresh={onRefresh}
         taxConsultants={[]}
         now={new Date("2026-11-16T00:00:00Z")}
         canManageDocuments
@@ -372,7 +374,7 @@ describe("TaxDocumentsSection — write permissions for associated team members"
       ),
     );
 
-    // Delete from linked company tax folder
+    // Delete from linked company tax folder triggers profile refresh
     fireEvent.click(
       screen.getByRole("button", { name: "Delete company-spt.pdf" }),
     );
@@ -383,5 +385,6 @@ describe("TaxDocumentsSection — write permissions for associated team members"
         "FILE_C1",
       ),
     );
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
   });
 });

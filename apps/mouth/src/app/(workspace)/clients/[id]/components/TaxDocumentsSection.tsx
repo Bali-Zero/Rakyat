@@ -212,6 +212,7 @@ export function TaxDocumentsSection({
   companyLinks,
   clientId,
   canManage = false,
+  onMutated,
 }: {
   clientFolderId?: string | null;
   companyLinks?: readonly ClientCompanyLink[];
@@ -219,6 +220,8 @@ export function TaxDocumentsSection({
   clientId?: number;
   /** True when the viewer is an admin or a team member associated with this client profile. */
   canManage?: boolean;
+  /** Optional parent profile refresher invoked after rename, replace, or delete succeeds. */
+  onMutated?: () => Promise<void> | void;
 }) {
   // One block per company, even if the profile lists it under several roles.
   const companies = (companyLinks ?? []).filter(
@@ -229,18 +232,25 @@ export function TaxDocumentsSection({
     return {
       onUpload: (folderId, file) =>
         api.crm.uploadClientTaxDocument(clientId, folderId, file),
-      onRename: (file, newName) =>
-        api.crm.renameClientTaxDocument(clientId, file.id, newName),
-      onReplace: (file, replacement, newName) =>
-        api.crm.replaceClientTaxDocument(
+      onRename: async (file, newName) => {
+        await api.crm.renameClientTaxDocument(clientId, file.id, newName);
+        void onMutated?.();
+      },
+      onReplace: async (file, replacement, newName) => {
+        await api.crm.replaceClientTaxDocument(
           clientId,
           file.id,
           replacement,
           newName,
-        ),
-      onDelete: (file) => api.crm.deleteClientTaxDocument(clientId, file.id),
+        );
+        void onMutated?.();
+      },
+      onDelete: async (file) => {
+        await api.crm.deleteClientTaxDocument(clientId, file.id);
+        void onMutated?.();
+      },
     };
-  }, [canManage, clientId]);
+  }, [canManage, clientId, onMutated]);
 
   return (
     <div className="space-y-6 py-4">

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator
 
 from backend.app.core.config import settings
@@ -1128,11 +1128,27 @@ class ClientProfileUpdate(BaseModel):
 # ============================================
 
 
+def _optional_request_auth_method(request: Request) -> str | None:
+    """Read HybridAuthMiddleware's auth_method/auth_type when present on the HTTP request."""
+    state_user = getattr(request.state, "user", None)
+    if isinstance(state_user, dict):
+        method = state_user.get("auth_method")
+        if isinstance(method, str) and method.strip():
+            return method.strip()
+        # Middleware authenticated this request without a recognized auth_method: fail closed.
+        return "unknown"
+    auth_type = getattr(request.state, "auth_type", None)
+    if isinstance(auth_type, str) and auth_type.strip():
+        return auth_type.strip()
+    return None
+
+
 @router.get("/clients/{client_id}/profile")
 async def get_client_profile(
     client_id: int,
     pool: Any = Depends(get_database_pool),
     current_user: dict = Depends(get_current_user),
+    request_auth_method: str | None = Depends(_optional_request_auth_method),
 ) -> dict[str, Any]:
     """
     Get enhanced client profile with family members, documents, and expiry alerts.
@@ -1163,8 +1179,14 @@ async def get_client_profile(
         viewer_can_write = can_write_client(
             current_user, client.get("assigned_to"), client.get("created_by")
         )
+        # Direct unit tests omit `request_auth_method` and receive the unresolved Depends marker.
+        tax_doc_user = (
+            {**current_user, "auth_method": request_auth_method}
+            if isinstance(request_auth_method, str)
+            else current_user
+        )
         viewer_can_manage_tax_documents = can_manage_client_tax_documents(
-            current_user,
+            tax_doc_user,
             client.get("assigned_to"),
             client.get("created_by"),
             client.get("tax_consultant"),

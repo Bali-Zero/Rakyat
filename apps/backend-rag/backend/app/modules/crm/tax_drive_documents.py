@@ -5,39 +5,56 @@ Scoped to the client's own Drive folder tree and those of its linked companies
 company's `google_drive_folder_id` / `tax_dept_folder_id`).
 
 Security invariants:
-1. Authorization BEFORE any Drive call or file body read: only CRM admins or
-   human team members associated with the client profile (`assigned_to`,
-   `tax_consultant`, `created_by`, or their validated client-pool peers) may
-   mutate documents.
+1. Authorization BEFORE any Drive call or file body read: only human CRM admins
+   or human team members associated with the client profile (`assigned_to`,
+   `tax_consultant`, `created_by`, or their validated client-pool peers) using a
+   human JWT session may mutate documents. Machine keys (`admin_key`,
+   `internal_key`, `api_key`) and non-human/portal roles (`monitoring`,
+   `internal`, `client`, `partner`, `service`) are rejected even if their email
+   is on an admin allowlist.
 2. Folder/file ancestry verified with `supportsAllDrives=True` before every
    mutation; an item outside the client's allowed roots returns 403 (fail
    closed, no Workspace existence oracle).
 3. Folders and root folders cannot be renamed, replaced, or trashed here;
    deletion moves the file to Drive Trash (recoverable, never hard delete).
-4. DB pool connection is released BEFORE Drive HTTP calls (no pool deadlock).
-5. Logs carry only numeric `client_id` and Drive IDs — never client PII or raw
-   filenames.
+4. DB pool connection is released BEFORE Drive HTTP calls (no pool deadlock),
+   then reacquired after Drive mutations to keep CRM registrations (`documents`
+   and `company_documents`), content hashes, and OCR evidence in sync.
+5. Logs carry only numeric `client_id` / `doc_id` and Drive IDs — never client
+   PII or raw filenames.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import mimetypes
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Path,
+    Request,
+    UploadFile,
+)
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel, Field
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.routers.documents_proxy import _DRIVE_FILE_ID_RE
 from backend.app.utils.client_pools import (
+    HUMAN_SESSION_AUTH_METHODS,
     can_manage_client_tax_documents,
     ensure_client_pools_validated,
 )
-from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.service_accounts import is_human_team_member
 from backend.core.cache import invalidate_cache
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
@@ -53,8 +70,15 @@ _MAX_ANCESTOR_HOPS = 6
 _MAX_ANCESTOR_LOOKUPS = 10
 _MAX_FILENAME_LEN = 200
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+_AUTHZ_DENIED_DETAIL = "You do not have permission to manage tax documents for this client."
 
 router = APIRouter(tags=["crm-tax-documents"])
+
+
+@dataclass(frozen=True)
+class _ClientDriveScope:
+    allowed_roots: set[str]
+    linked_company_ids: list[int]
 
 
 class TaxDriveFileItem(BaseModel):
@@ -104,6 +128,60 @@ def get_tax_drive_service() -> ServiceAccountDriveService:
 def get_tax_drive_service_factory() -> Callable[[], ServiceAccountDriveService]:
     """Deferred factory dependency so auth/input validation runs before Drive client init."""
     return get_tax_drive_service
+
+
+def get_tax_documents_user(
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Enforce human JWT session and human team role before any DB or Drive work.
+
+    ``get_current_user`` intentionally drops ``auth_method`` from ``request.state.user``.
+    Reading it here rejects ``X-Debug-Key`` (``admin_key``), ``X-Internal-Key``
+    (``internal_key``), ``X-API-Key`` (``api_key``), and ``public`` principals even
+    when they carry an ``admin`` role or allowlisted email.
+    """
+    state_user = getattr(request.state, "user", None)
+    state_auth_type = getattr(request.state, "auth_type", None)
+
+    auth_method: str | None = None
+    if isinstance(state_user, dict):
+        raw_method = state_user.get("auth_method")
+        if not isinstance(raw_method, str) or not raw_method.strip():
+            raw_method = state_auth_type if isinstance(state_auth_type, str) else None
+        if (
+            not isinstance(raw_method, str)
+            or raw_method.strip().lower() not in HUMAN_SESSION_AUTH_METHODS
+        ):
+            raise HTTPException(status_code=403, detail=_AUTHZ_DENIED_DETAIL)
+        auth_method = raw_method.strip().lower()
+    elif isinstance(state_auth_type, str) and state_auth_type.strip():
+        if state_auth_type.strip().lower() not in HUMAN_SESSION_AUTH_METHODS:
+            raise HTTPException(status_code=403, detail=_AUTHZ_DENIED_DETAIL)
+        auth_method = state_auth_type.strip().lower()
+    else:
+        raw_method = (current_user or {}).get("auth_method")
+        if raw_method is not None:
+            normalized = str(raw_method).strip().lower()
+            if normalized not in HUMAN_SESSION_AUTH_METHODS:
+                raise HTTPException(status_code=403, detail=_AUTHZ_DENIED_DETAIL)
+            auth_method = normalized
+
+    if not is_human_team_member((current_user or {}).get("role")):
+        raise HTTPException(status_code=403, detail=_AUTHZ_DENIED_DETAIL)
+
+    if auth_method is not None:
+        return {**current_user, "auth_method": auth_method}
+    return current_user
+
+
+def _record_get(row: Any, key: str) -> Any:
+    if hasattr(row, "get"):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
 def _assert_drive_id(raw_id: str, label: str = "Drive id") -> str:
@@ -186,22 +264,23 @@ async def _read_bounded_upload(upload: UploadFile) -> bytes:
     return content
 
 
-async def _authorize_and_load_roots(
+async def _authorize_and_load_scope(
     client_id: int,
     current_user: dict[str, Any],
     pool: Any,
-) -> set[str]:
-    """Verify caller may manage this client's tax documents and return allowed Drive root IDs.
+) -> _ClientDriveScope:
+    """Verify caller may manage this client's tax documents and return allowed Drive roots + companies.
 
     Releases the DB connection before returning so Drive I/O never holds a pool slot.
     """
-    if not is_crm_admin(current_user) and not is_human_team_member(
-        (current_user or {}).get("role")
+    auth_method = (current_user or {}).get("auth_method")
+    if (
+        auth_method is not None
+        and str(auth_method).strip().lower() not in HUMAN_SESSION_AUTH_METHODS
     ):
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have permission to manage tax documents for this client.",
-        )
+        raise HTTPException(status_code=403, detail=_AUTHZ_DENIED_DETAIL)
+    if not is_human_team_member((current_user or {}).get("role")):
+        raise HTTPException(status_code=403, detail=_AUTHZ_DENIED_DETAIL)
 
     async with pool.acquire() as conn:
         await ensure_client_pools_validated(conn)
@@ -219,19 +298,16 @@ async def _authorize_and_load_roots(
 
         if not can_manage_client_tax_documents(
             current_user,
-            client_row.get("assigned_to"),
-            client_row.get("created_by"),
-            client_row.get("tax_consultant"),
+            _record_get(client_row, "assigned_to"),
+            _record_get(client_row, "created_by"),
+            _record_get(client_row, "tax_consultant"),
         ):
             logger.warning("tax_drive.authz_denied client_id=%s", client_id)
-            raise HTTPException(
-                status_code=403,
-                detail="You do not have permission to manage tax documents for this client.",
-            )
+            raise HTTPException(status_code=403, detail=_AUTHZ_DENIED_DETAIL)
 
         company_rows = await conn.fetch(
             """
-            SELECT co.google_drive_folder_id, co.tax_dept_folder_id
+            SELECT ccl.company_id, co.google_drive_folder_id, co.tax_dept_folder_id
             FROM client_company_links ccl
             JOIN companies co ON co.id = ccl.company_id
             WHERE ccl.client_id = $1
@@ -241,12 +317,17 @@ async def _authorize_and_load_roots(
 
     roots: set[str] = set()
     for key in ("google_drive_folder_id", "drive_folder_id"):
-        val = client_row.get(key)
+        val = _record_get(client_row, key)
         if isinstance(val, str) and _DRIVE_FILE_ID_RE.match(val.strip()):
             roots.add(val.strip())
+
+    company_ids: set[int] = set()
     for row in company_rows or ():
+        cid = _record_get(row, "company_id")
+        if isinstance(cid, int):
+            company_ids.add(cid)
         for key in ("google_drive_folder_id", "tax_dept_folder_id"):
-            val = row.get(key) if hasattr(row, "get") else row[key]
+            val = _record_get(row, key)
             if isinstance(val, str) and _DRIVE_FILE_ID_RE.match(val.strip()):
                 roots.add(val.strip())
 
@@ -255,7 +336,232 @@ async def _authorize_and_load_roots(
             status_code=403,
             detail="No Google Drive folder is linked to this client.",
         )
-    return roots
+    return _ClientDriveScope(allowed_roots=roots, linked_company_ids=sorted(company_ids))
+
+
+async def _invalidate_tax_doc_caches() -> None:
+    """Invalidate Drive folder listing and dependent CRM client/document views."""
+    await invalidate_cache("zantara:team_drive:*")
+    await invalidate_cache("zantara:crm_clients_documents:*")
+    await invalidate_cache("zantara:crm_clients_stats:*")
+
+
+async def _dispatch_ocr_reprocessing(
+    pool: Any,
+    client_id: int,
+    file_id: str,
+    folder_name: str,
+    filename: str,
+    doc_id: int,
+    document_type: str | None,
+) -> None:
+    """Re-run OCR dispatcher for a replaced registered document and settle pending state."""
+    from backend.services.documents.ocr_dispatcher_service import dispatch_ocr_by_folder
+
+    try:
+        result = await dispatch_ocr_by_folder(
+            db_pool=pool,
+            client_id=client_id,
+            file_id=file_id,
+            folder_name=folder_name,
+            filename=filename,
+            doc_id=doc_id,
+            document_type=document_type,
+        )
+        if not isinstance(result, dict) or not result.get("dispatched"):
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE documents
+                    SET ocr_status = NULL, updated_at = NOW()
+                    WHERE id = $1 AND ocr_status = 'pending'
+                    """,
+                    doc_id,
+                )
+    except Exception as exc:
+        logger.error(
+            "tax_drive.ocr_reprocess_failed client_id=%s file_id=%s doc_id=%s error=%s",
+            client_id,
+            file_id,
+            doc_id,
+            type(exc).__name__,
+        )
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE documents
+                    SET ocr_status = 'failed', updated_at = NOW()
+                    WHERE id = $1 AND ocr_status = 'pending'
+                    """,
+                    doc_id,
+                )
+        except Exception as inner_exc:
+            logger.error(
+                "tax_drive.ocr_status_update_failed doc_id=%s error=%s",
+                doc_id,
+                type(inner_exc).__name__,
+            )
+
+
+async def _sync_renamed_registrations(
+    pool: Any,
+    client_id: int,
+    linked_company_ids: list[int],
+    file_id: str,
+    new_name: str,
+) -> None:
+    """Propagate Drive rename to active client and linked-company document registrations."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE documents
+            SET file_name = $3,
+                updated_at = NOW()
+            WHERE client_id = $1
+              AND file_id = $2
+              AND COALESCE(is_archived, false) = false
+              AND deleted_at IS NULL
+              AND COALESCE(status, '') <> 'deleted'
+            """,
+            client_id,
+            file_id,
+            new_name,
+        )
+        if linked_company_ids:
+            await conn.execute(
+                """
+                UPDATE company_documents
+                SET file_name = $3,
+                    updated_at = NOW()
+                WHERE company_id = ANY($1::int[])
+                  AND google_drive_file_id = $2
+                  AND status = 'active'
+                  AND COALESCE(is_archived, false) = false
+                  AND deleted_at IS NULL
+                """,
+                linked_company_ids,
+                file_id,
+                new_name,
+            )
+
+
+async def _sync_replaced_registrations(
+    pool: Any,
+    client_id: int,
+    linked_company_ids: list[int],
+    file_id: str,
+    *,
+    file_name: str | None,
+    mime_type: str,
+    content_bytes: bytes,
+    web_view_link: str | None,
+) -> list[dict[str, Any]]:
+    """Update metadata/content_hash and clear stale OCR evidence for replaced registrations.
+
+    Returns updated ``documents`` rows so the caller can enqueue OCR reprocessing.
+    """
+    content_hash = hashlib.md5(content_bytes).hexdigest()
+    file_size_kb = max(1, len(content_bytes) // 1024)
+    effective_name = file_name or None
+
+    async with pool.acquire() as conn:
+        updated_doc_rows = await conn.fetch(
+            """
+            UPDATE documents
+            SET file_name = COALESCE($3, file_name),
+                file_size_kb = $4,
+                mime_type = $5,
+                content_hash = $6,
+                file_url = COALESCE($7, file_url),
+                google_drive_file_url = COALESCE($7, google_drive_file_url),
+                ocr_status = 'pending',
+                ocr_completed_at = NULL,
+                ocr_extracted_data = NULL,
+                drive_verified_at = NOW(),
+                updated_at = NOW()
+            WHERE client_id = $1
+              AND file_id = $2
+              AND COALESCE(is_archived, false) = false
+              AND deleted_at IS NULL
+              AND COALESCE(status, '') <> 'deleted'
+            RETURNING id, document_type, subfolder, file_name
+            """,
+            client_id,
+            file_id,
+            effective_name,
+            file_size_kb,
+            mime_type,
+            content_hash,
+            web_view_link,
+        )
+        if linked_company_ids:
+            await conn.execute(
+                """
+                UPDATE company_documents
+                SET file_name = COALESCE($3, file_name),
+                    file_size_kb = $4,
+                    mime_type = $5,
+                    content_hash = $6,
+                    google_drive_file_url = COALESCE($7, google_drive_file_url),
+                    ocr_status = NULL,
+                    ocr_completed_at = NULL,
+                    ocr_extracted_data = NULL,
+                    is_verified = false,
+                    updated_at = NOW()
+                WHERE company_id = ANY($1::int[])
+                  AND google_drive_file_id = $2
+                  AND status = 'active'
+                  AND COALESCE(is_archived, false) = false
+                  AND deleted_at IS NULL
+                """,
+                linked_company_ids,
+                file_id,
+                effective_name,
+                file_size_kb,
+                mime_type,
+                content_hash,
+                web_view_link,
+            )
+
+    return [dict(row) for row in (updated_doc_rows or ())]
+
+
+async def _sync_trashed_registrations(
+    pool: Any,
+    client_id: int,
+    linked_company_ids: list[int],
+    file_id: str,
+) -> None:
+    """Mark matching CRM client/company document registrations deleted & archived after Drive trash."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE documents
+            SET status = 'deleted',
+                is_archived = true,
+                updated_at = NOW()
+            WHERE client_id = $1
+              AND file_id = $2
+              AND (COALESCE(is_archived, false) = false OR COALESCE(status, '') <> 'deleted')
+            """,
+            client_id,
+            file_id,
+        )
+        if linked_company_ids:
+            await conn.execute(
+                """
+                UPDATE company_documents
+                SET status = 'deleted',
+                    is_archived = true,
+                    updated_at = NOW()
+                WHERE company_id = ANY($1::int[])
+                  AND google_drive_file_id = $2
+                  AND (COALESCE(is_archived, false) = false OR COALESCE(status, '') <> 'deleted')
+                """,
+                linked_company_ids,
+                file_id,
+            )
 
 
 async def _fetch_metadata_or_deny(
@@ -370,20 +676,20 @@ async def upload_client_tax_document(
     file: UploadFile = File(...),
     folder_id: str = Form(...),
     pool: Any = Depends(get_database_pool),
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_tax_documents_user),
     drive_factory: Callable[[], ServiceAccountDriveService] = Depends(
         get_tax_drive_service_factory
     ),
 ) -> TaxDriveFileResponse:
     """Upload a tax document into one of the client's or linked company's Drive folders."""
-    allowed_roots = await _authorize_and_load_roots(client_id, current_user, pool)
+    scope = await _authorize_and_load_scope(client_id, current_user, pool)
     clean_folder_id = _assert_drive_id(folder_id, "folder_id")
     safe_name = _sanitize_upload_filename(file.filename)
     content = await _read_bounded_upload(file)
     mime_type = _resolve_mime_type(file.content_type, safe_name)
 
     drive = drive_factory()
-    await _verify_target_folder(drive, clean_folder_id, allowed_roots)
+    await _verify_target_folder(drive, clean_folder_id, scope.allowed_roots)
 
     try:
         uploaded = await drive.upload_file_to_folder(
@@ -403,7 +709,7 @@ async def upload_client_tax_document(
         )
         raise HTTPException(status_code=502, detail="Failed to upload document to Drive") from None
 
-    await invalidate_cache("zantara:team_drive:*")
+    await _invalidate_tax_doc_caches()
     item = _to_file_item(uploaded, fallback_mime=mime_type)
     logger.info(
         "tax_drive.uploaded client_id=%s folder_id=%s file_id=%s size=%s",
@@ -424,18 +730,18 @@ async def rename_client_tax_document(
     file_id: str,
     body: TaxDriveRenameRequest,
     pool: Any = Depends(get_database_pool),
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_tax_documents_user),
     drive_factory: Callable[[], ServiceAccountDriveService] = Depends(
         get_tax_drive_service_factory
     ),
 ) -> TaxDriveFileResponse:
-    """Rename an existing tax document in Google Drive."""
-    allowed_roots = await _authorize_and_load_roots(client_id, current_user, pool)
+    """Rename an existing tax document in Google Drive and sync CRM registrations."""
+    scope = await _authorize_and_load_scope(client_id, current_user, pool)
     clean_file_id = _assert_drive_id(file_id, "file_id")
     safe_name = _validate_explicit_name(body.name)
 
     drive = drive_factory()
-    await _verify_target_file(drive, clean_file_id, allowed_roots)
+    await _verify_target_file(drive, clean_file_id, scope.allowed_roots)
 
     try:
         updated = await drive.rename_file(clean_file_id, safe_name)
@@ -450,8 +756,28 @@ async def rename_client_tax_document(
         )
         raise HTTPException(status_code=502, detail="Failed to rename document in Drive") from None
 
-    await invalidate_cache("zantara:team_drive:*")
     item = _to_file_item(updated)
+    try:
+        await _sync_renamed_registrations(
+            pool,
+            client_id,
+            scope.linked_company_ids,
+            clean_file_id,
+            item.name or safe_name,
+        )
+    except Exception as exc:
+        logger.error(
+            "tax_drive.rename_db_sync_failed client_id=%s file_id=%s error=%s",
+            client_id,
+            clean_file_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Document renamed in Drive, but failed to synchronize CRM records",
+        ) from None
+
+    await _invalidate_tax_doc_caches()
     logger.info("tax_drive.renamed client_id=%s file_id=%s", client_id, clean_file_id)
     return TaxDriveFileResponse(success=True, file=item)
 
@@ -463,16 +789,17 @@ async def rename_client_tax_document(
 async def replace_client_tax_document(
     client_id: Annotated[int, Path(ge=1)],
     file_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     name: str | None = Form(None),
     pool: Any = Depends(get_database_pool),
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_tax_documents_user),
     drive_factory: Callable[[], ServiceAccountDriveService] = Depends(
         get_tax_drive_service_factory
     ),
 ) -> TaxDriveFileResponse:
-    """Replace an existing tax document's file content in-place (and optionally rename it)."""
-    allowed_roots = await _authorize_and_load_roots(client_id, current_user, pool)
+    """Replace an existing tax document's content in-place, sync DB evidence, and re-run OCR."""
+    scope = await _authorize_and_load_scope(client_id, current_user, pool)
     clean_file_id = _assert_drive_id(file_id, "file_id")
     explicit_name = _validate_explicit_name(name) if name is not None and name.strip() else None
     upload_name = _sanitize_upload_filename(file.filename)
@@ -481,7 +808,7 @@ async def replace_client_tax_document(
     mime_type = _resolve_mime_type(file.content_type, effective_name)
 
     drive = drive_factory()
-    await _verify_target_file(drive, clean_file_id, allowed_roots)
+    await _verify_target_file(drive, clean_file_id, scope.allowed_roots)
 
     try:
         updated = await drive.update_file_content(
@@ -501,13 +828,51 @@ async def replace_client_tax_document(
         )
         raise HTTPException(status_code=502, detail="Failed to replace document in Drive") from None
 
-    await invalidate_cache("zantara:team_drive:*")
     item = _to_file_item(updated, fallback_mime=mime_type)
+    try:
+        updated_docs = await _sync_replaced_registrations(
+            pool,
+            client_id,
+            scope.linked_company_ids,
+            clean_file_id,
+            file_name=item.name or explicit_name,
+            mime_type=item.mime_type or mime_type,
+            content_bytes=content,
+            web_view_link=item.web_view_link,
+        )
+    except Exception as exc:
+        logger.error(
+            "tax_drive.replace_db_sync_failed client_id=%s file_id=%s error=%s",
+            client_id,
+            clean_file_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Document replaced in Drive, but failed to synchronize CRM records",
+        ) from None
+
+    for doc_row in updated_docs:
+        doc_id = _record_get(doc_row, "id")
+        if isinstance(doc_id, int):
+            background_tasks.add_task(
+                _dispatch_ocr_reprocessing,
+                pool,
+                client_id,
+                clean_file_id,
+                _record_get(doc_row, "subfolder") or "03_Tax",
+                _record_get(doc_row, "file_name") or item.name or effective_name,
+                doc_id,
+                _record_get(doc_row, "document_type"),
+            )
+
+    await _invalidate_tax_doc_caches()
     logger.info(
-        "tax_drive.replaced client_id=%s file_id=%s size=%s",
+        "tax_drive.replaced client_id=%s file_id=%s size=%s synced_docs=%s",
         client_id,
         clean_file_id,
         len(content),
+        len(updated_docs),
     )
     return TaxDriveFileResponse(success=True, file=item)
 
@@ -520,17 +885,17 @@ async def delete_client_tax_document(
     client_id: Annotated[int, Path(ge=1)],
     file_id: str,
     pool: Any = Depends(get_database_pool),
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_tax_documents_user),
     drive_factory: Callable[[], ServiceAccountDriveService] = Depends(
         get_tax_drive_service_factory
     ),
 ) -> TaxDriveDeleteResponse:
-    """Move a client's tax document to Google Drive Trash (recoverable)."""
-    allowed_roots = await _authorize_and_load_roots(client_id, current_user, pool)
+    """Move a client's tax document to Google Drive Trash and retire CRM registrations."""
+    scope = await _authorize_and_load_scope(client_id, current_user, pool)
     clean_file_id = _assert_drive_id(file_id, "file_id")
 
     drive = drive_factory()
-    await _verify_target_file(drive, clean_file_id, allowed_roots)
+    await _verify_target_file(drive, clean_file_id, scope.allowed_roots)
 
     try:
         await drive.trash_file(clean_file_id)
@@ -545,6 +910,25 @@ async def delete_client_tax_document(
         )
         raise HTTPException(status_code=502, detail="Failed to delete document in Drive") from None
 
-    await invalidate_cache("zantara:team_drive:*")
+    try:
+        await _sync_trashed_registrations(
+            pool,
+            client_id,
+            scope.linked_company_ids,
+            clean_file_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "tax_drive.trash_db_sync_failed client_id=%s file_id=%s error=%s",
+            client_id,
+            clean_file_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Document moved to Drive Trash, but failed to synchronize CRM records",
+        ) from None
+
+    await _invalidate_tax_doc_caches()
     logger.info("tax_drive.trashed client_id=%s file_id=%s", client_id, clean_file_id)
     return TaxDriveDeleteResponse(success=True, file_id=clean_file_id, trashed=True)

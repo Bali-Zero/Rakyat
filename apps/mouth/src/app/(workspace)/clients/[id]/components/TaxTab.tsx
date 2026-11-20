@@ -1123,6 +1123,7 @@ export function TaxTab({
           companyLinks={companyLinks}
           clientId={clientId}
           canManage={canManageDocuments}
+          onMutated={onRefresh}
         />
       </LedgerSection>
 
