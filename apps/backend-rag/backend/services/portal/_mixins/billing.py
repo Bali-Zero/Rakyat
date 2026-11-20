@@ -69,6 +69,8 @@ class PortalBillingMixin:
                     pt.name AS practice_name,
                     pt.category AS practice_category,
                     i.paid_amount_idr,
+                    COALESCE((to_jsonb(i) ->> 'pph_expected_idr')::numeric, 0)
+                        AS pph_expected_idr,
                     p.payment_status,
                     p.paid_amount,
                     p.quoted_price
@@ -103,7 +105,12 @@ class PortalBillingMixin:
         paid_by_practice: dict[int, float] = {}
 
         for row in rows:
-            amount = float(row["amount_idr"] or 0)
+            # What the client owes on this invoice: invoices.amount_idr is the gross
+            # DPP; a client that withholds PPh (K127, invoices.pph_expected_idr) owes
+            # and transfers amount_idr - PPh, the TOTAL DUE on its PDF. Without PPh
+            # this is amount_idr, as before. (to_jsonb in the SELECT reads 0 when
+            # the column is absent.)
+            amount = float(row["amount_idr"] or 0) - float(row.get("pph_expected_idr") or 0)
             # "unpaid", not "pending": pending is not a state this system emits.
             payment_status = row["payment_status"] or "unpaid"
             total_invoiced += amount
