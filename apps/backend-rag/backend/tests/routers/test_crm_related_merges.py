@@ -1177,7 +1177,7 @@ FRAGMENTS = {"_MATCH_SQL", "_EFFECTIVE_SQL"}
 WRITING_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|TRUNCATE|MERGE|ALTER|DROP|CREATE)\b", re.I)
 
 
-def test_m14_static_census_is_eleven_plain_selects_without_the_merge_word_or_evidence():
+def test_m14_static_census_is_thirteen_plain_selects_without_the_merge_word_or_evidence():
     service = related_registry_read
     for sql in _sql_constants(service):
         assert not WRITING_SQL.search(sql), sql[:60]
@@ -1189,7 +1189,7 @@ def test_m14_static_census_is_eleven_plain_selects_without_the_merge_word_or_evi
         for attr, value in vars(service).items()
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     }
-    assert len(statements) == 11
+    assert len(statements) == 13
     for attr, sql in statements.items():
         assert sql.lstrip().upper().startswith("SELECT"), attr
         assert not re.search(r"\bMERGE\b", sql, re.I), attr
@@ -1286,6 +1286,9 @@ async def test_m15_golden_bodies_of_a_subject_in_no_merge(admin, conn, clients):
                 "created_at": "2026-01-03T00:00:00Z",
                 "files": None,
                 "from_subject_id": None,
+                "review": None,
+                "suggested_relation": None,
+                "suggestion_basis": [],
             }
         ],
         "links_total": 1,
