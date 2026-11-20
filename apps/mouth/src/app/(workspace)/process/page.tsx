@@ -1353,12 +1353,12 @@ export default function PratichePage() {
                                     practice.payment_status !== "paid")) && (
                                   <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                                     {practice.priority === "urgent" && (
-                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] uppercase tracking-wide">
+                                      <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] uppercase tracking-wide">
                                         urgent
                                       </span>
                                     )}
                                     {practice.priority === "high" && (
-                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] uppercase tracking-wide">
+                                      <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] uppercase tracking-wide">
                                         high
                                       </span>
                                     )}
@@ -1368,7 +1368,7 @@ export default function PratichePage() {
                                     {practice.payment_status &&
                                       practice.payment_status !== "paid" && (
                                         <span
-                                          className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide ${
+                                          className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide ${
                                             practice.payment_status === "unpaid"
                                               ? "bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)]"
                                               : "bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)]"
@@ -1507,7 +1507,7 @@ export default function PratichePage() {
                                         if (d < 0)
                                           return (
                                             <span
-                                              className="text-[9px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] tabular-nums"
+                                              className="text-[11px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] tabular-nums"
                                               title={`Expired on ${expiryDateStr}`}
                                             >
                                               exp {Math.abs(d)}d ago
@@ -1516,7 +1516,7 @@ export default function PratichePage() {
                                         if (d <= 30)
                                           return (
                                             <span
-                                              className="text-[9px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] tabular-nums"
+                                              className="text-[11px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] tabular-nums"
                                               title={`Expires ${expiryDateStr}`}
                                             >
                                               ⏰ {d}d
@@ -1540,7 +1540,7 @@ export default function PratichePage() {
                                             : `${ageDays}d`;
                                         return (
                                           <span
-                                            className={`text-[9px] px-1.5 py-0.5 rounded tabular-nums ${
+                                            className={`text-[11px] px-1.5 py-0.5 rounded tabular-nums ${
                                               ageDays > 14
                                                 ? "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)]"
                                                 : ageDays > 7
@@ -1583,7 +1583,7 @@ export default function PratichePage() {
                           <>
                             <div className="flex items-center gap-2 py-1">
                               <div className="flex-1 border-t border-dashed border-[var(--bz-border)]" />
-                              <span className="text-[9px] uppercase tracking-wider text-[var(--bz-text-2)]/50 font-medium">
+                              <span className="text-[11px] uppercase tracking-wider text-[var(--bz-text-2)]/50 font-medium">
                                 passate
                               </span>
                               <div className="flex-1 border-t border-dashed border-[var(--bz-border)]" />
