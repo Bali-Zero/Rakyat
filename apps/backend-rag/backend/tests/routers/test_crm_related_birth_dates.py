@@ -26,7 +26,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -89,6 +89,12 @@ B_DATE = date(1977, 3, 12)
 B2 = "1981-11-05"
 OTHER_DOB = date(1990, 1, 2)  # a date the nik of the detach worlds does not encode
 TODAY = date(2026, 11, 19)
+# The future birth date of the privacy proof. It is after the pinned TODAY, so the server answers
+# 422, and it is computed from the real UTC clock (the unpatched server day at import), two days
+# ahead: the log records carry real wall-clock timestamps (hybrid_auth logs a UTC ``timestamp``),
+# so a fixed date becomes a "leak" on the day it equals the real date, and one day of margin would
+# still collide with a run that crosses midnight UTC.
+FUTURE_BIRTH = (route_module._utc_today() + timedelta(days=2)).isoformat()
 
 O_SQL = birth_module._OWNERS_SQL
 KF_SQL = birth_module._OWNER_KEYS_SQL
@@ -2307,7 +2313,7 @@ PRIVACY_CASES = {
     # row 5: invalid bodies, each with its own submitted values
     "row5_invalid_date": pcase(req(P1, doc_of(N_PLAIN), birth="1977-02-30"), 422),
     "row5_out_of_range": pcase(req(P1, doc_of(N_PLAIN), birth="1899-12-31"), 422),
-    "row5_future_date": pcase(req(P1, doc_of(N_PLAIN), birth="2026-11-20"), 422),
+    "row5_future_date": pcase(req(P1, doc_of(N_PLAIN), birth=FUTURE_BIRTH), 422),
     "row5_company_kind": pcase(
         req(P1, doc_of(N_PLAIN), subject={"kind": "company", "identifiers": keys(P1)}), 422
     ),
