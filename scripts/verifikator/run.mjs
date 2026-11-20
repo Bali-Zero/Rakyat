@@ -3,8 +3,12 @@
 //
 // For each recent merged PR it answers two questions, separately:
 //   1. Is the PR's merge commit an ancestor of the commit production serves?  (TERSAJI / BELUM TERSAJI)
-//   2. For a served PR that touches a public route: does the page load with status < 400, a header, a footer and
-//      zero console errors, on desktop and on mobile?  (HALAMAN OK / REGRESI)
+//   2. For a served PR that touches a public route: does the page load with status < 400, zero console errors,
+//      a main CTA, a header and a footer, on desktop and on mobile?  (HALAMAN OK / CATATAN / REGRESI)
+//      Header = <header>, [role=banner] or a <nav> before <main>. Footer = <footer> or [role=contentinfo].
+//      A missing landmark is REGRESI only when the route's baseline (verifikator-out/baseline.json, the landmarks
+//      seen on the previous run, carried by actions/cache) had it. Missing then and now, or no baseline yet:
+//      CATATAN. A gap that already existed is a backlog item, not something a recent PR broke.
 // Anything it cannot measure is reported as BELUM DIUKUR with the reason. It never claims a page "looks right":
 // the semantic check stays with a human, who has the screenshots.
 //
@@ -14,7 +18,8 @@
 //
 // Usage: node scripts/verifikator/run.mjs
 // Env:   GH_TOKEN (gh reads)  TODOIST_API_TOKEN (optional)  GITHUB_REPOSITORY  GITHUB_STEP_SUMMARY
-//        VERIFIKATOR_OUT (default ./verifikator-out)  VERIFIKATOR_DAYS (default 7)  VERIFIKATOR_MAX_PRS (default 15)
+//        VERIFIKATOR_OUT (default ./verifikator-out; baseline.json is read from and written back to it)
+//        VERIFIKATOR_DAYS (default 7)  VERIFIKATOR_MAX_PRS (default 15)
 //        VERIFIKATOR_SKIP_BROWSER=1  skip Playwright (routes become BELUM DIUKUR); for runs from hosts that cannot
 //                                    reach balizero.com.
 //        VERIFIKATOR_FRONTEND_COMMIT / VERIFIKATOR_BACKEND_SHA  use a served commit read by hand when the health
@@ -53,6 +58,7 @@ const PRIVATE_PREFIXES = ["/portal", "/api", "/login", ...workspaceRoutes.map((d
 
 const V = {
   OK: "HALAMAN OK",
+  NOTE: "CATATAN",
   REG: "REGRESI",
   NOT_SERVED: "BELUM TERSAJI",
   NO_SCREEN: "TIDAK BERWUJUD LAYAR",
@@ -357,6 +363,34 @@ export function loadPlaywright() {
 
 const NETWORK_ERR = /ERR_(TUNNEL_CONNECTION_FAILED|PROXY|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|CONNECTION_REFUSED|ADDRESS_UNREACHABLE)/;
 const CTA_TEXT = /whatsapp|contact|book|consult|get started|start now|talk to|hubungi|konsultasi|chat with/i;
+const CTA_HREF = /wa\.me\/|api\.whatsapp\.com|whatsapp:/i;
+const BASELINE_FILE = "baseline.json";
+
+// Runs in the page. Header: <header>, [role=banner], or a <nav> that comes before <main> in document order
+// (article layouts carry the site navigation in a bare <nav>). Footer: <footer> or [role=contentinfo].
+// Main CTA: a link or button whose text, aria-label or WhatsApp href matches, inside <main> or the header area.
+function readLandmarks({ ctaText, ctaHref }) {
+  const textRe = new RegExp(ctaText, "i");
+  const hrefRe = new RegExp(ctaHref, "i");
+  const main = document.querySelector("main");
+  const before = (el) => main && !el.contains(main) && !main.contains(el) && Boolean(el.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const headerEl = document.querySelector("header") ? "header" : document.querySelector("[role=banner]") ? "[role=banner]" : null;
+  const navs = [...document.querySelectorAll("nav")].filter(before);
+  const headerVia = headerEl || (navs.length ? "nav" : null);
+  const scopes = [main, ...document.querySelectorAll("header, [role=banner]"), ...navs].filter(Boolean);
+  let cta = null;
+  for (const scope of scopes) {
+    for (const el of scope.querySelectorAll("a, button")) {
+      const label = `${el.textContent || ""} ${el.getAttribute("aria-label") || ""}`.replace(/\s+/g, " ").trim();
+      if (textRe.test(label) || hrefRe.test(el.getAttribute("href") || "")) {
+        cta = label.slice(0, 40) || (el.getAttribute("href") || "").slice(0, 40);
+        break;
+      }
+    }
+    if (cta) break;
+  }
+  return { header: Boolean(headerVia), headerVia, footer: Boolean(document.querySelector("footer, [role=contentinfo]")), cta };
+}
 
 export async function checkPage(browser, urlPath, prNumber, idx, origin = PUBLIC_ORIGIN) {
   const url = new URL(urlPath, origin).toString();
@@ -370,16 +404,13 @@ export async function checkPage(browser, urlPath, prNumber, idx, origin = PUBLIC
     });
     page.on("pageerror", (e) => consoleErrors.push(`pageerror: ${String(e.message).slice(0, 160)}`));
     const shot = path.join(OUT, `PR${prNumber}${idx ? `_u${idx + 1}` : ""}_${vp.name}.png`);
-    const v = { viewport: vp.name, url, status: null, header: false, footer: false, cta: null, consoleErrors, shot: null, navError: null, network: false };
+    const v = { viewport: vp.name, route: urlPath, url, status: null, header: false, headerVia: null, footer: false, cta: null, consoleErrors, shot: null, navError: null, network: false };
     try {
       const resp = await page.goto(url, { waitUntil: "load", timeout: 45_000 });
       v.status = resp ? resp.status() : null;
       v.finalUrl = page.url();
       await page.waitForTimeout(2_500); // let hydration and late console errors land
-      v.header = (await page.locator("header, [role=banner]").count()) > 0;
-      v.footer = (await page.locator("footer, [role=contentinfo]").count()) > 0;
-      const cta = page.locator("main a, main button, header a, header button").filter({ hasText: CTA_TEXT }).first();
-      v.cta = (await cta.count()) > 0 ? (await cta.innerText()).trim().slice(0, 40) : null;
+      Object.assign(v, await page.evaluate(readLandmarks, { ctaText: CTA_TEXT.source, ctaHref: CTA_HREF.source }));
       await page.screenshot({ path: shot, fullPage: true });
       v.shot = path.basename(shot);
     } catch (e) {
@@ -392,22 +423,76 @@ export async function checkPage(browser, urlPath, prNumber, idx, origin = PUBLIC
   return views;
 }
 
-export function judgeViews(views) {
+// ---------------------------------------------------------------------------------------------------------------
+// landmark baseline: what each route showed on the previous run
+
+// { version, updatedAt, routes: { "<path>": { "<viewport>": { header, footer, checkedAt } } } } or null.
+export function readBaseline(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return { baseline: null, note: "tidak ada (run pertama atau cache kosong)" };
+  }
+  try {
+    const b = JSON.parse(raw);
+    if (!b || typeof b.routes !== "object" || b.routes === null) throw new Error("tanpa routes");
+    return { baseline: b, note: `${Object.keys(b.routes).length} rute, diperbarui ${b.updatedAt || "?"}` };
+  } catch (e) {
+    return { baseline: null, note: `tidak terbaca (${String(e.message).slice(0, 80)}) — diperlakukan sebagai run pertama` };
+  }
+}
+
+// Only views that actually rendered the page (no navigation error, status < 400) say anything about landmarks.
+function measurable(v) {
+  return !v.navError && v.status !== null && v.status < 400;
+}
+
+// The next baseline: the previous one, with every route/viewport measured this run overwritten.
+// Judgement always uses the previous baseline, never a value written earlier in the same run.
+export function nextBaseline(prev, views, today) {
+  const routes = structuredClone(prev?.routes || {});
+  for (const v of views) {
+    if (!v.route || !measurable(v)) continue;
+    routes[v.route] = { ...(routes[v.route] || {}), [v.viewport]: { header: v.header, footer: v.footer, checkedAt: today } };
+  }
+  return { version: 1, updatedAt: today, routes };
+}
+
+const LANDMARKS = [
+  ["header", "header (<header>/[role=banner]/<nav> sebelum <main>)"],
+  ["footer", "footer (<footer>/[role=contentinfo])"],
+];
+
+export function judgeViews(views, baseline = null) {
   if (views.some((v) => v.network)) {
-    return { verdict: V.UNMEASURED, reason: "jaringan runner tidak menjangkau balizero.com" };
+    return { verdict: V.UNMEASURED, reason: "jaringan runner tidak menjangkau balizero.com", notes: [] };
   }
   const fails = [];
+  const notes = [];
   for (const v of views) {
-    const tag = v.viewport;
-    if (v.navError) fails.push(`${tag}: navigasi gagal (${v.navError})`);
-    else {
-      if (v.status === null || v.status >= 400) fails.push(`${tag}: HTTP ${v.status}`);
-      if (!v.header) fails.push(`${tag}: <header> hilang`);
-      if (!v.footer) fails.push(`${tag}: <footer> hilang`);
-      if (v.consoleErrors.length) fails.push(`${tag}: ${v.consoleErrors.length} console error ("${v.consoleErrors[0].slice(0, 80)}")`);
+    const tag = views.some((o) => o.route !== v.route) ? `${v.route} ${v.viewport}` : v.viewport;
+    if (v.navError) {
+      fails.push(`${tag}: navigasi gagal (${v.navError})`);
+      continue;
+    }
+    if (v.status === null || v.status >= 400) {
+      fails.push(`${tag}: HTTP ${v.status}`); // an error page's landmarks say nothing about the page
+      continue;
+    }
+    if (v.consoleErrors.length) fails.push(`${tag}: ${v.consoleErrors.length} console error ("${v.consoleErrors[0].slice(0, 80)}")`);
+    if (!v.cta) fails.push(`${tag}: CTA utama hilang`);
+    const before = baseline?.routes?.[v.route]?.[v.viewport];
+    for (const [key, label] of LANDMARKS) {
+      if (v[key]) continue;
+      if (before?.[key] === true) fails.push(`${tag}: ${label} hilang — ada di baseline ${before.checkedAt || "?"}`);
+      else if (before) notes.push(`${tag}: ${label} hilang — sudah hilang di baseline ${before.checkedAt || "?"}`);
+      else notes.push(`${tag}: ${label} hilang — belum ada baseline untuk rute ini`);
     }
   }
-  return fails.length ? { verdict: V.REG, reason: fails.join("; ") } : { verdict: V.OK, reason: "" };
+  if (fails.length) return { verdict: V.REG, reason: fails.join("; "), notes };
+  if (notes.length) return { verdict: V.NOTE, reason: "", notes };
+  return { verdict: V.OK, reason: "", notes };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -437,11 +522,11 @@ function ancestryFor(pr, c, served) {
 // g. report
 
 function renderReport(ctx) {
-  const { rows, served, ctrl, today, totalMerged, skipped, source } = ctx;
+  const { rows, served, ctrl, today, totalMerged, skipped, source, baselineInfo } = ctx;
   const count = (v) => rows.filter((r) => r.verdict === v).length;
   const head =
     `**Verifikator live ${today}** — ${rows.length} PR diperiksa (dari ${totalMerged} merged ${DAYS} hari terakhir) · ` +
-    `${V.OK} ${count(V.OK)} · ${V.REG} ${count(V.REG)} · ${V.NOT_SERVED} ${count(V.NOT_SERVED)} · ` +
+    `${V.OK} ${count(V.OK)} · ${V.NOTE} ${count(V.NOTE)} · ${V.REG} ${count(V.REG)} · ${V.NOT_SERVED} ${count(V.NOT_SERVED)} · ` +
     `${V.NO_SCREEN} ${count(V.NO_SCREEN)} · ${V.UNMEASURED} ${count(V.UNMEASURED)} · ` +
     `frontend \`${short(served.frontend)}\` · backend build_sha \`${short(served.backend)}\``;
   const lines = [head, ""];
@@ -449,15 +534,23 @@ function renderReport(ctx) {
   for (const r of rows) {
     lines.push(`| #${r.number} | ${cell(r.title)} | ${cell(r.urls.join("<br>") || "—")} | ${cell(r.ancestry)} | **${r.verdict}** | ${cell(r.evidence)} |`);
   }
+  const noted = rows.filter((r) => r.notes?.length);
+  lines.push("", "**Catatan**");
+  if (!noted.length) lines.push("- tidak ada landmark yang hilang tanpa baseline atau yang memang sudah hilang sebelumnya");
+  else {
+    lines.push("_Landmark yang hilang tetapi tidak baru hilang (sudah hilang di baseline, atau rute belum punya baseline). Bukan regresi PR ini; backlog perbaikan layout._");
+    for (const r of noted) for (const n of r.notes) lines.push(`- #${r.number}: ${n}`);
+  }
   lines.push("", "**Kontrol ancestry**");
   for (const c of ctrl) lines.push(`- ${c.name}: ${c.ok === null ? "tidak terukur" : c.ok ? "lulus" : "GAGAL"} (${c.note})`);
   lines.push("", "**Sumber**");
   lines.push(`- frontend commit: \`${served.frontend || "—"}\` dari ${served.frontendSource || "— (gagal)"}`);
   lines.push(`- backend build_sha: \`${served.backend || "—"}\` dari ${served.backendSource || "— (gagal)"}`);
   for (const e of served.errors) lines.push(`- health tidak terjangkau dari host ini: ${e}`);
+  lines.push(`- baseline landmark: ${baselineInfo.before} → ${baselineInfo.after}`);
   lines.push(`- daftar PR: ${source}${SKIP_BROWSER ? " · browser dilewati (VERIFIKATOR_SKIP_BROWSER=1)" : ""}`);
   if (skipped.length) lines.push(`- ${skipped.length} PR merged lain di luar batas ${MAX_PRS} (prioritas rendah): ${skipped.map((p) => `#${p.number}`).join(", ")}`);
-  lines.push("", "_Verdict mesin: status, header, footer, console. Apakah halaman benar secara isi tetap dicek manusia lewat screenshot di artifact._");
+  lines.push("", "_Verdict mesin: status, console, CTA utama, header, footer (landmark dibandingkan dengan baseline). Apakah halaman benar secara isi tetap dicek manusia lewat screenshot di artifact._");
   return lines.join("\n") + "\n";
 }
 
@@ -469,13 +562,15 @@ async function createTodoistTask(ctx, reportUrl) {
   if (!token) return "TODOIST_API_TOKEN tidak ada — task dilewati";
   const { rows, today, served } = ctx;
   const regs = rows.filter((r) => r.verdict === V.REG);
+  const notes = rows.flatMap((r) => (r.notes || []).map((n) => `#${r.number} ${n}`));
   const count = (v) => rows.filter((r) => r.verdict === v).length;
   const desc = [
-    `PR diperiksa: ${rows.length} · OK ${count(V.OK)} · REGRESI ${regs.length} · BELUM TERSAJI ${count(V.NOT_SERVED)} · TIDAK BERWUJUD LAYAR ${count(V.NO_SCREEN)} · BELUM DIUKUR ${count(V.UNMEASURED)}`,
+    `PR diperiksa: ${rows.length} · OK ${count(V.OK)} · CATATAN ${count(V.NOTE)} · REGRESI ${regs.length} · BELUM TERSAJI ${count(V.NOT_SERVED)} · TIDAK BERWUJUD LAYAR ${count(V.NO_SCREEN)} · BELUM DIUKUR ${count(V.UNMEASURED)}`,
     `Frontend ${short(served.frontend)} · backend build_sha ${short(served.backend)}`,
     regs.length ? "REGRESI:" : "REGRESI: tidak ada",
     ...regs.slice(0, 8).map((r) => `- #${r.number} ${r.urls[0] || ""}: ${r.evidence.slice(0, 120)}`),
     regs.length > 8 ? `- +${regs.length - 8} lainnya di laporan` : null,
+    notes.length ? `Catatan landmark (bukan regresi): ${notes.length}, mis. ${notes[0].slice(0, 110)}` : null,
     `Run: ${reportUrl}`,
     "Screenshot ada di artifact run. Cek isi halaman tetap manual.",
   ].filter(Boolean).slice(0, 15);
@@ -485,7 +580,7 @@ async function createTodoistTask(ctx, reportUrl) {
     description: desc.join("\n"),
     project_id: TODOIST_PROJECT,
     labels: ["Bali-Zero"],
-    priority: regs.length ? 4 : 3, // API: 4 = p1, 3 = p2
+    priority: regs.length ? 4 : 3, // API: 4 = p1, 3 = p2. p1 only on REGRESI; CATATAN alone stays p2.
     due_datetime: `${today}T08:00:00Z`,
   };
   const res = await fetch("https://api.todoist.com/api/v1/tasks", {
@@ -524,6 +619,10 @@ async function main() {
   const picked = hydrated.slice(0, MAX_PRS);
   const skipped = listed.filter((p) => !picked.some((x) => x.pr.number === p.number));
 
+  const baselineFile = path.join(OUT, BASELINE_FILE);
+  const { baseline, note: baselineNote } = readBaseline(baselineFile);
+  const measuredViews = [];
+
   const served = await servedCommits();
   const ctrl = controls(served);
   const ancestryTrusted = ctrl.every((c) => c.ok !== false);
@@ -547,7 +646,7 @@ async function main() {
     // A PR-body URL is used only as the concrete instance of one of the PR's own dynamic routes.
     const bodyU = bodyUrls(pr.body).filter((u) => c.routes.publicDynamic.some((r) => routePattern(r).test(u.split("?")[0])));
     const urls = [...new Set([...c.routes.publicStatic, ...bodyU])].slice(0, MAX_URLS_PER_PR);
-    const row = { number: pr.number, title: pr.title, urls: [], ancestry: anc.text, verdict: V.UNMEASURED, evidence: "" };
+    const row = { number: pr.number, title: pr.title, urls: [], ancestry: anc.text, verdict: V.UNMEASURED, evidence: "", notes: [] };
 
     if (!ancestryTrusted) {
       row.evidence = "kontrol ancestry gagal — ancestry tidak dipercaya";
@@ -572,8 +671,10 @@ async function main() {
       } else {
         const allViews = [];
         for (let i = 0; i < urls.length; i++) allViews.push(...(await checkPage(b, urls[i], pr.number, i)));
-        const j = judgeViews(allViews);
+        measuredViews.push(...allViews);
+        const j = judgeViews(allViews, baseline);
         row.verdict = j.verdict;
+        row.notes = j.notes;
         if (j.verdict === V.UNMEASURED) {
           row.evidence = j.reason;
         } else {
@@ -581,7 +682,9 @@ async function main() {
           const stat = allViews.map((v) => `${v.viewport} ${v.status ?? "—"}`).join(", ");
           const cta = allViews.find((v) => v.cta)?.cta;
           const moved = [...new Set(allViews.filter((v) => v.finalUrl && v.finalUrl !== v.url).map((v) => `→ ${new URL(v.finalUrl).pathname}`))];
-          row.evidence = [j.reason, `status ${stat}`, ...moved, `CTA: ${cta ? `"${cta}"` : "tidak terdeteksi"}`, shots.join(", ") || null].filter(Boolean).join(" · ");
+          const navHeader = allViews.some((v) => v.headerVia === "nav") ? "header = <nav> sebelum <main>" : null;
+          const noteRef = j.notes.length ? `${j.notes.length} catatan landmark (lihat Catatan)` : null;
+          row.evidence = [j.reason, `status ${stat}`, ...moved, `CTA: ${cta ? `"${cta}"` : "tidak terdeteksi"}`, navHeader, noteRef, shots.join(", ") || null].filter(Boolean).join(" · ");
         }
       }
     }
@@ -589,7 +692,11 @@ async function main() {
   }
   if (browser) await browser.close();
 
-  const ctx = { rows, served, ctrl, today, totalMerged, skipped, source };
+  const next = nextBaseline(baseline, measuredViews, today);
+  fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + "\n");
+  const baselineInfo = { before: baselineNote, after: `${Object.keys(next.routes).length} rute ditulis ke ${BASELINE_FILE}` };
+
+  const ctx = { rows, served, ctrl, today, totalMerged, skipped, source, baselineInfo };
   const report = renderReport(ctx);
   fs.writeFileSync(path.join(OUT, "report.md"), report);
   fs.writeFileSync(path.join(OUT, "report.json"), JSON.stringify({ ...ctx, skipped: skipped.map((p) => p.number) }, null, 2));
