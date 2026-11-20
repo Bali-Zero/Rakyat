@@ -21,7 +21,7 @@ from pydantic import BaseModel, field_validator
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
-from backend.app.utils.client_pools import can_write_client
+from backend.app.utils.client_pools import can_manage_client_tax_documents, can_write_client
 from backend.app.utils.crm_utils import (
     AvatarUrl,
     can_create_company,
@@ -1163,6 +1163,12 @@ async def get_client_profile(
         viewer_can_write = can_write_client(
             current_user, client.get("assigned_to"), client.get("created_by")
         )
+        viewer_can_manage_tax_documents = can_manage_client_tax_documents(
+            current_user,
+            client.get("assigned_to"),
+            client.get("created_by"),
+            client.get("tax_consultant"),
+        )
         client = {k: v for k, v in dict(client).items() if k != "created_by"}
 
         # Get family members
@@ -1403,6 +1409,7 @@ async def get_client_profile(
             "client": dict(client),
             "viewer_can_write": viewer_can_write,
             "viewer_can_create_company": can_create_company(current_user),
+            "viewer_can_manage_tax_documents": viewer_can_manage_tax_documents,
             "family_members": [dict(fm) for fm in family_members],
             "documents": documents_out,
             "expiry_alerts": [dict(a) for a in expiry_alerts],

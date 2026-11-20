@@ -1883,3 +1883,12 @@ main,
 .rumah-putih .rp-dark-island .text-white\/90 {
   color: rgba(255, 255, 255, 0.88) !important;
 }
+
+/* Native modal <dialog> scroll containment (prevents scroll chaining to the page behind). */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}

@@ -141,3 +141,30 @@ def can_edit_company(
             owners.add((row[key] or "").strip().lower())
     owners.discard("")
     return bool(owners & caller_pool_peers(current_user))
+
+
+def can_manage_client_tax_documents(
+    current_user: dict[str, Any],
+    assigned_to: str | None,
+    created_by: str | None,
+    tax_consultant: str | None,
+) -> bool:
+    """Write rule for a client's Tax Documents (Drive): CRM admin, else an associated human team member.
+
+    Associated = the caller or one of their validated client-pool peers is the client's
+    ``assigned_to`` (Setup), ``tax_consultant``, or ``created_by``. Machine principals and
+    portal/external roles never manage tax documents.
+    """
+    from backend.app.utils.crm_utils import is_crm_admin
+
+    if is_crm_admin(current_user):
+        return True
+    if not is_human_team_member((current_user or {}).get("role")):
+        return False
+    owners = {
+        (assigned_to or "").strip().lower(),
+        (created_by or "").strip().lower(),
+        (tax_consultant or "").strip().lower(),
+    }
+    owners.discard("")
+    return bool(owners & caller_pool_peers(current_user))

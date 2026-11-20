@@ -1,4 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type {
@@ -17,7 +23,14 @@ vi.mock("@/lib/api", () => ({
   api: {
     getProfile: vi.fn().mockResolvedValue({ email: "tester@example.test" }),
     drive: { listFiles: vi.fn() },
-    crm: { getCompanyDriveSources: vi.fn(), updateClient: vi.fn() },
+    crm: {
+      getCompanyDriveSources: vi.fn(),
+      updateClient: vi.fn(),
+      uploadClientTaxDocument: vi.fn().mockResolvedValue({ success: true }),
+      renameClientTaxDocument: vi.fn().mockResolvedValue({ success: true }),
+      replaceClientTaxDocument: vi.fn().mockResolvedValue({ success: true }),
+      deleteClientTaxDocument: vi.fn().mockResolvedValue({ success: true }),
+    },
   },
 }));
 vi.mock("@/lib/api/workspace/lkpm.api", () => ({
@@ -67,6 +80,10 @@ const url = (id: string) => `https://drive.google.com/drive/folders/${id}`;
 beforeEach(() => {
   listFiles.mockReset();
   driveSources.mockReset();
+  vi.mocked(api.crm.uploadClientTaxDocument).mockClear();
+  vi.mocked(api.crm.renameClientTaxDocument).mockClear();
+  vi.mocked(api.crm.replaceClientTaxDocument).mockClear();
+  vi.mocked(api.crm.deleteClientTaxDocument).mockClear();
 });
 
 describe("TaxDocumentsSection — personal block", () => {
@@ -291,5 +308,80 @@ describe("TaxDocumentsSection — legacy company tax folder", () => {
 
     await screen.findByText("pph.pdf");
     expect(listedIds()).not.toContain("LEGACY_9");
+  });
+});
+
+describe("TaxDocumentsSection — write permissions for associated team members", () => {
+  it("hides Upload / Edit / Delete when canManage is false or omitted", async () => {
+    drive({
+      FOLDER_123: [folder("TAX_NEW", "03_Company_and_Tax")],
+      TAX_NEW: [file("FILE_1", "spt.pdf")],
+    });
+    render(
+      <TaxDocumentsSection
+        clientFolderId="FOLDER_123"
+        clientId={7}
+        canManage={false}
+      />,
+    );
+
+    await screen.findByText("spt.pdf");
+    expect(screen.queryByRole("button", { name: /^Upload$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit spt.pdf" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete spt.pdf" })).toBeNull();
+  });
+
+  it("enables Upload, Edit and Delete on personal and company tax folders when canManage is true", async () => {
+    driveSources.mockResolvedValue(
+      sources(9, [{ url: url("TAXDEPT_9"), kinds: ["restricted_tax"] }]),
+    );
+    drive({
+      FOLDER_123: [folder("TAX_NEW", "03_Company_and_Tax")],
+      TAX_NEW: [file("FILE_P1", "personal-spt.pdf")],
+      TAXDEPT_9: [file("FILE_C1", "company-spt.pdf")],
+    });
+
+    render(
+      <TaxTab
+        clientId={7}
+        formatDate={(d) => d}
+        client={{ id: 7, google_drive_folder_id: "FOLDER_123" } as Client}
+        companyLinks={[link(9, "PT Nine")]}
+        taxConsultants={[]}
+        now={new Date("2026-11-16T00:00:00Z")}
+        canManageDocuments
+      />,
+    );
+
+    await screen.findByText("personal-spt.pdf");
+    await screen.findByText("company-spt.pdf");
+
+    // Upload into personal tax folder
+    const uploadInput = screen.getByLabelText(
+      "Upload document to 03_Company_and_Tax",
+    );
+    const pdf = new File(["%PDF-1.4"], "bpe-2025.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(uploadInput, { target: { files: [pdf] } });
+    await waitFor(() =>
+      expect(api.crm.uploadClientTaxDocument).toHaveBeenCalledWith(
+        7,
+        "TAX_NEW",
+        pdf,
+      ),
+    );
+
+    // Delete from linked company tax folder
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete company-spt.pdf" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() =>
+      expect(api.crm.deleteClientTaxDocument).toHaveBeenCalledWith(
+        7,
+        "FILE_C1",
+      ),
+    );
   });
 });
