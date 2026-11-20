@@ -5,8 +5,12 @@ does, the invoice shows the tax base (DPP = quoted price − discount), the with
 and the amount the client must transfer (DPP − PPh). Without it the invoice is exactly
 what the system issued before.
 
+The amounts persisted follow the accounting contract of migration 238:
+``invoices.amount_idr`` is the gross DPP and ``invoices.pph_expected_idr`` the PPh, so
+the matcher reads a transfer of DPP − PPh as "net of PPh".
+
 One module so the CRM router (validation), the invoice service (amounts persisted to
-``invoices.amount_idr``) and the PDF generator (label) cannot drift apart.
+``invoices``) and the PDF generator (label) cannot drift apart.
 """
 
 from __future__ import annotations
@@ -62,13 +66,8 @@ def validate_pph(type_: str, rate_percent: Decimal) -> PphWithholding:
     return PphWithholding(type=type_, rate_percent=rate_percent)
 
 
-def pph_from_metadata(metadata: Any, *, practice_id: int | None = None) -> PphWithholding | None:
-    """Read ``metadata.pph`` from a practice row; ``None`` when absent.
-
-    The CRM router validates every write, so an unreadable value can only come
-    from a hand edit: it is logged and ignored (the invoice is issued without
-    PPh, as before this feature) rather than blocking billing.
-    """
+def _metadata_dict(metadata: Any) -> dict | None:
+    """``practices.metadata`` as a dict (it may arrive as JSON, even double-encoded)."""
     if isinstance(metadata, str):
         try:
             metadata = json.loads(metadata)
@@ -76,7 +75,28 @@ def pph_from_metadata(metadata: Any, *, practice_id: int | None = None) -> PphWi
                 metadata = json.loads(metadata)
         except (TypeError, ValueError):
             return None
-    if not isinstance(metadata, dict):
+    return metadata if isinstance(metadata, dict) else None
+
+
+def pph_on_record(metadata: Any) -> bool:
+    """True when the process has or had a PPh (``metadata.pph`` or ``metadata.pph_log``).
+
+    The invoice service then also writes ``invoices.pph_expected_idr``, so a PPh
+    cleared after a first invoice is reset to 0 when the invoice is issued again.
+    """
+    metadata = _metadata_dict(metadata)
+    return bool(metadata) and ("pph" in metadata or bool(metadata.get("pph_log")))
+
+
+def pph_from_metadata(metadata: Any, *, practice_id: int | None = None) -> PphWithholding | None:
+    """Read ``metadata.pph`` from a practice row; ``None`` when absent.
+
+    The CRM router validates every write, so an unreadable value can only come
+    from a hand edit: it is logged and ignored (the invoice is issued without
+    PPh, as before this feature) rather than blocking billing.
+    """
+    metadata = _metadata_dict(metadata)
+    if metadata is None:
         return None
     raw = metadata.get("pph")
     if raw is None:

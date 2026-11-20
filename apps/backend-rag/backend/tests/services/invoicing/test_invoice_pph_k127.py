@@ -2,8 +2,8 @@
 
 Guard: a Tax Lead sets PPh 23 2% on a 2,500,000 process through the CRM API; the
 invoice then prints the tax base, the withheld PPh and TOTAL DUE 2,450,000, and
-``invoices.amount_idr`` is 2,450,000 (what the client actually transfers, so the
-unpaid notifier's ``amount_idr - paid_amount_idr`` is 0 once they pay).
+``invoices.amount_idr`` is the gross 2,500,000 with the PPh in ``pph_expected_idr``
+(the accounting contract of migration 238; see test_invoice_pph_gross_contract.py).
 
 Innocence: a process without PPh issues the same invoice and amount as before.
 Email, Drive and the database are mocked; every name and address is synthetic.
@@ -23,6 +23,7 @@ from pypdf import PdfReader
 from backend.services.invoicing.entities import ENTITIES
 from backend.services.invoicing.invoice_generator import _REPORTLAB_AVAILABLE
 from backend.services.invoicing.invoice_service import (
+    _INVOICE_UPSERT_PPH_SQL,
     _INVOICE_UPSERT_SQL,
     InvoiceAutomationService,
     InvoiceIssuerDecision,
@@ -114,7 +115,11 @@ async def _issue_invoice(
         result = await service.trigger_on_sending_invoice(7, "agent@example.test")
 
     assert result["success"] is True, result
-    upsert = next(c.args for c in conn.fetchrow.await_args_list if c.args[0] is _INVOICE_UPSERT_SQL)
+    upsert = next(
+        c.args
+        for c in conn.fetchrow.await_args_list
+        if c.args[0] in (_INVOICE_UPSERT_SQL, _INVOICE_UPSERT_PPH_SQL)
+    )
     documents = conn.execute.await_args_list[0].args[1]
     return {
         "text": _pdf_text(drive.upload_file_to_folder.await_args.kwargs["file_content"]),
@@ -193,7 +198,7 @@ async def test_guard_tax_lead_pph23_2_percent_on_2_5_million():
     assert "Tax PPh 23 2%\n − IDR 50,000" in text
     assert "TOTAL DUE\n IDR 2,450,000" in text
     assert "Amount in words: Two million four hundred fifty thousand Rupiah" in text
-    assert issued["amount_idr"] == 2_450_000
+    assert issued["amount_idr"] == 2_500_000
     assert issued["client_email_amount"] == issued["accounting_amount"] == 2_450_000
     assert issued["invoice_doc"]["pph"] == {
         "dpp": 2_500_000,
@@ -213,7 +218,7 @@ async def test_discount_and_pph_use_the_post_discount_base():
     assert "Subtotal before tax\n IDR 2,500,000\nTax PPh 23 2%\n − IDR 50,000" in text
     assert "60,000" not in text, "PPh must not be computed on the pre-discount price"
     assert "TOTAL DUE\n IDR 2,450,000" in text
-    assert issued["amount_idr"] == 2_450_000
+    assert issued["amount_idr"] == 2_500_000
     assert issued["discount_amount_idr"] == 500_000
 
 
@@ -225,13 +230,13 @@ async def test_pph_rounds_half_up_to_the_rupiah():
     )
     assert "Tax PPh 23 2%\n − IDR 24,691" in issued["text"]
     assert "TOTAL DUE\n IDR 1,209,876" in issued["text"]
-    assert issued["amount_idr"] == 1_209_876
+    assert issued["amount_idr"] == 1_234_567
 
     issued = await _issue_invoice(
         quoted=1_000_025, metadata={"pph": {"type": "PPH23", "rate_percent": 2}}
     )
     assert "Tax PPh 23 2%\n − IDR 20,001" in issued["text"]
-    assert issued["amount_idr"] == 980_024
+    assert issued["amount_idr"] == 1_000_025
 
 
 @pytest.mark.asyncio
@@ -240,13 +245,13 @@ async def test_other_types_and_decimal_rates_label_the_row():
         quoted=2_000_000, metadata={"pph": {"type": "PPH21", "rate_percent": 2.5}}
     )
     assert "Tax PPh 21 2.5%" in issued["text"]
-    assert issued["amount_idr"] == 1_950_000
+    assert issued["amount_idr"] == 2_000_000
 
     issued = await _issue_invoice(
         quoted=2_000_000, metadata={"pph": {"type": "PPH4_2", "rate_percent": 10}}
     )
     assert "Tax PPh 4(2) 10%" in issued["text"]
-    assert issued["amount_idr"] == 1_800_000
+    assert issued["amount_idr"] == 2_000_000
 
 
 # ---------------------------------------------------------------------------

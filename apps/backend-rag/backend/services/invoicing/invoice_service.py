@@ -40,7 +40,7 @@ from backend.services.invoicing.entities import (
 )
 from backend.services.invoicing.invoice_company import fetch_bill_to
 from backend.services.invoicing.invoice_generator import InvoiceGenerator
-from backend.services.invoicing.pph import PphWithholding, pph_from_metadata
+from backend.services.invoicing.pph import PphWithholding, pph_from_metadata, pph_on_record
 from backend.services.notifications.email_audit import (
     format_send_error,
     log_email_attempt,
@@ -150,14 +150,43 @@ WHERE (existing.issuer_entity_key IS NULL AND existing.issuer_routed_at IS NULL 
 RETURNING issuer_entity_key, issuer_routed_at
 """
 
+# K127: _INVOICE_UPSERT_SQL plus invoices.pph_expected_idr ($15, migration 238), in the
+# INSERT and in DO UPDATE so a PPh cleared on the process is reset to 0 on re-issue.
+# Used only for a process that has or had a PPh (see _persist_invoice); on 42703 the
+# write falls back to the two variants above, exactly as a process without PPh.
+_INVOICE_UPSERT_PPH_SQL = """
+INSERT INTO invoices AS existing (
+    practice_id, client_id, invoice_number, invoice_source, amount_idr,
+    discount_amount_idr, drive_file_id, drive_web_link, email_sent_to_client,
+    accounting_notified, generated_at, issuer_entity_key, issuer_routed_at, pph_expected_idr
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $15)
+ON CONFLICT (practice_id) DO UPDATE SET
+    invoice_number = EXCLUDED.invoice_number, invoice_source = EXCLUDED.invoice_source,
+    amount_idr = EXCLUDED.amount_idr, discount_amount_idr = EXCLUDED.discount_amount_idr,
+    pph_expected_idr = EXCLUDED.pph_expected_idr,
+    drive_file_id = EXCLUDED.drive_file_id, drive_web_link = EXCLUDED.drive_web_link,
+    email_sent_to_client = EXCLUDED.email_sent_to_client,
+    accounting_notified = EXCLUDED.accounting_notified, generated_at = EXCLUDED.generated_at,
+    issuer_entity_key = COALESCE(existing.issuer_entity_key, EXCLUDED.issuer_entity_key),
+    issuer_routed_at = CASE WHEN existing.issuer_entity_key IS NULL THEN EXCLUDED.issuer_routed_at ELSE existing.issuer_routed_at END,
+    updated_at = NOW()
+WHERE (existing.issuer_entity_key IS NULL AND existing.issuer_routed_at IS NULL AND EXCLUDED.issuer_entity_key = $14)
+   OR (existing.issuer_entity_key = EXCLUDED.issuer_entity_key AND existing.issuer_routed_at IS NOT NULL)
+RETURNING issuer_entity_key, issuer_routed_at
+"""
 
-def _row_pph(practice_row: Any, practice_id: int) -> PphWithholding | None:
-    """The PPh on a practice row; rows read without ``metadata`` have none."""
+
+def _row_pph(practice_row: Any, practice_id: int) -> tuple[PphWithholding | None, bool]:
+    """The PPh on a practice row, and whether the process has or ever had one.
+
+    Rows read without ``metadata`` have none. ``metadata.pph_log`` survives a cleared
+    PPh, so a re-issue after clearing still resets ``invoices.pph_expected_idr``.
+    """
     try:
         metadata = practice_row.get("metadata")
     except (AttributeError, KeyError, TypeError):
-        return None
-    return pph_from_metadata(metadata, practice_id=practice_id)
+        return None, False
+    return pph_from_metadata(metadata, practice_id=practice_id), pph_on_record(metadata)
 
 
 class InvoiceAutomationService:
@@ -248,8 +277,9 @@ class InvoiceAutomationService:
                     discount_amount_float = quoted_price_float
                 dpp_float = quoted_price_float - discount_amount_float
                 # K127: optional PPh chosen by the tax team (practices.metadata.pph).
-                # The client transfers DPP - PPh, so that is TOTAL DUE, the email
-                # amount and invoices.amount_idr (see _persist_invoice).
+                # The client transfers DPP - PPh, so that is TOTAL DUE and the email
+                # amount. invoices.amount_idr stays the gross DPP and the PPh goes to
+                # invoices.pph_expected_idr (see _persist_invoice).
                 pph = pph_from_metadata(practice_data.get("metadata"), practice_id=practice_id)
                 pph_amount = pph.amount_on(dpp_float) if pph else 0
                 final_amount_float = dpp_float - pph_amount
@@ -885,19 +915,20 @@ class InvoiceAutomationService:
             except (AttributeError, KeyError, TypeError):
                 discount = 0.0
             discount = max(0.0, min(discount, quoted))
-            # amount_idr stores what the client must pay: the post-discount total, less
-            # the PPh it withholds when the tax team chose one (K127) — the TOTAL DUE on
-            # the PDF. Outstanding = amount_idr - paid_amount_idr (unpaid notifier,
-            # portal billing, reconciliation) stays right for a client that withholds.
-            # discount_amount_idr mirrors the discount.
-            pph = _row_pph(practice_row, practice_id)
-            payable = quoted - discount - (pph.amount_on(quoted - discount) if pph else 0)
+            # amount_idr stores the post-discount total (DPP): gross, with or without
+            # PPh. discount_amount_idr mirrors the discount. A PPh the client withholds
+            # (K127) goes to pph_expected_idr (migration 238), the accounting contract:
+            # the matcher reads a transfer of amount_idr - pph_expected_idr as "net of
+            # PPh" (services/accounting/matcher.py _amount_signals) and outstanding is
+            # amount_idr - pph_expected_idr - paid. TOTAL DUE on the PDF is that net.
+            pph, pph_tracked = _row_pph(practice_row, practice_id)
+            pph_expected = pph.amount_on(quoted - discount) if pph else 0
             args = (
                 practice_id,
                 practice_row["client_id"],
                 invoice_info.get("invoice_number") or None,
                 invoice_info.get("source", "local_pdf"),
-                payable,
+                quoted - discount,
                 discount,
                 invoice_info.get("invoice_drive_id") or None,
                 invoice_info.get("invoice_drive_link") or None,
@@ -908,25 +939,47 @@ class InvoiceAutomationService:
                 issuer_decision.routed_at,
                 DEFAULT_ENTITY_KEY,
             )
-            try:
-                persisted = await conn.fetchrow(_INVOICE_UPSERT_SQL, *args)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if getattr(exc, "sqlstate", None) != "42703":
-                    raise InvoiceIssuerPersistenceError(
-                        "write_failed", getattr(exc, "sqlstate", None)
-                    ) from None
-                # Fallback for databases without migration 158 (discount_amount_idr).
-                pre158_args = (*args[:5], *args[6:])
+            pph_written = False
+            if pph_tracked:
+                # A process that has (or had) a PPh also writes pph_expected_idr. A
+                # process that never had one keeps the write below unchanged, so its
+                # pph_expected_idr stays the column default 0.
                 try:
-                    persisted = await conn.fetchrow(_INVOICE_UPSERT_PRE158_SQL, *pre158_args)
+                    persisted = await conn.fetchrow(_INVOICE_UPSERT_PPH_SQL, *args, pph_expected)
+                    pph_written = True
                 except asyncio.CancelledError:
                     raise
-                except Exception as fallback_exc:
-                    raise InvoiceIssuerPersistenceError(
-                        "write_failed", getattr(fallback_exc, "sqlstate", None)
-                    ) from None
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", None) != "42703":
+                        raise InvoiceIssuerPersistenceError(
+                            "write_failed", getattr(exc, "sqlstate", None)
+                        ) from None
+                    logger.warning(
+                        "invoices.pph_expected_idr missing (migration 238): practice %s "
+                        "invoiced without its PPh of %s IDR recorded",
+                        practice_id,
+                        pph_expected,
+                    )
+            if not pph_written:
+                try:
+                    persisted = await conn.fetchrow(_INVOICE_UPSERT_SQL, *args)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", None) != "42703":
+                        raise InvoiceIssuerPersistenceError(
+                            "write_failed", getattr(exc, "sqlstate", None)
+                        ) from None
+                    # Fallback for databases without migration 158 (discount_amount_idr).
+                    pre158_args = (*args[:5], *args[6:])
+                    try:
+                        persisted = await conn.fetchrow(_INVOICE_UPSERT_PRE158_SQL, *pre158_args)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as fallback_exc:
+                        raise InvoiceIssuerPersistenceError(
+                            "write_failed", getattr(fallback_exc, "sqlstate", None)
+                        ) from None
             if persisted is None or persisted["issuer_entity_key"] != issuer_decision.entity.key:
                 raise InvoiceIssuerPersistenceError("issuer_conflict")
             persisted_at = persisted["issuer_routed_at"]
