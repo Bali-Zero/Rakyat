@@ -1,29 +1,37 @@
 "use client";
 
 /**
- * Related-subjects registry — read-only staff page (kita workspace).
+ * Related-subjects registry — staff page (kita workspace).
  *
  * Backend: apps/backend-rag/backend/app/routers/crm_related_registry_read.py,
  * `GET /api/crm/related-registry` and `GET /api/crm/related-registry/{id}`,
+ * and crm_related_link_reviews.py, `POST /api/crm/related-registry/link-reviews`
+ * (a CRM admin confirms a proposed client link or marks it not related),
  * CRM admins only. A non-admin gets a plain 403, shown as "Admin only." and no
  * table. The page has no role check of its own: the server's answer decides.
  *
  * Answers that may update the page: only the latest list request for the
  * current search, kind, client-link filter and offset, and only the detail request for the
  * subject currently selected. A superseded answer, error included, is ignored
- * (the effect cleanup flips a per-request flag). The search text is sent only
+ * (the effect cleanup flips a per-request flag). A saved decision re-reads the
+ * detail through a refresh counter that supersedes every earlier detail request,
+ * and a POST that completes after another subject was opened changes nothing.
+ * The search text is sent only
  * as the query key `q` and is never logged.
  */
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 import {
   getRegistrySubject,
   listRegistry,
+  reviewRegistryLink,
   type RegistryDetail,
   type RegistryKind,
+  type RegistryLink,
   type RegistryLinked,
+  type RegistryReviewRelation,
   type RegistryRow,
 } from "@/lib/api/related-registry/related-registry";
 import { cn } from "@/lib/utils";
@@ -134,6 +142,140 @@ const DETACH_BASIS_MEANINGS: Readonly<Record<string, string>> = {
     "the national id number (NIK) encodes a birth date that differs from this person's, so the number belongs to someone else",
 };
 
+const RELATION_OPTIONS: ReadonlyArray<{
+  value: RegistryReviewRelation;
+  label: string;
+}> = [
+  { value: "self", label: "The client themself" },
+  { value: "spouse", label: "Spouse" },
+  { value: "child", label: "Child" },
+  { value: "employee", label: "Employee" },
+  { value: "other", label: "Other" },
+];
+
+const RELATION_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
+  RELATION_OPTIONS.map((o) => [o.value, o.label]),
+);
+
+/** What each suggestion basis says agrees with the client card. */
+const SUGGESTION_WORDS: Readonly<Record<string, string>> = {
+  passport_equal: "the passport number",
+  passport_one_char_apart: "the passport number (one character apart)",
+  nik_encodes_client_birth_date: "the birth date in the NIK",
+  birth_date_equal: "the birth date",
+};
+
+const SAVE_ERROR = "Could not save the decision.";
+
+function preselectionCaption(basis: readonly string[]): string {
+  const words = basis.flatMap((b) => SUGGESTION_WORDS[b] ?? []);
+  const joined =
+    words.length <= 1
+      ? words.join("")
+      : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+  return `Preselected: the name${joined ? ` and ${joined}` : ""} agree${joined ? "" : "s"} with the client card.`;
+}
+
+function statusLine(review: RegistryLink["review"]): string {
+  if (!review) return "Proposed, not confirmed.";
+  const when = `${review.decided_by}, ${review.decided_at.slice(0, 10)}`;
+  if (review.decision === "rejected") return `Not related — ${when}`;
+  const label = review.relation
+    ? (RELATION_LABELS[review.relation] ?? "—")
+    : "—";
+  return `Confirmed: ${label} — ${when}`;
+}
+
+/**
+ * The decision control of one client: a status line, a relation select and two
+ * buttons. The select starts from the effective confirmation, else from the
+ * server's `self` suggestion when there is no review at all; a rejection is
+ * never contradicted by a preselection. Remounted (keyed) on every new answer.
+ */
+function ReviewControl({
+  link,
+  busy,
+  onDecide,
+}: {
+  link: RegistryLink;
+  busy: boolean;
+  onDecide: (
+    clientId: number,
+    decision: "confirmed" | "rejected",
+    relation?: RegistryReviewRelation,
+  ) => void;
+}) {
+  const review = link.review ?? null;
+  const preselected =
+    !review && link.suggested_relation === "self"
+      ? ("self" as RegistryReviewRelation)
+      : null;
+  const initial: RegistryReviewRelation | null =
+    review?.decision === "confirmed"
+      ? ((review.relation as RegistryReviewRelation | null) ?? null)
+      : preselected;
+  const [choice, setChoice] = useState<RegistryReviewRelation | "">(
+    initial ?? "",
+  );
+  const selectId = `review-relation-${link.client_id}`;
+  return (
+    <div data-testid="registry-review" className="mb-2 mt-1">
+      <p
+        data-testid="registry-review-status"
+        className="text-[12px] text-[var(--tx-secondary)]"
+      >
+        {statusLine(review)}
+      </p>
+      <label htmlFor={selectId} className="sr-only">
+        {`Relation of the subject to client #${link.client_id}`}
+      </label>
+      <select
+        id={selectId}
+        value={choice}
+        disabled={busy}
+        onChange={(e) => setChoice(e.target.value as RegistryReviewRelation)}
+        className={cn(
+          "min-h-11 border border-[var(--line-control)] bg-transparent px-2 text-[12px] text-[var(--tx-pure)]",
+          FOCUS,
+        )}
+      >
+        <option value="" disabled>
+          Relation…
+        </option>
+        {RELATION_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>{" "}
+      <button
+        type="button"
+        disabled={busy || choice === ""}
+        onClick={() => choice && onDecide(link.client_id, "confirmed", choice)}
+        className={BUTTON}
+      >
+        Confirm
+      </button>{" "}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onDecide(link.client_id, "rejected")}
+        className={BUTTON}
+      >
+        Not related
+      </button>
+      {preselected && choice === preselected && (
+        <p
+          data-testid="registry-review-caption"
+          className="text-[12px] text-[var(--tx-secondary)]"
+        >
+          {preselectionCaption(link.suggestion_basis ?? [])}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function detachIdType(idType: string): string {
   return idType.toUpperCase();
 }
@@ -211,6 +353,12 @@ export default function RelatedRegistryPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
+  const [refresh, setRefresh] = useState(0);
+  const [saving, setSaving] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState(false);
+  const selectedRef = useRef<number | null>(null);
+  const loadedForRef = useRef<number | null>(null);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const detailRef = useRef<HTMLElement | null>(null);
 
@@ -274,16 +422,24 @@ export default function RelatedRegistryPage() {
     };
   }, [query]);
 
-  // Detail: only the subject currently selected may fill the panel.
+  // Detail: only the subject currently selected may fill the panel. A refresh
+  // (after a saved decision) re-reads the same subject without blanking the
+  // panel and supersedes every earlier detail request.
   useEffect(() => {
+    selectedRef.current = selectedId;
+    setSaveError(false);
     if (selectedId === null) {
+      loadedForRef.current = null;
       setDetail(null);
       setDetailError(null);
       setDetailLoading(false);
       return;
     }
     let current = true;
-    setDetail(null);
+    if (loadedForRef.current !== selectedId) {
+      loadedForRef.current = selectedId;
+      setDetail(null);
+    }
     setDetailError(null);
     setDetailLoading(true);
     getRegistrySubject(selectedId)
@@ -300,7 +456,42 @@ export default function RelatedRegistryPage() {
     return () => {
       current = false;
     };
-  }, [selectedId]);
+  }, [selectedId, refresh]);
+
+  const decide = (
+    subjectId: number,
+    clientId: number,
+    decision: "confirmed" | "rejected",
+    relation?: RegistryReviewRelation,
+  ) => {
+    setSaving(subjectId);
+    setSaveError(false);
+    const body =
+      decision === "confirmed" && relation
+        ? {
+            subject_id: subjectId,
+            client_id: clientId,
+            decision,
+            relation,
+          }
+        : {
+            subject_id: subjectId,
+            client_id: clientId,
+            decision: "rejected" as const,
+          };
+    reviewRegistryLink(body)
+      .then(() => {
+        if (selectedRef.current !== subjectId) return;
+        setRefresh((n) => n + 1);
+      })
+      .catch(() => {
+        if (selectedRef.current !== subjectId) return;
+        setSaveError(true);
+      })
+      .finally(() => {
+        setSaving((prev) => (prev === subjectId ? null : prev));
+      });
+  };
 
   const setKind = (kind: KindFilter) =>
     setQuery((prev) =>
@@ -660,8 +851,14 @@ export default function RelatedRegistryPage() {
                 <div data-testid="registry-clients">
                   <h3 className={HEAD}>Clients</h3>
                   <p className="text-[13px] text-[var(--tx-secondary)]">
-                    Proposed from documents, not confirmed.
+                    Proposed from documents. A CRM admin confirms each link
+                    below.
                   </p>
+                  {saveError && (
+                    <Notice tone="you" role="alert">
+                      {SAVE_ERROR}
+                    </Notice>
+                  )}
                   {anyFileCount && (
                     <p
                       data-testid="registry-files-caveat"
@@ -691,34 +888,50 @@ export default function RelatedRegistryPage() {
                   )}
                   <ul className="text-[13px] text-[var(--tx-pure)]">
                     {shownLinks.map((link, index) => (
-                      <li
+                      <Fragment
                         key={`${index}:${link.client_id}:${link.basis}`}
-                        data-testid="registry-client"
                       >
-                        {link.client_live ? (
-                          <Link
-                            href={`/clients/${link.client_id}`}
-                            className={cn(
-                              "text-[var(--bz-copper)] underline",
-                              FOCUS,
+                        <li data-testid="registry-client">
+                          {link.client_live ? (
+                            <Link
+                              href={`/clients/${link.client_id}`}
+                              className={cn(
+                                "text-[var(--bz-copper)] underline",
+                                FOCUS,
+                              )}
+                            >
+                              {link.client_name ?? `Client #${link.client_id}`}
+                            </Link>
+                          ) : (
+                            <span className="text-[var(--tx-secondary)]">
+                              Client no longer in the CRM
+                            </span>
+                          )}{" "}
+                          · {BASIS_LABELS[link.basis] ?? "—"} ·{" "}
+                          {link.created_at.slice(0, 10)}
+                          {typeof link.files === "number" &&
+                            link.files >= 1 && (
+                              <span data-testid="registry-client-files">
+                                {` · ${link.files} ${link.files === 1 ? "file" : "files"}`}
+                              </span>
                             )}
-                          >
-                            {link.client_name ?? `Client #${link.client_id}`}
-                          </Link>
-                        ) : (
-                          <span className="text-[var(--tx-secondary)]">
-                            Client no longer in the CRM
-                          </span>
-                        )}{" "}
-                        · {BASIS_LABELS[link.basis] ?? "—"} ·{" "}
-                        {link.created_at.slice(0, 10)}
-                        {typeof link.files === "number" && link.files >= 1 && (
-                          <span data-testid="registry-client-files">
-                            {` · ${link.files} ${link.files === 1 ? "file" : "files"}`}
-                          </span>
+                          <FromMark id={link.from_subject_id} />
+                        </li>
+                        {shownLinks.findIndex(
+                          (l) => l.client_id === link.client_id,
+                        ) === index && (
+                          <li data-testid="registry-review-item">
+                            <ReviewControl
+                              key={`${detail.id}:${link.client_id}:${link.review?.decided_at ?? "none"}`}
+                              link={link}
+                              busy={saving === detail.id}
+                              onDecide={(clientId, decision, relation) =>
+                                decide(detail.id, clientId, decision, relation)
+                              }
+                            />
+                          </li>
                         )}
-                        <FromMark id={link.from_subject_id} />
-                      </li>
+                      </Fragment>
                     ))}
                   </ul>
                   {linksTotal > shownLinks.length && (
