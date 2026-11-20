@@ -922,15 +922,21 @@ async def test_t6a_a_review_waits_for_a_merge_holding_the_subject_then_answers_s
             )
 
     merge_task = asyncio.create_task(merge())
-    await asyncio.wait_for(entered.wait(), 8)
-    review_task = asyncio.create_task(post(client, body(source)))
-    assert await wait_blocked(conn, "FOR SHARE"), "the review was not observed waiting"
-    assert not review_task.done()
-    release.set()
-    assert (await merge_task)["outcome"] == "merged"
-    resp = await asyncio.wait_for(review_task, 8)
-    assert (resp.status_code, resp.json()) == (409, {"detail": "subject_is_merged"})
-    assert await reviews(conn) == []
+    review_task = None
+    try:
+        await asyncio.wait_for(entered.wait(), 8)
+        review_task = asyncio.create_task(post(client, body(source)))
+        assert await wait_blocked(conn, "FOR SHARE"), "the review was not observed waiting"
+        assert not review_task.done()
+        release.set()
+        assert (await merge_task)["outcome"] == "merged"
+        resp = await asyncio.wait_for(review_task, 8)
+        assert (resp.status_code, resp.json()) == (409, {"detail": "subject_is_merged"})
+        assert await reviews(conn) == []
+    finally:
+        release.set()
+        pending = [t for t in (merge_task, review_task) if t is not None]
+        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), 15)
 
 
 @pytest.mark.asyncio
@@ -950,7 +956,7 @@ async def test_t6b_a_merge_waits_for_a_review_holding_the_subject_and_the_review
         )
         await conn.execute("SELECT pg_advisory_lock(424242)")
     review_task = asyncio.create_task(post(client, body(source)))
-    assert await wait_blocked(conn, "INSERT INTO related_subject_link_reviews"), "review not held"
+    merge_task = None
 
     async def merge():
         async with pool.acquire() as c:
@@ -958,16 +964,24 @@ async def test_t6b_a_merge_waits_for_a_review_holding_the_subject_and_the_review
                 c, merge_request([("permit", PERMIT)], [("passport", "ZZ7777777")]), dry_run=False
             )
 
-    merge_task = asyncio.create_task(merge())
-    assert await wait_blocked(conn, "FOR UPDATE"), "the merge was not observed waiting"
-    assert not merge_task.done() and not review_task.done()
-    await conn.execute("SELECT pg_advisory_unlock(424242)")
-    resp = await asyncio.wait_for(review_task, 8)
-    assert resp.status_code == 200 and resp.json()["status"] == "recorded"
-    assert (await asyncio.wait_for(merge_task, 8))["outcome"] == "merged"
-    assert [r["subject_id"] for r in await reviews(conn)] == [source]
-    review = link_of(await detail(client, target), C1)["review"]
-    assert (review["decision"], review["relation"]) == ("confirmed", "self")
+    try:
+        assert await wait_blocked(conn, "INSERT INTO related_subject_link_reviews"), (
+            "review not held"
+        )
+        merge_task = asyncio.create_task(merge())
+        assert await wait_blocked(conn, "FOR UPDATE"), "the merge was not observed waiting"
+        assert not merge_task.done() and not review_task.done()
+        await conn.execute("SELECT pg_advisory_unlock(424242)")
+        resp = await asyncio.wait_for(review_task, 8)
+        assert resp.status_code == 200 and resp.json()["status"] == "recorded"
+        assert (await asyncio.wait_for(merge_task, 8))["outcome"] == "merged"
+        assert [r["subject_id"] for r in await reviews(conn)] == [source]
+        review = link_of(await detail(client, target), C1)["review"]
+        assert (review["decision"], review["relation"]) == ("confirmed", "self")
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock_all()")
+        pending = [t for t in (merge_task, review_task) if t is not None]
+        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), 15)
 
 
 # ── T7 rollback, T7b write accounting, one log line ───────────────────────────
