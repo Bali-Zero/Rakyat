@@ -1395,9 +1395,45 @@ def body_tokens(raw, extra=()):
     out = {s for s in strings if 4 <= len(s) <= 200 and s not in PROTOCOL} | {
         str(i) for i in ints if len(str(i)) >= 4
     }
-    if isinstance(raw, dict) and isinstance(raw.get("subject_id"), int):
-        out.discard(str(raw["subject_id"]))  # the log line names the validated subject id (2.3)
     return out | set(extra)
+
+
+ROUTE_LINE = "related link review: subject=%s outcome=%s"
+ROUTE_LINE_ERROR = "related link review: subject=%s outcome=%s error=%s"
+OUTCOMES = {
+    "forbidden", "invalid", "recorded", "unchanged", "subject_not_found", "subject_is_merged",
+    "link_not_found", "unavailable",
+}  # fmt: skip
+
+
+def neutral_route_line(record, subject_id):
+    """The route's one log line (2.3) may name the validated subject id, and only that line may.
+    It is exempt only while it is exactly that line: the route's logger, one of the two templates,
+    the subject id (or `-` before validation), a closed outcome word, and for `unavailable` an
+    exception class name. Then a copy with the id replaced by `_` is scanned in its place; any
+    other record, or a line that does not match, is scanned as it is."""
+    args = record.args if isinstance(record.args, tuple) else None
+    exact = (
+        record.name == route_module.logger.name
+        and args is not None
+        and (
+            (record.msg == ROUTE_LINE and len(args) == 2)
+            or (
+                record.msg == ROUTE_LINE_ERROR
+                and len(args) == 3
+                and args[1] == "unavailable"
+                and isinstance(args[2], str)
+                and args[2].isidentifier()
+            )
+        )
+        and args[0] in (subject_id, "-")
+        and args[1] in OUTCOMES
+    )
+    if not exact:
+        return record
+    data = {k: v for k, v in record.__dict__.items() if k != "message"}
+    data["args"] = ("_", *args[1:])
+    return logging.makeLogRecord(data)
 
 
 REVIEW_KEYS = {"decision", "relation", "decided_by", "decided_at"}
@@ -1436,7 +1472,9 @@ def one_audit_row(rows, *, method, endpoint, status, email):
     assert got == (method, endpoint, status, email), got
 
 
-def surfaces_leaks(tokens, resp, records, rows, types, *, status, review=None, session_email=None):
+def surfaces_leaks(
+    tokens, resp, records, rows, types, *, status, review=None, session_email=None, subject_id=None
+):
     """The leaks of every surface. A 200 answer's `review` is left out of the scan only when it is
     exactly `review` (decision, relation, deciding admin) with an ISO time stamp; an audit row's
     `user_email` only when it is the session's own email. A value planted in an exempt field
@@ -1452,12 +1490,17 @@ def surfaces_leaks(tokens, resp, records, rows, types, *, status, review=None, s
         ):
             text = json.dumps({"status": data["status"]})
     found = {"answer": privacy.leaks(forbidden, privacy.response_surface(text))}
-    found["log"] = privacy.leaks(forbidden, privacy.log_surface(records))
+    shown = [neutral_route_line(r, subject_id) for r in records]
+    found["log"] = privacy.leaks(forbidden, privacy.log_surface(shown))
     found["audit"] = audit_leaks(forbidden, rows, types, session_email)
     return {k: v for k, v in found.items() if v}
 
 
 async def privacy_world(c):
+    # a six-digit subject id, so the id is a probe token of its own (forbidden everywhere but the
+    # route's one log line) and cannot coincide with the small ids of the audit rows
+    async with unmeasured(c):
+        await c.execute("SELECT setval(pg_get_serial_sequence('related_subjects', 'id'), 777000)")
     sid = await seed_subject(c, "person", "ZzPriv Subject", [("passport", "ZZSUBJ4321")])
     await seed_client(
         c, C1, CLIENT_NAME, passport=CLIENT_PASSPORT, dob=date.fromisoformat(CLIENT_BIRTH)
@@ -1520,6 +1563,8 @@ async def test_t9_post_answer_log_and_audit_row_carry_nothing_from_the_request(
     if status == 503:
         extra.append("ZZBOOM99X")
     tokens = body_tokens(raw, extra)
+    if isinstance(raw, dict) and isinstance(raw.get("subject_id"), int):
+        assert str(raw["subject_id"]) in tokens, case  # the six-digit id is itself a probe
     rows, types = await privacy.audit_snapshot(conn)
     session_email = identity.get("email")
     one_audit_row(rows, method="POST", endpoint=URL, status=status, email=session_email)
@@ -1538,6 +1583,7 @@ async def test_t9_post_answer_log_and_audit_row_carry_nothing_from_the_request(
         status=status,
         review=review,
         session_email=session_email,
+        subject_id=raw.get("subject_id") if isinstance(raw, dict) else None,
     )
     assert leaks == {}, case
 
@@ -1619,6 +1665,33 @@ async def test_t9_get_adds_closed_fields_only_and_never_a_copy_of_the_client_car
         {C1: spec["client_name"]},
     )
     assert get_leaks(data, records, rows, types, probes, ADMIN["email"], own) == {}
+
+
+def _line(name, msg, args, **extra):
+    record = logging.LogRecord(name, logging.INFO, __file__, 1, msg, args, None)
+    record.__dict__.update(extra)
+    return record
+
+
+def test_t9_only_the_route_s_exact_log_line_may_name_the_subject_id():
+    sid, route = 777001, route_module.logger.name
+    tokens = {str(sid)}
+    answer = type("Resp", (), {"text": "{}"})()
+
+    def log_leak(record, subject_id=sid):
+        found = surfaces_leaks(tokens, answer, [record], [], {}, status=403, subject_id=subject_id)
+        return bool(found.get("log"))
+
+    assert not log_leak(_line(route, ROUTE_LINE, (sid, "recorded")))
+    assert not log_leak(_line(route, ROUTE_LINE, ("-", "invalid")))
+    assert not log_leak(_line(route, ROUTE_LINE_ERROR, (sid, "unavailable", "PostgresError")))
+    assert log_leak(_line("zz.other", ROUTE_LINE, (sid, "recorded")))
+    assert log_leak(_line(route, ROUTE_LINE, (sid, "zz_outcome")))
+    assert log_leak(_line(route, ROUTE_LINE, (sid, "recorded")), subject_id=5)
+    assert log_leak(_line(route, ROUTE_LINE, (sid, "recorded"), carried=f"id {sid}"))
+    assert log_leak(_line(route, ROUTE_LINE_ERROR, (sid, "recorded", "PostgresError")))
+    assert log_leak(_line(route, ROUTE_LINE_ERROR, (sid, "unavailable", f"boom {sid}")))
+    assert log_leak(_line(route, "related link review: %s", (sid,)))
 
 
 READER = "zz-reader@example.test"
