@@ -180,6 +180,18 @@ async def _build_timeline(
 
         if history_rows:
             steps = []
+            initial_status = history_rows[0]["old_status"]
+            if initial_status:
+                completed, is_current = _step_flags(initial_status, current_status, is_last=False)
+                steps.append(
+                    {
+                        "status": initial_status,
+                        "label": _status_label(initial_status),
+                        "completed": completed,
+                        "is_current": is_current,
+                        "changed_at": None,
+                    }
+                )
             for i, row in enumerate(history_rows):
                 status = row["new_status"]
                 is_last = i == len(history_rows) - 1

@@ -72,6 +72,59 @@ async def test_timeline_returns_steps_for_valid_practice() -> None:
 
 
 @pytest.mark.asyncio
+async def test_timeline_includes_initial_status_before_first_history_transition() -> None:
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = _practice_row(status="waiting_documents")
+    mock_conn.fetch.return_value = [
+        {
+            "old_status": "inquiry",
+            "new_status": "waiting_documents",
+            "changed_at": "2026-02-02T09:00:00+00:00",
+        }
+    ]
+
+    result = await _build_timeline(_pool_for(mock_conn), practice_id=5, client_id=1)
+
+    initial = result["steps"][0]
+    assert initial["status"] == "inquiry"
+    assert initial["label"] == "Inquiry"
+    assert initial["completed"] is True
+    assert initial["is_current"] is False
+    assert initial["changed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_timeline_does_not_prepend_an_empty_initial_status() -> None:
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = _practice_row(status="waiting_documents")
+    mock_conn.fetch.return_value = [
+        {
+            "old_status": None,
+            "new_status": "waiting_documents",
+            "changed_at": "2026-02-02T09:00:00+00:00",
+        }
+    ]
+
+    result = await _build_timeline(_pool_for(mock_conn), practice_id=5, client_id=1)
+
+    assert [step["status"] for step in result["steps"]] == ["waiting_documents"]
+    assert result["steps"][-1]["is_current"] is True
+    assert result["steps"][-1]["completed"] is False
+
+    no_history_conn = AsyncMock()
+    no_history_conn.fetchrow.return_value = _practice_row(status="waiting_documents")
+    no_history_conn.fetch.return_value = []
+
+    no_history_result = await _build_timeline(
+        _pool_for(no_history_conn), practice_id=5, client_id=1
+    )
+
+    assert [step["status"] for step in no_history_result["steps"]] == ["waiting_documents"]
+    assert no_history_result["steps"][-1]["is_current"] is True
+    assert no_history_result["steps"][-1]["completed"] is False
+
+
+@pytest.mark.asyncio
 async def test_timeline_returns_none_for_wrong_client() -> None:
     """Timeline endpoint returns None if practice does not belong to the client."""
     mock_conn = AsyncMock()
