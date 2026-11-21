@@ -40,6 +40,8 @@ import {
   isSecondHomeStudioOnly,
 } from "../_lib/engine-adapter";
 import { VisaOracleResponseError } from "../_lib/engine-response";
+import { LivingLoop, LivingPrefetch } from "@/components/living/LivingLoop";
+import { livingAsset } from "@/lib/living/manifest";
 import { buildPreviewOutcome } from "../_lib/preview-adapter";
 import {
   buildClientGuardOutcome,
@@ -198,6 +200,9 @@ export interface OracleShellProps {
    */
   internalMode?: boolean;
 }
+
+/** Zantara reflecting while the verdict is computed (Linea 7, spec §2.1.1 Z2). */
+const ORACLE_Z2 = livingAsset("oracle-z2");
 
 /** Hydrate sessionStorage after mount so server and first client render match. */
 export function OracleShell({ internalMode = false }: OracleShellProps = {}) {
@@ -1178,6 +1183,9 @@ function OracleShellRuntime({
                   onEdit={handleEdit}
                   onConfirm={revealVerdict}
                 />
+                {/* Z2 downloads now, while the network is idle, so it never
+                    competes with the evaluation request on the next screen. */}
+                <LivingPrefetch asset={ORACLE_Z2} enabled={motion} />
               </>
             )}
 
@@ -1191,7 +1199,15 @@ function OracleShellRuntime({
                     aria-live="polite"
                   >
                     <p className="oracle-subhead">{sessionCopy.evaluating}</p>
-                    <span className="oracle-atlas-orbit" aria-hidden="true" />
+                    {/* Zantara "reflecting" (Z2) replaces the spinner: one
+                        motion per viewport. Poster only under reduced motion,
+                        Save-Data, a slow network or the in-app Pause. */}
+                    <LivingLoop
+                      asset={ORACLE_Z2}
+                      paused={!motion}
+                      className="oracle-living-z2"
+                      fallback={<span className="oracle-atlas-orbit" aria-hidden="true" />}
+                    />
                   </div>
                 ) : (
                   <>
