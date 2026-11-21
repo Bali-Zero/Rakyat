@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import type { DoneTodayResponse } from "@/lib/api/workspace/accounting.api";
-import type { DoneTodayStatus } from "./DoneTodaySection";
+import type { DoneTodayStatus, DoneTodayUndo } from "./DoneTodaySection";
 import { DoneTodayList } from "./DoneTodaySection";
 import { CalmArt, DayOneArt } from "./CcArt";
 import { CcGlyph, CC_PRIMARY, CC_SECONDARY } from "./CcGlyph";
@@ -25,6 +25,7 @@ export function ReconciliationBody({
   onRetryDone,
   onShowDone,
   onUpload,
+  undo,
 }: {
   view: CentreView;
   work: React.ReactNode;
@@ -37,6 +38,7 @@ export function ReconciliationBody({
   onRetryDone: () => void;
   onShowDone: () => void;
   onUpload: () => void;
+  undo?: DoneTodayUndo;
 }) {
   if (view === "work") return work;
   if (view === "loading") {
@@ -125,7 +127,12 @@ export function ReconciliationBody({
         className="cc-done mt-5 rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] px-7 py-[26px] text-[var(--cc-tx)]"
       >
         <h2 className="text-xl font-semibold">Done today</h2>
-        <DoneTodayList data={done} status={doneStatus} onRetry={onRetryDone} />
+        <DoneTodayList
+          data={done}
+          status={doneStatus}
+          onRetry={onRetryDone}
+          undo={undo}
+        />
         <div className="mt-6 border-t border-[var(--cc-hair)] pt-6">
           {linkedIgnored}
         </div>

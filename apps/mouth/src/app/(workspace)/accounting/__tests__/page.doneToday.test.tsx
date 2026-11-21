@@ -3,7 +3,7 @@
  * one more load (with one more summary) after a statement import. Data is invented.
  */
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import AccountingPage from "../page";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
@@ -22,6 +22,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
     linkRecorded: vi.fn(),
     ignoreTransaction: vi.fn(),
     reopenTransaction: vi.fn(),
+    undoConfirmation: vi.fn(),
     getMatchCandidates: vi.fn(),
     confirm: vi.fn(),
     exportSheet: vi.fn(),
@@ -104,5 +105,73 @@ describe("AccountingPage Done today", () => {
       expect(api.getDoneToday.mock.calls.length).toBe(doneCalls + 1);
       expect(api.getSummary.mock.calls.length).toBe(summaryCalls + 1);
     });
+  });
+
+  const confirmedToday = {
+    day: "2026-11-18",
+    timezone: "Asia/Makassar",
+    counts: { confirmed: 1, linked: 0, ignored: 0, total: 1 },
+    items: [
+      {
+        txn_id: 5,
+        action: "confirmed" as const,
+        done_at: "2026-11-18T10:00:00+08:00",
+        txn_date: "2026-11-17",
+        amount_idr: 4000000,
+        description: "TRF CONTOH DUA",
+        invoice_number: "INV-000000-00002",
+        client_name: "PT CONTOH DUA",
+      },
+    ],
+    truncated: false,
+  };
+  const toUndo = async () => {
+    api.getDoneToday.mockResolvedValue(confirmedToday);
+    render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    fireEvent.click(screen.getByTestId("cc-tab-done"));
+    fireEvent.click(await screen.findByTestId("done-today-undo-5"));
+    fireEvent.click(screen.getByTestId("done-today-undo-confirm-5"));
+  };
+
+  it("an undo posts that transfer once, then reloads the inbox and Done today", async () => {
+    api.undoConfirmation.mockResolvedValue({
+      bank_txn_id: 5,
+      reconciled_status: "unmatched",
+      reconciliation_log_id: 9,
+    } as never);
+    await toUndo();
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Confirmation undone"),
+    );
+    expect(api.undoConfirmation).toHaveBeenCalledTimes(1);
+    expect(api.undoConfirmation).toHaveBeenCalledWith(5);
+    await waitFor(() => expect(api.getDoneToday).toHaveBeenCalledTimes(2));
+    expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2);
+    for (const name of [
+      "confirm",
+      "linkRecorded",
+      "ignoreTransaction",
+      "reopenTransaction",
+    ] as const)
+      expect(api[name], name).not.toHaveBeenCalled();
+  });
+
+  it("a refused undo shows the reason under the entry and reloads nothing", async () => {
+    api.undoConfirmation.mockRejectedValue(
+      new Error(
+        "bank transaction 5 was confirmed before today: it cannot be undone",
+      ),
+    );
+    await toUndo();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "confirmed before today",
+    );
+    expect(toast.error).toHaveBeenCalledWith(
+      "Undo failed",
+      "bank transaction 5 was confirmed before today: it cannot be undone",
+    );
+    expect(api.getDoneToday).toHaveBeenCalledTimes(1);
+    expect(api.getReconciliationInbox).toHaveBeenCalledTimes(1);
   });
 });

@@ -422,6 +422,29 @@ export function ReconciliationInbox({
     </p>
   );
 
+  // Owner rule (b): a confirmation of today taken back. Same lock and refresh as a reopen.
+  const [undoError, setUndoError] = useState<{
+    txnId: number;
+    message: string;
+  } | null>(null);
+  const undoConfirmation = (txnId: number) =>
+    lock.runWrite(async () => {
+      setUndoError(null);
+      try {
+        await accountingApi.undoConfirmation(txnId);
+        success("Confirmation undone");
+        void load();
+        void companies.reload();
+        onConfirmed();
+      } catch (err) {
+        const detail =
+          (err instanceof Error && err.message) || "Please try again";
+        setUndoError({ txnId, message: detail });
+        error("Undo failed", detail);
+        logger.error(`accounting undo failed txn=${txnId}`, {}, err as Error);
+      }
+    });
+
   const linkedIgnored = (
     <LinkedIgnoredSection
       version={version}
@@ -547,6 +570,11 @@ export function ReconciliationInbox({
         onRetryDone={() => void retryDone()}
         onShowDone={() => setSelectedTab("done")}
         onUpload={() => document.getElementById(BANK_FILE_INPUT_ID)?.click()}
+        undo={{
+          onUndo: (id) => void undoConfirmation(id),
+          locked: lock.locked,
+          error: undoError,
+        }}
       />
       <ReconciliationMore onOpenCashout={onOpenCashout} />
       {modal && (
