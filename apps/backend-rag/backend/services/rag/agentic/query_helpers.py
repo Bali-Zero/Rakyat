@@ -494,12 +494,15 @@ def detect_query_language(query: str) -> str:
         # /api/blog/ask): the marker list was tested as bare SUBSTRINGS, and
         # "добре" sits inside the Russian "одобрение"/"одобрена". Ukrainian is
         # now decided by ENTITY: a Russian-only letter (ыэъё) means Russian, a
-        # Ukrainian-only letter (іїєґ) means Ukrainian, and the marker words
-        # only count as WHOLE words. Cyrillic with neither is Russian.
+        # Ukrainian-only letter (іїєґ) means Ukrainian, and a marker only counts
+        # at the START of a word: "як"/"дяку" as stems (якщо, якраз, дякувати,
+        # which the old substring test caught), the rest as whole words.
+        # Cyrillic with neither is Russian.
         if re.search(r"[ыэъё]", query_lower):
             return "RUSSIAN"
         if re.search(r"[іїєґ]", query_lower) or re.search(
-            r"(?<![а-яёіїєґ])(?:як|справи|добре|дякую)(?![а-яёіїєґ])", query_lower
+            r"(?<![а-яёіїєґ])(?:як|дяку|(?:справи|добре|чи|треба|можна)(?![а-яёіїєґ]))",
+            query_lower,
         ):
             return "UKRAINIAN"
         return "RUSSIAN"
