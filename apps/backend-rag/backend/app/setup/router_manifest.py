@@ -398,7 +398,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="portal_notifications", process_groups=_API, tags=("portal",)),
     RouterEntry(name="portal_notification_prefs", process_groups=_API, tags=("portal",)),
     RouterEntry(name="portal_process_timeline", process_groups=_API, tags=("portal",)),
-    # ── Preview ──
     # ── Prime ──
     RouterEntry(name="prime", process_groups=_API, tags=("prime",)),
     RouterEntry(name="prime_v2", process_groups=_API, tags=("prime",)),

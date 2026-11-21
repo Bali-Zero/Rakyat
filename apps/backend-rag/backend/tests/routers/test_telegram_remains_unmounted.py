@@ -31,10 +31,9 @@ def test_messaging_identity_has_no_telegram_lookup_route() -> None:
 
 @pytest.mark.asyncio
 async def test_handoff_succeeds_without_importing_telegram(monkeypatch) -> None:
-    from backend.app.routers import visa_oracle as mod
-
     for name in [m for m in sys.modules if "telegram_bot_service" in m]:
         monkeypatch.delitem(sys.modules, name)
+    monkeypatch.delitem(sys.modules, "backend.app.routers.visa_oracle", raising=False)
 
     real_import = builtins.__import__
 
@@ -44,6 +43,10 @@ async def test_handoff_succeeds_without_importing_telegram(monkeypatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    import importlib
+
+    mod = importlib.import_module("backend.app.routers.visa_oracle")
 
     row = {
         "quiz_answers": json.dumps({"nationality": "US", "purpose": "work", "duration": "long"}),
