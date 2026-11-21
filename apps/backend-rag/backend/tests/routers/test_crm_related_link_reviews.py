@@ -368,11 +368,17 @@ class _Alerts:
         return None
 
 
+# The protected value planted in the database error. Letters only: every form of a probe is
+# searched as a substring, and "ZZBOOM99X" had the digit form "99", which a random request id in
+# the error log line carries about one run in ten (Rakyat #557, 2026-11-21).
+BOOM = "ZZBOOMQXQ"
+
+
 class _BoomPool:
     """A pool whose acquire raises a database error carrying a protected value in its message."""
 
     def acquire(self):
-        raise asyncpg.PostgresError("zz boom ZZBOOM99X")
+        raise asyncpg.PostgresError(f"zz boom {BOOM}")
 
 
 @pytest.fixture
@@ -1039,7 +1045,7 @@ async def test_t7_an_unreachable_pool_is_a_fixed_503_with_one_log_line(
     async with make_client(_BoomPool()) as c:
         resp = await post(c, body(5))
     assert (resp.status_code, resp.json()) == (503, {"detail": "registry_unavailable"})
-    assert "ZZBOOM99X" not in resp.text
+    assert BOOM not in resp.text
     assert [r.getMessage() for r in route_lines(caplog)] == [
         "related link review: subject=5 outcome=unavailable error=PostgresError"
     ]
@@ -1535,6 +1541,14 @@ CASE_NAMES = [
 ] + [f"invalid_{c[0]}" for c in INVALID]  # fmt: skip
 
 
+def test_t9_no_probe_has_a_form_short_enough_to_occur_by_chance() -> None:
+    """Every form of every probe the T9 scan searches is at least six characters long, so a
+    random request id or time stamp in a log line can never contain it by chance."""
+    _cases, probe = post_cases(777001, 777002)
+    short = {x: f for x in (*probe, BOOM, "777001") for f in privacy.forms(x) if len(f) < 6}
+    assert short == {}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", CASE_NAMES)
 async def test_t9_post_answer_log_and_audit_row_carry_nothing_from_the_request(
@@ -1561,7 +1575,7 @@ async def test_t9_post_answer_log_and_audit_row_carry_nothing_from_the_request(
     if case.startswith("invalid_"):
         extra += next(c[3] for c in INVALID if c[0] == case[len("invalid_") :])
     if status == 503:
-        extra.append("ZZBOOM99X")
+        extra.append(BOOM)
     tokens = body_tokens(raw, extra)
     if not case.startswith("invalid_"):
         assert str(raw["subject_id"]) in tokens, case  # the six-digit id is itself a probe
