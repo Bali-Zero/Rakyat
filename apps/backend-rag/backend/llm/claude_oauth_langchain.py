@@ -336,6 +336,8 @@ def _validate_against_schema(raw_text: str, schema: Any) -> Any:
             # LLMs can hallucinate top-level arrays/primitives. Skip and
             # keep scanning for a real object.
             continue
+        if isinstance(schema, dict):
+            return parsed
         try:
             return _model_validate(schema, parsed)
         except Exception as exc:  # ValidationError or v1 equivalent
