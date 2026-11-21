@@ -127,7 +127,7 @@ def _configure_runtime(
 
 
 @pytest.mark.asyncio
-async def test_lifespan_success_sets_readiness_and_starts_scheduler(
+async def test_lifespan_success_sets_readiness_and_leaves_notification_scheduler_to_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, calls = _configure_runtime(monkeypatch)
@@ -139,7 +139,8 @@ async def test_lifespan_success_sets_readiness_and_starts_scheduler(
         assert app.state.process_mode == "rag"
 
     calls["initialize_services"].assert_awaited_once_with(app)
-    calls["init_scheduler"].assert_awaited_once_with(app.state.db_pool)
+    calls["init_scheduler"].assert_not_awaited()
+    assert app.state.notification_scheduler is None
     calls["close_checkpointer"].assert_awaited_once()
     calls["close_crm_push"].assert_awaited_once()
     app.state.db_pool.close.assert_awaited_once()
@@ -176,16 +177,16 @@ async def test_lifespan_critical_service_failure_sets_failed_state_and_stops_sta
 
 
 @pytest.mark.asyncio
-async def test_scheduler_failure_is_non_critical(
+async def test_lifespan_never_starts_notification_scheduler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, calls = _configure_runtime(monkeypatch)
-    calls["init_scheduler"].side_effect = RuntimeError("scheduler unavailable")
-
     async with app_factory.lifespan(app):
         await app.state._init_task
         assert app.state.startup_complete is True
-        assert not hasattr(app.state, "notification_scheduler")
+        assert app.state.notification_scheduler is None
+
+    calls["init_scheduler"].assert_not_awaited()
 
 
 @pytest.mark.asyncio

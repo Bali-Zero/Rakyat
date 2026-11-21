@@ -105,6 +105,29 @@ class TestInvokeAgent:
         assert data["errors"] == ["Grading step failed: timeout"]
 
     @patch("backend.app.routers.agent.invoke_rag_workflow", new_callable=AsyncMock)
+    def test_invoke_no_generation_reports_no_relevant_document(self, mock_invoke, client):
+        """An early workflow end without an answer is unsuccessful."""
+        mock_invoke.return_value = {
+            "execution_path": ["retrieve", "grade"],
+            "step_count": 2,
+            "timestamp": datetime.now(tz=timezone.utc),
+            "errors": None,
+        }
+
+        response = client.post(
+            "/api/agent/invoke",
+            json={"question": "Synthetic no-result question"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["generation"] == "No generation produced"
+        assert data["errors"] == [
+            "No answer was produced because no relevant document was found.",
+        ]
+
+    @patch("backend.app.routers.agent.invoke_rag_workflow", new_callable=AsyncMock)
     def test_invoke_workflow_exception(self, mock_invoke, client):
         """Workflow raises exception returns 500."""
         mock_invoke.side_effect = RuntimeError("LLM gateway down")

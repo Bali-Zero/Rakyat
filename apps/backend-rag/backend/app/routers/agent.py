@@ -163,8 +163,14 @@ async def invoke_agent(
             metadata=metadata,
         )
 
-        # Check for errors
         errors = final_state.get("errors")
+        generation = final_state.get("generation")
+        if generation is None or not generation.strip():
+            generation = "No generation produced"
+            errors = [
+                *(errors or []),
+                "No answer was produced because no relevant document was found.",
+            ]
         success = not bool(errors)
 
         if not success:
@@ -174,7 +180,7 @@ async def invoke_agent(
         response = AgentInvokeResponse(
             success=success,
             question=request.question,
-            generation=final_state.get("generation", "No generation produced"),
+            generation=generation,
             execution_path=final_state.get("execution_path", []),
             step_count=final_state.get("step_count", 0),
             timestamp=final_state.get("timestamp", datetime.now(tz=timezone.utc)),

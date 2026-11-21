@@ -178,14 +178,9 @@ async def lifespan(app: FastAPI):
 
         await validate_client_pools_on_pool(getattr(app.state, "db_pool", None))
 
-        # Initialize Notification Scheduler (automated email alerts)
-        try:
-            from backend.app.modules.notifications.scheduler import init_scheduler
-
-            app.state.notification_scheduler = await init_scheduler(app.state.db_pool)
-            logger.info("✅ Notification Scheduler initialized")
-        except Exception as e:
-            logger.error("⚠️ Failed to initialize Notification Scheduler: %s", e)
+        # The api process owns notification delivery so pending alerts have one sender.
+        app.state.notification_scheduler = None
+        logger.info("Notification Scheduler runs on the api process")
 
         # P0-0: mark startup complete so /health stops returning warmup status.
         app.state.startup_complete = True
