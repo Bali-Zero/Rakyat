@@ -1823,9 +1823,36 @@ def _forbidden(data, *, answer_words: bool) -> set[str]:
     return tokens
 
 
+# LogRecord attributes whose digits the runtime measures (clock, thread, process), never a body:
+# scanned never, as the audit columns of UNSCANNED_AUDIT_TYPES. A body's 5-digit number turned up
+# by chance in relativeCreated (CI, b_files_above_limit with files=10001). `extra=` cannot carry
+# these names: logging refuses to overwrite an attribute the record already has.
+UNSCANNED_RECORD_ATTRIBUTES = frozenset(
+    {"created", "msecs", "relativeCreated", "thread", "process"}
+)
+
+
 def _record_text(record: logging.LogRecord) -> str:
     rendered = logging.Formatter().format(record)
-    return rendered + " " + " ".join(str(v) for v in record.__dict__.values())
+    scanned = (v for k, v in record.__dict__.items() if k not in UNSCANNED_RECORD_ATTRIBUTES)
+    return rendered + " " + " ".join(str(v) for v in scanned)
+
+
+def test_record_text_skips_the_measured_attributes_and_keeps_every_other():
+    record = logging.LogRecord("probe", logging.INFO, __file__, 1, "plain message", None, None)
+    record.created, record.msecs, record.relativeCreated = 1795700000.10001, 100.01, 10001.5
+    record.thread = record.process = 10001
+    assert "10001" not in _record_text(record)
+
+    in_message = logging.LogRecord("probe", logging.INFO, __file__, 1, "files %s", (10001,), None)
+    assert "10001" in _record_text(in_message)
+    logger = logging.getLogger("probe.record_text")
+    extra = logger.makeRecord(
+        "probe", logging.INFO, __file__, 1, "m", None, None, extra={"n": 10001}
+    )
+    assert "10001" in _record_text(extra)
+    with pytest.raises(KeyError):
+        logger.makeRecord("probe", logging.INFO, __file__, 1, "m", None, None, extra={"thread": 1})
 
 
 def _forms(leaf: str) -> set[str]:
