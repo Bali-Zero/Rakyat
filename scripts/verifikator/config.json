@@ -1,0 +1,8 @@
+{
+  "ctaExempt": [
+    {
+      "route": "/assessment/briefing",
+      "reason": "noindex, halaman hasil assessment, bukan halaman konversi"
+    }
+  ]
+}

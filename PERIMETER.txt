@@ -216,7 +216,11 @@ scripts/tests/test_vercel_should_build.sh	carried from the source tree with a da
 .github/workflows/merah-putih-day-contrast.yml
 .github/workflows/security.yml
 .github/workflows/tests.yml
+.github/workflows/verifikator-live.yml
 scripts/ci/test_required_checks_contract.py
+scripts/verifikator/config.json
+scripts/verifikator/run.mjs
+scripts/verifikator/run.test.mjs
 
 # Known references from prod code to paths outside this repository (checked at build: the referrer is here,
 # still carries the reference, and the target is absent). Every target is also absent from the Fly image, so
