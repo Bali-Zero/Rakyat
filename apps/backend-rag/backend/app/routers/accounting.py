@@ -45,7 +45,12 @@ from backend.services.accounting.companies import (
 )
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
-from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
+from backend.services.accounting.matcher import (
+    MatchCandidate,
+    OpenInvoice,
+    extract_payer_name,
+    rank_candidates,
+)
 from backend.services.accounting.outgoings import load_outgoings
 from backend.services.accounting.reconcile_service import ReconcileError
 
@@ -539,6 +544,8 @@ def _classify_inbox(
                 "txn_date": tx["txn_date"],
                 "amount_idr": tx["amount_idr"],
                 "description": tx["description"],
+                # The payer the bank line names ("" when it names none), for the list to show.
+                "payer_name": extract_payer_name(tx["description"]),
                 "company_key": tx["company_key"],
                 "light": res.light,
                 "open_candidates": res.open_candidates,

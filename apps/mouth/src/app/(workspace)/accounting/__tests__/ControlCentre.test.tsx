@@ -69,6 +69,7 @@ const rows = () => [
     txn_date: "2026-11-16",
     amount_idr: 12500000,
     description: "CONTOH TRANSFER ONE",
+    payer_name: "CONTOH PEMBAYAR",
     light: "green",
     open_candidates: 1,
     suggestion: openCandidate,
@@ -456,6 +457,27 @@ describe("Accounting control centre", () => {
           element.classList.contains("text-xl"),
       ),
     ).toBe(false);
+  });
+
+  it("names the payer first when the bank line carries one, the memo under it", async () => {
+    renderCentre();
+    await ready();
+    const named = screen.getByTestId("inbox-row-1");
+    expect(within(named).getByText("CONTOH PEMBAYAR")).toHaveClass(
+      "truncate",
+      "text-sm",
+      "font-medium",
+    );
+    expect(within(named).getByText("CONTOH TRANSFER ONE")).toHaveClass(
+      "truncate",
+      "text-xs",
+    );
+    fireEvent.click(tab("nomatch"));
+    const unnamed = screen.getByTestId("inbox-row-4");
+    expect(within(unnamed).getByText("CONTOH TRANSFER FOUR")).toHaveClass(
+      "line-clamp-2",
+      "font-medium",
+    );
   });
 
   it("marks only the opened row", async () => {

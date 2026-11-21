@@ -265,6 +265,16 @@ def _inbox_conn(mock_db_pool, txns, open_pool, recorded_pool) -> None:
     conn.fetch = AsyncMock(side_effect=[txns, open_pool, recorded_pool])
 
 
+def test_inbox_names_the_payer_the_bank_line_carries(mock_db_pool) -> None:
+    txns = [
+        _tx(2, 4_000_000, "20260101CENAIDJA010O0000000001 BFS FR CENAIDJA UN CONTOH  KLIEN"),
+        _tx(1, 4_000_000, "EMPN BILLING REFUND 820260101000001"),
+    ]
+    _inbox_conn(mock_db_pool, txns, [], [])
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert [i["payer_name"] for i in items] == ["CONTOH KLIEN", ""]
+
+
 def test_inbox_shape_and_each_light(mock_db_pool) -> None:
     txns = [
         _tx(4, 4_000_000, "TRF CONTOH KLIEN"),  # one strong open, none recorded -> green
@@ -286,6 +296,7 @@ def test_inbox_shape_and_each_light(mock_db_pool) -> None:
             "txn_date",
             "amount_idr",
             "description",
+            "payer_name",
             "company_key",
             "light",
             "open_candidates",
