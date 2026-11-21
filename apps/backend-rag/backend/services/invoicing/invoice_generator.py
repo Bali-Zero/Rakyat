@@ -5,7 +5,8 @@ Layout v4 (owner-approved 2026-11-12): light masthead, dark issuer panel, unboxe
 BILL TO beside the meta table, pay-to grid with the invoice number as bank
 reference, Montserrat embedded from ./fonts (SIL OFL, see fonts/OFL-NOTICE.txt).
 The invoice body is one line item, the discount rows when a discount exists, and
-no tax row: that is what the system issues today.
+no tax row unless the tax team chose a PPh withholding for the process (K127): then
+the totals show the tax base, the withheld PPh and TOTAL DUE net of it.
 """
 
 import io
@@ -242,6 +243,8 @@ class InvoiceGenerator:
         bill_to_company: str | None = None,
         bill_to_npwp: str | None = None,
         bill_to_address: str | None = None,
+        pph_label: str | None = None,
+        pph_amount: float = 0.0,
     ) -> bytes:
         """Generate invoice PDF as bytes.
 
@@ -253,6 +256,12 @@ class InvoiceGenerator:
 
         ``entity`` is the issuer printed on the issuer panel and the bank block
         (see ``entities.resolve_invoice_entity``); ``None`` means CIMB.
+
+        ``pph_amount`` (K127) is the PPh the client withholds on the post-discount
+        base, already rounded by ``pph.PphWithholding.amount_on``; ``pph_label``
+        names it (``Tax PPh 23 2%``). Above 0 it prints "Subtotal before tax" and
+        the PPh row and lowers TOTAL DUE and the words to the net amount; at 0 the
+        PDF is unchanged.
         """
         issuer = entity or self.DEFAULT_ENTITY
         logger.info("Generating invoice for practice %s (issuer %s)", practice_id, issuer.key)
@@ -269,7 +278,9 @@ class InvoiceGenerator:
         safe_discount = max(0.0, float(discount_amount or 0))
         if safe_discount > quoted_price:
             safe_discount = quoted_price  # defensive — backend already validates this
-        final_total = quoted_price - safe_discount
+        dpp = quoted_price - safe_discount
+        safe_pph = min(max(0.0, float(pph_amount or 0)), dpp) if pph_label else 0.0
+        final_total = dpp - safe_pph
 
         logo_y = H - 40 - self.LOGO_SIZE
         has_logo = os.path.exists(self.LOGO_PATH)
@@ -498,6 +509,29 @@ class InvoiceGenerator:
                 )
             )
             elements += [totals, Spacer(1, 2)]
+        if safe_pph > 0:
+            # K127: the tax base is the post-discount amount; the PPh row uses the
+            # same minus notation as the Discount row.
+            pph_totals = Table(
+                [
+                    [p("Subtotal before tax", "totl"), p(self._idr(dpp), "totv")],
+                    [p(_esc(pph_label or ""), "totl"), p(f"−&nbsp;{self._idr(safe_pph)}", "totv")],
+                ],
+                colWidths=[total_width - 130, 130],
+                hAlign="RIGHT",
+            )
+            pph_totals.setStyle(
+                TableStyle(
+                    [
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                        ("LINEBELOW", (0, 0), (-1, -1), 0.5, rule),
+                    ]
+                )
+            )
+            elements += [pph_totals, Spacer(1, 2)]
         bar_size = 20.0
         while (
             pdfmetrics.stringWidth(f"IDR {final_total:,.0f}", "T800", bar_size) > 200 - 24

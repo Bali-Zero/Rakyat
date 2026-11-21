@@ -48,6 +48,7 @@ from backend.services.invoicing.client_email_outcome import (
     client_email_outcome,
     regenerated_message,
 )
+from backend.services.invoicing.pph import PphWithholding, validate_pph
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
 from backend.services.portal.required_slots import mark_required_slot_uploaded
 
@@ -392,6 +393,40 @@ STATUS_TIMELINE_EVENTS: dict[str, tuple[str, str, str]] = {
 }
 
 
+class PphSelection(BaseModel):
+    """PPh withholding the tax team picks for a process (K127); stored in metadata.pph."""
+
+    type: str
+    rate_percent: Decimal
+
+    @model_validator(mode="after")
+    def _allowed(self) -> "PphSelection":
+        validate_pph(self.type, self.rate_percent)
+        return self
+
+    def to_withholding(self) -> PphWithholding:
+        return validate_pph(self.type, self.rate_percent)
+
+
+def _require_pph_role(current_user: dict) -> None:
+    """Only the tax team and CRM admins may set or clear a process's PPh (K127)."""
+    if is_crm_admin(current_user) or (
+        (current_user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
+    ):
+        return
+    raise HTTPException(status_code=403, detail="Only the tax team can set PPh on a process")
+
+
+def _pph_log_entry(old: dict | None, new: dict | None, actor: str, event: str) -> dict[str, Any]:
+    return {
+        "previous": old,
+        "value": new,
+        "changed_by": actor,
+        "changed_at": datetime.now(tz=timezone.utc).isoformat(),
+        "event": event,
+    }
+
+
 class PracticeCreate(BaseModel):
     client_id: int
     # Optional since 2026-09-11 (Ari): an inquiry may be opened without a
@@ -415,6 +450,8 @@ class PracticeCreate(BaseModel):
     invoice_company_id: int | None = None
     invoice_company_name: str | None = None
     invoice_company_npwp: str | None = None
+    # K127: optional PPh withholding; tax team / admins only (403 otherwise).
+    pph: PphSelection | None = None
 
     @model_validator(mode="after")
     def _invoice_company_id_or_name(self) -> "PracticeCreate":
@@ -489,6 +526,8 @@ class PracticeUpdate(BaseModel):
     client_summary: str | None = None
     documents: list[dict] | None = None
     missing_documents: list[str] | None = None
+    # K127: object sets the PPh, null clears it, absent leaves it untouched.
+    pph: PphSelection | None = None
 
     @field_validator("status")
     @classmethod
@@ -570,6 +609,8 @@ async def create_practice(
     """
     # Extract created_by from current user
     created_by = current_user.get("email", "").lower()
+    if "pph" in practice.model_fields_set:
+        _require_pph_role(current_user)
 
     # No service picked → open inquiry against the placeholder type. Only an
     # inquiry-stage practice may start without a service.
@@ -698,18 +739,23 @@ async def create_practice(
             if practice.discount_reason is not None and practice.discount_reason.strip():
                 insert_columns.append("discount_reason")
                 insert_values.append(practice.discount_reason.strip())
+            create_metadata: dict[str, Any] = {}
             if practice.discount_amount is not None and practice.discount_amount > 0:
-                discount_audit = {
-                    "discount_log": [
-                        {
-                            "amount": str(practice.discount_amount),
-                            "reason": (practice.discount_reason or "").strip() or None,
-                            "applied_by": created_by,
-                            "applied_at": datetime.now(tz=timezone.utc).isoformat(),
-                            "event": "create",
-                        }
-                    ]
-                }
+                create_metadata["discount_log"] = [
+                    {
+                        "amount": str(practice.discount_amount),
+                        "reason": (practice.discount_reason or "").strip() or None,
+                        "applied_by": created_by,
+                        "applied_at": datetime.now(tz=timezone.utc).isoformat(),
+                        "event": "create",
+                    }
+                ]
+            if practice.pph is not None:
+                # K127: same jsonb, same audit idea as discount_log.
+                pph_meta = practice.pph.to_withholding().as_metadata()
+                create_metadata["pph"] = pph_meta
+                create_metadata["pph_log"] = [_pph_log_entry(None, pph_meta, created_by, "create")]
+            if create_metadata:
                 insert_columns.append("metadata")
                 # Pass the dict directly — the api pool registers a jsonb
                 # codec (service_initializer._light_init_connection) so
@@ -718,7 +764,7 @@ async def create_practice(
                 # land the value as a JSONB string scalar (the bug shipped
                 # in PR #485 / #492 — observed 2026-05-06 on practice_id=390
                 # where metadata::text was '"{\"discount_log\": ...}"').
-                insert_values.append(discount_audit)
+                insert_values.append(create_metadata)
 
             # Cast jsonb columns explicitly. asyncpg does not register a
             # JSON codec for `jsonb` by default, so a `json.dumps()` value
@@ -1514,6 +1560,9 @@ async def update_practice(
                         status_code=403,
                         detail="You don't have permission to update this practice",
                     )
+            pph_touched = "pph" in updates.model_fields_set
+            if pph_touched:
+                _require_pph_role(current_user)
 
             # Validate state machine transition if status is being changed
             if updates.status and updates.status != old_status:
@@ -1550,6 +1599,7 @@ async def update_practice(
             invoice_company_name_in = update_set.pop("invoice_company_name", None)
             invoice_company_npwp_in = update_set.pop("invoice_company_npwp", None)
             new_practice_type_code = update_set.pop("practice_type_code", None)
+            update_set.pop("pph", None)  # written into metadata below, not a column
             if "practice_type_code" in updates.model_fields_set and not new_practice_type_code:
                 raise HTTPException(status_code=400, detail="practice_type_code cannot be null")
             service_base_price = None  # base price a chosen service back-fills into a NULL price
@@ -1681,6 +1731,32 @@ async def update_practice(
             if service_base_price is not None:
                 update_fields.append(f"quoted_price = COALESCE(quoted_price, ${param_index})")
                 params.append(service_base_price)
+                param_index += 1
+
+            # K127: PPh lives in metadata.pph (no column); every change appends to
+            # metadata.pph_log. Written in the same UPDATE as the other fields.
+            pph_metadata: dict | None = None
+            if pph_touched:
+                pph_metadata = dict(old_metadata or {})
+                old_pph = pph_metadata.get("pph")
+                new_pph = updates.pph.to_withholding().as_metadata() if updates.pph else None
+                if new_pph is None:
+                    pph_metadata.pop("pph", None)
+                else:
+                    pph_metadata["pph"] = new_pph
+                if new_pph != old_pph:
+                    pph_log = pph_metadata.get("pph_log")
+                    pph_metadata["pph_log"] = [
+                        *(pph_log if isinstance(pph_log, list) else []),
+                        _pph_log_entry(
+                            old_pph,
+                            new_pph,
+                            (current_user.get("email") or "system").lower(),
+                            "update" if new_pph else "clear",
+                        ),
+                    ]
+                update_fields.append(f"metadata = ${param_index}::jsonb")
+                params.append(pph_metadata)
                 param_index += 1
 
             # Autoset date fields on status transitions (only if not already in DB
@@ -1845,7 +1921,9 @@ async def update_practice(
                             if old_discount_amount is not None
                             else None,
                         }
-                        new_meta = dict(old_metadata or {})
+                        new_meta = dict(
+                            pph_metadata if pph_metadata is not None else (old_metadata or {})
+                        )
                         log = new_meta.get("discount_log") or []
                         if not isinstance(log, list):
                             log = []
