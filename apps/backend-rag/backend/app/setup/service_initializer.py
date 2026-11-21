@@ -506,11 +506,11 @@ async def initialize_database_services(app: FastAPI) -> asyncpg.Pool | None:
             from backend.services.analytics.weekly_email_reporter import init_weekly_reporter
 
             attendance_monitor = AttendanceMonitor(db_pool)
-            await attendance_monitor.start_schedulers()
             app.state.attendance_monitor = attendance_monitor
 
             ts_service = init_timesheet_service(db_pool, attendance_monitor=attendance_monitor)
             app.state.ts_service = ts_service
+            logger.info("Attendance and timesheet schedulers run on the api process")
             if isinstance(db_pool, asyncpg.Pool):
                 from backend.services.security.token_revocation import set_revocation_db_pool
 
@@ -525,8 +525,7 @@ async def initialize_database_services(app: FastAPI) -> asyncpg.Pool | None:
             weekly_reporter = init_weekly_reporter(db_pool)
             app.state.weekly_reporter = weekly_reporter
 
-            # Start background tasks
-            await ts_service.start_auto_logout_monitor()
+            # These reporters are owned by the rag process.
             await daily_notifier.start()
             await weekly_reporter.start()
 
@@ -1830,33 +1829,12 @@ async def initialize_services(app: FastAPI) -> None:
         )
         logger.error("❌ Failed to start newsletter daily-digest task: %s", e)
 
-    # 10c. Olympus DB Guardian
-    # Background workers kill switch (2026-04-12 incident): skip Olympus when
-    # DISABLE_BACKGROUND_WORKERS=1 — Olympus heartbeat/pulse loops corrupt the
-    # asyncpg pool on transient PG errors, causing ConnectionDoesNotExistError storms.
-    if os.getenv("DISABLE_BACKGROUND_WORKERS") == "1":
-        logger.warning("⚠️ DISABLE_BACKGROUND_WORKERS=1 — skipping Olympus (full init)")
-        app.state.olympus = None
-    elif db_pool:
-        try:
-            from backend.services.olympus.guardian import OlympusGuardian
-
-            olympus = OlympusGuardian(db_pool=db_pool, alert_service=alert_service)
-            await olympus.initialize()
-            await olympus.start()
-            app.state.olympus = olympus
-            service_registry.register("olympus", ServiceStatus.HEALTHY, critical=False)
-            logger.info("✅ Olympus DB Guardian: Active (heartbeat + pulse)")
-        except Exception as e:
-            service_registry.register(
-                "olympus",
-                ServiceStatus.DEGRADED,
-                error=str(e),
-                critical=False,
-            )
-            logger.error("❌ Failed to initialize Olympus: %s", e)
-    else:
-        logger.warning("⚠️ Olympus skipped: no db_pool")
+    # 10c. Olympus DB Guardian runs on the always-on api process
+    # (initialize_services_light). Starting it here as well ran its heartbeat and
+    # its pulse (VACUUM, REINDEX CONCURRENTLY, retention deletes) twice, and this
+    # process group is not guaranteed to stay on.
+    app.state.olympus = None
+    logger.info("Olympus DB Guardian runs on the api process")
 
     # 12. LangGraph Agent Layer - Inject services into workflow nodes
     logger.debug("Injecting services into LangGraph agent nodes...")
