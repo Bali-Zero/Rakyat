@@ -205,7 +205,7 @@ _NPWP_NEW_DOTTED_RE = re.compile(r"\b0\d{2}\.\d{3}\.\d{3}\.\d-\d{3}\.\d{3}\b")
 # 1234...") would be captured as two DIFFERENT original strings ("NIK
 # 1234..." vs "1234...") and get two different placeholders.
 _NIK_LABEL_RE = re.compile(r"(?i)\b(?:nik|ktp|no\.?\s*ktp)\b[\s:=#-]*(\d[\d\s.-]{14,25}\d)")
-_NIK_BARE_RE = re.compile(r"\b\d{16}\b")
+_NIK_BARE_RE = re.compile(r"(?<!\d)\d{16}(?!\d)")
 _NIK_SEPARATED_RE = re.compile(r"\b\d(?:[\s.-]?\d){14,15}\b")
 
 # F1b — a list of three 5-digit KBLI codes ("55130 70100 64210") is exactly
@@ -268,7 +268,7 @@ _PASSPORT_CONTEXT_RE = re.compile(r"(?i)\b(?:passport|paspor)\b")
 # from the gap; the 0-40 char CAP still bounds how far the gap can reach,
 # so this does not turn into an unbounded label...digits-anywhere matcher.
 _BANK_LABEL_THEN_DIGITS_RE = re.compile(
-    r"(?i)\b(?:no\.?\s*rek(?:ening)?|rekening|acc(?:oun)?t\s*(?:no|number))\b"
+    r"(?i)\b(?:no\.?\s*rek(?:ening)?|rek(?:ening)?|acc(?:oun)?t\s*(?:no|number)|acct|a/c)\b"
     r"[^\d]{0,40}?(\d{8,16})\b"
 )
 _BANK_DIGITS_THEN_LABEL_RE = re.compile(
@@ -291,8 +291,8 @@ _IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")
 # "00000" (round amounts are not phone numbers — a WA number never ends in
 # five zeros).
 _PHONE_INTL_FMT_RE = re.compile(r"\+\d{1,3}[\s()-]{1,3}\d[\d\s()-]{5,16}\d")
-_PHONE_INTL_RUN_RE = re.compile(r"\+\d{11,15}\b")
-_PHONE_LOCAL_RE = re.compile(r"\b08\d{1,2}[\s.-]?\d{3,4}[\s.-]?\d{3,5}\b")
+_PHONE_INTL_RUN_RE = re.compile(r"\+\d{11,15}(?!\d)")
+_PHONE_LOCAL_RE = re.compile(r"(?<!\d)\(?08\d{1,2}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,5}(?!\d)")
 _PHONE_ID_RE = re.compile(r"\b62\d{9,12}\b")
 _PHONE_62_SEPARATED_RE = re.compile(r"\b62[\s.-]?\d(?:[\s.-]?\d){8,12}\b")
 
@@ -501,6 +501,8 @@ def _redact_or_decline(
 
 def _redact_one(text: str, state: _RedactionState) -> str:
     for category, specs in _CATEGORY_PATTERNS:
+        if category == "EMAIL" and "@" not in text:
+            continue
         for spec in specs:
             source = text
             text = spec.pattern.sub(
