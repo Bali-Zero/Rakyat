@@ -141,3 +141,46 @@ def can_edit_company(
             owners.add((row[key] or "").strip().lower())
     owners.discard("")
     return bool(owners & caller_pool_peers(current_user))
+
+
+#: Auth methods issued only to interactive human JWT sessions (never machine keys).
+HUMAN_SESSION_AUTH_METHODS: frozenset[str] = frozenset(
+    {"jwt_header", "jwt_cookie", "jwt_stateless"}
+)
+
+
+def can_manage_client_tax_documents(
+    current_user: dict[str, Any],
+    assigned_to: str | None,
+    created_by: str | None,
+    tax_consultant: str | None,
+) -> bool:
+    """Write rule for a client's Tax Documents (Drive): human CRM admin or associated human team member.
+
+    Associated = the caller or one of their validated client-pool peers is the client's
+    ``assigned_to`` (Setup), ``tax_consultant``, or ``created_by``. Machine principals
+    (``admin_key``, ``internal_key``, ``api_key``, ``public``), service roles
+    (``monitoring``, ``internal``), and portal/external roles (``client``, ``partner``)
+    never manage tax documents, even if their email matches an admin allowlist.
+    """
+    from backend.app.utils.crm_utils import is_crm_admin
+
+    if not current_user:
+        return False
+    auth_method = current_user.get("auth_method")
+    if (
+        auth_method is not None
+        and str(auth_method).strip().lower() not in HUMAN_SESSION_AUTH_METHODS
+    ):
+        return False
+    if not is_human_team_member(current_user.get("role")):
+        return False
+    if is_crm_admin(current_user):
+        return True
+    owners = {
+        (assigned_to or "").strip().lower(),
+        (created_by or "").strip().lower(),
+        (tax_consultant or "").strip().lower(),
+    }
+    owners.discard("")
+    return bool(owners & caller_pool_peers(current_user))

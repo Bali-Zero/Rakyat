@@ -422,6 +422,11 @@ async def submit_from_scraper(
     Articles are classified as 'visa' or 'news' and saved to the appropriate
     staging folder for team approval.
 
+    Editorial callers may set ``destination: "editorial_news"`` to stage in
+    News Room while retaining their topic category, including ``immigration``.
+    Omitting it preserves automatic classification. A source URL already staged
+    in the other destination returns 409; this endpoint never moves an item.
+
     Flow:
     1. Scraper POSTs article here
     2. Backend classifies type (visa/news)
@@ -434,10 +439,14 @@ async def submit_from_scraper(
 
     try:
         # Classify intel type using service
-        intel_type = classification_service.classify_intel_type(
-            submission.category,
-            submission.title,
-            submission.content,
+        intel_type = (
+            "news"
+            if submission.destination == "editorial_news"
+            else classification_service.classify_intel_type(
+                submission.category,
+                submission.title,
+                submission.content,
+            )
         )
 
         # Generate unique item ID
@@ -513,6 +522,22 @@ async def submit_from_scraper(
             if enrichment_backfilled:
                 response["enrichment_backfilled"] = True
             return response
+
+        # A destination override must not create another copy of the same source.
+        # Check both directions so a later automatic scrape cannot duplicate an
+        # explicitly editorial item in the visa queue either.
+        other_type = "visa" if intel_type == "news" else "news"
+        conflict = staging_service.check_duplicate(other_type, submission.source_url)
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "source_destination_conflict",
+                    "message": "Source URL already exists in another staging destination",
+                    "item_id": conflict.get("item_id"),
+                    "intel_type": other_type,
+                },
+            )
 
         # WR2 liveness rewire (SPRINT B1, scar family #9 break #2; red-team
         # FIX3 2026-07-18): normalize with uniform defaults so every staging
@@ -636,6 +661,8 @@ async def submit_from_scraper(
             "duplicate": False,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to submit article from scraper: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e

@@ -54,6 +54,9 @@ _DUE_SQL = """
         i.invoice_number,
         i.amount_idr,
         i.paid_amount_idr,
+        -- PPh the client withholds (migration 238). Read through to_jsonb so a schema
+        -- without the column reads 0 instead of failing the reminder run.
+        COALESCE((to_jsonb(i) ->> 'pph_expected_idr')::numeric, 0) AS pph_expected_idr,
         p.payment_status,
         p.assigned_to,
         COALESCE(pt.name, 'Service')                    AS service_name,
@@ -86,7 +89,12 @@ def _build_digest(invoices: list[dict[str, Any]], today: str) -> tuple[str, str]
     for inv in invoices:
         amount = _fmt_idr(inv.get("amount_idr"))
         if inv.get("payment_status") == "partial":
-            outstanding = float(inv.get("amount_idr") or 0) - float(inv.get("paid_amount_idr") or 0)
+            # amount_idr is gross; a client that withholds PPh owes amount_idr - PPh.
+            outstanding = (
+                float(inv.get("amount_idr") or 0)
+                - float(inv.get("pph_expected_idr") or 0)
+                - float(inv.get("paid_amount_idr") or 0)
+            )
             amount += f" (partial, outstanding {_fmt_idr(max(outstanding, 0))})"
         rows.append(
             "<tr>"

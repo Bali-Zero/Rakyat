@@ -1037,6 +1037,43 @@ class ServiceAccountDriveService:
         )
         return await asyncio.to_thread(request.execute)
 
+    async def rename_file(self, file_id: str, new_name: str) -> dict[str, Any]:
+        """Rename a file in Google Drive (Shared Drive safe)."""
+        request = self.service.files().update(
+            fileId=file_id,
+            body={"name": new_name},
+            fields="id, name, mimeType, size, modifiedTime, webViewLink",
+            supportsAllDrives=True,
+        )
+        updated = await asyncio.to_thread(request.execute)
+        logger.info("Renamed Drive file %s", file_id)
+        return updated
+
+    async def update_file_content(
+        self,
+        file_id: str,
+        file_content: bytes,
+        *,
+        file_name: str | None = None,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace a file's binary content in-place (preserving Drive file ID and revisions)."""
+        effective_mime = mime_type or "application/octet-stream"
+        body: dict[str, Any] = {}
+        if file_name:
+            body["name"] = file_name
+        media = MediaIoBaseUpload(BytesIO(file_content), mimetype=effective_mime, resumable=True)
+        request = self.service.files().update(
+            fileId=file_id,
+            body=body,
+            media_body=media,
+            fields="id, name, mimeType, size, modifiedTime, webViewLink",
+            supportsAllDrives=True,
+        )
+        updated = await asyncio.to_thread(request.execute)
+        logger.info("Replaced Drive file content %s (%s bytes)", file_id, len(file_content))
+        return updated
+
     async def trash_file(self, file_id: str) -> None:
         """Move one file to the Drive trash (recoverable). Never a permanent delete."""
         request = self.service.files().update(

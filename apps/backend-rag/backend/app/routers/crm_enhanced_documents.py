@@ -20,6 +20,7 @@ from pydantic_core import PydanticCustomError
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_service_write import verify_crm_write_key
+from backend.app.modules.crm.tax_drive_documents import router as tax_drive_documents_router
 from backend.app.routers.crm_enhanced import (
     DocumentCreate,
     DocumentUpdate,
@@ -85,6 +86,7 @@ def _row_get(row: Any, key: str) -> Any:
 
 
 router = APIRouter(prefix="/api/crm", tags=["crm-enhanced-documents"])
+router.include_router(tax_drive_documents_router)
 
 # ============================================
 # DOCUMENTS ENDPOINTS
@@ -1588,10 +1590,7 @@ async def upload_document_base64(
                                 ("status", "active"),
                                 ("is_verified", False),
                             ]
-                            if (
-                                "client_visible" in comp_cols
-                                and data.client_visible is not None
-                            ):
+                            if "client_visible" in comp_cols and data.client_visible is not None:
                                 col_values.append(("client_visible", bool(data.client_visible)))
                             if comp_has_idem and data.intake_idempotency_key is not None:
                                 col_values.append(
@@ -1826,9 +1825,7 @@ async def _upload_company_document_impl(
                 folder_name, root_folder_id, conn=conn
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=409, detail="Cannot verify Drive destination"
-            ) from exc
+            raise HTTPException(status_code=409, detail="Cannot verify Drive destination") from exc
 
         try:
             upload_result = await drive_service.upload_file_to_folder(
@@ -1881,10 +1878,7 @@ async def _upload_company_document_impl(
                     deduplicated_in_tx = True
                     effective_file_id = existing_tx["google_drive_file_id"]
                     effective_file_url = existing_tx["google_drive_file_url"]
-                    if (
-                        upload_result.get("id")
-                        and upload_result.get("id") != effective_file_id
-                    ):
+                    if upload_result.get("id") and upload_result.get("id") != effective_file_id:
                         logger.warning(
                             "orphaned_drive_file file_id=%s company_id=%s "
                             "reason=concurrent_intake_dedup",
