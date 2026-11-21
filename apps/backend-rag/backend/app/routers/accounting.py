@@ -45,7 +45,12 @@ from backend.services.accounting.companies import (
 )
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
-from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
+from backend.services.accounting.matcher import (
+    MatchCandidate,
+    OpenInvoice,
+    extract_payer_name,
+    rank_candidates,
+)
 from backend.services.accounting.outgoings import load_outgoings
 from backend.services.accounting.reconcile_service import ReconcileError
 
@@ -506,6 +511,12 @@ async def confirm_reconciliation(
 # ── Lights: the reconciliation inbox and the three actions that move no money ───────────
 
 
+# The payer patterns backtrack on a long run of spaces (16 000 spaces took seconds). The inbox
+# names the payer from the first 256 characters only: the longest bank line in production is
+# 112, so every real line is read whole. Matching (classify_transfer) still reads the whole line.
+PAYER_LINE_CHARS = 256
+
+
 def _classify_inbox(
     txns: list[dict[str, Any]],
     open_invoices: list[OpenInvoice],
@@ -539,6 +550,8 @@ def _classify_inbox(
                 "txn_date": tx["txn_date"],
                 "amount_idr": tx["amount_idr"],
                 "description": tx["description"],
+                # The payer the bank line names ("" when it names none), for the list to show.
+                "payer_name": extract_payer_name((tx["description"] or "")[:PAYER_LINE_CHARS]),
                 "company_key": tx["company_key"],
                 "light": res.light,
                 "open_candidates": res.open_candidates,

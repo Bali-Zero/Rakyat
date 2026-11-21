@@ -152,6 +152,8 @@ export interface ReconciliationInboxItem {
   txn_date: string;
   amount_idr: number;
   description: string;
+  /** The payer the bank line names, "" when it names none (absent from an older backend). */
+  payer_name?: string;
   /** The issuing company whose bank account received it; null when no company owns the account. */
   company_key: string | null;
   light: InboxLight;

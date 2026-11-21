@@ -7,6 +7,7 @@ services/test_accounting_lights_actions_integration.py. All values invented.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
@@ -265,6 +266,41 @@ def _inbox_conn(mock_db_pool, txns, open_pool, recorded_pool) -> None:
     conn.fetch = AsyncMock(side_effect=[txns, open_pool, recorded_pool])
 
 
+def test_inbox_names_the_payer_the_bank_line_carries(mock_db_pool) -> None:
+    txns = [
+        _tx(2, 4_000_000, "20260101CENAIDJA010O0000000001 BFS FR CENAIDJA UN CONTOH  KLIEN"),
+        _tx(1, 4_000_000, "EMPN BILLING REFUND 820260101000001"),
+    ]
+    _inbox_conn(mock_db_pool, txns, [], [])
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert [i["payer_name"] for i in items] == ["CONTOH KLIEN", ""]
+
+
+def test_a_long_run_of_spaces_does_not_stall_the_inbox(mock_db_pool) -> None:
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, "INCOMING SKN x/y/A" + " " * 16000 + "!")], [], [])
+    started = time.perf_counter()
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert time.perf_counter() - started < 1.0
+    assert items[0]["payer_name"] == ""
+
+
+def test_the_payer_bound_leaves_matching_on_a_long_line_as_it_was(mock_db_pool) -> None:
+    line = "BFS FR CENAIDJA UN CONTOH KLIEN" + " " * 256 + "UNRELATED " * 20
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, line)], [_inv(11, "Contoh Klien")], [])
+    item = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()[0]
+    assert (item["light"], item["open_strong"], item["suggestion"]) == ("yellow", 0, None)
+    assert item["description"] == line
+
+
+def test_a_line_as_long_as_the_longest_real_one_names_its_whole_payer(mock_db_pool) -> None:
+    tail = " BFS FR CENAIDJA UN CONTOH PEMBAYAR"
+    line = "20260101CENAIDJA010O0000000001" + " " * (112 - 30 - len(tail)) + tail
+    assert len(line) == 112
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, line)], [], [])
+    item = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()[0]
+    assert item["payer_name"] == "CONTOH PEMBAYAR"
+
+
 def test_inbox_shape_and_each_light(mock_db_pool) -> None:
     txns = [
         _tx(4, 4_000_000, "TRF CONTOH KLIEN"),  # one strong open, none recorded -> green
@@ -286,6 +322,7 @@ def test_inbox_shape_and_each_light(mock_db_pool) -> None:
             "txn_date",
             "amount_idr",
             "description",
+            "payer_name",
             "company_key",
             "light",
             "open_candidates",

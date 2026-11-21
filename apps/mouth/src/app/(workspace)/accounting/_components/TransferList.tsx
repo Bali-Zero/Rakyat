@@ -56,9 +56,20 @@ export function TransferList({
                   </span>
                 )}
               </span>
-              <span className="line-clamp-2 text-sm font-medium [overflow-wrap:anywhere]">
-                {item.description || "(no memo)"}
-              </span>
+              {item.payer_name ? (
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="truncate text-sm font-medium">
+                    {item.payer_name}
+                  </span>
+                  <span className="truncate text-xs text-[var(--cc-tx-2)]">
+                    {item.description}
+                  </span>
+                </span>
+              ) : (
+                <span className="line-clamp-2 text-sm font-medium [overflow-wrap:anywhere]">
+                  {item.description || "(no memo)"}
+                </span>
+              )}
               <span className="text-base font-medium">
                 <CcAmount value={item.amount_idr} />
               </span>
