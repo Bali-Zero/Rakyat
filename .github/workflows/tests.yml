@@ -1508,7 +1508,7 @@ jobs:
           # Editable cell-core workspace dep
           uv pip install --system -e ../../packages/cell-core
 
-      - name: Start backend (FastAPI on :8000)
+      - name: Start backend topology (API on :8000, RAG on :8081)
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
           REDIS_URL: redis://localhost:6379/0
@@ -1536,41 +1536,56 @@ jobs:
           ENVIRONMENT: test
         run: |
           cd apps/backend-rag
-          PYTHONPATH=. uvicorn backend.app.main:app \
+          PYTHONPATH=. uvicorn backend.app.main_rag:app \
+            --host 127.0.0.1 --port 8081 \
+            --log-level warning &
+          rag_pid=$!
+          RAG_WORKER_URL=http://127.0.0.1:8081 PYTHONPATH=. uvicorn backend.app.main_api:app \
             --host 0.0.0.0 --port 8000 \
             --log-level warning &
-          backend_pid=$!
+          api_pid=$!
           # The cold hosted startup exceeded 60s while still importing normally.
-          # Bound every probe and stop immediately if our own backend process exits.
+          # Bound every probe and stop immediately if either topology process exits.
           backend_deadline=$((SECONDS + 120))
-          backend_ready=false
-          while (( SECONDS < backend_deadline )); do
-            if ! kill -0 "$backend_pid" 2>/dev/null; then
-              echo "Backend exited before becoming healthy"
+          assert_topology_alive() {
+            if ! kill -0 "$rag_pid" 2>/dev/null; then
+              echo "RAG worker exited before the topology became healthy"
               exit 1
             fi
-            remaining=$((backend_deadline - SECONDS))
-            if (( remaining <= 0 )); then break; fi
-            probe_timeout=$((remaining < 2 ? remaining : 2))
-            if curl -sf --connect-timeout 2 --max-time "$probe_timeout" http://localhost:8000/health; then
-              if ! kill -0 "$backend_pid" 2>/dev/null; then
-                echo "Backend exited during its health probe"
-                exit 1
+            if ! kill -0 "$api_pid" 2>/dev/null; then
+              echo "API process exited before the topology became healthy"
+              exit 1
+            fi
+          }
+          wait_for_health() {
+            local process_name=$1
+            local health_url=$2
+            local ready=false
+            while (( SECONDS < backend_deadline )); do
+              assert_topology_alive
+              remaining=$((backend_deadline - SECONDS))
+              if (( remaining <= 0 )); then break; fi
+              probe_timeout=$((remaining < 2 ? remaining : 2))
+              if curl -sf --connect-timeout 2 --max-time "$probe_timeout" "$health_url"; then
+                assert_topology_alive
+                ready=true
+                echo "$process_name ready"
+                break
               fi
-              backend_ready=true
-              echo "Backend ready"
-              break
+              remaining=$((backend_deadline - SECONDS))
+              if (( remaining > 0 )); then
+                echo "Waiting for $process_name... (${remaining}s remaining)"
+                sleep "$((remaining < 2 ? remaining : 2))"
+              fi
+            done
+            if [ "$ready" != "true" ]; then
+              echo "$process_name did not become healthy within 120s"
+              exit 1
             fi
-            remaining=$((backend_deadline - SECONDS))
-            if (( remaining > 0 )); then
-              echo "Waiting for backend... (${remaining}s remaining)"
-              sleep "$((remaining < 2 ? remaining : 2))"
-            fi
-          done
-          if [ "$backend_ready" != "true" ]; then
-            echo "Backend did not become healthy within 120s"
-            exit 1
-          fi
+          }
+          wait_for_health "RAG worker" http://127.0.0.1:8081/health
+          wait_for_health "API process" http://localhost:8000/health
+          assert_topology_alive
 
       - name: Install Node dependencies
         run: npm install --no-fund
