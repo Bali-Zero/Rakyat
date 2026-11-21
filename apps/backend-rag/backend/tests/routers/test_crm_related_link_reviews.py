@@ -1563,7 +1563,7 @@ async def test_t9_post_answer_log_and_audit_row_carry_nothing_from_the_request(
     if status == 503:
         extra.append("ZZBOOM99X")
     tokens = body_tokens(raw, extra)
-    if isinstance(raw, dict) and isinstance(raw.get("subject_id"), int):
+    if not case.startswith("invalid_"):
         assert str(raw["subject_id"]) in tokens, case  # the six-digit id is itself a probe
     rows, types = await privacy.audit_snapshot(conn)
     session_email = identity.get("email")
