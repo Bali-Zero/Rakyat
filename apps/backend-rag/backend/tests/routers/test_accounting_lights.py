@@ -899,3 +899,58 @@ def test_outgoings_returns_the_service_reading_with_the_limit(mock_db_pool) -> N
 def test_outgoings_refuses_a_limit_out_of_range(mock_db_pool, limit) -> None:
     resp = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"limit": limit})
     assert resp.status_code == 422
+
+
+# ── owner rule (b): undo a confirmation of today ─────────────────────────────────────────
+
+
+def test_undo_is_admin_only(mock_db_pool) -> None:
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", AsyncMock()) as u:
+        resp = _client(mock_db_pool, OUTSIDER).post(
+            f"{BASE}/undo-confirmation", json={"bank_txn_id": 1}
+        )
+    assert resp.status_code == 403
+    assert not u.called
+
+
+def test_undo_passes_the_id_and_the_lowercased_identity(mock_db_pool) -> None:
+    undo = AsyncMock(return_value=ActionResult(1, "unmatched", 12))
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", undo):
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": 1})
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "bank_txn_id": 1,
+        "reconciled_status": "unmatched",
+        "reconciliation_log_id": 12,
+    }
+    assert undo.await_args.kwargs == {"bank_txn_id": 1, "undone_by": "admin@example.test"}
+
+
+def test_undo_refusal_is_422_with_the_services_text(mock_db_pool) -> None:
+    boom = AsyncMock(side_effect=ReconcileError("bank transaction 1 is not confirmed"))
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", boom):
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": 1})
+    assert (resp.status_code, resp.json()) == (
+        422,
+        {"detail": "bank transaction 1 is not confirmed"},
+    )
+
+
+def test_undo_unexpected_failure_is_500_fixed_text(mock_db_pool, caplog) -> None:
+    boom = AsyncMock(side_effect=_DriverError(f"duplicate key value {_SENTINEL} (id)=(5)"))
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch.object(accounting_module.reconcile_service, "undo_confirmation", boom),
+    ):
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": 1})
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "reconciliation action could not be completed"}
+    assert _SENTINEL not in resp.text and _SENTINEL not in caplog.text
+
+
+@pytest.mark.parametrize("bad", _BAD_IDS, ids=repr)
+def test_undo_id_that_is_not_a_json_integer_is_422(mock_db_pool, bad) -> None:
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", AsyncMock()) as u:
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": bad})
+    assert resp.status_code == 422
+    assert not u.called

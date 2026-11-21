@@ -15,6 +15,7 @@ Cash-basis, IDR. The accountant has already chosen the match; this records it.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -116,6 +117,10 @@ async def _record_start(conn: asyncpg.Connection, prac: asyncpg.Record, by: str)
     )
 
 
+def _iso(value: date | datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
 def _iso_week_label(d: date) -> str:
     """A human week label like Asya's tabs, derived from ISO week."""
     iso = d.isocalendar()
@@ -200,7 +205,7 @@ async def confirm_payment(
         # 1. Read current practice state (lock the row) — verify it exists.
         prac = await conn.fetchrow(
             "SELECT id, payment_status, paid_amount, status, client_id, client_visible,"
-            " client_summary FROM practices WHERE id = $1 FOR UPDATE",
+            " client_summary, start_date FROM practices WHERE id = $1 FOR UPDATE",
             practice_id,
         )
         if prac is None:
@@ -216,9 +221,11 @@ async def confirm_payment(
         # 1b. A given invoice must exist and belong to this practice, before any write.
         invoice_amount = None
         invoice_issuer = None
+        invoice_paid_date = None
         if invoice_id is not None:
             inv = await conn.fetchrow(
-                "SELECT practice_id, amount_idr, issuer_entity_key FROM invoices WHERE id = $1 FOR SHARE",
+                "SELECT practice_id, amount_idr, issuer_entity_key, paid_date FROM invoices"
+                " WHERE id = $1 FOR SHARE",
                 invoice_id,
             )
             if inv is None:
@@ -229,6 +236,7 @@ async def confirm_payment(
                 )
             invoice_amount = inv["amount_idr"]
             invoice_issuer = inv["issuer_entity_key"]
+            invoice_paid_date = inv["paid_date"]
             if invoice_amount is not None and not Decimal(invoice_amount).is_finite():
                 raise ReconcileError(f"invoice {invoice_id} has no usable amount")
 
@@ -397,8 +405,8 @@ async def confirm_payment(
             INSERT INTO reconciliation_log
                 (bank_txn_id, invoice_ids, practice_id, cashout_id, confirmed_by,
                  confirmed_at, status_before, status_after, amount_applied_idr,
-                 pph_delta_idr, bank_fee_delta_idr, note)
-            VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8, $9, $10, $11)
+                 pph_delta_idr, bank_fee_delta_idr, note, before_state)
+            VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8, $9, $10, $11, $12)
             RETURNING id
             """,
             bank_txn_id,
@@ -414,6 +422,11 @@ async def confirm_payment(
             pph_withheld_idr,
             bank_fee_idr,
             HISTORICAL_NOTE if historical else None,
+            # What this confirmation overwrites and an undo of today puts back (373).
+            {
+                "invoice_paid_date": _iso(invoice_paid_date),
+                "start_date": _iso(prac["start_date"]),
+            },
         )
 
     logger.info(
@@ -438,7 +451,8 @@ async def recorded_without_notifications(
     payment_before: str | None,
     payment_after: str | None,
 ) -> bool:
-    """Whether the practice change stamped `change_ts` was made by a historical confirmation.
+    """Whether the practice change stamped `change_ts` was made by a historical confirmation or
+    by an undo (owner rule b): neither emails anyone.
 
     The practice trigger stamps its payload with EXTRACT(EPOCH FROM NOW()) and confirm_payment
     writes its audit row with confirmed_at = now() in the same transaction, so both carry the
@@ -454,14 +468,14 @@ async def recorded_without_notifications(
             """
             SELECT EXISTS (
                 SELECT 1 FROM reconciliation_log
-                WHERE practice_id = $1 AND note = $2
+                WHERE practice_id = $1 AND note = ANY($2::text[])
                   AND extract(epoch FROM confirmed_at) = $3::numeric
                   AND status_before IS NOT DISTINCT FROM $4::text
                   AND status_after IS NOT DISTINCT FROM $5::text
             )
             """,
             practice_id,
-            HISTORICAL_NOTE,
+            [HISTORICAL_NOTE, UNDO_NOTE],
             str(change_ts),
             payment_before,
             payment_after,
@@ -673,6 +687,51 @@ async def ignore_transaction(
     return ActionResult(bank_txn_id, "ignored", log_id)
 
 
+# The paid date an invoice keeps: the latest movement date of its cash-out rows still standing.
+_STANDING_PAID_DATE = """
+    SELECT (max(wc.movement_date))::timestamp AT TIME ZONE 'UTC'
+    FROM weekly_cashout wc
+    WHERE wc.linked_invoice_id = $1 AND wc.type = 'invoice_payment'
+      AND wc.reversed_by_id IS NULL
+"""
+_SET_STANDING_PAID_DATE = "UPDATE invoices SET paid_date = (" + _STANDING_PAID_DATE + ") WHERE id = $1"
+
+
+async def _reverse_cashout_row(
+    conn: asyncpg.Connection, row_id: int, description: str, by: str
+) -> int:
+    """Append-only reversal of one cash-out row: a copy marked as its reversal, the two pointing
+    at each other, so every reader of the cash-out leaves both out. Returns the copy's id."""
+    reversal_id = await conn.fetchval(
+        """
+        INSERT INTO weekly_cashout
+            (movement_date, week_label, direction, type, amount_idr,
+             pnbp_idr, urgent_idr, rptka_imta_idr, margin_idr, final_price_idr,
+             original_currency, original_amount, fx_rate, fx_date,
+             pph_withheld_idr, bank_fee_idr,
+             linked_practice_id, linked_invoice_id, linked_bank_txn_id,
+             category, description, counterparty, payment_method,
+             recorded_by, recorded_at, reversed_by_id)
+        SELECT movement_date, week_label, direction, type, amount_idr,
+               pnbp_idr, urgent_idr, rptka_imta_idr, margin_idr, final_price_idr,
+               original_currency, original_amount, fx_rate, fx_date,
+               pph_withheld_idr, bank_fee_idr,
+               linked_practice_id, linked_invoice_id, linked_bank_txn_id,
+               category, $2, counterparty, payment_method,
+               $3, now(), id
+        FROM weekly_cashout WHERE id = $1
+        RETURNING id
+        """,
+        row_id,
+        description,
+        by,
+    )
+    await conn.execute(
+        "UPDATE weekly_cashout SET reversed_by_id = $1 WHERE id = $2", reversal_id, row_id
+    )
+    return reversal_id
+
+
 async def reopen_transaction(
     conn: asyncpg.Connection,
     *,
@@ -708,32 +767,8 @@ async def reopen_transaction(
             )
         reversal_id = None
         for row in written:
-            reversal_id = await conn.fetchval(
-                """
-                INSERT INTO weekly_cashout
-                    (movement_date, week_label, direction, type, amount_idr,
-                     pnbp_idr, urgent_idr, rptka_imta_idr, margin_idr, final_price_idr,
-                     original_currency, original_amount, fx_rate, fx_date,
-                     pph_withheld_idr, bank_fee_idr,
-                     linked_practice_id, linked_invoice_id, linked_bank_txn_id,
-                     category, description, counterparty, payment_method,
-                     recorded_by, recorded_at, reversed_by_id)
-                SELECT movement_date, week_label, direction, type, amount_idr,
-                       pnbp_idr, urgent_idr, rptka_imta_idr, margin_idr, final_price_idr,
-                       original_currency, original_amount, fx_rate, fx_date,
-                       pph_withheld_idr, bank_fee_idr,
-                       linked_practice_id, linked_invoice_id, linked_bank_txn_id,
-                       category, $2, counterparty, payment_method,
-                       $3, now(), id
-                FROM weekly_cashout WHERE id = $1
-                RETURNING id
-                """,
-                row["id"],
-                REVERSAL_DESCRIPTION.format(id=row["id"]),
-                reopened_by,
-            )
-            await conn.execute(
-                "UPDATE weekly_cashout SET reversed_by_id = $1 WHERE id = $2", reversal_id, row["id"]
+            reversal_id = await _reverse_cashout_row(
+                conn, row["id"], REVERSAL_DESCRIPTION.format(id=row["id"]), reopened_by
             )
 
         # Safe to read now: every writer of this bank transaction's log rows holds its lock.
@@ -752,19 +787,7 @@ async def reopen_transaction(
             bank_txn_id,
         )
         for invoice_id in sorted({r["linked_invoice_id"] for r in written} - {None}):
-            await conn.execute(
-                """
-                UPDATE invoices
-                SET paid_date = (
-                    SELECT (max(wc.movement_date))::timestamp AT TIME ZONE 'UTC'
-                    FROM weekly_cashout wc
-                    WHERE wc.linked_invoice_id = $1 AND wc.type = 'invoice_payment'
-                      AND wc.reversed_by_id IS NULL
-                )
-                WHERE id = $1
-                """,
-                invoice_id,
-            )
+            await conn.execute(_SET_STANDING_PAID_DATE, invoice_id)
         log_id = await conn.fetchval(
             """
             INSERT INTO reconciliation_log
@@ -781,3 +804,220 @@ async def reopen_transaction(
         )
     logger.info("Reconcile reopen: bank_txn=%s recon=%s", bank_txn_id, log_id)
     return ActionResult(bank_txn_id, "unmatched", log_id)
+
+
+UNDO_NOTE = "confirmation undone the same day"
+UNDO_REVERSAL_DESCRIPTION = "reversal of cash-out row {id}: confirmation undone"
+_UNDO_TZ = "Asia/Makassar"
+
+
+async def undo_confirmation(
+    conn: asyncpg.Connection,
+    *,
+    bank_txn_id: int,
+    undone_by: str,
+) -> ActionResult:
+    """Owner rule (b): a payment confirmed today (WITA) is taken back, in one transaction.
+
+    The transfer's newest log row must be a confirmation of today, still standing, and the
+    newest standing payment entry of its case, whose payment status must still be the one the
+    confirmation set: then `status_before` is still the state to go back to. Everything the
+    confirmation wrote goes back: the transfer is unmatched again, its cash-out row is reversed
+    (append-only, as a reopened link's), the invoice loses the amount and gets back the paid date
+    the confirmation found (its before_state, 373; a confirmation without one is refused), the
+    case gets its payment status and paid amount back. A case the confirmation started (rule a)
+    goes back to sending_invoice, its start date cleared when the confirmation set it and nobody
+    changed it since, the client timeline entry hidden, and an activity row says so; a case that
+    has moved on since is refused. A log row marks the undo as the confirmation's reversal; the
+    listener reads it as it reads a historical confirmation, so even an undo that gives a case
+    back its `paid` emails nobody. It runs in a transaction of its own for the same reason: the
+    listener recognises it by the transaction's instant. Locks in the confirm order: the bank
+    transaction, the practice, the cash-out row, the invoice.
+    """
+    if conn.is_in_transaction():
+        raise ReconcileError("an undo runs in a transaction of its own, not inside another")
+    async with conn.transaction():
+        bank = await _lock_bank_row(conn, bank_txn_id)
+        if bank["reconciled_status"] != "matched":
+            raise ReconcileError(f"bank transaction {bank_txn_id} is not confirmed")
+        # Safe to read now: every writer of this transfer's log rows holds its lock.
+        log = await conn.fetchrow(
+            "SELECT id, invoice_ids, practice_id, cashout_id, confirmed_at, status_before,"
+            " status_after, amount_applied_idr, note, reversal_of_id, before_state,"
+            f" (confirmed_at AT TIME ZONE '{_UNDO_TZ}')::date"
+            f" = (now() AT TIME ZONE '{_UNDO_TZ}')::date AS today"
+            " FROM reconciliation_log WHERE bank_txn_id = $1 ORDER BY id DESC LIMIT 1",
+            bank_txn_id,
+        )
+        if (
+            log is None
+            or log["practice_id"] is None
+            or log["reversal_of_id"] is not None
+            or log["note"] not in (None, HISTORICAL_NOTE)
+            or log["practice_id"] != bank["matched_practice_id"]
+            or len(log["invoice_ids"] or []) > 1
+        ):
+            raise ReconcileError(f"bank transaction {bank_txn_id} has no confirmation to undo")
+        if not log["today"]:
+            raise ReconcileError(
+                f"bank transaction {bank_txn_id} was confirmed before today: it cannot be undone"
+            )
+        before = log["before_state"]
+        if isinstance(before, str):
+            before = json.loads(before)
+        if not isinstance(before, dict):
+            raise ReconcileError(
+                f"bank transaction {bank_txn_id} was confirmed before its undo could be recorded:"
+                " it cannot be undone"
+            )
+        practice_id = log["practice_id"]
+        prac = await conn.fetchrow(
+            "SELECT payment_status, paid_amount, status, start_date FROM practices"
+            " WHERE id = $1 FOR UPDATE",
+            practice_id,
+        )
+        if prac is None:
+            raise ReconcileError(f"practice {practice_id} not found")
+        # Safe to read now: a confirmation or link on this case waits for the practice lock.
+        later = await conn.fetchval(
+            """
+            SELECT count(*) FROM reconciliation_log r
+            WHERE r.practice_id = $1 AND r.id > $2 AND r.reversal_of_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM reconciliation_log u WHERE u.reversal_of_id = r.id)
+            """,
+            practice_id,
+            log["id"],
+        )
+        if later or (prac["payment_status"] or "unpaid") != log["status_after"]:
+            raise ReconcileError(
+                f"practice {practice_id} has changed since this confirmation: undo the newer one first"
+            )
+        started = bool(
+            await conn.fetchval(
+                "SELECT 1 FROM activity_log WHERE entity_type = 'practice' AND entity_id = $1"
+                " AND description = 'Updated: status' AND changes->>'status' = 'on_process'"
+                " AND performed_at = $2",
+                practice_id,
+                log["confirmed_at"],
+            )
+        )
+        if started and prac["status"] != "on_process":
+            raise ReconcileError(
+                f"practice {practice_id} has moved on since this confirmation started it"
+            )
+
+        reversal_id = None
+        if log["cashout_id"] is not None:
+            standing = await conn.fetchval(
+                "SELECT id FROM weekly_cashout WHERE id = $1 AND reversed_by_id IS NULL FOR UPDATE",
+                log["cashout_id"],
+            )
+            if standing is not None:
+                reversal_id = await _reverse_cashout_row(
+                    conn, standing, UNDO_REVERSAL_DESCRIPTION.format(id=standing), undone_by
+                )
+        amount = int(log["amount_applied_idr"] or 0)
+        for invoice_id in sorted(set(log["invoice_ids"] or [])):
+            await conn.execute("SELECT 1 FROM invoices WHERE id = $1 FOR UPDATE", invoice_id)
+            await conn.execute(
+                "UPDATE invoices SET paid_amount_idr = GREATEST(COALESCE(paid_amount_idr, 0) - $2, 0),"
+                " paid_date = $3::text::timestamptz WHERE id = $1",
+                invoice_id,
+                amount,
+                before.get("invoice_paid_date"),
+            )
+        await conn.execute(
+            """
+            UPDATE bank_transactions
+            SET reconciled_status = 'unmatched',
+                matched_practice_id = NULL,
+                matched_invoice_id = NULL
+            WHERE id = $1
+            """,
+            bank_txn_id,
+        )
+        if started:
+            await conn.execute(
+                """
+                UPDATE practices
+                SET payment_status = $2, paid_amount = GREATEST(COALESCE(paid_amount, 0) - $3, 0),
+                    status = 'sending_invoice',
+                    start_date = CASE WHEN $5::text IS NULL
+                                       AND start_date = ($4::timestamptz)::date THEN NULL
+                                      ELSE start_date END,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                practice_id,
+                log["status_before"],
+                amount,
+                log["confirmed_at"],
+                before.get("start_date"),
+            )
+            await _record_unstart(conn, practice_id, log["confirmed_at"], undone_by)
+        else:
+            await conn.execute(
+                """
+                UPDATE practices
+                SET payment_status = $2, paid_amount = GREATEST(COALESCE(paid_amount, 0) - $3, 0),
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                practice_id,
+                log["status_before"],
+                amount,
+            )
+        log_id = await conn.fetchval(
+            """
+            INSERT INTO reconciliation_log
+                (bank_txn_id, invoice_ids, practice_id, cashout_id, confirmed_by, confirmed_at,
+                 status_before, status_after, amount_applied_idr, reversal_of_id, note)
+            VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8, $9, $10)
+            RETURNING id
+            """,
+            bank_txn_id,
+            list(log["invoice_ids"] or []),  # a list: see confirm_payment
+            practice_id,
+            reversal_id,
+            undone_by,
+            log["status_after"],
+            log["status_before"],
+            amount,
+            log["id"],
+            UNDO_NOTE,
+        )
+    logger.info(
+        "Reconcile undo: bank_txn=%s practice=%s undone=%s recon=%s started=%s",
+        bank_txn_id, practice_id, log["id"], log_id, started,
+    )
+    return ActionResult(bank_txn_id, "unmatched", log_id)
+
+
+async def _record_unstart(
+    conn: asyncpg.Connection, practice_id: int, started_at: datetime, by: str
+) -> None:
+    """The start an undone confirmation made is taken back where the client could see it: its
+    timeline entry is hidden (kept, never deleted), and an activity row records the move back,
+    as the CRM records a status change made by hand."""
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE timeline_events SET client_visible = false WHERE practice_id = $1"
+                " AND event_type = $2 AND title = $3 AND event_date = $4",
+                practice_id,
+                START_TIMELINE_EVENT[0],
+                START_TIMELINE_EVENT[1],
+                started_at,
+            )
+    except asyncpg.PostgresError as exc:
+        if getattr(exc, "sqlstate", None) != _UNDEFINED_TABLE:
+            raise
+    await conn.execute(
+        """
+        INSERT INTO activity_log (entity_type, entity_id, action, performed_by, description, changes)
+        VALUES ('practice', $1, 'updated', $2, 'Updated: status', $3)
+        """,
+        practice_id,
+        by,
+        {"status": "sending_invoice"},
+    )

@@ -55,3 +55,64 @@ async def test_the_start_milestone_hands_a_paid_case_to_the_automation(listener)
     listener._process_svc.trigger_on_process_start.assert_awaited_once_with(
         practice_id=7, triggered_by="staff@example.test"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("old_status", "new_status", "old_payment", "new_payment"),
+    [
+        ("on_process", "sending_invoice", "paid", "unpaid"),  # undo of a confirm that started it
+        ("on_process", "on_process", "paid", "partial"),  # undo of the last part
+        ("on_process", "on_process", "partial", "unpaid"),  # undo of a first part
+    ],
+)
+async def test_an_undone_confirmation_sends_nothing(
+    listener, old_status, new_status, old_payment, new_payment
+):
+    """Owner rule (b): the change an undo makes is neither a payment becoming paid nor a status
+    entering a client milestone, so no handler runs."""
+    listener._on_payment_received = AsyncMock()
+    listener._on_status_changed = AsyncMock()
+    historical = AsyncMock(return_value=False)
+    payload = json.dumps(
+        {
+            "practice_id": 7,
+            "old_status": old_status,
+            "new_status": new_status,
+            "old_payment": old_payment,
+            "new_payment": new_payment,
+            "ts": "1782345600.123456",
+        }
+    )
+    with patch(
+        "backend.services.crm.practice_status_listener.recorded_without_notifications", historical
+    ):
+        await listener._handle_notification(payload)
+    listener._on_payment_received.assert_not_awaited()
+    listener._on_status_changed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_undo_that_gives_back_paid_is_recognised_and_sends_nothing(listener):
+    """partial -> paid with the status unchanged would be a payment arriving; recognised as
+    recorded without notifications (an undo's log row), no handler runs."""
+    listener._on_payment_received = AsyncMock()
+    listener._on_status_changed = AsyncMock()
+    recognised = AsyncMock(return_value=True)
+    payload = json.dumps(
+        {
+            "practice_id": 7,
+            "old_status": "on_process",
+            "new_status": "on_process",
+            "old_payment": "partial",
+            "new_payment": "paid",
+            "ts": "1782345600.123456",
+        }
+    )
+    with patch(
+        "backend.services.crm.practice_status_listener.recorded_without_notifications", recognised
+    ):
+        await listener._handle_notification(payload)
+    assert recognised.await_args.args[1:] == (7, "1782345600.123456", "partial", "paid")
+    listener._on_payment_received.assert_not_awaited()
+    listener._on_status_changed.assert_not_awaited()

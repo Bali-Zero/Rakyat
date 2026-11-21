@@ -43,6 +43,10 @@ MIGRATION_363 = (
     Path(__file__).resolve().parents[2]
     / "db" / "migrations_v2" / "363_bank_statement_import.sql"
 )
+MIGRATION_373 = (
+    Path(__file__).resolve().parents[2]
+    / "db" / "migrations_v2" / "373_reconciliation_log_before_state.sql"
+)
 
 # A statement of the default company's account. A transfer settles only invoices of the company
 # that owns the account it reached, and an invoice with no issuer is the default company's.
@@ -143,6 +147,7 @@ async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     await conn.execute(_forward_sql_of(MIGRATION_239))
     await conn.execute(_forward_sql_of(MIGRATION_355))
     await conn.execute(_forward_sql_of(MIGRATION_363))
+    await conn.execute(_forward_sql_of(MIGRATION_373))
     # 363 sets session timeouts for its own run; the tests here keep the defaults they had.
     await conn.execute("RESET lock_timeout; RESET statement_timeout")
     return conn, dbname, user
