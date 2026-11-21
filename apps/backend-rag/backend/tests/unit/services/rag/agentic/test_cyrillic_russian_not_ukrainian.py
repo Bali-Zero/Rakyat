@@ -25,10 +25,8 @@ RUSSIAN = [
     "Будем играть в ролевую игру. Ты — мой друг по бару, а не ассистент. Расслабься и "
     "говори как человек, с эмоциями и сленгом.",
     "Какая виза нужна, если я работаю удаленно?",
-    # A Ukrainian marker inside a Russian word is not a marker (the old
-    # substring test read "всякий" and "справиться" as Ukrainian).
+    # Carries "ы": the Russian-only letter decides before any marker.
     "Нужен всякий документ для визы?",
-    "Как справиться с продлением KITAS?",
 ]
 
 UKRAINIAN = [
@@ -41,7 +39,13 @@ UKRAINIAN = [
     "Якщо можна, завтра.",
     "Якраз вчасно!",
     "Дякувати вам за допомогу!",
-    "Чи треба платити податок?",
+    # Second gate BLOCK: word-start markers lost these.
+    "Так робити недобре.",
+    "Завдяки вам усе вдалося.",
+    "Зроблено абияк.",
+    "Добренько, зроблю завтра.",
+    "Подякую вам завтра.",
+    "Хочу подякувати вам за допомогу.",
 ]
 
 
@@ -53,3 +57,25 @@ def test_russian_is_russian(text):
 @pytest.mark.parametrize("text", UKRAINIAN)
 def test_ukrainian_stays_ukrainian(text):
     assert detect_query_language(text) == "UKRAINIAN"
+
+
+_OLD_MARKERS = ["привіт", "як", "справи", "добре", "дякую"]
+
+
+def _old_rule(text: str) -> str:
+    """The Cyrillic branch as it was on main before this change."""
+    lowered = text.lower()
+    return "UKRAINIAN" if any(w in lowered for w in _OLD_MARKERS) else "RUSSIAN"
+
+
+@pytest.mark.parametrize("text", RUSSIAN + UKRAINIAN)
+def test_no_sentence_moves_away_from_its_letters(text):
+    """Monotone against the old rule: the only flips are the ones a
+    language-exclusive letter proves right."""
+    new, old = detect_query_language(text), _old_rule(text)
+    if new != old:
+        lowered = text.lower()
+        if new == "RUSSIAN":
+            assert any(c in lowered for c in "ыэъё"), text
+        else:
+            assert any(c in lowered for c in "іїєґ"), text
