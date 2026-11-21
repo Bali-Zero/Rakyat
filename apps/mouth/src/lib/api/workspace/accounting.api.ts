@@ -40,6 +40,8 @@ export interface CashoutRow {
   recorded_at: string | null;
   reversed_by_id: number | null;
   client_name: string | null;
+  /** The service of the linked case (absent from an older backend). */
+  service_name?: string | null;
 }
 
 export type ReconciledStatus = "unmatched" | "matched" | "manual" | "ignored";

@@ -382,3 +382,22 @@ async def test_reopen_and_link_on_one_invoice_in_random_order_never_deadlock(db)
         "SELECT max(txn_date) FROM bank_transactions WHERE reconciled_status = 'manual'"
     )
     assert await _paid_date(conn, iid) == _utc(latest)
+
+
+async def test_the_cash_out_list_names_the_service_of_the_linked_case(db) -> None:  # noqa: F811
+    conn, _ = db
+    pid, iid = await _practice(conn, "paid")
+    ptid = await conn.fetchval(
+        "INSERT INTO practice_types (code, name) VALUES ('CONTOH', 'Contoh Layanan') RETURNING id"
+    )
+    await conn.execute("UPDATE practices SET practice_type_id = $1 WHERE id = $2", ptid, pid)
+    await _link(conn, await _bank_on(conn, date(2026, 6, 25)), pid, iid)
+    pid2, iid2 = await _practice(conn, "paid")  # a case without a practice type
+    await _link(conn, await _bank_on(conn, date(2026, 6, 24)), pid2, iid2)
+
+    rows = await list_cashout(conn)
+
+    assert [(r["linked_practice_id"], r["service_name"]) for r in rows] == [
+        (pid, "Contoh Layanan"),
+        (pid2, None),
+    ]
