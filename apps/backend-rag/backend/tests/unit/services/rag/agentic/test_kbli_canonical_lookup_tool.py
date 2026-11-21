@@ -193,4 +193,6 @@ def test_prompt_requires_exact_lookup_and_locks_curated_legal_traps():
     assert "NEVER describe Rp10.000.000.000 as paid-up capital" in TOOL_USAGE_POLICY
     assert "56101, 56210, 56290, 56103, 56303, 68120, 11052" in TOOL_USAGE_POLICY
     assert "does not state a fixed three-year SLHS validity" in TOOL_USAGE_POLICY
-    assert "island-wide and permanent" in TOOL_USAGE_POLICY
+    assert "18 listed KBLI-2020 business fields" in TOOL_USAGE_POLICY
+    assert "NOT for every Low or Medium-Low risk activity" in TOOL_USAGE_POLICY
+    assert "island-wide and permanent" not in TOOL_USAGE_POLICY

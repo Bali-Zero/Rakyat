@@ -658,11 +658,11 @@ class Settings(BaseSettings):
         description="GitHub Personal Access Token for publishing articles. Set via GITHUB_TOKEN env var.",
     )
     github_owner: str = Field(
-        default="Balizero1987",
+        default="Bali-Zero",
         description="GitHub repository owner. Set via GITHUB_OWNER env var.",
     )
     github_repo: str = Field(
-        default="Teman2",
+        default="Rakyat",
         description="GitHub repository name. Set via GITHUB_REPO env var.",
     )
 
@@ -1119,6 +1119,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    @field_validator("admin_notification_email", mode="before")
+    @classmethod
+    def blank_admin_notification_email_keeps_default(cls, v: Any) -> Any:
+        """A blank `ADMIN_NOTIFICATION_EMAIL` (e.g. an empty Fly secret) would
+        otherwise replace the default with "" and silently mute every consumer:
+        the GARUDA alarms, the stale-practice digest and the welcome BCC."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return cls.model_fields["admin_notification_email"].default
+        return v.strip() if isinstance(v, str) else v
+
     # Historical default preserved when ADMIN_EMAILS is unset. The intent is that
     # ADMIN_EMAILS should always be set explicitly in production; this fallback
     # only matters for local dev where the routers still need to start.
@@ -1203,6 +1213,12 @@ class Settings(BaseSettings):
         None  # Set via GDRIVE_COMPANIES_FOLDER_ID env var (parent for company clients)
     )
 
+    # HR document door (STAFF_CARD.md C13): the owner's private tree HR&FINANCE/HR/DOKUMEN
+    # KARYAWAN and the Workspace user the service account impersonates to write into it (the
+    # service account itself is only a reader there).
+    hr_documents_drive_root_id: str = "1cihc-wQibnTrlJfbal4vPyJViS3CDsjX"
+    hr_documents_drive_subject: str = "zero@balizero.com"
+
     # Shared secret used by Pro-side `wa-mirror-auto-promote-leads.py` (and similar
     # service-to-service scripts that bypass POST /api/crm/clients/) to call
     # POST /api/crm/clients/{id}/ensure-drive-folder. Auth dependency:
@@ -1219,6 +1235,11 @@ class Settings(BaseSettings):
     # `fly secrets set WA_MIRROR_CRM_WRITE_KEY=...`.
     wa_mirror_crm_write_key: str | None = None
     wa_mirror_crm_write_enabled: bool = False
+
+    # Related-subject registry (slice 1): POST /api/crm/related-subjects/register, same scoped
+    # X-CRM-Write-Key as above. Own kill switch, default off (503): the WA Mirror flag alone
+    # never opens it.
+    related_subject_registry_enabled: bool = False
 
     # Scoped service key EXCLUSIVE to wa_inbox_bot.py's own call to
     # POST /api/agentic-rag/query, used ONLY to gate WA sender-profile

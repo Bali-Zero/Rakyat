@@ -2,38 +2,31 @@ import { render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import Loading from "./loading";
 
-describe("Loading", () => {
-  it("should render loading component", () => {
-    render(<Loading />);
+describe("Loading (root route boundary)", () => {
+  it("renders no visible text, so streamed public HTML carries no placeholder copy", () => {
+    const { container } = render(<Loading />);
+    expect(container.textContent).toBe("");
+    expect(container.innerHTML).not.toMatch(/Loading Zantara/);
+  });
 
-    expect(screen.getByText("Loading Zantara...")).toBeInTheDocument();
+  it("still announces loading to assistive tech", () => {
+    render(<Loading />);
+    expect(screen.getByRole("status")).toHaveAccessibleName("Loading");
   });
 
   it("should render loader icon", () => {
     const { container } = render(<Loading />);
-
-    const loader = container.querySelector(".animate-spin");
-    expect(loader).toBeInTheDocument();
+    expect(container.querySelector(".animate-spin")).toBeInTheDocument();
   });
 
   it("should have correct structure", () => {
     const { container } = render(<Loading />);
-
-    const mainDiv = container.firstChild as HTMLElement;
-    expect(mainDiv).toHaveClass(
+    expect(container.firstChild as HTMLElement).toHaveClass(
       "flex",
       "h-screen",
       "w-full",
       "items-center",
       "justify-center",
     );
-  });
-
-  it("should display loading text", () => {
-    render(<Loading />);
-
-    const loadingText = screen.getByText("Loading Zantara...");
-    expect(loadingText).toBeInTheDocument();
-    expect(loadingText).toHaveClass("animate-pulse");
   });
 });

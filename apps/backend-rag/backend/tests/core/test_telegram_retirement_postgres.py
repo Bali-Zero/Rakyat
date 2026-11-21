@@ -11,11 +11,22 @@ from urllib.parse import urlsplit
 import asyncpg
 import pytest
 
+from backend.services.garuda_orders import outbox_consumer
 from backend.services.garuda_orders.outbox_consumer import (
-    RETIRED_TELEGRAM_JOB_TYPES,
     count_undrained,
     drain_once,
 )
+
+_STAFF_PAGE_TYPES = (
+    "staff_page_duplicate_charge",
+    "staff_page_late_paid_after_refund",
+    "staff_page_late_paid_after_terminal",
+    "staff_page_charge_without_webhook",
+    "staff_page_payment_failure",
+    "staff_page_refund_out_of_order",
+)
+
+_SYNTHETIC_RETIRED_TYPES = tuple(f"synthetic_retired_tg_{i}" for i in range(6))
 
 
 @pytest.mark.asyncio
@@ -47,7 +58,11 @@ async def test_retired_jobs_are_held_while_email_is_claimed(monkeypatch):
                 created_at timestamptz NOT NULL DEFAULT now()
             )
         """)
-        for kind in RETIRED_TELEGRAM_JOB_TYPES:
+        monkeypatch.setenv("GARUDA_OUTBOX_CONSUMER_ENABLED", "true")
+        assert outbox_consumer.RETIRED_TELEGRAM_JOB_TYPES == ()
+
+        # Already-queued staff_page_* jobs drain via the email channel without migration.
+        for kind in _STAFF_PAGE_TYPES:
             await conn.execute(
                 "INSERT INTO garuda_order_outbox(order_id,journal_event_id,job_type) VALUES('synthetic-order','synthetic-event',$1)",
                 kind,
@@ -55,9 +70,27 @@ async def test_retired_jobs_are_held_while_email_is_claimed(monkeypatch):
         await conn.execute(
             "INSERT INTO garuda_order_outbox(order_id,journal_event_id,job_type) VALUES('synthetic-order','synthetic-event','payment_paid_email')"
         )
-        monkeypatch.setenv("GARUDA_OUTBOX_CONSUMER_ENABLED", "true")
+        live_handler = AsyncMock()
+        live_handlers = dict.fromkeys(_STAFF_PAGE_TYPES, live_handler)
+        live_handlers["payment_paid_email"] = live_handler
+        live_stats = await drain_once(conn, live_handlers)
+        assert live_stats.claimed == live_stats.dispatched == 7
+        assert live_stats.failed == live_stats.unroutable == 0
+        counts = await count_undrained(conn)
+        assert counts["retired_internal_attention"] == counts["undispatched"] == 0
+
+        await conn.execute("TRUNCATE garuda_order_outbox")
+        monkeypatch.setattr(outbox_consumer, "RETIRED_TELEGRAM_JOB_TYPES", _SYNTHETIC_RETIRED_TYPES)
+        for kind in _SYNTHETIC_RETIRED_TYPES:
+            await conn.execute(
+                "INSERT INTO garuda_order_outbox(order_id,journal_event_id,job_type) VALUES('synthetic-order','synthetic-event',$1)",
+                kind,
+            )
+        await conn.execute(
+            "INSERT INTO garuda_order_outbox(order_id,journal_event_id,job_type) VALUES('synthetic-order','synthetic-event','payment_paid_email')"
+        )
         handler = AsyncMock()
-        handlers = dict.fromkeys(RETIRED_TELEGRAM_JOB_TYPES, handler)
+        handlers = dict.fromkeys(_SYNTHETIC_RETIRED_TYPES, handler)
         handlers["payment_paid_email"] = handler
         stats = await drain_once(conn, handlers)
         assert stats.claimed == stats.dispatched == 1

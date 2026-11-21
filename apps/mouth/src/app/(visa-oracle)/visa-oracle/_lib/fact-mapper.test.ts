@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 import {
   CATEGORY_TO_PURPOSE,
+  PRODUCT_CODES,
   SCHEMA_VERSION,
   SPONSOR_TYPES,
   mapCurrentStatusExpiry,
@@ -18,6 +19,7 @@ import {
   mapOracleFactsToApplicantFacts,
   mapPurposes,
   mapRemoteClientsDerived,
+  mapRequestedProductCode,
   mapSponsorType,
   mapStayDays,
   mapViolationHistory,
@@ -157,9 +159,10 @@ describe("mapOracleFactsToApplicantFacts — full contract (acceptance test 1)",
 // visible as uncertainty and therefore preserves the human-review hold.
 // Slice A6-bis adds two more (`diaspora_documents`, `retirement_basis`),
 // nine in total; PR-M (owner ruling 2026-09-27) adds the E33F penjamin
-// sibling, `retirement_penjamin_confirmed` — ten.
+// sibling, `retirement_penjamin_confirmed` — ten; NC-08 adds
+// `secondhome_property_title` — eleven.
 describe("resolveConservativeAnswers — the wire seam (A6-2)", () => {
-  it("resolves exactly the ten declared conservative questions and retains other unsure answers", () => {
+  it("resolves exactly the eleven declared conservative questions and retains other unsure answers", () => {
     expect(
       Object.entries(QUESTIONS)
         .filter(([, q]) => q.notSure?.mode === "conservative")
@@ -172,6 +175,7 @@ describe("resolveConservativeAnswers — the wire seam (A6-2)", () => {
       "secondhome_deposit_usd",
       "secondhome_own_name",
       "secondhome_passive_income_usd",
+      "secondhome_property_title",
       "secondhome_property_value_usd",
       "secondhome_state_bank",
       "study_admission_confirmed",
@@ -1626,6 +1630,13 @@ describe("mapDisclosedReviewFlags — monotone abstention metadata", () => {
     // PR-M: a retiree who is "not sure" they have a penjamin is a "no", not a
     // human-review hold — the row also pins that AMBIGUOUS_SPONSOR stays off.
     ["retirement_penjamin_confirmed", "family.sponsor_confirmed", "no"],
+    // NC-08: unsure whether the property has a completed strata title resolves
+    // conservatively to the non-qualifying option -> KNOWN(0) property value.
+    [
+      "secondhome_property_title",
+      "secondhome.qualifying_property_value_usd",
+      "non_qualifying_leasehold_villa_offplan",
+    ],
   ] as const;
 
   it.each(CONSERVATIVE_ANSWERS)(
@@ -1758,6 +1769,59 @@ describe("mapDisclosedReviewFlags — monotone abstention metadata", () => {
     expect(mapDisclosedReviewFlags({ retirement_basis: "property" })).toEqual(
       [],
     );
+  });
+
+  it("NC-08 / P03: non-qualifying leasehold/villa/HGB/off-plan title maps qualifying_property_value_usd to KNOWN(0) even over a stale USD value, while completed_strata maps the documented USD value", () => {
+    const nonQualifyingCases: OracleFacts[] = [
+      {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+      },
+      {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+        secondhome_property_value_usd: "1100000",
+      },
+      {
+        category: "invest",
+        investment_vehicle: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+        secondhome_property_value_usd: "1100000",
+      },
+      {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "unsure",
+      },
+    ];
+    for (const facts of nonQualifyingCases) {
+      const mapped = mapFacts(facts);
+      expect(mapped.disclosed_review_flags).toEqual([]);
+      expect(mapped.facts["secondhome.qualifying_property_value_usd"]).toEqual({
+        status: "KNOWN",
+        value: 0,
+      });
+      expect(mapped.facts["secondhome.bank_deposit_usd"]).toEqual({
+        status: "KNOWN",
+        value: 0,
+      });
+    }
+
+    const qualifying = mapFacts({
+      category: "second_home",
+      secondhome_basis: "property",
+      secondhome_property_title: "completed_strata",
+      secondhome_property_value_usd: "1100000",
+    });
+    expect(qualifying.disclosed_review_flags).toEqual([]);
+    expect(
+      qualifying.facts["secondhome.qualifying_property_value_usd"],
+    ).toEqual({
+      status: "KNOWN",
+      value: 1_100_000,
+    });
   });
 });
 
@@ -2395,5 +2459,119 @@ describe("E28A sponsoring company", () => {
         investment_sponsoring_company_confirmed: "yes",
       }).facts[path],
     ).toEqual({ status: "UNKNOWN", reason: "CONFLICTING" });
+  });
+});
+
+describe("mapRequestedProductCode (seq-33 reachability)", () => {
+  const PATH = "intent.requested_product_code";
+
+  it("maps explicit requested_product_code overrides through the closed seq-33 catalogue", () => {
+    expect(
+      mapRequestedProductCode({ requested_product_code: "E28A" }),
+    ).toEqual({ status: "KNOWN", value: "E28A" });
+    expect(
+      mapRequestedProductCode({ requested_product_code: "BRIDGING" }),
+    ).toEqual({ status: "KNOWN", value: "BRIDGING" });
+    expect(
+      mapRequestedProductCode({ requested_product_code: "unsure" }),
+    ).toEqual({ status: "UNKNOWN", reason: "UNVERIFIED" });
+    expect(
+      mapRequestedProductCode({ requested_product_code: "ZZ99" }),
+    ).toEqual({ status: "UNKNOWN", reason: "NOT_PROVIDED" });
+  });
+
+  it.each(["ONSHORE_CONVERSION", "STATUS_BRIDGING"] as const)(
+    "derives E28A for onshore %s + PT PMA INVESTMENT walks (unblocking hf.visit.not-e28a-conversion & review.e28a.bridging-origin)",
+    (channel) => {
+      const wire = mapFacts({
+        in_indonesia: "yes",
+        application_channel: channel,
+        category: "invest",
+        investment_vehicle: "pt_pma",
+        investment_pt_pma: "yes",
+      });
+      expect(wire.facts[PATH]).toEqual({ status: "KNOWN", value: "E28A" });
+    },
+  );
+
+  it("keeps the applicant's current permit separate from the bridging destination", () => {
+    const facts: OracleFacts = {
+      in_indonesia: "yes",
+      application_channel: "STATUS_BRIDGING",
+      holds_stay_permit: "yes",
+      stay_permit_code: "E23",
+      category: "other",
+      other_paid_activity: "no",
+    };
+    const wire = mapFacts(facts);
+    expect(wire.facts["immigration.current_status_code"]).toEqual({
+      status: "KNOWN",
+      value: "E23",
+    });
+    expect(wire.facts[PATH]).toEqual({ status: "UNKNOWN", reason: "NOT_ASKED" });
+    expect(mapFacts({ ...facts, requested_product_code: "E28A" }).facts[PATH]).toEqual({
+      status: "KNOWN",
+      value: "E28A",
+    });
+  });
+
+  it("stays UNKNOWN(NOT_ASKED) when offshore, non-PT-PMA, re-routed to SECOND_HOME/EMPLOYMENT, or without stay_permit_code", () => {
+    const cases: OracleFacts[] = [
+      {
+        in_indonesia: "no",
+        application_channel: "ONSHORE_CONVERSION",
+        category: "invest",
+        investment_vehicle: "pt_pma",
+        investment_pt_pma: "yes",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "ONSHORE_CONVERSION",
+        category: "invest",
+        investment_vehicle: "capital_market",
+        investment_pt_pma: "no",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "ONSHORE_CONVERSION",
+        category: "invest",
+        investment_vehicle: "property",
+        investment_pt_pma: "yes",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "STATUS_BRIDGING",
+        holds_stay_permit: "yes",
+        stay_permit_code: "E23",
+        category: "other",
+        other_paid_activity: "yes",
+      },
+      {
+        in_indonesia: "yes",
+        application_channel: "STATUS_BRIDGING",
+        holds_stay_permit: "no",
+        current_status_code: "C1",
+        category: "other",
+        other_paid_activity: "no",
+      },
+    ];
+    for (const facts of cases) {
+      expect(mapFacts(facts).facts[PATH]).toEqual({
+        status: "UNKNOWN",
+        reason: "NOT_ASKED",
+      });
+    }
+  });
+
+  it("PRODUCT_CODES stays in exact parity with rulepack-prod-033.source.json", () => {
+    const seq33Path = path.join(
+      REPO_ROOT,
+      "apps/backend-rag/backend/services/visa_engine/contracts/packs/rulepack-prod-033.source.json",
+    );
+    const seq33 = JSON.parse(fs.readFileSync(seq33Path, "utf-8")) as {
+      products: { product_code: string }[];
+    };
+    const expectedCodes = seq33.products.map((p) => p.product_code).sort();
+    expect([...PRODUCT_CODES].sort()).toEqual(expectedCodes);
   });
 });

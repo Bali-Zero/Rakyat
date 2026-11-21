@@ -19,29 +19,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Loader2,
   Wallet,
-  Inbox,
-  TableProperties,
   CheckCircle2,
   ArrowDownToLine,
   ArrowUpFromLine,
+  ArrowLeft,
   Sheet,
   Upload,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
+import { ReconciliationInbox } from "./_components/ReconciliationInbox";
+import "./control-centre.css";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
 import {
   accountingApi,
   type CashoutRow,
-  type BankTransaction,
   type CashbookSummary,
-  type MatchCandidate,
 } from "@/lib/api/workspace/accounting.api";
 
-type Tab = "cashout" | "inbox";
+type View = "centre" | "cashout";
 
 // ── Summary cards ────────────────────────────────────────────────────────────
 
@@ -63,7 +61,7 @@ function SummaryCards({ summary }: { summary: CashbookSummary | null }) {
       label: "Net",
       value: summary?.net_idr ?? 0,
       icon: Wallet,
-      tone: "text-foreground",
+      tone: "text-[var(--bz-text-1)]",
     },
     {
       label: "Bali Zero margin",
@@ -77,9 +75,12 @@ function SummaryCards({ summary }: { summary: CashbookSummary | null }) {
       {cards.map((c) => {
         const Icon = c.icon;
         return (
-          <div key={c.label} className="rounded-lg border bg-card p-4">
+          <div
+            key={c.label}
+            className="rounded-lg border bg-[var(--bz-card)] p-4"
+          >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className="text-xs font-medium text-[var(--bz-text-2)]">
                 {c.label}
               </span>
               <Icon className={`h-4 w-4 ${c.tone}`} />
@@ -102,7 +103,7 @@ function SummaryCards({ summary }: { summary: CashbookSummary | null }) {
 function CashoutTable({ rows }: { rows: CashoutRow[] }) {
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border p-10 text-center text-muted-foreground">
+      <div className="rounded-lg border p-10 text-center text-[var(--bz-text-2)]">
         No cashout rows yet.
       </div>
     );
@@ -110,7 +111,7 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+        <thead className="bg-[var(--bz-surface)]/50 text-left text-xs uppercase text-[var(--bz-text-2)]">
           <tr>
             <th className="px-3 py-2 font-medium">Date</th>
             <th className="px-3 py-2 font-medium">Name</th>
@@ -125,14 +126,14 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
         </thead>
         <tbody className="divide-y">
           {rows.map((r) => (
-            <tr key={r.id} className="hover:bg-muted/30">
-              <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
+            <tr key={r.id} className="hover:bg-[var(--bz-card-hover)]/30">
+              <td className="whitespace-nowrap px-3 py-2 tabular-nums text-[var(--bz-text-2)]">
                 {r.movement_date ?? "—"}
               </td>
               <td className="px-3 py-2 font-medium">
                 {r.client_name ?? r.counterparty ?? "—"}
               </td>
-              <td className="px-3 py-2 text-muted-foreground">
+              <td className="px-3 py-2 text-[var(--bz-text-2)]">
                 {r.type === "cashout_worksheet" && (
                   <span
                     className="mr-1.5 inline-block rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--state-warning)]"
@@ -158,7 +159,7 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
               <td className="px-3 py-2 text-right font-medium tabular-nums">
                 <Money value={r.final_price_idr || r.amount_idr} />
               </td>
-              <td className="max-w-[200px] truncate px-3 py-2 text-muted-foreground">
+              <td className="max-w-[200px] truncate px-3 py-2 text-[var(--bz-text-2)]">
                 {r.description ?? ""}
               </td>
             </tr>
@@ -169,303 +170,18 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
   );
 }
 
-// ── Confirm modal ────────────────────────────────────────────────────────────
-
-function ConfirmModal({
-  txn,
-  candidate,
-  onClose,
-  onConfirmed,
-}: {
-  txn: BankTransaction;
-  candidate: MatchCandidate;
-  onClose: () => void;
-  onConfirmed: () => void;
-}) {
-  const { success, error } = useToast();
-  const [busy, setBusy] = useState(false);
-  const delta = txn.amount_idr - candidate.invoice_amount_idr;
-  // A transfer net of PPh23 withholding (delta < 0 but flagged likely_withheld)
-  // still SETTLES the invoice — the withheld tax is recorded separately, not a
-  // shortfall. Only a genuine underpayment (short, NOT withholding) is 'partial'.
-  const newStatus: "paid" | "partial" =
-    delta >= -1000 || candidate.likely_withheld ? "paid" : "partial";
-
-  const handleConfirm = async () => {
-    setBusy(true);
-    try {
-      await accountingApi.confirm({
-        bank_txn_id: txn.id,
-        practice_id: candidate.practice_id,
-        invoice_id: candidate.invoice_id,
-        amount_applied_idr: txn.amount_idr,
-        new_status: newStatus,
-        payment_method: "bank_transfer",
-        payment_reference: txn.description ?? undefined,
-        movement_date: txn.txn_date,
-        pph_withheld_idr: candidate.likely_withheld ? -delta : 0,
-      });
-      success(
-        "Payment confirmed",
-        `${candidate.client_name} marked ${newStatus}`,
-      );
-      onConfirmed();
-    } catch (err) {
-      error("Confirm failed", "Please try again");
-      logger.error(
-        `accounting confirm failed txn=${txn.id} inv=${candidate.invoice_id}`,
-        {},
-        err as Error,
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl border bg-card p-6 shadow-xl">
-        <div className="flex items-start justify-between">
-          <h3 className="text-lg font-semibold">Confirm payment match</h3>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <dl className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Transfer</dt>
-            <dd className="font-medium tabular-nums">
-              <Money value={txn.amount_idr} />
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Client</dt>
-            <dd className="font-medium">{candidate.client_name}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Invoice</dt>
-            <dd className="tabular-nums">
-              <Money value={candidate.invoice_amount_idr} />
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Delta</dt>
-            <dd
-              className={`tabular-nums ${delta < 0 ? "text-[var(--state-warning)]" : "text-[var(--state-success)]"}`}
-            >
-              {delta >= 0 ? "+" : ""}
-              <Money value={delta} />
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">New status</dt>
-            <dd className="font-semibold uppercase">{newStatus}</dd>
-          </div>
-          {candidate.likely_withheld && (
-            <p className="rounded-md bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] p-2 text-xs text-[var(--state-warning)]">
-              Looks net of PPh23 withholding — the delta is recorded as withheld
-              tax.
-            </p>
-          )}
-        </dl>
-
-        <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
-          {candidate.reasons.map((reason, i) => (
-            <li key={i}>• {reason}</li>
-          ))}
-        </ul>
-
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button onClick={handleConfirm} disabled={busy}>
-            {busy ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="mr-2 h-4 w-4" />
-            )}
-            Confirm {newStatus}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Reconciliation inbox ─────────────────────────────────────────────────────
-
-function ReconciliationInbox({ onConfirmed }: { onConfirmed: () => void }) {
-  const { error } = useToast();
-  const [txns, setTxns] = useState<BankTransaction[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedTxn, setExpandedTxn] = useState<number | null>(null);
-  const [candidates, setCandidates] = useState<MatchCandidate[]>([]);
-  const [candLoading, setCandLoading] = useState(false);
-  const [modal, setModal] = useState<{
-    txn: BankTransaction;
-    candidate: MatchCandidate;
-  } | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const rows = await accountingApi.getBankTransactions({
-        reconciledStatus: "unmatched",
-      });
-      // only incoming (credit) transfers are reconcilable to invoices
-      setTxns(rows.filter((t) => t.direction === "credit"));
-    } catch (err) {
-      error("Failed to load reconciliation inbox", "Please try again");
-      logger.error("accounting inbox load failed", {}, err as Error);
-    } finally {
-      setLoading(false);
-    }
-  }, [error]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const openCandidates = async (txn: BankTransaction) => {
-    if (expandedTxn === txn.id) {
-      setExpandedTxn(null);
-      return;
-    }
-    setExpandedTxn(txn.id);
-    setCandidates([]);
-    setCandLoading(true);
-    try {
-      const res = await accountingApi.getMatchCandidates(txn.id);
-      setCandidates(res.candidates);
-    } catch (err) {
-      error("Failed to load candidates", "Please try again");
-      logger.error(
-        `accounting candidates failed txn=${txn.id}`,
-        {},
-        err as Error,
-      );
-    } finally {
-      setCandLoading(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center p-10 text-muted-foreground">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading inbox…
-      </div>
-    );
-  }
-
-  if (txns.length === 0) {
-    return (
-      <div className="rounded-lg border p-10 text-center text-muted-foreground">
-        <Inbox className="mx-auto mb-2 h-8 w-8 opacity-50" />
-        No unmatched incoming transfers. Inbox zero.
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="space-y-2">
-        {txns.map((txn) => (
-          <div key={txn.id} className="rounded-lg border">
-            <button
-              onClick={() => openCandidates(txn)}
-              className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-muted/30"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
-                  {txn.description ?? "(no memo)"}
-                </p>
-                <p className="text-xs text-muted-foreground tabular-nums">
-                  {txn.txn_date}
-                </p>
-              </div>
-              <span className="shrink-0 font-semibold tabular-nums text-[var(--state-success)]">
-                <Money value={txn.amount_idr} />
-              </span>
-            </button>
-
-            {expandedTxn === txn.id && (
-              <div className="border-t bg-muted/20 p-3">
-                {candLoading ? (
-                  <div className="flex items-center justify-center py-4 text-muted-foreground">
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Ranking
-                    candidates…
-                  </div>
-                ) : candidates.length === 0 ? (
-                  <p className="py-2 text-center text-sm text-muted-foreground">
-                    No plausible invoice match. Leave unmatched or handle
-                    manually.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {candidates.map((c) => (
-                      <li
-                        key={c.invoice_id}
-                        className="flex items-center justify-between gap-3 rounded-md border bg-card p-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">
-                            {c.client_name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            <Money value={c.invoice_amount_idr} /> ·{" "}
-                            {(c.confidence * 100).toFixed(0)}% ·{" "}
-                            {c.reasons[0] ?? ""}
-                          </p>
-                        </div>
-                        <Button
-                          size="sm"
-                          onClick={() => setModal({ txn, candidate: c })}
-                        >
-                          Match
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {modal && (
-        <ConfirmModal
-          txn={modal.txn}
-          candidate={modal.candidate}
-          onClose={() => setModal(null)}
-          onConfirmed={() => {
-            setModal(null);
-            setExpandedTxn(null);
-            load();
-            onConfirmed();
-          }}
-        />
-      )}
-    </>
-  );
-}
-
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
   const { success, error } = useToast();
-  const [tab, setTab] = useState<Tab>("cashout");
+  const [view, setView] = useState<View>("centre");
   const [summary, setSummary] = useState<CashbookSummary | null>(null);
   const [cashout, setCashout] = useState<CashoutRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  // Bumped after every write of the Reconciliation tab: "Done today" reloads.
+  const [doneVersion, setDoneVersion] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadCashout = useCallback(async () => {
@@ -487,6 +203,11 @@ export default function AccountingPage() {
 
   useEffect(() => {
     loadCashout();
+  }, [loadCashout]);
+
+  const handleConfirmed = useCallback(() => {
+    void loadCashout();
+    setDoneVersion((v) => v + 1);
   }, [loadCashout]);
 
   const handleExport = async () => {
@@ -534,99 +255,96 @@ export default function AccountingPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Wallet className="h-6 w-6 text-[var(--bz-accent)]" />
-          <h1 className="text-2xl font-semibold tracking-tight">Accounting</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="hidden"
-            onChange={(e) => {
-              void handleImportFile(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          <Button
-            variant="outline"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            title="Import Asya's weekly cashout worksheet PDF (GABUNGAN)"
-          >
-            {importing ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="mr-2 h-4 w-4" />
-            )}
-            Import Cashout PDF
-          </Button>
-          <Button variant="outline" onClick={handleExport} disabled={exporting}>
-            {exporting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Sheet className="mr-2 h-4 w-4" />
-            )}
-            Export to Sheets
-          </Button>
-        </div>
-      </div>
-
-      <SummaryCards summary={summary} />
-      {(() => {
-        // Worksheet rows are Asya's planning draft (excluded from the totals
-        // above) — surface how much pending money is sitting in that bucket so
-        // the gap between "what's booked" and "what's confirmed in the bank" is
-        // visible at a glance.
-        const ws = summary?.by_type?.find(
-          (t) => t.type === "cashout_worksheet",
-        );
-        if (!ws || !ws.n) return null;
-        return (
-          <p className="-mt-3 text-xs text-[var(--state-warning)]">
-            {ws.n} worksheet draft(s) (<Money value={ws.total_idr} />) imported
-            from Asya&apos;s PDF — excluded from the totals above, pending bank
-            reconciliation.
-          </p>
-        );
-      })()}
-
-      <div className="flex gap-2 border-b">
-        <button
-          onClick={() => setTab("cashout")}
-          className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
-            tab === "cashout"
-              ? "border-b-2 border-[var(--bz-accent)] text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <TableProperties className="h-4 w-4" /> Weekly Cashout
-        </button>
-        <button
-          onClick={() => setTab("inbox")}
-          className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
-            tab === "inbox"
-              ? "border-b-2 border-[var(--bz-accent)] text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Inbox className="h-4 w-4" /> Reconciliation
-        </button>
-      </div>
-
-      {tab === "cashout" ? (
-        loading ? (
-          <div className="flex items-center justify-center p-10 text-muted-foreground">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading cashout…
-          </div>
-        ) : (
-          <CashoutTable rows={cashout} />
-        )
+    <div className={view === "centre" ? "px-4 pb-2 pt-1.5" : "p-6"}>
+      {view === "centre" ? (
+        <ReconciliationInbox
+          onConfirmed={handleConfirmed}
+          doneVersion={doneVersion}
+          onOpenCashout={() => setView("cashout")}
+        />
       ) : (
-        <ReconciliationInbox onConfirmed={loadCashout} />
+        <div className="space-y-6">
+          <button
+            type="button"
+            data-testid="back-to-centre"
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
+            onClick={() => setView("centre")}
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to reconciliation
+          </button>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Wallet className="h-6 w-6 text-[var(--bz-accent)]" />
+              <h1 className="text-2xl font-semibold tracking-tight">
+                Accounting
+              </h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  void handleImportFile(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                title="Import Asya's weekly cashout worksheet PDF (GABUNGAN)"
+              >
+                {importing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="mr-2 h-4 w-4" />
+                )}
+                Import Cashout PDF
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleExport}
+                disabled={exporting}
+              >
+                {exporting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Sheet className="mr-2 h-4 w-4" />
+                )}
+                Export to Sheets
+              </Button>
+            </div>
+          </div>
+
+          <SummaryCards summary={summary} />
+          {(() => {
+            // Worksheet rows are Asya's planning draft (excluded from the totals
+            // above) — surface how much pending money is sitting in that bucket so
+            // the gap between "what's booked" and "what's confirmed in the bank" is
+            // visible at a glance.
+            const ws = summary?.by_type?.find(
+              (t) => t.type === "cashout_worksheet",
+            );
+            if (!ws || !ws.n) return null;
+            return (
+              <p className="-mt-3 text-xs text-[var(--state-warning)]">
+                {ws.n} worksheet draft(s) (<Money value={ws.total_idr} />)
+                imported from Asya&apos;s PDF — excluded from the totals above,
+                pending bank reconciliation.
+              </p>
+            );
+          })()}
+
+          {loading ? (
+            <div className="flex items-center justify-center p-10 text-[var(--bz-text-2)]">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading cashout…
+            </div>
+          ) : (
+            <CashoutTable rows={cashout} />
+          )}
+        </div>
       )}
     </div>
   );

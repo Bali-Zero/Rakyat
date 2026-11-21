@@ -49,6 +49,13 @@ export interface InvoiceCompanySuggestion {
   companies: InvoiceCompanyChoice[];
 }
 
+export interface InvoiceCompanyMatch {
+  id: number;
+  company_name: string;
+  /** Already linked to the client of the search. */
+  linked: boolean;
+}
+
 export type InvoiceCompanyParams = {
   invoice_company_id?: number | null;
   invoice_company_name?: string;
@@ -608,6 +615,19 @@ export interface ClientProfile {
    *  derives every document date from this one value; absent on an older
    *  backend. */
   as_of?: string;
+  /** The server's answer for this viewer: may they write (edit/delete) this
+   *  client? True for an admin, an owner or a member of an owner's shared
+   *  client pool; absent on an older backend. */
+  viewer_can_write?: boolean;
+  /** The server's answer for this viewer: may they create a company? Admin,
+   *  tax team or a member of a shared client pool; absent on an older
+   *  backend (the desk then falls back to the role rule). */
+  viewer_can_create_company?: boolean;
+  /** The server's answer for this viewer: may they upload, edit or delete
+   *  documents in this client's Tax Documents Drive folders? True for CRM
+   *  admins and human team members associated with the profile (assigned_to,
+   *  tax_consultant, created_by, or their validated client-pool peers). */
+  viewer_can_manage_tax_documents?: boolean;
   stats: {
     family_count: number;
     documents_count: number;

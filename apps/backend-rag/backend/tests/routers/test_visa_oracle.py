@@ -843,3 +843,71 @@ class TestVisaTypesEndpoints:
         response = client.get("/api/v1/visa-oracle/visa-types/nonexistent-visa")
 
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 5. Surgical hardening tests (NC-04, NC-05, NC-20)
+# ---------------------------------------------------------------------------
+
+
+class TestRouterHardening:
+    """Prompt regulatory accuracy, Telegram retirement, and nationality safety."""
+
+    def test_system_prompt_c1_is_single_entry_and_business_uses_c2_d2(self) -> None:
+        from backend.app.routers.visa_oracle import SYSTEM_PROMPT
+
+        assert "multi-entry" not in SYSTEM_PROMPT.lower()
+        assert "single-entry" in SYSTEM_PROMPT.lower()
+        assert "C2" in SYSTEM_PROMPT
+        assert "D2" in SYSTEM_PROMPT
+        assert "For BUSINESS meetings: C10" not in SYSTEM_PROMPT
+        assert "NOT C10" in SYSTEM_PROMPT
+
+    def test_router_contains_no_telegram_bot_references(self) -> None:
+        from pathlib import Path
+
+        import backend.app.routers.visa_oracle as router_mod
+
+        src = Path(router_mod.__file__).read_text(encoding="utf-8")
+        assert "telegram_bot" not in src
+        assert "owner_telegram_chat_id" not in src
+
+    @patch("backend.app.routers.visa_oracle._persist_session_create")
+    def test_recommend_indonesian_citizen_returns_no_supported_path(
+        self, mock_persist, client: TestClient
+    ) -> None:
+        for code in ("ID", "IDN"):
+            resp = client.post(
+                "/api/v1/visa-oracle/recommend",
+                json={
+                    "nationality": code,
+                    "purpose": "visit",
+                    "duration": "short",
+                    "family": "no",
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["state"] == "NO_SUPPORTED_PATH"
+            assert data["visas"] == []
+            assert data["review_reasons"] == ["indonesian_citizen_no_visa_required"]
+
+    @patch("backend.app.routers.visa_oracle._persist_session_create")
+    def test_recommend_calling_visa_returns_human_review_required(
+        self, mock_persist, client: TestClient
+    ) -> None:
+        for code in ("NG", "NGA", "AF", "AFG"):
+            resp = client.post(
+                "/api/v1/visa-oracle/recommend",
+                json={
+                    "nationality": code,
+                    "purpose": "visit",
+                    "duration": "short",
+                    "family": "no",
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["state"] == "HUMAN_REVIEW_REQUIRED"
+            assert data["visas"] == []
+            assert data["review_reasons"] == ["calling_visa_advisor_referral"]

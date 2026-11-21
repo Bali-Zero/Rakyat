@@ -127,14 +127,18 @@ export const TAX_CONSULTANTS: readonly TaxConsultantOption[] = [
 /**
  * The LKPM assignee list. SEPARATE from TAX_CONSULTANTS on purpose: it gates
  * lkpm_reports.lkpm_assigned_to (DB CHECK lkpm_reports_assigned_to_check /
- * backend LKPM_ASSIGNEES), which is deliberately unchanged here. It is exactly
- * what TAX_CONSULTANTS held before Dea and Candra were added to the client
- * options.
+ * backend LKPM_ASSIGNEES). Aligned 1:1 with backend `LKPM_ASSIGNEES`
+ * (`app/routers/lkpm.py`, including Krisna added in the 2026-11-09
+ * reorganisation); historical rows holding a former assignee stay visible
+ * via `LkpmBatchClient`'s disabled "Former staff" fallback option.
  */
 export const LKPM_ASSIGNEES: readonly TaxConsultantOption[] = [
+  { value: "krisna@balizero.com", label: "Krisna" },
   { value: "kadek.tax@balizero.com", label: "Kadek" },
   { value: "dewaayu.tax@balizero.com", label: "Dewa Ayu" },
   { value: "angel.tax@balizero.com", label: "Angel" },
+  { value: "dea@balizero.com", label: "Dea" },
+  { value: "candra@balizero.com", label: "Candra" },
 ];
 
 /** A copy the client can hold: plain rows, no roster type crosses over. */

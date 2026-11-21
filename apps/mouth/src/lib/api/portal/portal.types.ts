@@ -172,6 +172,7 @@ export interface PortalDocument {
   status: "verified" | "pending" | "received" | "rejected" | "expired";
   uploadDate: string;
   expiryDate?: string;
+  practiceId?: number;
   size: string;
   downloadUrl?: string;
 }
@@ -241,6 +242,19 @@ export interface PortalProfile {
   address?: string;
   memberSince: string;
   assignedTo?: AssignedTeamMember;
+  /**
+   * True when the API sent passportNumber/dateOfBirth masked (DAI-140):
+   * passport keeps its last 3 characters, date of birth only its year. The
+   * full values come from `revealProfileIdentity()`.
+   */
+  identityMasked?: boolean;
+  /** Computed server-side (WITA) so a masked date of birth can still glow. */
+  birthdayToday?: boolean;
+}
+
+export interface PortalProfileIdentity {
+  passportNumber?: string;
+  dateOfBirth?: string;
 }
 
 // ============================================================================
@@ -302,7 +316,7 @@ export interface LKPMValidationAlert {
   field: string;
   severity: "red" | "yellow" | "green";
   message: string;
-  details?: string;
+  details?: string | null;
 }
 
 export interface LKPMDraftSummary {
@@ -322,8 +336,8 @@ export interface LKPMDraftSummary {
   client_approved?: boolean;
   lkpm_assigned_to?: string | null;
   days_to_deadline?: number | null;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at: string | null;
 }
 
 export interface LKPMDraft {
@@ -343,12 +357,23 @@ export interface LKPMDraft {
   employment: LKPMEmploymentData;
   revenue_quarterly?: number;
   revenue_annual?: number;
+  quarterly_revenue?: number;
+  annual_revenue?: number;
   obstacles?: string;
   plans?: string;
-  validation_alerts: LKPMValidationAlert[];
+  narrative_obstacles?: string | null;
+  narrative_plans?: string | null;
+  validation?: {
+    is_valid: boolean;
+    alerts: LKPMValidationAlert[];
+    red_count?: number;
+    yellow_count?: number;
+    green_count?: number;
+  } | null;
+  validation_alerts?: LKPMValidationAlert[];
   data_source: string;
   created_at: string;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 export interface LKPMReadyPack {
@@ -364,7 +389,8 @@ export interface LKPMReadyPack {
     red_count: number;
     yellow_count: number;
     green_count: number;
-  };
+    alerts?: LKPMValidationAlert[];
+  } | null;
   html_content: string;
 }
 
@@ -389,7 +415,7 @@ export interface LKPMBatchItem {
   client_approved: boolean;
   lkpm_assigned_to?: string | null;
   days_to_deadline?: number | null;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 export interface LKPMOSSCredentials {
@@ -468,9 +494,9 @@ export interface ProcessTimelineStep {
 
 export interface ProcessTimeline {
   practice_id: number;
-  practice_name: string;
-  practice_category: string;
-  current_status: string;
+  practice_name: string | null;
+  practice_category: string | null;
+  current_status: string | null;
   // NOTE: no `assigned_to` — client-facing; that field is the case
   // officer's staff email (clients.assigned_to). Do not reintroduce it.
   start_date: string | null;

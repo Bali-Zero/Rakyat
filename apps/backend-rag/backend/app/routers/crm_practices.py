@@ -19,23 +19,36 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_practices_user_filter
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
 from backend.app.services.internal_email import send_internal_email
-from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
+from backend.app.utils.client_pools import caller_pool_peers
+from backend.app.utils.crm_utils import COMPANY_CREATE_ROLES, is_crm_admin, verify_client_access
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_database_operation, log_success
 from backend.app.utils.service_accounts import CLIENT_ROLES, normalize_role
 from backend.core.cache import cached, invalidate_cache
 from backend.services.common.background import spawn
+from backend.services.crm.entity_search import (
+    build_practice_search,
+    escape_like,
+    smart_search_available,
+)
 from backend.services.crm.practice_state_machine import (
     OPEN_INQUIRY_TYPE_CODE,
     STATES_WITHOUT_SERVICE,
     InvalidTransitionError,
+    QuotedPriceRequiredError,
     normalize_state,
+    validate_quoted_price_for_invoice,
     validate_service_selected,
     validate_transition,
 )
 from backend.services.invoicing import InvoiceAutomationService
 from backend.services.invoicing import invoice_company as invoice_company_service
+from backend.services.invoicing.client_email_outcome import (
+    client_email_outcome,
+    regenerated_message,
+)
+from backend.services.invoicing.pph import PphWithholding, validate_pph
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
 from backend.services.portal.required_slots import mark_required_slot_uploaded
 
@@ -100,10 +113,22 @@ async def _resolve_invoice_company_http(
     name: str | None,
     npwp: str | None,
     current_user: dict,
+    allow_tax_create: bool = False,
 ) -> int:
     # Creating a company and linking it mutates the client, so it takes the same
     # write permission as the client link route (admin, or the client's owner).
-    await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
+    # Exception (DAI-156): on a NEW process (``allow_tax_create=True``, passed by
+    # create_practice only) the tax team (``COMPANY_CREATE_ROLES``) may name the
+    # invoice company for a client it does not own; the client must still exist.
+    # PATCH keeps the owner/admin rule. Deliberately a role check, not
+    # ``can_create_company``: that helper may grow beyond the tax team (pools).
+    tax_create = allow_tax_create and (
+        is_crm_admin(current_user)
+        or (current_user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
+    )
+    await verify_client_access(
+        client_id, current_user, conn, allow_assigned=True, write=not tax_create
+    )
     try:
         async with conn.transaction():
             return await invoice_company_service.resolve_invoice_company(
@@ -144,9 +169,9 @@ def _practice_ownership_flags(
     client-contact-field scrub, never a *write* pathway.
     """
     user_is_admin = is_crm_admin(current_user)
-    user_email_lower = (current_user.get("email") or "").lower()
-    created_by_match = bool(created_by and created_by.lower() == user_email_lower)
-    assigned_to_match = bool(assigned_to and assigned_to.lower() == user_email_lower)
+    peers = caller_pool_peers(current_user)
+    created_by_match = bool(created_by and created_by.lower() in peers)
+    assigned_to_match = bool(assigned_to and assigned_to.lower() in peers)
     return user_is_admin, created_by_match, assigned_to_match
 
 
@@ -192,7 +217,7 @@ async def _create_hr_bonus_on_completed(
 
             pt = await conn.fetchrow(
                 """
-                SELECT pt.code FROM practice_types pt
+                SELECT pt.code, pt.name FROM practice_types pt
                 JOIN practices p ON p.practice_type_id = pt.id
                 WHERE p.id = $1
                 """,
@@ -202,6 +227,7 @@ async def _create_hr_bonus_on_completed(
                 return
 
             practice_type_code = pt["code"]
+            practice_type_name = pt["name"]
 
             rate = await conn.fetchrow(
                 """
@@ -260,26 +286,38 @@ async def _create_hr_bonus_on_completed(
                 awarded_date,
             )
             logger.info(
-                f"HR bonus created: practice={practice_id}, "
-                f"employee={assigned_to}, amount={rate['amount_idr']} IDR"
+                "HR bonus created: practice=%s, hr_employee=%s, rate_id=%s",
+                practice_id,
+                emp["id"],
+                rate["id"],
             )
 
             # Notify HR admin (Asya) via email
             await _notify_hr_bonus_pending(
                 db_pool,
                 assigned_to,
-                practice_type_code,
+                practice_type_name,
                 rate["amount_idr"],
                 practice_id,
             )
     except Exception as e:
-        logger.warning("HR bonus hook failed for practice %s: %s", practice_id, e)
+        logger.warning("HR bonus hook failed for practice %s (%s)", practice_id, type(e).__name__)
+
+
+def hr_bonus_service_label(practice_type_name: str | None) -> str:
+    """Service display name for the HR bonus mail; never the raw service code.
+
+    A missing or blank ``practice_types.name`` falls back to a neutral label; the mail body
+    already shows the practice id next to it.
+    """
+    name = " ".join((practice_type_name or "").split())
+    return name or "Unnamed service"
 
 
 async def _notify_hr_bonus_pending(
     db_pool: asyncpg.Pool,
     employee_email: str,
-    practice_type: str,
+    practice_type_name: str | None,
     amount_idr: int,
     practice_id: int,
 ) -> None:
@@ -291,7 +329,7 @@ async def _notify_hr_bonus_pending(
     from html import escape
 
     amount_fmt = f"Rp {amount_idr:,}".replace(",", ".")
-    practice_label = practice_type.replace("_", " ").title()
+    practice_label = hr_bonus_service_label(practice_type_name)
 
     safe_email = escape(employee_email)
     safe_label = escape(practice_label)
@@ -343,6 +381,52 @@ PAYMENT_STATUS_VALUES = {"unpaid", "partial", "paid"}
 # ================================================
 
 
+# Client-visible timeline entry written when a practice enters a status. The entry is written at
+# the moment of the move, BEFORE the invoice automation has run, so for sending_invoice it must
+# not claim the invoice was sent: whether the client was emailed is only known afterwards
+# (and is told truthfully to the team by the accounting mail).
+STATUS_TIMELINE_EVENTS: dict[str, tuple[str, str, str]] = {
+    "waiting_documents": ("document_request", "Documents needed", "warning"),
+    "sending_invoice": ("payment_due", "Invoice being prepared", "warning"),
+    "on_process": ("milestone", "Application in process", "info"),
+    "completed": ("completion", "Case completed", "success"),
+}
+
+
+class PphSelection(BaseModel):
+    """PPh withholding the tax team picks for a process (K127); stored in metadata.pph."""
+
+    type: str
+    rate_percent: Decimal
+
+    @model_validator(mode="after")
+    def _allowed(self) -> "PphSelection":
+        validate_pph(self.type, self.rate_percent)
+        return self
+
+    def to_withholding(self) -> PphWithholding:
+        return validate_pph(self.type, self.rate_percent)
+
+
+def _require_pph_role(current_user: dict) -> None:
+    """Only the tax team and CRM admins may set or clear a process's PPh (K127)."""
+    if is_crm_admin(current_user) or (
+        (current_user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
+    ):
+        return
+    raise HTTPException(status_code=403, detail="Only the tax team can set PPh on a process")
+
+
+def _pph_log_entry(old: dict | None, new: dict | None, actor: str, event: str) -> dict[str, Any]:
+    return {
+        "previous": old,
+        "value": new,
+        "changed_by": actor,
+        "changed_at": datetime.now(tz=timezone.utc).isoformat(),
+        "event": event,
+    }
+
+
 class PracticeCreate(BaseModel):
     client_id: int
     # Optional since 2026-09-11 (Ari): an inquiry may be opened without a
@@ -366,6 +450,8 @@ class PracticeCreate(BaseModel):
     invoice_company_id: int | None = None
     invoice_company_name: str | None = None
     invoice_company_npwp: str | None = None
+    # K127: optional PPh withholding; tax team / admins only (403 otherwise).
+    pph: PphSelection | None = None
 
     @model_validator(mode="after")
     def _invoice_company_id_or_name(self) -> "PracticeCreate":
@@ -440,6 +526,8 @@ class PracticeUpdate(BaseModel):
     client_summary: str | None = None
     documents: list[dict] | None = None
     missing_documents: list[str] | None = None
+    # K127: object sets the PPh, null clears it, absent leaves it untouched.
+    pph: PphSelection | None = None
 
     @field_validator("status")
     @classmethod
@@ -521,6 +609,8 @@ async def create_practice(
     """
     # Extract created_by from current user
     created_by = current_user.get("email", "").lower()
+    if "pph" in practice.model_fields_set:
+        _require_pph_role(current_user)
 
     # No service picked → open inquiry against the placeholder type. Only an
     # inquiry-stage practice may start without a service.
@@ -584,6 +674,12 @@ async def create_practice(
             # Use base_price if no quoted price provided
             quoted_price = practice.quoted_price or practice_type_row["base_price"]
 
+            # A practice cannot be CREATED straight into Sending Invoice without a price either.
+            try:
+                validate_quoted_price_for_invoice(practice.status, quoted_price)
+            except QuotedPriceRequiredError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
+
             # Auto-assign: if not explicitly set, inherit from client or use creator
             assigned_to = practice.assigned_to
             if not assigned_to:
@@ -643,18 +739,23 @@ async def create_practice(
             if practice.discount_reason is not None and practice.discount_reason.strip():
                 insert_columns.append("discount_reason")
                 insert_values.append(practice.discount_reason.strip())
+            create_metadata: dict[str, Any] = {}
             if practice.discount_amount is not None and practice.discount_amount > 0:
-                discount_audit = {
-                    "discount_log": [
-                        {
-                            "amount": str(practice.discount_amount),
-                            "reason": (practice.discount_reason or "").strip() or None,
-                            "applied_by": created_by,
-                            "applied_at": datetime.now(tz=timezone.utc).isoformat(),
-                            "event": "create",
-                        }
-                    ]
-                }
+                create_metadata["discount_log"] = [
+                    {
+                        "amount": str(practice.discount_amount),
+                        "reason": (practice.discount_reason or "").strip() or None,
+                        "applied_by": created_by,
+                        "applied_at": datetime.now(tz=timezone.utc).isoformat(),
+                        "event": "create",
+                    }
+                ]
+            if practice.pph is not None:
+                # K127: same jsonb, same audit idea as discount_log.
+                pph_meta = practice.pph.to_withholding().as_metadata()
+                create_metadata["pph"] = pph_meta
+                create_metadata["pph_log"] = [_pph_log_entry(None, pph_meta, created_by, "create")]
+            if create_metadata:
                 insert_columns.append("metadata")
                 # Pass the dict directly — the api pool registers a jsonb
                 # codec (service_initializer._light_init_connection) so
@@ -663,7 +764,7 @@ async def create_practice(
                 # land the value as a JSONB string scalar (the bug shipped
                 # in PR #485 / #492 — observed 2026-05-06 on practice_id=390
                 # where metadata::text was '"{\"discount_log\": ...}"').
-                insert_values.append(discount_audit)
+                insert_values.append(create_metadata)
 
             # Cast jsonb columns explicitly. asyncpg does not register a
             # JSON codec for `jsonb` by default, so a `json.dumps()` value
@@ -705,6 +806,7 @@ async def create_practice(
                         name=practice.invoice_company_name,
                         npwp=practice.invoice_company_npwp,
                         current_user=current_user,
+                        allow_tax_create=True,
                     )
                     await conn.execute(
                         "UPDATE practices SET invoice_company_id = $1 WHERE id = $2",
@@ -737,7 +839,10 @@ async def create_practice(
                 except Exception as e:
                     # Undefined table (timeline_events missing) is safe to ignore during rollout.
                     if getattr(e, "sqlstate", None) != "42P01":
-                        logger.warning("Could not create timeline event for practice create: %s", e)
+                        logger.warning(
+                            "Could not create timeline event for practice create: %s",
+                            type(e).__name__,
+                        )
 
                 # Update client's last_interaction_date
                 await conn.execute(
@@ -764,7 +869,7 @@ async def create_practice(
 
             log_success(
                 logger,
-                f"Created practice: {practice.practice_type_code}",
+                "Created practice",
                 practice_id=new_practice["id"],
                 client_id=practice.client_id,
             )
@@ -787,7 +892,7 @@ async def create_practice(
                     db_pool,
                 )
             except Exception as e:
-                logger.error("Practice kickoff communication setup failed: %s", e)
+                logger.error("Practice kickoff communication setup failed: %s", type(e).__name__)
 
             return PracticeResponse(**new_practice)
 
@@ -813,7 +918,7 @@ def _parse_month_param(month: str | None) -> tuple[datetime, datetime] | None:
     except (ValueError, IndexError) as exc:
         logger.debug(
             "crm_practices.month_param_invalid",
-            extra={"raw_month": str(month)[:16], "error_type": type(exc).__name__},
+            extra={"error_type": type(exc).__name__},
         )
         return None
 
@@ -844,6 +949,11 @@ async def list_practices(
     practice_type: str | None = Query(None, description="Filter by practice type code"),
     priority: str | None = Query(None, description="Filter by priority"),
     month: str | None = Query(None, description="Filter by month YYYY-MM"),
+    search: str | None = Query(
+        None,
+        max_length=200,
+        description="Smart search: client name or e-mail, service, practice number, phone",
+    ),
     include_history: bool = Query(False, description="Include status transition history"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
@@ -878,6 +988,7 @@ async def list_practices(
     practice_type = resolve_query_param(practice_type)
     priority = resolve_query_param(priority)
     month = resolve_query_param(month)
+    search = resolve_query_param(search)
     include_history = resolve_query_param(include_history, False)
     limit = resolve_query_param(limit, DEFAULT_LIMIT)
     offset = resolve_query_param(offset, 0)
@@ -938,12 +1049,29 @@ async def list_practices(
             if current_user:
                 practices_filter = get_practices_user_filter(current_user)
                 if practices_filter:
-                    query_parts.append(f" AND p.assigned_to = ${param_index}")
+                    query_parts.append(f" AND p.assigned_to = ANY(${param_index}::text[])")
                     params.append(practices_filter)
                     param_index += 1
-                    logger.info(
-                        "RBAC: Filtering practices for %s (p.assigned_to)", practices_filter
+                    logger.info("RBAC: Filtering practices by p.assigned_to")
+
+            # Smart search (same behaviour as the client search; legacy substring fallback)
+            if isinstance(search, str) and search.strip():
+                smart = (
+                    await build_practice_search(conn, search, param_index)
+                    if await smart_search_available(conn)
+                    else None
+                )
+                if smart is not None:
+                    query_parts.append(smart.clause)
+                    params.extend(smart.params)
+                    param_index = smart.next_index
+                else:
+                    query_parts.append(
+                        f" AND (c.full_name ILIKE ${param_index} OR pt.code ILIKE ${param_index}"
+                        f" OR p.id::text LIKE ${param_index})"
                     )
+                    params.append(f"%{escape_like(search.strip())}%")
+                    param_index += 1
 
             # Month filter
             month_range = _parse_month_param(month)
@@ -1019,17 +1147,18 @@ async def get_active_practices(
     try:
         # RBAC: non-admin users can only see their own practices
         practices_filter = get_practices_user_filter(current_user)
-        if practices_filter and not assigned_to:
-            assigned_to = practices_filter
+        owners = practices_filter if practices_filter and not assigned_to else None
+        if owners is None and assigned_to:
+            owners = [assigned_to]
 
         async with db_pool.acquire() as conn:
             query_parts = ["SELECT * FROM active_practices_view WHERE 1=1"]
             params: list[Any] = []
             param_index = 1
 
-            if assigned_to:
-                query_parts.append(f" AND assigned_to = ${param_index}")
-                params.append(assigned_to)
+            if owners:
+                query_parts.append(f" AND assigned_to = ANY(${param_index}::text[])")
+                params.append(owners)
 
             query_parts.append(" ORDER BY priority DESC, start_date ASC")
             query = " ".join(query_parts)
@@ -1070,7 +1199,7 @@ async def get_upcoming_renewals(
             query = "SELECT * FROM upcoming_renewals_view WHERE days_until_expiry <= $1"
             params: list[Any] = [days]
             if practices_filter:
-                query += " AND assigned_to = $2"
+                query += " AND assigned_to = ANY($2::text[])"
                 params.append(practices_filter)
             rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
@@ -1162,6 +1291,22 @@ async def get_practice_types_catalog(
         raise handle_database_error(e)
 
 
+async def _require_visible_client(
+    conn: asyncpg.Connection, current_user: dict, client_id: int
+) -> None:
+    filter_email = get_practices_user_filter(current_user)
+    if filter_email:
+        visible = await conn.fetchval(
+            "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = ANY($2::text[])"
+            " OR EXISTS (SELECT 1 FROM practices WHERE client_id = $1"
+            " AND (created_by = ANY($2::text[]) OR LOWER(assigned_to) = ANY($2::text[]))))",
+            client_id,
+            filter_email,
+        )
+        if not visible:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+
 @router.get("/invoice-company/suggestion")
 async def invoice_company_suggestion(
     request: Request,
@@ -1173,17 +1318,7 @@ async def invoice_company_suggestion(
     """Companies the client is linked to and what the form should prefill for this service."""
     try:
         async with db_pool.acquire() as conn:
-            filter_email = get_practices_user_filter(current_user)
-            if filter_email:
-                visible = await conn.fetchval(
-                    "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = $2"
-                    " OR EXISTS (SELECT 1 FROM practices WHERE client_id = $1"
-                    " AND (created_by = $2 OR LOWER(assigned_to) = $2)))",
-                    client_id,
-                    filter_email,
-                )
-                if not visible:
-                    raise HTTPException(status_code=404, detail="Client not found")
+            await _require_visible_client(conn, current_user, client_id)
             category = (
                 await conn.fetchval(
                     "SELECT category FROM practice_types WHERE code = $1", practice_type_code
@@ -1207,6 +1342,26 @@ async def invoice_company_suggestion(
                 for c in result.companies
             ],
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_database_error(e)
+
+
+@router.get("/invoice-company/search")
+async def invoice_company_search(
+    request: Request,
+    client_id: int = Query(..., gt=0),
+    q: str = Query("", max_length=100),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Existing companies matching what is typed in the invoice-company field (ids and names)."""
+    try:
+        async with db_pool.acquire() as conn:
+            await _require_visible_client(conn, current_user, client_id)
+            companies = await invoice_company_service.search_companies(conn, client_id, q)
+        return {"companies": companies}
     except HTTPException:
         raise
     except Exception as e:
@@ -1249,14 +1404,12 @@ async def get_practice(
             """
             if practices_filter:
                 base_query += (
-                    " AND (c.assigned_to = $2 OR p.created_by = $2 "
-                    "OR LOWER(p.assigned_to) = $2)"
+                    " AND (c.assigned_to = ANY($2::text[]) OR p.created_by = ANY($2::text[])"
+                    " OR LOWER(p.assigned_to) = ANY($2::text[]))"
                 )
                 row = await conn.fetchrow(base_query, practice_id, practices_filter)
                 if not row:
-                    logger.info(
-                        "RBAC: Practice %s not visible to %s", practice_id, practices_filter
-                    )
+                    logger.info("RBAC: Practice %s not visible to caller", practice_id)
             else:
                 row = await conn.fetchrow(base_query, practice_id)
 
@@ -1266,9 +1419,10 @@ async def get_practice(
             practice = dict(row)
             await _attach_invoice_company_name(conn, practice)
             if practices_filter:
-                user_email = str(current_user.get("email") or "").lower()
-                created_by_match = str(practice.get("created_by") or "").lower() == user_email
-                client_lead_match = str(practice.get("client_lead") or "").lower() == user_email
+                created_by_match = str(practice.get("created_by") or "").lower() in practices_filter
+                client_lead_match = (
+                    str(practice.get("client_lead") or "").lower() in practices_filter
+                )
                 if not (created_by_match or client_lead_match):
                     for field in PRACTICE_CLIENT_CONTACT_FIELDS:
                         practice.pop(field, None)
@@ -1389,23 +1543,26 @@ async def update_practice(
 
             # RBAC: Check ownership or admin status
             user_is_admin = is_crm_admin(current_user)
-            user_email_lower = user_email.lower()
+            user_peers = caller_pool_peers(current_user)
             created_by_match = bool(
-                practice_created_by and practice_created_by.lower() == user_email_lower
+                practice_created_by and practice_created_by.lower() in user_peers
             )
             client_lead_match = bool(
-                practice_client_lead and practice_client_lead.lower() == user_email_lower
+                practice_client_lead and practice_client_lead.lower() in user_peers
             )
             if not user_is_admin:
                 # Check if user is creator or assigned to this practice
                 assigned_to_match = (
-                    practice_assigned_to and practice_assigned_to.lower() == user_email_lower
+                    practice_assigned_to and practice_assigned_to.lower() in user_peers
                 )
                 if not (created_by_match or assigned_to_match):
                     raise HTTPException(
                         status_code=403,
                         detail="You don't have permission to update this practice",
                     )
+            pph_touched = "pph" in updates.model_fields_set
+            if pph_touched:
+                _require_pph_role(current_user)
 
             # Validate state machine transition if status is being changed
             if updates.status and updates.status != old_status:
@@ -1442,8 +1599,10 @@ async def update_practice(
             invoice_company_name_in = update_set.pop("invoice_company_name", None)
             invoice_company_npwp_in = update_set.pop("invoice_company_npwp", None)
             new_practice_type_code = update_set.pop("practice_type_code", None)
+            update_set.pop("pph", None)  # written into metadata below, not a column
             if "practice_type_code" in updates.model_fields_set and not new_practice_type_code:
                 raise HTTPException(status_code=400, detail="practice_type_code cannot be null")
+            service_base_price = None  # base price a chosen service back-fills into a NULL price
             if new_practice_type_code:
                 # A live practice may not be regressed to the placeholder: the
                 # status gate above only fires on a status CHANGE, so a PATCH
@@ -1477,12 +1636,10 @@ async def update_practice(
                 # placeholder has no base_price). Back-fill from the chosen
                 # service so the invoice step never sees a NULL price, unless
                 # the caller sets the price explicitly in this same PATCH.
-                if (
-                    "quoted_price" not in update_set
-                    and old_quoted_price is None
-                    and new_type_row["base_price"] is not None
-                ):
-                    update_set["quoted_price"] = new_type_row["base_price"]
+                # The fill itself is `COALESCE(quoted_price, base)` in the UPDATE, so it is
+                # decided on the row as it is when the write happens, not on this early read.
+                if "quoted_price" not in update_set and new_type_row["base_price"] is not None:
+                    service_base_price = new_type_row["base_price"]
 
             invoice_company_pos: int | None = None
             if invoice_company_touched:
@@ -1538,6 +1695,24 @@ async def update_practice(
                 "missing_documents": "missing_documents",
             }
 
+            # Owner decision 2026-11-13: no move INTO Sending Invoice without a Quoted Price.
+            # The effective price is the one this same PATCH writes (explicit, or back-filled
+            # from a service chosen in it), else the one on the row; a PATCH that sets price
+            # and status together passes. Only entering the status is gated: a practice
+            # already in Sending Invoice keeps accepting unrelated edits.
+            if updates.status and normalize_state(old_status or "") != "sending_invoice":
+                try:
+                    validate_quoted_price_for_invoice(
+                        updates.status,
+                        update_set["quoted_price"]
+                        if "quoted_price" in update_set
+                        else (
+                            old_quoted_price if old_quoted_price is not None else service_base_price
+                        ),
+                    )
+                except QuotedPriceRequiredError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
+
             for field, value in update_set.items():
                 if field not in field_mapping:
                     raise HTTPException(status_code=400, detail=f"Invalid field name: {field}")
@@ -1551,6 +1726,37 @@ async def update_practice(
                 column_name = field_mapping[field]
                 update_fields.append(f"{column_name} = ${param_index}")
                 params.append(value)
+                param_index += 1
+
+            if service_base_price is not None:
+                update_fields.append(f"quoted_price = COALESCE(quoted_price, ${param_index})")
+                params.append(service_base_price)
+                param_index += 1
+
+            # K127: PPh lives in metadata.pph (no column); every change appends to
+            # metadata.pph_log. Written in the same UPDATE as the other fields.
+            pph_metadata: dict | None = None
+            if pph_touched:
+                pph_metadata = dict(old_metadata or {})
+                old_pph = pph_metadata.get("pph")
+                new_pph = updates.pph.to_withholding().as_metadata() if updates.pph else None
+                if new_pph is None:
+                    pph_metadata.pop("pph", None)
+                else:
+                    pph_metadata["pph"] = new_pph
+                if new_pph != old_pph:
+                    pph_log = pph_metadata.get("pph_log")
+                    pph_metadata["pph_log"] = [
+                        *(pph_log if isinstance(pph_log, list) else []),
+                        _pph_log_entry(
+                            old_pph,
+                            new_pph,
+                            (current_user.get("email") or "system").lower(),
+                            "update" if new_pph else "clear",
+                        ),
+                    ]
+                update_fields.append(f"metadata = ${param_index}::jsonb")
+                params.append(pph_metadata)
                 param_index += 1
 
             # Autoset date fields on status transitions (only if not already in DB
@@ -1632,6 +1838,28 @@ async def update_practice(
             params.append(practice_id)
 
             async with conn.transaction():
+                if updates.status and normalize_state(updates.status) == "sending_invoice":
+                    # The gate above ran on values read before this transaction. Lock the row
+                    # and decide on the LOCKED status and price: a concurrent commit (price
+                    # to 0/NULL, or a move out of sending_invoice) cannot slip a move in.
+                    locked = await conn.fetchrow(
+                        "SELECT status, quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                        practice_id,
+                    )
+                    if locked and normalize_state(locked["status"] or "") != "sending_invoice":
+                        try:
+                            validate_quoted_price_for_invoice(
+                                updates.status,
+                                update_set["quoted_price"]
+                                if "quoted_price" in update_set
+                                else (
+                                    locked["quoted_price"]
+                                    if locked["quoted_price"] is not None
+                                    else service_base_price
+                                ),
+                            )
+                        except QuotedPriceRequiredError as e:
+                            raise HTTPException(status_code=422, detail=str(e)) from e
                 if invoice_company_pos is not None and (
                     invoice_company_id_in is not None or invoice_company_name_in
                 ):
@@ -1693,7 +1921,9 @@ async def update_practice(
                             if old_discount_amount is not None
                             else None,
                         }
-                        new_meta = dict(old_metadata or {})
+                        new_meta = dict(
+                            pph_metadata if pph_metadata is not None else (old_metadata or {})
+                        )
                         log = new_meta.get("discount_log") or []
                         if not isinstance(log, list):
                             log = []
@@ -1716,7 +1946,7 @@ async def update_practice(
                     logger.warning(
                         "Discount audit append failed for practice %s: %s",
                         practice_id,
-                        audit_exc,
+                        type(audit_exc).__name__,
                     )
 
                 # Create timeline event for client-visible status changes (optional)
@@ -1731,19 +1961,8 @@ async def update_practice(
                         updated_practice.get("client_visible", practice_client_visible)
                     )
                     if is_visible:
-                        status_event_map = {
-                            "waiting_documents": (
-                                "document_request",
-                                "Documents needed",
-                                "warning",
-                            ),
-                            "sending_invoice": ("payment_due", "Invoice sent", "warning"),
-                            "on_process": ("milestone", "Application in process", "info"),
-                            "completed": ("completion", "Case completed", "success"),
-                        }
-
-                        if updates.status in status_event_map:
-                            event_type, title, color = status_event_map[updates.status]
+                        if updates.status in STATUS_TIMELINE_EVENTS:
+                            event_type, title, color = STATUS_TIMELINE_EVENTS[updates.status]
                             description = (
                                 updated_practice.get("client_summary")
                                 or f"Status: {updates.status}"
@@ -1770,7 +1989,7 @@ async def update_practice(
                                 if getattr(e, "sqlstate", None) != "42P01":
                                     logger.warning(
                                         "Could not create timeline event for status change: %s",
-                                        e,
+                                        type(e).__name__,
                                     )
 
                 # Log activity
@@ -1839,7 +2058,9 @@ async def update_practice(
                         ),
                     )
                 except Exception as e:
-                    logger.error("Portal notification for practice status failed: %s", e)
+                    logger.error(
+                        "Portal notification for practice status failed: %s", type(e).__name__
+                    )
 
             # 🚀 Waiting Documents Automation: Trigger when status changes to 'waiting_documents'
             if updates.status == "waiting_documents" and old_status != "waiting_documents":
@@ -1900,7 +2121,6 @@ async def update_practice(
                 logger,
                 "Updated practice",
                 practice_id=practice_id,
-                updated_by=user_email,
             )
             await invalidate_cache("zantara:crm_practices_stats:*")
             await invalidate_cache(f"zantara:{REVENUE_GROWTH_CACHE_NAMESPACE}:*")
@@ -1951,8 +2171,9 @@ async def delete_practice(
             if not user_is_admin:
                 created_by = (practice_row.get("created_by") or "").lower()
                 assigned_to = (practice_row.get("assigned_to") or "").lower()
-                created_by_match = created_by == user_email
-                assigned_to_match = assigned_to == user_email
+                peers = caller_pool_peers(current_user)
+                created_by_match = created_by in peers
+                assigned_to_match = assigned_to in peers
                 if not (created_by_match or assigned_to_match):
                     raise HTTPException(
                         status_code=403,
@@ -1990,7 +2211,6 @@ async def delete_practice(
                 logger,
                 "Deleted (soft) practice",
                 practice_id=practice_id,
-                deleted_by=user_email,
             )
             await invalidate_cache("zantara:crm_practices_stats:*")
             await invalidate_cache("zantara:crm_clients_stats:*")
@@ -2073,7 +2293,6 @@ async def add_document_to_practice(
                 logger,
                 "Added document to practice",
                 practice_id=practice_id,
-                document_name=document_name,
             )
 
             await invalidate_cache("zantara:crm_practices_stats:*")
@@ -2128,8 +2347,9 @@ async def get_practices_stats(
         rbac_where = ""
         rbac_params: list[Any] = []
         if not is_admin and effective_user:
-            rbac_where = " AND assigned_to = $1"
-            rbac_params = [effective_user]
+            rbac_where = " AND assigned_to = ANY($1::text[])"
+            # An explicit user_id is an internal caller naming one owner: no pool expansion.
+            rbac_params = [[effective_user] if user_id else sorted(caller_pool_peers(current_user))]
 
         async with db_pool.acquire() as conn:
             # By status (filtered by user for non-admins)
@@ -2227,7 +2447,7 @@ async def get_practices_revenue_growth(
     Performance: cached for 5 minutes (CACHE_TTL_STATS_SECONDS).
     """
     try:
-        # RBAC: None for admins (full view), else the user's email.
+        # RBAC: None for admins (full view), else the user's email plus client-pool peers.
         user_filter = get_practices_user_filter(current_user)
 
         # Build the optional RBAC clause; placeholder indices are DERIVED from
@@ -2238,7 +2458,7 @@ async def get_practices_revenue_growth(
         rbac_where = ""
         if user_filter:
             params.append(user_filter)
-            rbac_where = f" AND assigned_to = ${len(params)}"
+            rbac_where = f" AND assigned_to = ANY(${len(params)}::text[])"
 
         # Month boundaries (UTC), computed in Python so the SQL only binds dates.
         now = datetime.now(timezone.utc)
@@ -2411,13 +2631,16 @@ async def regenerate_invoice(
             logger,
             "Invoice regenerated successfully",
             practice_id=practice_id,
-            invoice_number=result.get("invoice_number"),
-            triggered_by=user_email,
         )
 
         return {
             "success": True,
-            "message": f"Invoice {result.get('invoice_number')} regenerated and sent successfully",
+            "message": regenerated_message(
+                result.get("invoice_number"),
+                client_email_outcome(
+                    bool(result.get("email_sent")), bool(result.get("email_attempted"))
+                ),
+            ),
             "invoice_number": result.get("invoice_number"),
             "drive_file_id": result.get("drive_file_id"),
             "drive_link": result.get("drive_link"),
@@ -2429,7 +2652,7 @@ async def regenerate_invoice(
         raise
     except Exception as e:
         logger.error(
-            "Failed to regenerate invoice for practice %s: %s", practice_id, e, exc_info=True
+            "Failed to regenerate invoice for practice %s: %s", practice_id, type(e).__name__
         )
         raise handle_database_error(e)
 
@@ -2517,7 +2740,7 @@ async def get_required_documents(
                 for row in rows
             ]
     except Exception as e:
-        logger.error("Failed to get required documents: %s", e, exc_info=True)
+        logger.error("Failed to get required documents: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2588,11 +2811,10 @@ async def add_required_document(
             )
 
             logger.info(
-                f"Added required document {doc.document_type} to practice {practice_id}",
+                f"Added required document to practice {practice_id}",
                 extra={
                     "practice_id": practice_id,
-                    "document_type": doc.document_type,
-                    "user": current_user.get("email"),
+                    "doc_id": row["id"],
                 },
             )
 
@@ -2616,7 +2838,7 @@ async def add_required_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to add required document: %s", e, exc_info=True)
+        logger.error("Failed to add required document: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2671,7 +2893,6 @@ async def delete_required_document(
                 extra={
                     "practice_id": practice_id,
                     "doc_id": doc_id,
-                    "user": current_user.get("email"),
                 },
             )
 
@@ -2680,7 +2901,7 @@ async def delete_required_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to delete required document: %s", e, exc_info=True)
+        logger.error("Failed to delete required document: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2760,8 +2981,6 @@ async def update_required_document(
                 extra={
                     "practice_id": practice_id,
                     "doc_id": doc_id,
-                    "status": update.status,
-                    "user": current_user.get("email"),
                 },
             )
 
@@ -2785,7 +3004,7 @@ async def update_required_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to update required document: %s", e, exc_info=True)
+        logger.error("Failed to update required document: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
@@ -2868,7 +3087,6 @@ async def upload_client_document(
                     "practice_id": practice_id,
                     "required_doc_id": request.required_doc_id,
                     "document_id": doc_id,
-                    "user": current_user.get("email"),
                 },
             )
 
@@ -2882,5 +3100,5 @@ async def upload_client_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to upload client document: %s", e, exc_info=True)
+        logger.error("Failed to upload client document: %s", type(e).__name__)
         raise handle_database_error(e)

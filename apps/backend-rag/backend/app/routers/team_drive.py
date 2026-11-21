@@ -29,6 +29,7 @@ from backend.services.integrations.team_drive_service import (
 )
 
 logger = logging.getLogger(__name__)
+_MAX_DRIVE_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB OOM bound
 
 # Every route here acts through the Service Account (full `drive` scope), so
 # authentication alone is not enough: a client-portal or partner JWT used to
@@ -604,7 +605,18 @@ async def upload_file(
         )
 
     try:
-        content = await file.read()
+        raw_size = getattr(file, "size", None)
+        if isinstance(raw_size, int) and raw_size > _MAX_DRIVE_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="File exceeds maximum upload size (50 MB)",
+            )
+        content = await file.read(_MAX_DRIVE_UPLOAD_BYTES + 1)
+        if len(content) > _MAX_DRIVE_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="File exceeds maximum upload size (50 MB)",
+            )
         result = await drive.upload_file(
             file_content=content,
             filename=file.filename or "untitled",
@@ -621,6 +633,8 @@ async def upload_file(
             message=f"File '{file.filename}' caricato con successo",
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("[TEAM_DRIVE] Error uploading file: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e

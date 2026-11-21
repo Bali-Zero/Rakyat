@@ -22,7 +22,15 @@ export interface Chapter {
 export interface TeamMember {
   name: string;
   role: string;
-  department: "leadership" | "setup" | "tax" | "accounting" | "support";
+  department:
+    | "leadership"
+    | "setup"
+    | "tax"
+    | "accounting"
+    | "support"
+    | "immigration"
+    | "operations"
+    | "security";
   photo?: string;
   whatsapp?: string;
 }
@@ -300,6 +308,9 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       tax: "Tax",
       accounting: "Accounting",
       support: "Support",
+      immigration: "Immigration",
+      operations: "Operations",
+      security: "Security",
     },
   },
   it: {
@@ -359,6 +370,9 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       tax: "Fiscale",
       accounting: "Contabilità",
       support: "Supporto",
+      immigration: "Immigrazione",
+      operations: "Operazioni",
+      security: "Sicurezza",
     },
   },
   id: {
@@ -418,6 +432,9 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       tax: "Pajak",
       accounting: "Akuntansi",
       support: "Dukungan",
+      immigration: "Imigrasi",
+      operations: "Operasional",
+      security: "Keamanan",
     },
   },
   ru: {
@@ -477,6 +494,9 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       tax: "Налоги",
       accounting: "Бухгалтерия",
       support: "Поддержка",
+      immigration: "Иммиграция",
+      operations: "Операции",
+      security: "Безопасность",
     },
   },
   zh: {
@@ -525,6 +545,9 @@ export const TRANSLATIONS: Record<Locale, BookTranslations> = {
       tax: "税务",
       accounting: "会计",
       support: "支持",
+      immigration: "移民",
+      operations: "运营",
+      security: "安保",
     },
   },
 };
@@ -698,7 +721,7 @@ export const SERVICES: Service[] = [
     features: [
       "Due diligence",
       "Title verification",
-      "Nominee structure",
+      "PT PMA HGB & leasehold structuring",
       "Legal protection",
     ],
     waMessage:

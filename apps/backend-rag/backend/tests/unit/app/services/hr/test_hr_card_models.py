@@ -123,6 +123,70 @@ def test_the_read_model_never_raises_on_stored_content():
         {"id": 1, "is_active": 5, "profile": {"docs": ["x"], "contract": "c", "nik": 7}}
     )
     assert (
-        card.docs == {} and card.contract is None and card.nik is None and card.is_active is False
+        not any(d["present"] for d in card.documents.model_dump().values())
+        and card.contract is None
+        and card.nik is None
+        and card.is_active is False
     )
     assert member_card({"id": None, "profile": "x"}).employee_id == 0
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("/static/team/contoh.jpg", "/static/team/contoh.jpg"),
+        ("/static/team/contoh-2026.webp", "/static/team/contoh-2026.webp"),
+        ("data:image/png;base64,AAAA", None),
+        ("https://example.test/p.jpg", None),
+        ("/static/team/../x.jpg", None),
+        ("/static/team/contoh.jpg\n", None),
+        ("/static/team/contoh\u212a.jpg", None),  # Kelvin sign
+        ("/static/team/contoh\u00e9.jpg", None),
+        ("/static/team/contoh.jpg?x=1", None),
+        ("/static/team/.hidden.jpg", None),
+        ("/static/team/a/b.jpg", None),
+        ("/static/team/CONTOH.JPG", None),
+        ("", None),
+        (None, None),
+        (7, None),
+    ],
+)
+def test_the_card_exposes_only_a_local_staff_portrait_path(stored, expected):
+    assert member_card({"id": 1, "avatar": stored}).avatar_url == expected
+
+
+def test_a_card_without_an_avatar_key_has_no_portrait():
+    assert member_card({"id": 1}).avatar_url is None
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_on_payroll_accepts_a_strict_boolean(value):
+    assert StaffProfilePatch(on_payroll=value).on_payroll is value
+
+
+@pytest.mark.parametrize("bad", ["yes", "false", 1, 0, "true", []])
+def test_on_payroll_rejects_anything_but_a_boolean(bad):
+    with pytest.raises(ValidationError):
+        StaffProfilePatch(on_payroll=bad)
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected"),
+    [
+        ({}, True),
+        ({"on_payroll": True}, True),
+        ({"on_payroll": False}, False),
+        ({"on_payroll": "no"}, True),
+        ("junk", True),
+    ],
+)
+def test_the_read_side_defaults_to_on_payroll(profile, expected):
+    card = {"id": 1, "is_active": True, "profile": profile}
+    assert member_card(card).on_payroll is expected
+
+
+def test_position_is_a_profile_key_and_reads_back():
+    patch = _ok(profile={"position": "Staff role"})
+    assert patch.profile.position == "Staff role"
+    _bad(profile={"position": "x" * 101})
+    assert member_card({"profile": {"position": "Staff role"}}).position == "Staff role"

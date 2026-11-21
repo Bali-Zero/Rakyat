@@ -144,10 +144,17 @@ class PublicEndpoint:
     prefix: str
     category: Category
     reason: str
-    match: str = "prefix"  # "prefix" | "exact"
+    match: str = "prefix"  # "prefix" | "exact" | "template"
     requires_route_auth: bool = False
+    methods: tuple[str, ...] | None = None
+    exclude: tuple[str, ...] = ()
 
-    def matches(self, path: str) -> bool:
+    def matches(self, path: str, method: str | None = None) -> bool:
+        if self.exclude and path.rstrip("/") in {ex.rstrip("/") for ex in self.exclude}:
+            return False
+        if method is not None and self.methods is not None:
+            if method.upper() not in self.methods:
+                return False
         if self.match == "exact":
             return path == self.prefix
         if self.match == "template":
@@ -309,10 +316,78 @@ _INFRA = (
         "wa-mirror CRM lead upsert — X-CRM-Write-Key + WA_MIRROR_CRM_WRITE_ENABLED auth in-router",
         match="exact",
     ),
+    # Related-subject registry (slice 1): the registry's own flag
+    # RELATED_SUBJECT_REGISTRY_ENABLED (default off, 503) plus the same scoped
+    # X-CRM-Write-Key, checked in-router (verify_related_subject_write). Public to
+    # bypass HybridAuthMiddleware; the key is the only credential. See
+    # backend/app/routers/crm_related_subjects.py.
+    PublicEndpoint(
+        "/api/crm/related-subjects/register",
+        Category.INFRA,
+        "related-subject registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+    ),
+    # Slice 2 (documents by reference): the same flag and key, checked by the same in-router
+    # dependency. Scoped to POST, so a GET on this path is not public. The slice-1 entry above
+    # is unchanged and still matches every method.
+    PublicEndpoint(
+        "/api/crm/related-subjects/documents/register",
+        Category.INFRA,
+        "related-subject documents registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
+    # Slice 4A (recorded names): the same flag and key, checked by the same in-router
+    # dependency, POST only. The two entries above are unchanged.
+    PublicEndpoint(
+        "/api/crm/related-subjects/names/register",
+        Category.INFRA,
+        "related-subject names registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
+    # Slice 4B (proposed client links): the same flag and key, POST only.
+    PublicEndpoint(
+        "/api/crm/related-subjects/links/register",
+        Category.INFRA,
+        "related-subject links registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
+    # Slice 4C (merges): the same flag and key, POST only.
+    PublicEndpoint(
+        "/api/crm/related-subjects/merges/register",
+        Category.INFRA,
+        "related-subject merges registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
+    # Slice 4D (detachments): the same flag and key, POST only.
+    PublicEndpoint(
+        "/api/crm/related-subjects/identifiers/detach",
+        Category.INFRA,
+        "related-subject detach registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
+    # Slice 4E (birth dates): the same flag and key, POST only.
+    PublicEndpoint(
+        "/api/crm/related-subjects/birth-date/register",
+        Category.INFRA,
+        "related-subject birth date registry — X-CRM-Write-Key + RELATED_SUBJECT_REGISTRY_ENABLED auth in-router",
+        match="exact",
+        methods=("POST",),
+    ),
     PublicEndpoint(
         "/api/crm/internal/clients/{client_id}/documents/upload",
         Category.INFRA,
         "wa-mirror intake document upload — X-CRM-Write-Key + WA_MIRROR_CRM_WRITE_ENABLED auth in-router",
+        match="template",
+    ),
+    PublicEndpoint(
+        "/api/crm/internal/companies/{company_uuid}/documents/upload",
+        Category.INFRA,
+        "wa-mirror intake standalone company document upload — X-CRM-Write-Key + WA_MIRROR_CRM_WRITE_ENABLED auth in-router",
         match="template",
     ),
     # BOT-V4 S2 broker transport (Codex re-verdict, finding 1): the Pro
@@ -408,11 +483,6 @@ _OAUTH = (
         "Google Drive OAuth callback — required by OAuth 2.0 flow",
     ),
     PublicEndpoint(
-        "/api/integrations/google-drive/system/status",
-        Category.OAUTH_CALLBACK,
-        "OAuth status check — REVIEW: should require auth",
-    ),
-    PublicEndpoint(
         "/api/admin/drive/health",
         Category.OAUTH_CALLBACK,
         "Drive health check — public status for diagnostics",
@@ -504,38 +574,84 @@ _PUBLIC_KNOWLEDGE = (
 )
 
 _MARKETING = (
+    # RT-02 (2026-11-16): replaced blanket "/api/news" prefix with method-scoped
+    # exact/template entries so ALL admin mutating routes (POST /api/news,
+    # POST /api/news/bulk, POST /api/news/{news_id}/image,
+    # PATCH /api/news/{news_id}/status) are blocked at HybridAuthMiddleware AND
+    # independently gated by Depends(get_admin_user) in news.py.
     PublicEndpoint(
         "/api/news",
         Category.MARKETING,
-        "Public news/intel feed — approved articles for balizero.com homepage and blog",
+        "Public news/intel feed list — approved articles only; POST create gated by get_admin_user in-router",
+        match="exact",
+        methods=("GET", "HEAD"),
     ),
     PublicEndpoint(
-        "/api/blog/",
+        "/api/news/categories",
         Category.MARKETING,
-        "Public blog articles and content",
+        "Public news category counts for approved articles",
+        match="exact",
+        methods=("GET", "HEAD"),
     ),
-    # Removed 2026-04-18: /api/vitals — no router implements this path.
-    # Stale entry from a removed web-vitals prototype. If frontend performance
-    # telemetry is re-introduced, add it under whatever real path lands.
+    PublicEndpoint(
+        "/api/news/feed/rss",
+        Category.MARKETING,
+        "Public RSS XML feed for approved news items",
+        match="exact",
+        methods=("GET", "HEAD"),
+    ),
+    PublicEndpoint(
+        "/api/news/subscribe",
+        Category.MARKETING,
+        "Public news alert subscription opt-in",
+        match="exact",
+        methods=("POST",),
+    ),
+    PublicEndpoint(
+        "/api/news/unsubscribe",
+        Category.MARKETING,
+        "Public news alert opt-out — HMAC token or owner/admin auth verified in-router",
+        match="exact",
+        methods=("POST",),
+    ),
+    PublicEndpoint(
+        "/api/news/{slug}",
+        Category.MARKETING,
+        "Public single approved news item by slug (excludes /api/news/bulk admin endpoint)",
+        match="template",
+        methods=("GET", "HEAD"),
+        exclude=("/api/news/bulk",),
+    ),
+    # RT-01 (2026-11-16): removed blanket "/api/blog/" prefix that exposed
+    # /api/blog/newsletter/subscribers, /log, and /preferences anonymously.
+    # (/api/blog/articles lives in Next.js apps/mouth, not FastAPI.)
     PublicEndpoint(
         "/api/blog/newsletter/subscribe",
         Category.MARKETING,
         "Newsletter subscription — public marketing endpoint",
+        match="exact",
+        methods=("POST",),
     ),
     PublicEndpoint(
         "/api/blog/newsletter/confirm",
         Category.MARKETING,
-        "Newsletter confirmation — token-based verification",
+        "Newsletter confirmation — token-based verification (GET link + POST)",
+        match="exact",
+        methods=("GET", "POST"),
     ),
     PublicEndpoint(
         "/api/blog/newsletter/unsubscribe",
         Category.MARKETING,
-        "Newsletter unsubscribe — token-based verification (legal requirement)",
+        "Newsletter unsubscribe — HMAC/DB token verification enforced in-router (legal requirement)",
+        match="exact",
+        methods=("POST",),
     ),
     PublicEndpoint(
         "/api/blog/ask",
         Category.MARKETING,
         "AskZantara widget on blog articles — public Q&A feature",
+        match="exact",
+        methods=("POST",),
     ),
 )
 
@@ -617,11 +733,7 @@ _FUNNEL = (
         Category.FUNNEL,
         "Pre-auth lead cookie bz_session touch — anonymous UUID, no PII. "
         "Required for cross-funnel session attribution.",
-    ),
-    PublicEndpoint(
-        "/api/funnel/session/convert",
-        Category.FUNNEL,
-        "Lead→client conversion bridge called by portal login flow. Takes session_id + client_id.",
+        match="exact",
     ),
     PublicEndpoint(
         "/api/analytics/funnel-event",
@@ -633,6 +745,12 @@ _FUNNEL = (
         "/api/prime/zoning",
         Category.FUNNEL,
         "Prime Intelligence geospatial zoning API — public map intelligence layer",
+    ),
+    PublicEndpoint(
+        "/api/prime/search-kbli",
+        Category.FUNNEL,
+        "Prime Intelligence KBLI business activity search — public map intelligence layer",
+        match="exact",
     ),
     PublicEndpoint(
         "/api/prime/zones-geojson",
@@ -739,6 +857,12 @@ _VISA_ORACLE = (
         "/api/visa/clock",
         Category.VISA_ORACLE,
         "Visa Check Clock submission — anonymous overstay-timeline wizard, no PII",
+        match="exact",
+    ),
+    PublicEndpoint(
+        "/api/visa/clock/email",
+        Category.VISA_ORACLE,
+        "Visa Check Clock email reminder opt-in — schedules up to 5 checkpoint drip reminders",
         match="exact",
     ),
     PublicEndpoint(
@@ -850,6 +974,13 @@ _VISA_ORACLE = (
         match="template",
     ),
     PublicEndpoint(
+        "/api/visa/voa/orders/{order_id}/checkout-session",
+        Category.VISA_ORACLE,
+        "GARUDA VOA resumeOrderCheckout (L3, tracker Pay now) — same magic-link "
+        "session gate and result_id_ref ownership predicate as getOrderAndPractice",
+        match="template",
+    ),
+    PublicEndpoint(
         "/api/visa/voa/webhooks/payment",
         Category.WEBHOOK,
         "GARUDA VOA receivePaymentWebhook (L3, garuda_orders_router.py) — inbound "
@@ -934,17 +1065,17 @@ PUBLIC_ENDPOINTS: tuple[PublicEndpoint, ...] = (
 )
 
 
-def is_public_path(path: str) -> bool:
+def is_public_path(path: str, method: str | None = None) -> bool:
     """Return True if `path` matches any registered public endpoint."""
     for ep in PUBLIC_ENDPOINTS:
-        if ep.matches(path):
+        if ep.matches(path, method=method):
             return True
     return False
 
 
-def find_entry(path: str) -> PublicEndpoint | None:
+def find_entry(path: str, method: str | None = None) -> PublicEndpoint | None:
     """Return the registry entry that matches `path`, or None."""
     for ep in PUBLIC_ENDPOINTS:
-        if ep.matches(path):
+        if ep.matches(path, method=method):
             return ep
     return None

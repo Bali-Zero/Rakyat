@@ -237,6 +237,62 @@ class TestCreateClient:
         assert portal_profile_service.ensure_portal_profile.await_count == 1
 
 
+class TestCreateClientCompanyDedupLog:
+    @pytest.mark.integration
+    def test_company_dedup_branch_logs_company_id_not_nib(
+        self,
+        client: TestClient,
+        mock_db_pool,
+        app: FastAPI,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        _pool, conn = mock_db_pool
+        conn.fetchval = AsyncMock(return_value=77)  # existing company found by NIB
+        client_service = MagicMock()
+        client_service.create_client = AsyncMock(return_value=_client_row())
+        app.dependency_overrides[crm_clients_module.get_client_service] = lambda: client_service
+
+        # ClientCreate declares no `nib` field, so the payload alone never reaches
+        # the NIB branch; inject the key the branch pops from the dumped dict.
+        real_dump = crm_clients_module.ClientCreate.model_dump
+
+        def dump_with_nib(self, *args, **kwargs):
+            return {**real_dump(self, *args, **kwargs), "nib": "9120000000099"}
+
+        with (
+            patch.object(crm_clients_module.ClientCreate, "model_dump", dump_with_nib),
+            patch("backend.app.routers.crm_clients.invalidate_cache", AsyncMock(return_value=None)),
+            patch(
+                "backend.services.integrations.service_account_drive_service.ServiceAccountDriveService",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "backend.services.crm.welcome.welcome_whatsapp_service.send_client_welcome",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "backend.services.crm.welcome.welcome_email_service.schedule_client_welcome_email",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "backend.services.portal.portal_profile_service.PortalProfileService",
+                return_value=MagicMock(ensure_portal_profile=AsyncMock(return_value=None)),
+            ),
+            caplog.at_level(logging.DEBUG),
+        ):
+            response = client.post(
+                "/api/crm/clients/",
+                json={"full_name": "Zyxwv Synthetic", "company_name": "Synthetic Co"},
+            )
+
+        assert response.status_code == 200
+        text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
+        assert "Company dedup: found existing company 77" in text
+        assert "9120000000099" not in text
+
+
 class TestListClients:
     @pytest.mark.integration
     def test_list_clients_returns_rows(
@@ -259,6 +315,35 @@ class TestListClients:
         assert payload[0]["full_name"] == "Alice Example"
         fetch_args = conn.fetch.await_args.args
         assert "%alice%" in fetch_args
+
+    @pytest.mark.integration
+    def test_list_clients_log_carries_no_identity_or_filter_values(
+        self,
+        client: TestClient,
+        mock_db_pool,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        _pool, conn = mock_db_pool
+        conn.fetch = AsyncMock(return_value=[_client_row()])
+
+        with (
+            patch(
+                "backend.app.routers.crm_clients.get_crm_user_filter",
+                return_value="zyxwv.rbac@example.com",
+            ),
+            patch("backend.app.routers.crm_clients.is_crm_admin", return_value=True),
+            caplog.at_level(logging.DEBUG),
+        ):
+            response = client.get("/api/crm/clients/?assigned_to=zyxwv.assignee@example.com")
+
+        assert response.status_code == 200
+        texts = [r.getMessage() + (r.exc_text or "") for r in caplog.records if r.name.startswith("backend.")]
+        text = " ".join(texts)
+        assert "requesting clients list" in text
+        assert "zyxwv" not in text
+        assert "@" not in text.split("requesting clients list", 1)[1].split("\n")[0]
 
     @pytest.mark.integration
     def test_list_clients_unnamed_filter_adds_placeholder_predicate(
@@ -373,6 +458,44 @@ class TestUpdateClient:
         assert response.status_code == 200
         assert response.json()["full_name"] == "Updated Name"
         assert conn.execute.await_count >= 1
+
+    @pytest.mark.integration
+    def test_update_client_logs_carry_no_email_or_exception_text(
+        self,
+        client: TestClient,
+        mock_db_pool,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        _pool, conn = mock_db_pool
+        conn.fetchrow = AsyncMock(return_value=_client_row(full_name="Updated Name"))
+        conn.execute = AsyncMock(return_value="OK")
+
+        with (
+            patch("backend.app.routers.crm_clients.verify_client_access", AsyncMock()),
+            patch(
+                "backend.services.portal.portal_notification_service.PortalNotificationService",
+                side_effect=RuntimeError("boom zyxwv.leak@example.com 987654"),
+            ),
+            patch("backend.app.routers.crm_clients.spawn", MagicMock()),
+            caplog.at_level(logging.DEBUG),
+        ):
+            response = client.patch("/api/crm/clients/1", json={"full_name": "Updated Name"})
+
+        assert response.status_code == 200
+        recs = [r for r in caplog.records if r.name.startswith("backend.")]
+        parts = []
+        for r in recs:
+            parts.append(r.getMessage())
+            parts.append(repr(getattr(r, "context", "")))
+            parts.append(r.exc_text or "")
+        text = " ".join(parts)
+        assert "Updated client" in text
+        assert "Portal notification for profile update failed: RuntimeError" in text
+        assert "zyxwv" not in text
+        assert "987654" not in text
+        assert "balizero.com" not in text  # the acting user's email (fake_user)
 
     @pytest.mark.integration
     def test_update_client_rejects_empty_payload(self, client: TestClient, mock_db_pool) -> None:

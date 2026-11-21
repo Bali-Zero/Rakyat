@@ -22,7 +22,12 @@ import { VOA_PRIMARY_ACTION_STYLE } from "../voa-action-style";
 import { NextSteps } from "../NextSteps";
 import { SafeClockHero } from "../SafeClock";
 import { useVoaLocale } from "../useVoaLocale";
-import { voaCopy, type VoaCopyKey } from "../voa-copy";
+import {
+  SUBMITTED_CHECK_PREFIX,
+  formatVoaNationality,
+  voaCopy,
+  type VoaCopyKey,
+} from "../voa-copy";
 
 /**
  * GARUDA VOA — public result page (owner decision 5, constraints 5a/5b).
@@ -48,8 +53,20 @@ interface DeclinedResult {
 
 type VoaResult = AcceptedResult | DeclinedResult;
 
-/** Answers the wizard persisted client-side before submitting (see page.tsx persistKey). */
-function readSubmittedAnswers(): EligibilitySubmission {
+const PINNED_NATIONALITY_LABEL_KEYS: Partial<Record<string, VoaCopyKey>> = {
+  USA: "nationality.USA",
+  GBR: "nationality.GBR",
+  ITA: "nationality.ITA",
+  DEU: "nationality.DEU",
+  FRA: "nationality.FRA",
+  AUS: "nationality.AUS",
+  CAN: "nationality.CAN",
+  NLD: "nationality.NLD",
+  SGP: "nationality.SGP",
+};
+
+/** Answers the wizard persisted client-side before submitting (per-hash sessionStorage, with localStorage fallback). */
+function readSubmittedAnswers(hash: string | null): EligibilitySubmission {
   const fallback: EligibilitySubmission = {
     case_type: "issuance",
     nationality: "",
@@ -59,6 +76,27 @@ function readSubmittedAnswers(): EligibilitySubmission {
     extension_already_used: false,
   };
   if (typeof window === "undefined") return fallback;
+  if (hash) {
+    try {
+      const saved = window.sessionStorage.getItem(
+        `${SUBMITTED_CHECK_PREFIX}${hash}`,
+      );
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<EligibilitySubmission>;
+        return {
+          case_type: parsed.case_type ?? fallback.case_type,
+          nationality: parsed.nationality ?? fallback.nationality,
+          purpose: parsed.purpose ?? fallback.purpose,
+          travellers: parsed.travellers ?? fallback.travellers,
+          self_pay: parsed.self_pay ?? fallback.self_pay,
+          extension_already_used:
+            parsed.extension_already_used ?? fallback.extension_already_used,
+        };
+      }
+    } catch {
+      /* fall through to wizard draft fallback */
+    }
+  }
   try {
     const raw = window.localStorage.getItem("bz.garuda_voa.wizard");
     if (!raw) return fallback;
@@ -185,7 +223,20 @@ export default function VoaResultPage({
       : `/visa/voa/${hash}`;
 
   if (data.verdict === "DECLINE") {
-    const answers = readSubmittedAnswers();
+    const rawAnswers = readSubmittedAnswers(hash);
+    const pinnedKey = rawAnswers.nationality
+      ? PINNED_NATIONALITY_LABEL_KEYS[rawAnswers.nationality]
+      : undefined;
+    const answers: EligibilitySubmission = {
+      ...rawAnswers,
+      nationality: rawAnswers.nationality
+        ? formatVoaNationality(
+            rawAnswers.nationality,
+            locale,
+            pinnedKey ? t(pinnedKey) : undefined,
+          )
+        : "",
+    };
     const code = primaryDeclineCode(data.reason_codes);
     const edu = code ? buildDeclineEducation(code, answers, t) : null;
 
@@ -536,6 +587,15 @@ function DeleteCheckControl({
         },
       );
       if (res.status === 204) {
+        if (typeof window !== "undefined") {
+          try {
+            window.sessionStorage.removeItem(
+              `${SUBMITTED_CHECK_PREFIX}${resultId}`,
+            );
+          } catch {
+            /* ignore sessionStorage errors */
+          }
+        }
         onDeleted();
         return;
       }

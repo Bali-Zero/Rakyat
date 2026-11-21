@@ -17,6 +17,7 @@ Design:
 import asyncio
 import json
 import os
+import re
 from typing import Any
 
 import asyncpg
@@ -24,8 +25,17 @@ import httpx
 
 from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
+from backend.security.pii_log_identifier import redact_identifier_for_log
+from backend.services.accounting.reconcile_service import recorded_without_notifications
 from backend.services.crm.automation import ProcessAutomationService
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
+from backend.services.notifications.email_audit import (
+    _bounded_scrub,
+    format_send_error,
+    log_email_attempt,
+    notify_email_failure_critical,
+    record_email_result,
+)
 from backend.services.notifications.email_branding import logo_header_html, team_email_html
 
 logger = get_logger(__name__)
@@ -44,6 +54,23 @@ _CLIENT_NOTIFY_STATUSES: set[str] = {
     "approved",  # M5: practice approved
     "completed",  # M5: documents delivered
 }
+
+# email_send_log.email_type of the client milestone mails, by status. "completed" keeps the
+# type the Completed mail has always had (completion_client); the others are new.
+_MILESTONE_EMAIL_TYPES: dict[str, str] = {
+    "submitted": "status_submitted_client",
+    "approved": "status_approved_client",
+    "completed": "completion_client",
+}
+
+# Providers the audit table accepts (ck_email_send_log_provider); anything else is stored as NULL.
+_AUDIT_PROVIDERS = frozenset({"brevo", "zoho"})
+_PROVIDER_IN_MESSAGE = re.compile(r"\bvia (brevo|zoho|resend)\b", re.IGNORECASE)
+
+
+class EmailNotDelivered(RuntimeError):
+    """The internal send endpoint answered 200 but reported ``success=false``."""
+
 
 _RECONNECT_DELAY_S = 5  # seconds to wait before reconnecting after error
 
@@ -172,16 +199,59 @@ class PracticeStatusListener:
             new_payment,
         )
 
+        payment_in = old_payment != "paid" and new_payment == "paid"
+        milestone = old_status != new_status and new_status in _CLIENT_NOTIFY_STATUSES
+        if (payment_in or milestone) and await self._recorded_without_notifications(
+            practice_id, payload
+        ):
+            logger.info(
+                "practice_changed: practice=%s recorded in historical mode: no notifications",
+                practice_id,
+            )
+            return
+
         # ── M4: payment_status → 'paid' ───────────────────────────────────
         # Asya changes payment_status to 'paid' (and separately moves status
         # to 'on_process'). We fire on the payment transition specifically so
         # the payment-confirmation email is decoupled from the process-start email.
-        if old_payment != "paid" and new_payment == "paid":
+        if payment_in:
             await self._on_payment_received(practice_id, data)
 
         # ── M5: status milestone transitions ─────────────────────────────
-        if old_status != new_status and new_status in _CLIENT_NOTIFY_STATUSES:
+        if milestone:
             await self._on_status_changed(practice_id, new_status, data)
+
+    async def _recorded_without_notifications(self, practice_id: int, payload: str) -> bool:
+        """True when a historical confirmation made this change: nobody is notified.
+
+        The payload is read again with its numbers as text, so the trigger's `ts` keeps its
+        microseconds. A confirmation moves the payment and never the practice's status, so a
+        change of status, or a change that leaves the payment where it was, is ordinary. If the
+        answer cannot be read, nothing is sent: an email about an old payment cannot be taken
+        back, a missing one can be sent by hand.
+        """
+        change = json.loads(payload, parse_float=str, parse_int=str)
+        if change.get("old_status") != change.get("new_status"):
+            return False
+        if change.get("old_payment") == change.get("new_payment"):
+            return False
+        try:
+            return await recorded_without_notifications(
+                self._db_pool,
+                practice_id,
+                change.get("ts"),
+                change.get("old_payment"),
+                change.get("new_payment"),
+            )
+        except Exception as exc:
+            logger.error(
+                "practice_changed: practice=%s notifications withheld, could not tell whether "
+                "the change was historical: %s",
+                practice_id,
+                exc,
+                exc_info=True,
+            )
+            return True
 
     # ── M4 handler ────────────────────────────────────────────────────────
 
@@ -235,7 +305,7 @@ Great news — we've received your payment! 🎉
 Your {practice_type} is now officially confirmed and our team is getting ready to start.
 
 What happens next:
-• You'll receive a separate email once we officially kick off the process
+• We'll keep you posted by email as your process moves forward
 • You can track your progress anytime at https://my.balizero.com
 • Your advisor ({team_member_email or "our team"}) will reach out on WhatsApp shortly
 
@@ -248,7 +318,10 @@ Zantara — Bali Zero Team
 📧 {ACCOUNTING_EMAIL} | 🌐 www.balizero.com | 📱 WhatsApp: {settings.CLIENT_CONTACT_WHATSAPP}
 """
             try:
-                await self._send_via_internal_api(
+                await self._send_logged(
+                    "payment_client",
+                    practice_id,
+                    practice_data.get("client_id"),
                     client_email,
                     subject,
                     body,
@@ -257,15 +330,15 @@ Zantara — Bali Zero Team
                     else None,
                     include_logo=True,
                 )
-                logger.info("M4: payment confirmation sent to client %s", client_email)
-            except httpx.HTTPError as exc:
-                logger.error("M4: failed to email client %s: %s", client_email, exc, exc_info=True)
+                logger.info(
+                    "M4: payment confirmation sent to client %s",
+                    redact_identifier_for_log(client_email),
+                )
             except Exception as exc:
                 logger.error(
-                    "M4: unexpected error emailing client %s: %s",
-                    client_email,
-                    exc,
-                    exc_info=True,
+                    "M4: failed to email client %s: %s",
+                    redact_identifier_for_log(client_email),
+                    _bounded_scrub(format_send_error(exc), 400),
                 )
 
         # ── Email 2: Team member — with Asya in CC ───────────────────────
@@ -298,24 +371,25 @@ Zantara — Bali Zero Team
             )
             try:
                 # Use internal /send-email endpoint: handles Zoho/Brevo routing + CC support
-                await self._send_via_internal_api(
-                    to_email=team_member_email,
-                    subject=subject,
-                    body=body,
+                await self._send_logged(
+                    "payment_team",
+                    practice_id,
+                    practice_data.get("client_id"),
+                    team_member_email,
+                    subject,
+                    body,
                     cc=ACCOUNTING_EMAIL,
                     prebuilt_html=True,
                 )
-                logger.info("M4: team notification sent to %s (CC: asya)", team_member_email)
-            except httpx.HTTPError as exc:
-                logger.error(
-                    "M4: failed to email team member %s: %s", team_member_email, exc, exc_info=True
+                logger.info(
+                    "M4: team notification sent to %s (CC: asya)",
+                    redact_identifier_for_log(team_member_email),
                 )
             except Exception as exc:
                 logger.error(
-                    "M4: unexpected error emailing team member %s: %s",
-                    team_member_email,
-                    exc,
-                    exc_info=True,
+                    "M4: failed to email team member %s: %s",
+                    redact_identifier_for_log(team_member_email),
+                    _bounded_scrub(format_send_error(exc), 400),
                 )
 
     # ── M5 handler ────────────────────────────────────────────────────────
@@ -383,7 +457,10 @@ Zantara — Bali Zero Team
         subject, body = _milestone_content(client_name, practice_type, practice_id, status)
 
         try:
-            await self._send_via_internal_api(
+            await self._send_logged(
+                _MILESTONE_EMAIL_TYPES.get(status, f"status_{status}_client"),
+                practice_id,
+                practice_data.get("client_id"),
                 client_email,
                 subject,
                 body,
@@ -395,18 +472,62 @@ Zantara — Bali Zero Team
             logger.info(
                 "M5: milestone '%s' email sent to %s (practice %s)",
                 status,
-                client_email,
+                redact_identifier_for_log(client_email),
                 practice_id,
             )
-        except httpx.HTTPError as exc:
-            logger.error("M5: milestone email failed for %s: %s", client_email, exc, exc_info=True)
         except Exception as exc:
             logger.error(
-                "M5: milestone email unexpected error for %s: %s",
-                client_email,
-                exc,
-                exc_info=True,
+                "M5: milestone email failed for %s: %s",
+                redact_identifier_for_log(client_email),
+                _bounded_scrub(format_send_error(exc), 400),
             )
+
+    async def _send_logged(
+        self,
+        email_type: str,
+        practice_id: int,
+        client_id: int | None,
+        to_email: str,
+        subject: str,
+        body: str,
+        **send_kwargs: Any,
+    ) -> None:
+        """Send through the internal API and audit the attempt in ``email_send_log``.
+
+        Same contract as the other CRM senders: a 'sending' row first, then 'sent' or
+        'failed' (a failure of a critical type also pages the owner) and the error is
+        re-raised so the caller's own handling is unchanged. The audit never gates the send.
+        """
+        row_id = await log_email_attempt(
+            self._db_pool,
+            email_type=email_type,
+            to_email=to_email,
+            subject=subject,
+            practice_id=practice_id,
+            client_id=client_id,
+        )
+        try:
+            provider = await self._send_via_internal_api(to_email, subject, body, **send_kwargs)
+        except Exception as exc:
+            # The stored text never echoes the recipient: provider errors often do.
+            err = _bounded_scrub(format_send_error(exc), 400)
+            await record_email_result(
+                self._db_pool, row_id, status="failed", provider=None, error_message=err
+            )
+            notify_email_failure_critical(
+                email_type=email_type,
+                to_email=to_email,
+                subject=subject,
+                practice_id=practice_id,
+                error=err,
+            )
+            raise
+        await record_email_result(
+            self._db_pool,
+            row_id,
+            status="sent",
+            provider=provider if provider in _AUDIT_PROVIDERS else None,
+        )
 
     async def _send_via_internal_api(
         self,
@@ -417,9 +538,14 @@ Zantara — Bali Zero Team
         bcc: str | None = None,
         include_logo: bool = False,
         prebuilt_html: bool = False,
-    ) -> None:
+    ) -> str | None:
         """
         Send email via the internal /api/notifications/send-email endpoint.
+
+        Returns the provider the endpoint reports having used ("brevo", "zoho", ...) or None
+        when it does not say. Raises :class:`EmailNotDelivered` when the endpoint answers 200
+        with ``success=false`` (every provider failed, or delivery is uncertain): HTTP 200 alone
+        is not a delivery.
 
         This endpoint handles Zoho SMTP vs Brevo routing automatically
         (intra-domain @balizero.com → Zoho, external → Brevo) and supports CC/BCC.
@@ -447,6 +573,19 @@ Zantara — Bali Zero Team
                 json=payload,
             )
             response.raise_for_status()
+        try:
+            answer = response.json()
+        except Exception:
+            return None
+        if not isinstance(answer, dict):
+            return None
+        message = str(answer.get("message") or "")
+        if answer.get("success") is False:
+            raise EmailNotDelivered(
+                _bounded_scrub(message, 200) or "send endpoint reported failure"
+            )
+        found = _PROVIDER_IN_MESSAGE.search(message)
+        return found.group(1).lower() if found else None
 
 
 # ── Email copy for status milestones ──────────────────────────────────────────

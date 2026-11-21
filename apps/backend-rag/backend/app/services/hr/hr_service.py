@@ -8,17 +8,21 @@ from __future__ import annotations
 
 import calendar
 import logging
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import asyncpg
 
+from backend.app.services.hr.hr_leave_routing import SETUP_TEAM_EMAILS, TAX_TEAM_EMAILS
 from backend.app.services.hr.hr_overview_logic import aggregate_attendance, unambiguous_email
 from backend.app.utils.hr_utils import (
     calculate_bpjs,
     calculate_pph21_monthly,
 )
+from backend.app.utils.service_accounts import GROUP_STAFF_ROLES_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +43,135 @@ def business_today() -> date:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
+#: What a manual bonus stores in practice_type_code when no service is named
+#: (the column is NOT NULL and has no foreign key).
+MANUAL_BONUS_CODE = "manual"
+
+
+class BonusPeriodLockedError(Exception):
+    """The payroll month of a bonus is already approved or paid."""
+
+
+class PayrollBonusesChangedError(Exception):
+    """Approved bonuses no longer match the payslips the period was calculated with."""
+
+
+class PayrollRosterChangedError(Exception):
+    """The payroll set no longer matches the owners of the period's payslips."""
+
+
+class OffPayrollError(Exception):
+    """The employee's card says `on_payroll = false`: no payroll item may be created for them."""
+
+
+#: SQL predicate over `hr_employees AS e`: true unless the card holds the JSON boolean
+#: `false` at `profile.on_payroll` (STAFF_CARD.md C12). Works on a non-object profile too.
+ON_PAYROLL_SQL = "((e.profile -> 'on_payroll') IS DISTINCT FROM 'false'::jsonb)"
+
+
+def payroll_set_sql() -> str:
+    """SQL predicate over `hr_employees e JOIN team_members tm`: who is on the monthly payroll.
+
+    Exactly: an active card, a login that is active and not a client/monitoring/partner (the
+    People rule, `VISIBLE_PERSON_PREDICATE`, whose card clause is already true on this join),
+    and a card that does not say `on_payroll = false`. Imported at call time: hr_people_service
+    imports this module.
+    """
+    from backend.app.services.hr.hr_people_service import VISIBLE_PERSON_PREDICATE
+
+    # Group staff hold an HR card but are never paid through this payroll, whatever
+    # `on_payroll` says (their rows are inactive and only the People predicate opts them in).
+    return (
+        f"(e.is_active = TRUE AND {ON_PAYROLL_SQL} AND ({VISIBLE_PERSON_PREDICATE})"
+        f" AND lower(trim(COALESCE(tm.role, ''))) NOT IN ({GROUP_STAFF_ROLES_SQL}))"
+    )
+
+
+def payroll_month_lock_key(month: int, year: int) -> str:
+    """The advisory-lock key of a payroll month (also what the tests lock on)."""
+    return f"hr_payroll_month:{year:04d}-{month:02d}"
+
+
+async def _lock_payroll_month(conn: Any, month: int, year: int, *, exclusive: bool) -> None:
+    """Take the transaction-scoped advisory lock of a payroll month.
+
+    It exists before any period row does, which a row lock cannot: whoever ADDS money to
+    a month (bonus insert, bonus approval) holds it SHARED, whoever FIXES the month's
+    money (calculate, approve, mark paid) holds it EXCLUSIVE, so the two never interleave
+    even when no hr_payroll_periods row exists yet. Must run inside a transaction (it is
+    released at commit/rollback). Lock order everywhere: bonus row, month lock, period row.
+    """
+    fn = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+    await conn.execute(f"SELECT {fn}(hashtext($1))", payroll_month_lock_key(month, year))
+
+
+async def _refuse_if_payroll_closed(conn: Any, month: int, year: int) -> None:
+    """Raise BonusPeriodLockedError when the month's payroll is approved or paid.
+
+    Only meaningful under the month lock, which makes this plain read race-free.
+    """
+    status = await conn.fetchval(
+        "SELECT status FROM hr_payroll_periods WHERE payroll_month = $1 AND payroll_year = $2",
+        month,
+        year,
+    )
+    if status in ("approved", "paid"):
+        msg = "That month's payroll is already approved"
+        raise BonusPeriodLockedError(msg)
+
+
+def department_of(email: str | None, stored: str | None = None) -> str:
+    """The department chip of a person: 'tax', 'setup' or 'office'.
+
+    The org chart in hr_leave_routing is authoritative (the stored column is free
+    text); the stored value is only a fallback for addresses outside both sets.
+    """
+    mail = (email or "").lower().strip()
+    if mail in TAX_TEAM_EMAILS:
+        return "tax"
+    if mail in SETUP_TEAM_EMAILS:
+        return "setup"
+    guess = (stored or "").lower().strip()
+    return guess if guess in ("tax", "setup") else "office"
+
+
+def practice_group(code: str, category: str | None = None) -> str:
+    """Settings dropdown group of a practice type: visa | company | tax | other."""
+    low = (code or "").lower()
+    cat = (category or "").lower()
+    if low.startswith("tax") or cat == "tax":
+        return "tax"
+    if low.startswith("company") or cat in ("company", "business"):
+        return "company"
+    if low.startswith(("visa", "kitas", "kitap", "voa", "extension")) or cat in (
+        "visa",
+        "kitas",
+        "kitap",
+    ):
+        return "visa"
+    return "other"
+
+
 _LOCK_ERRORS = (
     asyncpg.exceptions.LockNotAvailableError,
     asyncpg.exceptions.DeadlockDetectedError,
 )
+
+
+def _lock_visible_person_sql() -> str:
+    # Imported at call time: hr_people_service imports this module (business_today).
+    from backend.app.services.hr.hr_people_service import VISIBLE_PERSON_PREDICATE
+
+    return f"""
+        SELECT tm.id
+        FROM team_members tm
+        LEFT JOIN hr_employees e ON e.team_member_id = tm.id
+        WHERE tm.id = $1 AND tm.email = $2 AND {VISIBLE_PERSON_PREDICATE}
+        FOR SHARE OF tm
+    """
+
+
+CARD_EDIT_LOCK_TIMEOUT_MS = 5000  # the import's bound (C8): wait at most this for a member lock
 
 
 class HRCardCode(str, Enum):
@@ -75,14 +204,20 @@ class HRService:
     async def list_employees(self) -> list[dict[str, Any]]:
         """List all HR employees with team member info."""
         async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT e.*, tm.full_name, tm.email, tm.role
+            rows = await conn.fetch(f"""
+                SELECT e.*, {payroll_set_sql()} AS on_payroll,
+                       tm.full_name, tm.email, tm.role, tm.department
                 FROM hr_employees e
                 JOIN team_members tm ON tm.id = e.team_member_id
                 WHERE e.is_active = TRUE
                 ORDER BY tm.full_name
             """)
-            return [self._legacy_row(r) for r in rows]
+            out = []
+            for r in rows:
+                row = self._legacy_row(r)
+                row["department"] = department_of(row.get("email"), row.get("department"))
+                out.append(row)
+            return out
 
     @staticmethod
     def _legacy_row(row: Any) -> dict[str, Any]:
@@ -90,6 +225,14 @@ class HRService:
         data = dict(row)
         data.pop("profile", None)
         return data
+
+    async def is_on_payroll(self, employee_id: int) -> bool:
+        """False only when the employee's card says `profile.on_payroll = false` (C12)."""
+        async with self.db_pool.acquire() as conn:
+            value = await conn.fetchval(
+                f"SELECT {ON_PAYROLL_SQL} FROM hr_employees e WHERE e.id = $1", employee_id
+            )
+        return value is not False
 
     async def get_employee(self, employee_id: int) -> dict[str, Any] | None:
         """Get employee by HR employee ID."""
@@ -157,46 +300,54 @@ class HRService:
                 data.get("bpjs_ketenagakerjaan_number"),
                 data.get("notes"),
             )
-            logger.info(f"HR employee upserted: team_member_id={data['team_member_id']}")
+            logger.info(f"HR employee upserted: employee_id={row['id']}")
             return self._legacy_row(row)
 
     # ─── STAFF CARD (contract: STAFF_CARD.md) ───────────────────────
 
     # Explicit column list (no `e.*`, and no `notes`: HR free text is never on the card).
-    _CARD_SELECT = """
+    _CARD_SELECT = f"""
         SELECT e.id, e.team_member_id, e.hire_date, e.is_active, e.ptkp_status,
                e.npwp, e.bpjs_kesehatan_number, e.bpjs_ketenagakerjaan_number,
                e.bank_name, e.bank_account, e.bank_account_holder, e.profile,
                e.base_salary_idr,
-               tm.full_name, tm.role, tm.department
+               tm.full_name, tm.role, tm.department, tm.avatar
         FROM hr_employees e
         JOIN team_members tm ON tm.id = e.team_member_id
-        WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client' AND tm.active = true
+        WHERE tm.id = $1 AND COALESCE(tm.role, '') <> 'client'
+          AND (tm.active = true OR lower(trim(COALESCE(tm.role, ''))) IN ({GROUP_STAFF_ROLES_SQL}))
     """
 
-    # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once.
+    # $11 is a Python dict bound to jsonb: the pool codec encodes it exactly once. $12 is the
+    # text[] of cleared keys (C11): a cleared column becomes NULL, a cleared profile key is
+    # removed, `contract_number` removes `profile.contract.number`; empty for the import.
     _CARD_UPDATE_SQL = """
         UPDATE hr_employees SET
             hire_date = COALESCE($2, hire_date),
-            npwp = COALESCE($3, npwp),
+            npwp = CASE WHEN 'npwp' = ANY($12::text[]) THEN NULL ELSE COALESCE($3, npwp) END,
             ptkp_status = COALESCE($4, ptkp_status),
-            bpjs_kesehatan_number = COALESCE($5, bpjs_kesehatan_number),
-            bpjs_ketenagakerjaan_number = COALESCE($6, bpjs_ketenagakerjaan_number),
-            bank_name = COALESCE($7, bank_name),
-            bank_account = COALESCE($8, bank_account),
-            bank_account_holder = COALESCE($9, bank_account_holder),
+            bpjs_kesehatan_number = CASE WHEN 'bpjs_kesehatan_number' = ANY($12::text[]) THEN NULL ELSE COALESCE($5, bpjs_kesehatan_number) END,
+            bpjs_ketenagakerjaan_number = CASE WHEN 'bpjs_ketenagakerjaan_number' = ANY($12::text[]) THEN NULL ELSE COALESCE($6, bpjs_ketenagakerjaan_number) END,
+            bank_name = CASE WHEN 'bank_name' = ANY($12::text[]) THEN NULL ELSE COALESCE($7, bank_name) END,
+            bank_account = CASE WHEN 'bank_account' = ANY($12::text[]) THEN NULL ELSE COALESCE($8, bank_account) END,
+            bank_account_holder = CASE WHEN 'bank_account_holder' = ANY($12::text[]) THEN NULL ELSE COALESCE($9, bank_account_holder) END,
             is_active = COALESCE($10, is_active),
-            profile = (CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
+            profile = ((CASE WHEN jsonb_typeof(profile) = 'object' THEN profile ELSE '{}'::jsonb END)
+                    - $12::text[])
                 || $11::jsonb
                 || CASE WHEN $11::jsonb ? 'docs' THEN jsonb_build_object(
                     'docs',
                     (CASE WHEN jsonb_typeof(profile->'docs') = 'object' THEN profile->'docs'
                           ELSE '{}'::jsonb END) || ($11::jsonb->'docs'))
                     ELSE '{}'::jsonb END
-                || CASE WHEN $11::jsonb ? 'contract' THEN jsonb_build_object(
+                || CASE WHEN $11::jsonb ? 'contract' OR ('contract_number' = ANY($12::text[])
+                                          AND jsonb_typeof(profile->'contract') = 'object')
+                    THEN jsonb_build_object(
                     'contract',
-                    (CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
-                          ELSE '{}'::jsonb END) || ($11::jsonb->'contract'))
+                    ((CASE WHEN jsonb_typeof(profile->'contract') = 'object' THEN profile->'contract'
+                           ELSE '{}'::jsonb END)
+                        - ARRAY(SELECT 'number' WHERE 'contract_number' = ANY($12::text[])))
+                    || COALESCE($11::jsonb->'contract', '{}'::jsonb))
                     ELSE '{}'::jsonb END,
             updated_at = NOW()
         WHERE team_member_id = $1
@@ -274,14 +425,19 @@ class HRService:
         team_member_id: str,
         fields: dict[str, Any],
         profile_patch: dict[str, Any],
+        clear: Sequence[str] = (),
     ) -> int | None:
         """Non-clobbering card write on a caller-owned connection (the import batches many).
+
+        `clear` (C11, the HTTP edit only) names columns to set NULL and profile keys to remove
+        in the same statement; an insert has nothing to clear and ignores it.
 
         Returns the row id, or None when no row was written (no such member). A
         concurrent insert falls through to the update; a stored profile that is not
         an object after the merge fails and rolls this write back.
         """
         fields, profile_patch = self._checked_patch(fields, profile_patch)
+        cleared = sorted({str(k) for k in clear})
         args = (
             team_member_id,
             fields.get("hire_date"),
@@ -297,13 +453,13 @@ class HRService:
         )
         try:
             async with conn.transaction():
-                row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args, cleared)
                 if row is None:
                     if fields.get("hire_date") is None:
                         raise HRCardError(HRCardCode.HIRE_DATE_REQUIRED)
                     row = await conn.fetchrow(self._CARD_INSERT_SQL, *args)
                     if row is None:  # a concurrent writer inserted the row: update it
-                        row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args)
+                        row = await conn.fetchrow(self._CARD_UPDATE_SQL, *args, cleared)
                 if row is not None and row["profile_type"] != "object":
                     raise HRCardError(HRCardCode.PROFILE_NOT_OBJECT)
         except HRCardError:
@@ -314,8 +470,57 @@ class HRService:
             raise HRCardError(HRCardCode.DB_ERROR) from None
         if row is None:
             return None
-        logger.info(f"HR card merged: team_member_id={team_member_id}")
+        logger.info(f"HR card merged: employee_id={row['id']}")
         return row["id"]
+
+    async def lock_visible_person(self, conn: Any, team_member_id: str, email: str) -> bool:
+        """Lock the team_members row FOR SHARE, re-checking in the SAME statement that the
+        member is still a person the People console shows (the full `VISIBLE_PERSON_PREDICATE`:
+        active, not client/monitoring/partner, with an HR row or a named staff role) and that the
+        stored email is the one the route looked up. False when the row no longer qualifies.
+        A savepoint keeps a failed lock from aborting the caller's transaction."""
+        try:
+            async with conn.transaction():
+                found = await conn.fetchval(_lock_visible_person_sql(), team_member_id, email)
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
+        return found is not None
+
+    async def edit_card(
+        self,
+        team_member_id: str,
+        email: str,
+        fields: dict[str, Any],
+        profile_patch: dict[str, Any],
+        clear: Sequence[str],
+    ) -> int | None:
+        """One HR admin edit of one card (C11): lock the member, merge and clear, one transaction.
+
+        Same `lock_timeout` as the import (C8), same merge as C5. The member lock re-checks the
+        People visibility predicate, so a member deactivated or turned monitoring/partner after
+        the route's lookup is not written. Returns the row id, or None when the person no longer
+        qualifies. Failures are HRCardError codes; no value reaches any message or log.
+        """
+        try:
+            async with self.db_pool.acquire() as conn, conn.transaction():
+                await conn.execute(f"SET LOCAL lock_timeout = {int(CARD_EDIT_LOCK_TIMEOUT_MS)}")
+                # One lock order with the HR document door (STAFF_CARD.md C13): the per-member
+                # advisory lock first, then the row lock, so a unit change cannot land between the
+                # door's unit read and its folder move.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('hr_docs_folder:'||$1))", team_member_id
+                )
+                if not await self.lock_visible_person(conn, team_member_id, email):
+                    return None
+                return await self.merge_card_on(conn, team_member_id, fields, profile_patch, clear)
+        except HRCardError:
+            raise
+        except _LOCK_ERRORS:
+            raise HRCardError(HRCardCode.LOCK_TIMEOUT) from None
+        except Exception:
+            raise HRCardError(HRCardCode.DB_ERROR) from None
 
     # ─── BONUS RATES ─────────────────────────────────────────────────
 
@@ -350,13 +555,14 @@ class HRService:
             """,
                 data["practice_type_code"],
                 data["amount_idr"],
-                data.get("effective_from", date.today()),
+                data.get("effective_from") or business_today(),
                 data.get("effective_to"),
                 data.get("is_active", True),
                 data.get("notes"),
             )
             logger.info(
-                f"Bonus rate upserted: {data['practice_type_code']} = {data['amount_idr']} IDR"
+                "Bonus rate upserted: rate_id=%s",
+                row["id"],
             )
             return dict(row)
 
@@ -373,11 +579,12 @@ class HRService:
         async with self.db_pool.acquire() as conn:
             query = """
                 SELECT bl.*, tm.full_name as employee_name, tm.email as employee_email,
+                       tm.department as employee_department,
                        p.status as practice_status, c.full_name as client_name
                 FROM hr_bonus_ledger bl
                 JOIN hr_employees e ON e.id = bl.employee_id
                 JOIN team_members tm ON tm.id = e.team_member_id
-                JOIN practices p ON p.id = bl.practice_id
+                LEFT JOIN practices p ON p.id = bl.practice_id
                 LEFT JOIN clients c ON c.id = p.client_id
                 WHERE 1=1
             """
@@ -409,7 +616,14 @@ class HRService:
 
             query += " ORDER BY bl.awarded_at DESC"
             rows = await conn.fetch(query, *params)
-            return [dict(r) for r in rows]
+            out = []
+            for r in rows:
+                row = dict(r)
+                row["employee_department"] = department_of(
+                    row.get("employee_email"), row.get("employee_department")
+                )
+                out.append(row)
+            return out
 
     async def list_bonus_historical(
         self,
@@ -441,23 +655,183 @@ class HRService:
             return [dict(r) for r in rows]
 
     async def approve_bonus(self, bonus_id: int, approved_by: str) -> dict[str, Any]:
-        """Approve a pending bonus."""
+        """Approve a pending bonus, unless its payroll month is already approved or paid or its
+        employee is outside the payroll set (OffPayrollError)."""
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                cur = await conn.fetchrow(
+                    """
+                    SELECT status, employee_id,
+                           EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS m,
+                           EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS y
+                    FROM hr_bonus_ledger WHERE id = $1 FOR UPDATE
+                    """,
+                    bonus_id,
+                )
+                if not cur or cur["status"] != "pending":
+                    msg = f"Bonus {bonus_id} not found or not pending"
+                    raise ValueError(msg)
+                await _lock_payroll_month(conn, cur["m"], cur["y"], exclusive=False)
+                await _refuse_if_payroll_closed(conn, cur["m"], cur["y"])
+                in_set = await conn.fetchval(
+                    f"SELECT {payroll_set_sql()} FROM hr_employees e "
+                    "JOIN team_members tm ON tm.id = e.team_member_id "
+                    "WHERE e.id = $1 FOR SHARE OF e, tm",
+                    cur["employee_id"],
+                )
+                if in_set is not True:
+                    msg = "This person is not on payroll"
+                    raise OffPayrollError(msg)
+                row = await conn.fetchrow(
+                    """
+                    UPDATE hr_bonus_ledger
+                    SET status = 'approved', approved_by = $2, approved_at = NOW()
+                    WHERE id = $1 AND status = 'pending'
+                    RETURNING *
+                    """,
+                    bonus_id,
+                    approved_by,
+                )
+            logger.info("Bonus %s approved", bonus_id)
+            return dict(row)
+
+    # ─── MANUAL BONUSES ──────────────────────────────────────────────
+
+    async def list_bonus_practice_types(self) -> list[dict[str, Any]]:
+        """Active practice types for the rate / manual-bonus dropdowns, tax included."""
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT code, name, category
+                FROM practice_types
+                WHERE is_active = TRUE
+                ORDER BY code
+            """)
+        out = [
+            {
+                "code": r["code"],
+                "name": r["name"],
+                "category": r["category"],
+                "group": practice_group(r["code"], r["category"]),
+            }
+            for r in rows
+        ]
+        order = {"visa": 0, "company": 1, "tax": 2, "other": 3}
+        out.sort(key=lambda t: (order[t["group"]], str(t["name"] or "").lower()))
+        return out
+
+    async def create_manual_bonus(
+        self,
+        *,
+        employee_id: int,
+        amount_idr: int,
+        reason: str,
+        practice_type_code: str | None,
+        awarded_on: date,
+        created_by: str,
+    ) -> dict[str, Any] | None:
+        """Insert a pending manual bonus. None when the employee is unknown or inactive.
+
+        Raises ValueError for an unknown service code, OffPayrollError when the employee's
+        card says they are not on payroll, and BonusPeriodLockedError when the payroll month
+        of `awarded_on` is already approved or paid.
+        """
+        awarded_at = datetime.combine(awarded_on, time(12, 0), tzinfo=ZoneInfo(BUSINESS_TZ))
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                emp = await conn.fetchrow(
+                    f"SELECT e.id, {payroll_set_sql()} AS on_payroll "
+                    "FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id "
+                    "WHERE e.id = $1 AND e.is_active = TRUE",
+                    employee_id,
+                )
+                if not emp:
+                    return None
+                if not emp["on_payroll"]:
+                    msg = "This person is not on payroll"
+                    raise OffPayrollError(msg)
+                if practice_type_code:
+                    known = await conn.fetchval(
+                        "SELECT 1 FROM practice_types WHERE code = $1 AND is_active = TRUE",
+                        practice_type_code,
+                    )
+                    if not known:
+                        msg = "Unknown or inactive service"
+                        raise ValueError(msg)
+                await _lock_payroll_month(conn, awarded_on.month, awarded_on.year, exclusive=False)
+                await _refuse_if_payroll_closed(conn, awarded_on.month, awarded_on.year)
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO hr_bonus_ledger (
+                        employee_id, practice_type_code, amount_idr, status,
+                        awarded_at, source, reason, created_by
+                    ) VALUES ($1, $2, $3, 'pending', $4, 'manual', $5, $6)
+                    RETURNING *
+                    """,
+                    employee_id,
+                    practice_type_code or MANUAL_BONUS_CODE,
+                    amount_idr,
+                    awarded_at,
+                    reason.strip(),
+                    created_by,
+                )
+        logger.info("Manual bonus %s created for employee %s", row["id"], employee_id)
+        return dict(row)
+
+    async def reject_bonus(
+        self, bonus_id: int, rejected_by: str, note: str | None = None
+    ) -> dict[str, Any]:
+        """Reject a pending bonus (practice or manual).
+
+        One statement decides: LookupError when no bonus has that id, ValueError when it
+        exists but is not pending. The existence probe shares the UPDATE's snapshot.
+        """
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                UPDATE hr_bonus_ledger
-                SET status = 'approved', approved_by = $2, approved_at = NOW()
-                WHERE id = $1 AND status = 'pending'
-                RETURNING *
-            """,
+                WITH upd AS (
+                    UPDATE hr_bonus_ledger
+                    SET status = 'rejected', approved_by = $2, approved_at = NOW(),
+                        notes = COALESCE($3, notes)
+                    WHERE id = $1 AND status = 'pending'
+                    RETURNING *
+                )
+                SELECT upd.*, EXISTS (SELECT 1 FROM hr_bonus_ledger WHERE id = $1) AS _existed
+                FROM (SELECT 1) AS one LEFT JOIN upd ON TRUE
+                """,
                 bonus_id,
-                approved_by,
+                rejected_by,
+                note,
             )
-            if not row:
-                msg = f"Bonus {bonus_id} not found or not pending"
-                raise ValueError(msg)
-            logger.info("Bonus %s approved by %s", bonus_id, approved_by)
-            return dict(row)
+            if row is None or row["id"] is None:
+                if row is not None and row["_existed"]:
+                    msg = f"Bonus {bonus_id} is not pending"
+                    raise ValueError(msg)
+                msg = f"Bonus {bonus_id} not found"
+                raise LookupError(msg)
+            logger.info("Bonus %s rejected", bonus_id)
+            out = dict(row)
+            out.pop("_existed", None)
+            return out
+
+    async def delete_manual_bonus(self, bonus_id: int) -> str:
+        """Delete a pending manual bonus: 'deleted', 'missing' (no such id) or 'conflict'
+        (exists but is not a pending manual bonus). One statement, one snapshot."""
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                WITH del AS (
+                    DELETE FROM hr_bonus_ledger
+                    WHERE id = $1 AND source = 'manual' AND status = 'pending'
+                    RETURNING id
+                )
+                SELECT (SELECT id FROM del) AS deleted_id,
+                       EXISTS (SELECT 1 FROM hr_bonus_ledger WHERE id = $1) AS existed
+                """,
+                bonus_id,
+            )
+        if row["deleted_id"] is not None:
+            return "deleted"
+        return "conflict" if row["existed"] else "missing"
 
     async def get_bonus_summary(
         self,
@@ -476,6 +850,7 @@ class HRService:
                     COALESCE(SUM(amount_idr), 0) as grand_total
                 FROM hr_bonus_ledger
                 WHERE employee_id = $1
+                  AND status NOT IN ('rejected', 'reversed', 'cancelled')
                   AND EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $2
                   AND EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $3
             """,
@@ -495,7 +870,11 @@ class HRService:
     ) -> dict[str, Any]:
         """
         Calculate payroll for a given month.
-        Creates period + payslips + deductions for all active employees.
+        Creates period + payslips + deductions for all active employees that are on payroll
+        (card `profile.on_payroll` is not false). Payslips of this period that belong to
+        anyone outside that set (inactive login, client/monitoring/partner role, inactive card or
+        off-payroll card) are deleted in the same transaction, unless the period was
+        already approved or paid when this call found it.
         """
         period_start = date(year, month, 1)
         last_day = calendar.monthrange(year, month)[1]
@@ -503,6 +882,13 @@ class HRService:
 
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await _lock_payroll_month(conn, month, year, exclusive=True)
+                prior_status = await conn.fetchval(
+                    "SELECT status FROM hr_payroll_periods "
+                    "WHERE payroll_month = $1 AND payroll_year = $2",
+                    month,
+                    year,
+                )
                 # Create or get period
                 period = await conn.fetchrow(
                     """
@@ -522,13 +908,14 @@ class HRService:
                 )
                 period_id = period["id"]
 
-                # Get all active employees
-                employees = await conn.fetch("""
+                # Get all active employees that are on payroll
+                employees = await conn.fetch(f"""
                     SELECT e.*, tm.full_name, tm.email
                     FROM hr_employees e
                     JOIN team_members tm ON tm.id = e.team_member_id
-                    WHERE e.is_active = TRUE
-                """)
+                    WHERE {payroll_set_sql()}
+                    FOR SHARE OF e, tm
+                """)  # share locks: a concurrent card or login edit waits for this commit
 
                 payslips = []
                 for emp in employees:
@@ -550,7 +937,8 @@ class HRService:
                         month,
                         year,
                     )
-                    bonus_total = bonus_row["total"]
+                    # SUM(bigint) is numeric: asyncpg returns Decimal, which the float tax maths rejects.
+                    bonus_total = int(bonus_row["total"])
 
                     # Calculate BPJS
                     bpjs = calculate_bpjs(salary)
@@ -645,6 +1033,27 @@ class HRService:
                         }
                     )
 
+                if prior_status not in ("approved", "paid"):
+                    kept = [emp["id"] for emp in employees]
+                    await conn.execute(
+                        """
+                        DELETE FROM hr_deductions WHERE payslip_id IN (
+                            SELECT id FROM hr_payslips
+                            WHERE payroll_period_id = $1 AND employee_id <> ALL($2::int[])
+                        )
+                    """,
+                        period_id,
+                        kept,
+                    )
+                    await conn.execute(
+                        """
+                        DELETE FROM hr_payslips
+                        WHERE payroll_period_id = $1 AND employee_id <> ALL($2::int[])
+                    """,
+                        period_id,
+                        kept,
+                    )
+
                 logger.info(f"Payroll calculated: {month}/{year}, {len(payslips)} employees")
                 return {
                     "period_id": period_id,
@@ -731,28 +1140,100 @@ class HRService:
             return result
 
     async def approve_payroll(self, period_id: int, approved_by: str) -> dict[str, Any]:
-        """Approve a payroll period (locks it)."""
+        """Approve a payroll period (locks it).
+
+        Order: read the period's month unlocked, take the month lock EXCLUSIVE (waits for
+        in-flight bonus inserts/approvals, blocks new ones), lock the period row, re-check
+        it, then compare bonuses. Refuses when the approved+paid bonuses of the month no
+        longer match what the payslips were calculated with.
+        """
         async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                UPDATE hr_payroll_periods
-                SET status = 'approved', approved_by = $2
-                WHERE id = $1 AND status = 'calculated'
-                RETURNING *
-            """,
-                period_id,
-                approved_by,
-            )
-            if not row:
-                msg = f"Period {period_id} not found or not in 'calculated' status"
-                raise ValueError(msg)
-            logger.info("Payroll period %s approved by %s", period_id, approved_by)
+            async with conn.transaction():
+                seen = await conn.fetchrow(
+                    "SELECT payroll_month, payroll_year FROM hr_payroll_periods WHERE id = $1",
+                    period_id,
+                )
+                if not seen:
+                    msg = f"Period {period_id} not found or not in 'calculated' status"
+                    raise ValueError(msg)
+                await _lock_payroll_month(
+                    conn, seen["payroll_month"], seen["payroll_year"], exclusive=True
+                )
+                period = await conn.fetchrow(
+                    "SELECT * FROM hr_payroll_periods WHERE id = $1 FOR UPDATE", period_id
+                )
+                if (
+                    not period
+                    or period["status"] != "calculated"
+                    or (period["payroll_month"], period["payroll_year"])
+                    != (seen["payroll_month"], seen["payroll_year"])
+                ):
+                    msg = f"Period {period_id} not found or not in 'calculated' status"
+                    raise ValueError(msg)
+                drift = await conn.fetchval(
+                    f"""
+                    SELECT e.id FROM hr_employees e
+                    JOIN team_members tm ON tm.id = e.team_member_id
+                    LEFT JOIN hr_payslips ps
+                           ON ps.employee_id = e.id AND ps.payroll_period_id = $1
+                    WHERE {payroll_set_sql()}
+                      AND COALESCE(ps.bonus_total_idr, 0) <> COALESCE((
+                            SELECT SUM(b.amount_idr) FROM hr_bonus_ledger b
+                            WHERE b.employee_id = e.id
+                              AND b.status IN ('approved', 'paid')
+                              AND EXTRACT(MONTH FROM (b.awarded_at AT TIME ZONE 'Asia/Makassar')) = $2
+                              AND EXTRACT(YEAR FROM (b.awarded_at AT TIME ZONE 'Asia/Makassar')) = $3
+                          ), 0)
+                    LIMIT 1
+                    """,
+                    period_id,
+                    period["payroll_month"],
+                    period["payroll_year"],
+                )
+                if drift is not None:
+                    msg = (
+                        "Bonuses changed since this payroll was calculated; "
+                        "recalculate before approving"
+                    )
+                    raise PayrollBonusesChangedError(msg)
+                roster = await conn.fetch(
+                    f"""
+                    SELECT e.id, {payroll_set_sql()} AS in_set
+                    FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id
+                    FOR SHARE OF e, tm
+                    """
+                )
+                owners = await conn.fetch(
+                    "SELECT employee_id FROM hr_payslips WHERE payroll_period_id = $1", period_id
+                )
+                if {r["id"] for r in roster if r["in_set"]} != {r["employee_id"] for r in owners}:
+                    msg = "The team changed since this payroll was calculated: calculate again"
+                    raise PayrollRosterChangedError(msg)
+                row = await conn.fetchrow(
+                    """
+                    UPDATE hr_payroll_periods
+                    SET status = 'approved', approved_by = $2
+                    WHERE id = $1 AND status = 'calculated'
+                    RETURNING *
+                    """,
+                    period_id,
+                    approved_by,
+                )
+            logger.info("Payroll period %s approved", period_id)
             return dict(row)
 
     async def mark_payroll_paid(self, period_id: int) -> dict[str, Any]:
         """Mark payroll as paid."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                seen = await conn.fetchrow(
+                    "SELECT payroll_month, payroll_year FROM hr_payroll_periods WHERE id = $1",
+                    period_id,
+                )
+                if seen:
+                    await _lock_payroll_month(
+                        conn, seen["payroll_month"], seen["payroll_year"], exclusive=True
+                    )
                 row = await conn.fetchrow(
                     """
                     UPDATE hr_payroll_periods
@@ -887,7 +1368,7 @@ class HRService:
                     req["start_date"].year,
                 )
 
-                logger.info("Leave request %s approved by %s", request_id, reviewed_by)
+                logger.info("Leave request %s approved", request_id)
                 return dict(req)
 
     async def reject_leave(
@@ -930,7 +1411,7 @@ class HRService:
                     req["start_date"].year,
                 )
 
-                logger.info("Leave request %s rejected by %s", request_id, reviewed_by)
+                logger.info("Leave request %s rejected", request_id)
                 return dict(req)
 
     async def get_leave_request(
@@ -1217,15 +1698,23 @@ class HRService:
             }
 
     async def get_my_dashboard(self, employee_id: int) -> dict[str, Any]:
-        """Personal dashboard for a team member."""
+        """Personal dashboard for a team member.
+
+        A person whose card says `on_payroll = false` gets `on_payroll: false` and no payroll
+        data at all (no payslip, no bonus totals); their leave balances stay.
+        """
         today = business_today()
         async with self.db_pool.acquire() as conn:
+            on_payroll = await conn.fetchval(
+                f"SELECT {ON_PAYROLL_SQL} FROM hr_employees e WHERE e.id = $1", employee_id
+            )
             # Current month bonuses
             bonuses = await conn.fetchrow(
                 """
                 SELECT COUNT(*) as count, COALESCE(SUM(amount_idr), 0) as total
                 FROM hr_bonus_ledger
                 WHERE employee_id = $1
+                  AND status NOT IN ('rejected', 'reversed', 'cancelled')
                   AND EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $2
                   AND EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar')) = $3
             """,
@@ -1262,7 +1751,13 @@ class HRService:
                 today.year,
             )
 
+            if on_payroll is False:
+                return {
+                    "on_payroll": False,
+                    "leave_balances": [dict(r) for r in leave_balance],
+                }
             return {
+                "on_payroll": True,
                 "month_bonuses": dict(bonuses),
                 "latest_payslip": dict(latest_payslip) if latest_payslip else None,
                 "leave_balances": [dict(r) for r in leave_balance],

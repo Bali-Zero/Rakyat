@@ -19,8 +19,14 @@ from backend.app.modules.crm.company_schemas import (
     CompanyUpdate,
 )
 from backend.app.routers.documents_proxy import assert_drive_file_belongs_to_company
-from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
+from backend.app.utils.client_pools import can_edit_company, ensure_client_pools_validated
+from backend.app.utils.crm_utils import can_create_company, is_crm_admin, verify_client_access
 from backend.services.common.background import spawn
+from backend.services.crm.entity_search import (
+    build_company_search,
+    escape_like,
+    smart_search_available,
+)
 from backend.services.invoicing.invoice_company import link_lock_key
 
 logger = logging.getLogger(__name__)
@@ -36,6 +42,24 @@ def _require_crm_admin(current_user: dict) -> None:
     """Require CRM admin privileges for company-level mutations."""
     if not is_crm_admin(current_user):
         raise HTTPException(status_code=403, detail="CRM admin access required")
+
+
+async def _require_company_editor(conn, company_id: int, current_user: dict, action: str) -> None:
+    """403/404 unless the caller may change this company (``client_pools.can_edit_company``)."""
+    await ensure_client_pools_validated(conn)
+    if is_crm_admin(current_user):
+        return
+    company = await conn.fetchrow("SELECT created_by FROM companies WHERE id = $1", company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    owners = await conn.fetch(
+        "SELECT c.assigned_to, c.created_by, c.tax_consultant "
+        "FROM client_company_links l JOIN clients c ON c.id = l.client_id "
+        "WHERE l.company_id = $1 AND c.deleted_at IS NULL",
+        company_id,
+    )
+    if not can_edit_company(current_user, company["created_by"], owners):
+        raise HTTPException(status_code=403, detail=f"Not allowed to {action} this company")
 
 
 def company_record_to_dict(record: asyncpg.Record) -> dict:
@@ -96,24 +120,38 @@ async def list_companies(
     """
     params: list = []
 
-    if search:
-        query += " AND (c.company_name ILIKE $1 OR c.nib ILIKE $1 OR c.npwp_company ILIKE $1)"
-        params.append(f"%{search}%")
-
-    if status:
-        query += f" AND c.status = ${len(params) + 1}"
-        params.append(status)
-
-    if kbli:
-        query += f" AND c.kbli_code = ${len(params) + 1}"
-        params.append(kbli)
-
-    query += (
-        f" GROUP BY c.id ORDER BY c.company_name LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
-    )
-    params.extend([limit, skip])
-
     async with db.acquire() as conn:
+        if search and search.strip():
+            # Smart search (case, accents, word order, PT/CV affixes, NIB/NPWP digits); the
+            # legacy substring search answers when every token is short or migration 358 is absent.
+            smart = (
+                await build_company_search(conn, search, 1)
+                if await smart_search_available(conn)
+                else None
+            )
+            if smart is not None:
+                query += smart.clause
+                params.extend(smart.params)
+            else:
+                query += (
+                    " AND (c.company_name ILIKE $1 OR c.nib ILIKE $1 OR c.npwp_company ILIKE $1)"
+                )
+                params.append(f"%{escape_like(search.strip())}%")
+
+        if status:
+            query += f" AND c.status = ${len(params) + 1}"
+            params.append(status)
+
+        if kbli:
+            query += f" AND c.kbli_code = ${len(params) + 1}"
+            params.append(kbli)
+
+        query += (
+            f" GROUP BY c.id ORDER BY c.company_name"
+            f" LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
+        )
+        params.extend([limit, skip])
+
         rows = await conn.fetch(query, *params)
 
         companies = []
@@ -133,7 +171,9 @@ async def create_company(
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Create a new company"""
-    _require_crm_admin(current_user)
+    # CRM admins and the tax team; edit/delete stay admin-only.
+    if not can_create_company(current_user):
+        raise HTTPException(status_code=403, detail="Company creation not allowed for this role")
     user_email = current_user.get("email", "system")
 
     query = """
@@ -363,32 +403,34 @@ async def update_company(
     db: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Update company details"""
-    _require_crm_admin(current_user)
+    """Update company details (admin, or staff who manage the company's clients)"""
     user_email = current_user.get("email", "system")
 
-    # Only fields the client actually sent are written. CompanyUpdate has
-    # already validated and converted them: a date string arrives as
-    # datetime.date, and an explicit null clears a nullable column.
-    payload = data.model_dump(exclude_unset=True)
-
-    updates = []
-    params = []
-    for field, value in payload.items():
-        updates.append(f"{field} = ${len(params) + 1}")
-        params.append(value)
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
-
-    updates.append(f"updated_by = ${len(params) + 1}")
-    updates.append("updated_at = NOW()")
-    params.append(user_email)
-    params.append(company_id)
-
-    query = f"UPDATE companies SET {', '.join(updates)} WHERE id = ${len(params)} RETURNING id, company_name"
-
     async with db.acquire() as conn:
+        # Authorize first: a denied caller gets 403/404 whatever the payload holds.
+        await _require_company_editor(conn, company_id, current_user, "edit")
+
+        # Only fields the client actually sent are written. CompanyUpdate has
+        # already validated and converted them: a date string arrives as
+        # datetime.date, and an explicit null clears a nullable column.
+        payload = data.model_dump(exclude_unset=True)
+
+        updates = []
+        params = []
+        for field, value in payload.items():
+            updates.append(f"{field} = ${len(params) + 1}")
+            params.append(value)
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="No valid fields to update")
+
+        updates.append(f"updated_by = ${len(params) + 1}")
+        updates.append("updated_at = NOW()")
+        params.append(user_email)
+        params.append(company_id)
+
+        query = f"UPDATE companies SET {', '.join(updates)} WHERE id = ${len(params)} RETURNING id, company_name"
+
         row = await conn.fetchrow(query, *params)
         if not row:
             raise HTTPException(status_code=404, detail="Company not found")
@@ -810,12 +852,13 @@ async def sync_company_drive_folder(
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """
-    _require_crm_admin(current_user)
+    Allowed to whoever may edit the company (admin, or staff who manage its clients).
     Scan the company's Google Drive folder and upsert files into company_documents.
     Files already tracked (by google_drive_file_id) are skipped.
     Returns a summary: {added, skipped, total, docs}.
     """
     async with db.acquire() as conn:
+        await _require_company_editor(conn, company_id, current_user, "sync")
         row = await conn.fetchrow(
             "SELECT id, company_name, google_drive_folder_id FROM companies WHERE id = $1",
             company_id,

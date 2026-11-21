@@ -1090,3 +1090,22 @@ def test_notify_email_failure_critical_without_owner_chat_sends_nothing(monkeypa
             error="x",
         )
     assert not mock_open.called
+
+
+@pytest.mark.asyncio
+async def test_unpaid_invoice_digest_failure_is_never_scheduled_for_retry(fake_pool):
+    """The daily notifier run is its own retry; a [RETRY] stub on top would be a duplicate."""
+    fake_pool._conn.fetchrow = AsyncMock(
+        return_value={"attempt_number": 1, "email_type": "unpaid_invoice_digest"},
+    )
+    await record_email_result(fake_pool, 7, status="failed", provider="brevo", error_message="500")
+    assert fake_pool._conn.execute.call_args.args[5] is None
+
+
+@pytest.mark.asyncio
+async def test_ordinary_team_type_failure_is_still_scheduled_for_retry(fake_pool):
+    fake_pool._conn.fetchrow = AsyncMock(
+        return_value={"attempt_number": 1, "email_type": "hr_bonus"},
+    )
+    await record_email_result(fake_pool, 7, status="failed", provider="brevo", error_message="500")
+    assert fake_pool._conn.execute.call_args.args[5] is not None

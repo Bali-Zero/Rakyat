@@ -7,7 +7,7 @@
   },
   "as_of": "2026-11-04 06:24:52.905834+00:00",
   "age_55_birth_date": "1971-09-01",
-  "walk_corpus_fingerprint": "301c5ba13753ce1948cd03a62e882d45ee7ef0b7f9834bac94a322d11d15dfbd",
+  "walk_corpus_fingerprint": "816962abd70fc355a9cc666d12806ef531ae1e9e45167f98191572a43b665d3d",
   "walks": [
     {
       "label": "offshore/business",
@@ -380,6 +380,17 @@
       "walk_fixture": "offshore_retirement_bank_deposit.json",
       "why": "same basis, conditioned on whose name holds the deposit",
       "ui": { "secondhome_own_name": "no" },
+      "state": "NO_SUPPORTED_PATH",
+      "no_path_reason_codes": ["AGE_BELOW_55"],
+      "doors": { "TOURISM": ["C1"], "SECOND_HOME": [], "AGE_55": ["E33F"] }
+    },
+    {
+      "id": "property-not-completed-strata",
+      "walk_fixture": "offshore_retirement_property.json",
+      "why": "the Second Home property basis requires a completed strata title, not a villa, leasehold, HGB or off-plan unit",
+      "ui": {
+        "secondhome_property_title": "non_qualifying_leasehold_villa_offplan"
+      },
       "state": "NO_SUPPORTED_PATH",
       "no_path_reason_codes": ["AGE_BELOW_55"],
       "doors": { "TOURISM": ["C1"], "SECOND_HOME": [], "AGE_55": ["E33F"] }

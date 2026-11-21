@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useR19 } from "@/components/r19/R19Presentation";
 import { usePathname } from "next/navigation";
 import { NavShell, BZLogo } from "@balizero/core";
-import { MobileNav } from "@/app/v2/_components/MobileNav";
+import { MobileNav } from "@/components/site/MobileNav";
 import type { NavItem } from "@balizero/core";
 
 const ALL_NAV_ITEMS: NavItem[] = [

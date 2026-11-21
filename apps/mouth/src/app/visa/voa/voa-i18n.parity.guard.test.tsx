@@ -57,7 +57,18 @@ const CONSUMER_FILES = [
 const CONSUMER_SRC: Record<string, string> = Object.fromEntries(
   CONSUMER_FILES.map((rel) => [rel, readFileSync(join(VOA_DIR, rel), "utf8")]),
 );
-const ALL_CONSUMER_SRC = Object.values(CONSUMER_SRC).join("\n");
+/**
+ * The order tracker consumes the `order.closed.*` keys (its closed-order
+ * panel) but is NOT in CONSUMER_FILES: the rest of the tracker is English
+ * screen text that is deliberately not localised yet, and the hardcoded-
+ * sentence rule below would convict it. It counts here for the orphan rule
+ * only; the claims guard scans it by name (checked by the last tracker test).
+ */
+const TRACKER_FILE = "orders/OrderTracker.tsx";
+const TRACKER_SRC = readFileSync(join(VOA_DIR, TRACKER_FILE), "utf8");
+const ALL_CONSUMER_SRC = [...Object.values(CONSUMER_SRC), TRACKER_SRC].join(
+  "\n",
+);
 
 const DECLINE_SRC =
   CONSUMER_SRC["../../../components/garuda/declineEducation.ts"];
@@ -215,6 +226,31 @@ describe("voa-i18n — every key has a consumer, every sentence has a key", () =
   });
 });
 
+describe("voa-i18n — the tracker's closed-order panel is in the dictionary", () => {
+  const CLOSED = keys.filter((k) => k.startsWith("order.closed."));
+
+  it("carries the four closed-order keys in both languages", () => {
+    expect(CLOSED.sort()).toEqual([
+      "order.closed.expired.heading",
+      "order.closed.failed.heading",
+      "order.closed.payAgain",
+      "order.closed.safetyBody",
+    ]);
+  });
+
+  it("the safety instruction survives in Indonesian", () => {
+    expect(VOA_COPY.id["order.closed.safetyBody"]).toMatch(
+      /uang sudah keluar.*hubungi kami terlebih dahulu/i,
+    );
+  });
+
+  it("the tracker renders those keys as literals, not hardcoded English", () => {
+    for (const k of CLOSED) expect(TRACKER_SRC).toContain(`"${k}"`);
+    expect(TRACKER_SRC).not.toContain("If money has already left");
+    expect(TRACKER_SRC).not.toMatch(/>\s*Pay again\s*</);
+  });
+});
+
 describe("voa-i18n — the ruling is a variable, and it ships at 5a", () => {
   it("ships english-by-default: constraint 5a is what production serves", () => {
     expect(VOA_LOCALE_RULING).toBe("english-by-default");
@@ -366,6 +402,12 @@ describe("voa-i18n — the banned-claims guard followed the copy", () => {
     join(VOA_DIR, "voa-copy.guard.test.ts"),
     "utf8",
   );
+
+  it("the claims guard scans the tracker by name", () => {
+    expect(claimsGuardScannedFiles(CLAIMS_GUARD_SRC).has(
+      join(VOA_DIR, TRACKER_FILE),
+    )).toBe(true);
+  });
 
   it("every consumer this file scans is scanned by the claims guard too", () => {
     const scanned = claimsGuardScannedFiles(CLAIMS_GUARD_SRC);

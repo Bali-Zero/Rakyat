@@ -85,7 +85,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.generate_openapi import compute_schema_sha256
+from scripts.generate_openapi import compute_schema_sha256, consumed_openapi
 
 # This file: apps/backend-rag/backend/tests/unit/scripts/test_generate_openapi_schema_pin.py
 # Repo root: six levels up (mirrors this directory's own conftest.py). A
@@ -107,7 +107,9 @@ def test_schema_d_ts_pin_matches_the_live_openapi_contract() -> None:
 
     app = create_app()
     schema = app.openapi()
-    live_hash = compute_schema_sha256(schema)
+    # The pin covers only the part of the contract mouth consumes
+    # (scripts/openapi_consumed.py); a change outside it is not drift.
+    live_hash = compute_schema_sha256(consumed_openapi(schema, _REPO_ROOT))
 
     assert _PIN_PATH.exists(), (
         f"pin file missing at {_PIN_PATH} — run `npm run contract:visa-oracle` "

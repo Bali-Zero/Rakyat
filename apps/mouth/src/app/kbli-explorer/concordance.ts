@@ -31,14 +31,6 @@ export const KBLI_CONCORDANCE_2025: Record<string, ConcordanceEntry> = {
     impact: "OTA (Airbnb/Booking) verification cutoff on March 31, 2026.",
     action: "Immediate Akta-OSS sync required to prevent listing delisting.",
   },
-  "70209": {
-    code: "70209",
-    status: "REVOKED",
-    reason: "Generic Management Consulting catch-all deleted.",
-    impact:
-      "Consulting firms must now specify their sector (IT, HR, Marketing, etc.).",
-    action: "Requires Akta amendment to select valid 2025 successors.",
-  },
   "62019": {
     code: "62019",
     status: "SPLIT",
@@ -51,18 +43,20 @@ export const KBLI_CONCORDANCE_2025: Record<string, ConcordanceEntry> = {
     code: "68111",
     status: "CRITICAL",
     reason:
-      "Strict separation between Long-term Real Estate and Daily Rentals.",
+      "Strict separation between Long-term Real Estate and Daily Rentals (plus Bali's 18-field OSS closure from the third week of May 2026).",
     impact:
-      "Using this code for daily guests (Airbnb) triggers automatic delisting by March 31.",
-    action: "Migrate to 55203 (Villa) if providing hospitality services.",
+      "Using this code for daily guests (Airbnb) violates licensing scope and triggers OTA delisting.",
+    action:
+      "Do NOT migrate a PT PMA to 55203 (0% PMA — reserved for Indonesian Koperasi & UMKM). For short-term hospitality as a PT PMA, evaluate open PMA codes such as 55101 (Star Hotel) or 55204 (Serviced Apartments) outside restricted zones.",
   },
   "55209": {
     code: "55209",
     status: "ELEVATED_RISK",
-    reason: "New operational restriction on housekeeping services.",
+    reason:
+      "New operational restriction on housekeeping services (Guest House slice reserved for Koperasi/UMKM).",
     impact:
       "Daily cleaning is strictly prohibited. Violations lead to NIB suspension.",
     action:
-      "Audit service levels. Move to 55106 if high-touch service is required.",
+      "Audit service levels. Do NOT migrate a PT PMA to 55106 (0% PMA — reserved for Koperasi & UMKM); if high-touch hotel services are required as a PT PMA, evaluate 55101 (Star Hotel) or 55204 (Serviced Apartments).",
   },
 };

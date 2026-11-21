@@ -296,6 +296,74 @@ class TestProcessAutomationService:
         assert team_call.kwargs["practice_id"] == 1
         assert team_call.kwargs["client_id"] == 10
 
+    async def test_trigger_paid_practice_sends_no_start_email(self):
+        """Spec B-1: already paid: the payment emails said it, so NO start email at all."""
+        svc, _, _ = self._make_service()
+        practice = {
+            "id": 1,
+            "client_id": 10,
+            "practice_type_name": "KITAS",
+            "assigned_to": "uxx6@d.com",
+            "payment_status": "paid",
+        }
+        client = {"id": 10, "full_name": "John", "email": "uxx5@d.com"}
+        with (
+            patch(
+                "backend.services.crm.automation._fetch_practice_with_client",
+                new_callable=AsyncMock,
+            ) as m_fetch,
+            patch(
+                "backend.services.crm.automation._send_with_brevo_fallback", new_callable=AsyncMock
+            ) as m_send,
+            patch("backend.services.crm.automation._log_activity", new_callable=AsyncMock) as m_act,
+        ):
+            m_fetch.return_value = (practice, client)
+            result = await svc.trigger_on_process_start(1, "ux16@d.com")
+        assert result["success"] is True
+        assert result["client_notified"] is False
+        assert result["team_leader_notified"] is False
+        assert result["skipped"] == "payment_emails_cover_start"
+        m_send.assert_not_called()
+        assert "no start emails" in m_act.await_args.args[4]
+
+    @pytest.mark.parametrize("payment_status", [None, "unpaid", "partial"])
+    async def test_trigger_unpaid_practice_sends_start_emails_without_a_payment_claim(
+        self, payment_status
+    ):
+        """Spec B-5/B-7: On Process before payment: both mails go out and claim no payment."""
+        svc, _, _ = self._make_service()
+        practice = {
+            "id": 1,
+            "client_id": 10,
+            "practice_type_name": "KITAS",
+            "assigned_to": "uxx6@d.com",
+            "payment_status": payment_status,
+        }
+        client = {"id": 10, "full_name": "John", "email": "uxx5@d.com"}
+        with (
+            patch(
+                "backend.services.crm.automation._fetch_practice_with_client",
+                new_callable=AsyncMock,
+            ) as m_fetch,
+            patch(
+                "backend.services.crm.automation._send_with_brevo_fallback", new_callable=AsyncMock
+            ) as m_send,
+            patch("backend.services.crm.automation._log_activity", new_callable=AsyncMock),
+        ):
+            m_fetch.return_value = (practice, client)
+            await svc.trigger_on_process_start(1, "ux16@d.com")
+        assert m_send.await_count == 2
+        for call in m_send.await_args_list:
+            subject, body = call.args[2], call.args[3]
+            assert "Payment Confirmed" not in subject
+            for claim in (
+                "received your payment",
+                "payment has just been confirmed",
+                "confirmed the payment",
+            ):
+                assert claim not in body
+        assert "Starting Your KITAS" in m_send.await_args_list[0].args[2]
+
     async def test_trigger_no_client_email(self):
         svc, _, _ = self._make_service()
         practice = {"id": 1, "practice_type_name": "KITAS", "assigned_to": "uxx6@d.com"}
@@ -313,4 +381,3 @@ class TestProcessAutomationService:
             m.return_value = (practice, client)
             result = await svc.trigger_on_process_start(1, "ux16@d.com")
         assert result["client_notified"] is False
-

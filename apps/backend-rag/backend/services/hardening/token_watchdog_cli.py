@@ -29,6 +29,7 @@ import logging
 import os
 import sys
 
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.hardening.token_watchdog import TokenProbe, TokenWatchdog
 from backend.services.review.telegram_adapter import TelegramReviewAdapter
 
@@ -49,13 +50,13 @@ def _build_probes() -> list[tuple[str, TokenProbe]]:
 
 async def run() -> int:
     _configure_logging()
-    owner_chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID")
-    if not owner_chat_id:
+    owner_chat_id = os.environ.get("TELEGRAM_OWNER_CHAT_ID") or ""
+    if not owner_chat_id and not telegram_is_retired():
         logger.error("TELEGRAM_OWNER_CHAT_ID not set")
         return 1
 
     probes = _build_probes()
-    telegram = TelegramReviewAdapter()
+    telegram = TelegramReviewAdapter(bot_token="retired" if telegram_is_retired() else None)
     watchdog = TokenWatchdog(
         probes=probes,
         telegram=telegram,

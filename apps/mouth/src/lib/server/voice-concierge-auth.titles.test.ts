@@ -9,6 +9,8 @@ const TITLE_PAIRS: Array<[string, string]> = [
   ["Team Leader", "Tax Responsible"],
   ["Executive Consultant", "Senior Consultant"],
   ["Accounting", "HR & Accounting"],
+  // owner order 2026-11-15
+  ["Tax Lead", "Tax Consultant"],
 ];
 
 describe("voice concierge auth: 2026-11-09 job titles", () => {

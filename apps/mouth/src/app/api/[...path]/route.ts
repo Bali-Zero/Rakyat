@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { logRouteTouch } from "@/lib/api/route-touch";
 import { toError } from "@/lib/types/common";
+import { safeUpstreamError } from "@/lib/search-redaction";
 
 // Use Node.js runtime (not Edge) for long-running SSE streams.
 // Edge has a 30s timeout which kills workspace-stream responses.
@@ -94,6 +95,7 @@ const SLASH_ONLY_UPSTREAM_PATHS = new Set(["/api/crm/interactions"]);
 
 async function proxy(req: NextRequest): Promise<Response> {
   const backendBase = getBackendBaseUrl();
+  const backendBaseUrl = new URL(backendBase);
   const url = new URL(req.url);
   const upstreamPath = SLASH_ONLY_UPSTREAM_PATHS.has(url.pathname)
     ? `${url.pathname}/`
@@ -101,11 +103,11 @@ async function proxy(req: NextRequest): Promise<Response> {
   const targetUrl = `${backendBase}${upstreamPath}${url.search}`;
   const isPublicVisaEvaluation =
     url.pathname === VISA_ORACLE_EVALUATE_PATH && req.method === "POST";
-  // Never put Visa Oracle's semantic request_category query in logs or error
-  // metadata. The upstream still receives the full targetUrl.
-  const logTargetUrl = isPublicVisaEvaluation
-    ? `${backendBase}${url.pathname}`
-    : targetUrl;
+  // Logs and error metadata carry the path only, never the query string: it holds Visa Oracle's
+  // semantic request_category and the typed search text of the client, practice and company
+  // search bars (`?search=`, `?q=`: names, e-mails, phones). The upstream still receives the
+  // full targetUrl.
+  const logTargetUrl = `${backendBase}${url.pathname}`;
 
   // Extract correlation ID for logging
   const correlationId = req.headers.get("X-Correlation-ID") || "unknown";
@@ -278,7 +280,7 @@ async function proxy(req: NextRequest): Promise<Response> {
               : "binary"
             : "none",
           contentType: headers.get("content-type"),
-          targetUrl,
+          targetUrl: logTargetUrl,
         },
       });
     }
@@ -337,10 +339,56 @@ async function proxy(req: NextRequest): Promise<Response> {
       const location = upstream.headers.get("location");
       if (!location) break;
 
-      // Resolve relative URLs against the backend base
-      const redirectUrl = location.startsWith("http")
-        ? location.replace(/^http:/, "https:") // Force HTTPS
-        : `${backendBase}${location.startsWith("/") ? "" : "/"}${location}`;
+      // Resolve relative URLs against the backend base and refuse any redirect
+      // that leaves backendBaseUrl.origin or carries userinfo, so Authorization,
+      // Cookie, X-CSRF-Token and X-API-Key never leak off-origin.
+      let resolvedRedirect: URL;
+      try {
+        resolvedRedirect = new URL(location, backendBase);
+      } catch {
+        upstream = new Response(
+          JSON.stringify({ detail: "Invalid upstream redirect" }),
+          {
+            status: 502,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+        break;
+      }
+
+      if (
+        backendBaseUrl.protocol === "https:" &&
+        resolvedRedirect.protocol === "http:" &&
+        resolvedRedirect.hostname === backendBaseUrl.hostname &&
+        resolvedRedirect.port === backendBaseUrl.port
+      ) {
+        resolvedRedirect.protocol = "https:";
+      }
+
+      if (
+        resolvedRedirect.origin !== backendBaseUrl.origin ||
+        resolvedRedirect.username !== "" ||
+        resolvedRedirect.password !== ""
+      ) {
+        logger.warn("[Proxy] Refusing cross-origin upstream redirect", {
+          component: "AUTO",
+          action: "redirect_refused",
+          metadata: {
+            path: url.pathname,
+            redirectOrigin: resolvedRedirect.origin,
+          },
+        });
+        upstream = new Response(
+          JSON.stringify({ detail: "Cross-origin upstream redirect refused" }),
+          {
+            status: 502,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+        break;
+      }
+
+      const redirectUrl = resolvedRedirect.toString();
 
       // HTTP 307 and 308 preserve the original method (including POST/DELETE body)
       // HTTP 301, 302, 303 convert POST to GET (standard browser behavior)
@@ -363,6 +411,28 @@ async function proxy(req: NextRequest): Promise<Response> {
         credentials: isPublicVisaEvaluation ? "omit" : "include",
       });
       redirectCount++;
+    }
+
+    // A response still redirecting here exhausted maxRedirects: its Location
+    // was never checked against the backend origin, so it must not reach the
+    // client, which would follow it carrying its own X-CSRF-Token.
+    if (
+      upstream.status >= 300 &&
+      upstream.status < 400 &&
+      upstream.headers.get("location")
+    ) {
+      logger.warn("[Proxy] Upstream redirect chain exceeded the limit", {
+        component: "AUTO",
+        action: "redirect_limit",
+        metadata: { path: url.pathname, redirects: redirectCount },
+      });
+      upstream = new Response(
+        JSON.stringify({ detail: "Too many upstream redirects" }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
 
     const upstreamDuration = Date.now() - upstreamStartTime;
@@ -469,71 +539,6 @@ async function proxy(req: NextRequest): Promise<Response> {
 
     const bodyBuffer = await upstream.arrayBuffer();
 
-    // CRITICAL: For auth/login responses, manually set cookies via NextResponse
-    // Vercel Edge Runtime silently drops Set-Cookie headers with domain=.balizero.com
-    // when they come from a proxied response. We must use NextResponse.cookies.set()
-    // to bypass this restriction.
-    const isLoginEndpoint =
-      url.pathname === "/api/auth/login" &&
-      req.method === "POST" &&
-      upstream.status === 200;
-
-    if (isLoginEndpoint) {
-      try {
-        const bodyJson = JSON.parse(new TextDecoder().decode(bodyBuffer));
-        const jwt = bodyJson?.data?.token;
-        const csrf = bodyJson?.data?.csrfToken;
-        if (jwt) {
-          const isLocalhost =
-            url.hostname === "localhost" || url.hostname === "127.0.0.1";
-          const cookieDomain = isLocalhost
-            ? null
-            : (process.env.COOKIE_DOMAIN || ".balizero.com").replace(
-                /\s+/g,
-                "",
-              );
-          // Follow the backend token lifetime (expiresIn = JWT_ACCESS_TOKEN_EXPIRE_HOURS*3600)
-          // so the cookie never outlives or under-lives the JWT. Mirrors
-          // app/api/auth/login/route.ts. Fallback 86400 only if expiresIn is absent.
-          const maxAge = bodyJson?.data?.expiresIn || 86400;
-          // CRITICAL: Strip upstream Set-Cookie headers — they carry SameSite=none
-          // which Chrome 130+ rejects without Partitioned. We re-set cookies manually
-          // using raw header strings to bypass Vercel Edge Runtime restrictions.
-          respHeaders.delete("set-cookie");
-          // Build raw Set-Cookie strings — Vercel Edge forwards these reliably
-          // On localhost, omit Domain so the browser accepts the cookie
-          const tokenParts = [
-            `nz_access_token=${jwt}`,
-            ...(cookieDomain ? [`Domain=${cookieDomain}`] : []),
-            `HttpOnly`,
-            `Max-Age=${maxAge}`,
-            `Path=/`,
-            `SameSite=Lax`,
-            ...(isLocalhost ? [] : [`Secure`]),
-          ];
-          respHeaders.append("set-cookie", tokenParts.join("; "));
-          if (csrf) {
-            const csrfParts = [
-              `nz_csrf_token=${csrf}`,
-              ...(cookieDomain ? [`Domain=${cookieDomain}`] : []),
-              `Max-Age=${maxAge}`,
-              `Path=/`,
-              `SameSite=Lax`,
-              ...(isLocalhost ? [] : [`Secure`]),
-            ];
-            respHeaders.append("set-cookie", csrfParts.join("; "));
-          }
-          return new Response(bodyBuffer, {
-            status: upstream.status,
-            statusText: upstream.statusText,
-            headers: respHeaders,
-          });
-        }
-      } catch {
-        // Fall through to normal response if JSON parse fails
-      }
-    }
-
     return new Response(
       NULL_BODY_STATUSES.has(upstream.status) ? null : bodyBuffer,
       {
@@ -554,7 +559,8 @@ async function proxy(req: NextRequest): Promise<Response> {
           targetUrl: logTargetUrl,
         },
       },
-      toError(error),
+      // a fetch error can print the whole target URL, query included
+      safeUpstreamError(toError(error), targetUrl, logTargetUrl, url.search),
     );
     return new Response(
       JSON.stringify({

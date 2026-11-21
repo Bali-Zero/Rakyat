@@ -1,14 +1,24 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetProfile } = vi.hoisted(() => ({ mockGetProfile: vi.fn() }));
+const { mockGetProfile, mockReveal, mockToastError } = vi.hoisted(() => ({
+  mockGetProfile: vi.fn(),
+  mockReveal: vi.fn(),
+  mockToastError: vi.fn(),
+}));
 
 vi.mock("@/lib/api", () => ({
-  api: { portal: { getProfile: mockGetProfile, updateProfile: vi.fn() } },
+  api: {
+    portal: {
+      getProfile: mockGetProfile,
+      updateProfile: vi.fn(),
+      revealProfileIdentity: mockReveal,
+    },
+  },
 }));
 
 vi.mock("@/components/ui/toast", () => ({
-  useToast: () => ({ error: vi.fn() }),
+  useToast: () => ({ error: mockToastError }),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -79,5 +89,68 @@ describe("ProfilePage identity masking (guard)", () => {
 
     const { container } = await renderLoaded();
     expect(container.innerHTML).not.toContain(PASSPORT);
+  });
+});
+
+// DAI-140: the API now sends both fields masked by default; the full values
+// come only from POST /api/portal/profile/reveal on the first Show.
+const MASKED_PROFILE: PortalProfile = {
+  ...PROFILE,
+  passportNumber: "•••••123",
+  dateOfBirth: "1990",
+  identityMasked: true,
+  birthdayToday: false,
+};
+
+describe("ProfilePage identity reveal via API (guard, DAI-140)", () => {
+  beforeEach(() => {
+    mockReveal.mockReset();
+    mockToastError.mockReset();
+  });
+
+  async function renderMasked() {
+    mockGetProfile.mockResolvedValue(MASKED_PROFILE);
+    const utils = render(<ProfilePage />);
+    await screen.findByText("Test Client");
+    return utils;
+  }
+
+  it("does not call reveal until the client presses Show", async () => {
+    const { container } = await renderMasked();
+    expect(mockReveal).not.toHaveBeenCalled();
+    expect(screen.getByText("•••••123")).toBeInTheDocument();
+    expect(screen.getByText(/•• ••• 1990/)).toBeInTheDocument();
+    expect(container.innerHTML).not.toContain(PASSPORT);
+  });
+
+  it("Show fetches the full values once and displays them", async () => {
+    mockReveal.mockResolvedValue({
+      passportNumber: PASSPORT,
+      dateOfBirth: DOB,
+    });
+    const { container } = await renderMasked();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show passport number" }),
+    );
+    expect(await screen.findByText(PASSPORT)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show date of birth" }));
+    await waitFor(() => expect(container.innerHTML).toContain(formatDate(DOB)));
+    expect(mockReveal).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays masked and tells the client when reveal fails", async () => {
+    mockReveal.mockRejectedValue(new Error("HTTP 403"));
+    const { container } = await renderMasked();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show passport number" }),
+    );
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+    expect(container.innerHTML).not.toContain(PASSPORT);
+    expect(
+      screen.getByRole("button", { name: "Show passport number" }),
+    ).toBeInTheDocument();
   });
 });

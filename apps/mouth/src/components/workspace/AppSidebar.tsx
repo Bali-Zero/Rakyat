@@ -37,6 +37,7 @@ import { BZLogo } from "@balizero/core/components/BZLogo";
 import { navigation, NavSection, NavItem } from "@/types/navigation";
 import { cn } from "@/lib/utils";
 import { isOwner } from "@/lib/auth/owner";
+import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 
 // Icon mapping
 const iconMap: Record<string, React.ElementType> = {
@@ -97,8 +98,15 @@ export function AppSidebar({
   isZantaraOpen = false,
 }: AppSidebarProps) {
   const pathname = usePathname();
+  // The server's own answer about accounting access (the same read the HR
+  // layout uses). The client portal never asks: it has no accountingOnly item.
+  const { capabilities } = useHrCapabilities({ enabled: !isPortal });
+  const owner = isOwner(user.email);
+  // The owner always sees accountingOnly items (no wait on the server's
+  // answer); anyone else only once it says accounting_admin is true.
+  const showAccounting = capabilities.accounting_admin || owner;
   const nav = (navigationConfig || navigation).filter(
-    (section) => !section.ownerOnly || isOwner(user.email),
+    (section) => !section.ownerOnly || owner,
   );
 
   const isActive = (href: string) => {
@@ -250,9 +258,13 @@ export function AppSidebar({
       <Link
         key={item.href}
         href={item.href}
-        // Protected RSC prefetches can race portal auth hydration in WebKit.
-        // Explicit clicks keep normal client-side navigation semantics.
-        prefetch={isPortal ? false : undefined}
+        // No speculative prefetch on either surface. Portal: protected RSC
+        // prefetches can race auth hydration in WebKit. Workspace: the rail
+        // puts ~13 links in the viewport, and their route prefetches
+        // (/dashboard, /intelligence, /clients, ...) competed with the open
+        // page's own data on first load (measured 2026-11-18 on
+        // /clients/{id}). Explicit clicks keep client-side navigation.
+        prefetch={false}
         className={sharedClassName}
         style={sharedStyle}
       >
@@ -261,12 +273,15 @@ export function AppSidebar({
     );
   };
 
-  // The rail numbers visible items 01..13 with a single counter that runs
+  // The rail numbers visible items 01..13 (14 with Accounting) with a single counter that runs
   // across ALL non-ownerOnly sections without resetting per group (K1c-bis:
   // "the ordinal is a running index ... it does NOT restart per group").
   // ownerOnly sections (only ever visible to the owner) are skipped for
   // numbering so one person's extra "Da fare" section cannot shift anyone
-  // else's numbers. Portal rows never carry an ordinal at all.
+  // else's numbers. A hidden accountingOnly item is filtered out
+  // before the counter runs, so numbers stay consecutive: the owner and
+  // accounting admins get 01..14, everyone else 01..13. Portal rows never
+  // carry an ordinal at all.
   let ordinalCounter = 0;
 
   const renderNavSection = (section: NavSection, index: number) => (
@@ -294,13 +309,15 @@ export function AppSidebar({
           {section.note}
         </div>
       )}
-      {section.items.map((item) => {
-        if (isPortal || section.ownerOnly) {
-          return renderNavItem(item, undefined);
-        }
-        ordinalCounter += 1;
-        return renderNavItem(item, String(ordinalCounter).padStart(2, "0"));
-      })}
+      {section.items
+        .filter((item) => !item.accountingOnly || showAccounting)
+        .map((item) => {
+          if (isPortal || section.ownerOnly) {
+            return renderNavItem(item, undefined);
+          }
+          ordinalCounter += 1;
+          return renderNavItem(item, String(ordinalCounter).padStart(2, "0"));
+        })}
     </div>
   );
 
@@ -332,8 +349,8 @@ export function AppSidebar({
       >
         <Link
           href={isPortal ? "/portal" : "/dashboard"}
-          // Apply the same protected-route rule to the workspace home link.
-          prefetch={isPortal ? false : undefined}
+          // Same rule as the rail items: no speculative prefetch.
+          prefetch={false}
           aria-label="Bali Zero — workspace home"
           className={cn(
             "flex items-center transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",

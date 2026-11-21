@@ -3,13 +3,16 @@ Admin endpoint per verificare stato Google Drive e triggerare drive poll.
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import os
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials
 
 from backend.app.dependencies import get_current_user
 from backend.app.utils.crm_utils import is_crm_admin
@@ -153,6 +156,48 @@ def _require_backfill_admin(user: dict[str, Any]) -> None:
     """
     if not is_crm_admin(user):
         raise HTTPException(status_code=403, detail="admin required")
+
+
+async def _resolve_request_user(request: Request) -> dict[str, Any]:
+    """Resolve user from override, middleware state, or Bearer token (Request-only)."""
+    app = getattr(request, "app", None)
+    overrides = getattr(app, "dependency_overrides", None)
+    if isinstance(overrides, dict):
+        override = overrides.get(get_current_user)
+        if callable(override):
+            user = override()
+            if inspect.isawaitable(user):
+                user = await user
+            if isinstance(user, dict):
+                return user
+
+    state_user = getattr(getattr(request, "state", None), "user", None)
+    if isinstance(state_user, dict) and state_user:
+        return state_user
+
+    headers = getattr(request, "headers", None)
+    auth_header = headers.get("Authorization") if headers is not None else None
+    creds: HTTPAuthorizationCredentials | None = None
+    if isinstance(auth_header, str) and auth_header.startswith("Bearer "):
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=auth_header[7:].strip(),
+        )
+    if creds is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Provide Bearer token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    auth_req = SimpleNamespace(state=SimpleNamespace(user=None))
+    return get_current_user(auth_req, credentials=creds)
+
+
+async def require_drive_admin(request: Request) -> dict[str, Any]:
+    """Require an authenticated CRM admin from Request without altering OpenAPI schemas."""
+    user = await _resolve_request_user(request)
+    _require_backfill_admin(user)
+    return user
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -406,6 +451,7 @@ async def drive_poll_status(request: Request) -> dict[str, Any]:
 @router.post("/poll")
 async def trigger_drive_poll(request: Request) -> dict[str, Any]:
     """Trigger Google Drive changes poll (for cron jobs / OpenClaw automation)."""
+    await require_drive_admin(request)
     mode = _drive_poll_api_mode()
     if mode != "direct":
         worker_status = await _read_drive_poll_worker_status(_get_request_pool(request))
@@ -490,11 +536,63 @@ async def backfill_drive_documents(
         ServiceAccountDriveService,
     )
 
+    def _list_client_drive_files_sync(drive: Any, folder_id: str) -> list[tuple[str, str, str]]:
+        files: list[tuple[str, str, str]] = []
+        q = f"'{folder_id}' in parents and trashed = false"
+        top = (
+            drive.service.files()
+            .list(
+                q=q,
+                fields="files(id, name, mimeType)",
+                pageSize=100,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+            .get("files", [])
+        )
+
+        for item in top:
+            if item["mimeType"] == "application/vnd.google-apps.folder":
+                sub_q = f"'{item['id']}' in parents and trashed = false"
+                subs = (
+                    drive.service.files()
+                    .list(
+                        q=sub_q,
+                        fields="files(id, name, mimeType)",
+                        pageSize=100,
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True,
+                    )
+                    .execute()
+                    .get("files", [])
+                )
+                for sf in subs:
+                    if sf["mimeType"] == "application/vnd.google-apps.folder":
+                        nested_q = f"'{sf['id']}' in parents and trashed = false"
+                        nested = (
+                            drive.service.files()
+                            .list(
+                                q=nested_q,
+                                fields="files(id, name)",
+                                pageSize=50,
+                                supportsAllDrives=True,
+                                includeItemsFromAllDrives=True,
+                            )
+                            .execute()
+                            .get("files", [])
+                        )
+                        for nf in nested:
+                            files.append((nf["id"], nf["name"], sf["name"]))
+                    else:
+                        files.append((sf["id"], sf["name"], item["name"]))
+        return files
+
     async def _run_backfill() -> None:
         import os
 
         pool = await asyncpg.create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=3)
-        drive = ServiceAccountDriveService()
+        drive = await asyncio.to_thread(ServiceAccountDriveService)
 
         try:
             async with pool.acquire() as conn:
@@ -519,56 +617,8 @@ async def backfill_drive_documents(
                 cid = cl["id"]
                 folder_id = cl["google_drive_folder_id"]
                 try:
-                    # List all files recursively (top-level + subfolders + nested)
-                    files = []
-                    q = f"'{folder_id}' in parents and trashed = false"
-                    top = (
-                        drive.service.files()
-                        .list(
-                            q=q,
-                            fields="files(id, name, mimeType)",
-                            pageSize=100,
-                            supportsAllDrives=True,
-                            includeItemsFromAllDrives=True,
-                        )
-                        .execute()
-                        .get("files", [])
-                    )
-
-                    for item in top:
-                        if item["mimeType"] == "application/vnd.google-apps.folder":
-                            sub_q = f"'{item['id']}' in parents and trashed = false"
-                            subs = (
-                                drive.service.files()
-                                .list(
-                                    q=sub_q,
-                                    fields="files(id, name, mimeType)",
-                                    pageSize=100,
-                                    supportsAllDrives=True,
-                                    includeItemsFromAllDrives=True,
-                                )
-                                .execute()
-                                .get("files", [])
-                            )
-                            for sf in subs:
-                                if sf["mimeType"] == "application/vnd.google-apps.folder":
-                                    nested_q = f"'{sf['id']}' in parents and trashed = false"
-                                    nested = (
-                                        drive.service.files()
-                                        .list(
-                                            q=nested_q,
-                                            fields="files(id, name)",
-                                            pageSize=50,
-                                            supportsAllDrives=True,
-                                            includeItemsFromAllDrives=True,
-                                        )
-                                        .execute()
-                                        .get("files", [])
-                                    )
-                                    for nf in nested:
-                                        files.append((nf["id"], nf["name"], sf["name"]))
-                                else:
-                                    files.append((sf["id"], sf["name"], item["name"]))
+                    # List all files recursively (top-level + subfolders + nested) off the event loop
+                    files = await asyncio.to_thread(_list_client_drive_files_sync, drive, folder_id)
 
                     for file_id, file_name, _folder_name in files:
                         if file_id in existing_fids:

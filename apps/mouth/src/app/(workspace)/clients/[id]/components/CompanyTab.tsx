@@ -187,6 +187,7 @@ export function CompanyTab({
   onOpenDocuments,
   onOpenRemoved,
   companyLinks,
+  canCreateCompany = false,
 }: {
   clientId: number;
   client: ClientProfile["client"];
@@ -200,6 +201,9 @@ export function CompanyTab({
   /** The client's links from the profile already on screen: the identity
    * renders from them with no request of its own. */
   companyLinks?: ClientCompanyLink[];
+  /** Offer "Add company" — `viewerCanCreateCompany` (backend
+   * `can_create_company`). Absent = not offered (fail closed). */
+  canCreateCompany?: boolean;
 }) {
   // Holding count (row 33): only a live document is on file. A removed,
   // archived or rejected one is listed once, in Documents, and signposted.
@@ -532,16 +536,18 @@ export function CompanyTab({
       <>
         <EmptyState
           action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => setIsAddingCompany(true)}
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Add company
-            </Button>
+            canCreateCompany ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => setIsAddingCompany(true)}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add company
+              </Button>
+            ) : undefined
           }
         >
           No company linked yet.
@@ -774,7 +780,7 @@ export function CompanyTab({
     </Button>
   ) : null;
 
-  const addCompanyAction = (
+  const addCompanyAction = canCreateCompany ? (
     <Button
       type="button"
       variant="outline"
@@ -785,7 +791,7 @@ export function CompanyTab({
       <Plus className="h-3.5 w-3.5" aria-hidden="true" />
       Add company
     </Button>
-  );
+  ) : null;
 
   // Section numbers follow what is actually rendered, so a hidden section
   // never leaves a gap (01, 03, 04...).

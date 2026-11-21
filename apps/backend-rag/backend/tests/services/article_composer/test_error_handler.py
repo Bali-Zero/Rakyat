@@ -31,6 +31,7 @@ def test_api_error_create_normalizes_enum_code_and_details() -> None:
 
 
 def test_handle_anthropic_error_maps_deepseek_auth_to_401() -> None:
+    """Upstream LLM provider auth error maps to 503 (never 401, which logs out staff)."""
     exc = handle_anthropic_error(
         DeepSeekAuthError("missing key"),
         article_title="Title",
@@ -38,7 +39,7 @@ def test_handle_anthropic_error_maps_deepseek_auth_to_401() -> None:
         request_id="req-1",
     )
 
-    assert exc.status_code == 401
+    assert exc.status_code == 503
     assert exc.detail["code"] == ErrorCode.API_KEY_NOT_CONFIGURED
     assert exc.detail["request_id"] == "req-1"
     assert exc.detail["details"]["article_title"] == "Title"

@@ -17,6 +17,7 @@ from backend.app.utils.logging_utils import get_logger
 from backend.services.common.cache import cache_invalidating
 from backend.services.portal._document_visibility import document_visibility_clause
 from backend.services.portal._rbac import ClientContext, require_client_access
+from backend.services.portal._timeline_display import document_title, event_description
 
 logger = get_logger(__name__)
 
@@ -430,7 +431,27 @@ class PortalDashboardMixin:
 
         # Add missing documents actions
         for item in action_items:
-            missing_docs = item["missing_documents"] or []
+            raw_missing = item["missing_documents"]
+            if isinstance(raw_missing, str):
+                stripped = raw_missing.strip()
+                if not stripped:
+                    missing_docs: list[str] = []
+                elif stripped.startswith("["):
+                    try:
+                        parsed = json.loads(stripped)
+                        missing_docs = (
+                            [str(d).strip() for d in parsed if str(d).strip()]
+                            if isinstance(parsed, list)
+                            else [p.strip() for p in stripped.split(",") if p.strip()]
+                        )
+                    except (ValueError, TypeError):
+                        missing_docs = [p.strip() for p in stripped.split(",") if p.strip()]
+                else:
+                    missing_docs = [p.strip() for p in stripped.split(",") if p.strip()]
+            elif isinstance(raw_missing, (list, tuple)):
+                missing_docs = [str(d).strip() for d in raw_missing if str(d).strip()]
+            else:
+                missing_docs = []
             if missing_docs:
                 actions.append(
                     {
@@ -1129,7 +1150,7 @@ class PortalDashboardMixin:
                             if occurred_at
                             else now.isoformat(),
                             "title": ev["title"],
-                            "description": ev["description"],
+                            "description": event_description(ev["description"]),
                             "status": event_type,
                             "unread": False,
                             "isFuture": is_future,
@@ -1195,7 +1216,7 @@ class PortalDashboardMixin:
                             "id": f"doc-{doc['id']}",
                             "type": "document",
                             "occurredAt": doc["created_at"].isoformat(),
-                            "title": f"Document: {doc['file_name']}",
+                            "title": document_title(doc["document_type"], doc["file_name"]),
                             "description": f"Type: {doc['document_type']}",
                             "status": doc["status"],
                             "unread": False,

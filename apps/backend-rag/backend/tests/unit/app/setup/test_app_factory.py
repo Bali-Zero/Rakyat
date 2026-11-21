@@ -112,9 +112,7 @@ class TestCreateApp:
             patch("backend.app.setup.app_factory.settings", _mock_settings),
             patch("backend.app.setup.app_factory.register_middleware"),
             patch("backend.app.setup.app_factory.setup_observability"),
-            patch("backend.app.setup.app_factory.http_exception_handler"),
-            patch("backend.app.setup.app_factory.starlette_http_exception_handler"),
-            patch("backend.app.setup.app_factory.general_exception_handler"),
+            patch("backend.app.setup.app_factory.register_exception_handlers"),
         ):
             from backend.app.setup.app_factory import create_app
 
@@ -127,9 +125,7 @@ class TestCreateApp:
             patch("backend.app.setup.app_factory.settings", _mock_settings),
             patch("backend.app.setup.app_factory.register_middleware"),
             patch("backend.app.setup.app_factory.setup_observability"),
-            patch("backend.app.setup.app_factory.http_exception_handler"),
-            patch("backend.app.setup.app_factory.starlette_http_exception_handler"),
-            patch("backend.app.setup.app_factory.general_exception_handler"),
+            patch("backend.app.setup.app_factory.register_exception_handlers"),
         ):
             from backend.app.setup.app_factory import create_app
 

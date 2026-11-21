@@ -308,6 +308,91 @@ class TestListPractices:
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("smart", "available", "expect_in", "expect_not_in", "expect_params"),
+        [
+            ("clause", True, "AND SMART($2::text)", "ILIKE", "acme"),
+            (None, True, "c.full_name ILIKE $2", "SMART", "%5\\%%"),
+            ("unused", False, "c.full_name ILIKE $2", "SMART", "%5\\%%"),
+        ],
+    )
+    async def test_list_search_paths(
+        self,
+        mock_db_pool: MagicMock,
+        mock_db_conn: AsyncMock,
+        admin_user: dict,
+        smart: Any,
+        available: bool,
+        expect_in: str,
+        expect_not_in: str,
+        expect_params: str,
+    ) -> None:
+        from backend.app.routers.crm_practices import list_practices
+        from backend.services.crm.entity_search import EntitySearch
+
+        mock_db_conn.fetch = AsyncMock(return_value=[])
+        built = EntitySearch(" AND SMART($2::text)", ["acme"], 3) if smart == "clause" else None
+        build = AsyncMock(return_value=built)
+        with (
+            patch("backend.app.routers.crm_practices.get_practices_user_filter", return_value=None),
+            patch(
+                "backend.app.routers.crm_practices.smart_search_available",
+                AsyncMock(return_value=available),
+            ),
+            patch("backend.app.routers.crm_practices.build_practice_search", build),
+        ):
+            result = await list_practices(
+                client_id=None,
+                status="inquiry",
+                assigned_to=None,
+                practice_type=None,
+                priority=None,
+                month=None,
+                search="5%" if smart != "clause" else "Acme",
+                include_history=False,
+                limit=10,
+                offset=0,
+                db_pool=mock_db_pool,
+                current_user=admin_user,
+            )
+        assert result == []
+        if not available:
+            build.assert_not_awaited()
+        sql, *params = mock_db_conn.fetch.await_args.args
+        assert expect_in in sql
+        assert expect_not_in not in sql
+        assert params[:2] == ["inquiry", expect_params]
+
+    @pytest.mark.asyncio
+    async def test_list_blank_search_adds_no_clause(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
+    ) -> None:
+        from backend.app.routers.crm_practices import list_practices
+
+        mock_db_conn.fetch = AsyncMock(return_value=[])
+        build = AsyncMock()
+        with (
+            patch("backend.app.routers.crm_practices.get_practices_user_filter", return_value=None),
+            patch("backend.app.routers.crm_practices.build_practice_search", build),
+        ):
+            await list_practices(
+                client_id=None,
+                status=None,
+                assigned_to=None,
+                practice_type=None,
+                priority=None,
+                month=None,
+                search="   ",
+                include_history=False,
+                limit=10,
+                offset=0,
+                db_pool=mock_db_pool,
+                current_user=admin_user,
+            )
+        build.assert_not_awaited()
+        assert "ILIKE" not in mock_db_conn.fetch.await_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_list_with_all_filters(
         self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, admin_user: dict
     ) -> None:
@@ -722,8 +807,8 @@ class TestGetPractice:
                 )
             assert exc_info.value.status_code == 404
         query = mock_db_conn.fetchrow.await_args.args[0]
-        assert "c.assigned_to = $2 OR p.created_by = $2" in query
-        assert "p.assigned_to = $2" not in query
+        assert "c.assigned_to = ANY($2::text[]) OR p.created_by = ANY($2::text[])" in query
+        assert "p.assigned_to = ANY($2::text[])" not in query
 
     @pytest.mark.asyncio
     async def test_get_practice_strips_client_contact_fields_defensively(
@@ -1010,7 +1095,7 @@ class TestOpenInquiry:
 
         update_sql, *update_params = mock_db_conn.fetchrow.call_args_list[2].args
         assert "practice_type_id = $1" in update_sql
-        assert "quoted_price = $2" in update_sql
+        assert "quoted_price = COALESCE(quoted_price, $2)" in update_sql
         assert update_params[0] == 24
         assert update_params[1] == Decimal("36000000")
 
@@ -2311,6 +2396,39 @@ class TestDeleteRequiredDocument:
 # ---------------------------------------------------------------------------
 
 
+class TestRouterErrorLogsCarryNoPII:
+    @pytest.mark.asyncio
+    async def test_required_documents_error_log_has_type_only(
+        self,
+        mock_db_pool: MagicMock,
+        mock_db_conn: AsyncMock,
+        admin_user: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        from backend.app.routers import crm_practices
+
+        mock_db_conn.fetch = AsyncMock(
+            side_effect=RuntimeError("Key (email)=(zyxwv@example.com) amount 987654")
+        )
+        with caplog.at_level(logging.DEBUG, logger=crm_practices.logger.name):
+            with pytest.raises(HTTPException):
+                await crm_practices.get_required_documents(
+                    practice_id=7, current_user=admin_user, db_pool=mock_db_pool
+                )
+
+        parts = []
+        for r in caplog.records:
+            if r.name.startswith("backend."):
+                parts += [r.getMessage(), r.exc_text or "", repr(r.exc_info)]
+        text = " ".join(parts)
+        assert "Failed to get required documents: RuntimeError" in text
+        assert "zyxwv" not in text
+        assert "987654" not in text
+        assert all(r.exc_info is None for r in caplog.records if r.name.startswith("backend."))
+
+
 class TestHRBonus:
     @pytest.mark.asyncio
     async def test_hr_bonus_no_assigned_to(self, mock_db_pool: MagicMock) -> None:
@@ -2352,7 +2470,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(return_value=True)
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},  # practice type
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},  # practice type
                 None,  # no rate
             ]
         )
@@ -2370,7 +2488,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(return_value=True)
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},  # practice type
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},  # practice type
                 {"id": 1, "amount_idr": 500000},  # rate
                 None,  # no employee
             ]
@@ -2381,6 +2499,36 @@ class TestHRBonus:
         mock_db_conn.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_hr_bonus_created_log_carries_ids_only(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        from backend.app.routers import crm_practices
+        from backend.app.routers.crm_practices import _create_hr_bonus_on_completed
+
+        mock_db_conn.fetchval = AsyncMock(side_effect=[True, None])
+        mock_db_conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},
+                {"id": 11, "amount_idr": 987654},
+                {"id": 7},
+            ]
+        )
+        with (
+            patch.object(crm_practices, "_notify_hr_bonus_pending", new=AsyncMock()),
+            caplog.at_level(logging.INFO, logger=crm_practices.logger.name),
+        ):
+            await _create_hr_bonus_on_completed(mock_db_pool, 1, "synthetic.staff@example.test")
+
+        text = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("backend."))
+        assert "HR bonus created" in text
+        assert "hr_employee=7" in text
+        assert "synthetic.staff" not in text
+        assert "987654" not in text
+        assert "@" not in text
+
+    @pytest.mark.asyncio
     async def test_hr_bonus_existing_entry(
         self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
     ) -> None:
@@ -2389,7 +2537,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(side_effect=[True, 99])  # table exists, existing entry
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},  # practice type
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},  # practice type
                 {"id": 1, "amount_idr": 500000},  # rate
                 {"id": 7},  # employee
             ]
@@ -2406,7 +2554,7 @@ class TestHRBonus:
         mock_db_conn.fetchval = AsyncMock(side_effect=[True, None])  # table exists, no existing
         mock_db_conn.fetchrow = AsyncMock(
             side_effect=[
-                {"code": "kitas_sponsor"},
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},
                 {"id": 1, "amount_idr": 500000},
                 {"id": 7},
             ]
@@ -2449,7 +2597,7 @@ class TestNotifyHRBonus:
             await _notify_hr_bonus_pending(
                 mock_pool,
                 "team@balizero.com",
-                "kitas_sponsor",
+                "KITAS Sponsor",
                 500000,
                 42,
             )
@@ -2460,6 +2608,60 @@ class TestNotifyHRBonus:
         assert call_kwargs.kwargs["email_type"] == "hr_bonus"
         assert call_kwargs.kwargs["practice_id"] == 42
         assert call_kwargs.kwargs["pool"] is mock_pool
+        assert call_kwargs.kwargs["subject"] == "HR Bonus Pending: KITAS Sponsor — Rp 500.000"
+        assert "KITAS Sponsor" in call_kwargs.kwargs["body"]
+
+    @pytest.mark.parametrize("missing", [None, "", "   "])
+    @pytest.mark.asyncio
+    async def test_notify_never_shows_the_code_when_the_name_is_missing(
+        self, missing: str | None
+    ) -> None:
+        from backend.app.routers.crm_practices import _notify_hr_bonus_pending
+
+        with patch(
+            "backend.app.routers.crm_practices.send_internal_email", new=AsyncMock()
+        ) as mock_send:
+            await _notify_hr_bonus_pending(MagicMock(), "team@balizero.com", missing, 500000, 42)
+        kwargs = mock_send.call_args.kwargs
+        assert kwargs["subject"] == "HR Bonus Pending: Unnamed service — Rp 500.000"
+        assert "Unnamed service (#42)" in kwargs["body"]
+        assert "_" not in kwargs["subject"].split(":", 1)[1].split("—")[0]
+
+    @pytest.mark.asyncio
+    async def test_notify_escapes_the_name_in_the_body_but_not_the_subject_text(self) -> None:
+        from backend.app.routers.crm_practices import _notify_hr_bonus_pending
+
+        with patch(
+            "backend.app.routers.crm_practices.send_internal_email", new=AsyncMock()
+        ) as mock_send:
+            await _notify_hr_bonus_pending(
+                MagicMock(), "team@balizero.com", "R&D <b>Visa</b>", 1000, 7
+            )
+        kwargs = mock_send.call_args.kwargs
+        assert "R&amp;D &lt;b&gt;Visa&lt;/b&gt;" in kwargs["body"]
+        assert "<b>" not in kwargs["body"].split("<strong>Practice:</strong>")[1].split("<br>")[0]
+
+    @pytest.mark.asyncio
+    async def test_hook_passes_the_service_name_from_practice_types_to_the_mail(
+        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
+    ) -> None:
+        from backend.app.routers import crm_practices
+
+        mock_db_conn.fetchval = AsyncMock(side_effect=[True, None])
+        mock_db_conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"code": "kitas_sponsor", "name": "KITAS Sponsor"},
+                {"id": 1, "amount_idr": 500000},
+                {"id": 7},
+            ]
+        )
+        mock_db_conn.execute = AsyncMock(return_value=None)
+        with patch.object(crm_practices, "_notify_hr_bonus_pending", new=AsyncMock()) as notify:
+            await crm_practices._create_hr_bonus_on_completed(mock_db_pool, 5, "team@balizero.com")
+        first_sql = mock_db_conn.fetchrow.await_args_list[0].args[0]
+        assert "pt.name" in first_sql and "pt.code AS name" not in first_sql
+        assert notify.await_args.args[2] == "KITAS Sponsor"
+        assert "kitas_sponsor" not in [str(a) for a in notify.await_args.args[2:]]
 
 
 # ---------------------------------------------------------------------------

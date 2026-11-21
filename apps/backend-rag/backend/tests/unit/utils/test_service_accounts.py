@@ -16,6 +16,8 @@ import pytest
 from backend.app.utils.service_accounts import (
     CLIENT_ROLES,
     EXTERNAL_ROLES,
+    GROUP_STAFF_ROLES,
+    GROUP_STAFF_ROLES_SQL,
     NON_HUMAN_ROLES,
     NON_HUMAN_ROLES_SQL,
     NON_TEAM_ROLES,
@@ -156,6 +158,12 @@ class TestTeamRolesAreAnAllowList:
     def test_every_role_production_issues_still_passes(self, role: str) -> None:
         """Innocence: the allow-list is the census, not a guess (scar family #3)."""
         assert is_human_team_member(role) is True
+
+    def test_tax_consultant_is_a_staff_title_like_tax_lead(self) -> None:
+        """Owner order 2026-11-15: the new tax title."""
+        assert is_human_team_member("Tax Consultant") is True
+        assert is_human_team_member("  tax consultant ") is True
+        assert normalize_role("Tax Consultant") in TEAM_ROLES
 
     def test_matching_is_case_and_padding_insensitive(self) -> None:
         assert is_human_team_member("  TAX LEAD  ") is True
@@ -326,3 +334,20 @@ def test_reorganisation_2026_11_09_titles_are_human_team_roles() -> None:
 
     for role in ("Direktur", "Tax Supervisor", "Tax Responsible", "Senior Consultant", "HR & Accounting"):
         assert is_human_team_member(role), role
+
+
+class TestGroupStaffRole:
+    """Staff of a group company: an HR card, but not a colleague and not in rosters."""
+
+    def test_not_a_colleague_and_not_assignable(self) -> None:
+        from backend.services.crm_assignment_routing import ASSIGNABLE_ROLES
+
+        assert "group_staff" not in TEAM_ROLES
+        assert "group_staff" not in {r.lower() for r in ASSIGNABLE_ROLES}
+        assert is_human_team_member("group_staff") is False
+
+    def test_group_staff_roles_are_a_separate_set_and_literal(self) -> None:
+        assert GROUP_STAFF_ROLES == frozenset({"group_staff"})
+        assert not (GROUP_STAFF_ROLES & NON_HUMAN_ROLES)
+        assert NON_HUMAN_ROLES == frozenset({"client", "monitoring"})
+        assert GROUP_STAFF_ROLES_SQL == "'group_staff'"

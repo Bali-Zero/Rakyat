@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-vi.mock("@/app/v2/_components/NavWhatsAppCTA", () => ({
+vi.mock("@/components/site/NavWhatsAppCTA", () => ({
   NavWhatsAppCTA: () => null,
 }));
 vi.mock("@/components/lead/WhatsAppLeadButton", () => ({

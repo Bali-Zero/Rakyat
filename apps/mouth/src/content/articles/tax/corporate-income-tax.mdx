@@ -39,7 +39,7 @@ seoTitle: "Corporate Income Tax Indonesia 2026 | CIT Guide"
 seoDescription: "Complete guide to corporate income tax (PPh Badan) in Indonesia. Standard 22% rate, SME incentives, deductions, and compliance requirements for PT PMA..."
 aiOptimization:
   primaryQuestion: "What is the corporate income tax rate in Indonesia for 2026?"
-  answerSnippet: "Indonesia's standard corporate income tax rate is 22% for most companies. SMEs with gross revenue under IDR 4.8 billion get 0.5% final tax. Listed companies with 40%+ public float receive a 3% discount (19% effective rate). PT PMA companies follow the same rates as domestic entities."
+  answerSnippet: "Indonesia's standard corporate income tax rate is 22% (Art. 31E grants eligible entities with gross revenue up to IDR 50 billion a 50% discount — 11% effective — on the portion of taxable income corresponding to IDR 4.8 billion of gross turnover). Under PP 20/2026 (effective 22 April 2026), PT PMAs and newly formed multi-shareholder PTs/CVs cannot newly use the 0.5% PP 55/2022 final tax regime; pre-existing domestic PTs/CVs finish only their 3y/4y transition window."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Pajak"
@@ -49,7 +49,7 @@ aiOptimization:
       sameAs: "https://pajak.go.id/id/uu-hpp"
 faq:
   - question: "What is the corporate tax rate in Indonesia for 2026?"
-    answer: "The standard corporate income tax (PPh Badan) rate is 22%. SMEs with annual revenue under IDR 4.8 billion qualify for 0.5% final tax rate. Publicly listed companies with 40%+ free float get a 3% reduction to 19%."
+    answer: "The standard corporate income tax (PPh Badan) rate is 22%. Companies with annual gross turnover up to IDR 50 billion qualify under Art. 31E for a 50% rate discount (11% effective) on the portion of taxable income proportional to IDR 4.8 billion of gross turnover. Under PP 20/2026 (eff. 22 April 2026), PT PMAs and new multi-shareholder PTs/CVs are excluded from the 0.5% PP 55/2022 SME final regime (existing pre-PP 20/2026 domestic entities finish only their 3y PT / 4y CV window). Listed companies with 40%+ free float get 19%."
   - question: "What expenses can Indonesian companies deduct from taxable income?"
     answer: "Deductible expenses include employee salaries and benefits, office rent and utilities, depreciation of assets, business travel, professional fees, bad debts (with conditions), and CSR contributions up to 5% of net income. Entertainment expenses require a nominative list."
   - question: "When is the corporate tax return due in Indonesia?"
@@ -113,12 +113,21 @@ Corporate income tax (PPh Badan) is a significant consideration for any business
       },
     },
     {
-      name: "SME Rate",
-      subtitle: "Small businesses",
+      name: "UMKM Final Rate",
+      subtitle: "Domestic MSMEs only (PP 55/2022)",
       values: {
         Rate: "0.5% of turnover",
-        "Applies To": "Turnover < IDR 4.8B",
-        "Entity Type": "CV, PT with low revenue",
+        "Applies To": "Turnover < IDR 4.8B (3y PT / 4y CV / 7y OP)",
+        "Entity Type": "Domestic MSMEs (PT PMA & ordinary PT/CV excl. PP 20/2026)",
+      },
+    },
+    {
+      name: "Art. 31E Facility",
+      subtitle: "Small/medium PT & PT PMA",
+      values: {
+        Rate: "11% effective (on <=4.8B share)",
+        "Applies To": "Gross revenue up to IDR 50B",
+        "Entity Type": "Domestic PT & PT PMA",
       },
     },
     {
@@ -161,42 +170,49 @@ Corporate income tax (PPh Badan) is a significant consideration for any business
     },
     {
       id: "type",
-      label: "Company Type",
+      label: "Tax Regime / Company Type",
       type: "select",
       options: [
-        { value: "standard", label: "Standard PT/PT PMA" },
-        { value: "public", label: "Public Listed Company" },
-        { value: "sme", label: "SME (< IDR 4.8B revenue)" }
+        { value: "art31e", label: "PT / PT PMA <= IDR 50B Turnover (Art. 31E: 11% / 22%)" },
+        { value: "standard", label: "Standard PT / PT PMA > IDR 50B Turnover (22%)" },
+        { value: "public", label: "Public Listed Company (40%+ float: 19%)" },
+        { value: "umkm_eligible", label: "Eligible Domestic SME < IDR 4.8B (Grandfathered / Solo 0.5% Final)" }
       ],
-      defaultValue: "standard"
+      defaultValue: "art31e"
     }
   ]}
   calculateResult={(values) => {
     const revenue = Number(values.revenue);
     const expenses = Number(values.expenses);
-    const profit = revenue - expenses;
+    const taxableProfit = Math.max(0, revenue - expenses);
 
-    let tax;
-    let rate;
+    let tax = 0;
+    let rate = "22%";
 
-    if (values.type === "sme" && revenue <= 4800000000) {
+    if (values.type === "umkm_eligible" && revenue <= 4800000000) {
       tax = revenue * 0.005;
-      rate = "0.5% of turnover";
+      rate = "0.5% of gross turnover (excludes PT PMA & new multi-shareholder PT/CV under PP 20/2026)";
+    } else if (values.type === "art31e" && revenue > 0 && revenue <= 50000000000) {
+      const discountedShare = Math.min(1, 4800000000 / revenue);
+      const discountedProfit = taxableProfit * discountedShare;
+      const regularProfit = taxableProfit - discountedProfit;
+      tax = discountedProfit * 0.11 + regularProfit * 0.22;
+      rate = revenue <= 4800000000 ? "11% (Art. 31E full 50% discount)" : "Blended Art. 31E (11% + 22%)";
     } else if (values.type === "public") {
-      tax = profit > 0 ? profit * 0.19 : 0;
+      tax = taxableProfit * 0.19;
       rate = "19%";
     } else {
-      tax = profit > 0 ? profit * 0.22 : 0;
+      tax = taxableProfit * 0.22;
       rate = "22%";
     }
 
     return {
-      total: tax,
+      total: Math.round(tax),
       breakdown: [
         { label: "Revenue", amount: revenue },
         { label: "Expenses", amount: expenses },
-        { label: "Taxable Profit", amount: profit > 0 ? profit : 0 },
-        { label: "Tax Due", amount: tax }
+        { label: "Taxable Profit", amount: taxableProfit },
+        { label: "Tax Due", amount: Math.round(tax) }
       ],
       currency: "IDR",
       note: `Rate applied: ${rate}`
@@ -207,28 +223,26 @@ Corporate income tax (PPh Badan) is a significant consideration for any business
 
 ---
 
-## SME Final Tax (PP 55/2022)
+## SME Final Tax (PP 55/2022 & PP 20/2026 Exclusion)
 
-<InfoCard variant="tip" title="Simplified for Small Business">
-Businesses with gross turnover under **IDR 4.8 billion/year** can use simplified final tax:
+<InfoCard variant="warning" title="CRITICAL UPDATE — PP 20/2026 (Effective 22 April 2026)">
+Under **PP 55/2022**, taxpayers with gross turnover under **IDR 4.8 billion/year** could access a 0.5% final tax rate with maximum windows of:
 
-- **Rate**: 0.5% of gross turnover
-- **No complex calculations**
-- **Monthly payment**
-- **Applies to**: PT, CV, individuals with business
-- **Duration**: Maximum 7 years for PT, 4 years for CV/individuals
+- **3 years** for standard limited companies (**PT**)
+- **4 years** for **CV, Firma, and Koperasi**
+- **7 years** for individual taxpayers (**Orang Pribadi**)
 
-After the maximum period, regular rates apply.
+**Important PP 20/2026 Update (effective 22 April 2026):** Multi-shareholder **PTs, PT PMAs, CVs, and Firmas** are **excluded** from newly entering the 0.5% final tax regime going forward. Pre-existing domestic PTs/CVs already using PP 55/2022 before PP 20/2026 finish only their remaining 3-year/4-year window; **PT Perorangan** and cooperatives remain subject to statutory eligibility, while individual taxpayers (**Orang Pribadi**) retain the 0.5% rate without the 7-year time limit. Standard PT PMAs with turnover up to **IDR 50 billion** instead apply **UU HPP Art. 31E** (11% effective CIT on the portion proportional to IDR 4.8B turnover, 22% on the balance).
 
 </InfoCard>
 
-### SME Tax Example
+### Eligible 0.5% Final Regime Illustration (Grandfathered / Solo)
 
-| Monthly Revenue | Tax Due  |
-| --------------- | -------- |
-| IDR 100M        | IDR 500K |
-| IDR 200M        | IDR 1M   |
-| IDR 400M        | IDR 2M   |
+| Monthly Revenue | 0.5% Final Tax Due |
+| --------------- | ------------------ |
+| IDR 100M        | IDR 500K           |
+| IDR 200M        | IDR 1M             |
+| IDR 400M        | IDR 2M             |
 
 ---
 
@@ -351,10 +365,10 @@ after fiscal year-end - **For calendar year**: April 30 - **Extension**: Up to
 
 | Obligation | Deadline                | Description             |
 | ---------- | ----------------------- | ----------------------- |
-| PPh 21     | 10th of following month | Employee withholding    |
-| PPh 23     | 10th of following month | Service withholding     |
+| PPh 21     | 15th of following month | Employee withholding (PMK 81/2024; filing 20th) |
+| PPh 23     | 15th of following month | Service withholding (PMK 81/2024; filing 20th)  |
 | PPh 25     | 15th of following month | Prepaid CIT installment |
-| PPh 4(2)   | 10th of following month | Final tax items         |
+| PPh 4(2)   | 15th of following month | Final tax items (PMK 81/2024; filing 20th)      |
 | VAT (PPN)  | End of following month  | If VAT registered       |
 
 ---
@@ -423,11 +437,11 @@ Work with qualified tax advisors for related party transactions.
 
 ## Penalties
 
-| Violation    | Penalty                       |
-| ------------ | ----------------------------- |
-| Late filing  | IDR 1M/month (max 24 months)  |
-| Late payment | 2% per month                  |
-| Underpayment | 2% per month + potential 200% |
+| Violation    | Penalty                                                           |
+| ------------ | ----------------------------------------------------------------- |
+| Late filing  | IDR 1,000,000 per annual corporate SPT Badan return               |
+| Late payment | Variable monthly KMK interest rate under UU HPP (max 24 months)   |
+| Underpayment | Variable monthly KMK rate + administrative surcharge per KUP/HPP  |
 | Tax fraud    | Criminal penalties possible   |
 
 ---

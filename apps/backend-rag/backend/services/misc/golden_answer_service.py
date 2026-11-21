@@ -23,8 +23,9 @@ import asyncpg
 import numpy as np
 
 # SECURITY: Lazy import of sentence_transformers to avoid PyTorch import issues during test collection
-# SentenceTransformer will be imported inside methods when needed
-from sklearn.metrics.pairwise import cosine_similarity
+# SentenceTransformer will be imported inside methods when needed.
+# sklearn is imported inside _semantic_lookup for the same reason: it is used only there,
+# and at module level every process that registers a router paid for it at boot.
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,8 @@ class GoldenAnswerService:
             canonical_embeddings = self.model.encode(canonical_questions)
 
             # Calculate similarities
+            from sklearn.metrics.pairwise import cosine_similarity
+
             similarities = cosine_similarity([query_embedding], canonical_embeddings)[0]
 
             # Find best match above threshold

@@ -46,6 +46,7 @@ import {
 } from "./tax-deadlines";
 import { witaDateKey } from "./overview-brief";
 import { dayToInstant, resolveCardDay } from "./witaClock";
+import { TaxDocumentsSection } from "./TaxDocumentsSection";
 
 // ============================================
 // TAX CONSULTANT DROPDOWN (Bali Zero tax team)
@@ -803,6 +804,7 @@ export function TaxTab({
   now,
   attention,
   day: dayProp,
+  canManageDocuments = false,
 }: {
   clientId: number;
   formatDate: (d: string) => string;
@@ -825,6 +827,8 @@ export function TaxTab({
   day?: string;
   /** The profile's attention items; the SPT lines use them when present. */
   attention?: readonly AttentionItem[];
+  /** Whether the viewer may upload, edit or delete files in Tax Documents. */
+  canManageDocuments?: boolean;
 }) {
   // One day for the whole tab: the card's day at 00:00 WITA. The year
   // selector, its default and the SPT status all derive from it.
@@ -1110,6 +1114,18 @@ export function TaxTab({
           </div>
         </LedgerSection>
       ) : null}
+
+      {/* Tax Documents — the client's and each linked company's tax folder,
+          browsed live from Drive (names as in Drive), files via the proxy. */}
+      <LedgerSection n={6} title="Tax Documents">
+        <TaxDocumentsSection
+          clientFolderId={client?.google_drive_folder_id}
+          companyLinks={companyLinks}
+          clientId={clientId}
+          canManage={canManageDocuments}
+          onMutated={onRefresh}
+        />
+      </LedgerSection>
 
       {/* The per-tab AiSummaryCard is gone: v3 drops it from every tab
           (product-visible removal, disclosed in the PR body). */}

@@ -230,7 +230,14 @@ export default function NewsRoomPage() {
       if (!item) continue;
 
       try {
-        await intelligenceApi.publishItem(item.type, id, getPosition(id));
+        const bulkResponse = await intelligenceApi.publishItem(
+          item.type,
+          id,
+          getPosition(id),
+        );
+        if (bulkResponse?.success === false) {
+          throw new Error(bulkResponse.message || "Publication was not queued");
+        }
         results.success++;
         setItems((prev) =>
           prev.map((i) =>
@@ -321,6 +328,23 @@ export default function NewsRoomPage() {
         item.id,
         position,
       );
+
+      // The backend answers HTTP 200 `{ success: false, message }` when the
+      // GitHub PR could not be opened (publisher unconfigured, slug exists, ...).
+      // That is NOT a queued publication: never mark the card "Queued".
+      if (response?.success === false) {
+        logger.warn("Publication was not queued", {
+          component: "NewsRoomPage",
+          action: "publish_not_queued",
+          itemId: item.id,
+          metadata: { message: response.message },
+        });
+        toast.error(
+          "Not queued",
+          response.message || "The article could not be queued for publication.",
+        );
+        return;
+      }
 
       logger.info("Item queued for publication", {
         component: "NewsRoomPage",

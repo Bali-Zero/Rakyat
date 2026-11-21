@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import asyncpg
 
@@ -35,6 +36,11 @@ logger = logging.getLogger(__name__)
 # Q2 (Apr-Jun) → due July 15
 # Q3 (Jul-Sep) → due October 15
 # Q4 (Oct-Dec) → due January 15 (next year)
+# Days late/remaining are whole calendar days in Bali time, the same count the
+# portal dashboard shows (#150): 15 Oct -> 10 Nov is 26, not the 27 that
+# flooring a UTC timestamp difference gives after midnight UTC.
+_WITA = ZoneInfo("Asia/Makassar")
+
 QUARTER_DEADLINES = {
     "Q1": (4, 15),  # April 15
     "Q2": (7, 15),  # July 15
@@ -272,7 +278,7 @@ class LKPMService:
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT DISTINCT r.*, COALESCE(c.company_name, co.company_name) AS company_name
+                SELECT DISTINCT r.*, COALESCE(c.company_name, co.company_name, '') AS company_name
                 FROM lkpm_reports r
                 LEFT JOIN lkpm_client_config c ON c.client_id = r.client_id
                     AND COALESCE(r.company_id, 0) = COALESCE(c.company_id, 0)
@@ -777,7 +783,7 @@ class LKPMService:
             rows = await conn.fetch(
                 """
                 SELECT DISTINCT r.*,
-                       COALESCE(c.company_name, co.company_name) AS company_name
+                       COALESCE(c.company_name, co.company_name, '') AS company_name
                 FROM lkpm_reports r
                 LEFT JOIN lkpm_client_config c ON c.client_id = r.client_id
                     AND COALESCE(r.company_id, 0) = COALESCE(c.company_id, 0)
@@ -888,17 +894,17 @@ class LKPMService:
 
     def get_deadlines(self, days_ahead: int = 30) -> list[LKPMDeadline]:
         """Calculate upcoming LKPM deadlines."""
-        now = datetime.now(timezone.utc)
+        today = datetime.now(_WITA).date()
         deadlines: list[LKPMDeadline] = []
 
         for quarter, (month, day) in QUARTER_DEADLINES.items():
             # Current year deadline
-            year = now.year
+            year = today.year
             if quarter == "Q4":
                 year += 1  # Q4 deadline is in January next year
 
             deadline_dt = datetime(year, month, day, tzinfo=timezone.utc)
-            days_remaining = (deadline_dt - now).days
+            days_remaining = (deadline_dt.date() - today).days
 
             if -30 <= days_remaining <= days_ahead:
                 deadlines.append(
@@ -1109,11 +1115,15 @@ class LKPMService:
             alerts_data = row["validation_alerts"]
             if isinstance(alerts_data, str):
                 alerts_data = json.loads(alerts_data)
-            from backend.app.models.lkpm import ValidationAlert
+            from backend.app.models.lkpm import ValidationAlert, ValidationSeverity
 
+            alerts = [ValidationAlert(**a) for a in alerts_data]
             validation = LKPMValidationResult(
                 is_valid=row["validation_status"] == "valid",
-                alerts=[ValidationAlert(**a) for a in alerts_data],
+                alerts=alerts,
+                red_count=sum(1 for a in alerts if a.severity == ValidationSeverity.RED),
+                yellow_count=sum(1 for a in alerts if a.severity == ValidationSeverity.YELLOW),
+                green_count=sum(1 for a in alerts if a.severity == ValidationSeverity.GREEN),
             )
 
         return LKPMDraft(
@@ -1208,7 +1218,7 @@ class LKPMService:
             id=row["id"],
             client_id=row["client_id"],
             company_id=row.get("company_id"),
-            company_name=row["company_name"],
+            company_name=row.get("company_name") or "",
             quarter=row["quarter"],
             year=row["year"],
             status=LKPMStatus(row["status"]),

@@ -54,7 +54,7 @@ faq:
   - question: "Can I invest the IDR 10 billion over time?"
     answer: "Yes. The IDR 10 billion is a total investment commitment over your investment plan period. Paid-up capital (IDR 2.5B) must be deposited immediately, but remaining investment can be made gradually per your LKPM reporting schedule."
   - question: "Does the capital requirement change based on business sector?"
-    answer: "The minimum IDR 10B total investment applies to all PT PMA regardless of sector. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
+    answer: "The minimum >IDR 10B total investment per 5-digit KBLI per project location (excluding land and buildings) and IDR 2.5B paid-up capital per company (BKPM Reg. 5/2025 Art. 26) apply across PT PMA sectors. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
 contentStructure:
   hasHowTo: false
   hasFAQ: true
@@ -75,7 +75,7 @@ ogImage: "/static/insights/business/capital-requirements-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "fr"
-source_sha256: "d1eb26598458d4f558408601a56720d144e2355575e5f37b600af7ee81b0cdfa"
+source_sha256: "1fc18d4f2cea8f35d9f31e81b6507692111ea73fb4f24a573a8f1d86436fc687"
 ---
 
 import {
@@ -107,18 +107,18 @@ Les deux ont des exigences minimales pour l'investissement étranger.
 
 ### Minimums standard pour les PT PMA
 
-| Type de Capital          | Montant Minimum                                                          |
-| :----------------------- | :----------------------------------------------------------------------- |
-| **Investissement Total** | 10 milliards IDR (~625 000 USD)                                          |
-| **Capital Libéré**       | 10 milliards IDR (doit correspondre à l'investissement total maintenant) |
-| **Par Actionnaire**      | 10 millions IDR minimum                                                  |
+| Type de Capital          | Montant Minimum                                                                       |
+| :----------------------- | :------------------------------------------------------------------------------------ |
+| **Investissement Total** | Plus de 10 milliards IDR (~625 000 USD) par KBLI à 5 chiffres / site (hors terrains)  |
+| **Capital Libéré**       | **2,5 milliards IDR par société** (Règlement BKPM 5/2025 Art. 26)                     |
+| **Par Actionnaire**      | 10 millions IDR minimum par actionnaire                                               |
 
-<InfoCard variant="warning" title="2021 Changes">
-**Changement important :**
+<InfoCard variant="warning" title="Réglementation en vigueur (Règl. BKPM 5/2025)">
+**Clarification importante :**
 
-Selon la réglementation actuelle, le capital libéré doit être égal à l'engagement d'investissement total. Cela signifie que vous devez réellement disposer et investir un minimum de 10 milliards IDR.
+Depuis le **Règlement BKPM 5/2025 (Article 26)**, le capital libéré minimum est de **2,5 milliards IDR par société** (au niveau de l'entreprise, quel que soit le nombre d'associés), conservé sur le compte au moins 12 mois sauf dépenses opérationnelles documentées. L'engagement d'investissement total **supérieur à 10 milliards IDR** par code KBLI à 5 chiffres et par site **exclut terrains et bâtiments** (hors exceptions sectorielles).
 
-Il s'agit d'une augmentation significative par rapport aux exigences précédentes.
+Des guides antérieurs mentionnaient encore un capital libéré égal à 10 milliards IDR.
 
 </InfoCard>
 
@@ -144,21 +144,21 @@ Il s'agit d'une augmentation significative par rapport aux exigences précédent
       name: "Investissement Total",
       subtitle: "Engagement d'investissement",
       values: {
-        Minimum: "10 milliards IDR",
-        "Équivalent USD": "~$625,000",
-        Includes: "Toute la valeur du projet",
+        Minimum: "> 10 milliards IDR (hors terrains/bâtiments)",
+        "Équivalent USD": "~$625,000+",
+        Includes: "CAPEX, équipements, OPEX hors foncier",
         "Quand nécessaire": "Engagé à la création",
       },
       highlight: true,
     },
     {
       name: "Capital Libéré",
-      subtitle: "Investissement réel",
+      subtitle: "Apport au niveau de la société",
       values: {
-        Minimum: "10 milliards IDR",
-        "Équivalent USD": "~$625,000",
-        Includes: "Liquidités + actifs",
-        "Quand nécessaire": "Doit être déposé",
+        Minimum: "2,5 milliards IDR par société",
+        "Équivalent USD": "~$156,000",
+        Includes: "Liquidités / actifs libérés",
+        "Quand nécessaire": "Déposé à la création (bloqué 12 mois)",
       },
     },
     {
@@ -202,70 +202,76 @@ Certaines classifications d'activités (codes KBLI) ont des exigences de capital
 
 ### Ce qui compte pour l'investissement
 
-| Compte                   | Ne compte pas           |
-| :----------------------- | :---------------------- |
-| Dépôts en espèces        | Gains futurs            |
-| Équipement (évalué)      | Achalandage             |
-| Terrains/bâtiments       | Revenus projetés        |
-| Propriété intellectuelle | Intangibles non évalués |
-| Stock initial            | Dépenses d'exploitation |
+| Compte                   | Ne compte pas                                 |
+| :----------------------- | :-------------------------------------------- |
+| Dépôts en espèces        | Terrains/bâtiments (exclus du seuil >10 Mrd*) |
+| Équipement (évalué)      | Gains futurs / Achalandage                    |
+| Propriété intellectuelle | Revenus projetés                              |
+| Fonds de roulement/OPEX  | Intangibles non évalués                       |
+
+*\*Selon le Règl. BKPM 5/2025, le seuil > 10 milliards IDR par KBLI à 5 chiffres / site exclut terrains et bâtiments (hors secteurs immobiliers/industriels).*
 
 ### Calculatrice
 
 <Calculator
-  title="Investment Structure"
-  description="Plan your capital allocation"
+  title="Structure d'Investissement"
+  description="Planifiez votre allocation en capital"
   fields={[
     {
       id: "cash",
-      label: "Investissement en espèces (IDR)",
+      label: "Capital Libéré en Espèces (Min 2,5 Mrd IDR par société)",
       type: "number",
-      defaultValue: 8000000000,
+      defaultValue: 2500000000,
       min: 0
     },
     {
       id: "equipment",
-      label: "Valeur de l'équipement (IDR)",
+      label: "Valeur Équipement & Tech (IDR)",
       type: "number",
-      defaultValue: 1500000000,
+      defaultValue: 4000000000,
       min: 0
     },
     {
       id: "property",
-      label: "Propriété/Terrain (IDR)",
+      label: "Propriété/Terrain (Exclu du plafond >10 Mrd IDR BKPM)",
       type: "number",
       defaultValue: 0,
       min: 0
     },
     {
       id: "other",
-      label: "Autres Actifs (IDR)",
+      label: "Fonds de Roulement & Autres Actifs Non Fonciers (IDR)",
       type: "number",
-      defaultValue: 500000000,
+      defaultValue: 4000000000,
       min: 0
     }
   ]}
   calculateResult={(values) => {
-    const total = values.cash + values.equipment + values.property + values.other;
+    const qualifyingTotal = Number(values.cash) + Number(values.equipment) + Number(values.other);
+    const property = Number(values.property);
+    const minPaidUp = 2500000000;
     const minimum = 10000000000;
-    const shortfall = Math.max(0, minimum - total);
-    const meetsRequirement = total >= minimum;
+    const shortfall = Math.max(0, minimum - qualifyingTotal);
+    const meetsPaidUp = Number(values.cash) >= minPaidUp;
+    const meetsRequirement = meetsPaidUp && qualifyingTotal > minimum;
 
     return {
-      total: total,
+      total: qualifyingTotal,
       breakdown: [
-        { label: "Investissement en espèces", amount: values.cash },
-        { label: "Valeur de l'équipement", amount: values.equipment },
-        { label: "Propriété/Terrain", amount: values.property },
-        { label: "Autres actifs", amount: values.other },
-        { label: "INVESTISSEMENT TOTAL", amount: total },
-        { label: "Minimum requis", amount: minimum },
-        { label: meetsRequirement ? "Au-dessus du minimum de" : "MANQUE", amount: meetsRequirement ? total - minimum : shortfall }
+        { label: "Capital libéré en espèces (min 2,5 Mrd IDR/société)", amount: Number(values.cash) },
+        { label: "Valeur de l'équipement", amount: Number(values.equipment) },
+        { label: "Fonds de roulement & actifs non fonciers", amount: Number(values.other) },
+        { label: "Propriété/Terrain (exclu du seuil >10 Mrd IDR BKPM)", amount: property },
+        { label: "INVESTISSEMENT ÉLIGIBLE BKPM", amount: qualifyingTotal },
+        { label: "Minimum requis (>10 Mrd IDR)", amount: minimum },
+        { label: meetsRequirement ? "Au-dessus du seuil de" : "MANQUE vers >10 Mrd IDR", amount: qualifyingTotal > minimum ? qualifyingTotal - minimum : shortfall }
       ],
       currency: "IDR",
-      note: meetsRequirement
-        ? `Satisfait l'exigence (~USD ${Math.round(total / 16000).toLocaleString()})`
-        : `Besoin de ${shortfall.toLocaleString()} IDR supplémentaires pour atteindre le minimum`
+      note: !meetsPaidUp
+        ? "Capital libéré inférieur au minimum de 2,5 Mrd IDR par société (BKPM 5/2025 Art. 26)"
+        : meetsRequirement
+          ? `Respecte les règles 2,5 Mrd libéré et >10 Mrd IDR hors foncier (~USD ${Math.round(qualifyingTotal / 16000).toLocaleString()})`
+          : `Besoin de plus de ${(shortfall + 1).toLocaleString()} IDR hors foncier pour dépasser 10 Mrd IDR`
     };
 
 }}
@@ -282,7 +288,7 @@ Certaines classifications d'activités (codes KBLI) ont des exigences de capital
 
 - Équipement (machines, véhicules)
 - Propriété intellectuelle (brevets, marques)
-- Biens immobiliers (terrains, bâtiments)
+- Biens immobiliers (secteurs immobiliers/zones dédiées uniquement ; **exclus** du seuil > 10 Mrd IDR dans les secteurs ordinaires)
 
 **Exigences :**
 
@@ -353,7 +359,7 @@ Certaines classifications d'activités (codes KBLI) ont des exigences de capital
 
 **Réponse :**
 
-- Un minimum de 10 milliards IDR est requis pour une PT PMA standard
+- Une PT PMA standard requiert > 10 milliards IDR d'investissement (hors terrains/bâtiments) et 2,5 milliards IDR libérés par société
 - Certaines zones spéciales peuvent avoir des règles différentes
 - Un bureau de représentation ne nécessite pas de capital mais ne peut pas faire de commerce
 - Envisagez une PT PMDN (société nationale) si éligible

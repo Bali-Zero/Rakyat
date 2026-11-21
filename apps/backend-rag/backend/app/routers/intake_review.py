@@ -1093,8 +1093,26 @@ def _apply_document_destination_override(
                 op.values["document_category"] = category
             if subtype:
                 op.values["document_type"] = subtype
+        elif op.table == "company_documents":
+            if category:
+                op.values["document_subtype"] = category
+            if subtype:
+                op.values["document_type"] = subtype
         elif op.table == "practices.documents[]" and subtype:
             op.values["name"] = subtype
+
+
+def _parse_explicit_optional_int(body: dict[str, Any], key: str) -> tuple[bool, int | None]:
+    """Parse an optional nullable integer override, rejecting malformed values with 422."""
+    if key not in body:
+        return (False, None)
+    raw = body.get(key)
+    if raw is None:
+        return (True, None)
+    parsed = intake_writer._coerce_optional_int(raw)
+    if parsed is None:
+        raise HTTPException(status_code=422, detail=f"Invalid integer for {key}")
+    return (True, parsed)
 
 
 @router.post("/{proposal_id}/approve")
@@ -1121,16 +1139,16 @@ async def approve_review(
     P0#5: the caller must hold the active claim — non-admins must present the
     matching ``claim_token`` on a non-expired lease.
 
-    body: {client_id?, practice_id?, document_category?, document_subtype?,
-           final_fields?, claim_token?}
+    body: {client_id?, company_id?, practice_id?, document_category?,
+           document_subtype?, final_fields?, claim_token?}
     """
     admin, user_email = _reviewer_identity(user)
     claim_token = body.get("claim_token")
-    override_client_id = body.get("client_id")
-    # Practice override distinguishes ABSENT ("use routing's hint") from an
-    # EXPLICIT null ("reviewer chose: archive only, no practice").
-    practice_explicit = "practice_id" in body
-    override_practice_id = body.get("practice_id")
+    client_explicit, override_client_id = _parse_explicit_optional_int(body, "client_id")
+    # Practice / company overrides distinguish ABSENT ("use routing's hint")
+    # from EXPLICIT null ("reviewer chose none").
+    practice_explicit, override_practice_id = _parse_explicit_optional_int(body, "practice_id")
+    company_explicit, override_company_id = _parse_explicit_optional_int(body, "company_id")
     final_fields = body.get("final_fields") if isinstance(body.get("final_fields"), dict) else None
 
     async with pool.acquire() as conn:
@@ -1159,8 +1177,11 @@ async def approve_review(
                 conn,
                 committed_by=user_email or "system:hitl",
                 override_client_id=override_client_id,
+                client_explicit=client_explicit,
                 override_practice_id=override_practice_id,
                 practice_explicit=practice_explicit,
+                override_company_id=override_company_id,
+                company_explicit=company_explicit,
                 final_fields=final_fields,
             )
             _apply_document_destination_override(

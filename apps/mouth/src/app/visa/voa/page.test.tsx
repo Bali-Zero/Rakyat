@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   act,
   render,
@@ -73,6 +75,7 @@ describe("VoaEligibilityPage — wire contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    window.sessionStorage.clear();
     fetchMock.mockReset();
   });
 
@@ -193,6 +196,7 @@ describe("VoaEligibilityPage — double submit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    window.sessionStorage.clear();
     fetchMock.mockReset();
   });
 
@@ -252,6 +256,7 @@ describe("VoaEligibilityPage — customer-facing surface", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    window.sessionStorage.clear();
     fetchMock.mockReset();
   });
 
@@ -311,6 +316,7 @@ describe("VoaEligibilityPage — hero WhatsApp handoff", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    window.sessionStorage.clear();
     fetchMock.mockReset();
   });
 
@@ -358,5 +364,143 @@ describe("VoaEligibilityPage — hero WhatsApp handoff", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(container.querySelector(".voa-hero-wa")).not.toBeNull();
+  });
+});
+
+describe("VoaEligibilityPage — 97-country decree parity, resume sync & check context", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    fetchMock.mockReset();
+  });
+
+  it("offers all 97 VOA-eligible ISO-3 countries plus valid 3-letter ISO-3 codes for non-VOA countries, never OTHER", () => {
+    const pyPath = join(
+      __dirname,
+      "../../../../../backend-rag/backend/services/garuda_flow/nationality_eligibility.py",
+    );
+    const pySrc = readFileSync(pyPath, "utf-8");
+    const voa97 = [...pySrc.matchAll(/^\s*"([A-Z]{3})",\s*#/gm)].map(
+      (m) => m[1],
+    );
+    expect(voa97.length).toBe(97);
+
+    render(<VoaEligibilityPage />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Get a new Visa on Arrival/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tourism" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const select = screen.getByLabelText("Nationality") as HTMLSelectElement;
+    const values = Array.from(select.options)
+      .map((o) => o.value)
+      .filter(Boolean);
+
+    expect(values).not.toContain("OTHER");
+    for (const v of values) {
+      expect(v).toMatch(/^[A-Z]{3}$/);
+    }
+    const valueSet = new Set(values);
+    for (const code of voa97) {
+      expect(valueSet.has(code), `missing VOA ISO-3 code ${code}`).toBe(true);
+    }
+    // Non-VOA nationalities (P16) also submit real ISO-3 codes so backend returns 201 DECLINE, never 422.
+    for (const nonVoa of ["NGA", "AFG", "PAK"]) {
+      expect(valueSet.has(nonVoa), `missing non-VOA ISO-3 code ${nonVoa}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("resuming an extension draft from localStorage renders VOA expiry date and enforces its validation", () => {
+    window.localStorage.setItem(
+      "bz.garuda_voa.wizard",
+      JSON.stringify({
+        ts: Date.now(),
+        idx: 3,
+        values: {
+          case_type: "extension",
+          purpose: "tourism",
+          trip: { nationality: "KOR", travellers: 1, self_pay: true },
+          dates: {
+            entry_date: "2026-10-18",
+            passport_expiry_date: "2027-10-18",
+            retention_notice_acknowledged: true,
+          },
+        },
+      }),
+    );
+
+    render(<VoaEligibilityPage />);
+    expect(
+      screen.getByLabelText("Current Visa on Arrival expiry date"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "See result" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/expiry date is needed/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("persists submitted check context by result hash on 201 and keeps localStorage draft on failure", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("temporary outage"));
+    const { unmount } = render(<VoaEligibilityPage />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Get a new Visa on Arrival/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Visiting family" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.change(screen.getByLabelText("Nationality"), {
+      target: { value: "NGA" },
+    });
+    fireEvent.change(screen.getByLabelText("Number of travellers"), {
+      target: { value: "3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.change(screen.getByLabelText("Entry date"), {
+      target: { value: "2026-12-01" },
+    });
+    fireEvent.change(screen.getByLabelText("Passport expiry date"), {
+      target: { value: "2028-01-01" },
+    });
+    fireEvent.click(
+      screen.getByLabelText("Storage and deletion notice acknowledgement"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "See result" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(window.localStorage.getItem("bz.garuda_voa.wizard")).not.toBeNull();
+
+    fetchMock.mockResolvedValueOnce({
+      status: 201,
+      headers: new Headers({ Location: "/visa/voa/res_nga_3" }),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "See result" }));
+
+    await waitFor(() =>
+      expect(
+        window.sessionStorage.getItem("bz.garuda_voa.check.res_nga_3"),
+      ).not.toBeNull(),
+    );
+    await waitFor(() =>
+      expect(window.localStorage.getItem("bz.garuda_voa.wizard")).toBeNull(),
+    );
+    expect(
+      JSON.parse(
+        window.sessionStorage.getItem("bz.garuda_voa.check.res_nga_3")!,
+      ),
+    ).toEqual({
+      case_type: "issuance",
+      nationality: "NGA",
+      purpose: "family",
+      travellers: 3,
+      self_pay: true,
+      extension_already_used: false,
+    });
+    unmount();
   });
 });

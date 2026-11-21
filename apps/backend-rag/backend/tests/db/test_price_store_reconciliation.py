@@ -84,11 +84,6 @@ UNRECONCILED: dict[str, str] = {
         "entry, so it corresponds to at most one of the two."
     ),
     "other_create_user_rptka": "No sheet entry — process step, not a sold service.",
-    "company_dissolving": (
-        "The sheet prices closure as a RANGE ('Close PMA Company', 6.0-7.5M) "
-        "and the row is a single 13.000.000 figure. A range and a scalar "
-        "cannot be reconciled by equality."
-    ),
     "kitap_dependent_merp": "No sheet entry.",
     "tax_annual_reporting": "Superseded by the itemised tax_annual_* rows; no sheet entry.",
     "tax_annual_company": "Sheet label differs ('Annual Tax Company'); not verified same scope.",

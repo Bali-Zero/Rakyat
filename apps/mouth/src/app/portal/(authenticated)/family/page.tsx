@@ -24,6 +24,10 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, User, Baby } from "lucide-react";
+import {
+  maskDateOfBirth,
+  maskPassportNumber,
+} from "@/lib/portal/identity-mask";
 
 interface FamilyMember {
   id: number;
@@ -184,6 +188,14 @@ export default function PortalFamilyPage() {
               </div>
             </section>
           )}
+
+          {/* Identity values stay masked here: there is no reveal endpoint
+              for family members yet, so the full values live in the Vault. */}
+          <p className="text-[11px] text-[var(--tx-secondary)]">
+            Passport numbers and dates of birth are partly hidden. The full
+            passport numbers and dates of birth are in each member&apos;s
+            documents in your Vault.
+          </p>
         </>
       )}
     </div>
@@ -209,7 +221,9 @@ function AdultCard({ member }: { member: FamilyMember }) {
       </div>
       <div className="text-xs text-[var(--tx-secondary)] flex flex-wrap gap-3">
         {member.nationality && <span>{member.nationality}</span>}
-        {member.passport_number && <span>PP {member.passport_number}</span>}
+        {member.passport_number && (
+          <span>PP {maskPassportNumber(member.passport_number)}</span>
+        )}
         {member.visa_type && <span>{member.visa_type}</span>}
         {member.visa_expiry && (
           <span>
@@ -240,9 +254,11 @@ function MinorCard({ member }: { member: FamilyMember }) {
       </div>
       <div className="text-xs text-[var(--tx-secondary)] flex flex-wrap gap-3">
         {member.date_of_birth && (
-          <span>DOB {new Date(member.date_of_birth).toLocaleDateString()}</span>
+          <span>DOB {maskDateOfBirth(member.date_of_birth)}</span>
         )}
-        {member.passport_number && <span>PP {member.passport_number}</span>}
+        {member.passport_number && (
+          <span>PP {maskPassportNumber(member.passport_number)}</span>
+        )}
         {member.passport_expiry && (
           <span>
             PP exp {new Date(member.passport_expiry).toLocaleDateString()}

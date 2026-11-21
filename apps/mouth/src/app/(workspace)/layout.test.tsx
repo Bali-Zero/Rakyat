@@ -105,6 +105,14 @@ vi.mock("@/hooks/useDashboardData", () => ({
   removeDashboardQueries: vi.fn(),
 }));
 
+const { mockPrefetchClientDetail } = vi.hoisted(() => ({
+  mockPrefetchClientDetail: vi.fn(),
+}));
+vi.mock("./clients/[id]/prefetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./clients/[id]/prefetch")>()),
+  prefetchClientDetail: mockPrefetchClientDetail,
+}));
+
 describe("WorkspaceLayout CELL decommission", () => {
   const originalLocation = window.location;
 
@@ -325,5 +333,91 @@ describe("WorkspaceLayout CELL decommission", () => {
         expect(screen.getByText("Workspace content")).toBeInTheDocument();
       });
     });
+  });
+});
+
+describe("WorkspaceLayout early route data", () => {
+  const originalLocation = window.location;
+
+  function setPath(pathname: string) {
+    delete (window as { location?: Location }).location;
+    (window as unknown as { location: Partial<Location> }).location = {
+      hostname: "kita.balizero.com",
+      pathname,
+      href: `https://kita.balizero.com${pathname}`,
+      replace: mockLocationReplace,
+    };
+  }
+
+  beforeEach(() => {
+    mockGetUserProfile.mockReturnValue({
+      name: "Zero",
+      email: "zero@balizero.com",
+      role: "admin",
+      team: "Management",
+    });
+  });
+
+  afterEach(() => {
+    delete (window as { location?: Location }).location;
+    (window as unknown as { location: Location }).location = originalLocation;
+    vi.clearAllMocks();
+  });
+
+  it("starts a client page's data while the gate probe is still pending", async () => {
+    setPath("/clients/12714");
+    // The gate never answers: the page's data must not wait for it.
+    mockGetGateStatus.mockReturnValue(new Promise(() => {}));
+
+    render(
+      <WorkspaceLayout>
+        <div>Client page</div>
+      </WorkspaceLayout>,
+    );
+
+    await waitFor(() => {
+      expect(mockPrefetchClientDetail).toHaveBeenCalledWith(
+        expect.anything(),
+        12714,
+      );
+    });
+    expect(mockGetGateStatus).toHaveBeenCalled();
+    // ...and the gate still holds the page back until it answers.
+    expect(screen.queryByText("Client page")).not.toBeInTheDocument();
+  });
+
+  it("starts nothing for a portal client, who is sent away instead", async () => {
+    setPath("/clients/12714");
+    mockGetUserProfile.mockReturnValue({
+      name: "Portal Client",
+      email: "portal-client@example.test",
+      role: "client",
+      team: "Client",
+    });
+
+    render(
+      <WorkspaceLayout>
+        <div>Workspace must not render</div>
+      </WorkspaceLayout>,
+    );
+
+    await waitFor(() => expect(mockLocationReplace).toHaveBeenCalled());
+    expect(mockPrefetchClientDetail).not.toHaveBeenCalled();
+  });
+
+  it("starts nothing on other routes", async () => {
+    setPath("/dashboard");
+    mockGetGateStatus.mockResolvedValue({ blocked: false });
+
+    render(
+      <WorkspaceLayout>
+        <div>Dashboard content</div>
+      </WorkspaceLayout>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("Dashboard content")).toBeInTheDocument(),
+    );
+    expect(mockPrefetchClientDetail).not.toHaveBeenCalled();
   });
 });

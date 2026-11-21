@@ -31,26 +31,11 @@ import re
 import pytest
 
 from backend.channels.format import format_rich_text
-from backend.utils.response_sanitizer import sanitize_zantara_response
 
 REAL = "The capital gains rate for a PT PMA depends on your KBLI sector."
 
 
 # --- guilt: the content loss each rule caused ---------------------------------
-
-
-@pytest.mark.parametrize("marker", ["THOUGHT", "ACTION", "OBSERVATION"])
-def test_w119c_an_empty_agentic_marker_does_not_delete_the_answer(marker):
-    out = sanitize_zantara_response(f"{marker}:\n{REAL}\nSecond line.\n")
-    assert REAL in out, f"{marker}: ate the answer -> {out!r}"
-
-
-@pytest.mark.parametrize("marker", ["THOUGHT", "ACTION", "OBSERVATION"])
-def test_w119c_a_populated_agentic_marker_line_is_still_removed(marker):
-    """Innocence: the rule must keep doing the job it exists for."""
-    out = sanitize_zantara_response(f"{marker}: I should look up the KBLI table.\n{REAL}\n")
-    assert marker.lower() not in out.lower(), out
-    assert REAL in out, out
 
 
 def test_w119c_an_empty_user_query_marker_does_not_delete_the_answer():

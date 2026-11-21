@@ -8,8 +8,9 @@ Endpoints exposed:
   - POST /api/admin/crm-kg/garbage-collect  → soft-delete orphan nodes,
                                                 hard-delete old edges (PR-D)
 
-All admin-API-key-gated via the existing X-API-Key middleware. Designed
-to be invoked by Mini-Pro2 cron via curl. Background-task pattern: HTTP
+The drive worker runs build-mediated and garbage-collect on a schedule
+(backend/workers/crm_kg_maintenance.py). These endpoints stay for manual
+runs by a CRM admin. Background-task pattern: HTTP
 200 returns in <1s, work happens async on the api machine without
 blocking other requests.
 """
@@ -21,9 +22,16 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request
 
+from backend.app.routers.admin_drive_health import require_drive_admin
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin/crm-kg", tags=["admin"])
+
+
+async def _require_kg_admin(request: Request) -> dict[str, Any]:
+    """Gate mutating CRM KG endpoints to CRM admins."""
+    return await require_drive_admin(request)
 
 
 @router.post("/backfill-drive-documents")
@@ -40,6 +48,7 @@ async def trigger_backfill_drive_documents(
     Dry-run returns the candidate summary immediately. Live mode runs in a
     background task. OCR/Gemini dispatch is disabled unless allow_ocr=true.
     """
+    await _require_kg_admin(request)
     pool = getattr(request.app.state, "db_pool", None)
     if not pool:
         return {"status": "error", "message": "Database pool not available"}
@@ -89,6 +98,7 @@ async def trigger_build_mediated(
     actual work happens in the background task. Errors are logged but
     do not propagate to the caller (best-effort cron pattern).
     """
+    await _require_kg_admin(request)
     pool = getattr(request.app.state, "db_pool", None)
     if not pool:
         return {"status": "error", "message": "Database pool not available"}
@@ -117,6 +127,7 @@ async def trigger_garbage_collect(
 
     Cron-friendly: returns HTTP 200 immediately. Best-effort behavior.
     """
+    await _require_kg_admin(request)
     pool = getattr(request.app.state, "db_pool", None)
     if not pool:
         return {"status": "error", "message": "Database pool not available"}

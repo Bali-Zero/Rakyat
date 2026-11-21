@@ -78,7 +78,10 @@ export default async function SectorDetailPage({
               {meta.nameEn}
             </h1>
             <p className="text-base text-[var(--foreground-muted)]">
-              {meta.nameId}
+              <span className="mr-1.5 text-xs font-semibold uppercase tracking-wider">
+                Official BPS section (Bahasa Indonesia):
+              </span>
+              <span lang="id">{meta.nameId}</span>
             </p>
           </div>
         </div>

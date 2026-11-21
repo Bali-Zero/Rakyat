@@ -125,6 +125,16 @@ const TRUTH: readonly (readonly [string, string, string])[] = [
     "Pilihan Anda menentukan pertanyaan berikutnya dan visa pensiun mana yang dapat sesuai dengan situasi Anda.",
   ],
   [
+    "why.secondhome_property_title",
+    "Under Permenkumham 22/2023, only a completed strata-title unit qualifies for the Second Home property route. Selecting another property type records zero qualifying property value and skips the dollar-amount question.",
+    "Berdasarkan Permenkumham 22/2023, hanya unit rumah susun selesai dibangun dengan hak pakai atas satuan rumah susun yang memenuhi syarat jalur properti Second Home. Memilih jenis properti lain mencatat nilai properti yang memenuhi syarat sebesar nol dan melewati pertanyaan jumlah dolar.",
+  ],
+  [
+    "assumption.secondhome_property_title",
+    "If you are unsure whether the property has a completed strata title in your own name, this assessment counts the qualifying property value as zero. You can discuss it with a Bali Zero advisor.",
+    "Jika Anda belum yakin apakah properti tersebut memiliki hak pakai atas satuan rumah susun yang telah selesai atas nama Anda sendiri, penilaian ini menghitung nilai properti yang memenuhi syarat sebagai nol. Anda dapat membahasnya dengan konsultan Bali Zero.",
+  ],
+  [
     "why.secondhome_property_value_usd",
     "We record the exact value you give. Ownership and tenure are not assumed.",
     "Kami mencatat nilai persis yang Anda berikan. Kepemilikan dan bentuk penguasaan tidak diasumsikan.",

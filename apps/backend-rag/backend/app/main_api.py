@@ -211,129 +211,131 @@ _OP04_SWEEP_LIMIT = 200
 _ALARM_SEND_TIMEOUT_SECONDS = 20.0
 
 
-async def _send_outbox_alarm(client: "httpx.AsyncClient", text: str) -> bool:  # noqa: F821
-    """Best-effort page to the owner chat. NEVER raises.
-
-    RETURNS whether the page actually reached Telegram, and the caller MUST
-    gate `confirm_sent` on it. This returned `None` on every path — refused by
-    Telegram, no credentials, delivered fine — while its call site ran
-    `confirm_sent` unconditionally under a comment reading "A page that never
-    landed must not silence the next hour". The comment stated the invariant
-    the line broke. Found on the sibling inbox alarm first (kimi-code/k3,
-    cross-family council) and cured here in the same change, because the
-    concern is one — an alarm's delivery result is discarded and success
-    confirmed anyway — and the two definitions sit a dozen lines apart.
-
-    DESTINATION, and why it needs no SYMBIOSIS Law 2 derogation.
-    `TELEGRAM_OWNER_CHAT_ID` is Zero's own chat — the same destination the five
-    `staff_page_*` handlers already use. Nothing here carries applicant data:
-    the message names counts and `job_type` strings, never an order id, an
-    address or a name. That is not a promise this docstring makes on its own;
-    `test_the_page_names_only_counts_and_job_types` pins the shape.
-
-    A missing token or chat id is logged and swallowed. The caller is the drain
-    loop, and an unreachable Telegram must never stop customer emails going out.
-
-    The annotation is a STRING because `httpx` is imported inside the scheduler
-    rather than at module scope — `test_no_httpx_violators_outside_http_files`
-    only sanctions the `async with httpx.AsyncClient(...)` shape outside
-    `*_http.py`, and a module-level import here would be a new violation.
-    """
-
-    from backend.services.wa_copilot.telegram_notifier import (
-        is_credential_rejected,
-        send_telegram_message,
+def _admin_alarm_recipient(settings) -> str:
+    """The alarm recipient: a non-blank `ADMIN_NOTIFICATION_EMAIL` env value wins,
+    anything blank falls back to `settings.admin_notification_email`. A blank
+    value used to win and mute both alarms."""
+    from backend.services.garuda_orders.outbox_handlers import (
+        resolve_admin_notification_email,
     )
 
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
-    if not token or not chat_id:
+    return resolve_admin_notification_email(settings)
+
+
+async def _send_outbox_alarm(client: "httpx.AsyncClient", text: str) -> bool:  # noqa: F821
+    """Best-effort internal operational page for GARUDA outbox backlogs. NEVER raises.
+
+    Telegram was retired by owner order (2026-11-07), so this sender checks
+    `telegram_is_retired()` first and routes the zero-PII operational summary
+    through the sanctioned internal email channel (`BrevoEmailSender` to
+    `ADMIN_NOTIFICATION_EMAIL` / `settings.admin_notification_email`), never
+    calling Telegram or reading `TELEGRAM_BOT_TOKEN`.
+
+    Returns ``True`` ONLY when delivery actually succeeded; caller MUST gate
+    `confirm_sent` on the return value so an undelivered alarm never starts
+    the suppression window. `test_the_page_names_only_counts_and_job_types`
+    pins that `text` carries only counts and `job_type` strings (zero PII).
+
+    The annotation is a STRING because `httpx` is imported inside the scheduler
+    rather than at module scope — `test_no_httpx_violators` bans a
+    module-level import here.
+    """
+
+    import html
+
+    from backend.app.core.config import settings
+    from backend.core.telegram_retirement import telegram_is_retired
+    from backend.services.garuda_orders.outbox_handlers import (
+        BrevoEmailSender,
+        EmailSendFailed,
+    )
+
+    if not telegram_is_retired():
         logger.error(
-            "GARUDA outbox alarm has something to report and NO WAY TO SEND IT: "
-            "TELEGRAM_BOT_TOKEN/TELEGRAM_OWNER_CHAT_ID unset. The log line above "
-            "is the only record."
+            "GARUDA outbox alarm skipped: telegram_is_retired() returned False; "
+            "refusing Telegram fallback."
         )
         return False
-    ok, err = await send_telegram_message(client, token, chat_id, text)
-    if not ok:
-        if is_credential_rejected(err):
-            # Same sentence as the unset branch above, on purpose: a token
-            # Telegram REFUSES leaves this alarm exactly as mute as no token
-            # at all, and a reader scanning for "NO WAY TO SEND IT" must find
-            # both. Until 2026-09-20 this branch said only "could not be
-            # delivered", which reads like one lost message.
-            logger.error(
-                "GARUDA outbox alarm has something to report and NO WAY TO SEND IT: "
-                "TELEGRAM_BOT_TOKEN is SET and Telegram REJECTS it (%s). Rotate it "
-                "with BotFather — until then the log line above is the only record.",
-                err,
-            )
-            return False
-        logger.error("GARUDA outbox alarm could not be delivered: %s", err)
+
+    recipient = _admin_alarm_recipient(settings)
+    api_key = os.getenv("NUZANTARA_API_KEY", "").strip()
+    if not recipient or not api_key:
+        logger.error(
+            "GARUDA outbox alarm has something to report and NO WAY TO SEND IT: "
+            "ADMIN_NOTIFICATION_EMAIL or NUZANTARA_API_KEY is unset. The log line "
+            "above is the only record."
+        )
+        return False
+
+    sender = BrevoEmailSender(client, api_key=api_key)
+    try:
+        await sender.send(
+            to=recipient,
+            subject="[GARUDA] Outbox backlog alarm",
+            html_body=f"<pre>{html.escape(text)}</pre>",
+        )
+    except EmailSendFailed as exc:
+        logger.error("GARUDA outbox alarm could not be delivered: %s", exc)
+        return False
+    except Exception as exc:
+        logger.error("GARUDA outbox alarm unexpected delivery error: %s", exc)
         return False
     return True
 
 
 async def _send_quarantine_alarm(client: "httpx.AsyncClient", text: str) -> bool:  # noqa: F821
-    """Best-effort page for a REFUSED payment callback. NEVER raises.
+    """Best-effort internal operational page for a REFUSED payment callback. NEVER raises.
 
-    RETURNS whether the page actually reached Telegram, and the caller MUST
-    gate `confirm_sent` on it. Returning `None` unconditionally — which this
-    did until a cross-family council seat caught it — hands the suppression
-    hour to a page that was never delivered: exactly the failure
-    `QuarantineAlarm.confirm_sent` exists to prevent, reintroduced one layer
-    up in the wiring where the class's own tests cannot see it.
+    Telegram was retired by owner order (2026-11-07), so this sender checks
+    `telegram_is_retired()` first and routes the zero-PII operational summary
+    through the sanctioned internal email channel (`BrevoEmailSender` to
+    `ADMIN_NOTIFICATION_EMAIL` / `settings.admin_notification_email`), never
+    calling Telegram or reading `TELEGRAM_BOT_TOKEN`.
 
-    DESTINATION, and why it needs no SYMBIOSIS Law 2 derogation. Both env var
-    NAMES are read here and never their values from anywhere else — no token
-    and no chat id is written in this repository (119 hardcoded fallbacks once
-    pointed at a mailbox nobody can open; this is not the 120th).
-    `TELEGRAM_OWNER_CHAT_ID` is Zero's own chat, the same destination the five
-    `staff_page_*` handlers and the outbox alarm already use. Nothing here
-    carries applicant data: the message names counts, the closed
-    `quarantine_reason` vocabulary, provider event ids and order ids — never a
-    name, email, phone or passport, none of which exist on
-    `garuda_payment_inbox` at all. `test_the_quarantine_page_carries_no_pii`
-    pins the shape rather than trusting this paragraph.
-
-    A DELIBERATE NEAR-TWIN of `_send_outbox_alarm` rather than a shared helper
-    it was refactored into: that function is the live money-page for a
-    different queue, and rewriting it inside a PR about the payment inbox
-    would put a working alarm at risk for a dozen saved lines. The one thing
-    that MUST not drift — the re-alert discipline — is shared for real, by
-    importing `REALERT_SECONDS` in `quarantine_alarm.py`.
+    Returns ``True`` ONLY when delivery actually succeeded; caller MUST gate
+    `confirm_sent` on the return value. `test_the_quarantine_page_carries_no_pii`
+    pins that `text` carries only counts, closed `quarantine_reason` codes,
+    provider event ids, and order ids (zero applicant PII).
     """
 
-    from backend.services.wa_copilot.telegram_notifier import (
-        is_credential_rejected,
-        send_telegram_message,
+    import html
+
+    from backend.app.core.config import settings
+    from backend.core.telegram_retirement import telegram_is_retired
+    from backend.services.garuda_orders.outbox_handlers import (
+        BrevoEmailSender,
+        EmailSendFailed,
     )
 
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
-    if not token or not chat_id:
+    if not telegram_is_retired():
         logger.error(
-            "GARUDA payment quarantine alarm has something to report and NO WAY "
-            "TO SEND IT: TELEGRAM_BOT_TOKEN/TELEGRAM_OWNER_CHAT_ID unset. The "
-            "log line above is the only record."
+            "GARUDA payment quarantine alarm skipped: telegram_is_retired() "
+            "returned False; refusing Telegram fallback."
         )
         return False
-    ok, err = await send_telegram_message(client, token, chat_id, text)
-    if not ok:
-        if is_credential_rejected(err):
-            # See `_send_outbox_alarm`: a REFUSED token is the same entity as
-            # an unset one, and this alarm gates `confirm_sent`, so a caller
-            # reading the log must be able to tell "nothing will ever send"
-            # from "this one page bounced".
-            logger.error(
-                "GARUDA payment quarantine alarm has something to report and NO WAY "
-                "TO SEND IT: TELEGRAM_BOT_TOKEN is SET and Telegram REJECTS it (%s). "
-                "Rotate it with BotFather — until then the log line above is the only "
-                "record.",
-                err,
-            )
-            return False
-        logger.error("GARUDA payment quarantine alarm could not be delivered: %s", err)
+
+    recipient = _admin_alarm_recipient(settings)
+    api_key = os.getenv("NUZANTARA_API_KEY", "").strip()
+    if not recipient or not api_key:
+        logger.error(
+            "GARUDA payment quarantine alarm has something to report and NO WAY "
+            "TO SEND IT: ADMIN_NOTIFICATION_EMAIL or NUZANTARA_API_KEY is unset. "
+            "The log line above is the only record."
+        )
+        return False
+
+    sender = BrevoEmailSender(client, api_key=api_key)
+    try:
+        await sender.send(
+            to=recipient,
+            subject="[GARUDA] Payment quarantine alarm",
+            html_body=f"<pre>{html.escape(text)}</pre>",
+        )
+    except EmailSendFailed as exc:
+        logger.error("GARUDA payment quarantine alarm could not be delivered: %s", exc)
+        return False
+    except Exception as exc:
+        logger.error("GARUDA payment quarantine alarm unexpected delivery error: %s", exc)
         return False
     return True
 
@@ -386,7 +388,7 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
     from backend.services.garuda_orders.outbox_consumer import count_undrained, drain_once
     from backend.services.garuda_orders.outbox_handlers import (
         BrevoEmailSender,
-        TelegramStaffPageSender,
+        EmailStaffPageSender,
         build_handlers,
     )
     from backend.services.garuda_orders.payment_inbox_watch import count_quarantined
@@ -422,9 +424,8 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
             _probe_exc,
         )
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Same injected client as the email sender (Golden Rule #10) — a
-        # Telegram POST is just another HTTPS call, no reason for a second
-        # long-lived client here.
+        # Both customer emails and staff money-anomaly pages share the single
+        # injected `httpx.AsyncClient` and `BrevoEmailSender` (Golden Rule #10).
         #
         # WRAPPED, because this runs OUTSIDE the per-tick try below and a failure
         # here killed the whole drain in silence (cross-family seat, Kimi K3,
@@ -440,9 +441,8 @@ async def _run_garuda_outbox_scheduler(app: FastAPI) -> None:
         # The task still dies (there is no safe way to drain without handlers),
         # but it dies LOUDLY: one CRITICAL naming the cause, then the re-raise.
         try:
-            handlers = build_handlers(
-                pool, BrevoEmailSender(client), TelegramStaffPageSender(client)
-            )
+            email_sender = BrevoEmailSender(client)
+            handlers = build_handlers(pool, email_sender, EmailStaffPageSender(email_sender))
         except Exception:
             logger.critical(
                 "GARUDA outbox scheduler CANNOT START — build_handlers failed; "
@@ -803,6 +803,10 @@ async def lifespan_light(app: FastAPI):
             app.state.db_pool = None
             return
 
+        from backend.app.utils.client_pools import validate_client_pools_on_pool
+
+        await validate_client_pools_on_pool(app.state.db_pool)
+
         # Background workers kill switch — see service_initializer.py note (2026-04-12 incident)
         if os.getenv("DISABLE_BACKGROUND_WORKERS") == "1":
             logger.warning(
@@ -1007,6 +1011,15 @@ def create_api_app() -> FastAPI:
 
     register_middleware(api)
     include_light_routers(api)
+
+    # Setup rate limiter for article composer (must be after router inclusion, matching app_factory.py)
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+
+    from backend.app.routers import article_composer
+
+    api.state.limiter = article_composer.limiter
+    api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # GARUDA VOA public router (`garuda_voa_public.py`) validates `result_id`
     # by hand, never as a Pydantic path constraint, so FastAPI's automatic

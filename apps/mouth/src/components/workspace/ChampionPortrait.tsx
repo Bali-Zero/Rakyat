@@ -13,20 +13,46 @@ import { cn } from "@/lib/utils";
  * missing here keeps the plain centred crop.
  */
 const FACE_FRAMING: Record<string, readonly [number, number, number]> = {
-  "adit.jpg": [63.5, 36, 2.2],
-  "angel.jpg": [49, 43, 2.15],
-  "ari.jpg": [50, 34, 2.45],
-  "asya.jpg": [49, 42, 2.05],
-  "candra.jpg": [49.5, 41, 2.35],
-  "damar.jpg": [54, 29, 2.35],
-  "dea.jpg": [48, 46, 2.2],
-  "dewaayu.jpg": [52, 42, 2.4],
-  "krisna-20260927.jpg": [55, 33, 2.45],
-  "subhi.jpg": [53.5, 40, 2.25],
-  "surya.jpg": [52, 40, 2],
-  "vino.jpg": [48, 33, 2.3],
-  "ruslana.jpg": [50, 37, 1.6],
-  "zainal-ceo.jpg": [52, 33, 1.95],
+  "adit.jpg": [50, 34, 1.35],
+  "angel.jpg": [50, 34, 1.35],
+  "ari.jpg": [50, 34, 1.35],
+  "asya.jpg": [50, 34, 1.35],
+  "candra.jpg": [50, 34, 1.35],
+  "damar.jpg": [50, 34, 1.35],
+  "dea.jpg": [50, 34, 1.35],
+  "dewaayu.jpg": [50, 34, 1.35],
+  "heru-komisaris.jpg": [50, 34, 1.35],
+  "kadek.jpg": [50, 34, 1.35],
+  "krisna-20260927.jpg": [50, 34, 1.35],
+  "krisna.jpg": [50, 34, 1.35],
+  "rina.jpg": [50, 34, 1.35],
+  "rio.jpg": [50, 34, 1.35],
+  "ruslana-2026-11.jpg": [50, 34, 1.35],
+  "ruslana.jpg": [50, 34, 1.35],
+  "subhi.jpg": [50, 34, 1.35],
+  "surya.jpg": [50, 34, 1.35],
+  "vino.jpg": [50, 34, 1.35],
+  "zainal-ceo.jpg": [50, 34, 1.35],
+  "zero.jpg": [50, 34, 1.35],
+  // Group-staff A1 portraits: face centre measured with Apple Vision on the
+  // processed 640x800 files; zoom kept low enough to show the hair.
+  "zainal-a1.jpg": [40, 43, 1.5],
+  "heru-a1.jpg": [49, 39, 1.7],
+  "dian.jpg": [57, 46, 1.5],
+  "adi.jpg": [58, 46, 1.5],
+  "agus.jpg": [41, 42, 1.5],
+  "farid.jpg": [45, 48, 1.5],
+  "nanang.jpg": [46, 39, 1.5],
+  "yoyok.jpg": [43, 49, 1.5],
+  "yudi.jpg": [43, 43, 1.5],
+  "megi.jpg": [43, 43, 1.5],
+  "david.jpg": [42, 42, 1.5],
+  "novi.jpg": [44, 42, 1.5],
+  "lia.jpg": [53, 52, 1.5],
+  "yanti.jpg": [43, 47, 1.6],
+  "oman.jpg": [62, 38, 1.5],
+  "dini.jpg": [61, 52, 1.5],
+  "ropik.jpg": [55, 33, 1.6],
 };
 
 /**
@@ -36,6 +62,7 @@ const FACE_FRAMING: Record<string, readonly [number, number, number]> = {
  */
 const SUPERSEDED_SOURCES = new Map<string, string>([
   ["/static/team/krisna.jpg", "/static/team/krisna-20260927.jpg"],
+  ["/static/team/ruslana.jpg", "/static/team/ruslana-2026-11.jpg"],
 ]);
 
 /**

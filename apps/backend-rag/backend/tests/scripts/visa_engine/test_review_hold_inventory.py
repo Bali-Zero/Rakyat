@@ -140,12 +140,16 @@ def test_holding_split_matches_the_2026_09_13_ruling_floor() -> None:
     holding, dead_end, conditioning = split_disclosed_review_codes(codes)
 
     assert set(holding) == HOLDING_DISCLOSED_FLAGS
-    assert set(holding) == {DisclosedReviewFlag.CRIMINAL_RECORD}
+    assert set(holding) == {
+        DisclosedReviewFlag.CRIMINAL_RECORD,
+        DisclosedReviewFlag.BLACKLIST_ENTRY,
+        DisclosedReviewFlag.IMMIGRATION_INVESTIGATION,
+    }
     assert set(dead_end) == DEAD_END_DISCLOSED_FLAGS
     assert set(dead_end) == {DisclosedReviewFlag.ACTIVITY_BOUNDARY}
-    assert len(holding) == 1
+    assert len(holding) == 3
     assert len(dead_end) == 1
-    assert len(conditioning) == 12
+    assert len(conditioning) == 10
     assert set(holding) | set(dead_end) | set(conditioning) == set(DisclosedReviewFlag)
     assert set(holding) & set(dead_end) == set()
     assert set(holding) & set(conditioning) == set()

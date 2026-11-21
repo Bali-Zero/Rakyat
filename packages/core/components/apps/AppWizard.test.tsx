@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, render, fireEvent } from "@testing-library/react";
+import { act, render, fireEvent, waitFor } from "@testing-library/react";
 import { AppWizard } from "./AppWizard";
 import type { WizardStep } from "./AppWizard";
 
@@ -259,5 +259,141 @@ describe("AppWizard — chrome labels", () => {
     );
     expect(getByText("Step 1 of 2")).toBeTruthy();
     expect(getByText("Lanjut")).toBeTruthy();
+  });
+});
+
+describe("AppWizard — persistKey lifecycle & onComplete ordering", () => {
+  beforeEach(() => {
+    vi.stubGlobal("navigator", { vibrate: vi.fn(() => true) });
+    window.matchMedia = vi.fn().mockImplementation((q: string) => ({
+      matches: false,
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it("keeps persistKey readable inside async onComplete and removes it only after onComplete resolves", async () => {
+    const key = "bz.test.wizard";
+    let resolveSubmit!: () => void;
+    let snapshotDuringOnComplete: string | null = null;
+
+    const onComplete = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          snapshotDuringOnComplete = localStorage.getItem(key);
+          resolveSubmit = resolve;
+        }),
+    );
+
+    const { getByTestId, getByText } = render(
+      <AppWizard
+        steps={makeSteps()}
+        persistKey={key}
+        onComplete={onComplete}
+      />,
+    );
+
+    fireEvent.click(getByTestId("a-btn"));
+    fireEvent.click(getByText(/^Next$/));
+    fireEvent.click(getByTestId("b-btn"));
+    fireEvent.click(getByText(/See result/));
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(snapshotDuringOnComplete).not.toBeNull();
+    expect(JSON.parse(snapshotDuringOnComplete!).values).toEqual({
+      a: "a-value",
+      b: "b-value",
+    });
+    // Still present while the async submit is in flight.
+    expect(localStorage.getItem(key)).not.toBeNull();
+
+    resolveSubmit();
+    await waitFor(() => expect(localStorage.getItem(key)).toBeNull());
+  });
+
+  it("retains persistKey in localStorage when async onComplete rejects or returns false", async () => {
+    const key = "bz.test.wizard.fail";
+    const onCompleteReject = vi.fn(() =>
+      Promise.reject(new Error("network failure")),
+    );
+
+    const { getByTestId, getByText, unmount } = render(
+      <AppWizard
+        steps={makeSteps()}
+        persistKey={key}
+        onComplete={onCompleteReject}
+      />,
+    );
+
+    fireEvent.click(getByTestId("a-btn"));
+    fireEvent.click(getByText(/^Next$/));
+    fireEvent.click(getByTestId("b-btn"));
+    fireEvent.click(getByText(/See result/));
+
+    await Promise.resolve();
+    expect(localStorage.getItem(key)).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem(key)!).values).toEqual({
+      a: "a-value",
+      b: "b-value",
+    });
+    unmount();
+
+    const onCompleteFalse = vi.fn(async () => false);
+    const second = render(
+      <AppWizard
+        steps={makeSteps()}
+        persistKey={key}
+        onComplete={onCompleteFalse}
+      />,
+    );
+    fireEvent.click(second.getByText(/See result/));
+    await waitFor(() => expect(onCompleteFalse).toHaveBeenCalledTimes(1));
+    expect(localStorage.getItem(key)).not.toBeNull();
+  });
+
+  it("exposes restored values to render and validate on resume", () => {
+    const key = "bz.test.wizard.resume";
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        ts: Date.now(),
+        idx: 1,
+        values: { a: "restored-a", b: "" },
+      }),
+    );
+
+    const steps: WizardStep[] = [
+      {
+        id: "a",
+        title: "A",
+        render: () => <div>step-a</div>,
+      },
+      {
+        id: "b",
+        title: "B",
+        render: ({ values }) => (
+          <div data-testid="seen-a">{String(values.a ?? "missing")}</div>
+        ),
+        validate: (_v, values) =>
+          values.a === "restored-a" ? "needs extra field for restored-a" : null,
+      },
+    ];
+
+    const { getByTestId, getByText, getByRole } = render(
+      <AppWizard steps={steps} persistKey={key} onComplete={vi.fn()} />,
+    );
+    expect(getByTestId("seen-a").textContent).toBe("restored-a");
+    fireEvent.click(getByText(/See result/));
+    expect(getByRole("alert").textContent).toContain(
+      "needs extra field for restored-a",
+    );
   });
 });

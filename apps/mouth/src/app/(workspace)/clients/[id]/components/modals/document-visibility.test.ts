@@ -6,6 +6,7 @@ describe("viewerCanChangeDocumentVisibility", () => {
     "Direktur",
     "Tax Supervisor",
     "Tax Responsible",
+    "Tax Consultant",
     "Supervisor",
     "Tax Lead",
     "Team Leader",

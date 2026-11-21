@@ -2,7 +2,8 @@
 
 Implements exactly the operations `products/garuda-voa/LANES.md` scopes to
 L3: `createOrderFromCheck`, `getOrderAndPractice`, `observePaymentBrowserReturn`,
-`receivePaymentWebhook`, `resolveLateOrder`.
+`receivePaymentWebhook`, `resolveLateOrder`, plus `resumeOrderCheckout` (the
+tracker's "Pay now", owner decision 2026-11-18).
 
 `getOrderAndPractice`'s `practice` field is served by L4's
 `PracticeRepository` (services/garuda_portal/practice.py) — the order half
@@ -34,7 +35,9 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from backend.services.garuda_orders.errors import (
+    CheckoutNotResumable,
     HonouredWithoutPaidPayment,
+    InvalidStateTransition,
     NoOpenLateCase,
     OrderNotFound,
     OrderNotReady,
@@ -195,6 +198,7 @@ _ERROR_CATALOG: dict[str, tuple[int, bool, str]] = {
     "ORDER_NOT_FOUND": (404, False, "garuda_voa.error.order_not_found"),
     "WEBHOOK_SIGNATURE_INVALID": (401, False, "garuda_voa.error.webhook_signature_invalid"),
     "INVALID_STATE_TRANSITION": (409, False, "garuda_voa.error.invalid_state_transition"),
+    "CHECKOUT_NOT_RESUMABLE": (409, False, "garuda_voa.error.checkout_not_resumable"),
 }
 
 
@@ -341,6 +345,7 @@ _OPERATION_STATUS_CODES: dict[str, tuple[int, ...]] = {
     "observePaymentBrowserReturn": (400, 401, 404, 422, 500, 503),
     "receivePaymentWebhook": (401, 404, 422, 500, 503),
     "resolveLateOrder": (400, 401, 404, 409, 422, 500, 503),
+    "resumeOrderCheckout": (401, 404, 409, 429, 500, 503),
 }
 
 
@@ -500,6 +505,49 @@ async def get_order_and_practice(
     if body_out is None:
         raise HTTPException(status_code=404, detail={"code": "ORDER_NOT_FOUND", "retryable": False})
     return body_out
+
+
+@router.post(
+    "/orders/{order_id}/checkout-session",
+    operation_id="resumeOrderCheckout",
+    responses=_status_responses("resumeOrderCheckout"),
+)
+async def resume_order_checkout(
+    order_id: str,
+    request: Request,
+    response: Response,
+    repository: GarudaOrderRepository = Depends(get_repository),
+) -> dict:
+    """Tracker "Pay now": the order's bound provider session URL, fetched
+    from the provider NOW and returned only in this response — never in the
+    tracker's GET, never persisted, never logged (#455). Same authority as
+    `getOrderAndPractice`: magic session + `result_id_ref` ownership.
+
+    No Idempotency-Key: it writes nothing and never creates a provider
+    session, so a reload storm costs provider reads, not sessions. A closed
+    session is refused (409 CHECKOUT_NOT_RESUMABLE), never replaced.
+    """
+    _privacy_headers(response)
+    actor = await _require_magic_session_actor(request)
+    try:
+        checkout_url = await repository.resume_checkout(order_id=order_id, result_id=actor)
+    except OrderNotFound as exc:
+        raise HTTPException(
+            status_code=404, detail={"code": "ORDER_NOT_FOUND", "retryable": False}
+        ) from exc
+    except InvalidStateTransition as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "INVALID_STATE_TRANSITION", "retryable": False}
+        ) from exc
+    except CheckoutNotResumable as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "CHECKOUT_NOT_RESUMABLE", "retryable": False}
+        ) from exc
+    except PaymentProviderUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail={"code": "PAYMENT_PROVIDER_UNAVAILABLE", "retryable": True}
+        ) from exc
+    return {"checkout_url": checkout_url}
 
 
 @router.post(

@@ -17,16 +17,11 @@ import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.core.config import settings
-from backend.app.setup.exception_handlers import (
-    general_exception_handler,
-    http_exception_handler,
-    starlette_http_exception_handler,
-)
+from backend.app.setup.exception_handlers import register_exception_handlers
 from backend.app.setup.logging_config import configure_logging
 from backend.app.setup.middleware_config import register_middleware
 from backend.app.setup.observability import setup_observability
@@ -108,7 +103,6 @@ async def lifespan(app: FastAPI):
     Startup Phase:
     - Initialize AlertService
     - Initialize all backend services (RAG, CRM, Integrations, etc.)
-    - Initialize plugin system
 
     Shutdown Phase:
     - Stop all background tasks (WebSocket listener, Health Monitor, etc.)
@@ -180,17 +174,9 @@ async def lifespan(app: FastAPI):
             app.state.startup_error = str(e)
             return  # Stop background init, health check will report 503
 
-        try:
-            from backend.app.setup.plugin_initializer import initialize_plugins
+        from backend.app.utils.client_pools import validate_client_pools_on_pool
 
-            await initialize_plugins(app)
-        except Exception as e:
-            logger.error(
-                "⚠️ Failed to initialize plugins (non-critical): %s",
-                e,
-                exc_info=True,
-            )
-            app.state.plugin_registry = None
+        await validate_client_pools_on_pool(getattr(app.state, "db_pool", None))
 
         # Initialize Notification Scheduler (automated email alerts)
         try:
@@ -468,9 +454,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("CRM push client close skipped: %s", e)
 
-    # NOTE: WebSocket Redis Listener, Compliance Monitor, and Autonomous Scheduler
-    # shutdown removed — _init_background_services() is disabled (omnichannel stabilization).
-    # Re-add shutdown code when _init_background_services() is re-enabled.
+    # NOTE: there is no shutdown for the WebSocket Redis Listener, the Compliance Monitor or
+    # the Autonomous Scheduler: nothing starts them. Their starter, _init_background_services(),
+    # was disabled for the omnichannel stabilization and then deleted.
 
     # Shutdown ConfirmationService (VASSAL Phase 3) — before Redis closes
     confirmation_service = getattr(app.state, "confirmation_service", None)
@@ -770,9 +756,7 @@ def create_app() -> FastAPI:
     )
 
     # Register global exception handlers (MUST be before middleware to catch all exceptions)
-    app.add_exception_handler(HTTPException, http_exception_handler)
-    app.add_exception_handler(StarletteHTTPException, starlette_http_exception_handler)
-    app.add_exception_handler(Exception, general_exception_handler)
+    register_exception_handlers(app)
 
     # Register middleware (CORS, Auth, Tracing, Error Monitoring, Rate Limiting)
     register_middleware(app)

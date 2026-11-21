@@ -23,6 +23,7 @@ import Script from "next/script";
 import Image from "next/image";
 import { PrimeZantaraChat } from "./PrimeZantaraChat";
 import { logger } from "@/lib/logger";
+import primeZones from "@/data/prime-zones.json";
 import { PrimeNexusContext } from "@/contexts/PrimeNexusContext";
 import { AccordionSection, LayerToggle } from "./MapControls";
 import { ZONE_COLORS, CATEGORY_COLORS } from "./mapConstants";
@@ -228,7 +229,7 @@ export default function PrimeMap3D() {
 
       try {
         if (!zonesGeoJsonRef.current) {
-          const res = await fetch("/api/prime/zones-geojson");
+          const res = await fetch(primeZones.path);
           zonesGeoJsonRef.current = await res.json();
         }
 
@@ -341,18 +342,40 @@ export default function PrimeMap3D() {
   const handleKbliSearch = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!kbliSearchQuery.trim()) {
+      const kbliQuery = kbliSearchQuery.trim();
+      if (!kbliQuery) {
         setHighlightedZones([]);
         toggleZoneColors(layers.zoneColors, layers.extrusion, []);
+        return;
+      }
+      // Backend `GET /api/prime/search-kbli` declares `q` with min_length=2 and
+      // answers 422 below that — never send a request it is guaranteed to reject.
+      if (kbliQuery.length < 2) {
         return;
       }
 
       setIsSearchingKbli(true);
       try {
         const res = await fetch(
-          `/api/prime/search-kbli?q=${encodeURIComponent(kbliSearchQuery)}`,
+          `/api/prime/search-kbli?q=${encodeURIComponent(kbliQuery)}`,
         );
+        if (!res.ok) {
+          // 401/403 (not public), 422 (validation), 429/5xx: keep the current
+          // highlights untouched and surface the failure in the log.
+          logger.error("KBLI search rejected", {
+            metadata: { status: res.status },
+          });
+          return;
+        }
         const data = await res.json();
+        // The handler reports internal failures as HTTP 200
+        // `{ status: "error", matching_zone_codes: [] }`.
+        if (data.status === "error") {
+          logger.error("KBLI search failed upstream", {
+            metadata: { status: data.status },
+          });
+          return;
+        }
         if (data.status === "success" && data.matching_zone_codes) {
           setHighlightedZones(data.matching_zone_codes);
           // Force redraw with highlights

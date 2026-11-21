@@ -841,7 +841,7 @@ async def get_clients_geo(
     params: list[Any] = []
     where_clause = "WHERE status = 'active'"
     if assigned_filter:
-        where_clause = "WHERE status = 'active' AND assigned_to = $1"
+        where_clause = "WHERE status = 'active' AND assigned_to = ANY($1::text[])"
         params = [assigned_filter]
 
     try:

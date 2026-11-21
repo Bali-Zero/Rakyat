@@ -21,7 +21,7 @@ from backend.app.models import UserProfile
 from backend.app.utils.cookie_auth import clear_auth_cookies, get_jwt_from_cookie, set_auth_cookies
 from backend.app.utils.jwt_decode import decode_jwt
 from backend.app.utils.logging_utils import get_logger, log_error, log_warning
-from backend.app.utils.service_accounts import is_human_team_member
+from backend.app.utils.service_accounts import is_group_staff, is_human_team_member
 from backend.services.common.background import spawn
 from backend.services.pii.violation_store import hash_subject
 
@@ -33,7 +33,7 @@ JWT_ALGORITHM = settings.jwt_algorithm
 JWT_ACCESS_TOKEN_EXPIRE_HOURS = settings.jwt_access_token_expire_hours
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 # ============================================================================
 # Pydantic Models
@@ -171,21 +171,40 @@ async def _revoke_request_session(request: Request) -> None:
         ) from exc
 
 
+def _extract_auth_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+) -> str | None:
+    """Resolve JWT from Bearer credentials or nz_access_token httpOnly cookie."""
+    if credentials is not None and credentials.credentials:
+        token = credentials.credentials.strip()
+        if token:
+            return token
+    access_token = _get_request_access_token(request)
+    if access_token:
+        return access_token
+    return None
+
+
 async def get_current_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> Any:
-    """Get current authenticated user from JWT token"""
+    """Get current authenticated user from JWT token (Bearer header or httpOnly cookie)."""
     credentials_exception = HTTPException(
         status_code=401,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    raw_token = _extract_auth_token(request, credentials)
+    if not raw_token:
+        raise credentials_exception
+
     try:
         payload = decode_jwt(
-            credentials.credentials,
+            raw_token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
         )
@@ -416,7 +435,8 @@ async def login(
                         )
                 raise HTTPException(status_code=401, detail="Invalid email or PIN")
 
-            if not user["active"]:
+            # Group staff hold an HR card, never an app login: same path as an inactive row.
+            if not user["active"] or is_group_staff(user["role"]):
                 await audit_service.log_auth_event(
                     email=request.email,
                     action="failed_login",
@@ -975,6 +995,7 @@ async def refresh_token(
 @router.post("/revoke-all")
 async def revoke_all_sessions(
     request: Request,
+    response: Response,
     current_user: dict = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
@@ -1018,6 +1039,7 @@ async def revoke_all_sessions(
     except Exception as e:
         logger.warning("S03-S2: Audit log failed for revoke-all: %s", e)
 
+    clear_auth_cookies(response)
     return {"success": True, "message": "All sessions revoked"}
 
 

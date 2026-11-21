@@ -45,8 +45,15 @@ class TestResolveResponsibleManager:
     def test_the_tax_supervisor_has_no_manager_line(self) -> None:
         assert resolve_responsible_manager("angel.tax@balizero.com") is None
 
-    def test_rina_routes_to_ruslana(self) -> None:
-        assert resolve_responsible_manager("rina@balizero.com") == "ruslana@balizero.com"
+    def test_ruslana_s_reports_route_to_ruslana(self) -> None:
+        """Rina (2026-10-20), Rio, Dea and Candra (2026-11-15) report to Ruslana."""
+        for email in (
+            "rina@balizero.com",
+            "rio@balizero.com",
+            "dea@balizero.com",
+            "candra@balizero.com",
+        ):
+            assert resolve_responsible_manager(email) == "ruslana@balizero.com", email
 
     def test_setup_team_routes_to_the_direktur(self) -> None:
         """Reorganisation 2026-11-09: the Direktur leads the setup team; Asya assists him."""
@@ -54,11 +61,9 @@ class TestResolveResponsibleManager:
             "asya@balizero.com",
             "ari.firda@balizero.com",
             "krisna@balizero.com",
-            "dea@balizero.com",
             "surya@balizero.com",
             "damar@balizero.com",
             "vino@balizero.com",
-            "candra@balizero.com",
         ):
             assert resolve_responsible_manager(email) == "adit@balizero.com", email
 
@@ -81,7 +86,7 @@ class TestResolveResponsibleManager:
 
     def test_routing_is_case_insensitive(self) -> None:
         assert resolve_responsible_manager("KADEK.TAX@balizero.com") == "angel.tax@balizero.com"
-        assert resolve_responsible_manager("DEA@balizero.com") == "adit@balizero.com"
+        assert resolve_responsible_manager("DEA@balizero.com") == "ruslana@balizero.com"
         assert resolve_responsible_manager("  Krisna@balizero.com  ") == "adit@balizero.com"
         assert resolve_responsible_manager("  RINA@balizero.com  ") == "ruslana@balizero.com"
 

@@ -55,6 +55,7 @@ OUTCOME_KEYS = (
     "rejected:member_changed",
     "rejected:not_applied",
     "rejected:bad_document",
+    "rejected:doc_keys_door_only",
     "rejected:hire_date_required",
     "rejected:invalid_input",
     "rejected:profile_not_object",

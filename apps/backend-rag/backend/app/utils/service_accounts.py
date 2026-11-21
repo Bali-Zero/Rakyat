@@ -61,6 +61,13 @@ EXTERNAL_ROLES = frozenset({"partner"})
 #: Everything an "is this caller a colleague" gate must refuse.
 NON_TEAM_ROLES = NON_HUMAN_ROLES | EXTERNAL_ROLES
 
+#: Staff of a group company whose HR card is kept in kita but who do not use the app.
+#: Invariant: such a row is created ``active = FALSE`` with ``PLACEHOLDER_PIN_HASH``, so
+#: every colleague-shaped selector that filters on ``active`` skips it like a former
+#: employee. Only the HR People predicate opts it in. Absent from :data:`TEAM_ROLES` and
+#: from ``ASSIGNABLE_ROLES``; the PIN doors and invite redemption also refuse it.
+GROUP_STAFF_ROLES = frozenset({"group_staff"})
+
 
 def normalize_role(role: str | None) -> str:
     """Return a role in the canonical form the comparisons below expect."""
@@ -122,6 +129,8 @@ TEAM_ROLES = frozenset(
         "Tax Responsible",
         "Senior Consultant",
         "HR & Accounting",
+        # owner order 2026-11-15: a tax title with Tax Lead's access, no automatic leads
+        "Tax Consultant",
     )
 )
 
@@ -134,6 +143,11 @@ def is_human_team_member(role: str | None) -> bool:
     ``user`` default all fail closed.
     """
     return normalize_role(role) in TEAM_ROLES
+
+
+def is_group_staff(role: str | None) -> bool:
+    """True for a group-company staff row (HR card only, never an app identity)."""
+    return normalize_role(role) in GROUP_STAFF_ROLES
 
 
 def non_human_roles_sql_array() -> list[str]:
@@ -169,3 +183,6 @@ def _sql_literal_list(roles: frozenset[str]) -> str:
 
 #: Ready-to-interpolate SQL fragment: ``WHERE role NOT IN (NON_HUMAN_ROLES_SQL)``.
 NON_HUMAN_ROLES_SQL = _sql_literal_list(NON_HUMAN_ROLES)
+
+#: SQL ``IN`` list of the group-staff roles, for the HR People predicate and the HR card read.
+GROUP_STAFF_ROLES_SQL = _sql_literal_list(GROUP_STAFF_ROLES)

@@ -5,16 +5,48 @@
 
 import { ApiClientBase } from "./client";
 
-// Use the base API URL from environment or default
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
+// Strip any trailing "/api" so endpoint paths starting with "/api/..." never
+// double-prefix to "/api/api/..." when NEXT_PUBLIC_API_URL="/api".
+const rawBase = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+const API_BASE_URL = rawBase.replace(/\/api\/?$/, "").replace(/\/+$/, "");
 const apiClient = new ApiClientBase(API_BASE_URL);
 
 // --- Types ---
 
+export type ArticleComposerCategory =
+  | "immigration"
+  | "business"
+  | "tax"
+  | "property"
+  | "lifestyle"
+  | "tech"
+  | "legal";
+
+export type ArticlePublishPosition =
+  | "normal"
+  | "latest"
+  | "main_featured"
+  | "secondary"
+  | "hero_main"
+  | "hero_2"
+  | "hero_3"
+  | "hero_4"
+  | "hero_5"
+  | "hero_6"
+  | "hero_7"
+  | "insight_1"
+  | "insight_2"
+  | "insight_3";
+
 export interface ComposeRequest {
   title: string;
   content: string;
-  category: string;
+  category:
+    | ArticleComposerCategory
+    | "visas"
+    | "living"
+    | "trends"
+    | (string & {});
   source_url?: string;
   author: string;
 }
@@ -66,18 +98,23 @@ export interface EnrichedArticle {
   ai_tags: string[];
   suggested_components: string[];
   cover_image: string | null;
-  image_prompt: string | null;
+  image_prompt?: string | null;
   source: string;
   source_url: string | null;
   enriched_at: string;
+  seo_title?: string | null;
+  seo_description?: string | null;
+  cover_image_alt?: string | null;
   extra_sections?: ExtraSection[];
 }
 
 export interface ComposeResponse {
   success: boolean;
   article: EnrichedArticle | null;
-  error: string | null;
+  error: string | { code?: string; message?: string; details?: unknown } | null;
   api_cost_cents: number;
+  cached?: boolean;
+  request_id?: string | null;
 }
 
 export interface ComposerStatus {
@@ -91,8 +128,9 @@ export interface PublishRequest {
   article: EnrichedArticle;
   cover_image_base64?: string;
   cover_image_filename?: string;
-  position: "main_featured" | "secondary" | "normal";
+  position: ArticlePublishPosition;
   slug?: string;
+  publication_key?: string;
 }
 
 export interface PublishResponse {
@@ -102,6 +140,9 @@ export interface PublishResponse {
   mdx_path?: string;
   image_path?: string;
   commit_sha?: string;
+  pull_request_number?: number | null;
+  auto_merge_enabled?: boolean | null;
+  homepage_slot?: string | null;
   error?: string;
 }
 

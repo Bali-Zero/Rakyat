@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 
 import type { KBLIDetail } from "@/lib/api/kbli.api";
 import KBLIInspector, {
+  formatLicenseScaleEn,
   getRelatedRequirementGroups,
   getPmaBadge,
   getRiskBadge,
@@ -147,5 +148,37 @@ describe("related requirements", () => {
         items: ["Sector authority review"],
       },
     ]);
+  });
+
+  it("renders non-scope license SLA, business size, and risk level in English", () => {
+    expect(formatLicenseScaleEn(["Mikro", "Kecil", "Menengah", "Besar"])).toBe(
+      "Micro, Small, Medium, Large",
+    );
+
+    const data: KBLIDetail = {
+      code: "62019",
+      title: "Other Computer Programming",
+      description: "Programming activities",
+      ...GAP_PMA,
+      licensing_status: "VERIFIED",
+      sector: "Information and Communication",
+      risk_profile: "Menengah Rendah",
+      licenses: [
+        {
+          type: "NIB + Sertifikat Standar",
+          scale: ["Mikro", "Kecil"],
+          risk_level: "Menengah Rendah",
+          sla: "Otomatis",
+          requirements: [],
+        },
+      ],
+      related_codes: [],
+      related_requirements: {},
+    };
+
+    render(<KBLIInspector data={data} isLoading={false} />);
+    expect(screen.getByText("Instant")).toBeInTheDocument();
+    expect(screen.getByText("Micro, Small")).toBeInTheDocument();
+    expect(screen.getByText("Medium-Low")).toBeInTheDocument();
   });
 });

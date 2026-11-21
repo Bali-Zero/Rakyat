@@ -14,6 +14,7 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.app.utils.logging_utils import sanitize_log_path
+from backend.core.secret_log_redaction import redact_query_params
 from backend.middleware.correlation import (
     reset_correlation_id,
     set_correlation_id,
@@ -95,7 +96,7 @@ class RequestTracingMiddleware(BaseHTTPMiddleware):
             "request_id": request_id,
             "method": request.method,
             "path": sanitize_log_path(request.url.path),
-            "query_params": {} if private_evaluation else dict(request.query_params),
+            "query_params": {} if private_evaluation else redact_query_params(request.query_params),
             "start_time": trace_start,
             "steps": [],
             "duration_ms": None,

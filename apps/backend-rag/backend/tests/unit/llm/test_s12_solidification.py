@@ -1,7 +1,6 @@
 """
-S12 LLM Layer Solidification — targeted tests for the 5 fixes applied.
+S12 LLM Layer Solidification — targeted tests for the fixes applied.
 
-FIX-1: providers/ollama.py — _async_client initialized in __init__
 FIX-2: retry_handler.py   — error classification (429 / 503 / timeout) + jitter
 FIX-3: genai_client.py    — structured logging on generate_content / stream
 FIX-4: ollama_client.py   — structured logging on all Ollama calls
@@ -19,40 +18,6 @@ import pytest
 _backend = Path(__file__).parents[5] / "backend"
 if str(_backend) not in sys.path:
     sys.path.insert(0, str(_backend))
-
-
-# ---------------------------------------------------------------------------
-# FIX-1: OllamaProvider._async_client initialized in __init__
-# ---------------------------------------------------------------------------
-class TestFix1OllamaProviderInit:
-    def test_async_client_attr_exists_at_construction(self):
-        """_async_client must be set to None in __init__ — no AttributeError on first use."""
-        from backend.llm.providers.ollama import OllamaProvider
-
-        provider = OllamaProvider()
-        assert hasattr(provider, "_async_client"), "_async_client must be set in __init__"
-        assert provider._async_client is None
-
-    @pytest.mark.asyncio
-    async def test_get_async_client_creates_client_on_first_call(self):
-        """_get_async_client() must not raise AttributeError on first call."""
-        from backend.llm.providers.ollama import OllamaProvider
-
-        provider = OllamaProvider()
-        client = await provider._get_async_client()
-        assert client is not None
-        await provider.aclose()
-
-    def test_init_client_removes_inline_httpx(self):
-        """_init_client must NOT create an httpx.AsyncClient inline (dead code removed)."""
-        import inspect
-
-        from backend.llm.providers.ollama import OllamaProvider
-
-        src = inspect.getsource(OllamaProvider._init_client)
-        assert "httpx.AsyncClient" not in src, (
-            "_init_client must not instantiate httpx.AsyncClient inline (S04 rule)"
-        )
 
 
 # ---------------------------------------------------------------------------

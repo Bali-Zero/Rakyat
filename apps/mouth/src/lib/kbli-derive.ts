@@ -124,3 +124,143 @@ export function riskLabelEn(category?: string | null): string | null {
   if (lower.includes("rendah")) return "Low";
   return null;
 }
+
+/**
+ * Numeric rank for a raw kategori_risiko tier, matching macOS Theme.RiskTier.rank:
+ * Rendah (1) < Menengah Rendah (2) < Menengah Tinggi (3) < Tinggi (4).
+ * Compound "menengah" forms are checked BEFORE bare "tinggi"/"rendah".
+ * Unknown/empty returns 0 so callers never fabricate a tier.
+ */
+export function riskRank(category?: string | null): number {
+  if (!category) return 0;
+  const lower = category.toLowerCase();
+  const menengah = lower.includes("menengah");
+  if (menengah && lower.includes("tinggi")) return 3;
+  if (menengah && lower.includes("rendah")) return 2;
+  if (lower.includes("tinggi")) return 4;
+  if (lower.includes("rendah")) return 1;
+  return 0;
+}
+
+/**
+ * English label for a raw skala_usaha value ("Mikro" → "Micro", "Kecil" → "Small",
+ * "Menengah" → "Medium", "Besar" → "Large"), matching macOS PP28ScalePanel.scaleLabel.
+ * Returns null for unknown/empty values so callers never guess.
+ */
+export function scaleLabelEn(scale?: string | null): string | null {
+  if (!scale) return null;
+  switch (scale.trim().toLowerCase()) {
+    case "mikro":
+      return "Micro";
+    case "kecil":
+      return "Small";
+    case "menengah":
+      return "Medium";
+    case "besar":
+      return "Large";
+    default:
+      return null;
+  }
+}
+
+/** Format an array of raw Indonesian business scales in English, preserving unknown tokens verbatim. */
+export function formatScalesEn(
+  scales: readonly string[],
+  separator = " + ",
+): string {
+  return scales.map((s) => scaleLabelEn(s) ?? s).join(separator);
+}
+
+/**
+ * Summarize risk across all served licensing rows without understating multi-tier codes.
+ *
+ * 526 canonical codes carry multiple risk tiers across scales/scopes (and on 501 of them,
+ * `licensing[0]` — typically Mikro — is lower than Besar, which is the mandatory PT PMA scale).
+ * Mirrors macOS KBLIRegistryView's `lo → hi` range ("Low → High" / "Medium-Low → Medium-High"):
+ * - `"en"` mode (LicensingQuickFacts): `"Medium-Low"` or `"Medium-Low → Medium-High"`
+ * - `"en-with-id"` mode (LicensingSection KeyFacts): `"Medium-Low (Menengah Rendah)"` or
+ *   `"Medium-Low → Medium-High (Menengah Rendah → Menengah Tinggi)"`
+ */
+export function summarizeRiskRange(
+  entries: ReadonlyArray<{ riskCategory: string }>,
+  mode: "en" | "en-with-id" = "en",
+): string | null {
+  const valid = entries
+    .map((e) => (e.riskCategory || "").trim())
+    .filter(Boolean);
+  if (valid.length === 0) return null;
+
+  const ranked = valid
+    .map((raw) => ({ raw, rank: riskRank(raw) }))
+    .filter((x) => x.rank > 0)
+    .sort((a, b) => a.rank - b.rank);
+
+  if (ranked.length === 0) {
+    const distinct = Array.from(new Set(valid));
+    return distinct.length === 1
+      ? distinct[0]
+      : `${distinct[0]} → ${distinct[distinct.length - 1]}`;
+  }
+
+  const lo = ranked[0].raw;
+  const hi = ranked[ranked.length - 1].raw;
+  const loEn = riskLabelEn(lo) ?? lo;
+  const hiEn = riskLabelEn(hi) ?? hi;
+
+  if (ranked[0].rank === ranked[ranked.length - 1].rank) {
+    return mode === "en-with-id" && loEn !== lo ? `${loEn} (${lo})` : loEn;
+  }
+
+  if (mode === "en-with-id") {
+    return `${loEn} → ${hiEn} (${lo} → ${hi})`;
+  }
+  return `${loEn} → ${hiEn}`;
+}
+
+function licenseRank(license: string): number {
+  const lower = license.toLowerCase();
+  if (lower.includes("izin")) return 3;
+  if (lower.includes("sertifikat standar")) return 2;
+  if (lower === "nib") return 1;
+  return 2;
+}
+
+/**
+ * Summarize licenseType across all served licensing rows: single string when uniform across
+ * scales (e.g. 56101: "NIB + Sertifikat Standar"), or `lo → hi` ordered by licence tier when
+ * larger scales require a stricter permit than Mikro (e.g. 01115: "NIB → NIB + Sertifikat Standar").
+ */
+export function summarizeLicenseRange(
+  entries: ReadonlyArray<{ licenseType: string }>,
+): string | null {
+  const valid = entries
+    .map((e) => (e.licenseType || "").trim())
+    .filter(Boolean);
+  if (valid.length === 0) return null;
+
+  const distinct = Array.from(new Set(valid));
+  if (distinct.length === 1) return distinct[0];
+
+  const sorted = [...distinct].sort((a, b) => licenseRank(a) - licenseRank(b));
+  return `${sorted[0]} → ${sorted[sorted.length - 1]}`;
+}
+
+/**
+ * Summarize processing timeframe across all served licensing rows: single formatted string when
+ * uniform across scales, or `first → last` when Mikro is Instant ("Otomatis") and larger scales
+ * carry working-day SLAs (so a multi-scale code never claims universal "Instant" issuance).
+ */
+export function summarizeTimeframeRange(
+  entries: ReadonlyArray<{ timeframe: string }>,
+): string | null {
+  const formatted = Array.from(
+    new Set(
+      entries
+        .map((e) => formatTimeframe(e.timeframe))
+        .filter((v): v is string => v !== null),
+    ),
+  );
+  if (formatted.length === 0) return null;
+  if (formatted.length === 1) return formatted[0];
+  return `${formatted[0]} → ${formatted[formatted.length - 1]}`;
+}

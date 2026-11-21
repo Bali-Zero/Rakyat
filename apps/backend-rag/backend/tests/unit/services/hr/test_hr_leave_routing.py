@@ -4,11 +4,32 @@ import pytest
 
 from backend.app.services.hr.hr_leave_routing import (
     ASYA_EMAIL,
+    RUSLANA_EMAIL,
+    SETUP_TEAM_EMAILS,
+    TAX_TEAM_EMAILS,
     ZERO_EMAIL,
     build_notification_recipients,
     build_review_recipients,
+    reports_of,
     resolve_approver,
 )
+
+
+class TestRuslanaReports:
+    """Owner order 2026-11-15: Ruslana approves Rina, Rio, Dea and Candra."""
+
+    def test_ruslana_approves_exactly_her_four_reports(self) -> None:
+        assert reports_of(RUSLANA_EMAIL) == frozenset(
+            {"rina@balizero.com", "rio@balizero.com", "dea@balizero.com", "candra@balizero.com"}
+        )
+
+    def test_department_membership_does_not_decide_the_approver(self) -> None:
+        # Dea and Candra sit in the tax department, Rio in setup, yet none of
+        # them reports to that department's head.
+        assert {"dea@balizero.com", "candra@balizero.com"} <= TAX_TEAM_EMAILS
+        assert "rio@balizero.com" in SETUP_TEAM_EMAILS
+        assert reports_of("angel.tax@balizero.com").isdisjoint(reports_of(RUSLANA_EMAIL))
+        assert reports_of("adit@balizero.com").isdisjoint(reports_of(RUSLANA_EMAIL))
 
 
 class TestResolveApprover:
@@ -24,16 +45,18 @@ class TestResolveApprover:
             # setup team, Tax Responsible and HR & Accounting → Direktur
             ("ari.firda@balizero.com", "adit@balizero.com"),
             ("krisna@balizero.com", "adit@balizero.com"),
-            ("dea@balizero.com", "adit@balizero.com"),
             ("surya@balizero.com", "adit@balizero.com"),
             ("damar@balizero.com", "adit@balizero.com"),
             ("vino@balizero.com", "adit@balizero.com"),
-            ("candra@balizero.com", "adit@balizero.com"),
             ("asya@balizero.com", "adit@balizero.com"),
             ("adit@balizero.com", ZERO_EMAIL),  # Direktur → Zero
+            # Ruslana's reports, whatever their department (2026-11-15)
+            ("rina@balizero.com", "ruslana@balizero.com"),
+            ("rio@balizero.com", "ruslana@balizero.com"),
+            ("dea@balizero.com", "ruslana@balizero.com"),
+            ("candra@balizero.com", "ruslana@balizero.com"),
             # not mapped, falls back to Zero
             ("natalie@balizero.com", ZERO_EMAIL),
-            ("rina@balizero.com", "ruslana@balizero.com"),
             # the retired tax@ address is no longer anyone's requester identity
             ("tax@balizero.com", ZERO_EMAIL),
             ("ruslana@balizero.com", ZERO_EMAIL),
@@ -61,8 +84,12 @@ class TestBuildNotificationRecipients:
         assert result == {"to": "ruslana@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
 
     def test_setup_team_routes_to_the_direktur(self) -> None:
-        result = build_notification_recipients("dea@balizero.com")
+        result = build_notification_recipients("krisna@balizero.com")
         assert result == {"to": "adit@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
+
+    def test_tax_consultant_dea_routes_to_ruslana(self) -> None:
+        result = build_notification_recipients("dea@balizero.com")
+        assert result == {"to": "ruslana@balizero.com", "cc": [ZERO_EMAIL, ASYA_EMAIL]}
 
     def test_offboarded_natalie_falls_back_to_zero(self) -> None:
         result = build_notification_recipients("natalie@balizero.com")

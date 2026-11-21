@@ -24,7 +24,7 @@ const STATS = [
 // lists publicly, so adding a slug below is never enough to publish them.
 const TEAM_MEMBERS = publicEntries([
   { slug: "zainal", roleOverride: "CEO · Founder" },
-  { slug: "heru", roleOverride: "Komisaris · Founder" },
+  { slug: "heru", roleOverride: "Commissioner · Founder" },
   { slug: "ruslana" },
   { slug: "krisna", roleOverride: "Senior Consultant" },
   { slug: "asya", roleOverride: "HR & Accounting" },

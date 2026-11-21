@@ -33,6 +33,7 @@ import httpx
 from backend.services.payments.port import (
     ChargeConfirmation,
     CheckoutSession,
+    CheckoutSessionStatus,
     NormalizedFailureEvent,
     NormalizedPaidEvent,
     NormalizedRefundEvent,
@@ -61,6 +62,14 @@ _CHECKOUT_TTL_MINUTES = 60
 # whose money we were already holding. Anything not listed here is not
 # evidence of absence: it leaves the order alone and opens a late case.
 _INVOICE_STATUSES_WITH_NO_ACCEPTED_CHARGE = frozenset({"PENDING", "EXPIRED", "FAILED"})
+
+# Hosts Xendit serves invoice checkout pages from (live / test mode). A
+# re-served `invoice_url` outside this set is refused, never redirected to.
+_CHECKOUT_HOSTS = frozenset({"checkout.xendit.co", "checkout-staging.xendit.co"})
+
+# An invoice this close to its own expiry is not handed out: the customer
+# could not finish paying it.
+_RESUME_MIN_REMAINING = timedelta(seconds=60)
 
 # Xendit Invoices `failure_code` -> our closed vocabulary. Deliberately
 # NOT exhaustive of Xendit's real catalog: any code not listed here (and
@@ -263,6 +272,17 @@ class XenditPaymentProvider:
         if not isinstance(event_id, str) or not event_id:
             raise WebhookUnparseable("callback body missing invoice id")
 
+        # EVENT IDENTITY CARRIES THE LIFECYCLE STATUS. The payment inbox dedups
+        # on `(provider, provider_event_id)` and the handlers answer OP-09
+        # "duplicate" on that conflict BEFORE any state logic, so an identity of
+        # the bare invoice id made an EXPIRED/FAILED callback swallow a late PAID
+        # for the same invoice (no OP-F05 case, no staff page) and a PAID swallow
+        # its REFUND. Identity is therefore `<invoice>:paid`, `<invoice>:expired`,
+        # `<invoice>:failed`, `<invoice>:refund:<refund id>`: a redelivery of the
+        # same lifecycle event still dedups, a different one is its own event.
+        # (SETTLED, a later stage of the same payment, is not accepted by this
+        # parser; if it ever is, it MUST map to `<invoice>:paid`, never its own
+        # identity, or handle_paid_event would see a second payment: false OP-08.)
         if status == "PAID":
             # THE INVOICE ID, NOT THE PAYMENT ID, and the difference is a money
             # path. `provider_charge_id` is what `garuda_orders` stores, what an
@@ -279,7 +299,7 @@ class XenditPaymentProvider:
             if not isinstance(amount, int | float):
                 raise WebhookUnparseable("PAID callback missing a numeric amount")
             return NormalizedPaidEvent(
-                provider_event_id=str(event_id),
+                provider_event_id=f"{event_id}:paid",
                 provider_charge_id=str(charge_id),
                 provider_session_id=str(session_id),
                 amount_idr=int(amount),
@@ -301,7 +321,7 @@ class XenditPaymentProvider:
             else:
                 mapped = map_provider_failure_code("xendit", raw_code, _FAILURE_CODE_MAP)
             return NormalizedFailureEvent(
-                provider_event_id=str(event_id),
+                provider_event_id=f"{event_id}:{str(status).lower()}",
                 provider_session_id=str(session_id),
                 failure=mapped,
             )
@@ -312,12 +332,52 @@ class XenditPaymentProvider:
             # invoice ids.
             charge_id = body.get("id")
             return NormalizedRefundEvent(
-                provider_event_id=str(event_id),
+                provider_event_id=f"{event_id}:refund:{refund_id}",
                 provider_refund_id=str(refund_id),
                 provider_charge_id=str(charge_id),
                 provider_session_id=str(session_id),
             )
         raise WebhookUnparseable(f"unrecognised Xendit invoice status: {status!r}")
+
+    @property
+    def checkout_hosts(self) -> frozenset[str]:
+        return _CHECKOUT_HOSTS
+
+    async def resume_checkout_session(self, *, provider_session_id: str) -> CheckoutSessionStatus:
+        """Re-read the bound invoice at request time (tracker "Pay now").
+
+        Open means `PENDING` (the only status a customer can still pay)
+        with a parseable `expiry_date` later than now + 60 s; everything else
+        is closed, unknown statuses included. The URL is returned to the
+        caller and never stored or logged here.
+        """
+        response = await self._client.get(
+            f"{self._base_url}/v2/invoices/{quote(provider_session_id, safe='')}",
+            auth=(self._secret_key, ""),
+        )
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+        raw_status = body.get("status")
+        status = str(raw_status) if raw_status is not None else None
+        url = body.get("invoice_url")
+        expiry_raw = body.get("expiry_date")
+        try:
+            expiry = datetime.fromisoformat(str(expiry_raw).replace("Z", "+00:00"))
+        except ValueError:
+            expiry = None
+        is_open = (
+            status == "PENDING"
+            and isinstance(url, str)
+            and bool(url)
+            and expiry is not None
+            and expiry.tzinfo is not None
+            and expiry > datetime.now(UTC) + _RESUME_MIN_REMAINING
+        )
+        return CheckoutSessionStatus(
+            is_open=is_open,
+            checkout_url=url if is_open else None,
+            provider_status=status,
+        )
 
     async def confirm_no_successful_charge(self, *, provider_session_id: str) -> ChargeConfirmation:
         response = await self._client.get(

@@ -40,7 +40,6 @@ SETUP_TEAM = [
     "ari.firda@balizero.com",
     "surya@balizero.com",
     "krisna@balizero.com",
-    "dea@balizero.com",
     "sahira@balizero.com",
     "adit@balizero.com",
     "vino@balizero.com",

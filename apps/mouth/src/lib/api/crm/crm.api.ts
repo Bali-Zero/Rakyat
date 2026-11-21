@@ -9,6 +9,7 @@ import type {
   CreateClientParams,
   CreatePracticeParams,
   InvoiceCompanyParams,
+  InvoiceCompanyMatch,
   InvoiceCompanySuggestion,
   RenewalAlert,
   ClientSummary,
@@ -110,6 +111,7 @@ export class CrmApi {
       limit?: number;
       offset?: number;
       month?: string;
+      search?: string;
       include_history?: boolean;
     } = {},
   ): Promise<Practice[]> {
@@ -120,6 +122,7 @@ export class CrmApi {
     if (params.limit) queryParams.append("limit", params.limit.toString());
     if (params.offset) queryParams.append("offset", params.offset.toString());
     if (params.month) queryParams.append("month", params.month);
+    if (params.search) queryParams.append("search", params.search);
     if (params.include_history) queryParams.append("include_history", "true");
 
     const queryString = queryParams.toString();
@@ -419,6 +422,23 @@ export class CrmApi {
     if (practiceTypeCode) params.set("practice_type_code", practiceTypeCode);
     return this.client.request<InvoiceCompanySuggestion>(
       `/api/crm/practices/invoice-company/suggestion?${params.toString()}`,
+    );
+  }
+
+  /**
+   * Existing companies matching what is typed in the invoice-company field.
+   * Matching (case, PT/CV/Tbk, word order, NPWP) lives on the backend only.
+   */
+  async searchInvoiceCompanies(
+    clientId: number,
+    query: string,
+  ): Promise<{ companies: InvoiceCompanyMatch[] }> {
+    const params = new URLSearchParams({
+      client_id: String(clientId),
+      q: query,
+    });
+    return this.client.request<{ companies: InvoiceCompanyMatch[] }>(
+      `/api/crm/practices/invoice-company/search?${params.toString()}`,
     );
   }
 
@@ -780,6 +800,118 @@ export class CrmApi {
   ): Promise<{ success: boolean; action: string }> {
     return this.client.request<{ success: boolean; action: string }>(
       `/api/crm/clients/${clientId}/documents/${docId}${permanent ? "?permanent=true" : ""}`,
+      { method: "DELETE" },
+    );
+  }
+
+  /**
+   * Upload a document directly into one of the client's (or linked company's)
+   * Drive tax folders. Requires an admin or a team member associated with the
+   * client profile.
+   */
+  async uploadClientTaxDocument(
+    clientId: number,
+    folderId: string,
+    file: File,
+  ): Promise<{
+    success: boolean;
+    file: {
+      id: string;
+      name: string;
+      mime_type: string;
+      size: number;
+      modified_time?: string | null;
+      web_view_link?: string | null;
+      is_folder: boolean;
+    };
+  }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("folder_id", folderId);
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/upload`,
+      {
+        method: "POST",
+        body: formData,
+      },
+      60000,
+    );
+  }
+
+  /**
+   * Rename a document inside the client's (or linked company's) Drive tax folders.
+   */
+  async renameClientTaxDocument(
+    clientId: number,
+    fileId: string,
+    name: string,
+  ): Promise<{
+    success: boolean;
+    file: {
+      id: string;
+      name: string;
+      mime_type: string;
+      size: number;
+      modified_time?: string | null;
+      web_view_link?: string | null;
+      is_folder: boolean;
+    };
+  }> {
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/${encodeURIComponent(fileId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      },
+    );
+  }
+
+  /**
+   * Replace a document's file content in-place (and optionally rename it) inside
+   * the client's (or linked company's) Drive tax folders.
+   */
+  async replaceClientTaxDocument(
+    clientId: number,
+    fileId: string,
+    file: File,
+    name?: string,
+  ): Promise<{
+    success: boolean;
+    file: {
+      id: string;
+      name: string;
+      mime_type: string;
+      size: number;
+      modified_time?: string | null;
+      web_view_link?: string | null;
+      is_folder: boolean;
+    };
+  }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (name && name.trim()) {
+      formData.append("name", name.trim());
+    }
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/${encodeURIComponent(fileId)}/content`,
+      {
+        method: "PUT",
+        body: formData,
+      },
+      60000,
+    );
+  }
+
+  /**
+   * Move a document in the client's (or linked company's) Drive tax folders to
+   * Google Drive Trash (recoverable).
+   */
+  async deleteClientTaxDocument(
+    clientId: number,
+    fileId: string,
+  ): Promise<{ success: boolean; file_id: string; trashed: boolean }> {
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/${encodeURIComponent(fileId)}`,
       { method: "DELETE" },
     );
   }

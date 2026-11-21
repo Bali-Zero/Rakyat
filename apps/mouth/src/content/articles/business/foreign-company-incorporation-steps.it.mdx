@@ -43,7 +43,7 @@ seoTitle: "PT PMA Registration Indonesia 2026 | Step by Step"
 seoDescription: "Register a PT PMA in Indonesia: complete step-by-step guide with documents, timeline (4-8 weeks), costs, and process from notary deed to NIB issuance."
 aiOptimization:
   primaryQuestion: "How do I register a PT PMA (foreign company) in Indonesia?"
-  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Total cost: IDR 15-25 million through an agent. Required: 2+ shareholders, director, commissioner."
+  answerSnippet: "PT PMA registration takes 4-8 weeks: company name reservation (1-3 days), notary deed (3-5 days), AHU approval (5-7 days), NPWP (2-3 days), OSS/NIB (1-3 days), bank account (2-4 weeks). Bali Zero setup fee: IDR 25,000,000 (excl. IDR 5,000,000 Virtual Office if needed). Required: 2+ shareholders, director, commissioner."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "AHU Kemenkumham"
@@ -79,7 +79,7 @@ ogImage: "/static/insights/business/foreign-company-incorporation-steps.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "38908520a355ef56c84baf62dee217c7c890760b1f86aabc371b904492fd2f4e"
+source_sha256: "4a6c242fdfb5156fc6e29001eeaeefa13af82a1da9ad284521a21a9b04484d31"
 ---
 
 # Come Registrare una PT PMA in Indonesia: Guida Passo Passo 2026
@@ -96,17 +96,18 @@ Le nuove regole entrate in vigore nel 2025 portano alcune semplificazioni:
 3. **LKPM trimestrale obbligatorio** - Report investimenti digitale tramite OSS
 4. **Verifica capitale rafforzata** - BKPM può richiedere evidenza del deposito capitale
 
-**Requisiti investimento invariati**: IDR 10 miliardi minimo (circa $625,000) rimane lo standard per PT PMA.
+**Capitale Versato e Investimento Totale (Reg. BKPM 5/2025 Art. 26):** Il capitale minimo versato è di **2,5 miliardi di IDR per società** (vincolato 12 mesi), mentre l'impegno di investimento totale resta **> 10 miliardi di IDR per codice KBLI a 5 cifre / sede (esclusi terreni ed edifici)**.
 
 </InfoCard>
 
 ## Panoramica Rapida
 
-| Aspect                | Details                    |
-| --------------------- | -------------------------- |
-| **Timeline**          | 4-8 weeks                  |
-| **Min Investment**    | IDR 10 billion (~$625,000) |
-| **Min Shareholders**  | 2 (can be foreign)         |
+| Aspetto                 | Dettagli                                                        |
+| ----------------------- | --------------------------------------------------------------- |
+| **Tempistiche**         | 4-8 settimane                                                   |
+| **Investimento Min.**   | > IDR 10 miliardi per KBLI a 5 cifre (escl. terreni & edifici)  |
+| **Capitale Versato Min.**| IDR 2,5 miliardi per società (Reg. BKPM 5/2025 Art. 26)        |
+| **Azionisti Min.**      | 2 (possono essere stranieri)                                    |
 | **Min Directors**     | 1 (can be foreign)         |
 | **Min Commissioners** | 1 (can be foreign)         |
 
@@ -318,61 +319,59 @@ Le nuove regole entrate in vigore nel 2025 portano alcune semplificazioni:
 
 <Calculator
   title="Calcolatore dei Costi di Costituzione PT PMA"
-  description="Stima i tuoi costi di registrazione"
+  description="Stima delle tariffe di costituzione Bali Zero (listino ufficiale 2026)"
   fields={[
     {
       id: "service",
-      label: "Tipo di Servizio",
+      label: "Registrazione Società",
       type: "select",
       options: [
-        { value: "diy", label: "Fai da te (solo notaio)" },
-        { value: "basic", label: "Pacchetto base con agenzia" },
-        { value: "full", label: "Pacchetto completo" }
+        { value: "pma", label: "Nuova PT PMA — Tariffe SSOT Bali Zero (25M IDR)" }
       ],
-      defaultValue: "basic"
+      defaultValue: "pma"
     },
     {
       id: "vo",
-      label: "Ufficio Virtuale?",
+      label: "Includere Ufficio Virtuale? (5M IDR — verifica idoneità KBLI Bali)",
       type: "checkbox",
-      defaultValue: true
+      defaultValue: false
     },
     {
-      id: "location",
-      label: "Località",
+      id: "kitas",
+      label: "Investor KITAS Opzionale (E28A, 2 Anni, quote personali >= 10B IDR)",
       type: "select",
       options: [
-        { value: "jakarta", label: "Jakarta" },
-        { value: "bali", label: "Bali" },
-        { value: "other", label: "Altro" }
+        { value: "none", label: "Nessuno / Più tardi" },
+        { value: "offshore", label: "Offshore E28A (17M IDR)" },
+        { value: "onshore", label: "Onshore E28A (19M IDR)" }
       ],
-      defaultValue: "bali"
+      defaultValue: "none"
     }
   ]}
   calculateResult={(values) => {
-    let total = 0;
-    const breakdown = [];
-
-    const serviceCosts = { diy: 15000000, basic: 35000000, full: 55000000 };
-    const service = serviceCosts[values.service];
-    total += service;
-    breakdown.push({ label: "Servizio di registrazione", amount: service });
-
-    const govFees = 5000000;
-    total += govFees;
-    breakdown.push({ label: "Tasse governative", amount: govFees });
+    let total = 25000000;
+    const breakdown = [
+      { label: "Nuova Società (PT PMA) — Atto, AHU, NPWP, NIB/OSS", amount: 25000000 }
+    ];
 
     if (values.vo) {
-      const voCost = values.location === 'jakarta' ? 15000000 : 12000000;
-      total += voCost;
-      breakdown.push({ label: "Ufficio virtuale (1 anno)", amount: voCost });
+      total += 5000000;
+      breakdown.push({ label: "Ufficio Virtuale (SSOT Bali Zero)", amount: 5000000 });
+    }
+
+    if (values.kitas === "offshore") {
+      total += 17000000;
+      breakdown.push({ label: "Investor KITAS 2 Anni E28A (Offshore)", amount: 17000000 });
+    } else if (values.kitas === "onshore") {
+      total += 19000000;
+      breakdown.push({ label: "Investor KITAS 2 Anni E28A (Onshore)", amount: 19000000 });
     }
 
     return {
       total,
       breakdown,
       currency: "IDR",
-      note: "Esclude il capitale sociale versato (minimo IDR 10B)"
+      note: "Solo onorari di servizio. Esclude il capitale societario (min 2,5B IDR di capitale versato per società; investimento > 10B IDR per KBLI a 5 cifre escl. terreni e edifici)."
     };
 
 }}
@@ -383,11 +382,11 @@ Le nuove regole entrate in vigore nel 2025 portano alcune semplificazioni:
 ## Consigli per il Successo
 
 <InfoCard variant="tip" title="Consigli per la Registrazione">
-  1. **KBLI prima**: Scegli i codici con cura prima di iniziare 2. **Pianifica
-  il capitale**: Sapere come distribuire IDR 10B 3. **Usa professionisti**: Il
-  corporate secretary evita mal di testa 4. **Tempistiche**: Prevedi 6-8
-  settimane per sicurezza 5. **Presenza del direttore**: Potrebbe essere
-  necessario essere in Indonesia per l’apertura del conto bancario
+  1. **KBLI prima**: Scegli codici KBLI aperti agli stranieri prima di redigere l'atto notarile
+  2. **Pianifica il capitale**: Versa 2,5B IDR di capitale per società e struttura > 10B IDR di investimento (escl. terreni ed edifici)
+  3. **Usa professionisti**: Verifiche corrette di KBLI e zonizzazione evitano costose modifiche all'Akta
+  4. **Tempistiche**: Prevedi 6–8 settimane dall'inizio alla fine
+  5. **Presenza del direttore**: Potrebbe essere richiesta per aprire il conto bancario societario locale
 </InfoCard>
 
 ---
@@ -407,31 +406,25 @@ Le nuove regole entrate in vigore nel 2025 portano alcune semplificazioni:
 
 ---
 
-## Opinioni e Discussioni in Corso
+## Contesto Normativo e Linee Guida Ufficiali (2025–2026)
 
 <InfoCard
   variant="note"
-  title="⚠️ Nota: Questa sezione contiene OPINIONI e discussioni non ancora confermate ufficialmente"
+  title="Aggiornamento Normativo: Capitale Versato & Regole di Zonizzazione Bali (2025–2026)"
 >
 
-Informazioni basate su analisi di settore e discussioni tra esperti. **Non
-confermate da BKPM o Kemenkumham**.
+Sulla base del **Regolamento BKPM n. 5/2025 (Articolo 26)** e delle linee guida attive **OSS-RBA / DPMPTSP Bali**:
 
 </InfoCard>
 
-### Possibili sviluppi PT PMA (OPINIONE)
+### Regole Chiave su Capitale e Strutturazione PT PMA
 
-1. **Capitale ridotto per settore tech** - Si discute di una possibile riduzione del requisito di capitale minimo (attualmente IDR 10 miliardi) per startup tecnologiche e servizi digitali. Alcuni ritengono potrebbe scendere a IDR 2.5-5 miliardi. _Solo discussione, nessuna conferma._
+1. **Capitale versato fissato a 2,5B IDR per società** — Da ottobre 2025 (Reg. BKPM 5/2025 Art. 26), il capitale minimo versato alla costituzione è pari a **2,5 miliardi di IDR per società** (con vincolo di 12 mesi salvo spese operative documentate), mentre l'impegno di investimento totale rimane **> 10 miliardi di IDR per codice KBLI a 5 cifre per sede, esclusi terreni ed edifici**.
+2. **Codici KBLI chiusi e restrizioni alle licenze a Bali** — `55203` Ville, `55201` Pondok Wisata, `55106` Hotel Non Stellati e `79903` Guide Turistiche sono `0% PMA` a livello nazionale ai sensi del Perpres 49/2021. Separatamente, Bali ha chiuso OSS alle nuove licenze PT PMA per **18 settori elencati con numerazione KBLI 2020** dalla terza settimana di maggio 2026 (comunicato del Governo Provinciale di Bali, 24 luglio 2026, successivo alla lettera di richiesta del Governatore del 28 gennaio 2026 `B.27.000/642/PM/DPMPTSP`).
+3. **Sede commerciale vs. Ufficio Virtuale** — La conformità urbanistica fisica (`PKKPR`) è richiesta per i codici KBLI operativi/di ospitalità. La lettera di richiesta del Governatore del 28 gennaio 2026 (`B.27.000/642/PM/DPMPTSP`) proponeva anche restrizioni agli uffici virtuali PMA a Bali, ma l'applicazione di tale restrizione non è confermata — verifica le regole OSS/DPMPTSP attuali per il tuo specifico KBLI prima di firmare contratti di locazione.
+4. **Soglia Investor KITAS (E28A)** — Per accedere a un E28A Investor KITAS senza RPTKA, ciascun richiedente straniero deve detenere almeno **10 miliardi di IDR** di quote personali; direttori e soci sotto 10 miliardi necessitano di un **Working KITAS E23**.
 
-2. **Negative Investment List semplificata** - C'è discussione su ulteriori aperture settoriali per investitori stranieri, specialmente in educazione, sanità e logistica. _Nessun annuncio ufficiale._
-
-3. **One-stop registration** - Si discute di un processo ancora più integrato che combinerebbe notaio, Kemenkumham, NPWP e OSS in un unico flusso. _Solo speculazione._
-
-4. **Virtual company per freelancer** - Alcuni esperti discutono di una possibile struttura aziendale semplificata per freelancer stranieri, senza i requisiti completi di PT PMA. _Non confermato._
-
-5. **Incentivi zona economica speciale** - Si discute di possibili incentivi aggiuntivi (tax holiday, capitale ridotto) per PT PMA che si stabiliscono nelle Zone Economiche Speciali (KEK). _In fase di valutazione._
-
-**Ricorda**: Per decisioni di investimento, attendi conferme ufficiali da oss.go.id o bkpm.go.id.
+**Verifica sempre i requisiti aggiornati su oss.go.id o bkpm.go.id prima di impegnare capitali.**
 
 ---
 

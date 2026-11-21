@@ -52,7 +52,7 @@ seoDescription: "Opsi KITAS untuk pemegang saham PT PMA asing di Indonesia. Mini
 locale: "id"
 aiOptimization:
   primaryQuestion: "KITAS apa yang dibutuhkan pemegang saham asing di Indonesia?"
-  answerSnippet: "Pemegang saham asing dengan IDR 10 miliar+ di PT PMA dapat mendapatkan KITAS Investor (E28A) tanpa RPTKA. Pemegang saham di bawah ambang batas ini yang memegang posisi direktur memerlukan KITAS Kerja (E25B). Pemegang saham minoritas pasif tanpa peran direktur dapat menggunakan visa sosial/bisnis untuk kunjungan singkat."
+  answerSnippet: "Pemegang saham asing dengan saham pribadi minimal IDR 10 miliar di PT PMA sponsor dapat memperoleh Investor KITAS (E28A) tanpa RPTKA. Pemegang saham di bawah IDR 10 miliar yang menjabat sebagai direktur atau karyawan memerlukan Working KITAS (E23) dengan RPTKA. Pemegang saham minoritas pasif tanpa peran direktur/kerja dapat menggunakan visa kunjungan bisnis (mis. C2/D2) untuk kunjungan berkala."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Imigrasi"
@@ -77,7 +77,7 @@ contentStructure:
 canonicalUrl: "https://balizero.com/immigration/shareholder-kitas-requirements"
 ogImage: "/static/insights/immigration/shareholder.jpg"
 twitterCard: "summary_large_image"
-source_sha256: "8b313fe8f2b7dbac5beb30485f24b9a10480b62c4dd8a48ebf3817105571cd93"
+source_sha256: "9cc123649d3cc60f508004d17e93a254afa1a3488247f2e9467f0e9608565955"
 ---
 
 import {
@@ -116,42 +116,42 @@ Pemegang saham asing di perusahaan Indonesia memiliki beberapa pilihan KITAS ter
     },
     {
       id: "passive",
-      question: "Do you meet IDR 1B+ investment?",
+      question: "Apakah investasi saham pribadi Anda mencapai IDR 10B+?",
       options: [
-        { label: "Yes, I have IDR 1B+ invested", next: "investor-kitas" },
-        { label: "No, less than IDR 1B", next: "no-investor" },
+        { label: "Ya, saya memiliki saham IDR 10B+ atas nama sendiri", next: "investor-kitas" },
+        { label: "Tidak, kurang dari IDR 10B", next: "no-investor" },
       ],
     },
     {
       id: "director",
       result: {
-        title: "Director KITAS with RPTKA",
+        title: "Director Working KITAS (E23) dengan RPTKA",
         description:
-          "As a working director, you need full work authorization. RPTKA + KITAS required. Company sponsors you. DKP-TKA fees apply.",
+          "As a working director, you need full work authorization (E23). RPTKA + KITAS required. Company sponsors you. DKP-TKA fees apply.",
       },
     },
     {
       id: "worker",
       result: {
-        title: "Employee KITAS with RPTKA",
+        title: "Employee Working KITAS (E23) dengan RPTKA",
         description:
-          "Working in a non-director role requires employee KITAS. RPTKA based on your position. Normal qualification requirements.",
+          "Working in a non-director role requires employee E23 Working KITAS. RPTKA based on your position. Normal qualification requirements.",
       },
     },
     {
       id: "investor-kitas",
       result: {
-        title: "Investor KITAS (C313)",
+        title: "Investor KITAS (E28A)",
         description:
-          "Passive investors with IDR 1B+ can get Investor KITAS without RPTKA. No DKP-TKA fees. Can attend board meetings and receive dividends.",
+          "Passive investors holding IDR 10B+ in personal PT PMA shares can get E28A Investor KITAS without RPTKA. No DKP-TKA fees. Can attend board meetings and receive dividends.",
       },
     },
     {
       id: "no-investor",
       result: {
-        title: "No Direct KITAS Pathway",
+        title: "No Direct Investor KITAS Pathway",
         description:
-          "If under IDR 1B and not working, you can't get KITAS as a shareholder. Consider increasing investment to IDR 1B or taking a working role.",
+          "If your personal shareholding is under IDR 10B and you are not working with RPTKA, you cannot get E28A Investor KITAS. Consider increasing personal shareholding to IDR 10B+ or applying for an E23 Working KITAS with RPTKA.",
       },
     },
   ]}
@@ -163,13 +163,13 @@ Pemegang saham asing di perusahaan Indonesia memiliki beberapa pilihan KITAS ter
 
 <Calculator
   title="Shareholder Investment Calculator"
-  description="Check your KITAS eligibility"
+  description="Check your E28A Investor KITAS eligibility (IDR 10B+ personal shareholding)"
   fields={[
     {
       id: "totalCapital",
-      label: "Company Paid-Up Capital",
+      label: "Company Paid-Up / Share Capital",
       type: "number",
-      defaultValue: 5000000000,
+      defaultValue: 10000000000,
       min: 0,
       step: 500000000,
       suffix: "IDR"
@@ -178,7 +178,7 @@ Pemegang saham asing di perusahaan Indonesia memiliki beberapa pilihan KITAS ter
       id: "sharePercent",
       label: "Your Ownership Percentage",
       type: "number",
-      defaultValue: 30,
+      defaultValue: 100,
       min: 1,
       max: 100,
       suffix: "%"
@@ -188,20 +188,20 @@ Pemegang saham asing di perusahaan Indonesia memiliki beberapa pilihan KITAS ter
     const capital = Number(values.totalCapital);
     const percent = Number(values.sharePercent) / 100;
     const yourShare = capital * percent;
-    const minInvestor = 1000000000;
+    const minInvestor = 10000000000;
     const eligible = yourShare >= minInvestor;
 
     return {
       total: yourShare,
       breakdown: [
-        { label: "Total Company Capital", amount: capital },
-        { label: `Your Share (${values.sharePercent}%)`, amount: yourShare },
-        { label: "Investor KITAS Minimum", amount: minInvestor }
+        { label: "Total Company Share Capital", amount: capital },
+        { label: `Your Shareholding (${values.sharePercent}%)`, amount: yourShare },
+        { label: "E28A Investor KITAS Minimum", amount: minInvestor }
       ],
       currency: "IDR",
       note: eligible
-        ? "✅ Eligible for Investor KITAS (passive)"
-        : "❌ Below IDR 1B - need to work or increase investment"
+        ? "✅ Eligible for E28A Investor KITAS (IDR 10B+ personal shareholding met)"
+        : "❌ Below IDR 10B personal shareholding — apply for E23 Working KITAS (with RPTKA) or increase own shareholding"
     };
 
 }}
@@ -209,11 +209,11 @@ Pemegang saham asing di perusahaan Indonesia memiliki beberapa pilihan KITAS ter
 
 ### Ambang Batas Minimum
 
-| Jenis KITAS              | Persyaratan Investasi                         |
-| ------------------------ | --------------------------------------------- |
-| Investor KITAS (pasif)   | investasi pribadi minimum IDR 1,000,000,000   |
-| Direktur KITAS (bekerja) | Tidak ada minimum (perusahaan harus memenuhi IDR 10B) |
-| Karyawan KITAS (bekerja) | Tidak berbasis investasi                      |
+| Jenis KITAS                        | Persyaratan Investasi / Saham                              |
+| ---------------------------------- | ---------------------------------------------------------- |
+| Investor KITAS (E28A, pasif)       | Saham pribadi minimal IDR 10,000,000,000 di PT PMA         |
+| Direktur / Working KITAS (E23)     | Tidak ada minimum saham pribadi (memerlukan RPTKA + DKP-TKA) |
+| Karyawan KITAS (E23, bekerja)      | Tidak berbasis saham (memerlukan RPTKA + DKP-TKA)          |
 
 ---
 
@@ -221,11 +221,11 @@ Pemegang saham asing di perusahaan Indonesia memiliki beberapa pilihan KITAS ter
 
 <ComparisonTable
   title="Shareholder KITAS Paths"
-  description="Options based on role and investment"
+  description="Options based on role and personal shareholding"
   items={[
     {
-      name: "Path 1: Pure Investor",
-      subtitle: "IDR 1B+ investment, no work",
+      name: "Path 1: Investor KITAS (E28A)",
+      subtitle: "IDR 10B+ own shares, no salaried role",
       values: {
         RPTKA: "Not required",
         "DKP-TKA": "Not required",
@@ -298,9 +298,9 @@ Investor KITAS.
 - CV/Resume
 - Akta perusahaan yang menunjukkan kepemilikan saham
 
-### Untuk Investor KITAS (Pasif)
+### Untuk Investor KITAS (E28A, Pasif)
 
-- Bukti setoran modal (bagian Anda IDR 1B+)
+- Bukti kepemilikan saham pribadi minimum **IDR 10 miliar (IDR 10B+)** di akta/NIB PT PMA
 - Rekening koran bank
 - Sertifikat saham (jika tersedia)
 - NIB dan dokumen perusahaan
@@ -318,16 +318,16 @@ Investor KITAS.
 
 Jika PT PMA Anda memiliki beberapa pemegang saham asing:
 
-| Pemegang Saham | Investasi per Orang               | Total Modal Perusahaan |
-| ------------ | ---------------------- | --------------------- |
-| 1 orang asing  | IDR 1B+                | minimum IDR 10B       |
-| 2 orang asing | IDR 1B+ masing-masing = IDR 2B+ | minimum IDR 10B       |
-| 3 orang asing | IDR 1B+ masing-masing = IDR 3B+ | minimum IDR 10B       |
+| Pemegang Saham | Saham Pribadi per Pemegang E28A   | Total Investasi PT PMA (per KBLI)   |
+| -------------- | --------------------------------- | ----------------------------------- |
+| 1 orang asing  | IDR 10B+                          | > IDR 10B (di luar tanah/bangunan)  |
+| 2 orang asing  | IDR 10B+ masing-masing = IDR 20B+ | IDR 20B+ untuk 2 E28A (atau E23)    |
+| 3 orang asing  | IDR 10B+ masing-masing = IDR 30B+ | IDR 30B+ untuk 3 E28A (atau E23)    |
 
-<InfoCard variant="note" title="Each Foreigner Needs IDR 1B">
+<InfoCard variant="note" title="Setiap Pemegang E28A Membutuhkan Saham Pribadi IDR 10B">
 
-Untuk Investor KITAS, setiap pemegang saham asing harus memiliki setidaknya IDR 1 miliar
-yang diinvestasikan atas nama mereka. Anda tidak dapat membagi satu IDR 1B untuk dua orang.
+Untuk Investor KITAS (E28A), setiap pemegang saham asing harus memiliki setidaknya **IDR 10 miliar**
+saham atas nama pribadi di akta perusahaan (Kepmenkumham / Peraturan Imigrasi). Anda tidak dapat membagi satu kepemilikan IDR 10B untuk dua pemegang E28A (pemegang saham di bawah IDR 10B yang aktif bekerja dapat mengajukan Working KITAS E23 dengan RPTKA).
 
 </InfoCard>
 

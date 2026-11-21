@@ -67,7 +67,6 @@ SETUP_TEAM = [
     "ari.firda@balizero.com",   # Team Leader
     "surya@balizero.com",       # Team Leader
     "krisna@balizero.com",      # Executive Consultant
-    "dea@balizero.com",         # Executive Consultant
     "adit@balizero.com",        # Supervisor
     "vino@balizero.com",        # Junior Consultant
     "damar@balizero.com",       # Junior Consultant

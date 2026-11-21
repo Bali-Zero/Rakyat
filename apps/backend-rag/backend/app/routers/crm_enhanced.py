@@ -16,13 +16,15 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.utils.client_pools import can_manage_client_tax_documents, can_write_client
 from backend.app.utils.crm_utils import (
     AvatarUrl,
+    can_create_company,
     extract_json_from_llm_response,
     verify_client_access,
 )
@@ -1126,11 +1128,27 @@ class ClientProfileUpdate(BaseModel):
 # ============================================
 
 
+def _optional_request_auth_method(request: Request) -> str | None:
+    """Read HybridAuthMiddleware's auth_method/auth_type when present on the HTTP request."""
+    state_user = getattr(request.state, "user", None)
+    if isinstance(state_user, dict):
+        method = state_user.get("auth_method")
+        if isinstance(method, str) and method.strip():
+            return method.strip()
+        # Middleware authenticated this request without a recognized auth_method: fail closed.
+        return "unknown"
+    auth_type = getattr(request.state, "auth_type", None)
+    if isinstance(auth_type, str) and auth_type.strip():
+        return auth_type.strip()
+    return None
+
+
 @router.get("/clients/{client_id}/profile")
 async def get_client_profile(
     client_id: int,
     pool: Any = Depends(get_database_pool),
     current_user: dict = Depends(get_current_user),
+    request_auth_method: str | None = Depends(_optional_request_auth_method),
 ) -> dict[str, Any]:
     """
     Get enhanced client profile with family members, documents, and expiry alerts.
@@ -1148,7 +1166,7 @@ async def get_client_profile(
                 assigned_to, tax_consultant, address, notes, tags, custom_fields,
                 first_contact_date, last_interaction_date,
                 birthplace, npwp, nib, lead_source,
-                created_at, updated_at
+                created_at, updated_at, created_by
             FROM clients
             WHERE id = $1 AND deleted_at IS NULL
             """,
@@ -1157,6 +1175,23 @@ async def get_client_profile(
 
         if not client:
             raise HTTPException(status_code=404, detail="Client not found")
+
+        viewer_can_write = can_write_client(
+            current_user, client.get("assigned_to"), client.get("created_by")
+        )
+        # Direct unit tests omit `request_auth_method` and receive the unresolved Depends marker.
+        tax_doc_user = (
+            {**current_user, "auth_method": request_auth_method}
+            if isinstance(request_auth_method, str)
+            else current_user
+        )
+        viewer_can_manage_tax_documents = can_manage_client_tax_documents(
+            tax_doc_user,
+            client.get("assigned_to"),
+            client.get("created_by"),
+            client.get("tax_consultant"),
+        )
+        client = {k: v for k, v in dict(client).items() if k != "created_by"}
 
         # Get family members
         family_members = await conn.fetch(
@@ -1394,6 +1429,9 @@ async def get_client_profile(
 
         return {
             "client": dict(client),
+            "viewer_can_write": viewer_can_write,
+            "viewer_can_create_company": can_create_company(current_user),
+            "viewer_can_manage_tax_documents": viewer_can_manage_tax_documents,
             "family_members": [dict(fm) for fm in family_members],
             "documents": documents_out,
             "expiry_alerts": [dict(a) for a in expiry_alerts],

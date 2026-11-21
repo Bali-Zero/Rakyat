@@ -54,7 +54,7 @@ faq:
   - question: "Can I invest the IDR 10 billion over time?"
     answer: "Yes. The IDR 10 billion is a total investment commitment over your investment plan period. Paid-up capital (IDR 2.5B) must be deposited immediately, but remaining investment can be made gradually per your LKPM reporting schedule."
   - question: "Does the capital requirement change based on business sector?"
-    answer: "The minimum IDR 10B total investment applies to all PT PMA regardless of sector. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
+    answer: "The minimum >IDR 10B total investment per 5-digit KBLI per project location (excluding land and buildings) and IDR 2.5B paid-up capital per company (BKPM Reg. 5/2025 Art. 26) apply across PT PMA sectors. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
 contentStructure:
   hasHowTo: false
   hasFAQ: true
@@ -75,7 +75,7 @@ ogImage: "/static/insights/business/capital-requirements-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "ru"
-source_sha256: "d1eb26598458d4f558408601a56720d144e2355575e5f37b600af7ee81b0cdfa"
+source_sha256: "1fc18d4f2cea8f35d9f31e81b6507692111ea73fb4f24a573a8f1d86436fc687"
 ---
 
 # PT PMA Требования к капиталу Индонезия 2026: Руководство для инвесторов
@@ -100,18 +100,18 @@ source_sha256: "d1eb26598458d4f558408601a56720d144e2355575e5f37b600af7ee81b0cdfa
 
 ### Стандартные минимумы для PT PMA
 
-| Тип капитала               | Минимальная сумма                                                          |
-| :------------------------- | :------------------------------------------------------------------------- |
-| **Общий объем инвестиций** | 10 миллиардов IDR (~625 000 долларов США)                                  |
-| **Оплаченный капитал**     | 10 миллиардов IDR (должен соответствовать общему объему инвестиций сейчас) |
-| **На акционера**           | Минимум 10 миллионов IDR                                                   |
+| Тип капитала               | Минимальная сумма                                                                 |
+| :------------------------- | :-------------------------------------------------------------------------------- |
+| **Общий объем инвестиций** | Свыше 10 миллиардов IDR (~625 000 USD) на 5-значный KBLI / объект (без земли)     |
+| **Оплаченный капитал**     | **2,5 миллиарда IDR на компанию** (Регламент BKPM 5/2025 ст. 26)                  |
+| **На акционера**           | Минимум 10 миллионов IDR на акционера                                             |
 
-<InfoCard variant="warning" title="2021 Changes">
-**Важное изменение:**
+<InfoCard variant="warning" title="Действующие правила (Регл. BKPM 5/2025)">
+**Важное разъяснение:**
 
-Согласно действующим правилам, оплаченный капитал должен быть равен общему объему инвестиционных обязательств. Это означает, что вам необходимо фактически иметь и инвестировать минимум 10 миллиардов IDR.
+Согласно **Регламенту BKPM № 5/2025 (ст. 26)**, минимальный оплаченный капитал составляет **2,5 миллиарда IDR на компанию** (независимо от количества акционеров; замораживается на 12 месяцев, если не расходуется на подтвержденные деловые нужды). Требование общих инвестиций **свыше 10 миллиардов IDR** на 5-значный код KBLI и локацию **не включает стоимость земли и зданий** (за исключением профильных секторов недвижимости).
 
-Это значительное увеличение по сравнению с предыдущими требованиями.
+Устаревшие руководства ранее ошибочно приравнивали оплаченный капитал к полным 10 миллиардам IDR.
 
 </InfoCard>
 
@@ -137,21 +137,21 @@ source_sha256: "d1eb26598458d4f558408601a56720d144e2355575e5f37b600af7ee81b0cdfa
       name: "Общий объем инвестиций",
       subtitle: "Инвестиционное обязательство",
       values: {
-        Minimum: "10 миллиардов IDR",
-        "USD Equivalent": "~$625,000",
-        Includes: "Вся стоимость проекта",
+        Minimum: "> 10 миллиардов IDR (без земли и зданий)",
+        "USD Equivalent": "~$625,000+",
+        Includes: "Оборудование, капитал и OPEX без недвижимости",
         "When needed": "Обязательство при создании",
       },
       highlight: true,
     },
     {
       name: "Оплаченный капитал",
-      subtitle: "Фактические инвестиции",
+      subtitle: "Взнос на уровне компании",
       values: {
-        Minimum: "10 миллиардов IDR",
-        "USD Equivalent": "~$625,000",
-        Includes: "Наличные + активы",
-        "When needed": "Необходимо внести",
+        Minimum: "2,5 миллиарда IDR на компанию",
+        "USD Equivalent": "~$156,000",
+        Includes: "Внесенные средства",
+        "When needed": "При создании (удержание 12 мес.)",
       },
     },
     {
@@ -195,70 +195,76 @@ source_sha256: "d1eb26598458d4f558408601a56720d144e2355575e5f37b600af7ee81b0cdfa
 
 ### Что учитывается при инвестировании?
 
-| Учитывается                    | Не учитывается                    |
-| :----------------------------- | :-------------------------------- |
-| Денежные вклады                | Будущие доходы                    |
-| Оборудование (оцененное)       | Деловая репутация                 |
-| Земля/здания                   | Прогнозируемый доход              |
-| Интеллектуальная собственность | Неоцененные нематериальные активы |
-| Первоначальный запас           | Операционные расходы              |
+| Учитывается                    | Не учитывается                                |
+| :----------------------------- | :-------------------------------------------- |
+| Денежные вклады                | Земля/здания (исключены из порога >10 млрд*)  |
+| Оборудование (оцененное)       | Будущие доходы / Деловая репутация            |
+| Интеллектуальная собственность | Прогнозируемый доход                          |
+| Оборотный капитал и расходы    | Неоцененные нематериальные активы             |
+
+*\*По Регл. BKPM 5/2025 порог > 10 млрд IDR на 5-значный KBLI / локацию не включает землю и здания (кроме девелоперских/промзон).*
 
 ### Калькулятор
 
 <Calculator
-  title="Investment Structure"
-  description="Plan your capital allocation"
+  title="Структура инвестиций"
+  description="Спланируйте распределение капитала"
   fields={[
     {
       id: "cash",
-      label: "Денежные инвестиции (IDR)",
+      label: "Оплаченный капитал (Мин. 2,5 млрд IDR на компанию)",
       type: "number",
-      defaultValue: 8000000000,
+      defaultValue: 2500000000,
       min: 0
     },
     {
       id: "equipment",
-      label: "Стоимость оборудования (IDR)",
+      label: "Оборудование и технологии (IDR)",
       type: "number",
-      defaultValue: 1500000000,
+      defaultValue: 4000000000,
       min: 0
     },
     {
       id: "property",
-      label: "Недвижимость/Земля (IDR)",
+      label: "Недвижимость/Земля (Исключено из порога >10 млрд BKPM)",
       type: "number",
       defaultValue: 0,
       min: 0
     },
     {
       id: "other",
-      label: "Прочие активы (IDR)",
+      label: "Оборотный капитал и прочие неземельные активы (IDR)",
       type: "number",
-      defaultValue: 500000000,
+      defaultValue: 4000000000,
       min: 0
     }
   ]}
   calculateResult={(values) => {
-    const total = values.cash + values.equipment + values.property + values.other;
+    const qualifyingTotal = Number(values.cash) + Number(values.equipment) + Number(values.other);
+    const property = Number(values.property);
+    const minPaidUp = 2500000000;
     const minimum = 10000000000;
-    const shortfall = Math.max(0, minimum - total);
-    const meetsRequirement = total >= minimum;
+    const shortfall = Math.max(0, minimum - qualifyingTotal);
+    const meetsPaidUp = Number(values.cash) >= minPaidUp;
+    const meetsRequirement = meetsPaidUp && qualifyingTotal > minimum;
 
     return {
-      total: total,
+      total: qualifyingTotal,
       breakdown: [
-        { label: "Денежные инвестиции", amount: values.cash },
-        { label: "Стоимость оборудования", amount: values.equipment },
-        { label: "Недвижимость/Земля", amount: values.property },
-        { label: "Прочие активы", amount: values.other },
-        { label: "ОБЩИЙ ОБЪЕМ ИНВЕСТИЦИЙ", amount: total },
-        { label: "Минимально требуемый", amount: minimum },
-        { label: meetsRequirement ? "Превышение минимума на" : "НЕДОСТАТОК", amount: meetsRequirement ? total - minimum : shortfall }
+        { label: "Оплаченный капитал (мин. 2,5 млрд IDR/компания)", amount: Number(values.cash) },
+        { label: "Стоимость оборудования", amount: Number(values.equipment) },
+        { label: "Оборотный капитал и неземельные активы", amount: Number(values.other) },
+        { label: "Недвижимость/Земля (исключена из порога >10 млрд BKPM)", amount: property },
+        { label: "КВАЛИФИЦИРУЕМЫЕ ИНВЕСТИЦИИ BKPM", amount: qualifyingTotal },
+        { label: "Минимум (>10 млрд)", amount: minimum },
+        { label: meetsRequirement ? "Превышение порога на" : "НЕХВАТКА до >10 млрд", amount: qualifyingTotal > minimum ? qualifyingTotal - minimum : shortfall }
       ],
       currency: "IDR",
-      note: meetsRequirement
-        ? `Соответствует требованиям (~${Math.round(total / 16000).toLocaleString()} долларов США)`
-        : `Требуется дополнительно ${shortfall.toLocaleString()} IDR для соответствия минимуму`
+      note: !meetsPaidUp
+        ? "Оплаченный капитал ниже 2,5 млрд IDR на компанию (Регл. BKPM 5/2025 ст. 26)"
+        : meetsRequirement
+          ? `Выполнены оба условия: 2,5 млрд оплачено и >10 млрд без земли (~${Math.round(qualifyingTotal / 16000).toLocaleString()} USD)`
+          : `Требуется более ${(shortfall + 1).toLocaleString()} IDR неземельных инвестиций сверх 10 млрд IDR`
     };
 
 }}
@@ -275,7 +281,7 @@ source_sha256: "d1eb26598458d4f558408601a56720d144e2355575e5f37b600af7ee81b0cdfa
 
 - Оборудование (машины, транспортные средства)
 - Интеллектуальная собственность (патенты, товарные знаки)
-- Недвижимость (земля, здания)
+- Недвижимость (только для профильных девелоперских/промзон; **исключена** из порога >10 млрд IDR в обычных секторах)
 
 **Требования:**
 
@@ -346,7 +352,7 @@ source_sha256: "d1eb26598458d4f558408601a56720d144e2355575e5f37b600af7ee81b0cdfa
 
 **Ответ:**
 
-- Для стандартной PT PMA требуется минимум 10 миллиардов IDR
+- Для стандартной PT PMA требуются инвестиции > 10 млрд IDR (без земли и зданий) и оплаченный капитал 2,5 млрд IDR на компанию
 - Некоторые особые зоны могут иметь другие правила
 - Представительство не требует капитала, но не может вести торговую деятельность
 - Рассмотрите PT PMDN (отечественную компанию), если соответствуете требованиям

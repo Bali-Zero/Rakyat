@@ -67,15 +67,19 @@ def validate_category(category: str) -> str:
     """
     category_lower = category.lower().strip()
 
-    # Map common variations
+    # Map common and legacy frontend variations backwards-compatibly
     category_map = {
         "tax-legal": "tax",
+        "taxes": "tax",
         "legal": "tax",
         "immigration": "immigration",
+        "visas": "immigration",
         "business": "business",
         "property": "property",
         "lifestyle": "lifestyle",
+        "living": "lifestyle",
         "tech": "tech",
+        "trends": "tech",
     }
 
     normalized = category_map.get(category_lower, category_lower)

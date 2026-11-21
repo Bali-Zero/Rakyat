@@ -3,7 +3,9 @@
  * People: the HR console, read side. Everyone on one roster, and for the selected person
  * the same three panels (Pay, Time, Me) the person sees on their own "My HR" page.
  * HR admins see everyone plus the pulse; the scoped viewer sees a few people, read only.
- * Write actions are not here: this page has no edit, upload or delete control.
+ * The one write is the card edit (STAFF_CARD.md C11), only for `hr_card_write` viewers (the
+ * global admins): an inline form that edits, clears or creates a person's HR card. There is
+ * no upload or delete control here.
  *
  * Personal data: bound to the bearer token's identity per src/lib/auth/SESSION.md S4.
  * The roster and each person's overview are fetched with requestWithCredential and kept
@@ -11,9 +13,11 @@
  * (`viewer_team_member_id`) as the reader. Every result is stored with the identity (and,
  * for a person, the member id) it was fetched for and shown only while both still match
  * this render, so a late answer for a previous person or identity is never displayed.
+ * The card PATCH answer is accepted under the same rule: only for the identity it was sent
+ * with, and only if it names the member it was sent for.
  * Nothing here is logged, cached or persisted.
  */
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
@@ -23,6 +27,7 @@ import {
   Clock,
   Gift,
   Landmark,
+  Pencil,
   Search,
   Sparkles,
   Upload,
@@ -32,8 +37,16 @@ import {
 import { DESK_SERIF } from "@balizero/core";
 import { ApiError } from "@/lib/api/error-handler";
 import {
+  editPersonCard,
   getPeople,
   getPersonOverview,
+  removePersonDocument,
+  uploadPersonDocument,
+  type CardEditBody,
+  type DocSlot,
+  type CardEditFieldError,
+  type HrDocuments,
+  type HrStaffCard,
   type PeopleRoster,
   type PersonOverview,
   type PersonRow,
@@ -45,6 +58,13 @@ import {
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import { ChampionPortrait } from "@/components/workspace/ChampionPortrait";
+import { DocumentsBlock, type DocResult } from "./_components/documents-block";
+import {
+  CardEditForm,
+  type CardEditMode,
+  type CardEditResult,
+} from "./_components/card-edit-form";
 import {
   Bubble,
   CARD,
@@ -68,6 +88,7 @@ import {
 } from "./_components/hr-panels";
 
 const AMBER = "#f59e0b";
+const SOFT_TONE = "#64748b";
 const CORAL = "#ef6a3a";
 const PALETTE = [
   "#14a37f",
@@ -95,12 +116,24 @@ const initials = (name: string) =>
     .map((w) => w[0]!.toUpperCase())
     .join("");
 
-const GROUP_FIRST = ["Setup", "Tax"];
+// The roster groups by the card's unit (the group-wide units of 2026-11-16); a person
+// without one falls back to the team department, spelled like a unit so the two merge.
+const GROUP_FIRST = [
+  "BOARD",
+  "SETUP",
+  "IMIGRASI",
+  "TAX",
+  "CORPORATE & LEGAL",
+  "FINANCE & HR",
+  "OPERASIONAL",
+  "SECURITY",
+  "MARKETING / IT",
+];
 const GROUP_LAST = ["Office", "Former"];
 function groupOf(p: PersonRow): string {
   if (!p.active) return "Former";
-  const d = (p.department ?? "").trim();
-  return d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Office";
+  const g = (p.unit ?? "").trim() || (p.department ?? "").trim();
+  return g ? g.toUpperCase() : "Office";
 }
 function groupRank(g: string) {
   const first = GROUP_FIRST.indexOf(g);
@@ -114,6 +147,26 @@ const plural = (n: number, one: string, many: string) =>
 
 function Avatar({ person, size = 40 }: { person: PersonRow; size?: number }) {
   const c = colorOf(person);
+  if (person.avatar_url) {
+    // The photo fills a box of the same size as the initials disc, so the rows never shift;
+    // ChampionPortrait itself falls back to initials when the file cannot load.
+    return (
+      <span
+        className="inline-flex shrink-0"
+        style={{ width: size, height: size, fontSize: size * 0.38 }}
+        data-testid="hr-person-portrait"
+        aria-hidden
+      >
+        <ChampionPortrait
+          name={nameOf(person)}
+          src={person.avatar_url}
+          face
+          sizes={`${size}px`}
+          className="h-full w-full"
+        />
+      </span>
+    );
+  }
   return (
     <span
       className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white"
@@ -385,6 +438,68 @@ function errorKind(err: unknown) {
   };
 }
 
+/** The backend's `papers_missing` for a refreshed card: the six slots that are not `present`. */
+function papersMissing(card: HrStaffCard): number {
+  return Object.values(card.documents ?? {}).filter((d) => !d.present).length;
+}
+
+/** A failed card save as the form shows it: fixed texts only, never a value. */
+function saveFailure(err: unknown): CardEditResult {
+  if (err instanceof ApiError) {
+    const detail = (err.data as { detail?: unknown } | undefined)?.detail;
+    if (err.statusCode === 422 && Array.isArray(detail)) {
+      return {
+        ok: false,
+        errors: (detail as CardEditFieldError[]).filter(
+          (e) => typeof e?.field === "string" && typeof e?.message === "string",
+        ),
+      };
+    }
+    if (err.statusCode === 403)
+      return { ok: false, errors: [], general: "You cannot edit this card." };
+    if (err.statusCode === 409)
+      return {
+        ok: false,
+        errors: [],
+        general: "This card is being saved by someone else. Try again.",
+      };
+    if (err.statusCode === 404)
+      return { ok: false, errors: [], general: "This person was not found." };
+  }
+  return { ok: false, errors: [], general: "Could not save. Try again." };
+}
+
+function docFailure(err: unknown): DocResult {
+  if (err instanceof ApiError) {
+    const detail = (err.data as { detail?: unknown } | undefined)?.detail;
+    const first = Array.isArray(detail)
+      ? (detail[0] as { message?: unknown } | undefined)
+      : undefined;
+    if (err.statusCode === 422 && typeof first?.message === "string")
+      return { ok: false, message: first.message };
+    if (err.statusCode === 403)
+      return { ok: false, message: "You cannot change documents." };
+    if (err.statusCode === 404)
+      return { ok: false, message: "This person was not found." };
+    if (err.statusCode === 409) {
+      const code = (detail as { code?: unknown } | undefined)?.code;
+      return {
+        ok: false,
+        message:
+          code === "hr_record_required"
+            ? "Add this person to HR first."
+            : "This card is being saved by someone else. Try again.",
+      };
+    }
+    if (err.statusCode === 502)
+      return {
+        ok: false,
+        message: "Document storage is unavailable. Try again in a moment.",
+      };
+  }
+  return { ok: false, message: "Could not save. Try again." };
+}
+
 function PeopleConsole() {
   const router = useRouter();
   const params = useSearchParams();
@@ -410,6 +525,11 @@ function PeopleConsole() {
   }, [urlPerson]);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Panel>("pay");
+  // The card form is bound to one person and one mode; another selection closes it.
+  const [editing, setEditing] = useState<{
+    id: string;
+    mode: CardEditMode;
+  } | null>(null);
 
   // The selection is only ever a member of the accepted roster.
   const selected: PersonRow | null = useMemo(() => {
@@ -421,6 +541,10 @@ function PeopleConsole() {
     );
   }, [roster, picked]);
   const selectedId = selected?.team_member_id ?? null;
+  // The save callback outlives the render that created it: it asks THIS ref who is selected
+  // when the answer lands, so a late answer for A never overwrites B's person slot.
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
   const selectedHasRecord = selected?.has_record ?? false;
 
   const [pslot, setPslot] = useState<{
@@ -500,6 +624,195 @@ function PeopleConsole() {
     };
   }, [identity, selectedId, selectedHasRecord]);
 
+  // A document change (STAFF_CARD.md C13): accepted only for the identity and the person it was
+  // sent for (same rule as saveCard); on success the person's overview is read again so the
+  // card, the roster's missing-papers count and the Documents rows all show the new state.
+  async function changeDocument(
+    slot: DocSlot,
+    send: (id: string) => ReturnType<typeof uploadPersonDocument>,
+  ): Promise<DocResult> {
+    const id = selectedId;
+    const sentFor = identity;
+    if (!id || !sentFor)
+      return {
+        ok: false,
+        message: "Your session changed. Reload to continue.",
+      };
+    try {
+      const res = await send(id);
+      if (!acceptResponse(res, sentFor) || res.data.slot !== slot)
+        return {
+          ok: false,
+          message:
+            "Your session changed, so the answer was discarded. Reload to check the documents.",
+        };
+      // The write succeeded: apply the returned map now, identity- and person-bound. The overview
+      // read below only refreshes the rest and is best effort; its failure is never a save error.
+      const applyMap = (docs: HrDocuments) => {
+        setPslot((prev) => {
+          if (
+            prev.id !== id ||
+            prev.load.kind !== "ready" ||
+            !isSameIdentity(prev.owner, sentFor)
+          )
+            return prev;
+          const data = prev.load.data;
+          return {
+            ...prev,
+            load: {
+              kind: "ready",
+              data: {
+                ...data,
+                person: {
+                  ...data.person,
+                  card: { ...data.person.card, documents: docs },
+                },
+              },
+            },
+          };
+        });
+        setRslot((prev) => {
+          if (
+            prev.load.kind !== "ready" ||
+            !isSameIdentity(prev.owner, sentFor)
+          )
+            return prev;
+          const r = prev.load.roster;
+          return {
+            owner: prev.owner,
+            load: {
+              kind: "ready",
+              roster: {
+                ...r,
+                people: r.people.map((p) =>
+                  p.team_member_id === id
+                    ? {
+                        ...p,
+                        flags: {
+                          ...p.flags,
+                          papers_missing: Object.values(docs).filter(
+                            (d) => !d.present,
+                          ).length,
+                        },
+                      }
+                    : p,
+                ),
+              },
+            },
+          };
+        });
+      };
+      if (res.data.documents) applyMap(res.data.documents);
+      try {
+        const fresh = await getPersonOverview(id);
+        if (
+          acceptResponse(fresh, sentFor, fresh.data.viewer_team_member_id) &&
+          fresh.data.person.team_member_id === id
+        ) {
+          if (selectedIdRef.current === id)
+            setPslot({
+              owner: sentFor,
+              id,
+              load: { kind: "ready", data: fresh.data },
+            });
+          applyMap(fresh.data.person.card.documents);
+        }
+      } catch {
+        /* best effort: the saved state is already on screen */
+      }
+      return { ok: true };
+    } catch (err: unknown) {
+      return docFailure(err);
+    }
+  }
+  const uploadDocument = (slot: DocSlot, file: File) =>
+    changeDocument(slot, (id) => uploadPersonDocument(id, slot, file));
+  const removeDocument = (slot: DocSlot) =>
+    changeDocument(slot, (id) => removePersonDocument(id, slot));
+
+  async function saveCard(body: CardEditBody): Promise<CardEditResult> {
+    const id = selectedId;
+    const sentFor = identity;
+    if (!id || !sentFor)
+      return {
+        ok: false,
+        errors: [],
+        general: "Your session changed. Reload to continue.",
+      };
+    try {
+      const res = await editPersonCard(id, body);
+      if (
+        !acceptResponse(res, sentFor, res.data.viewer_team_member_id) ||
+        res.data.person.team_member_id !== id
+      )
+        return {
+          ok: false,
+          errors: [],
+          general:
+            "Your session changed, so the answer was discarded. Reload to check the card.",
+        };
+      const fresh = res.data.person.card;
+      if (selectedIdRef.current === id)
+        setPslot({
+          owner: sentFor,
+          id,
+          load: { kind: "ready", data: res.data },
+        });
+      setRslot((prev) => {
+        if (prev.load.kind !== "ready" || !isSameIdentity(prev.owner, sentFor))
+          return prev;
+        const r = prev.load.roster;
+        const old = r.people.find((p) => p.team_member_id === id);
+        return {
+          owner: prev.owner,
+          load: {
+            kind: "ready",
+            roster: {
+              ...r,
+              people: r.people.map((p) =>
+                p.team_member_id === id
+                  ? {
+                      ...p,
+                      has_record: true,
+                      employee_id: fresh.employee_id,
+                      hire_date: fresh.hire_date,
+                      unit: fresh.unit,
+                      active: fresh.is_active,
+                      flags: {
+                        ...p.flags,
+                        papers_missing: papersMissing(fresh),
+                      },
+                    }
+                  : p,
+              ),
+              pulse:
+                r.pulse && old
+                  ? {
+                      ...r.pulse,
+                      people_without_record: Math.max(
+                        0,
+                        r.pulse.people_without_record -
+                          (old.has_record ? 0 : 1),
+                      ),
+                      active_people: Math.max(
+                        0,
+                        r.pulse.active_people +
+                          (fresh.is_active ? 1 : 0) -
+                          (old.active ? 1 : 0),
+                      ),
+                    }
+                  : r.pulse,
+            },
+          },
+        };
+      });
+      setEditing((cur) => (cur && cur.id === id ? null : cur));
+      return { ok: true };
+    } catch (err: unknown) {
+      return saveFailure(err);
+    }
+  }
+
   const grouped = useMemo(() => {
     if (!roster) return [];
     const f = q.trim().toLowerCase();
@@ -555,6 +868,8 @@ function PeopleConsole() {
   if (!roster) return <div className="h-64" />;
 
   const full = roster.scope === "all";
+  const canWriteCard = full && capabilities.hr_card_write === true;
+  const formMode = editing && editing.id === selectedId ? editing.mode : null;
   const viewer = roster.people.find(
     (p) => p.team_member_id === roster.viewer_team_member_id,
   );
@@ -732,7 +1047,7 @@ function PeopleConsole() {
                     </h2>
                     <p className={`text-[14px] ${SOFT}`}>
                       {[
-                        card?.role ?? selected.role,
+                        card?.position?.trim() || card?.role || selected.role,
                         card?.unit ?? selected.unit,
                         card?.employer_entity,
                       ]
@@ -752,12 +1067,54 @@ function PeopleConsole() {
                           contract ends in {ends} days
                         </Chip>
                       )}
+                      {card?.on_payroll === false && (
+                        <Chip tone={SOFT_TONE}>Not on payroll</Chip>
+                      )}
                     </div>
                   </div>
                 </div>
+                {canWriteCard &&
+                  person &&
+                  formMode === null &&
+                  selected.has_record && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditing({
+                          id: selected.team_member_id,
+                          mode: "edit",
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200 hover:-translate-y-0.5"
+                      style={{
+                        color: TONE.me,
+                        border: `1.5px solid ${tint(TONE.me, 55)}`,
+                        background: tint(TONE.me, 6),
+                      }}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden />
+                      Edit
+                    </button>
+                  )}
               </div>
 
-              {!selected.has_record || pload.kind === "no-record" ? (
+              {formMode === "create" ? (
+                <CardEditForm
+                  key={`${selected.team_member_id}:create`}
+                  mode="create"
+                  card={null}
+                  onSubmit={saveCard}
+                  onCancel={() => setEditing(null)}
+                />
+              ) : formMode === "edit" && person ? (
+                <CardEditForm
+                  key={`${selected.team_member_id}:edit`}
+                  mode="edit"
+                  card={person.card}
+                  onSubmit={saveCard}
+                  onCancel={() => setEditing(null)}
+                />
+              ) : !selected.has_record || pload.kind === "no-record" ? (
                 <div
                   className={`rounded-[28px] border border-dashed ${HAIR} p-8 text-center`}
                 >
@@ -768,16 +1125,25 @@ function PeopleConsole() {
                     There is nothing to show for this person until an HR record
                     exists.
                   </p>
-                  {full && (
+                  {canWriteCard && (
                     <p className="mt-4">
-                      <PillLink
-                        href="/hr/employees"
-                        tone={TONE.me}
-                        filledStyle
-                        icon={UserPlus}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditing({
+                            id: selected.team_member_id,
+                            mode: "create",
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold text-white transition-all duration-200 hover:-translate-y-0.5"
+                        style={{
+                          background: TONE.me,
+                          boxShadow: `0 8px 18px -10px ${TONE.me}`,
+                        }}
                       >
-                        Create record
-                      </PillLink>
+                        <UserPlus className="h-4 w-4" aria-hidden />
+                        Add to HR
+                      </button>
                     </p>
                   )}
                 </div>
@@ -827,7 +1193,18 @@ function PeopleConsole() {
                         viewer="admin"
                       />
                     )}
-                    {open === "me" && <MeDetail me={person} viewer="admin" />}
+                    {open === "me" && (
+                      <MeDetail me={person} viewer="admin" showPapers={false} />
+                    )}
+                    {open === "me" && (
+                      <DocumentsBlock
+                        key={selected.team_member_id}
+                        card={person.card}
+                        canWrite={canWriteCard}
+                        onUpload={uploadDocument}
+                        onRemove={removeDocument}
+                      />
+                    )}
                     <p
                       className={`mt-8 border-t ${HAIR} pt-4 text-[12px] ${SOFT}`}
                     >

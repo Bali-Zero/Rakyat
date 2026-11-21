@@ -37,13 +37,16 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import asyncpg
 
 from backend.services.garuda_flow import pricing
 from backend.services.garuda_orders import idempotency, journal
 from backend.services.garuda_orders.errors import (
+    CheckoutNotResumable,
     HonouredWithoutPaidPayment,
+    InvalidStateTransition,
     NoOpenLateCase,
     OrderNotFound,
     OrderNotReady,
@@ -196,6 +199,26 @@ async def _open_late_case(
     )
 
 
+def _is_provider_checkout_url(url: str | None, hosts: frozenset[str]) -> bool:
+    """`https:` on one of the adapter's own checkout hosts, nothing else —
+    no userinfo, no explicit port (the server-side twin of the tracker's
+    `isProviderCheckoutUrl`)."""
+
+    if not url:
+        return False
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and port is None
+        and "@" not in parts.netloc
+        and (parts.hostname or "") in hosts
+    )
+
+
 class GarudaOrderRepository:
     def __init__(
         self,
@@ -319,7 +342,9 @@ class GarudaOrderRepository:
             )
             if outcome.replayed:
                 assert outcome.response_body is not None
-                return outcome.response_body, True
+                # A pre-upgrade replay can contain a provider capability or
+                # the old pending-resume scheme. Return the tracker response.
+                return {**outcome.response_body, "checkout_url": None}, True
 
             order_id = outcome.order_id
             if order_id is None:
@@ -334,8 +359,9 @@ class GarudaOrderRepository:
                 # Idempotency-Keys are allowed to reference the same order
                 # (no uniqueness on garuda_order_idempotency.order_id), and
                 # this also means a live `created` order gets a REAL
-                # checkout_url below (the CREATED branch calls the provider)
-                # instead of ever reaching the `pending-resume:` placeholder.
+                # checkout_url below (the CREATED branch calls the provider),
+                # while an already `awaiting_payment` order cleanly returns
+                # `checkout_url=None` for the tracker redirect.
                 existing = await conn.fetchrow(
                     """
                     SELECT order_id FROM garuda_orders
@@ -462,7 +488,6 @@ class GarudaOrderRepository:
                         order_id=order_id,
                         journal_event_id=event_id,
                         job_type="checkout_ready_email",
-                        payload={"checkout_url": checkout.checkout_url},
                     )
             checkout_url = checkout.checkout_url
             final_state = OrderState.AWAITING_PAYMENT.value
@@ -480,22 +505,9 @@ class GarudaOrderRepository:
             # offer a checkout action ONLY while the order is genuinely
             # still awaiting payment.
             final_state = row["state"]
-            if final_state == OrderState.AWAITING_PAYMENT.value:
-                checkout_row = await self._pool.fetchrow(
-                    "SELECT provider_session_id FROM garuda_orders WHERE order_id = $1", order_id
-                )
-                # Sandbox-safe placeholder: the real checkout_url isn't
-                # persisted (it's a provider capability, never journal/DB
-                # content per SM-G03) -- a genuine resume-after-crash
-                # re-fetches it from the provider by provider_session_id.
-                # Kept minimal here; flagged in the PR report as a
-                # follow-up rather than guessed (scoped to the orchestrator
-                # per the standing "returning customer" spec).
-                checkout_url = (
-                    f"pending-resume:{checkout_row['provider_session_id']}" if checkout_row else ""
-                )
-            else:
-                checkout_url = None
+            # CheckoutFlow goes to the tracker on resume. The provider URL
+            # is a capability available only on the initial checkout.
+            checkout_url = None
 
         response_body = {
             "order_id": order_id,
@@ -508,7 +520,7 @@ class GarudaOrderRepository:
                 conn,
                 key_sha256=idempotency_key_sha256,
                 response_status=201,
-                response_body=response_body,
+                response_body={**response_body, "checkout_url": None},
             )
         return response_body, False
 
@@ -521,6 +533,66 @@ class GarudaOrderRepository:
                     datetime.now(UTC),
                 )
             )
+
+    # ---- resumeOrderCheckout: tracker "Pay now" -------------------------
+
+    async def resume_checkout(self, *, order_id: str, result_id: str) -> str:
+        """Return the provider checkout URL of the order's ONE bound session,
+        read from the provider at request time.
+
+        Writes nothing: no order, journal, outbox, idempotency or inbox row,
+        and the URL is never logged (the #455 boundary — a provider URL is a
+        payment capability and lives only in this response). It never mints a
+        second session: a closed one is refused with `CheckoutNotResumable`,
+        so "at most one payable session per order" holds by construction and
+        every webhook for this order still matches `provider_session_id`.
+
+        `result_id` is the magic-session actor; a non-owned order raises
+        `OrderNotFound` exactly like an absent one (non-enumerating).
+        """
+
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT state, provider, provider_session_id
+                  FROM garuda_orders
+                 WHERE order_id = $1 AND result_id_ref = $2
+                """,
+                order_id,
+                result_id,
+            )
+        if row is None:
+            raise OrderNotFound(order_id)
+        if row["state"] != OrderState.AWAITING_PAYMENT.value or not row["provider_session_id"]:
+            raise InvalidStateTransition(order_id)
+
+        provider = self.provider_for(row["provider"])
+        resume = getattr(provider, "resume_checkout_session", None)
+        if resume is None:
+            # Midtrans: the Snap URL is not retrievable and an unused token
+            # cannot be voided, so it can never be re-served safely.
+            raise CheckoutNotResumable(order_id)
+        try:
+            status = await resume(provider_session_id=row["provider_session_id"])
+        except Exception as exc:  # provider transport/HTTP errors
+            logger.warning(
+                "garuda_orders: checkout resume lookup failed for %s (%s)",
+                order_id,
+                type(exc).__name__,
+            )
+            raise PaymentProviderUnavailable(order_id) from exc
+        if not status.is_open:
+            raise CheckoutNotResumable(order_id)
+        if not _is_provider_checkout_url(
+            status.checkout_url, getattr(provider, "checkout_hosts", frozenset())
+        ):
+            logger.warning(
+                "garuda_orders: provider re-served a checkout URL off its allow-list for %s",
+                order_id,
+            )
+            raise PaymentProviderUnavailable(order_id)
+        assert status.checkout_url is not None
+        return status.checkout_url
 
     # ---- OP-07: browser return observation ------------------------------
 
@@ -589,7 +661,7 @@ class GarudaOrderRepository:
                 return "OP-09"  # duplicate delivery — already processed or in flight
 
             order = await conn.fetchrow(
-                "SELECT order_id, state, price_idr FROM garuda_orders WHERE provider_session_id = $1 FOR UPDATE",
+                "SELECT order_id, state, price_idr, provider_charge_id FROM garuda_orders WHERE provider_session_id = $1 FOR UPDATE",
                 event.provider_session_id,
             )
             if order is None:
@@ -723,6 +795,16 @@ class GarudaOrderRepository:
                     journal_event_id=event_id,
                     job_type="staff_page_duplicate_charge",
                 )
+            elif (
+                state == OrderState.REFUNDED.value
+                and order["provider_charge_id"] is not None
+                and event.provider_charge_id == order["provider_charge_id"]
+            ):
+                # The REFUNDED callback beat this PAID (OP-05 recorded the
+                # refunded charge). Same charge: this is the original payment
+                # of money already refunded, not new money -- no late case, no
+                # page, no journal event; the inbox row commits as OP-09.
+                transition_id = "OP-09"
             elif state == OrderState.REFUNDED.value:
                 transition_id = "OP-F04"
                 # CORRECTED (refuter finding): this branch previously opened
@@ -920,9 +1002,12 @@ class GarudaOrderRepository:
             else:
                 transition_id, event_name = "OP-06", "payment.refunded"
             await conn.execute(
-                "UPDATE garuda_orders SET state = 'refunded' WHERE order_id = $1 AND state = $2",
+                "UPDATE garuda_orders SET state = 'refunded', "
+                "provider_charge_id = COALESCE(provider_charge_id, $3) "
+                "WHERE order_id = $1 AND state = $2",
                 order_id,
                 state,
+                event.provider_charge_id,
             )
             event_id = await journal.append_event(
                 conn,

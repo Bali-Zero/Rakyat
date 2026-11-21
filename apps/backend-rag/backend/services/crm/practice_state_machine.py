@@ -8,6 +8,7 @@ Created: 2026-04-06 — CRM Solidification Blocco A
 """
 
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from backend.app.utils.crm_utils import is_crm_admin
@@ -130,6 +131,47 @@ def validate_service_selected(to_state: str, practice_type_code: str | None) -> 
         to_state,
         f"select a service before moving to '{to_state}'",
     )
+
+
+# Owner decision 2026-11-13: a practice cannot move to Sending Invoice without a Quoted Price.
+# Before this gate the status moved anyway, ``InvoiceAutomationService`` produced no invoice and
+# nobody noticed. Only the QUOTED price counts: a discount that brings the total to 0 is a
+# deliberate owner action (the discount is already capped at the quoted price) and passes.
+QUOTED_PRICE_REQUIRED_DETAIL = "Quoted Price is required before Sending Invoice"
+
+
+class QuotedPriceRequiredError(Exception):
+    """Raised when a practice would enter Sending Invoice without a Quoted Price (null or 0)."""
+
+    def __init__(self) -> None:
+        super().__init__(QUOTED_PRICE_REQUIRED_DETAIL)
+
+
+def has_quoted_price(quoted_price: Any) -> bool:
+    """True when ``quoted_price`` is a number greater than zero (None, 0, '' and junk are not)."""
+    if quoted_price is None or isinstance(quoted_price, bool):
+        return False
+    try:
+        return Decimal(str(quoted_price)) > 0
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def validate_quoted_price_for_invoice(to_state: str | None, quoted_price: Any) -> bool:
+    """
+    Gate: entering ``sending_invoice`` (legacy names included) needs a Quoted Price > 0.
+
+    ``quoted_price`` must be the EFFECTIVE price after the same write (a request that sets the
+    price and the status together passes).
+
+    Raises:
+        QuotedPriceRequiredError: target is sending_invoice and the price is null or 0
+    """
+    if normalize_state(to_state or "") != "sending_invoice":
+        return True
+    if has_quoted_price(quoted_price):
+        return True
+    raise QuotedPriceRequiredError
 
 
 # Legacy state mapping for migration

@@ -34,6 +34,7 @@ from backend.app.deps.crm_access import get_crm_user_filter
 from backend.app.deps.crm_service_write import verify_crm_write_key
 from backend.app.services.crm.audit_logger import audit_change, audit_logger
 from backend.app.services.crm.metrics import metrics_collector, track_client_creation
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import (
     AvatarUrl,
     is_crm_admin,
@@ -50,6 +51,7 @@ from backend.db.repositories.client_repository import (
 )
 from backend.phone_lock import lock_phone_cores, phone_core
 from backend.services.common.background import spawn
+from backend.services.crm import client_search
 from backend.services.crm.client_service import ClientService
 from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.gender import normalize_gender
@@ -166,7 +168,7 @@ async def get_current_user_or_internal(request: Request) -> dict | None:
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("get_current_user_or_internal: auth failed: %s", e)
+        logger.warning("get_current_user_or_internal: auth failed (%s)", type(e).__name__)
         raise HTTPException(status_code=401, detail="authentication required") from e
 
 
@@ -225,10 +227,9 @@ async def _create_drive_folder_with_observability(
                 f"ensure_client_folder returned success=False: {result.get('error')}"
             )
             logger.error(
-                "Drive folder creation failed for client %s (%s): %s",
+                "Drive folder creation failed for client %s (%s)",
                 client_id,
                 client_type,
-                result.get("error"),
             )
             _report_drive_folder_failure(client_id, client_name, client_type, err)
     except Exception as e:
@@ -236,7 +237,7 @@ async def _create_drive_folder_with_observability(
             "Drive folder creation exception for client %s (%s): %s",
             client_id,
             client_type,
-            e,
+            type(e).__name__,
         )
         _report_drive_folder_failure(client_id, client_name, client_type, e)
 
@@ -606,9 +607,7 @@ async def create_client(
         creator_email = (current_user.get("email") or "").strip().lower() if current_user else None
         if not creator_email:
             logger.error(
-                f"create_client: missing email in current_user context. "
-                f"Keys: {list(current_user.keys()) if current_user else 'None'}, "
-                f"sub: {current_user.get('sub') if current_user else 'N/A'}"
+                "create_client: missing email in current_user context",
             )
             raise HTTPException(
                 status_code=401,
@@ -678,9 +677,8 @@ async def create_client(
                     )
                     if existing_company_id:
                         logger.info(
-                            "Company dedup: found existing company %s by NIB %s",
+                            "Company dedup: found existing company %s",
                             existing_company_id,
-                            nib,
                         )
 
             if not existing_company_id:
@@ -742,7 +740,7 @@ async def create_client(
                 db_pool=db_pool,
             )
         except Exception as e:
-            logger.error("Drive folder creation scheduling failed: %s", e)
+            logger.error("Drive folder creation scheduling failed (%s)", type(e).__name__)
             _report_drive_folder_failure(new_client["id"], client.full_name, client.client_type, e)
 
         # Invalidazione extra cache HTTP (il service invalida la memory cache)
@@ -758,7 +756,7 @@ async def create_client(
             background_tasks.add_task(send_client_welcome, new_client["id"], db_pool)
             background_tasks.add_task(schedule_client_welcome_email, new_client["id"], db_pool)
         except Exception as e:
-            logger.error("Welcome communication setup failed: %s", e)
+            logger.error("Welcome communication setup failed (%s)", type(e).__name__)
 
         # Auto-create portal profile (team_members with role='client')
         try:
@@ -772,12 +770,12 @@ async def create_client(
                 full_name=new_client.get("full_name", ""),
             )
         except Exception as e:
-            logger.error("Portal profile creation setup failed: %s", e)
+            logger.error("Portal profile creation setup failed (%s)", type(e).__name__)
 
         return ClientResponse(**new_client)
 
     except ResourceConflictError as e:
-        logger.warning("Integrity error creating client: %s", e)
+        logger.warning("Integrity error creating client (%s)", type(e).__name__)
         raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         # Intentional HTTP errors (409 duplicate-phone gate, 401 missing email)
@@ -843,11 +841,10 @@ async def list_clients(
         # RBAC: non-admin users only see their own clients
         rbac_filter = get_crm_user_filter(current_user)
 
+        # Filter KEY names only: the values can hold emails.
         logger.info(
-            "📋 [CRM Clients] User %s requesting clients list (assigned_to_filter=%s, rbac_filter=%s)",
-            current_user_email,
-            assigned_to,
-            rbac_filter,
+            "📋 [CRM Clients] requesting clients list (filters: %s)",
+            sorted([k for k, v in (("assigned_to", assigned_to), ("rbac", rbac_filter)) if v]),
         )
 
         async with db_pool.acquire() as conn:
@@ -922,7 +919,8 @@ async def list_clients(
             # every team member. Unassigned clients stay admin-only until triaged.
             if rbac_filter is not None:
                 query_parts.append(
-                    f" AND (c.assigned_to = ${param_index} OR c.tax_consultant = ${param_index})",
+                    f" AND (c.assigned_to = ANY(${param_index}::text[])"
+                    f" OR c.tax_consultant = ANY(${param_index}::text[]))",
                 )
                 params.append(rbac_filter)
                 param_index += 1
@@ -958,21 +956,33 @@ async def list_clients(
             # users — everyone sees the full client list. The RBAC filter from
             # get_crm_user_filter() above already handles this correctly.
 
-            if search:
-                search_pattern = f"%{search}%"
-                # NIB/NPWP: on the client row, or on a linked company (the create
-                # path moves the NIB onto companies). The whole group is AND-ed, so
-                # the RBAC clause above still bounds every match.
-                ident = f"${param_index + 3}"
-                query_parts.append(
-                    f" AND (c.full_name ILIKE ${param_index} OR c.email ILIKE ${param_index + 1} OR c.phone ILIKE ${param_index + 2}"
-                    f" OR c.nib ILIKE {ident} OR c.npwp ILIKE {ident}"
-                    " OR EXISTS (SELECT 1 FROM client_company_links ccl"
-                    " JOIN companies co ON co.id = ccl.company_id"
-                    f" WHERE ccl.client_id = c.id AND (co.nib ILIKE {ident} OR co.npwp_company ILIKE {ident})))",
-                )
-                params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
-                param_index += 4
+            smart_search = None
+            if isinstance(search, str) and search.strip():
+                if await client_search.smart_search_available(conn):
+                    smart_search = await client_search.build_client_search(
+                        conn, search, param_index
+                    )
+                if smart_search is not None:
+                    query_parts.append(smart_search.clause)
+                    params.extend(smart_search.params)
+                    param_index = smart_search.next_index
+                else:
+                    # Migration 358 not applied yet, or every typed token is shorter than a
+                    # trigram: the legacy substring search answers.
+                    search_pattern = f"%{search}%"
+                    # NIB/NPWP: on the client row, or on a linked company (the create
+                    # path moves the NIB onto companies). The whole group is AND-ed, so
+                    # the RBAC clause above still bounds every match.
+                    ident = f"${param_index + 3}"
+                    query_parts.append(
+                        f" AND (c.full_name ILIKE ${param_index} OR c.email ILIKE ${param_index + 1} OR c.phone ILIKE ${param_index + 2}"
+                        f" OR c.nib ILIKE {ident} OR c.npwp ILIKE {ident}"
+                        " OR EXISTS (SELECT 1 FROM client_company_links ccl"
+                        " JOIN companies co ON co.id = ccl.company_id"
+                        f" WHERE ccl.client_id = c.id AND (co.nib ILIKE {ident} OR co.npwp_company ILIKE {ident})))",
+                    )
+                    params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
+                    param_index += 4
 
             if nationality:
                 query_parts.append(f" AND c.nationality ILIKE ${param_index}")
@@ -993,8 +1003,9 @@ async def list_clients(
                     params.append(passport_expiring_days)
                     param_index += 1
 
+            order_by = smart_search.order_by if smart_search else "c.created_at DESC"
             query_parts.append(
-                f" ORDER BY c.created_at DESC LIMIT ${param_index} OFFSET ${param_index + 1}",
+                f" ORDER BY {order_by} LIMIT ${param_index} OFFSET ${param_index + 1}",
             )
             params.extend([limit, offset])
 
@@ -1002,9 +1013,7 @@ async def list_clients(
             rows = await conn.fetch(query, *params)
 
             clients = [ClientResponse(**dict(row)) for row in rows]
-            logger.info(
-                f"📋 [CRM Clients] Returning {len(clients)} clients for {current_user_email}",
-            )
+            logger.info("📋 [CRM Clients] Returning %d clients", len(clients))
             return clients
 
     except HTTPException:
@@ -1103,7 +1112,7 @@ async def get_client_avatar(
                 header, b64 = avatar_url.split(",", 1)
                 media_type = "image/jpeg"
                 if header.startswith("data:") and ";" in header:
-                    media_type = header[len("data:"):].split(";", 1)[0] or media_type
+                    media_type = header[len("data:") :].split(";", 1)[0] or media_type
                 image_bytes = base64.b64decode(b64)
             except (ValueError, binascii.Error) as e:
                 raise HTTPException(status_code=422, detail="Malformed avatar data") from e
@@ -1183,7 +1192,9 @@ async def upload_client_avatar(
             ACL="public-read",
         )
     except Exception as e:
-        logger.error("Avatar upload to Tigris failed for client %s: %s", client_id, e)
+        logger.error(
+            "Avatar upload to Tigris failed for client %s: %s", client_id, type(e).__name__
+        )
         raise HTTPException(status_code=502, detail="Avatar storage failed") from e
 
     public_url = f"https://{_tigris.PUBLIC_HOST}/{key}"
@@ -1196,7 +1207,7 @@ async def upload_client_avatar(
         )
     await invalidate_cache("zantara:crm_clients_stats:*")
 
-    logger.info("Avatar uploaded for client %s -> %s", client_id, key)
+    logger.info("Avatar uploaded for client %s", client_id)
     return {"success": True, "avatar_url": public_url}
 
 
@@ -1583,7 +1594,7 @@ async def upsert_client_by_phone(
     try:
         await invalidate_cache("zantara:crm_clients_stats:*")
     except Exception as exc:  # pragma: no cover - cache best-effort
-        logger.warning("upsert-by-phone: cache invalidation failed: %s", exc)
+        logger.warning("upsert-by-phone: cache invalidation failed: %s", type(exc).__name__)
 
     if result.get("matched_count", 0) > 1:
         # Do NOT log the phone (PII / UU PDP + log-injection: it's user-supplied).
@@ -1760,8 +1771,7 @@ async def update_client(
                     _converged = False
                     for _ in range(3):
                         _cur = await conn.fetchrow(
-                            "SELECT phone, phone_normalized, whatsapp"
-                            "  FROM clients WHERE id = $1",
+                            "SELECT phone, phone_normalized, whatsapp  FROM clients WHERE id = $1",
                             client_id,
                         )
                         _want = {
@@ -1833,13 +1843,12 @@ async def update_client(
                     ),
                 )
             except Exception as e:
-                logger.error("Portal notification for profile update failed: %s", e)
+                logger.error("Portal notification for profile update failed: %s", type(e).__name__)
 
             log_success(
                 logger,
                 "Updated client",
                 client_id=client_id,
-                updated_by=user_email,
             )
 
             # Track metrics
@@ -1909,7 +1918,6 @@ async def delete_client(
                 logger,
                 "Deleted (soft) client",
                 client_id=client_id,
-                deleted_by=user_email,
             )
 
             # Track metrics
@@ -2052,12 +2060,9 @@ async def get_clients_stats(
         # scoped (non-admin) requests $1 is the user email in every query below
         # (the only pre-existing param, STATS_DAYS_RECENT, shifts to $2 in the
         # new_last_30_days query).
-        user_email = (
-            current_user.get("email", "").lower()
-            if isinstance(current_user, dict)
-            else ""
-        )
+        user_email = current_user.get("email", "").lower() if isinstance(current_user, dict) else ""
         scoped = bool(user_email) and not is_crm_admin(current_user)
+        peers = sorted(caller_pool_peers(current_user))
 
         async with db_pool.acquire() as conn:
             # Total clients by status (exclude soft-deleted)
@@ -2065,10 +2070,10 @@ async def get_clients_stats(
                 f"""
                 SELECT status, COUNT(*) as count
                 FROM clients
-                WHERE deleted_at IS NULL{" AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""}
+                WHERE deleted_at IS NULL{" AND (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))" if scoped else ""}
                 GROUP BY status
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             # Clients by assigned team member (exclude soft-deleted)
@@ -2077,12 +2082,14 @@ async def get_clients_stats(
                 SELECT assigned_to, COUNT(*) as count
                 FROM clients
                 WHERE assigned_to IS NOT NULL AND deleted_at IS NULL{
-                    " AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""
+                    " AND (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))"
+                    if scoped
+                    else ""
                 }
                 GROUP BY assigned_to
                 ORDER BY count DESC
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             # New clients last N days
@@ -2091,10 +2098,10 @@ async def get_clients_stats(
                     """
                     SELECT COUNT(*) as count
                     FROM clients
-                    WHERE (assigned_to = $1 OR tax_consultant = $1)
+                    WHERE (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))
                         AND created_at >= NOW() - INTERVAL '1 day' * $2
                     """,
-                    user_email,
+                    peers,
                     STATS_DAYS_RECENT,
                 )
             else:
@@ -2113,11 +2120,11 @@ async def get_clients_stats(
                 SELECT pt.name as practice_type, COUNT(p.id) as count
                 FROM practices p
                 JOIN practice_types pt ON p.practice_type_id = pt.id
-                {"WHERE p.assigned_to = $1" if scoped else ""}
+                {"WHERE p.assigned_to = ANY($1::text[])" if scoped else ""}
                 GROUP BY pt.name
                 ORDER BY count DESC
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             # Passport health counts
@@ -2129,9 +2136,9 @@ async def get_clients_stats(
                     COUNT(*) FILTER (WHERE last_interaction_date < NOW() - INTERVAL '30 days' OR last_interaction_date IS NULL) as silent_30d
                 FROM clients
                 WHERE deleted_at IS NULL AND status != 'inactive'
-                    AND passport_expiry IS NOT NULL{" AND (assigned_to = $1 OR tax_consultant = $1)" if scoped else ""}
+                    AND passport_expiry IS NOT NULL{" AND (assigned_to = ANY($1::text[]) OR tax_consultant = ANY($1::text[]))" if scoped else ""}
                 """,
-                *([user_email] if scoped else []),
+                *([peers] if scoped else []),
             )
 
             by_status = {row["status"]: row["count"] for row in by_status_rows}
@@ -2372,7 +2379,7 @@ async def get_client_ai_summary(
     start_time = time.time()
 
     # RBAC: enforce per-user filter unless admin
-    assigned_filter: str | None = None
+    assigned_filter: list[str] | None = None
     if not is_crm_admin(current_user):
         assigned_filter = get_crm_user_filter(current_user)
 
@@ -2386,7 +2393,7 @@ async def get_client_ai_summary(
                            ai_summary_schema_version, ai_summary_file_hash
                     FROM clients
                     WHERE id = $1
-                      AND (assigned_to = $2 OR tax_consultant = $2 OR assigned_to IS NULL)
+                      AND (assigned_to = ANY($2::text[]) OR tax_consultant = ANY($2::text[]) OR assigned_to IS NULL)
                     """,
                     client_id,
                     assigned_filter,
@@ -2421,20 +2428,9 @@ async def get_client_ai_summary(
                 # injection vector even though FastAPI already validates the
                 # path param as int (defense in depth).
                 safe_client_id = int(client_id)
-                safe_schema = (
-                    str(row["ai_summary_schema_version"] or "")
-                    .replace(
-                        "\n",
-                        " ",
-                    )
-                    .replace("\r", " ")[:64]
-                )
-                safe_fp = (row["ai_summary_file_hash"] or "")[:12]
                 logger.info(
-                    "ai_summary served client_id=%d schema=%s fp=%s elapsed_ms=%d",
+                    "ai_summary served client_id=%d elapsed_ms=%d",
                     safe_client_id,
-                    safe_schema,
-                    safe_fp,
                     int((time.time() - start_time) * 1000),
                 )
                 return AiSummaryResponse(
@@ -2470,9 +2466,10 @@ async def get_client_ai_summary(
         raise
     except Exception as e:
         # CodeQL log-injection: cast to int defangs any non-numeric path.
-        logger.exception(
-            "ai_summary fetch failed for client %d",
+        logger.error(
+            "ai_summary fetch failed for client %d (%s)",
             int(client_id),
+            type(e).__name__,
         )
         raise handle_database_error(e) from e
 
@@ -2532,9 +2529,10 @@ async def get_client_wa_case_intelligence(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(
-            "wa_case_intelligence fetch failed for client %d",
+        logger.error(
+            "wa_case_intelligence fetch failed for client %d (%s)",
             int(client_id),
+            type(e).__name__,
         )
         raise handle_database_error(e) from e
 

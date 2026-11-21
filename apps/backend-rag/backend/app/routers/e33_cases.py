@@ -57,6 +57,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.dependencies import get_database_pool, require_team_member
+from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.crm.e33_case_repository import E33CaseRepository
 from backend.services.crm.e33_guarantee_scanner import ScanSwitchState, resolve_scan_switch
@@ -112,8 +113,7 @@ def _assert_client_access(current_user: dict[str, Any], assigned_to: str | None)
     """403 unless the user is a CRM admin or the client is assigned to them."""
     if is_crm_admin(current_user):
         return
-    user_email = (current_user.get("email") or "").lower()
-    if not assigned_to or assigned_to.lower() != user_email:
+    if not assigned_to or assigned_to.lower() not in caller_pool_peers(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this E33 case",
@@ -436,9 +436,9 @@ async def list_cases(
 
     if not is_crm_admin(current_user):
         clauses.append(
-            f"e33_cases.client_id IN (SELECT id FROM clients WHERE LOWER(assigned_to) = ${len(params) + 1})"
+            f"e33_cases.client_id IN (SELECT id FROM clients WHERE LOWER(assigned_to) = ANY(${len(params) + 1}::text[]))"
         )
-        params.append((current_user.get("email") or "").lower())
+        params.append(sorted(caller_pool_peers(current_user)))
 
     if stage:
         clauses.append(f"e33_cases.stage = ${len(params) + 1}")
@@ -633,10 +633,10 @@ async def get_summary(
     rbac_clause: str | None = None
     rbac_params: list[Any] = []
     if not is_crm_admin(current_user):
-        rbac_params.append((current_user.get("email") or "").lower())
+        rbac_params.append(sorted(caller_pool_peers(current_user)))
         rbac_clause = (
             "e33_cases.client_id IN "
-            f"(SELECT id FROM clients WHERE LOWER(assigned_to) = ${len(rbac_params)})"
+            f"(SELECT id FROM clients WHERE LOWER(assigned_to) = ANY(${len(rbac_params)}::text[]))"
         )
 
     async with db_pool.acquire() as conn:

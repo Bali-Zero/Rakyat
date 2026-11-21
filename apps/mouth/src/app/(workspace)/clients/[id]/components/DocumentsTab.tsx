@@ -6,7 +6,10 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { ClientDocument } from "@/lib/api/crm/crm.types";
+import type {
+  ClientCompanyLink,
+  ClientDocument,
+} from "@/lib/api/crm/crm.types";
 import {
   CellStack,
   DeskStrip,
@@ -16,6 +19,7 @@ import {
   HairlineGrid,
   HairlineHead,
   HairlineRow,
+  MICRO_LABEL,
   StatePill,
   TABULAR,
   type PillTone,
@@ -31,9 +35,13 @@ import {
   type DocumentValidity,
 } from "./documentValidity";
 import { resolveCardDay } from "./witaClock";
+import { TaxDocumentsSection } from "./TaxDocumentsSection";
 
 /** The filter group that lists every void document of the profile, once. */
 const REMOVED_GROUP = "removed";
+
+/** The filter that also shows the tax folders read live from Drive. */
+const TAX_GROUP = "tax";
 
 const CATEGORY_ORDER = [
   "immigration",
@@ -156,6 +164,8 @@ export function DocumentsTab({
   onRefresh,
   initialGroup = "all",
   day: dayProp,
+  clientFolderId,
+  companyLinks,
 }: {
   clientId: number;
   /** Every row the tab lists: the live general documents plus every void
@@ -171,6 +181,10 @@ export function DocumentsTab({
   initialGroup?: string;
   /** The card's day (`YYYY-MM-DD`, the payload's `as_of`). */
   day?: string;
+  /** The client's Drive folder, for the Tax filter's Drive panel. */
+  clientFolderId?: string | null;
+  /** The linked companies, for the Tax filter's Drive panel. */
+  companyLinks?: readonly ClientCompanyLink[];
 }) {
   const day = resolveCardDay(dayProp);
   const [activeCategory, setActiveCategory] = useState<string>(initialGroup);
@@ -500,6 +514,19 @@ export function DocumentsTab({
           })}
         </HairlineBody>
       </HairlineGrid>
+
+      {/* Tax filter: the same read-only Drive tax folders as Tax › Tax
+          Documents (#345), mounted only while the filter is on so the other
+          filters make no Drive calls. */}
+      {activeCategory === TAX_GROUP && (
+        <section aria-label="Tax Documents" className="mt-6">
+          <h3 className={MICRO_LABEL}>Tax Documents</h3>
+          <TaxDocumentsSection
+            clientFolderId={clientFolderId}
+            companyLinks={companyLinks}
+          />
+        </section>
+      )}
     </div>
   );
 }

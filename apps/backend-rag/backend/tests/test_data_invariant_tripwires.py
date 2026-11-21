@@ -253,7 +253,7 @@ def test_client_contact_whatsapp_matches_the_price_list_generator():
     """The two sides of the system must name the SAME client-facing number.
 
     `settings.CLIENT_CONTACT_WHATSAPP` is what the backend hands a client when
-    the price sheet fails to load (pricing_plugin / zantara_tools fallback);
+    the price sheet fails to load (zantara_tools fallback);
     `_CANONICAL_WHATSAPP_DIGITS` in scripts/pricelist_2026/schema.py is what
     the sheet and the rendered price list print. They live in different trees
     and neither imports the other, so nothing but this test stops them from
@@ -321,7 +321,6 @@ def test_pricing_fallback_contacts_read_the_setting_and_never_a_literal():
 
     root = _repo_root() / "apps/backend-rag/backend"
     sources = [
-        root / "plugins/bali_zero/pricing_plugin.py",
         root / "services/misc/zantara_tools.py",
     ]
     for src in sources:

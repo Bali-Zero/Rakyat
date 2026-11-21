@@ -45,10 +45,14 @@ export const FunnelFrame: FC<FunnelFrameProps> = ({
     ) : null}
     <main style={{ flex: 1, padding: "var(--space-6)" }}>{children}</main>
     {trust ? <TrustBand {...trust} /> : null}
+    {/* `cta_handoff` is the LeadSource value for this shared bar (DAI-133);
+        the old `funnel-<name>` tag matched no LeadSource value. The funnel
+        name rides in the payload instead. */}
     <CTAHandoff
-      source={`funnel-${funnel}`}
+      source="cta_handoff"
       sessionId={sessionId}
       {...handoff}
+      payload={{ funnel, ...handoff?.payload }}
     />
   </div>
 );

@@ -101,6 +101,48 @@ def test_configure_logging_installs_the_filter_in_a_real_process():
     assert VALUE not in combined
 
 
+# httpx2 / httpcore2 are the successor packages pinned in requirements-prod.lock.txt;
+# their logger names were read from the 2.12.0 wheels (httpx2: `_client`; httpcore2:
+# `connection`, `http11`, `http2`, `proxy`, `socks`). The test never imports them.
+_SUCCESSOR_LOGGERS = (
+    "httpx2",
+    "httpcore2",
+    "httpcore2.connection",
+    "httpcore2.http11",
+    "httpcore2.http2",
+    "httpcore2.proxy",
+    "httpcore2.socks",
+)
+
+
+def test_configure_logging_holds_the_successor_http_loggers_at_warning():
+    """Without this an httpx2 INFO line carrying the full URL becomes a Sentry breadcrumb."""
+    probe = (
+        "import logging\n"
+        "from backend.app.setup.logging_config import configure_logging\n"
+        "configure_logging()\n"
+        f"for n in {_SUCCESSOR_LOGGERS!r}:\n"
+        "    print(n, logging.getLogger(n).getEffectiveLevel())\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=BACKEND_ROOT.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(BACKEND_ROOT.parent), "ENVIRONMENT": "development"},
+    )
+    assert proc.returncode == 0, f"probe failed: {proc.stderr[-2000:]}"
+    levels = {
+        line.split()[0]: int(line.split()[1])
+        for line in proc.stdout.splitlines()
+        if line.split()[:1] and line.split()[0] in _SUCCESSOR_LOGGERS
+    }
+    assert set(levels) == set(_SUCCESSOR_LOGGERS), proc.stdout[-500:]
+    for name, level in levels.items():
+        assert level >= logging.WARNING, f"{name} still emits below WARNING ({level})"
+
+
 # --- api -> rag proxy (measured emitter: rag_proxy logs the URL on upstream failure) ---
 
 
@@ -171,3 +213,15 @@ async def test_rag_proxy_failure_log_masks_search(monkeypatch, caplog, exc, rout
     assert client.urls == [f"{path}?search={VALUE}&page=2"], "upstream URL must stay unchanged"
     assert f"{path}?search=***&page=2" in caplog.text, "failure line never logged — vacuous"
     assert VALUE not in caplog.text
+
+
+def test_redact_query_params_replaces_only_the_search_values():
+    from backend.core.secret_log_redaction import redact_query_params
+
+    assert redact_query_params({"search": VALUE, " Q ": VALUE, "page": "2"}) == {
+        "search": "***",
+        " Q ": "***",
+        "page": "2",
+    }
+    assert redact_query_params({"se%61rch": VALUE}) == {"se%61rch": "***"}
+    assert redact_query_params(None) == {}

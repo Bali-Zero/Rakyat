@@ -28,6 +28,7 @@ class FakeConn:
                 "full_name": "Made Contoh",
                 "role": "staff",
                 "department": "setup",
+                "avatar": "/static/team/contoh.jpg",
                 "employee_id": 1,
                 "hire_date": date(2025, 1, 1),
                 "employee_active": True,
@@ -38,6 +39,7 @@ class FakeConn:
                 "full_name": "Wayan Tanpa",
                 "role": "staff",
                 "department": "tax",
+                "avatar": "data:image/png;base64,AAAA",
                 "employee_id": None,
                 "hire_date": None,
                 "employee_active": None,
@@ -48,6 +50,7 @@ class FakeConn:
                 "full_name": "Ketut Lama",
                 "role": "staff",
                 "department": "tax",
+                "avatar": None,
                 "employee_id": 3,
                 "hire_date": date(2020, 1, 1),
                 "employee_active": False,
@@ -112,11 +115,22 @@ async def test_roster_flags_and_a_bounded_number_of_queries():
 
 
 @pytest.mark.asyncio
+async def test_roster_carries_the_portrait_path_of_a_local_photo_and_nothing_else():
+    pool = FakePool()
+    by = {r["team_member_id"]: r for r in await HRPeopleService(pool).roster(None)}
+    assert by["a"]["avatar_url"] == "/static/team/contoh.jpg"
+    assert by["b"]["avatar_url"] is None  # a data URI is not a portrait path
+    assert by["c"]["avatar_url"] is None  # no avatar stored
+    assert "tm.avatar" in pool.conn.calls[0][0]
+    assert "avatar" not in {k for r in by.values() for k in r if k != "avatar_url"}
+
+
+@pytest.mark.asyncio
 async def test_a_scoped_roster_passes_the_emails_as_a_parameter_never_in_the_sql():
     pool = FakePool()
-    await HRPeopleService(pool).roster(["dea@balizero.com"])
+    await HRPeopleService(pool).roster(["member-e@example.test"])
     sql, args = pool.conn.calls[0]
-    assert args == (["dea@balizero.com"],) and "dea@" not in sql
+    assert args == (["member-e@example.test"],) and "member-e@" not in sql
 
 
 @pytest.mark.asyncio
@@ -154,23 +168,28 @@ def _visible(rows: list[tuple[str, str, str | None, bool, bool]]) -> set[str]:
 
 def test_predicate_lists_employees_not_system_test_or_external_accounts():
     rows = [
-        ("consultant", "a.person@balizero.com", "consultant", True, False),
-        ("consultant-upper", "B.Person@BaliZero.com", "consultant", True, False),
-        ("member-with-record", "c.person@balizero.com", "member", True, True),
-        ("e2e-member", "e2e.bot@balizero.com", "member", True, False),
-        ("monitor", "health@balizero.com", "monitoring", True, False),
+        ("consultant", "staff-a@balizero.com", "consultant", True, False),
+        ("consultant-upper", "Staff-B@BaliZero.com", "consultant", True, False),
+        ("member-with-record", "staff-c@balizero.com", "member", True, True),
+        ("e2e-member", "bot-a@balizero.com", "member", True, False),
+        ("monitor", "probe-a@balizero.com", "monitoring", True, False),
         ("external", "advisor@example.com", "consultant", True, False),
         ("external-with-record", "d.person@example.com", "consultant", True, True),
-        ("client-with-record", "client@balizero.com", "client", True, True),
-        ("inactive", "f.person@balizero.com", "consultant", False, True),
-        ("no-role", "g.person@balizero.com", None, True, False),
-        ("no-role-with-record", "h.person@balizero.com", None, True, True),
+        ("client-with-record", "client-a@balizero.com", "client", True, True),
+        ("inactive", "staff-f@balizero.com", "consultant", False, True),
+        ("no-role", "staff-g@balizero.com", None, True, False),
+        ("no-role-with-record", "staff-h@balizero.com", None, True, True),
         # the non-person roles are excluded first, HR row or not, whatever their spelling
-        ("monitor-with-record", "health2@balizero.com", "monitoring", True, True),
-        ("monitor-upper", "health3@balizero.com", "Monitoring", True, False),
-        ("partner", "partner@balizero.com", "partner", True, False),
-        ("partner-with-record", "partner2@balizero.com", "Partner", True, True),
-        ("client-padded", "client2@balizero.com", " client ", True, True),
+        ("monitor-with-record", "probe-b@balizero.com", "monitoring", True, True),
+        ("monitor-upper", "probe-c@balizero.com", "Monitoring", True, False),
+        ("partner", "partner-a@balizero.com", "partner", True, False),
+        ("partner-with-record", "partner-b@balizero.com", "Partner", True, True),
+        ("client-padded", "client-b@balizero.com", " client ", True, True),
+        # group staff are INACTIVE rows that only this predicate opts in, by their card
+        ("group-staff-with-card", "staff1@example.com", "group_staff", False, True),
+        ("group-staff-no-card", "staff2@example.com", "group_staff", False, False),
+        ("group-staff-active-with-card", "staff3@example.com", " Group_Staff ", True, True),
+        ("former-employee-with-card", "former-a@balizero.com", "consultant", False, True),
     ]
     assert _visible(rows) == {
         "consultant",
@@ -178,6 +197,8 @@ def test_predicate_lists_employees_not_system_test_or_external_accounts():
         "member-with-record",
         "external-with-record",
         "no-role-with-record",
+        "group-staff-with-card",
+        "group-staff-active-with-card",
     }
 
 
@@ -185,3 +206,22 @@ def test_both_queries_use_the_one_predicate():
     assert mod.VISIBLE_PERSON_PREDICATE in mod._ROSTER_SQL
     assert mod.VISIBLE_PERSON_PREDICATE in mod._MEMBER_EMAIL_SQL
     assert "LEFT JOIN hr_employees e" in mod._MEMBER_EMAIL_SQL
+
+
+def test_card_read_and_member_lock_use_the_same_group_staff_opt_in():
+    from backend.app.services.hr.hr_service import HRService, _lock_visible_person_sql
+
+    assert "IN ('group_staff')" in mod.VISIBLE_PERSON_PREDICATE
+    assert mod.VISIBLE_PERSON_PREDICATE in _lock_visible_person_sql()
+    assert mod.VISIBLE_PERSON_PREDICATE in mod._MEMBER_EMAIL_SQL
+    # the HR card read must not drop an inactive group_staff row
+    assert "IN ('group_staff')" in HRService._CARD_SELECT
+
+
+def test_payroll_set_excludes_group_staff_whatever_on_payroll_says():
+    from backend.app.services.hr.hr_service import payroll_set_sql
+
+    sql = payroll_set_sql()
+    assert "lower(trim(COALESCE(tm.role, ''))) NOT IN ('group_staff')" in sql
+    # the People opt-in is still part of it; the explicit exclusion is what keeps them out
+    assert mod.VISIBLE_PERSON_PREDICATE in sql

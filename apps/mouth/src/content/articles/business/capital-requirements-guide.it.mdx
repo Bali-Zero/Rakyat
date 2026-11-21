@@ -54,7 +54,7 @@ faq:
   - question: "Can I invest the IDR 10 billion over time?"
     answer: "Yes. The IDR 10 billion is a total investment commitment over your investment plan period. Paid-up capital (IDR 2.5B) must be deposited immediately, but remaining investment can be made gradually per your LKPM reporting schedule."
   - question: "Does the capital requirement change based on business sector?"
-    answer: "The minimum IDR 10B total investment applies to all PT PMA regardless of sector. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
+    answer: "The minimum >IDR 10B total investment per 5-digit KBLI per project location (excluding land and buildings) and IDR 2.5B paid-up capital per company (BKPM Reg. 5/2025 Art. 26) apply across PT PMA sectors. However, certain sectors like banking, insurance, and mining have higher specific capital requirements set by sector regulators."
 contentStructure:
   hasHowTo: false
   hasFAQ: true
@@ -75,7 +75,7 @@ ogImage: "/static/insights/business/capital-requirements-guide.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "053cb8bda248a3d440a0388b006666bbf20b2f88d8c0a5475574f067ea9ee191"
+source_sha256: "1fc18d4f2cea8f35d9f31e81b6507692111ea73fb4f24a573a8f1d86436fc687"
 ---
 
 # Requisiti di Capitale PT PMA in Indonesia 2026: Guida all'Investimento
@@ -100,18 +100,18 @@ Entrambi hanno requisiti minimi per gli investimenti esteri.
 
 ### Minimi Standard PT PMA
 
-| Tipo di Capitale         | Importo Minimo                                            |
-| ------------------------- | --------------------------------------------------------- |
-| **Investimento Totale**   | Più di IDR 10 miliardi (~USD 625.000) per KBLI/ubicazione |
-| **Capitale Versato**      | IDR 2,5 miliardi (ridotto da IDR 10 miliardi nell'ottobre 2025) |
-| **Per Azionista**         | IDR 10 milioni minimo                                     |
+| Tipo di Capitale          | Importo Minimo                                                                    |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| **Investimento Totale**   | Oltre IDR 10 miliardi (~USD 625.000) per KBLI a 5 cifre / sede (escl. terreni/edifici) |
+| **Capitale Versato**      | IDR 2,5 miliardi **per società** (Regolamento BKPM 5/2025 Art. 26)                |
+| **Per Azionista**         | IDR 10 milioni minimo per socio                                                   |
 
-<InfoCard variant="warning" title="Cambiamenti del 2025 (Regolamento BKPM 5/2025)">
-**Importante cambiamento:**
+<InfoCard variant="warning" title="Normativa Vigente (Regolamento BKPM 5/2025)">
+**Chiarimento Fondamentale:**
 
-Dal ottobre 2025, il Regolamento BKPM 5/2025 (Articolo 26) ha ridotto il capitale minimo versato a IDR 2,5 miliardi, che deve rimanere sul conto aziendale per almeno 12 mesi. L'impegno di investimento totale di più di IDR 10 miliardi per codice KBLI a 5 cifre per ubicazione del progetto (escluso terreni e edifici, con eccezioni settoriali) rimane invariato.
+Ai sensi del **Regolamento BKPM 5/2025 (Articolo 26)**, il capitale minimo versato è fissato a **2,5 miliardi di IDR per società** (a livello aziendale, indipendentemente dal numero di soci), con vincolo di mantenimento per almeno 12 mesi salvo utilizzo per attività aziendali documentate. L'impegno di investimento totale superiore a **10 miliardi di IDR** per codice KBLI a 5 cifre e per sede del progetto **esclude terreni ed edifici** (salvo eccezioni settoriali).
 
-Prima dell'ottobre 2025, il capitale versato doveva essere pari all'intero IDR 10 miliardi — le guide precedenti riportavano ancora quella cifra.
+Guide obsolete indicavano erroneamente un capitale versato pari all'intero ammontare di 10 miliardi di IDR.
 
 </InfoCard>
 
@@ -195,70 +195,76 @@ Alcune classificazioni aziendali (codici KBLI) hanno requisiti di capitale speci
 
 ### Cosa Conta come Investimento?
 
-| Conta                | Non Conta        |
-| -------------------- | ---------------- |
-| Depositi in contanti | Guadagni futuri   |
-| Attrezzature (valutate) | Goodwill         |
-| Terreni/edifici      | Ricavi previsti   |
-| Proprietà intellettuale | Intangibili non valutati |
-| Inventario iniziale  | Spese operative   |
+| Conta                     | Non Conta                                     |
+| ------------------------- | --------------------------------------------- |
+| Depositi in contanti      | Terreni/edifici (esclusi dalla soglia >10B*)  |
+| Attrezzature (valutate)   | Guadagni futuri / Avviamento (Goodwill)       |
+| Proprietà intellettuale   | Ricavi previsti                               |
+| Capitale circolante/costi | Intangibili non valutati                      |
+
+*\*Ai sensi del Reg. BKPM 5/2025, la soglia > 10 miliardi IDR per KBLI a 5 cifre / sede esclude terreni ed edifici (salvo specifici settori immobiliari/industriali).*
 
 ### Calcolatrice
 
 <Calculator
   title="Struttura di Investimento"
-  description="Pianifica la tua allocazione del capitale"
+  description="Pianifica capitale versato e investimento qualificante BKPM > 10B"
   fields={[
     {
       id: "cash",
-      label: "Investimento in Contanti (IDR)",
+      label: "Capitale Versato in Contanti (Min 2,5B IDR per società)",
       type: "number",
-      defaultValue: 8000000000,
+      defaultValue: 2500000000,
       min: 0
     },
     {
       id: "equipment",
-      label: "Valore Attrezzature (IDR)",
+      label: "Valore Attrezzature & Tech (IDR)",
       type: "number",
-      defaultValue: 1500000000,
+      defaultValue: 4000000000,
       min: 0
     },
     {
       id: "property",
-      label: "Proprietà/Terreno (IDR)",
+      label: "Immobili/Terreni (Esclusi dal totale >10B BKPM)",
       type: "number",
       defaultValue: 0,
       min: 0
     },
     {
       id: "other",
-      label: "Altri Attivi (IDR)",
+      label: "Capitale Circolante & Altri Attivi Non Immobiliari (IDR)",
       type: "number",
-      defaultValue: 500000000,
+      defaultValue: 4000000000,
       min: 0
     }
   ]}
   calculateResult={(values) => {
-    const total = values.cash + values.equipment + values.property + values.other;
+    const qualifyingTotal = Number(values.cash) + Number(values.equipment) + Number(values.other);
+    const property = Number(values.property);
+    const minPaidUp = 2500000000;
     const minimum = 10000000000;
-    const shortfall = Math.max(0, minimum - total);
-    const meetsRequirement = total >= minimum;
+    const shortfall = Math.max(0, minimum - qualifyingTotal);
+    const meetsPaidUp = Number(values.cash) >= minPaidUp;
+    const meetsRequirement = meetsPaidUp && qualifyingTotal > minimum;
 
     return {
-      total: total,
+      total: qualifyingTotal,
       breakdown: [
-        { label: "Investimento in contanti", amount: values.cash },
-        { label: "Valore attrezzature", amount: values.equipment },
-        { label: "Proprietà/Terreno", amount: values.property },
-        { label: "Altri attivi", amount: values.other },
-        { label: "INVESTIMENTO TOTALE", amount: total },
-        { label: "Minimo richiesto", amount: minimum },
-        { label: meetsRequirement ? "Superiore al minimo di" : "CARENZA", amount: meetsRequirement ? total - minimum : shortfall }
+        { label: "Capitale versato contanti (min 2,5B IDR/società)", amount: Number(values.cash) },
+        { label: "Valore attrezzature", amount: Number(values.equipment) },
+        { label: "Capitale circolante & altri attivi non immobiliari", amount: Number(values.other) },
+        { label: "Immobili/Terreni (esclusi dalla soglia >10B BKPM)", amount: property },
+        { label: "INVESTIMENTO QUALIFICANTE BKPM", amount: qualifyingTotal },
+        { label: "Minimo richiesto (>10B)", amount: minimum },
+        { label: meetsRequirement ? "Oltre la soglia 10B di" : "CARENZA rispetto a >10B", amount: qualifyingTotal > minimum ? qualifyingTotal - minimum : shortfall }
       ],
       currency: "IDR",
-      note: meetsRequirement
-        ? `Soddisfa i requisiti (~USD ${Math.round(total / 16000).toLocaleString()})`
-        : `Servono ulteriori IDR ${shortfall.toLocaleString()} per soddisfare il minimo`
+      note: !meetsPaidUp
+        ? "Capitale versato inferiore al minimo di 2,5B IDR per società (Reg. BKPM 5/2025 Art. 26)"
+        : meetsRequirement
+          ? `Soddisfa sia il capitale versato 2,5B che la soglia >10B escl. terreni/edifici (~USD ${Math.round(qualifyingTotal / 16000).toLocaleString()})`
+          : `Servono oltre ${(shortfall + 1).toLocaleString()} IDR di investimento non immobiliare aggiuntivo per superare 10B IDR`
     };
 
 }}
@@ -275,7 +281,7 @@ Alcune classificazioni aziendali (codici KBLI) hanno requisiti di capitale speci
 
 - Attrezzature (macchinari, veicoli)
 - Proprietà intellettuale (brevetti, marchi)
-- Immobili (terreni, edifici)
+- Immobili (solo per settori immobiliari/aree dedicate; **esclusi** dalla soglia > IDR 10B nei settori ordinari)
 
 **Requisiti:**
 
@@ -346,7 +352,7 @@ Alcune classificazioni aziendali (codici KBLI) hanno requisiti di capitale speci
 
 **Risposta:**
 
-- Per un PT PMA standard è richiesto un minimo di IDR 10B
+- Per una PT PMA standard sono richiesti > IDR 10B di investimento (escl. terreni/edifici) e IDR 2,5B di capitale versato per società
 - Alcune zone speciali potrebbero avere regole diverse
 - Un ufficio rappresentativo non richiede capitale ma non può commerciare
 - Valuta la PT PMDN (società domestica) se sei idoneo

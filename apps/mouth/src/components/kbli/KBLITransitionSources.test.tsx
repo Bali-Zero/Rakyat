@@ -39,7 +39,22 @@ describe("KBLITransitionSources — BPS-authoritative transition disclosure", ()
     ).toBeInTheDocument();
     expect(within(pp28).getByText("01122")).toBeInTheDocument();
     expect(container.textContent).not.toContain("Previous codes");
-    expect(container.textContent).toContain(
+    expect(container.textContent).not.toContain(
+      "Legacy PP28 source-matching note:",
+    );
+    expect(container.textContent).not.toContain("Match:");
+  });
+
+  it("guilt: 55201 never leaks internal pipeline mapping_note strings (score=, Auto-matched, Agent mapping)", () => {
+    const code = getCode("55201")!;
+    expect(code.transition.mappingNote).toContain("score=");
+    const { container } = render(
+      <KBLITransitionSources transition={code.transition} />,
+    );
+    expect(container.textContent).not.toContain("score=");
+    expect(container.textContent).not.toContain("Auto-matched");
+    expect(container.textContent).not.toContain("Agent mapping:");
+    expect(container.textContent).not.toContain(
       "Legacy PP28 source-matching note:",
     );
   });

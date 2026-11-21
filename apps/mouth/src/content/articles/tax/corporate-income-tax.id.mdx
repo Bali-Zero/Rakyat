@@ -35,10 +35,10 @@ relatedArticles:
   - "withholding-tax-guide"
 tableOfContents: true
 seoTitle: "Pajak Penghasilan Badan Indonesia 2026 | Panduan PPh Badan"
-seoDescription: "Panduan lengkap pajak penghasilan badan (PPh Badan) di Indonesia. Tarif standar 22%, insentif UMKM, deduksi, dan persyaratan kepatuhan untuk perusahaan PT PMA."
+seoDescription: "Panduan lengkap pajak penghasilan badan (PPh Badan) di Indonesia. Tarif standar 22%, fasilitas Pasal 31E (11% efektif), aturan PP 20/2026 tentang UMKM, deduksi, dan kepatuhan PT PMA."
 aiOptimization:
   primaryQuestion: "Berapa tarif pajak penghasilan badan di Indonesia untuk tahun 2026?"
-  answerSnippet: "Tarif pajak penghasilan badan standar Indonesia adalah 22% untuk sebagian besar perusahaan. UMKM dengan pendapatan bruto di bawah Rp 4,8 miliar mendapatkan pajak final 0,5%. Perusahaan terbuka dengan 40%+ saham publik menerima diskon 3% (tarif efektif 19%). Perusahaan PT PMA mengikuti tarif yang sama dengan entitas domestik."
+  answerSnippet: "Tarif standar PPh Badan di Indonesia adalah 22% (Pasal 31E memberikan diskon tarif 50% — efektif 11% — atas bagian laba kena pajak sebanding peredaran bruto Rp 4,8 miliar bagi wajib pajak dengan omzet hingga Rp 50 miliar). Berdasarkan PP 20/2026 (berlaku 22 April 2026), PT PMA dan PT/CV baru dengan banyak pemegang saham dikecualikan dari skema pajak final UMKM 0,5% PP 55/2022; entitas domestik lama hanya menyelesaikan sisa masa 3 tahun (PT) / 4 tahun (CV)."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Pajak"
@@ -48,7 +48,7 @@ aiOptimization:
       sameAs: "https://pajak.go.id/id/uu-hpp"
 faq:
   - question: "Berapa tarif pajak badan di Indonesia untuk tahun 2026?"
-    answer: "Tarif standar pajak penghasilan badan (PPh Badan) adalah 22%. UMKM dengan pendapatan tahunan di bawah Rp 4,8 miliar memenuhi syarat untuk tarif pajak final 0,5%. Perusahaan yang terdaftar di bursa dengan 40%+ saham publik mendapatkan pengurangan 3% menjadi 19%."
+    answer: "Tarif standar PPh Badan adalah 22%. Perusahaan dengan omzet bruto hingga Rp 50 miliar per tahun berhak atas fasilitas Pasal 31E (diskon 50% menjadi efektif 11% untuk porsi omzet s.d. Rp 4,8 miliar). Berdasarkan PP 20/2026 (berlaku 22 April 2026), PT PMA dan PT/CV baru berpemegang saham jamak tidak dapat menggunakan tarif final UMKM 0,5% PP 55/2022 (entitas domestik lama hanya melanjutkan sisa masa 3 tahun PT / 4 tahun CV). Perusahaan Tbk dengan free float 40%+ mendapat tarif 19%."
   - question: "Biaya apa saja yang dapat dikurangkan oleh perusahaan Indonesia dari penghasilan kena pajak?"
     answer: "Biaya yang dapat dikurangkan meliputi gaji dan tunjangan karyawan, sewa kantor dan utilitas, penyusutan aset, perjalanan bisnis, biaya profesional, piutang tak tertagih (dengan syarat), dan kontribusi CSR hingga 5% dari pendapatan bersih. Biaya hiburan memerlukan daftar nominatif."
   - question: "Kapan pengajuan SPT tahunan badan di Indonesia?"
@@ -73,7 +73,7 @@ canonicalUrl: "https://balizero.com/tax/corporate-income-tax"
 ogImage: "/static/insights/tax/corporate-tax.jpg"
 twitterCard: "summary_large_image"
 locale: "id"
-source_sha256: "8b776716086ca2926c92109a9ba3ef7f77286a434d6b96b135723071c26b07d1"
+source_sha256: "86ffc480f741e825b5ac813e821df363e6177c04ef797db1e32d6d6bbcd9d9ce"
 ---
 
 # Pajak Penghasilan Badan Indonesia 2026: Panduan Lengkap
@@ -106,12 +106,21 @@ Pajak penghasilan badan (PPh Badan) adalah pertimbangan signifikan bagi setiap b
       },
     },
     {
-      name: "Tarif UMKM",
-      subtitle: "Bisnis kecil",
+      name: "Tarif Final UMKM",
+      subtitle: "Hanya UMKM domestik (PP 55/2022)",
       values: {
         Rate: "0.5% dari omset",
-        "Applies To": "Omset < IDR 4.8Miliar",
-        "Entity Type": "CV, PT dengan pendapatan rendah",
+        "Applies To": "Omset < IDR 4.8M (3 thn PT / 4 thn CV / 7 thn OP)",
+        "Entity Type": "UMKM Domestik (PT PMA & PT/CV biasa dikecualikan PP 20/2026)",
+      },
+    },
+    {
+      name: "Fasilitas Pasal 31E",
+      subtitle: "PT & PT PMA skala kecil/menengah",
+      values: {
+        Rate: "11% efektif (porsi <=4.8M)",
+        "Applies To": "Omset bruto s.d. IDR 50M",
+        "Entity Type": "PT Domestik & PT PMA",
       },
     },
     {
@@ -154,42 +163,49 @@ Pajak penghasilan badan (PPh Badan) adalah pertimbangan signifikan bagi setiap b
     },
     {
       id: "type",
-      label: "Jenis Perusahaan",
+      label: "Rezim Pajak / Jenis Perusahaan",
       type: "select",
       options: [
-        { value: "standard", label: "PT Standar/PT PMA" },
-        { value: "public", label: "Perusahaan Publik Terdaftar" },
-        { value: "sme", label: "UMKM (< IDR 4.8Miliar pendapatan)" }
+        { value: "art31e", label: "PT / PT PMA Omzet <= IDR 50M (Pasal 31E: 11% / 22%)" },
+        { value: "standard", label: "PT / PT PMA Standar > IDR 50M (22%)" },
+        { value: "public", label: "Perusahaan Terbuka (40%+ free float: 19%)" },
+        { value: "umkm_eligible", label: "UMKM Domestik Memenuhi Syarat < IDR 4.8M (Sisa masa / OP 0.5%)" }
       ],
-      defaultValue: "standard"
+      defaultValue: "art31e"
     }
   ]}
   calculateResult={(values) => {
     const revenue = Number(values.revenue);
     const expenses = Number(values.expenses);
-    const profit = revenue - expenses;
+    const profit = Math.max(0, revenue - expenses);
 
-    let tax;
-    let rate;
+    let tax = 0;
+    let rate = "22%";
 
-    if (values.type === "sme" && revenue <= 4800000000) {
+    if (values.type === "umkm_eligible" && revenue <= 4800000000) {
       tax = revenue * 0.005;
-      rate = "0.5% dari omset";
+      rate = "0.5% dari omset bruto (PT PMA & PT/CV baru dikecualikan PP 20/2026)";
+    } else if (values.type === "art31e" && revenue > 0 && revenue <= 50000000000) {
+      const discountedShare = Math.min(1, 4800000000 / revenue);
+      const discountedProfit = profit * discountedShare;
+      const regularProfit = profit - discountedProfit;
+      tax = discountedProfit * 0.11 + regularProfit * 0.22;
+      rate = revenue <= 4800000000 ? "11% (Fasilitas penuh 50% Pasal 31E)" : "Tarif campuran Pasal 31E (11% + 22%)";
     } else if (values.type === "public") {
-      tax = profit > 0 ? profit * 0.19 : 0;
+      tax = profit * 0.19;
       rate = "19%";
     } else {
-      tax = profit > 0 ? profit * 0.22 : 0;
+      tax = profit * 0.22;
       rate = "22%";
     }
 
     return {
-      total: tax,
+      total: Math.round(tax),
       breakdown: [
         { label: "Pendapatan", amount: revenue },
         { label: "Biaya", amount: expenses },
-        { label: "Laba Kena Pajak", amount: profit > 0 ? profit : 0 },
-        { label: "Pajak Terutang", amount: tax }
+        { label: "Laba Kena Pajak", amount: profit },
+        { label: "Pajak Terutang", amount: Math.round(tax) }
       ],
       currency: "IDR",
       note: `Tarif yang diterapkan: ${rate}`
@@ -200,22 +216,20 @@ Pajak penghasilan badan (PPh Badan) adalah pertimbangan signifikan bagi setiap b
 
 ---
 
-## Pajak Final UMKM (PP 55/2022)
+## Pajak Final UMKM (PP 55/2022 & Pengecualian PP 20/2026)
 
-<InfoCard variant="tip" title="Disederhanakan untuk Bisnis Kecil">
-Bisnis dengan omset kotor di bawah **IDR 4.8 miliar/tahun** dapat menggunakan pajak final yang disederhanakan:
+<InfoCard variant="warning" title="PEMBARUAN PENTING — PP 20/2026 (Berlaku 22 April 2026)">
+Berdasarkan **PP 55/2022**, wajib pajak dengan omset bruto di bawah **IDR 4,8 miliar/tahun** memiliki batas waktu maksimal skema final 0,5%:
 
-- **Tarif**: 0.5% dari omset kotor
-- **Tidak ada perhitungan rumit**
-- **Pembayaran bulanan**
-- **Berlaku untuk**: PT, CV, individu dengan bisnis
-- **Durasi**: Maksimal 7 tahun untuk PT, 4 tahun untuk CV/individu
+- **3 tahun** untuk Perseroan Terbatas biasa (**PT**)
+- **4 tahun** untuk **CV, Firma, dan Koperasi**
+- **7 tahun** untuk wajib pajak **Orang Pribadi**
 
-Setelah periode maksimal, tarif reguler berlaku.
+**Pembaruan Penting PP 20/2026 (berlaku 22 April 2026):** **PT biasa, PT PMA, CV, dan Firma** berpemegang saham jamak **dikecualikan** dari penggunaan baru tarif final 0,5%. PT/CV domestik lama yang sudah menggunakan PP 55/2022 sebelum PP 20/2026 hanya menyelesaikan sisa masa 3 tahun/4 tahun mereka; PT PMA dengan omzet hingga **IDR 50 miliar** menerapkan fasilitas **Pasal 31E UU HPP** (efektif 11% atas porsi omzet s.d. IDR 4,8 miliar, 22% selebihnya).
 
 </InfoCard>
 
-### Contoh Pajak UMKM
+### Ilustrasi Pajak Final 0,5% (Masa Transisi / Orang Pribadi)
 
 | Pendapatan Bulanan | Pajak Terutang |
 | ------------------ | -------------- |
@@ -340,13 +354,13 @@ Setelah periode maksimal, tarif reguler berlaku.
 
 ### Kewajiban Bulanan
 
-| Kewajiban | Batas Waktu                | Deskripsi             |
-| --------- | -------------------------- | --------------------- |
-| PPh 21   | Tanggal 10 bulan berikutnya | Pemotongan karyawan   |
-| PPh 23   | Tanggal 10 bulan berikutnya | Pemotongan jasa       |
-| PPh 25   | Tanggal 15 bulan berikutnya | Angsuran PKP           |
-| PPh 4(2) | Tanggal 10 bulan berikutnya | Item pajak final       |
-| PPN      | Akhir bulan berikutnya     | Jika terdaftar PPN     |
+| Kewajiban | Batas Waktu (PMK 81/2024 Coretax)                  | Deskripsi             |
+| --------- | -------------------------------------------------- | --------------------- |
+| PPh 21    | Setor tgl 15 / Lapor SPT tgl 20 bulan berikutnya   | Pemotongan karyawan   |
+| PPh 23    | Setor tgl 15 / Lapor SPT tgl 20 bulan berikutnya   | Pemotongan jasa       |
+| PPh 25    | Setor tanggal 15 bulan berikutnya                  | Angsuran badan        |
+| PPh 4(2)  | Setor tgl 15 / Lapor SPT tgl 20 bulan berikutnya   | Item pajak final      |
+| PPN       | Setor & Lapor akhir bulan berikutnya               | Jika terdaftar PKP    |
 
 ---
 
@@ -414,11 +428,11 @@ Bekerja dengan penasihat pajak yang berkualitas untuk transaksi pihak terkait.
 
 ## Sanksi
 
-| Pelanggaran    | Sanksi                       |
-| -------------- | ---------------------------- |
-| Keterlambatan pelaporan | IDR 1 Juta/bulan (maksimal 24 bulan) |
-| Keterlambatan pembayaran | 2% per bulan                  |
-| Kurang bayar   | 2% per bulan + potensi 200%   |
+| Pelanggaran              | Sanksi                                                              |
+| ------------------------ | ------------------------------------------------------------------- |
+| Keterlambatan pelaporan  | IDR 1 Juta/SPT Badan (IDR 100rb/SPT Masa OP/PPh; Rp 500rb/PPN)      |
+| Keterlambatan pembayaran | Suku bunga KMK bulanan variabel (UU HPP, maksimal 24 bulan)         |
+| Kurang bayar             | Suku bunga KMK bulanan variabel + sanksi administrasi UU HPP        |
 | Penipuan pajak | Sanksi pidana mungkin         |
 
 ---

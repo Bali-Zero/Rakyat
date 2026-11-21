@@ -279,26 +279,26 @@ export default async function KBLIHomePage({
           />
         </section>
 
-        {/* ── DECODER LINK ── */}
+        {/* ── DECODER & BUILDER LINKS ── */}
         <p className="text-xs mt-4" style={{ color: "var(--text-secondary)" }}>
-          Tidak yakin kode yang tepat?{" "}
+          Not sure which code fits your business?{" "}
           <Link
             href="/kbli/decoder"
             className="underline underline-offset-2"
             style={{ color: "var(--text-primary)" }}
           >
-            Coba KBLI Decoder →
+            Try KBLI Decoder →
           </Link>
         </p>
 
         <p className="text-xs mt-2" style={{ color: "var(--text-secondary)" }}>
-          Mau setup PT PMA?{" "}
+          Setting up a PT PMA?{" "}
           <Link
             href="/kbli/builder"
             className="underline underline-offset-2"
             style={{ color: "var(--text-primary)" }}
           >
-            Coba KBLI Builder →
+            Try KBLI Builder →
           </Link>
         </p>
       </div>

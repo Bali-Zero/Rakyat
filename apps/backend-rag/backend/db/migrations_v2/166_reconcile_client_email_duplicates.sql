@@ -3,7 +3,7 @@
 -- Context:
 --   `clients.email` has a legacy UNIQUE(email) constraint, but PostgreSQL text
 --   uniqueness is case-sensitive. Prod had a case-only duplicate on
---   2026-05-10: `guasraf32@gmail.com` / `Guasraf32@gmail.com`.
+--   2026-05-10: one client's address stored twice, in two letter cases.
 --
 -- Safety:
 --   - Client rows are not merged or deleted.

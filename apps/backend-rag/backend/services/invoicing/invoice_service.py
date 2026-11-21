@@ -28,6 +28,10 @@ from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_crm_stats
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
+from backend.services.invoicing.client_email_outcome import (
+    activity_description,
+    client_email_outcome,
+)
 from backend.services.invoicing.entities import (
     DEFAULT_ENTITY_KEY,
     ENTITIES,
@@ -36,6 +40,7 @@ from backend.services.invoicing.entities import (
 )
 from backend.services.invoicing.invoice_company import fetch_bill_to
 from backend.services.invoicing.invoice_generator import InvoiceGenerator
+from backend.services.invoicing.pph import PphWithholding, pph_from_metadata, pph_on_record
 from backend.services.notifications.email_audit import (
     format_send_error,
     log_email_attempt,
@@ -145,6 +150,44 @@ WHERE (existing.issuer_entity_key IS NULL AND existing.issuer_routed_at IS NULL 
 RETURNING issuer_entity_key, issuer_routed_at
 """
 
+# K127: _INVOICE_UPSERT_SQL plus invoices.pph_expected_idr ($15, migration 238), in the
+# INSERT and in DO UPDATE so a PPh cleared on the process is reset to 0 on re-issue.
+# Used only for a process that has or had a PPh (see _persist_invoice); on 42703 the
+# write falls back to the two variants above, exactly as a process without PPh.
+_INVOICE_UPSERT_PPH_SQL = """
+INSERT INTO invoices AS existing (
+    practice_id, client_id, invoice_number, invoice_source, amount_idr,
+    discount_amount_idr, drive_file_id, drive_web_link, email_sent_to_client,
+    accounting_notified, generated_at, issuer_entity_key, issuer_routed_at, pph_expected_idr
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $15)
+ON CONFLICT (practice_id) DO UPDATE SET
+    invoice_number = EXCLUDED.invoice_number, invoice_source = EXCLUDED.invoice_source,
+    amount_idr = EXCLUDED.amount_idr, discount_amount_idr = EXCLUDED.discount_amount_idr,
+    pph_expected_idr = EXCLUDED.pph_expected_idr,
+    drive_file_id = EXCLUDED.drive_file_id, drive_web_link = EXCLUDED.drive_web_link,
+    email_sent_to_client = EXCLUDED.email_sent_to_client,
+    accounting_notified = EXCLUDED.accounting_notified, generated_at = EXCLUDED.generated_at,
+    issuer_entity_key = COALESCE(existing.issuer_entity_key, EXCLUDED.issuer_entity_key),
+    issuer_routed_at = CASE WHEN existing.issuer_entity_key IS NULL THEN EXCLUDED.issuer_routed_at ELSE existing.issuer_routed_at END,
+    updated_at = NOW()
+WHERE (existing.issuer_entity_key IS NULL AND existing.issuer_routed_at IS NULL AND EXCLUDED.issuer_entity_key = $14)
+   OR (existing.issuer_entity_key = EXCLUDED.issuer_entity_key AND existing.issuer_routed_at IS NOT NULL)
+RETURNING issuer_entity_key, issuer_routed_at
+"""
+
+
+def _row_pph(practice_row: Any, practice_id: int) -> tuple[PphWithholding | None, bool]:
+    """The PPh on a practice row, and whether the process has or ever had one.
+
+    Rows read without ``metadata`` have none. ``metadata.pph_log`` survives a cleared
+    PPh, so a re-issue after clearing still resets ``invoices.pph_expected_idr``.
+    """
+    try:
+        metadata = practice_row.get("metadata")
+    except (AttributeError, KeyError, TypeError):
+        return None, False
+    return pph_from_metadata(metadata, practice_id=practice_id), pph_on_record(metadata)
+
 
 class InvoiceAutomationService:
     """Handles automated invoice generation and distribution via Zoho Email or SMTP fallback."""
@@ -232,7 +275,14 @@ class InvoiceAutomationService:
                     discount_amount_float = 0.0
                 if discount_amount_float > quoted_price_float:
                     discount_amount_float = quoted_price_float
-                final_amount_float = quoted_price_float - discount_amount_float
+                dpp_float = quoted_price_float - discount_amount_float
+                # K127: optional PPh chosen by the tax team (practices.metadata.pph).
+                # The client transfers DPP - PPh, so that is TOTAL DUE and the email
+                # amount. invoices.amount_idr stays the gross DPP and the PPh goes to
+                # invoices.pph_expected_idr (see _persist_invoice).
+                pph = pph_from_metadata(practice_data.get("metadata"), practice_id=practice_id)
+                pph_amount = pph.amount_on(dpp_float) if pph else 0
+                final_amount_float = dpp_float - pph_amount
 
                 pdf_bytes = self.invoice_generator.generate(
                     practice_id=practice_id,
@@ -251,6 +301,8 @@ class InvoiceAutomationService:
                     discount_reason=discount_reason_value,
                     entity=issuer_decision.entity,
                     **bill_to,
+                    pph_label=pph.label if pph else None,
+                    pph_amount=float(pph_amount),
                 )
 
                 filename = f"Invoice_{invoice_number}.pdf"
@@ -333,6 +385,7 @@ class InvoiceAutomationService:
                     filename=filename,
                     entity=issuer_decision.entity,
                     amount=final_amount_float,
+                    client_email_status=client_email_outcome(email_sent, email_attempted),
                 )
                 asya_notified = True
                 accounting_notified = True
@@ -379,10 +432,21 @@ class InvoiceAutomationService:
                 "invoice_generated_at": datetime.now(tz=timezone.utc).isoformat(),
                 "invoice_drive_id": drive_file_id,
                 "invoice_drive_link": drive_web_link,
+                "email_attempted": email_attempted,
                 "email_sent": email_sent,
                 "accounting_notified": asya_notified,
                 "source": "local_pdf",
             }
+            if pph:
+                # Snapshot of the withholding printed on this PDF. invoices has no
+                # jsonb column, so it lives with the rest of the invoice in
+                # practices.documents.invoice.
+                invoice_info["pph"] = {
+                    "dpp": round(dpp_float),
+                    "pph_type": pph.type,
+                    "pph_rate": float(pph.rate_percent),
+                    "pph_amount": pph_amount,
+                }
 
             await self._update_practice_with_invoice(
                 practice_id=practice_id,
@@ -392,6 +456,13 @@ class InvoiceAutomationService:
                 invoice_attempt_id=invoice_attempt_id,
             )
 
+            if email_sent:
+                await self._record_invoice_sent_on_client_timeline(
+                    practice_data=practice_data,
+                    invoice_number=invoice_number,
+                    triggered_by=triggered_by,
+                )
+
             logger.info("Invoice automation completed successfully for practice %s", practice_id)
 
             return {
@@ -399,6 +470,7 @@ class InvoiceAutomationService:
                 "invoice_number": invoice_number,
                 "drive_file_id": drive_file_id,
                 "drive_link": drive_web_link,
+                "email_attempted": email_attempted,
                 "email_sent": email_sent,
                 "accounting_notified": asya_notified,
             }
@@ -526,15 +598,43 @@ class InvoiceAutomationService:
         filename: str,
         entity: InvoiceEntity,
         amount: float,
+        client_email_status: str = "sent",
     ) -> bool:
-        """Send notification email to accounting (Asya) via internal email API."""
+        """Send notification email to accounting (Asya) via internal email API.
+
+        ``client_email_status`` says what really happened to the client's own mail:
+        "sent", "failed" (the send raised) or "no_email" (the client has no address).
+        The text never claims the client was emailed unless it was.
+        """
         subject = f"[TEAM] New Invoice {invoice_number} - {client_data['full_name']}"
+        name = client_data["full_name"]
+        if client_email_status == "no_email":
+            intro = (
+                f"Hi Asya — a new invoice has been generated for {name}. The client has NO email "
+                "address on file, so the invoice was NOT emailed to them. PDF attached."
+            )
+            first_step = (
+                "Send the invoice to the client yourself: contact them by WhatsApp or another "
+                "channel (they were not emailed) and follow up on payment"
+            )
+        elif client_email_status == "failed":
+            intro = (
+                f"Hi Asya — a new invoice has been generated for {name}, but the email to the "
+                "client FAILED, so they have NOT received it. PDF attached."
+            )
+            first_step = (
+                "Send the invoice to the client yourself by WhatsApp or another channel "
+                "(the automatic email failed) and follow up on payment"
+            )
+        else:
+            intro = f"Hi Asya — a new invoice has been generated and sent to {name}. PDF attached."
+            first_step = "Reach out to the client via WhatsApp for payment follow-up"
         body_html = team_email_html(
             title=f"New Invoice {invoice_number}",
-            intro=f"Hi Asya — a new invoice has been generated and sent to {client_data['full_name']}. PDF attached.",
+            intro=intro,
             meta_rows=[
                 ("Client", client_data["full_name"]),
-                ("Email", client_data.get("email") or "—"),
+                ("Email", client_data.get("email") or "— (no email on file)"),
                 ("Practice", f"#{practice_data['id']}"),
                 ("Issuing Company", entity.company_name),
                 ("Bank Name", entity.bank_name),
@@ -543,9 +643,11 @@ class InvoiceAutomationService:
             body_html=(
                 "<b>Next steps:</b>"
                 "<ol style='margin:6px 0 4px 18px;padding:0;'>"
-                "<li>Reach out to the client via WhatsApp for payment follow-up</li>"
+                f"<li>{first_step}</li>"
                 "<li>Keep an eye on our bank account</li>"
-                "<li>Once payment comes through, update the status to ON PROCESS</li>"
+                "<li>Once payment comes through, confirm it on the "
+                "<a href='https://kita.balizero.com/accounting'>Accounting page</a>, "
+                "then move the practice to ON PROCESS</li>"
                 "</ol>"
             ),
             cta_label="Open practice in CRM",
@@ -570,6 +672,40 @@ class InvoiceAutomationService:
 
         logger.info("Accounting notification sent to %s from zantara@", ACCOUNTING_EMAIL)
         return True
+
+    async def _record_invoice_sent_on_client_timeline(
+        self, practice_data: dict, invoice_number: str, triggered_by: str | None
+    ) -> None:
+        """Client-visible "Invoice sent" entry, written ONLY after the client mail really went out.
+
+        The status move writes "Invoice being prepared" before this automation runs; on no_email
+        or failed nothing client-visible is added (the team and accounting notices cover those).
+        Best effort: a missing table or a write error never fails the invoice flow.
+        """
+        if practice_data.get("client_visible") is False or practice_data.get("client_id") is None:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO timeline_events (
+                        client_id, practice_id, event_type, title, description,
+                        event_date, client_visible, color, created_by
+                    )
+                    VALUES ($1, $2, 'payment_due', 'Invoice sent', $3, NOW(), true, 'warning', $4)
+                    """,
+                    practice_data["client_id"],
+                    practice_data["id"],
+                    f"Invoice {invoice_number}",
+                    triggered_by,
+                )
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) != "42P01":
+                logger.warning(
+                    "Could not write the invoice-sent timeline entry for practice %s: %s",
+                    practice_data.get("id"),
+                    type(exc).__name__,
+                )
 
     async def _fetch_practice_data(self, practice_id: int) -> dict | None:
         """Fetch practice data from database."""
@@ -752,13 +888,14 @@ class InvoiceAutomationService:
             # that have not yet applied migration 158.
             try:
                 practice_row = await conn.fetchrow(
-                    "SELECT client_id, quoted_price, discount_amount FROM practices WHERE id = $1",
+                    "SELECT client_id, quoted_price, discount_amount, metadata"
+                    " FROM practices WHERE id = $1",
                     practice_id,
                 )
             except Exception as fetch_exc:
                 if getattr(fetch_exc, "sqlstate", None) == "42703":
                     practice_row = await conn.fetchrow(
-                        "SELECT client_id, quoted_price FROM practices WHERE id = $1",
+                        "SELECT client_id, quoted_price, metadata FROM practices WHERE id = $1",
                         practice_id,
                     )
                 else:
@@ -778,7 +915,14 @@ class InvoiceAutomationService:
             except (AttributeError, KeyError, TypeError):
                 discount = 0.0
             discount = max(0.0, min(discount, quoted))
-            # amount_idr stores the post-discount total; discount_amount_idr mirrors the discount.
+            # amount_idr stores the post-discount total (DPP): gross, with or without
+            # PPh. discount_amount_idr mirrors the discount. A PPh the client withholds
+            # (K127) goes to pph_expected_idr (migration 238), the accounting contract:
+            # the matcher reads a transfer of amount_idr - pph_expected_idr as "net of
+            # PPh" (services/accounting/matcher.py _amount_signals) and outstanding is
+            # amount_idr - pph_expected_idr - paid. TOTAL DUE on the PDF is that net.
+            pph, pph_tracked = _row_pph(practice_row, practice_id)
+            pph_expected = pph.amount_on(quoted - discount) if pph else 0
             args = (
                 practice_id,
                 practice_row["client_id"],
@@ -795,25 +939,47 @@ class InvoiceAutomationService:
                 issuer_decision.routed_at,
                 DEFAULT_ENTITY_KEY,
             )
-            try:
-                persisted = await conn.fetchrow(_INVOICE_UPSERT_SQL, *args)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                if getattr(exc, "sqlstate", None) != "42703":
-                    raise InvoiceIssuerPersistenceError(
-                        "write_failed", getattr(exc, "sqlstate", None)
-                    ) from None
-                # Fallback for databases without migration 158 (discount_amount_idr).
-                pre158_args = (*args[:5], *args[6:])
+            pph_written = False
+            if pph_tracked:
+                # A process that has (or had) a PPh also writes pph_expected_idr. A
+                # process that never had one keeps the write below unchanged, so its
+                # pph_expected_idr stays the column default 0.
                 try:
-                    persisted = await conn.fetchrow(_INVOICE_UPSERT_PRE158_SQL, *pre158_args)
+                    persisted = await conn.fetchrow(_INVOICE_UPSERT_PPH_SQL, *args, pph_expected)
+                    pph_written = True
                 except asyncio.CancelledError:
                     raise
-                except Exception as fallback_exc:
-                    raise InvoiceIssuerPersistenceError(
-                        "write_failed", getattr(fallback_exc, "sqlstate", None)
-                    ) from None
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", None) != "42703":
+                        raise InvoiceIssuerPersistenceError(
+                            "write_failed", getattr(exc, "sqlstate", None)
+                        ) from None
+                    logger.warning(
+                        "invoices.pph_expected_idr missing (migration 238): practice %s "
+                        "invoiced without its PPh of %s IDR recorded",
+                        practice_id,
+                        pph_expected,
+                    )
+            if not pph_written:
+                try:
+                    persisted = await conn.fetchrow(_INVOICE_UPSERT_SQL, *args)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", None) != "42703":
+                        raise InvoiceIssuerPersistenceError(
+                            "write_failed", getattr(exc, "sqlstate", None)
+                        ) from None
+                    # Fallback for databases without migration 158 (discount_amount_idr).
+                    pre158_args = (*args[:5], *args[6:])
+                    try:
+                        persisted = await conn.fetchrow(_INVOICE_UPSERT_PRE158_SQL, *pre158_args)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as fallback_exc:
+                        raise InvoiceIssuerPersistenceError(
+                            "write_failed", getattr(fallback_exc, "sqlstate", None)
+                        ) from None
             if persisted is None or persisted["issuer_entity_key"] != issuer_decision.entity.key:
                 raise InvoiceIssuerPersistenceError("issuer_conflict")
             persisted_at = persisted["issuer_routed_at"]
@@ -878,7 +1044,13 @@ class InvoiceAutomationService:
                 practice_id,
                 "invoice_generated",
                 triggered_by,
-                f"Invoice {invoice_info['invoice_number']} created and sent",
+                activity_description(
+                    invoice_info["invoice_number"],
+                    client_email_outcome(
+                        bool(invoice_info.get("email_sent")),
+                        bool(invoice_info.get("email_attempted")),
+                    ),
+                ),
             )
 
         logger.info("Practice %s updated with invoice information", practice_id)

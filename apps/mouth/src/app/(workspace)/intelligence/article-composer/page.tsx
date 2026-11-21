@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import {
   articlesApi,
+  ArticleComposerCategory,
+  ArticlePublishPosition,
   ComposeRequest,
   EnrichedArticle,
   PublishRequest,
@@ -34,20 +36,35 @@ import {
   Send,
 } from "lucide-react";
 
-const CATEGORIES = [
+const CATEGORIES: { value: ArticleComposerCategory; label: string }[] = [
   { value: "business", label: "Business & Company" },
-  { value: "visas", label: "Visas & Visas" },
+  { value: "immigration", label: "Immigration & Visas" },
   { value: "tax", label: "Taxes" },
   { value: "property", label: "Property & Real Estate" },
-  { value: "living", label: "Living" },
-  { value: "trends", label: "Trends & Insights" },
+  { value: "lifestyle", label: "Lifestyle & Living" },
+  { value: "tech", label: "Tech & Trends" },
   { value: "legal", label: "Legal Updates" },
 ];
 
-const POSITIONS = [
-  { value: "normal", label: "Normal Article" },
-  { value: "secondary", label: "Secondary Featured" },
-  { value: "main_featured", label: "Main Featured (Homepage Hero)" },
+const LEGACY_CATEGORY_MAP: Record<string, ArticleComposerCategory> = {
+  visas: "immigration",
+  living: "lifestyle",
+  trends: "tech",
+};
+
+const POSITIONS: { value: ArticlePublishPosition; label: string }[] = [
+  { value: "normal", label: "Normal Article (Unpinned)" },
+  { value: "latest", label: "Latest Feed (Unpinned)" },
+  { value: "hero_main", label: "Homepage Hero Main" },
+  { value: "hero_2", label: "Homepage Hero 2" },
+  { value: "hero_3", label: "Homepage Hero 3" },
+  { value: "hero_4", label: "Homepage Hero 4" },
+  { value: "hero_5", label: "Homepage Hero 5" },
+  { value: "insight_1", label: "Homepage Insight 1" },
+  { value: "insight_2", label: "Homepage Insight 2" },
+  { value: "insight_3", label: "Homepage Insight 3" },
+  { value: "secondary", label: "Secondary Featured (Legacy Unpinned)" },
+  { value: "main_featured", label: "Main Featured (Legacy Unpinned)" },
 ];
 
 const DRAFT_KEY = "bz_composer_draft_v2";
@@ -106,9 +123,7 @@ export default function ArticleComposerPage() {
   );
 
   // Publish State
-  const [position, setPosition] = useState<
-    "normal" | "secondary" | "main_featured"
-  >("normal");
+  const [position, setPosition] = useState<ArticlePublishPosition>("normal");
   const [customSlug, setCustomSlug] = useState("");
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
 
@@ -151,7 +166,9 @@ export default function ArticleComposerPage() {
         const draft = JSON.parse(raw);
         if (draft.title) setTitle(draft.title);
         if (draft.content) setContent(draft.content);
-        if (draft.category) setCategory(draft.category);
+        if (draft.category) {
+          setCategory(LEGACY_CATEGORY_MAP[draft.category] || draft.category);
+        }
         if (draft.source) setSourceUrl(draft.source);
         if (draft.author) setAuthor(draft.author);
       }
@@ -223,7 +240,11 @@ export default function ArticleComposerPage() {
         );
         localStorage.removeItem(DRAFT_KEY);
       } else {
-        throw new Error(res.error || "Unknown error");
+        const errMsg =
+          typeof res.error === "string"
+            ? res.error
+            : res.error?.message || "Unknown error";
+        throw new Error(errMsg);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -264,7 +285,7 @@ export default function ArticleComposerPage() {
         setPublishedUrl(res.article_url || "#");
         toast.success("Published!", "Article is live.");
       } else {
-        throw new Error(res.error);
+        throw new Error(res.error || res.message || "Publish failed");
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Publish failed";
@@ -1194,9 +1215,7 @@ export default function ArticleComposerPage() {
                         <Select
                           value={position}
                           onValueChange={(v) =>
-                            setPosition(
-                              v as "normal" | "secondary" | "main_featured",
-                            )
+                            setPosition(v as ArticlePublishPosition)
                           }
                           disabled={isEditing}
                         >

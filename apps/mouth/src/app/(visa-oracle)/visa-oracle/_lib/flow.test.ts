@@ -55,6 +55,7 @@ describe("Slice A6-2 — declared conservative Not sure branches", () => {
       "secondhome_deposit_usd",
       "secondhome_own_name",
       "secondhome_passive_income_usd",
+      "secondhome_property_title",
       "secondhome_property_value_usd",
       "secondhome_state_bank",
       "study_admission_confirmed",
@@ -233,6 +234,7 @@ const CATEGORY_CASES: ReadonlyArray<{
     category: "second_home",
     branch: [
       ["secondhome_basis", "property"],
+      ["secondhome_property_title", "completed_strata"],
       ["secondhome_property_value_usd", "2000000"],
       ["stay_days", "1825"],
     ],
@@ -1509,14 +1511,54 @@ describe("PR-3 · work_role is gone from every live sequence (owner ruling 6)", 
 });
 
 describe("PR-3 · the second_home branch (owner ruling 3)", () => {
-  it("guilt: each basis serves exactly the evidence its E33 support rule reads", () => {
+  it("guilt: each basis serves the property-title filter and the evidence its E33 support rule reads", () => {
     expect(
       getCategoryQuestionIds({
         category: "second_home",
         secondhome_basis: "property",
       }),
+    ).toEqual(["secondhome_basis", "secondhome_property_title", "stay_days"]);
+    expect(
+      getCategoryQuestionIds({
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "completed_strata",
+      }),
     ).toEqual([
       "secondhome_basis",
+      "secondhome_property_title",
+      "secondhome_property_value_usd",
+      "stay_days",
+    ]);
+    expect(
+      getCategoryQuestionIds({
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+      }),
+    ).toEqual(["secondhome_basis", "secondhome_property_title", "stay_days"]);
+    expect(
+      getCategoryQuestionIds({
+        category: "invest",
+        investment_vehicle: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+      }),
+    ).toEqual([
+      "sponsor_category",
+      "investment_vehicle",
+      "secondhome_property_title",
+      "stay_days",
+    ]);
+    expect(
+      getCategoryQuestionIds({
+        category: "invest",
+        investment_vehicle: "property",
+        secondhome_property_title: "completed_strata",
+      }),
+    ).toEqual([
+      "sponsor_category",
+      "investment_vehicle",
+      "secondhome_property_title",
       "secondhome_property_value_usd",
       "stay_days",
     ]);
@@ -1541,7 +1583,7 @@ describe("PR-3 · the second_home branch (owner ruling 3)", () => {
     ]);
   });
 
-  it("innocence: the retirement branch is unchanged by the new tile", () => {
+  it("guilt: the retirement property branch shares the same strata-title gate before asking USD value (NC-08 / F3)", () => {
     expect(
       getCategoryQuestionIds({
         category: "retirement",
@@ -1549,10 +1591,37 @@ describe("PR-3 · the second_home branch (owner ruling 3)", () => {
       }),
     ).toEqual([
       "retirement_basis",
-      "secondhome_property_value_usd",
+      "secondhome_property_title",
       // Added (PR-D3, D3-3): `property` now asks the same E33F fallback
       // pair every other retirement basis does — see flow.ts. PR-M: the
       // sponsor half of the pair is the penjamin wording.
+      "secondhome_passive_income_usd",
+      "retirement_penjamin_confirmed",
+      "stay_days",
+    ]);
+    expect(
+      getCategoryQuestionIds({
+        category: "retirement",
+        retirement_basis: "property",
+        secondhome_property_title: "completed_strata",
+      }),
+    ).toEqual([
+      "retirement_basis",
+      "secondhome_property_title",
+      "secondhome_property_value_usd",
+      "secondhome_passive_income_usd",
+      "retirement_penjamin_confirmed",
+      "stay_days",
+    ]);
+    expect(
+      getCategoryQuestionIds({
+        category: "retirement",
+        retirement_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+      }),
+    ).toEqual([
+      "retirement_basis",
+      "secondhome_property_title",
       "secondhome_passive_income_usd",
       "retirement_penjamin_confirmed",
       "stay_days",

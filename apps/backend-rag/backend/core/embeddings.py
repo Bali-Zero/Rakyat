@@ -34,26 +34,51 @@ _OPENAI_EMBED_MAX_TOKENS_PER_REQUEST = 300_000
 _OPENAI_EMBED_TOKEN_BUDGET = 200_000  # safety margin for limit (1)
 _OPENAI_EMBED_MAX_TOKENS_PER_INPUT = 8192  # OpenAI hard limit (2)
 _OPENAI_EMBED_INPUT_TOKEN_BUDGET = 7500  # safety margin for limit (2)
-_TIKTOKEN_ENCODER: "tiktoken.Encoding | None"
+_TIKTOKEN_ENCODER: "tiktoken.Encoding | None" = None
+_TIKTOKEN_ENCODER_TRIED = False
 try:
     import tiktoken
 
     _TIKTOKEN_AVAILABLE = True
-    _TIKTOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")
 except ImportError:
     _TIKTOKEN_AVAILABLE = False
-    _TIKTOKEN_ENCODER = None
     logger.warning(
         "tiktoken not available — embedding sub-batching falls back to "
         "char-count heuristic (1 token ≈ 4 chars). Recommended: pip install tiktoken",
     )
 
 
+def _get_tiktoken_encoder() -> "tiktoken.Encoding | None":
+    """Return the cl100k_base encoder, loading it on first use.
+
+    get_encoding() downloads the vocabulary when tiktoken has not cached it and
+    keeps it in memory afterwards. Done at import, every process that imports
+    this module could not boot while the download host was unreachable, and
+    paid for the encoder whether or not it ever embeds. One attempt per
+    process: after a failure the char-count fallback answers until restart.
+    """
+    global _TIKTOKEN_ENCODER, _TIKTOKEN_ENCODER_TRIED
+    if not _TIKTOKEN_AVAILABLE:
+        return None
+    if not _TIKTOKEN_ENCODER_TRIED:
+        try:
+            _TIKTOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")
+        except Exception as exc:
+            logger.warning(
+                "tiktoken encoder could not be loaded (%s) — embedding sub-batching "
+                "falls back to char-count heuristic for the life of this process",
+                type(exc).__name__,
+            )
+        _TIKTOKEN_ENCODER_TRIED = True
+    return _TIKTOKEN_ENCODER
+
+
 def _count_tokens(text: str) -> int:
     """Count tokens for a string using tiktoken (or char-based fallback)."""
-    if _TIKTOKEN_AVAILABLE and _TIKTOKEN_ENCODER is not None:
+    encoder = _get_tiktoken_encoder()
+    if encoder is not None:
         try:
-            return len(_TIKTOKEN_ENCODER.encode(text, disallowed_special=()))
+            return len(encoder.encode(text, disallowed_special=()))
         except Exception:
             pass
     # Fallback: 1 token ≈ 4 characters (conservative for non-English)
@@ -67,7 +92,8 @@ def _truncate_oversized_input(text: str, max_tokens: int = _OPENAI_EMBED_INPUT_T
     chunks within the limit; oversized inputs are evidence of a chunker config
     bug or a malformed PDF page.
     """
-    if not _TIKTOKEN_AVAILABLE or _TIKTOKEN_ENCODER is None:
+    encoder = _get_tiktoken_encoder()
+    if encoder is None:
         # Char-based fallback: ~4 chars/token → max ~30k chars
         max_chars = max_tokens * 3
         if len(text) > max_chars:
@@ -77,11 +103,11 @@ def _truncate_oversized_input(text: str, max_tokens: int = _OPENAI_EMBED_INPUT_T
             return text[:max_chars] + " [TRUNCATED]"
         return text
 
-    tokens = _TIKTOKEN_ENCODER.encode(text, disallowed_special=())
+    tokens = encoder.encode(text, disallowed_special=())
     if len(tokens) <= max_tokens:
         return text
     truncated_tokens = tokens[:max_tokens]
-    truncated_text = _TIKTOKEN_ENCODER.decode(truncated_tokens)
+    truncated_text = encoder.decode(truncated_tokens)
     logger.warning(
         f"Truncating oversized input: {len(tokens)} tokens → {max_tokens} "
         f"({len(text)} chars → {len(truncated_text)} chars). "

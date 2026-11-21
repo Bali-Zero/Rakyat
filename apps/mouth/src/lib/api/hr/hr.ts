@@ -11,6 +11,7 @@ import type {
   Bonus,
   BonusHistoricalRecord,
   BonusRate,
+  BonusPracticeType,
   BonusRatePayload,
   EmployeeCreatePayload,
   HREmployee,
@@ -18,6 +19,7 @@ import type {
   LeaveRequest,
   LeaveRequestPayload,
   LeaveType,
+  ManualBonusPayload,
   PayrollPeriod,
   Payslip,
   PayslipDetail,
@@ -49,6 +51,10 @@ export interface HrCapabilities {
   people_scope: "all" | "scoped" | null;
   /** The viewer may edit HR data (read-only People for everyone else). */
   hr_edit: boolean;
+  /** The viewer may edit, clear or create any person's HR card (the owner and the accountant only). */
+  hr_card_write: boolean;
+  /** The viewer may calculate, approve or mark paid a payroll period (the same two people). */
+  hr_payroll_write: boolean;
 }
 export const getCapabilities = () =>
   api.get<HrCapabilities>(`${BASE}/me/capabilities`);
@@ -56,11 +62,26 @@ export const getCapabilities = () =>
 // Own staff card — the member's own values in full, without the HR notes.
 export interface HrContract {
   number?: string | null;
-  file_id?: string | null;
+}
+/** One paper: `present` = a value is on file; `file_id` is set ONLY when the door verified it. */
+export interface HrDocumentState {
+  present: boolean;
+  file_id: string | null;
+}
+/** Closed: exactly these six keys. The API never returns a stored slot value (STAFF_CARD.md C13). */
+export interface HrDocuments {
+  ktp: HrDocumentState;
+  kk: HrDocumentState;
+  npwp: HrDocumentState;
+  bpjs_kes: HrDocumentState;
+  bpjs_tk: HrDocumentState;
+  contract: HrDocumentState;
 }
 export interface HrStaffCard {
   employee_id: number;
   full_name: string | null;
+  /** Local staff portrait path (/static/team/<slug>.jpg); null when none. */
+  avatar_url?: string | null;
   role: string | null;
   department: string | null;
   hire_date: string | null;
@@ -83,8 +104,11 @@ export interface HrStaffCard {
   marital_status: string | null;
   employer_entity: string | null;
   unit: string | null;
+  position?: string | null;
+  /** false = the person is not on payroll (absent on older answers means true). */
+  on_payroll?: boolean;
   contract: HrContract | null;
-  docs: Record<string, string>;
+  documents: HrDocuments;
   end_date: string | null;
 }
 export const getMyCard = () => api.get<HrStaffCard>(`${BASE}/me/card`);
@@ -181,6 +205,62 @@ export const getPersonOverview = (
     `${BASE}/people/${encodeURIComponent(teamMemberId)}/overview`,
   );
 
+// People console, card edit — STAFF_CARD.md C11. Only the global admins may call it; the
+// answer is the person's refreshed overview, bound to the session like the read.
+export type CardEditBody = components["schemas"]["CardEditBody"];
+/** One entry of a 422: a closed field key (or ""), a code and a fixed message; never a value. */
+export interface CardEditFieldError {
+  field: string;
+  code: string;
+  message: string;
+}
+export const editPersonCard = (
+  teamMemberId: string,
+  body: CardEditBody,
+): Promise<CredentialedResponse<PersonOverview>> =>
+  api.requestWithCredential<PersonOverview>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/card`,
+    { method: "PATCH", body: JSON.stringify(body) },
+  );
+
+// People console, HR documents — STAFF_CARD.md C13. Only the global admins may call these. The
+// file goes up as multipart (field `file`); the browser sets the boundary, so no Content-Type here.
+export const DOC_SLOTS = [
+  "ktp",
+  "kk",
+  "npwp",
+  "bpjs_kes",
+  "bpjs_tk",
+  "contract",
+] as const;
+export type DocSlot = (typeof DOC_SLOTS)[number];
+export const DOC_MAX_BYTES = 4 * 1024 * 1024;
+export interface PersonDocumentResult {
+  slot: DocSlot;
+  documents: HrDocuments;
+}
+export const uploadPersonDocument = (
+  teamMemberId: string,
+  slot: DocSlot,
+  file: File,
+): Promise<CredentialedResponse<PersonDocumentResult>> => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.requestWithCredential<PersonDocumentResult>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/documents/${slot}`,
+    { method: "POST", body: form },
+    90000,
+  );
+};
+export const removePersonDocument = (
+  teamMemberId: string,
+  slot: DocSlot,
+): Promise<CredentialedResponse<PersonDocumentResult>> =>
+  api.requestWithCredential<PersonDocumentResult>(
+    `${BASE}/people/${encodeURIComponent(teamMemberId)}/documents/${slot}`,
+    { method: "DELETE" },
+  );
+
 // Dashboard
 export const getDashboard = () => api.get<AdminDashboard>(`${BASE}/dashboard`);
 export const getMyDashboard = () =>
@@ -203,6 +283,12 @@ export const listBonusRates = () =>
 export const upsertBonusRate = (data: BonusRatePayload) =>
   api.post<{ success: boolean; rate: BonusRate }>(`${BASE}/bonus-rates`, data);
 
+/** HR-admin only. Active practice types, tax included, grouped server-side. */
+export const listBonusPracticeTypes = () =>
+  api.get<{ practice_types: BonusPracticeType[]; count: number }>(
+    `${BASE}/bonus-practice-types`,
+  );
+
 // Bonuses
 export const listBonuses = (
   params?: Record<string, string | number | null | undefined>,
@@ -213,6 +299,17 @@ export const approveBonus = (id: number) =>
     `${BASE}/bonuses/${id}/approve`,
     {},
   );
+/** HR-admin only. Starts pending; 409 when that payroll month is already locked. */
+export const createManualBonus = (data: ManualBonusPayload) =>
+  api.post<{ success: boolean; bonus: Bonus }>(`${BASE}/bonuses`, data);
+export const rejectBonus = (id: number, note?: string) =>
+  api.post<{ success: boolean; bonus: Bonus }>(
+    `${BASE}/bonuses/${id}/reject`,
+    note ? { note } : {},
+  );
+/** Only a pending MANUAL bonus can be deleted (409 otherwise). */
+export const deleteBonus = (id: number) =>
+  api.delete<{ success: boolean }>(`${BASE}/bonuses/${id}`);
 /** HR-admin only — 403 for team members. Callers must tolerate the rejection. */
 export const listBonusHistorical = (year?: number) =>
   api.get<{ records: BonusHistoricalRecord[]; count: number }>(

@@ -2,7 +2,7 @@
 
 Owner direction: retire every Telegram bot and integration. `backend.core.telegram_retirement.telegram_is_retired()` is a source policy, with no environment opt-in. Stale cached tokens cannot enable startup, HTTP sends or approval callbacks. Historical conversation reads remain available; public Telegram contact links are removed.
 
-Telegram-only Garuda staff-page jobs remain in the durable outbox. All six current types are excluded before claim and retry-budget consumption. They retain `dispatched_at=NULL` and are counted as `retired_internal_attention`. This is a visible hold, not delivery. Customer email and other outbox jobs continue normally. No schema change or customer-row cleanup is involved.
+Garuda `staff_page_*` money-anomaly jobs now deliver through the internal email channel (`EmailStaffPageSender` / `BrevoEmailSender`) under `telegram_is_retired()`, leaving `RETIRED_TELEGRAM_JOB_TYPES` empty while preserving the consumer's hold predicate (`retired_internal_attention`) for any future retired transport types. Customer email and other outbox jobs continue normally. No schema change or customer-row cleanup is involved.
 
 Review SLA expiry continues without a Telegram adapter or chat ID. Other senders retain local logging and non-Telegram functions. Legacy protocol tests explicitly opt into mocked transports only; new tests enforce the retired production default even with injected credentials.
 

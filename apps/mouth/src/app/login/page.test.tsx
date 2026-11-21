@@ -9,7 +9,15 @@
  *   2. stageForError   — a 500 is never reported as a wrong PIN.
  *   3. no red, no copper FILL — the alphabet's law, read off the rendered DOM.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -33,7 +41,12 @@ vi.mock("@/lib/logger", () => ({
 
 import { ApiError } from "@/lib/api/error-handler";
 import LoginPage from "./page";
-import { firstPartyRedirect, stageForError } from "./contract";
+import {
+  CREDENTIAL_FIELDS,
+  firstPartyRedirect,
+  stageForError,
+  withoutCredentialFields,
+} from "./contract";
 import LoginError from "./error";
 import LoginLoading from "./loading";
 
@@ -720,5 +733,142 @@ describe("LoginPage — forest ground, kita heading face", () => {
     expect(readFileSync(join(portalLogin, "r19-fonts.css"), "utf8")).toContain(
       "Fraunces",
     );
+  });
+});
+
+/**
+ * The credentials never travel in the address.
+ *
+ * The form had no `method`, so a submit made by the browser itself, before
+ * React owned the page, was a GET to `/login?email=…&pin=…`. Every value below
+ * is invented.
+ */
+describe("credentials stay out of the address", () => {
+  const serverMarkup = () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToString(<LoginPage />);
+    return host;
+  };
+
+  it("withoutCredentialFields removes both fields and keeps the rest (guilt)", () => {
+    expect(
+      withoutCredentialFields(
+        "https://kita.example/login?email=a%40example.com&redirect=%2Fclients&pin=135790#top",
+      ),
+    ).toBe("/login?redirect=%2Fclients#top");
+    expect(
+      withoutCredentialFields("https://kita.example/login?pin=135790"),
+    ).toBe("/login");
+    expect(
+      withoutCredentialFields(
+        "https://kita.example/login?email=a%40example.com",
+      ),
+    ).toBe("/login");
+  });
+
+  it("withoutCredentialFields leaves an address without them alone (innocence)", () => {
+    expect(
+      withoutCredentialFields("https://kita.example/login?redirect=%2Fclients"),
+    ).toBeNull();
+    expect(withoutCredentialFields("https://kita.example/login")).toBeNull();
+    // A key that merely contains the word is not the field.
+    expect(
+      withoutCredentialFields("https://kita.example/login?pinned=1&emails=2"),
+    ).toBeNull();
+    expect(withoutCredentialFields("not an address")).toBeNull();
+  });
+
+  it("the server's markup is a POST form that cannot be submitted yet (guilt for the method-less form)", () => {
+    const host = serverMarkup();
+    const form = host.querySelector("form")!;
+    expect(form.getAttribute("method")).toBe("post");
+    expect(form.getAttribute("action")).toBeNull();
+    const button = host.querySelector('button[type="submit"]');
+    expect(button).not.toBeNull();
+    expect(button).toBeDisabled();
+    // One submit button and no other control that could submit the form.
+    expect(form.querySelectorAll("button, input[type=submit]")).toHaveLength(1);
+    // The fields are the two names a GET would have written into the query.
+    expect(
+      Array.from(form.querySelectorAll("input")).map((input) => input.name),
+    ).toEqual([...CREDENTIAL_FIELDS]);
+  });
+
+  it("the button is enabled once the page is interactive (innocence)", async () => {
+    render(<LoginPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Enter" })).toBeEnabled(),
+    );
+  });
+
+  it("an address that already carries the fields is rewritten without them", async () => {
+    const replaceState = vi.spyOn(globalThis.history, "replaceState");
+    atUrl("?email=a%40example.com&pin=135790&redirect=%2Fclients");
+    render(<LoginPage />);
+    await waitFor(() => expect(replaceState).toHaveBeenCalledTimes(1));
+    expect(replaceState.mock.calls[0][2]).toBe("/login?redirect=%2Fclients");
+    replaceState.mockRestore();
+  });
+
+  it("an address without the fields is not rewritten (innocence)", async () => {
+    const replaceState = vi.spyOn(globalThis.history, "replaceState");
+    atUrl("?redirect=%2Fclients");
+    render(<LoginPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Enter" })).toBeEnabled(),
+    );
+    expect(replaceState).not.toHaveBeenCalled();
+    replaceState.mockRestore();
+  });
+
+  it("what was typed before React took over is what is sent, by a request and not by the address", async () => {
+    const host = serverMarkup();
+    document.body.appendChild(host);
+    (host.querySelector("#email") as HTMLInputElement).value =
+      "early@example.com";
+    (host.querySelector("#pin") as HTMLInputElement).value = "246810";
+    mockLogin.mockResolvedValueOnce({ user: { name: "Ada", role: "staff" } });
+
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    await act(async () => {
+      root = hydrateRoot(host, <LoginPage />);
+    });
+    const button = host.querySelector('button[type="submit"]')!;
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.submit(host.querySelector("form")!);
+
+    await waitFor(() =>
+      expect(mockLogin).toHaveBeenCalledWith("early@example.com", "246810"),
+    );
+    await waitFor(() =>
+      expect(redirectReplace).toHaveBeenCalledWith("/dashboard"),
+    );
+    await act(async () => root?.unmount());
+    host.remove();
+  });
+
+  it("a fill that arrives after mount without an input event is what is sent, and stays in the fields", async () => {
+    mockLogin.mockReturnValueOnce(new Promise(() => {}));
+    const { container } = render(<LoginPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Enter" })).toBeEnabled(),
+    );
+    const email = container.querySelector("#email") as HTMLInputElement;
+    const pin = container.querySelector("#pin") as HTMLInputElement;
+    // The native setter: React's own value tracker never hears of it, as with
+    // a password manager that writes the field and fires nothing.
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    setValue.call(email, "late@example.com");
+    setValue.call(pin, "864200");
+    fireEvent.submit(container.querySelector("form")!);
+
+    await waitFor(() =>
+      expect(mockLogin).toHaveBeenCalledWith("late@example.com", "864200"),
+    );
+    expect(email.value).toBe("late@example.com");
+    expect(pin.value).toBe("864200");
   });
 });

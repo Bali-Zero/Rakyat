@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { R19Presentation } from "./R19Presentation";
-import { MobileNav } from "@/app/v2/_components/MobileNav";
+import { MobileNav } from "@/components/site/MobileNav";
 
 const route = vi.hoisted(() => ({ pathname: "/news" }));
 vi.mock("next/navigation", () => ({ usePathname: () => route.pathname }));

@@ -55,17 +55,48 @@ describe("LicensingQuickFacts — the non-gold grid keeps the same honesty rule"
     ).toBeInTheDocument();
   });
 
-  it("innocence: 56101 (oss_native) prints its real values and no qualifier", () => {
+  it("innocence: 56101 (oss_native, multi-tier) prints its full Low→High risk range and no qualifier", () => {
     const kbli = getCode("56101");
     if (!kbli) throw new Error("56101 missing from the canonical");
 
     render(<LicensingQuickFacts kbli={kbli} />);
 
-    expect(cellValue("Risk Level")).not.toBe(UNVERIFIED_LICENSING_FACT);
+    expect(cellValue("Risk Level")).toBe("Medium-Low → Medium-High");
     expect(cellValue("License Type")).toBe(kbli.licensing[0].licenseType);
     expect(cellValue("Processing")).not.toBe(UNVERIFIED_LICENSING_FACT);
     expect(screen.queryByText(/crosswalk is not verified/)).toBeNull();
     expect(screen.queryByText(/detached after a code-number/)).toBeNull();
+  });
+
+  it("guilt: multi-scale 01115 never understates Risk Level or License Type to Mikro-only Low / NIB", () => {
+    const kbli = getCode("01115");
+    if (!kbli) throw new Error("01115 missing from the canonical");
+
+    render(<LicensingQuickFacts kbli={kbli} />);
+
+    expect(cellValue("Risk Level")).toBe("Low → Medium-High");
+    expect(cellValue("License Type")).toBe("NIB → NIB + Sertifikat Standar");
+  });
+
+  it("guilt: Bali-blocked records qualify Foreign Ownership to match KeyFacts (55203 + located 100%-open Bali-blocked)", () => {
+    const k55203 = getCode("55203");
+    if (!k55203) throw new Error("55203 missing from the canonical");
+
+    const { unmount } = render(<LicensingQuickFacts kbli={k55203} />);
+    expect(cellValue("Foreign Ownership")).toBe(
+      "National: Closed (0%) · blocked in Bali",
+    );
+    unmount();
+
+    const baseOpen = getCode("56101")!;
+    const openBaliBlocked = {
+      ...baseOpen,
+      baliL4: { ...k55203.baliL4!, blocked: true },
+    };
+    render(<LicensingQuickFacts kbli={openBaliBlocked} />);
+    expect(cellValue("Foreign Ownership")).toBe(
+      "National: 100% Open · blocked in Bali",
+    );
   });
 
   it("a record with no licensing rows renders nothing at all", () => {

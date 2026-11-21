@@ -1059,3 +1059,132 @@ async def test_get_timeline_recent_documents_hide_archived_and_deleted() -> None
     assert "client_visible = true" in docs_sql
     assert "deleted_at IS NULL" in docs_sql
     assert "COALESCE(is_archived, FALSE) = FALSE" in docs_sql
+
+
+# ---------------------------------------------------------------------------
+# DAI-152 — the portal "Recent activity" timeline never shows a UUID file
+# name. Storage keys like ``3f2b…-….png`` were frozen into the upload event
+# sentence and echoed in the documents feed; the client saw the raw key.
+# Display text is built at READ time: label → real original name → fallback
+# "Document received (<EXT>)". No stored row is rewritten.
+# ---------------------------------------------------------------------------
+
+# Deterministic, obviously fake keys (low entropy: no secret-scanner noise).
+_UUID_NAME = "00000000-0000-4000-8000-000000000001.png"
+_HEX32_PDF = "00000000000040008000000000000002.PDF"
+_UUID_JPEG = "00000000-0000-4000-8000-000000000003.jpeg"
+_HEX32_BARE = "00000000000040008000000000000004"
+_KEY_MARKERS = ("-0000-4000-8000-", "000040008000")
+
+
+@pytest.mark.asyncio
+async def test_get_timeline_upload_event_never_shows_uuid_file_name() -> None:
+    service, conn = _service_with_conn()
+    now = datetime.now(timezone.utc)
+    conn.fetch.side_effect = [
+        [
+            {
+                "id": 1,
+                "practice_id": None,
+                "event_type": "document_received",
+                "title": "Document received",
+                "description": f"{_UUID_NAME} uploaded successfully",
+                "event_date": now,
+            },
+            {
+                "id": 2,
+                "practice_id": None,
+                "event_type": "document_received",
+                "title": "Document received",
+                "description": (
+                    f"{_HEX32_PDF} uploaded successfully (Expiry detected: 2030-01-01)"
+                ),
+                "event_date": now,
+            },
+            {
+                "id": 3,
+                "practice_id": None,
+                "event_type": "document_received",
+                "title": "Document received",
+                "description": "my-lease.pdf uploaded successfully",
+                "event_date": now,
+            },
+            {
+                "id": 4,
+                "practice_id": None,
+                "event_type": "document_removed",
+                "title": "Document removed",
+                "description": f"{_UUID_NAME} removed by client (recoverable for 30 days)",
+                "event_date": now,
+            },
+        ],
+        [],
+        [],
+        [],
+    ]
+
+    result = await service.get_timeline(1, limit=20, current_user=_ctx())
+
+    by_id = {e["id"]: e for e in result["entries"]}
+    assert by_id["event-1"]["description"] == "Document received (PNG)"
+    assert by_id["event-2"]["description"] == (
+        "Document received (PDF) (Expiry detected: 2030-01-01)"
+    )
+    # A real original name is kept as-is.
+    assert by_id["event-3"]["description"] == "my-lease.pdf uploaded successfully"
+    assert by_id["event-4"]["description"] == (
+        "Document (PNG) removed by client (recoverable for 30 days)"
+    )
+    blob = repr(result)
+    assert not any(marker in blob for marker in _KEY_MARKERS)
+
+
+@pytest.mark.asyncio
+async def test_get_timeline_document_feed_label_wins_and_uuid_falls_back() -> None:
+    service, conn = _service_with_conn()
+    now = datetime.now(timezone.utc)
+    conn.fetch.side_effect = [
+        [],
+        [],
+        [
+            {  # label wins over any file name
+                "id": 5,
+                "document_type": "passport",
+                "file_name": _UUID_NAME,
+                "status": "received",
+                "created_at": now,
+            },
+            {  # no label, real original name
+                "id": 6,
+                "document_type": None,
+                "file_name": "bank-statement.pdf",
+                "status": "received",
+                "created_at": now,
+            },
+            {  # no label, UUID name → extension fallback
+                "id": 7,
+                "document_type": "other",
+                "file_name": _UUID_JPEG,
+                "status": "received",
+                "created_at": now,
+            },
+            {  # nothing usable at all
+                "id": 8,
+                "document_type": None,
+                "file_name": _HEX32_BARE,
+                "status": "received",
+                "created_at": now,
+            },
+        ],
+        [],
+    ]
+
+    result = await service.get_timeline(1, limit=30, current_user=_ctx())
+
+    by_id = {e["id"]: e for e in result["entries"]}
+    assert by_id["doc-5"]["title"] == "Document: Passport"
+    assert by_id["doc-6"]["title"] == "Document: bank-statement.pdf"
+    assert by_id["doc-7"]["title"] == "Document received (JPEG)"
+    assert by_id["doc-8"]["title"] == "Document received"
+    blob = repr(result)
+    assert not any(marker in blob for marker in _KEY_MARKERS)

@@ -30,6 +30,12 @@ from backend.app.core.config import settings
 # (hr_leave_routing) and a read-only People view of four members (HR_SCOPED_VIEWERS).
 HR_EXTRA_ADMIN_EMAILS: frozenset[str] = frozenset({"adit@balizero.com"})
 
+# The closed set of HR writers (owner decision 2026-11-13): the owner and the accountant. HR
+# card writes, HR document changes and payroll calculate/approve/mark-paid belong to them
+# ONLY; being a global admin (`settings.admin_emails_set`, which also holds an IT account)
+# grants none of it. All lower-case.
+HR_WRITER_EMAILS: frozenset[str] = frozenset({"zero@balizero.com", "asya@balizero.com"})
+
 # Read-only People viewers (owner decision 2026-11-12): viewer email -> the member emails
 # that viewer may SEE. All lower-case. A scoped viewer never edits anything.
 HR_SCOPED_VIEWERS: Mapping[str, frozenset[str]] = {
@@ -53,6 +59,24 @@ def is_hr_admin(user: dict[str, Any]) -> bool:
     """Check if user has HR admin privileges."""
     email = (user.get("email") or "").lower()
     return email in _hr_admin_emails() or user.get("role") == "admin"
+
+
+def can_write_hr_card(user: dict[str, Any]) -> bool:
+    """May this caller write HR data: any card, HR documents, payroll (STAFF_CARD.md C11)?
+
+    Only the closed set `HR_WRITER_EMAILS` (the owner and the accountant). Being a global
+    admin is not enough, nor an HR extra, a scoped viewer, a member or a client, and the
+    token's `role` claim does not grant it: it is an email allow-list, nothing else.
+    """
+    if user.get("role") == "client":
+        return False
+    email = (user.get("email") or "").lower().strip()
+    return email in HR_WRITER_EMAILS
+
+
+def can_run_payroll(user: dict[str, Any]) -> bool:
+    """May this caller calculate, approve or mark paid a payroll period? Same closed set."""
+    return can_write_hr_card(user)
 
 
 def hr_people_scope(user: dict[str, Any]) -> Literal["all"] | frozenset[str] | None:

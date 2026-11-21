@@ -3085,7 +3085,7 @@ describe("review reasons cover every code the current pack can emit", () => {
     const start = evaluatePathText.indexOf(
       "_DISCLOSED_REVIEW_REASON_CODES: MappingProxyType",
     );
-    const end = evaluatePathText.indexOf("\n\n#: The nine disclosures", start);
+    const end = evaluatePathText.indexOf("\n\n#: The ten disclosures", start);
     if (start < 0 || end < 0) {
       throw new Error("could not isolate _DISCLOSED_REVIEW_REASON_CODES");
     }
@@ -3207,8 +3207,6 @@ describe("review reasons cover every code the current pack can emit", () => {
   // "phantom" below — the same edit that adds the copy must delete the row.
   const HELD_ONLY_REVIEW_CODES = [
     "DISCLOSED_PAST_OVERSTAY_REVIEW", // evaluate_path.py:1147
-    "DISCLOSED_BLACKLIST_ENTRY_REVIEW", // evaluate_path.py:1148
-    "DISCLOSED_IMMIGRATION_INVESTIGATION_REVIEW", // evaluate_path.py:1149
   ];
 
   it("derives and pins every backend-independent review reason by name", () => {
@@ -3407,11 +3405,13 @@ describe("review reasons cover every code the current pack can emit", () => {
     expect(phantomHeldOnlyEntries).toEqual([]);
   });
 
-  it("pins the held-only allowlist to exactly the three A3-B codes", () => {
+  it("pins the held-only allowlist to the single remaining kill-switch-only code", () => {
     // Cardinality by literal, not derived — a test whose expectation shrinks
     // with the table it judges proves nothing (GATE-A2G OBS-A2g-4, the same
-    // reasoning A5-1's four-field pin uses).
-    expect(HELD_ONLY_REVIEW_CODES).toHaveLength(3);
+    // reasoning A5-1's four-field pin uses). BLACKLIST_ENTRY and
+    // IMMIGRATION_INVESTIGATION now hold unconditionally and carry
+    // visitor-facing REVIEW_REASON_COPY (NC-03).
+    expect(HELD_ONLY_REVIEW_CODES).toHaveLength(1);
   });
 });
 
@@ -3538,6 +3538,92 @@ describe("criminal review elements and unmapped review reasons (slice A5)", () =
     expect(
       REVIEW_REASON_ELEMENTS.DISCLOSED_ACTIVITY_BOUNDARY_REVIEW,
     ).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "DISCLOSED_BLACKLIST_ENTRY_REVIEW",
+      "You flagged a blacklist entry in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can go over your situation with you.",
+      "Pengungkapan Anda menandai adanya pencantuman dalam daftar hitam, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat membahas situasi tersebut bersama Anda.",
+    ],
+    [
+      "DISCLOSED_IMMIGRATION_INVESTIGATION_REVIEW",
+      "You flagged an open immigration investigation in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can review its status with you.",
+      "Anda menandai adanya pemeriksaan keimigrasian yang sedang berjalan dalam pengungkapan Anda, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat meninjau statusnya bersama Anda.",
+    ],
+  ] as const)(
+    "renders %s as a mapped review reason without throwing RESPONSE_INVARIANT (NC-03)",
+    (code, en, id) => {
+      const response = makeVisaOracleResponse("HUMAN_REVIEW_REQUIRED");
+      response.decision.review_reasons[0].code = code;
+      const outcome = buildEngineOutcome(response);
+      if (outcome.state !== "HUMAN_REVIEW_REQUIRED")
+        throw new Error("unexpected state");
+      expect(outcome.reviewReasons).toHaveLength(1);
+      expect(outcome.reviewReasons[0].message).toEqual({ en, id });
+    },
+  );
+
+  it("renders fact-aware property-title copy on SECOND_HOME_BELOW_THRESHOLD_STUDIO instead of claiming a declared figure when secondhome_property_title is non-qualifying or unsure (F2 / P03)", () => {
+    const response = makeVisaOracleResponse("HUMAN_REVIEW_REQUIRED");
+    response.decision.review_reasons[0].code =
+      "SECOND_HOME_BELOW_THRESHOLD_STUDIO";
+
+    const nonQualifying = buildEngineOutcome(response, {
+      facts: {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "non_qualifying_leasehold_villa_offplan",
+      },
+    });
+    if (nonQualifying.state !== "HUMAN_REVIEW_REQUIRED")
+      throw new Error("unexpected state");
+    expect(nonQualifying.reviewReasons[0].message.en).toContain(
+      "villas, leasehold or freehold land, HGB titles, and off-plan units",
+    );
+    expect(nonQualifying.reviewReasons[0].message.en).not.toContain(
+      "The figure you declared",
+    );
+    expect(nonQualifying.reviewReasons[0].message.id).toContain(
+      "vila, tanah sewa (leasehold) atau hak milik, HGB, dan unit inden (off-plan)",
+    );
+    expect(nonQualifying.reviewReasons[0].message.id).not.toContain(
+      "Angka yang Anda nyatakan",
+    );
+
+    const unsureTitle = buildEngineOutcome(response, {
+      facts: {
+        category: "invest",
+        investment_vehicle: "property",
+        secondhome_property_title: "unsure",
+      },
+    });
+    if (unsureTitle.state !== "HUMAN_REVIEW_REQUIRED")
+      throw new Error("unexpected state");
+    expect(unsureTitle.reviewReasons[0].message.en).toContain(
+      "unsure whether the property has a completed strata title",
+    );
+    expect(unsureTitle.reviewReasons[0].message.en).not.toContain(
+      "The figure you declared",
+    );
+    expect(unsureTitle.reviewReasons[0].message.id).toContain(
+      "belum yakin apakah properti tersebut memiliki hak pakai atas satuan rumah susun",
+    );
+
+    // Control: completed_strata with a below-threshold dollar figure keeps the threshold copy.
+    const completedBelow = buildEngineOutcome(response, {
+      facts: {
+        category: "second_home",
+        secondhome_basis: "property",
+        secondhome_property_title: "completed_strata",
+        secondhome_property_value_usd: "500000",
+      },
+    });
+    if (completedBelow.state !== "HUMAN_REVIEW_REQUIRED")
+      throw new Error("unexpected state");
+    expect(completedBelow.reviewReasons[0].message).toEqual(
+      REVIEW_REASON_COPY.SECOND_HOME_BELOW_THRESHOLD_STUDIO,
+    );
   });
 
   // This throw cannot fire in playwright.config.ts's e2e run because that
@@ -3696,7 +3782,7 @@ describe("notices render as named conditions (slice A2)", () => {
     },
   );
 
-  it("has all thirteen codes N1 names, and no other code, EN and ID both non-empty (A3'-M M6: fourteen -> thirteen, ACTIVITY_BOUNDARY retired)", () => {
+  it("has all eleven codes N1 names, and no other code, EN and ID both non-empty (NC-03: thirteen -> eleven, BLACKLIST_ENTRY and IMMIGRATION_INVESTIGATION moved to REVIEW_REASON_COPY)", () => {
     const EXPECTED_CODES = [
       "OBSOLETE_PRODUCT_CODE",
       "DISCLOSED_HEALTH_CONCERN_CONDITION",
@@ -3712,10 +3798,9 @@ describe("notices render as named conditions (slice A2)", () => {
       // gone rather than dead weight.
       "DISCLOSED_MULTI_PURPOSE_TRIP_CONDITION",
       "CONFLICTING_IMMIGRATION_STATUS_CONDITION",
-      // Slice A3-M (DRAFT-SPEC-A3-1.v2-M §4.1, M4): three new keys.
+      // Slice A3-M (DRAFT-SPEC-A3-1.v2-M §4.1, M4): PAST_OVERSTAY remains a
+      // condition; BLACKLIST_ENTRY and IMMIGRATION_INVESTIGATION now hold.
       "DISCLOSED_PAST_OVERSTAY_CONDITION",
-      "DISCLOSED_BLACKLIST_ENTRY_CONDITION",
-      "DISCLOSED_IMMIGRATION_INVESTIGATION_CONDITION",
     ].sort();
     expect(Object.keys(NOTICE_CONDITION_COPY).sort()).toEqual(EXPECTED_CODES);
     for (const message of Object.values(NOTICE_CONDITION_COPY)) {
@@ -3741,8 +3826,6 @@ describe("notices render as named conditions (slice A2)", () => {
     "DISCLOSED_MULTI_PURPOSE_TRIP_CONDITION", // evaluate_path.py:1170
     "CONFLICTING_IMMIGRATION_STATUS_CONDITION", // evaluate_path.py:1171-1173
     "DISCLOSED_PAST_OVERSTAY_CONDITION", // evaluate_path.py:1174
-    "DISCLOSED_BLACKLIST_ENTRY_CONDITION", // evaluate_path.py:1175
-    "DISCLOSED_IMMIGRATION_INVESTIGATION_CONDITION", // evaluate_path.py:1176
   ];
 
   // A3' (slice A3'-M, M6) retires the row this list used to carry:
@@ -4090,6 +4173,7 @@ describe("notices render as named conditions (slice A2)", () => {
         // falling through to the generic "no value was inferred" text
         // that was now false for them.
         | "assumption.secondhome_deposit_usd"
+        | "assumption.secondhome_property_title"
         | "assumption.secondhome_property_value_usd"
         | "assumption.secondhome_passive_income_usd"
         | "assumption.secondhome_state_bank"
@@ -4163,6 +4247,7 @@ describe("notices render as named conditions (slice A2)", () => {
       // Slice A6-2 delta A6-4b: the seven declared-conservative questions'
       // own assumption strings.
       "assumption.secondhome_deposit_usd",
+      "assumption.secondhome_property_title",
       "assumption.secondhome_property_value_usd",
       "assumption.secondhome_passive_income_usd",
       "assumption.secondhome_state_bank",
@@ -4228,6 +4313,7 @@ describe("notices render as named conditions (slice A2)", () => {
     // join the scan too, moving this pin 50 → 64 (seven keys × two
     // languages = fourteen new entries).
     "assumption.secondhome_deposit_usd",
+    "assumption.secondhome_property_title",
     "assumption.secondhome_property_value_usd",
     "assumption.secondhome_passive_income_usd",
     "assumption.secondhome_state_bank",
@@ -4242,9 +4328,9 @@ describe("notices render as named conditions (slice A2)", () => {
     "assumption.generic",
   ].sort();
 
-  it("pins the scan's own iteration: exactly the title, intro, generic fallback, thirteen codes, guardian consent, one sourceless dead-end code and fifteen assumption keys, both languages (V3, A6-3 + A6-4b + A6-bis + A7-M + A3'-M FIX-5)", () => {
+  it("pins the scan's own iteration: exactly the title, intro, generic fallback, eleven codes, guardian consent, one sourceless dead-end code and sixteen assumption keys, both languages (NC-03 + NC-08: 72 - 4 + 2 = 70)", () => {
     const entries = conditionsBlockEntries();
-    expect(entries).toHaveLength(72);
+    expect(entries).toHaveLength(70);
     expect(Array.from(new Set(entries.map((e) => e.key))).sort()).toEqual(
       EXPECTED_CONDITIONS_BLOCK_KEYS,
     );
@@ -4259,7 +4345,7 @@ describe("notices render as named conditions (slice A2)", () => {
     }
   });
 
-  it("innocence: all 72 shipped strings pass the scan clean", () => {
+  it("innocence: all 70 shipped strings pass the scan clean", () => {
     const hits = scanConditionsBlock();
     expect(hits, JSON.stringify(hits)).toEqual([]);
   });

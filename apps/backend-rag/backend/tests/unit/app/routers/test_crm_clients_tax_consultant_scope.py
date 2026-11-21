@@ -59,11 +59,14 @@ BOOK = [
 ]
 
 _COL = r"(?:c\.)?(assigned_to|tax_consultant)"
-_TERM = re.compile(_COL + r"\s*(?:=\s*\$(\d+)|(IS NULL))")
+_BIND = r"(?:ANY\(\$(\d+)::text\[\]\)|\$(\d+))"
+_TERM = re.compile(_COL + r"\s*(?:=\s*" + _BIND + r"|(IS NULL))")
 _GROUP = re.compile(
-    r"(?:AND|WHERE)\s*\(((?:\s*" + _COL + r"\s*(?:=\s*\$\d+|IS NULL)\s*(?:OR)?)+)\)"
+    r"(?:AND|WHERE)\s*\(((?:\s*"
+    + _COL
+    + r"\s*(?:=\s*(?:ANY\(\$\d+::text\[\]\)|\$\d+)|IS NULL)\s*(?:OR)?)+)\)"
 )
-_BARE = re.compile(r"(?:AND|WHERE)\s+" + _COL + r"\s*=\s*\$(\d+)")
+_BARE = re.compile(r"(?:AND|WHERE)\s+" + _COL + r"\s*=\s*" + _BIND)
 
 
 def _visible(sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -71,12 +74,17 @@ def _visible(sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
     groups: list[list[tuple[str, str | None]]] = []
     for g in _GROUP.finditer(sql):
         terms = []
-        for col, idx, is_null in _TERM.findall(g.group(1)):
-            terms.append((col, None if is_null else params[int(idx) - 1]))
+        for col, any_idx, plain_idx, is_null in _TERM.findall(g.group(1)):
+            terms.append((col, None if is_null else params[int(any_idx or plain_idx) - 1]))
         groups.append(terms)
-    for col, idx in _BARE.findall(sql):
-        groups.append([(col, params[int(idx) - 1])])
-    return [r for r in BOOK if all(any(r[c] == v for c, v in g) for g in groups)]
+    for col, any_idx, plain_idx in _BARE.findall(sql):
+        groups.append([(col, params[int(any_idx or plain_idx) - 1])])
+    return [r for r in BOOK if all(any(_owns(r[c], v) for c, v in g) for g in groups)]
+
+
+def _owns(owner: Any, bound: Any) -> bool:
+    """``col = $n`` for a scalar, ``col = ANY($n::text[])`` for a list."""
+    return owner in bound if isinstance(bound, list) else owner == bound
 
 
 class _FakeConn:

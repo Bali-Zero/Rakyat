@@ -33,7 +33,10 @@ import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import { Button } from "@/components/ui/button";
-import type { PortalProfile } from "@/lib/api/portal/portal.types";
+import type {
+  PortalProfile,
+  PortalProfileIdentity,
+} from "@/lib/api/portal/portal.types";
 
 // ============================================================================
 // ALERT UTILITIES (same as workspace)
@@ -107,6 +110,10 @@ const isBirthdayToday = (dateOfBirth: string | undefined): boolean => {
 
 import { formatDate, formatLongSpan } from "@/lib/utils/format-date";
 import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
+import {
+  maskDateOfBirth,
+  maskPassportNumber,
+} from "@/lib/portal/identity-mask";
 
 // ============================================================================
 // IDENTITY MASKING
@@ -115,15 +122,7 @@ import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
 // The passport number and date of birth used to render in full on every
 // visit, readable by anyone looking at the screen. They now load masked and
 // the client reveals each one on purpose; nothing is remembered between loads.
-const MASK = "•••••";
-
-const maskPassportNumber = (value: string): string =>
-  value.length > 3 ? `${MASK}${value.slice(-3)}` : MASK;
-
-const maskDateOfBirth = (value: string): string => {
-  const year = /^(\d{4})/.exec(value)?.[1];
-  return year ? `•• ••• ${year}` : "•• ••• ••••";
-};
+// Mask rules live in @/lib/portal/identity-mask (shared with the Family page).
 
 function RevealToggle({
   label,
@@ -230,6 +229,8 @@ export default function ProfilePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [showPassportNumber, setShowPassportNumber] = useState(false);
   const [showDateOfBirth, setShowDateOfBirth] = useState(false);
+  // Full values fetched on the first Show when the API sent them masked.
+  const [identity, setIdentity] = useState<PortalProfileIdentity | null>(null);
   const [editData, setEditData] = useState({
     phone: "",
     whatsapp: "",
@@ -267,6 +268,26 @@ export default function ProfilePage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const toggleReveal = async (
+    revealed: boolean,
+    setRevealed: (value: boolean) => void,
+  ) => {
+    if (revealed) {
+      setRevealed(false);
+      return;
+    }
+    if (profile?.identityMasked && !identity) {
+      try {
+        setIdentity(await api.portal.revealProfileIdentity());
+      } catch (err) {
+        error("Couldn't show this detail", "Please try again");
+        logger.error("Failed to reveal portal identity", {}, err as Error);
+        return;
+      }
+    }
+    setRevealed(true);
   };
 
   const handleEdit = () => {
@@ -380,7 +401,15 @@ export default function ProfilePage() {
   const passportValidity = getPassportValidityColor(profile.passportExpiry);
   const passportTone =
     STATE_TONE_STYLES[toneForAlertLevel(passportValidity.alertLevel)];
-  const isBirthday = isBirthdayToday(profile.dateOfBirth);
+  const isBirthday = profile.identityMasked
+    ? Boolean(profile.birthdayToday)
+    : isBirthdayToday(profile.dateOfBirth);
+  const fullPassportNumber = profile.identityMasked
+    ? identity?.passportNumber
+    : profile.passportNumber;
+  const fullDateOfBirth = profile.identityMasked
+    ? identity?.dateOfBirth
+    : profile.dateOfBirth;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -529,7 +558,9 @@ export default function ProfilePage() {
                   <RevealToggle
                     label="Date of Birth"
                     revealed={showDateOfBirth}
-                    onToggle={() => setShowDateOfBirth((v) => !v)}
+                    onToggle={() =>
+                      toggleReveal(showDateOfBirth, setShowDateOfBirth)
+                    }
                   />
                 </div>
                 <p
@@ -541,8 +572,8 @@ export default function ProfilePage() {
                     isBirthday ? { color: "var(--state-warning)" } : undefined
                   }
                 >
-                  {showDateOfBirth
-                    ? formatDate(profile.dateOfBirth)
+                  {showDateOfBirth && fullDateOfBirth
+                    ? formatDate(fullDateOfBirth)
                     : maskDateOfBirth(profile.dateOfBirth)}
                   {isBirthday && " 🎂 (Today!)"}
                 </p>
@@ -556,15 +587,17 @@ export default function ProfilePage() {
               icon={CreditCard}
               label="Passport Number"
               value={
-                showPassportNumber
-                  ? profile.passportNumber
+                showPassportNumber && fullPassportNumber
+                  ? fullPassportNumber
                   : maskPassportNumber(profile.passportNumber)
               }
               action={
                 <RevealToggle
                   label="Passport Number"
                   revealed={showPassportNumber}
-                  onToggle={() => setShowPassportNumber((v) => !v)}
+                  onToggle={() =>
+                    toggleReveal(showPassportNumber, setShowPassportNumber)
+                  }
                 />
               }
             />

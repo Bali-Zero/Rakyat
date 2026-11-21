@@ -20,6 +20,7 @@ import sys
 
 import asyncpg
 
+from backend.core.telegram_retirement import telegram_is_retired
 from backend.services.cognitive.repository import CognitiveRepository
 from backend.services.cognitive.strategos import StrategosOrchestrator
 from backend.services.cognitive.strategos_delivery import StrategosDelivery
@@ -71,6 +72,9 @@ async def _generate(pool: asyncpg.Pool) -> int:
 
 
 async def _deliver(pool: asyncpg.Pool) -> int:
+    if telegram_is_retired():
+        sys.stdout.write(json.dumps({"ok": False, "skipped": True, "skip_reason": "Telegram is retired"}) + "\n")
+        return 0
     if not DEFAULT_OWNER:
         sys.stdout.write(json.dumps({"ok": False, "skipped": True, "skip_reason": "TELEGRAM_OWNER_CHAT_ID not set"}) + "\n")
         return 0

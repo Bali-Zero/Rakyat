@@ -29,6 +29,13 @@ session with ZERO divergence on any entry:
     direct-parse retrieval and without sight of it: 97/97 country names
     matched, in the same order, ZERO divergence.
 
+    Re-attested (2026-11-17): re-fetched and parsed the live page at
+    `SOURCE_URL` (`<ol><li><span>...</span></li></ol>` list, 97/97 exact
+    country-name set parity with `VOA_ELIGIBLE_NATIONALITIES`, zero additions
+    or removals) and independently cross-checked via web-grounded regulatory
+    verification that KEPMENKUMHAM RI Nomor M.HH-02.GR.01.06 Tahun 2024
+    remains the in-force VOA subject list with 97 eligible countries/entities.
+
     ISO 3166-1 alpha-3 codes for each Indonesian country name were then
     verified against the standard ISO 3166-1 reference table
     (github.com/lukes/ISO-3166-Countries-with-Regional-Codes, `all/all.csv`,
@@ -96,7 +103,7 @@ SOURCE_URL: str = (
     "https://www.imigrasi.go.id/wna/daftar-negara-voa-bvk-calling-visa/"
     "daftar-negara-subjek-visa-on-arrival"
 )
-RETRIEVED_ON: str = "2026-08-23"
+RETRIEVED_ON: str = "2026-11-17"
 COUNT: int = 97
 
 # The one and only place a VOA-eligible nationality may be added or removed

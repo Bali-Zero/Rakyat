@@ -83,12 +83,99 @@ export interface MatchCandidate {
   reasons: string[];
   amount_delta_idr: number;
   likely_withheld: boolean;
+  /** Identity of the invoice; null when the source has none, absent from an older backend. */
+  invoice_number?: string | null;
+  /** ISO 8601 stamp of the invoice's generated_at. */
+  invoice_issued_at?: string | null;
+  service_name?: string | null;
 }
 
 export interface MatchCandidatesResponse {
   txn_id: number;
   transfer_amount_idr: number;
   candidates: MatchCandidate[];
+  /** Candidates among payments a practice already records (link, never confirm). */
+  recorded_candidates: MatchCandidate[];
+}
+
+/** Advice only: the screen never acts on a light by itself. */
+export type InboxLight = "green" | "recorded" | "yellow" | "red";
+
+export type DoneTodayAction = "confirmed" | "linked" | "ignored";
+
+/** One transfer handled today (GET /done-today). */
+export interface DoneTodayItem {
+  txn_id: number;
+  action: DoneTodayAction;
+  /** WITA local time, ISO with a +08:00 offset. */
+  done_at: string;
+  txn_date: string;
+  amount_idr: number;
+  description: string;
+  invoice_number: string | null;
+  client_name: string | null;
+}
+
+export interface DoneTodayResponse {
+  /** The WITA day, YYYY-MM-DD. */
+  day: string;
+  timezone: string;
+  counts: {
+    confirmed: number;
+    linked: number;
+    ignored: number;
+    total: number;
+  };
+  items: DoneTodayItem[];
+  truncated: boolean;
+}
+
+/** One issuing company with its bank account and imported-statement coverage (GET /companies). */
+export interface AccountingCompany {
+  /** An issuing-entity key, or "other" for imported accounts no company owns. */
+  key: string;
+  company_name: string;
+  bank_name: string | null;
+  account_number: string | null;
+  /** Last day covered by an imported statement (YYYY-MM-DD), null when none is imported. */
+  data_through: string | null;
+  statements: number;
+  /** Incoming transfers of this account still waiting to be reconciled. */
+  to_reconcile: number;
+}
+
+/** One unmatched incoming transfer with its light (GET /reconciliation-inbox). */
+export interface ReconciliationInboxItem {
+  txn_id: number;
+  txn_date: string;
+  amount_idr: number;
+  description: string;
+  /** The issuing company whose bank account received it; null when no company owns the account. */
+  company_key: string | null;
+  light: InboxLight;
+  open_candidates: number;
+  open_strong: number;
+  recorded_candidates: number;
+  recorded_strong: number;
+  suggestion: MatchCandidate | null;
+}
+
+export interface LinkRecordedRequest {
+  bank_txn_id: number;
+  practice_id: number;
+  invoice_id: number;
+}
+
+export interface IgnoreTransactionRequest {
+  bank_txn_id: number;
+  /** 3 to 200 characters after trimming. */
+  reason: string;
+}
+
+export interface ReconciliationActionResponse {
+  bank_txn_id: number;
+  reconciled_status: string;
+  reconciliation_log_id: number | null;
 }
 
 export interface ConfirmRequest {
@@ -106,6 +193,8 @@ export interface ConfirmRequest {
   rptka_imta_idr?: number;
   margin_idr?: number;
   movement_date?: string | null;
+  /** Historical mode: recorded without emails to the client or the team. */
+  historical?: boolean;
 }
 
 export interface ConfirmResponse {
@@ -115,6 +204,7 @@ export interface ConfirmResponse {
   reconciliation_log_id: number;
   status_before: string | null;
   status_after: string;
+  historical?: boolean;
 }
 
 export interface ExportSheetResponse {
@@ -129,6 +219,73 @@ export interface ImportCashoutResponse {
   imported: number;
   weeks: string[];
   replaced: number;
+}
+
+/** Amounts in a statement report are 2-decimal strings (e.g. "1500000.00"). */
+export interface BankStatementKindSum {
+  count: number;
+  total: string;
+}
+
+/** Report of a parsed statement (bank_parser.build_preview_report). */
+export interface BankStatementPreview {
+  account: { number: string; name: string };
+  period: { first: string; last: string };
+  row_count: number;
+  opening_balance: string;
+  closing_balance: string;
+  total_debit: string;
+  total_credit: string;
+  balance_check: { ok: boolean; mismatch_positions: number[] };
+  order_decided_by: string;
+  kinds: Record<string, BankStatementKindSum>;
+}
+
+export interface BankStatementImportOutcome {
+  statement_id: number | null;
+  rows_inserted: number;
+  rows_duplicate: number;
+  history_segments: number;
+  nothing_new: boolean;
+}
+
+export interface BankStatementImportResponse extends BankStatementPreview {
+  import: BankStatementImportOutcome;
+}
+
+/**
+ * Multipart POST of one `file` field. fetch sets the multipart boundary; we only
+ * attach CSRF + Authorization and send httpOnly cookies. A non-OK response
+ * throws an Error whose message is the backend's `detail` (or the statusText).
+ */
+async function postFile<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const headers: Record<string, string> = {};
+  const csrf = api.getCsrfToken();
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  const token = api.getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const resp = await fetch(`${api.getBaseUrl()}${path}`, {
+    method: "POST",
+    headers,
+    body: form,
+    credentials: "include",
+  });
+
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = await resp.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail);
+  }
+  return resp.json() as Promise<T>;
 }
 
 const qs = (params: Record<string, string | number | undefined>): string => {
@@ -164,6 +321,55 @@ export const accountingApi = {
         reconciled_status: opts?.reconciledStatus,
         limit: opts?.limit,
       })}`,
+    );
+  },
+
+  /** What was confirmed, linked or ignored today (WITA); read-only. */
+  async getDoneToday(): Promise<DoneTodayResponse> {
+    return api.get<DoneTodayResponse>("/api/crm/accounting/done-today");
+  },
+
+  /** The issuing companies, each with its bank account and how far its statements reach. */
+  async getCompanies(): Promise<AccountingCompany[]> {
+    return api.get<AccountingCompany[]>("/api/crm/accounting/companies");
+  },
+
+  /** Unmatched incoming transfers with their light, newest first. */
+  async getReconciliationInbox(
+    limit?: number,
+  ): Promise<ReconciliationInboxItem[]> {
+    return api.get<ReconciliationInboxItem[]>(
+      `/api/crm/accounting/reconciliation-inbox${qs({ limit })}`,
+    );
+  },
+
+  /** Attach a transfer to the invoice of a payment already recorded. Moves no money. */
+  async linkRecorded(
+    payload: LinkRecordedRequest,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/link-recorded",
+      payload,
+    );
+  },
+
+  /** Mark a transfer as not a client payment. Moves no money. */
+  async ignoreTransaction(
+    payload: IgnoreTransactionRequest,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/ignore-transaction",
+      payload,
+    );
+  },
+
+  /** Put a linked or ignored transfer back to unmatched. */
+  async reopenTransaction(
+    bankTxnId: number,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/reopen-transaction",
+      { bank_txn_id: bankTxnId },
     );
   },
 
@@ -212,30 +418,31 @@ export const accountingApi = {
    * 422 if the PDF carries no "NEW CASHOUT" title / no client rows.
    */
   async importCashout(file: File): Promise<ImportCashoutResponse> {
-    const form = new FormData();
-    form.append("file", file);
-
-    const headers: Record<string, string> = {};
-    const csrf = api.getCsrfToken();
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-    const token = api.getToken();
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    const resp = await fetch(
-      `${api.getBaseUrl()}/api/crm/accounting/import-cashout`,
-      { method: "POST", headers, body: form, credentials: "include" },
+    return postFile<ImportCashoutResponse>(
+      "/api/crm/accounting/import-cashout",
+      file,
     );
+  },
 
-    if (!resp.ok) {
-      let detail = resp.statusText;
-      try {
-        const body = await resp.json();
-        if (body?.detail) detail = String(body.detail);
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new Error(detail);
-    }
-    return resp.json() as Promise<ImportCashoutResponse>;
+  /**
+   * Preview a bank statement (CIMB CSV, Mandiri or Permata PDF; max 2 MB, admin only). Stores nothing; returns
+   * the report of the statement. 422 carries a fixed-text `detail`.
+   */
+  async previewBankStatement(file: File): Promise<BankStatementPreview> {
+    return postFile<BankStatementPreview>(
+      "/api/crm/accounting/bank-statement/preview",
+      file,
+    );
+  },
+
+  /**
+   * Store a bank statement: the preview report plus an `import` result.
+   * Idempotent: sending the same file again stores nothing new.
+   */
+  async importBankStatement(file: File): Promise<BankStatementImportResponse> {
+    return postFile<BankStatementImportResponse>(
+      "/api/crm/accounting/bank-statement/import",
+      file,
+    );
   },
 };

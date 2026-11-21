@@ -3,16 +3,16 @@ import { KBLIBuilderCTA } from "./_components/KBLIBuilderCTA";
 import { KBLIBreadcrumbJsonLd } from "@/components/kbli/KBLIStructuredData";
 
 export const metadata: Metadata = {
-  title: "KBLI Builder — Susun Struktur Kode KBLI untuk PT PMA Anda",
+  title: "KBLI Builder — Structure KBLI Codes for Your PT PMA",
   description:
-    "Mau mendirikan PT PMA di Bali? Tim Bali Zero menyusun struktur kode KBLI 2025 yang tepat untuk proses inkorporasi dan kepatuhan investasi asing Anda.",
+    "Setting up a PT PMA in Bali or across Indonesia? Structure compatible primary and secondary KBLI 2025 codes aligned with foreign investment and OSS licensing rules.",
   alternates: {
     canonical: "https://balizero.com/kbli/builder",
   },
   openGraph: {
-    title: "KBLI Builder — Susun Struktur Kode KBLI untuk PT PMA Anda",
+    title: "KBLI Builder — Structure KBLI Codes for Your PT PMA",
     description:
-      "Mau mendirikan PT PMA di Bali? Tim Bali Zero menyusun struktur kode KBLI 2025 yang tepat untuk proses inkorporasi dan kepatuhan investasi asing Anda.",
+      "Setting up a PT PMA in Bali or across Indonesia? Structure compatible primary and secondary KBLI 2025 codes aligned with foreign investment and OSS licensing rules.",
     url: "https://balizero.com/kbli/builder",
     siteName: "Bali Zero",
     type: "website",

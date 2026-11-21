@@ -311,6 +311,52 @@ class TestScanAndClassify:
         assert TAX_SUPERVISOR in cc
         assert ADMIN_EMAIL in cc
 
+    async def test_unassigned_alert_to_list_includes_dea_and_candra(
+        self, frozen_now: datetime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rows = [_row(3, "Q1", 2026, "draft", None, "PT Unassigned")]
+        notifier = LKPMDeadlineNotifier(_make_pool("true", rows))
+        sent_emails: list[dict] = []
+
+        async def fake_post_email(self_, to, subject, html_body, cc=None):
+            sent_emails.append({"to": to, "cc": cc})
+
+        monkeypatch.setattr(mod.LKPMDeadlineNotifier, "_post_email", fake_post_email)
+        monkeypatch.setattr(
+            mod.LKPMDeadlineNotifier,
+            "_send_telegram_alert",
+            lambda *a, **kw: _async_none(),
+        )
+
+        await notifier.check_and_notify()
+        recipients = [a.strip() for a in sent_emails[0]["to"].split(",")]
+        assert recipients == [
+            "kadek.tax@balizero.com",
+            "dewaayu.tax@balizero.com",
+            "dea@balizero.com",
+            "candra@balizero.com",
+        ]
+
+    async def test_assignee_reminder_reaches_dea(
+        self, frozen_now: datetime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rows = [_row(4, "Q1", 2026, "draft", "dea@balizero.com", "PT Dea")]
+        notifier = LKPMDeadlineNotifier(_make_pool("true", rows))
+        sent_emails: list[dict] = []
+
+        async def fake_post_email(self_, to, subject, html_body, cc=None):
+            sent_emails.append({"to": to, "cc": cc})
+
+        monkeypatch.setattr(mod.LKPMDeadlineNotifier, "_post_email", fake_post_email)
+        monkeypatch.setattr(
+            mod.LKPMDeadlineNotifier,
+            "_send_telegram_alert",
+            lambda *a, **kw: _async_none(),
+        )
+
+        await notifier.check_and_notify()
+        assert [e["to"] for e in sent_emails] == ["dea@balizero.com"]
+
     async def test_grouping_by_assignee(
         self, frozen_now: datetime, monkeypatch: pytest.MonkeyPatch
     ) -> None:

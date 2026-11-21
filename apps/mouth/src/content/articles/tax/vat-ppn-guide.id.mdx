@@ -36,17 +36,17 @@ relatedArticles:
   - "foreign-company-incorporation-steps"
 tableOfContents: true
 seoTitle: "PPN Indonesia 2026 | Panduan Kepatuhan Bisnis"
-seoDescription: "Panduan PPN Indonesia untuk tahun 2026. Tarif standar 11%, pendaftaran PKP, faktur pajak, kredit pajak masukan-keluaran, dan kepatuhan untuk perusahaan PT PMA."
+seoDescription: "Panduan PPN Indonesia 2026 (PMK 131/2024): tarif efektif 11% untuk barang/jasa umum lewat DPP Nilai Lain 11/12 (12% penuh untuk barang mewah), ambang PKP Rp 4,8 miliar, dan e-Faktur Coretax."
 aiOptimization:
   primaryQuestion: "Bagaimana cara kerja PPN untuk bisnis di Indonesia?"
-  answerSnippet: "Tarif standar PPN di Indonesia adalah 11%. Bisnis dengan pendapatan tahunan melebihi Rp 4,8 miliar wajib mendaftar sebagai PKP (Pengusaha Kena Pajak) dan memungut PPN. Terbitkan faktur pajak melalui sistem e-Faktur. Kredit pajak masukan dapat dikompensasikan dengan pajak keluaran. Lapor SPT Masa PPN setiap bulan paling lambat akhir bulan berikutnya."
+  answerSnippet: "Berdasarkan PMK 131/2024, tarif PPN undang-undang adalah 12%, tetapi barang dan jasa umum non-mewah memakai DPP Nilai Lain 11/12 sehingga tarif efektif tetap 11% (hanya barang mewah tertentu yang dikenakan 12% penuh). Usaha dengan omzet > Rp 4,8 miliar/tahun wajib mendaftar PKP, menerbitkan e-Faktur lewat Coretax, dan melapor SPT Masa PPN paling lambat akhir bulan berikutnya."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Pajak"
       sameAs: "https://www.pajak.go.id"
 faq:
   - question: "Berapa tarif PPN di Indonesia untuk tahun 2026?"
-    answer: "Tarif standar PPN adalah 11% (sejak April 2022). Kenaikan menjadi 12% telah dibahas namun per awal 2026 diimplementasikan dengan mekanisme khusus untuk menjaga tarif efektif tetap di 11% bagi sebagian besar barang. Barang dan jasa tertentu dibebaskan atau dikenakan tarif nol, termasuk kebutuhan pokok, pendidikan, dan ekspor."
+    answer: "Berdasarkan PMK 131/2024 (berlaku 1 Januari 2025), tarif PPN undang-undang adalah 12%, sedangkan barang dan jasa umum non-mewah menerapkan DPP Nilai Lain 11/12 sehingga tarif efektif tetap 11%. Tarif penuh 12% tanpa pengurangan 11/12 berlaku khusus bagi barang mewah tertentu (terkena PPnBM). Ekspor tetap bertarif 0%."
   - question: "Kapan bisnis harus mendaftar PPN (PKP) di Indonesia?"
     answer: "Pendaftaran sebagai PKP (Pengusaha Kena Pajak) wajib dilakukan ketika pendapatan bruto tahunan melebihi Rp 4,8 miliar. Bisnis dapat mendaftar secara sukarela meskipun di bawah ambang batas tersebut. Pendaftaran PKP mewajibkan penerbitan faktur pajak untuk semua transaksi kena pajak."
   - question: "Bagaimana cara kerja kredit pajak masukan untuk PPN Indonesia?"
@@ -68,7 +68,7 @@ tags:
 canonicalUrl: "https://balizero.com/tax/vat-ppn-guide"
 ogImage: "/static/insights/tax/vat-ppn.jpg"
 twitterCard: "summary_large_image"
-source_sha256: "9d9e83b83d03b8c009ab1f2098ef6df2e3f2e19ac271ae049a63ccd25cf46c1c"
+source_sha256: "150fa343cd5bd54565418d8309d80795a3c3ec995e3f29852e1c53d1e25ebf21"
 ---
 
 import {
@@ -84,16 +84,17 @@ import {
 
 Pajak Pertambahan Nilai (PPN) adalah pajak konsumsi di Indonesia. Memahaminya sangat penting untuk kepatuhan bisnis.
 
-<InfoCard variant="warning" title="Update PPN 2026 (Sumber: pajak.go.id)">
-**PPN 12% berlaku mulai 1 Januari 2025:**
+<InfoCard variant="warning" title="Update PPN 2026 (PMK 131/2024 — Sumber: pajak.go.id)">
+**Struktur PPN 12% Nominal vs 11% Efektif:**
 
-PPN Indonesia secara resmi berada di angka **12%** sejak 1 Januari 2025. Namun, berkat mekanisme **DPP Nilai Lain**, tarif efektif untuk sebagian besar barang dan jasa tetap berada di angka **11%**.
+PPN Indonesia secara resmi berada di angka **12%** sejak 1 Januari 2025, namun **PMK 131/2024** menerapkan **DPP Nilai Lain (11/12)** untuk barang dan jasa umum non-mewah:
 
-- **Barang normal**: 12% × (11/12) = **11% efektif**
-- **Barang mewah**: **12% penuh** (tanpa DPP Nilai Lain)
-- **Semua faktur pajak** harus diterbitkan melalui **Coretax/e-Faktur**
+- **Barang & jasa umum**: 12% × (11/12) = **11% efektif**
+- **Barang mewah (kategori PPnBM)**: **12% penuh** (tanpa pengurangan 11/12 DPP Nilai Lain)
+- **Faktur Pajak**: Wajib diterbitkan secara elektronik melalui **Coretax e-Faktur**
+- **Setor & Lapor**: Paling lambat **akhir bulan berikutnya** (PMK 81/2024)
 
-**Nota Penting**: Struktur ini diterapkan untuk meminimalkan dampak pada konsumen sambil secara formal tetap mempertahankan tarif 12% yang diamanatkan undang-undang.
+**Catatan Penting**: Struktur PMK 131/2024 menjaga tarif efektif PPN transaksi umum tetap **11%** sekaligus menerapkan 12% khusus bagi barang mewah.
 
 </InfoCard>
 
@@ -243,6 +244,16 @@ Sebagai PKP, Anda wajib:
       suffix: "IDR"
     },
     {
+      id: "category",
+      label: "Kategori Barang / Jasa (PMK 131/2024)",
+      type: "select",
+      options: [
+        { value: "general", label: "Barang / Jasa Umum (11% efektif lewat 11/12 DPP)" },
+        { value: "luxury", label: "Barang Mewah PPnBM (12% penuh)" }
+      ],
+      defaultValue: "general"
+    },
+    {
       id: "type",
       label: "Jenis Transaksi",
       type: "select",
@@ -255,7 +266,8 @@ Sebagai PKP, Anda wajib:
   ]}
   calculateResult={(values) => {
     const amount = Number(values.amount);
-    const rate = 0.11; // 11% efektif
+    const isLuxury = values.category === "luxury";
+    const rate = isLuxury ? 0.12 : 0.11;
 
     let baseAmount, vatAmount, totalAmount;
 
@@ -270,14 +282,16 @@ Sebagai PKP, Anda wajib:
     }
 
     return {
-      total: vatAmount,
+      total: Math.round(vatAmount),
       breakdown: [
-        { label: "Dasar Pengenaan Pajak (DPP)", amount: Math.round(baseAmount) },
-        { label: "PPN (11%)", amount: Math.round(vatAmount) },
+        { label: "Dasar Pengenaan Pajak (DPP) Sebenarnya", amount: Math.round(baseAmount) },
+        { label: isLuxury ? "PPN Barang Mewah (12%)" : "PPN Efektif (11% = 12% × 11/12 DPP)", amount: Math.round(vatAmount) },
         { label: "Total dengan PPN", amount: Math.round(totalAmount) }
       ],
       currency: "IDR",
-      note: "Tarif: 11% (standar efektif)"
+      note: isLuxury
+        ? "Tarif: 12% penuh (Barang mewah sesuai PMK 131/2024)"
+        : "Tarif: 11% efektif (12% × 11/12 DPP Nilai Lain sesuai PMK 131/2024)"
     };
 
 }}

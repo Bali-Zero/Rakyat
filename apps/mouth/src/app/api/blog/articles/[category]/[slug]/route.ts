@@ -154,13 +154,14 @@ The Golden Visa is a special residency permit that allows high-net-worth individ
 
 | Tier | Investment | Duration | Benefits |
 |------|------------|----------|----------|
-| Tier 1 | $350,000+ | 5 years | Full residency, work permit |
-| Tier 2 | $1,000,000+ | 10 years | Full residency, work permit, fast-track citizenship |
+| E28C (Capital Market) | USD 350,000+ (bonds, public stocks, mutual funds) | 5 years | Multi-entry residency, family sponsorship (no salaried employment) |
+| E28C (Capital Market / Property) | USD 700,000+ (financial instruments) or USD 1,000,000+ (apartment) | 10 years | Multi-entry residency, family sponsorship (no salaried employment) |
+| E28B (Company Establishment) | USD 2,500,000+ (5y) / USD 5,000,000+ (10y) | 5–10 years | Establish/direct PT PMA (no fast-track citizenship) |
 
 ## Key Benefits
 
-1. **Extended Stay** - No more 60-day visa runs
-2. **Work Authorization** - Legal permission to work in Indonesia
+1. **Extended Stay** - No more short-term visa runs
+2. **Investment & Director Authorization** - Right to invest and oversee your PT PMA (E28B) or hold passive capital-market/property assets (E28C); salaried local employment requires a work KITAS (E23)
 3. **Family Inclusion** - Spouse and children included
 4. **Property Rights** - Enhanced property ownership options
 5. **Tax Benefits** - Potential tax advantages for investors
@@ -286,10 +287,10 @@ Under OSS-RBA, businesses are classified by risk level:
 
 | Code | Description | Risk Level |
 |------|-------------|------------|
-| 62011 | Software Development | Low |
-| 70201 | Business Consulting | Low |
+| 62199 | Software & Application Development | Low |
+| 70201 | Management & Tourism Consulting | Low (check Bali OSS restrictions) |
 | 73100 | Advertising | Medium-Low |
-| 68110 | Real Estate Agency | Medium-High |
+| 68210 | Real Estate Intermediation / Brokerage | Medium-High |
 
 ## Timeline
 
@@ -335,7 +336,7 @@ Under OSS-RBA, businesses are classified by risk level:
       slug: "capital-evolution-bkpm-5-2025",
       title: "Capital Evolution: How BKPM 5/2025 Saved Property Investors",
       excerpt:
-        "The 10B IDR rule is no longer a barrier. Learn how your villa's physical value now secures your 100% ownership.",
+        "BKPM Reg 5/2025 sets PT PMA paid-up capital at IDR 2.5B per company, while the >IDR 10B investment threshold still excludes land and buildings—and KBLI 55203 Villas remains 0% PMA.",
       content: `
 # Capital Evolution: BKPM 5/2025
 
@@ -343,18 +344,18 @@ For years, the **10 Billion IDR** barrier was the "monster under the bed" for sm
 
 ## The Heart of the Reform
 
-The BKPM has finally decoupled the **Paid-up Capital (Modal Disetor)** from the **Total Investment Value**.
+The BKPM distinguishes between **Paid-up Capital (Modal Disetor)** and **Minimum Total Investment Value (Nilai Investasi)** under Perka BKPM 5/2025 Art. 26:
 
-- **Paid-up Capital:** Now only **Rp 2.5 Billion** required for hospitality PT PMAs.
-- **Total Investment:** Must still exceed Rp 10 Billion, but here's the game-changer: **The physical value of your land and building now counts toward this threshold.**
+- **Paid-up Capital (Modal Disetor):** Minimum **IDR 2.5 Billion per company** (subject to the 12-month lock-up rule unless used for legitimate business operations).
+- **Minimum Total Investment:** Must still exceed **IDR 10 Billion per 5-digit KBLI per project location, EXCLUDING the value of land and buildings** (tanah dan bangunan). Real estate / land acquisition value does **not** count toward the IDR 10B BKPM threshold.
 
 ## The 12-Month Lock-up Rule
 
-Attention: this capital isn't "free." Our latest analysis confirms that paid-up capital is subject to a **12-month lock-up period**. It can only be used for documented business purposes (construction, asset purchase, operations).
+Attention: paid-up capital is subject to a **12-month lock-up period**. It can only be used for documented business purposes (construction, equipment/asset purchase, working capital).
 
-## Why it Saves You
+## Why Compliance Structuring Matters
 
-If your villa is valued at Rp 8 Billion and you have paid in Rp 2.5 Billion, you are technically above the Rp 10 Billion threshold without needing further cash injections. **Bali Zero** helps certify this value for BKPM audits.
+Property/land value (e.g., IDR 8 Billion in land or villa shell) CANNOT be added to IDR 2.5 Billion paid-up capital to clear the **>IDR 10 Billion** BKPM minimum investment rule—the IDR 10B threshold explicitly excludes land and buildings. Furthermore, **KBLI 55203 (Aktivitas Vila)** is **0% PMA** (reserved for Koperasi/UMKM under Perpres 49/2021). Foreign hospitality projects must use open PMA KBLIs such as **55101 (Star Hotel, >= 6,000 m² in Bali under the May 2026 moratorium)** or **55204 (Serviced Apartments)** in compliant zoning with PKKPR and PBG & SLF via SIMBG.
       `,
       coverImage: "/static/insights/property/property-via-pt-pma-indonesia.jpg",
       category: "property",
@@ -396,7 +397,7 @@ Our research shows integration goes beyond OSS. It crosses data with **SITP (Tou
 
 ## Corrective Action
 
-Migrating to **KBLI 2025 (Code 55203)** is the only escape. Note: this requires your villa to be in a **Pink Zone (Tourism)**. If you are in an agricultural zone, "Digital Darwinism" has already selected you for extinction.
+For foreign-owned PT PMA operators, migrating to **KBLI 55203 (Aktivitas Vila)** is NOT permitted: under Perpres 49/2021 Lampiran II, 55203 is **0% PMA** (reserved for Indonesian Koperasi & UMKM) and lacks a Large-scale entry in PP 28/2025. Eligible foreign hospitality projects must evaluate open PMA codes such as **55204 (Serviced Apartments)** or **55101 (5-Star Hotel — >= 6,000 m² in Bali)** in a **Pink Zone (Tourism)** with PKKPR and PBG/SLF via SIMBG — or long-term residential leasing (68112, closed to new Bali PMAs).
       `,
       coverImage: "/static/insights/property/airbnb-bali-ban-truth.jpg",
       category: "property",
@@ -436,7 +437,7 @@ The government doesn't need to enter your property to fine you. Authorities have
 
 ## Strategic Choice
 
-If your brand promises luxury and high-touch service, 55209 is your worst enemy. The solution is migration to **55106 (Non-star Hotel)** or **55203 (Villa)**, accepting the capital requirements but guaranteeing legal survival.
+If your PT PMA brand requires daily hotel-level services, do NOT migrate to **55106 (Non-star Hotel)** or **55203 (Villa)** — both are **0% PMA** (reserved exclusively for Indonesian Koperasi & UMKM under Perpres 49/2021 Lampiran II). The compliant foreign-investment route is upgrading to open PMA codes such as **55204 (Serviced Apartments / Aparthotel)** or **55101 (5-Star Hotel — >= 6,000 m² in Bali)**, meeting standard PT PMA investment rules (>IDR 10B excluding land/buildings).
       `,
       coverImage: "/static/insights/property/property-green-zone-alert.jpg",
       category: "property",

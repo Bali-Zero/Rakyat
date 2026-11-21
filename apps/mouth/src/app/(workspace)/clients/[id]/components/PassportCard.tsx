@@ -14,12 +14,12 @@ import {
 import { useOcrPolling } from "@/hooks/useOcrPolling";
 import type { ClientProfile, ClientDocument } from "@/lib/api/crm/crm.types";
 import {
-  extractDriveFileId,
   getDriveProxyUrl,
   getPassportValidityColor,
   pickCurrentPassport,
   countVoidPassports,
   downloadHrefFor,
+  getDocumentOpenUrl,
 } from "./utils";
 import { dateValidity } from "./documentValidity";
 import { resolveCardDay } from "./witaClock";
@@ -70,7 +70,8 @@ export function PassportCard({
   const voidPassports = countVoidPassports(documents);
   // The scan is only ever FETCHED on demand (Download, Extract) — the card
   // never renders it, so opening the Overview loads no document bytes.
-  const passportImageUrl = passportDoc?.google_drive_file_url;
+  const passportImageUrl =
+    passportDoc?.google_drive_file_url ?? passportDoc?.file_url;
   const passportIsPdf =
     passportDoc?.file_name?.toLowerCase().endsWith(".pdf") ||
     passportImageUrl?.toLowerCase().includes(".pdf") ||
@@ -78,14 +79,29 @@ export function PassportCard({
 
   const expiryDays = expiry.daysLeft;
 
-  // Convert Drive view URL to direct download URL
-  const getDownloadUrl = downloadHrefFor;
+  // Where Download goes. Portal uploads carry `file_id` + `file_url` and never
+  // `google_drive_file_url`, so the Documents tab's rule comes first; the
+  // card's own URL rule (proxy for Drive, https as itself) is the fallback.
+  const passportDownloadUrl = passportDoc
+    ? (getDocumentOpenUrl(passportDoc) ??
+      downloadHrefFor(passportDoc.google_drive_file_url))
+    : null;
+
+  // What Extract fetches: the same proxy URL (`file_id` first, so portal
+  // uploads work), or the Drive proxy of `google_drive_file_url`. A bare
+  // external URL is not fetched cross-origin. Extract and Delete show only
+  // when the row has a file behind it.
+  const passportScanUrl = passportDoc
+    ? (getDocumentOpenUrl(passportDoc) ??
+      (passportDoc.google_drive_file_url
+        ? getDriveProxyUrl(passportDoc.google_drive_file_url, "full")
+        : null))
+    : null;
 
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (passportImageUrl) {
-      const downloadUrl = getDownloadUrl(passportImageUrl);
-      if (!downloadUrl) return;
+    const downloadUrl = passportDownloadUrl;
+    if (downloadUrl) {
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = `passport_${client.full_name?.replace(/\s+/g, "_") || "document"}.pdf`;
@@ -110,22 +126,12 @@ export function PassportCard({
 
   // Enhanced OCR extraction with Gemini Vision
   const handleExtractData = useCallback(async () => {
-    if (!passportImageUrl || isExtractingRef.current) return;
-    const fileId = extractDriveFileId(passportImageUrl);
-    if (!fileId) {
-      toast.error("Invalid document URL");
-      return;
-    }
+    if (!passportScanUrl || isExtractingRef.current) return;
     setIsExtracting(true);
     isExtractingRef.current = true;
     setOcrError(null);
     try {
-      const proxyUrl = getDriveProxyUrl(passportImageUrl, "full");
-      if (!proxyUrl) {
-        throw new Error("Passport document cannot be proxied for OCR");
-      }
-
-      const fileResponse = await fetch(proxyUrl);
+      const fileResponse = await fetch(passportScanUrl);
       if (!fileResponse.ok) {
         throw new Error(`Passport download failed (${fileResponse.status})`);
       }
@@ -171,7 +177,7 @@ export function PassportCard({
       setIsExtracting(false);
       isExtractingRef.current = false;
     }
-  }, [passportImageUrl, passportIsPdf, client.id, onRefresh]);
+  }, [passportScanUrl, passportIsPdf, client.id, onRefresh]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -298,7 +304,7 @@ export function PassportCard({
             size="sm"
             className="gap-1.5 border-[var(--line-control)]"
             onClick={handleDownload}
-            disabled={!passportImageUrl}
+            disabled={!passportDownloadUrl}
             aria-label="Download passport"
           >
             <Download className="h-4 w-4" aria-hidden="true" />
@@ -318,7 +324,7 @@ export function PassportCard({
             )}
             {isUploading ? "Uploading…" : "Upload"}
           </Button>
-          {passportImageUrl ? (
+          {passportScanUrl ? (
             <span className="ml-auto flex items-center gap-1">
               <Button
                 variant="ghost"

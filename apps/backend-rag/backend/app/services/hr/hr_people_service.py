@@ -11,7 +11,9 @@ from typing import Any
 
 import asyncpg
 
+from backend.app.services.hr.hr_card_models import avatar_path, project_documents
 from backend.app.services.hr.hr_service import business_today
+from backend.app.utils.service_accounts import GROUP_STAFF_ROLES_SQL
 
 DOC_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk")  # + the contract file = 6 papers
 
@@ -21,8 +23,8 @@ DOC_SLOTS = ("ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk")  # + the contract file 
 # not make it a person). Then: a member WITH an hr_employees row is a person; without one only
 # a company address with a named staff role is (`member` is the role of test/bot logins). Used
 # by both SQLs below, over the aliases `tm` (team_members) and `e` (hr_employees, LEFT JOINed).
-VISIBLE_PERSON_PREDICATE = """
-      tm.active = true
+VISIBLE_PERSON_PREDICATE = f"""
+      (tm.active = true OR lower(trim(COALESCE(tm.role, ''))) IN ({GROUP_STAFF_ROLES_SQL}))
       AND lower(trim(COALESCE(tm.role, ''))) NOT IN ('client', 'monitoring', 'partner')
       AND (
         e.id IS NOT NULL
@@ -34,7 +36,7 @@ VISIBLE_PERSON_PREDICATE = """
 """
 
 _ROSTER_SQL = f"""
-    SELECT tm.id AS team_member_id, tm.full_name, tm.role, tm.department,
+    SELECT tm.id AS team_member_id, tm.full_name, tm.role, tm.department, tm.avatar,
            e.id AS employee_id, e.hire_date, e.is_active AS employee_active, e.profile
     FROM team_members tm
     LEFT JOIN hr_employees e ON e.team_member_id = tm.id
@@ -83,13 +85,10 @@ _PULSE_SQL = """
 
 
 def papers_missing(profile: Any) -> int:
-    """How many of the six paper slots (contract + five documents) have no file on record."""
-    p = profile if isinstance(profile, dict) else {}
-    docs = p.get("docs") if isinstance(p.get("docs"), dict) else {}
-    contract = p.get("contract") if isinstance(p.get("contract"), dict) else {}
-    missing = sum(1 for slot in DOC_SLOTS if not (isinstance(docs.get(slot), str) and docs[slot]))
-    contract_file = contract.get("file_id")
-    return missing + (0 if isinstance(contract_file, str) and contract_file else 1)
+    """How many of the six paper slots (contract + five documents) have no file on record.
+
+    Counts `present` of the shared projection (C13), so it agrees with every card response."""
+    return sum(1 for d in project_documents(profile).values() if not d["present"])
 
 
 class HRPeopleService:
@@ -130,6 +129,7 @@ class HRPeopleService:
                     "employee_id": eid,
                     "has_record": has_record,
                     "name": r["full_name"],
+                    "avatar_url": avatar_path(r["avatar"]),
                     "role": r["role"],
                     "department": r["department"],
                     "unit": unit if isinstance(unit, str) and unit else None,

@@ -127,6 +127,11 @@ export default function CookiePage() {
           </table>
         </div>
 
+        <p className="text-[13px] leading-relaxed mb-8">
+          Cookie lifetime is how long the cookie stays in your browser; how long
+          we keep analytics data is set out in our Privacy Policy.
+        </p>
+
         <section
           className="py-8"
           style={{ borderTop: "1px solid var(--border-subtle)" }}
@@ -139,9 +144,13 @@ export default function CookiePage() {
           </h2>
           <p className="text-[14px] leading-relaxed">
             Essential cookies cannot be disabled without breaking login and
-            preferences. Analytics cookies are loaded only after consent. You
-            can revoke consent at any time by clearing cookies in your browser
-            settings or contacting us.
+            preferences. On our client portal (my.balizero.com), analytics
+            cookies are loaded only after you give consent. On balizero.com we
+            use Google Analytics to understand how visitors use the site;
+            analytics storage is on by default and advertising storage is always
+            off. You can delete these cookies at any time in your browser
+            settings or contact us; on balizero.com they will be set again on
+            your next visit.
           </p>
         </section>
 

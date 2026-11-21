@@ -14,12 +14,13 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
-from pydantic import BaseModel, BeforeValidator, Field, StrictInt
+from pydantic import BaseModel, BeforeValidator, Field, StrictBool, StrictInt
 from pydantic_core import PydanticCustomError
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_service_write import verify_crm_write_key
+from backend.app.modules.crm.tax_drive_documents import router as tax_drive_documents_router
 from backend.app.routers.crm_enhanced import (
     DocumentCreate,
     DocumentUpdate,
@@ -27,7 +28,11 @@ from backend.app.routers.crm_enhanced import (
     _dispatch_ocr_by_folder,
 )
 from backend.app.routers.documents_proxy import assert_drive_file_belongs_to_client
-from backend.app.utils.crm_utils import can_change_document_visibility, verify_client_access
+from backend.app.utils.crm_utils import (
+    can_change_document_visibility,
+    is_crm_admin,
+    verify_client_access,
+)
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_cache
 from backend.db.repositories.client_repository import CORE_OWNER_IDS_SQL
@@ -36,7 +41,10 @@ from backend.services.common.background import spawn
 from backend.services.crm.admin_document_visibility import admin_document_not_deleted_clause
 from backend.services.crm.document_categorizer import auto_categorize_document
 from backend.services.crm.documents import validate_client_document_date
-from backend.services.crm.drive_taxonomy import folder_for_category, physical_root_layout
+from backend.services.crm.drive_taxonomy import (
+    folder_for_category,
+    physical_root_layout,
+)
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 logger = get_logger(__name__)
@@ -78,6 +86,7 @@ def _row_get(row: Any, key: str) -> Any:
 
 
 router = APIRouter(prefix="/api/crm", tags=["crm-enhanced-documents"])
+router.include_router(tax_drive_documents_router)
 
 # ============================================
 # DOCUMENTS ENDPOINTS
@@ -237,6 +246,81 @@ async def create_document(
             "success": True,
             "ocr_triggered": ocr_triggered,
         }
+
+
+class ClientArchiveDocumentCreate(BaseModel):
+    """Body of the archive registration. Visibility has no default: the caller states it."""
+
+    file_id: str
+    document_type: str
+    document_category: str | None = None
+    file_name: str | None = None
+    google_drive_file_url: str | None = None
+    notes: str | None = None
+    client_visible: StrictBool
+
+
+@router.post("/clients/{client_id}/documents/archive")
+async def register_archive_document(
+    client_id: int,
+    data: ClientArchiveDocumentCreate,
+    pool: Any = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """
+    Register an existing Drive file as a client document (archive path, admin only).
+
+    No OCR, no portal message, no write to clients; visibility is explicit and the
+    registration is idempotent on (client_id, file_id).
+    """
+    if not is_crm_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    async with pool.acquire() as conn:
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
+        await assert_drive_file_belongs_to_client(data.file_id, client_id, conn)
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(742021, hashtext($1))",
+                f"{client_id}:{data.file_id}",
+            )
+            existing_id = await conn.fetchval(
+                f"""
+                SELECT d.id FROM documents d
+                WHERE d.client_id = $1 AND d.file_id = $2
+                  AND {admin_document_not_deleted_clause("d")}
+                ORDER BY d.id LIMIT 1
+                """,
+                client_id,
+                data.file_id,
+            )
+            if existing_id is not None:
+                return {
+                    "id": existing_id,
+                    "success": True,
+                    "deduplicated": True,
+                    "ocr_triggered": False,
+                }
+            doc_id = await conn.fetchval(
+                """
+                INSERT INTO documents (
+                    client_id, document_type, document_category, file_name, file_id,
+                    google_drive_file_url, notes, status, storage_type, uploaded_by,
+                    client_visible
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9)
+                RETURNING id
+                """,
+                client_id,
+                data.document_type,
+                data.document_category,
+                data.file_name,
+                data.file_id,
+                data.google_drive_file_url,
+                data.notes,
+                (current_user.get("email") or "system").lower(),
+                data.client_visible,
+            )
+        await invalidate_cache("zantara:crm_clients_stats:*")
+        return {"id": doc_id, "success": True, "deduplicated": False, "ocr_triggered": False}
 
 
 @router.post("/clients/{client_id}/documents/bulk")
@@ -694,7 +778,8 @@ class DocumentUploadBase64(BaseModel):
     # Canonical numeric IDs are used by the frontend. Replicas send the
     # canonical UUID on this same key so older integer-only servers reject it.
     practice_id: _WirePracticeRowId | _WirePracticeUuid | None = None
-    company_id: int | None = None
+    company_id: _WirePracticeRowId | _WirePracticeUuid | None = None
+    intake_idempotency_key: str | None = None
     # Ownership token (Codex 2026-07-19 round 12, F12 gap 3): intake delivery
     # resolves the target client BY PHONE in a separate earlier request; this
     # carries the resolved phone core into the upload so the handler can prove,
@@ -747,6 +832,147 @@ async def _resolve_upload_practice(
     )
     if row is None:
         raise HTTPException(status_code=409, detail="practice_identity_unresolved")
+    return int(row["id"])
+
+
+async def _documents_columns(conn: Any) -> set[str]:
+    rows = await conn.fetch(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'documents' "
+        "AND (table_schema = current_schema() OR table_schema LIKE 'pg_temp%')"
+    )
+    return {str(r["column_name"]) for r in rows}
+
+
+async def _company_documents_columns(conn: Any) -> set[str]:
+    rows = await conn.fetch(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'company_documents' "
+        "AND (table_schema = current_schema() OR table_schema LIKE 'pg_temp%')"
+    )
+    return {str(r["column_name"]) for r in rows}
+
+
+def _intake_company_marker(idempotency_key: str) -> str:
+    return f"[intake_key:{idempotency_key}]"
+
+
+def _append_intake_marker(notes: str | None, idempotency_key: str) -> str:
+    marker = _intake_company_marker(idempotency_key)
+    if notes and marker in notes:
+        return notes
+    return f"{notes} {marker}".strip() if notes else marker
+
+
+async def _probe_existing_client_intake_doc(
+    conn: Any,
+    client_id: int,
+    idempotency_key: str,
+    doc_cols: set[str],
+) -> Any:
+    if "intake_idempotency_key" in doc_cols:
+        return await conn.fetchrow(
+            """
+            SELECT id, file_id, file_url
+            FROM documents
+            WHERE client_id = $1 AND intake_idempotency_key = $2
+            ORDER BY id ASC LIMIT 1
+            """,
+            client_id,
+            idempotency_key,
+        )
+    marker_like = f"%{_intake_company_marker(idempotency_key)}%"
+    return await conn.fetchrow(
+        """
+        SELECT id, file_id, file_url
+        FROM documents
+        WHERE client_id = $1 AND notes LIKE $2
+        ORDER BY id ASC LIMIT 1
+        """,
+        client_id,
+        marker_like,
+    )
+
+
+async def _probe_existing_company_intake_doc(
+    conn: Any,
+    company_id: int,
+    idempotency_key: str,
+    comp_cols: set[str],
+) -> Any:
+    if "intake_idempotency_key" in comp_cols:
+        return await conn.fetchrow(
+            """
+            SELECT id, google_drive_file_id, google_drive_file_url
+            FROM company_documents
+            WHERE company_id = $1 AND intake_idempotency_key = $2
+            ORDER BY id ASC LIMIT 1
+            """,
+            company_id,
+            idempotency_key,
+        )
+    marker_like = f"%{_intake_company_marker(idempotency_key)}%"
+    return await conn.fetchrow(
+        """
+        SELECT id, google_drive_file_id, google_drive_file_url
+        FROM company_documents
+        WHERE company_id = $1 AND notes LIKE $2
+        ORDER BY id ASC LIMIT 1
+        """,
+        company_id,
+        marker_like,
+    )
+
+
+async def _resolve_upload_company(
+    conn: Any,
+    client_id: int,
+    reference: int | UUID | None,
+    expected_phone_core: str | None,
+    *,
+    lock: bool = False,
+) -> int | None:
+    """Resolve and verify a linked company on client upload (UUID on cross-DB leg)."""
+    if reference is None:
+        return None
+    if isinstance(reference, int):
+        if expected_phone_core or not -(2**31) <= reference < 2**31:
+            raise HTTPException(
+                status_code=409,
+                detail="company_identity_unresolved: cross-DB delivery requires canonical company UUID",
+            )
+        if lock:
+            return int(reference)
+        company_link = await conn.fetchrow(
+            """
+            SELECT company_id
+            FROM client_company_links
+            WHERE client_id = $1 AND company_id = $2
+            LIMIT 1
+            """,
+            client_id,
+            reference,
+        )
+        if not company_link:
+            raise HTTPException(status_code=400, detail="Company is not linked to this client")
+        return int(company_link["company_id"])
+
+    row = await conn.fetchrow(
+        """
+        SELECT c.id, c.status, l.client_id
+        FROM companies c
+        LEFT JOIN client_company_links l
+               ON l.company_id = c.id AND l.client_id = $1
+        WHERE c.uuid = $2
+        """
+        + (" FOR SHARE OF c" if lock else ""),
+        client_id,
+        str(reference),
+    )
+    if row is None or str(row["status"] or "").lower() == "deleted":
+        raise HTTPException(status_code=409, detail="company_identity_unresolved")
+    if row["client_id"] is None:
+        raise HTTPException(status_code=400, detail="Company is not linked to this client")
     return int(row["id"])
 
 
@@ -896,28 +1122,20 @@ async def upload_document_base64(
                         ),
                     )
 
-            if data.company_id is not None:
-                company_link = await conn.fetchrow(
-                    """
-                    SELECT company_id
-                    FROM client_company_links
-                    WHERE client_id = $1 AND company_id = $2
-                    LIMIT 1
-                    """,
-                    client_id,
-                    data.company_id,
-                )
-                if not company_link:
-                    raise HTTPException(
-                        status_code=400, detail="Company is not linked to this client"
-                    )
+            company_id = await _resolve_upload_company(
+                conn,
+                client_id,
+                data.company_id,
+                data.expected_phone_core,
+                lock=False,
+            )
 
             # PR 2a: the same file (content_hash) already on this client, in
             # the same practice/family context, is refused BEFORE any Drive
             # work, so a refusal leaves no orphan. Company-tab attachments are
             # a company context and are not checked against client documents.
             existing_doc_id = None
-            if data.company_id is None:
+            if company_id is None:
                 existing_doc_id = await _active_duplicate_document_id(
                     conn,
                     client_id,
@@ -934,123 +1152,170 @@ async def upload_document_base64(
                     ),
                 )
 
-            drive_service = ServiceAccountDriveService()
+            doc_cols: set[str] | None = None
+            comp_cols: set[str] | None = None
+            reused_existing_doc: Any = None
+            if data.intake_idempotency_key:
+                doc_cols = await _documents_columns(conn)
+                if company_id is not None:
+                    comp_cols = await _company_documents_columns(conn)
+                if data.client_visible is False and (
+                    "client_visible" not in doc_cols
+                    or (comp_cols is not None and "client_visible" not in comp_cols)
+                ):
+                    raise HTTPException(status_code=409, detail="client_visible_column_missing")
 
-            # Ensure Root Folder Exists — MUST go through the idempotent
-            # chokepoint. The old inline create raced against the POST
-            # /api/clients background task (passport upload lands ~15-25s
-            # after creation, while the 16 subfolders are still being built)
-            # and produced a twin "{id}_{name}" root folder on every new
-            # client created with a passport scan.
-            root_folder_id = client["google_drive_folder_id"]
-            if not root_folder_id:
-                try:
-                    ensure_result = await drive_service.ensure_client_folder(
-                        client_id=client["id"],
-                        client_name=client["full_name"],
-                        client_type=client["client_type"] or "individual",
-                        db_pool=pool,
-                        conn=conn,
+                existing_intake_doc = await _probe_existing_client_intake_doc(
+                    conn, client_id, data.intake_idempotency_key, doc_cols
+                )
+                if existing_intake_doc is not None:
+                    if company_id is None:
+                        return {
+                            "success": True,
+                            "document_id": int(existing_intake_doc["id"]),
+                            "file_id": existing_intake_doc["file_id"],
+                            "file_url": existing_intake_doc["file_url"],
+                            "ocr_triggered": False,
+                            "deduplicated": True,
+                        }
+                    existing_comp = await _probe_existing_company_intake_doc(
+                        conn, company_id, data.intake_idempotency_key, comp_cols or set()
                     )
-                    root_folder_id = ensure_result["root_folder_id"]
-                except Exception as e:
-                    logger.error("Failed to create root folder: %s", e)
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to create root folder: {e}",
-                    ) from e
+                    if existing_comp is not None:
+                        return {
+                            "success": True,
+                            "document_id": int(existing_intake_doc["id"]),
+                            "company_document_id": int(existing_comp["id"]),
+                            "file_id": existing_intake_doc["file_id"],
+                            "file_url": existing_intake_doc["file_url"],
+                            "ocr_triggered": False,
+                            "deduplicated": True,
+                        }
+                    reused_existing_doc = existing_intake_doc
 
-            try:
-                root = await drive_service.get_file_metadata(root_folder_id)
-                layout = physical_root_layout(
-                    root,
-                    root_folder_id,
-                    client["client_type"],
-                    individuals_parent=settings.gdrive_individuals_folder_id,
-                    companies_parent=settings.gdrive_companies_folder_id,
-                )
-                folder_name = folder_for_category(category, layout)
-                subfolder_id = await drive_service.resolve_canonical_folder(
-                    folder_name, root_folder_id, conn=conn
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=409, detail="Cannot verify Drive destination"
-                ) from e
+            drive_service = ServiceAccountDriveService()
+            folder_name = None
+            upload_result: dict[str, Any]
+            if reused_existing_doc is not None and reused_existing_doc["file_id"]:
+                upload_result = {
+                    "id": reused_existing_doc["file_id"],
+                    "webViewLink": reused_existing_doc["file_url"],
+                }
+            else:
+                # Ensure Root Folder Exists — MUST go through the idempotent
+                # chokepoint. The old inline create raced against the POST
+                # /api/clients background task (passport upload lands ~15-25s
+                # after creation, while the 16 subfolders are still being built)
+                # and produced a twin "{id}_{name}" root folder on every new
+                # client created with a passport scan.
+                root_folder_id = client["google_drive_folder_id"]
+                if not root_folder_id:
+                    try:
+                        ensure_result = await drive_service.ensure_client_folder(
+                            client_id=client["id"],
+                            client_name=client["full_name"],
+                            client_type=client["client_type"] or "individual",
+                            db_pool=pool,
+                            conn=conn,
+                        )
+                        root_folder_id = ensure_result["root_folder_id"]
+                    except Exception as e:
+                        logger.error("Failed to create root folder: %s", e)
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to create root folder: {e}",
+                        ) from e
 
-            # Handle subfolder_hint for nested subfolders (e.g. "Actual Visa" inside 01_Immigration)
-            target_subfolder_id = subfolder_id
-            subfolder_value = None  # for documents.subfolder column
-
-            if data.subfolder_hint and data.subfolder_hint in ("Actual Visa", "Previous Visa"):
-                subfolder_value = data.subfolder_hint
                 try:
-                    target_subfolder_id = await drive_service.resolve_canonical_folder(
-                        data.subfolder_hint, subfolder_id, conn=conn
+                    root = await drive_service.get_file_metadata(root_folder_id)
+                    layout = physical_root_layout(
+                        root,
+                        root_folder_id,
+                        client["client_type"],
+                        individuals_parent=settings.gdrive_individuals_folder_id,
+                        companies_parent=settings.gdrive_companies_folder_id,
+                    )
+                    folder_name = folder_for_category(category, layout)
+                    subfolder_id = await drive_service.resolve_canonical_folder(
+                        folder_name, root_folder_id, conn=conn
                     )
                 except Exception as e:
                     raise HTTPException(
                         status_code=409, detail="Cannot verify Drive destination"
                     ) from e
 
-                # Visa rotation: if uploading to "Actual Visa", move existing actual to "Previous Visa"
-                if data.subfolder_hint == "Actual Visa":
-                    existing_actual = await conn.fetchrow(
-                        """SELECT d.id, d.file_id FROM documents d
-                           WHERE d.client_id = $1 AND d.subfolder = 'Actual Visa'
-                             AND (d.is_archived IS NOT TRUE)
-                           ORDER BY d.created_at DESC LIMIT 1""",
-                        client_id,
-                    )
-                    if existing_actual and existing_actual["file_id"]:
-                        try:
-                            prev_folder_id = await drive_service.resolve_canonical_folder(
-                                "Previous Visa", subfolder_id, conn=conn
-                            )
-                        except Exception as e:
-                            logger.error(
-                                "Failed to verify Previous Visa folder: %s", type(e).__name__
-                            )
-                            prev_folder_id = None
+                # Handle subfolder_hint for nested subfolders (e.g. "Actual Visa" inside 01_Immigration)
+                target_subfolder_id = subfolder_id
 
-                        if prev_folder_id:
+                if data.subfolder_hint and data.subfolder_hint in ("Actual Visa", "Previous Visa"):
+                    try:
+                        target_subfolder_id = await drive_service.resolve_canonical_folder(
+                            data.subfolder_hint, subfolder_id, conn=conn
+                        )
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=409, detail="Cannot verify Drive destination"
+                        ) from e
+
+                    # Visa rotation: if uploading to "Actual Visa", move existing actual to "Previous Visa"
+                    if data.subfolder_hint == "Actual Visa":
+                        existing_actual = await conn.fetchrow(
+                            """SELECT d.id, d.file_id FROM documents d
+                               WHERE d.client_id = $1 AND d.subfolder = 'Actual Visa'
+                                 AND (d.is_archived IS NOT TRUE)
+                               ORDER BY d.created_at DESC LIMIT 1""",
+                            client_id,
+                        )
+                        if existing_actual and existing_actual["file_id"]:
                             try:
-                                await drive_service.move_file(
-                                    user_email=current_user.get("email", ""),
-                                    file_id=existing_actual["file_id"],
-                                    new_parent_id=prev_folder_id,
-                                    old_parent_id=target_subfolder_id,
-                                )
-                                await conn.execute(
-                                    "UPDATE documents SET subfolder = 'Previous Visa', updated_at = NOW() WHERE id = $1",
-                                    existing_actual["id"],
-                                )
-                                logger.info(
-                                    f"Rotated visa doc {existing_actual['id']} to Previous Visa"
+                                prev_folder_id = await drive_service.resolve_canonical_folder(
+                                    "Previous Visa", subfolder_id, conn=conn
                                 )
                             except Exception as e:
-                                logger.error("Visa rotation failed: %s", e)
+                                logger.error(
+                                    "Failed to verify Previous Visa folder: %s", type(e).__name__
+                                )
+                                prev_folder_id = None
 
-            # Upload File
-            try:
-                upload_result = await drive_service.upload_file_to_folder(
-                    folder_id=target_subfolder_id,
-                    file_content=file_content,
-                    file_name=data.file_name,
-                    mime_type=data.mime_type,
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to upload to drive: {e}"
-                ) from e
+                            if prev_folder_id:
+                                try:
+                                    await drive_service.move_file(
+                                        user_email=current_user.get("email", ""),
+                                        file_id=existing_actual["file_id"],
+                                        new_parent_id=prev_folder_id,
+                                        old_parent_id=target_subfolder_id,
+                                    )
+                                    await conn.execute(
+                                        "UPDATE documents SET subfolder = 'Previous Visa', updated_at = NOW() WHERE id = $1",
+                                        existing_actual["id"],
+                                    )
+                                    logger.info(
+                                        f"Rotated visa doc {existing_actual['id']} to Previous Visa"
+                                    )
+                                except Exception as e:
+                                    logger.error("Visa rotation failed: %s", e)
 
-            # Create Document Record. When the caller sent an ownership token,
-            # the INSERT commits ATOMICALLY with a re-verification under the
-            # cooperative phonecore lock (Codex round 12, F12 gap 3): a
-            # cooperative writer moving this phone blocks on the lock until we
-            # commit; a non-cooperative move is caught by the locked re-read.
-            # The Drive file already exists either way — an orphaned Drive file
-            # is recoverable noise, a mis-attached document is not.
+                # Upload File
+                try:
+                    upload_result = await drive_service.upload_file_to_folder(
+                        folder_id=target_subfolder_id,
+                        file_content=file_content,
+                        file_name=data.file_name,
+                        mime_type=data.mime_type,
+                    )
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500, detail=f"Failed to upload to drive: {e}"
+                    ) from e
+
+            # Create Document + optional Company Document atomically in ONE TX.
+            subfolder_value_final = None
+            if data.subfolder_hint and data.subfolder_hint in ("Actual Visa", "Previous Visa"):
+                subfolder_value_final = data.subfolder_hint
+            effective_file_id: str | None = upload_result.get("id")
+            effective_file_url: str | None = upload_result.get("webViewLink")
+            deduplicated_doc_in_tx = False
+            deduplicated_comp_in_tx = False
             async with conn.transaction():
                 if data.expected_phone_core:
                     await lock_cores(
@@ -1059,10 +1324,6 @@ async def upload_document_base64(
                         phone_core(client["phone"]),
                         phone_core(client["phone_normalized"]),
                     )
-                    # FOR UPDATE (round 13, F12g3): the advisory locks stop
-                    # only COOPERATIVE writers — the row lock makes the
-                    # re-check atomic with the INSERT against direct writers
-                    # too (any concurrent UPDATE blocks until we commit).
                     _recheck = await conn.fetchrow(
                         "SELECT phone, phone_normalized, whatsapp FROM clients"
                         " WHERE id = $1 FOR UPDATE",
@@ -1073,11 +1334,6 @@ async def upload_document_base64(
                         or not _owns_expected_core(_recheck)
                         or not await _sole_owner_is_target(conn)
                     ):
-                        # F17: the Drive file already exists and has no
-                        # documents row — log the id as a structured
-                        # reconciliation marker (no delete API on the service;
-                        # an orphaned file is recoverable noise, a
-                        # mis-attached document is not).
                         logger.error(
                             "orphaned_drive_file file_id=%s client_id=%s "
                             "reason=phone_ownership_changed",
@@ -1105,61 +1361,143 @@ async def upload_document_base64(
                         client_id,
                     )
                     raise
-                insert_sql = """
-                    INSERT INTO documents (
-                        client_id, document_type, document_category,
-                        file_name, file_id, file_url, google_drive_file_url,
-                        status, storage_type, notes, subfolder, expiry_date, content_hash,
-                        family_member_id, practice_id, uploaded_by, uploaded_source
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9, $10, $11, $12, $13, $14, $15)
-                    RETURNING id
-                    """
-                insert_args: list[Any] = [
-                    client_id,
-                    data.document_type,
-                    category,
-                    data.file_name,
-                    upload_result["id"],
-                    upload_result.get("webViewLink"),
-                    upload_result.get("webViewLink"),
-                    data.notes,
-                    subfolder_value,
-                    _parse_date_or_none(data.expiry_date),
-                    content_hash,
-                    data.family_member_id,
-                    practice_id,
-                    current_user.get("email"),
-                    source,
-                ]
-                if data.client_visible is not None:
-                    # Explicit visibility: the same statement plus the column,
-                    # written in the SAME INSERT (the row never exists with the
-                    # default). Absent keeps the statement above byte for byte.
-                    insert_sql = """
-                    INSERT INTO documents (
-                        client_id, document_type, document_category,
-                        file_name, file_id, file_url, google_drive_file_url,
-                        status, storage_type, notes, subfolder, expiry_date, content_hash,
-                        family_member_id, practice_id, uploaded_by, uploaded_source,
-                        client_visible
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                    RETURNING id
-                    """
-                    insert_args.append(data.client_visible)
-                doc_id = await conn.fetchval(insert_sql, *insert_args)
+                if company_id is not None and (
+                    isinstance(data.company_id, UUID) or data.expected_phone_core is not None
+                ):
+                    try:
+                        current_company_id = await _resolve_upload_company(
+                            conn, client_id, data.company_id, data.expected_phone_core, lock=True
+                        )
+                        if current_company_id != company_id:
+                            raise HTTPException(
+                                status_code=409, detail="company_identity_unresolved"
+                            )
+                    except HTTPException:
+                        logger.error(
+                            "orphaned_drive_file file_id=%s client_id=%s "
+                            "reason=company_identity_unresolved",
+                            upload_result.get("id"),
+                            client_id,
+                        )
+                        raise
 
-            company_document_id = None
-            if data.company_id is not None:
-                company_document_id = await conn.fetchval(
-                    """
-                    SELECT id
-                    FROM company_documents
-                    WHERE company_id = $1 AND google_drive_file_id = $2
-                    """,
-                    data.company_id,
-                    upload_result["id"],
-                )
-                if company_document_id is None:
+                doc_id: int | None = None
+                if data.intake_idempotency_key:
+                    await conn.execute(
+                        "SELECT pg_advisory_xact_lock(742020, hashtext($1))",
+                        f"{client_id}:{company_id or 0}:{data.intake_idempotency_key}",
+                    )
+                    if doc_cols is None:
+                        doc_cols = await _documents_columns(conn)
+                    existing_tx_doc = await _probe_existing_client_intake_doc(
+                        conn, client_id, data.intake_idempotency_key, doc_cols
+                    )
+                    if existing_tx_doc is not None:
+                        doc_id = int(existing_tx_doc["id"])
+                        deduplicated_doc_in_tx = True
+                        effective_file_id = existing_tx_doc["file_id"]
+                        effective_file_url = existing_tx_doc["file_url"]
+                        if (
+                            reused_existing_doc is None
+                            and upload_result.get("id")
+                            and upload_result.get("id") != effective_file_id
+                        ):
+                            logger.warning(
+                                "orphaned_drive_file file_id=%s client_id=%s "
+                                "reason=concurrent_intake_dedup",
+                                upload_result.get("id"),
+                                client_id,
+                            )
+
+                if doc_id is None:
+                    if not data.intake_idempotency_key:
+                        insert_sql = """
+                            INSERT INTO documents (
+                                client_id, document_type, document_category,
+                                file_name, file_id, file_url, google_drive_file_url,
+                                status, storage_type, notes, subfolder, expiry_date, content_hash,
+                                family_member_id, practice_id, uploaded_by, uploaded_source
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9, $10, $11, $12, $13, $14, $15)
+                            RETURNING id
+                            """
+                        insert_args: list[Any] = [
+                            client_id,
+                            data.document_type,
+                            category,
+                            data.file_name,
+                            upload_result["id"],
+                            upload_result.get("webViewLink"),
+                            upload_result.get("webViewLink"),
+                            data.notes,
+                            subfolder_value_final,
+                            _parse_date_or_none(data.expiry_date),
+                            content_hash,
+                            data.family_member_id,
+                            practice_id,
+                            current_user.get("email"),
+                            source,
+                        ]
+                        if data.client_visible is not None:
+                            insert_sql = """
+                            INSERT INTO documents (
+                                client_id, document_type, document_category,
+                                file_name, file_id, file_url, google_drive_file_url,
+                                status, storage_type, notes, subfolder, expiry_date, content_hash,
+                                family_member_id, practice_id, uploaded_by, uploaded_source,
+                                client_visible
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'google_drive', $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                            RETURNING id
+                            """
+                            insert_args.append(data.client_visible)
+                        doc_id = await conn.fetchval(insert_sql, *insert_args)
+                    else:
+                        doc_has_idem = "intake_idempotency_key" in (doc_cols or set())
+                        doc_notes = (
+                            data.notes
+                            if doc_has_idem
+                            else _append_intake_marker(data.notes, data.intake_idempotency_key)
+                        )
+                        doc_col_values: list[tuple[str, Any]] = [
+                            ("client_id", client_id),
+                            ("document_type", data.document_type),
+                            ("document_category", category),
+                            ("file_name", data.file_name),
+                            ("file_id", upload_result["id"]),
+                            ("file_url", upload_result.get("webViewLink")),
+                            ("google_drive_file_url", upload_result.get("webViewLink")),
+                            ("status", "active"),
+                            ("storage_type", "google_drive"),
+                            ("notes", doc_notes),
+                            ("subfolder", subfolder_value_final),
+                            ("expiry_date", _parse_date_or_none(data.expiry_date)),
+                            ("content_hash", content_hash),
+                            ("family_member_id", data.family_member_id),
+                            ("practice_id", practice_id),
+                            ("uploaded_by", current_user.get("email")),
+                            ("uploaded_source", source),
+                        ]
+                        if data.client_visible is not None:
+                            doc_col_values.append(("client_visible", data.client_visible))
+                        if doc_has_idem:
+                            doc_col_values.append(
+                                ("intake_idempotency_key", data.intake_idempotency_key)
+                            )
+                        d_col_sql = ", ".join(name for name, _ in doc_col_values)
+                        d_ph_sql = ", ".join(f"${i}" for i in range(1, len(doc_col_values) + 1))
+                        d_args = [val for _, val in doc_col_values]
+                        doc_id = await conn.fetchval(
+                            f"INSERT INTO documents ({d_col_sql}) VALUES ({d_ph_sql}) RETURNING id",
+                            *d_args,
+                        )
+
+                company_document_id = None
+                if company_id is not None:
+                    comp_drive_file_id = effective_file_id or upload_result["id"]
+                    comp_drive_file_url = (
+                        effective_file_url
+                        if effective_file_id
+                        else upload_result.get("webViewLink")
+                    )
                     size_raw = upload_result.get("size")
                     file_size_kb = None
                     if size_raw:
@@ -1168,48 +1506,159 @@ async def upload_document_base64(
                         except (TypeError, ValueError):
                             file_size_kb = None
 
-                    company_document_id = await conn.fetchval(
-                        """
-                        INSERT INTO company_documents (
-                            company_id, document_type, google_drive_file_id,
-                            google_drive_file_url, file_name, file_size_kb,
-                            mime_type, notes, uploaded_by, status, is_verified
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', false)
-                        RETURNING id
-                        """,
-                        data.company_id,
-                        data.document_type,
-                        upload_result["id"],
-                        upload_result.get("webViewLink"),
-                        data.file_name,
-                        file_size_kb,
-                        data.mime_type,
-                        data.notes,
-                        current_user.get("email", "system"),
-                    )
+                    if data.client_visible is None and data.intake_idempotency_key is None:
+                        company_document_id = await conn.fetchval(
+                            """
+                            SELECT id
+                            FROM company_documents
+                            WHERE company_id = $1 AND google_drive_file_id = $2
+                            """,
+                            company_id,
+                            comp_drive_file_id,
+                        )
+                        if company_document_id is None:
+                            try:
+                                company_document_id = await conn.fetchval(
+                                    """
+                                    INSERT INTO company_documents (
+                                        company_id, document_type, google_drive_file_id,
+                                        google_drive_file_url, file_name, file_size_kb,
+                                        mime_type, notes, uploaded_by, status, is_verified,
+                                        created_at, updated_at
+                                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', false, now(), now())
+                                    RETURNING id
+                                    """,
+                                    company_id,
+                                    data.document_type,
+                                    comp_drive_file_id,
+                                    comp_drive_file_url,
+                                    data.file_name,
+                                    file_size_kb,
+                                    data.mime_type,
+                                    data.notes,
+                                    current_user.get("email", "system"),
+                                )
+                            except Exception:
+                                logger.error(
+                                    "orphaned_drive_file file_id=%s client_id=%s "
+                                    "reason=company_document_insert_failed",
+                                    comp_drive_file_id,
+                                    client_id,
+                                )
+                                raise
+                    else:
+                        if comp_cols is None:
+                            comp_cols = await _company_documents_columns(conn)
+                        if data.client_visible is False and "client_visible" not in comp_cols:
+                            raise HTTPException(
+                                status_code=409, detail="client_visible_column_missing"
+                            )
+                        comp_has_idem = "intake_idempotency_key" in comp_cols
+                        if data.intake_idempotency_key is not None:
+                            existing_comp_row = await _probe_existing_company_intake_doc(
+                                conn, company_id, data.intake_idempotency_key, comp_cols
+                            )
+                            if existing_comp_row is not None:
+                                company_document_id = int(existing_comp_row["id"])
+                                deduplicated_comp_in_tx = True
+                        if company_document_id is None:
+                            company_document_id = await conn.fetchval(
+                                """
+                                SELECT id
+                                FROM company_documents
+                                WHERE company_id = $1 AND google_drive_file_id = $2
+                                """,
+                                company_id,
+                                comp_drive_file_id,
+                            )
+                        if company_document_id is None:
+                            comp_notes = (
+                                _append_intake_marker(data.notes, data.intake_idempotency_key)
+                                if (data.intake_idempotency_key is not None and not comp_has_idem)
+                                else data.notes
+                            )
+                            col_values: list[tuple[str, Any]] = [
+                                ("company_id", company_id),
+                                ("document_type", data.document_type),
+                                ("google_drive_file_id", comp_drive_file_id),
+                                ("google_drive_file_url", comp_drive_file_url),
+                                ("file_name", data.file_name),
+                                ("file_size_kb", file_size_kb),
+                                ("mime_type", data.mime_type),
+                                ("notes", comp_notes),
+                                ("uploaded_by", current_user.get("email", "system")),
+                                ("status", "active"),
+                                ("is_verified", False),
+                            ]
+                            if "client_visible" in comp_cols and data.client_visible is not None:
+                                col_values.append(("client_visible", bool(data.client_visible)))
+                            if comp_has_idem and data.intake_idempotency_key is not None:
+                                col_values.append(
+                                    ("intake_idempotency_key", data.intake_idempotency_key)
+                                )
+                            col_parts = [name for name, _ in col_values]
+                            ph_parts = [f"${i}" for i in range(1, len(col_values) + 1)]
+                            if "created_at" in comp_cols:
+                                col_parts.append("created_at")
+                                ph_parts.append("now()")
+                            if "updated_at" in comp_cols:
+                                col_parts.append("updated_at")
+                                ph_parts.append("now()")
+                            col_sql = ", ".join(col_parts)
+                            ph_sql = ", ".join(ph_parts)
+                            args = [val for _, val in col_values]
+                            try:
+                                company_document_id = await conn.fetchval(
+                                    f"INSERT INTO company_documents ({col_sql}) VALUES ({ph_sql}) RETURNING id",
+                                    *args,
+                                )
+                            except Exception:
+                                logger.error(
+                                    "orphaned_drive_file file_id=%s client_id=%s "
+                                    "reason=company_document_insert_failed",
+                                    comp_drive_file_id,
+                                    client_id,
+                                )
+                                raise
 
-            # Trigger OCR via dispatcher
-            background_tasks.add_task(
-                _dispatch_ocr_by_folder,
-                pool,
-                client_id,
-                upload_result["id"],
-                folder_name,
-                data.file_name,
-                doc_id,
-                data.document_type,
-            )
-            await conn.execute(
-                "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
-                doc_id,
-            )
+            if deduplicated_doc_in_tx and (company_id is None or deduplicated_comp_in_tx):
+                dedup_resp: dict[str, Any] = {
+                    "success": True,
+                    "document_id": doc_id,
+                    "file_id": effective_file_id,
+                    "file_url": effective_file_url,
+                    "ocr_triggered": False,
+                    "deduplicated": True,
+                }
+                if company_id is not None:
+                    dedup_resp["company_document_id"] = company_document_id
+                return dedup_resp
+
+            # Trigger OCR via dispatcher only for newly inserted client document rows.
+            if not deduplicated_doc_in_tx:
+                if folder_name is not None and effective_file_id is not None:
+                    background_tasks.add_task(
+                        _dispatch_ocr_by_folder,
+                        pool,
+                        client_id,
+                        effective_file_id,
+                        folder_name,
+                        data.file_name,
+                        doc_id,
+                        data.document_type,
+                    )
+                await conn.execute(
+                    "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
+                    doc_id,
+                )
 
             await invalidate_cache("zantara:crm_clients_stats:*")
             return {
                 "success": True,
                 "document_id": doc_id,
-                "file_url": upload_result.get("webViewLink"),
-                "ocr_triggered": True,
+                "file_id": effective_file_id,
+                "file_url": effective_file_url,
+                "ocr_triggered": not deduplicated_doc_in_tx,
                 "company_document_id": company_document_id,
             }
 
@@ -1246,6 +1695,318 @@ async def upload_document_base64_internal(
             "permissions": ["crm:write"],
         },
         background_tasks=background_tasks,
+        access_already_verified=True,
+    )
+
+
+class CompanyDocumentUploadBase64(BaseModel):
+    file: str  # Base64
+    file_name: str
+    document_type: str
+    document_category: str | None = None
+    document_number: str | None = None
+    mime_type: str | None = None
+    expiry_date: str | None = None
+    notes: str | None = None
+    client_visible: bool | None = None
+    intake_idempotency_key: str | None = None
+
+
+def _parse_company_ref(company_ref: str) -> int | UUID:
+    if re.fullmatch(r"[0-9]{1,18}", company_ref):
+        return int(company_ref)
+    if re.fullmatch(
+        r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
+        company_ref,
+    ):
+        return UUID(company_ref)
+    raise HTTPException(
+        status_code=422,
+        detail="company_ref must be an integer ID or canonical hyphenated UUID",
+    )
+
+
+async def _upload_company_document_impl(
+    *,
+    company_ref: int | UUID,
+    data: CompanyDocumentUploadBase64,
+    pool: Any,
+    current_user: dict[str, Any],
+    require_uuid_identity: bool = False,
+    access_already_verified: bool = False,
+) -> dict[str, Any]:
+    """Upload a standalone company document to Drive and ``company_documents``."""
+    try:
+        file_content = base64.b64decode(data.file)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 file content")
+
+    if data.document_category:
+        category = data.document_category
+    else:
+        cat_result = auto_categorize_document(data.file_name)
+        category = cat_result["document_category"]
+
+    async with pool.acquire() as conn:
+        col = "uuid" if isinstance(company_ref, UUID) else "id"
+        param: Any = str(company_ref) if isinstance(company_ref, UUID) else company_ref
+        company = await conn.fetchrow(
+            f"SELECT id, uuid, company_name, google_drive_folder_id, status "
+            f"FROM companies WHERE {col} = $1",
+            param,
+        )
+        if not company or str(company["status"] or "").lower() == "deleted":
+            if require_uuid_identity:
+                raise HTTPException(status_code=409, detail="company_identity_unresolved")
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        company_id = int(company["id"])
+        if access_already_verified is not True and not is_crm_admin(current_user):
+            links = await conn.fetch(
+                "SELECT client_id FROM client_company_links WHERE company_id = $1",
+                company_id,
+            )
+            authorized = False
+            for link in links:
+                try:
+                    await verify_client_access(
+                        int(link["client_id"]),
+                        current_user,
+                        conn,
+                        allow_assigned=True,
+                        write=True,
+                    )
+                    authorized = True
+                    break
+                except HTTPException:
+                    continue
+            if not authorized:
+                raise HTTPException(status_code=403, detail="Access denied to company")
+
+        comp_cols = await _company_documents_columns(conn)
+        if data.client_visible is False and "client_visible" not in comp_cols:
+            raise HTTPException(status_code=409, detail="client_visible_column_missing")
+
+        if data.intake_idempotency_key:
+            existing = await _probe_existing_company_intake_doc(
+                conn, company_id, data.intake_idempotency_key, comp_cols
+            )
+            if existing is not None:
+                return {
+                    "success": True,
+                    "company_document_id": int(existing["id"]),
+                    "company_id": company_id,
+                    "file_id": existing["google_drive_file_id"],
+                    "file_url": existing["google_drive_file_url"],
+                    "deduplicated": True,
+                }
+
+        drive_service = ServiceAccountDriveService()
+        root_folder_id = company["google_drive_folder_id"]
+        if not root_folder_id:
+            try:
+                ensure_res = await drive_service.ensure_company_folder(
+                    company_id=company_id,
+                    company_name=company["company_name"],
+                    db_pool=pool,
+                    conn=conn,
+                )
+                root_folder_id = ensure_res["root_folder_id"]
+            except Exception as exc:
+                logger.error("Failed to create company root folder: %s", exc)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create company root folder: {exc}",
+                ) from exc
+
+        folder_name = folder_for_category(category, "company")
+        try:
+            target_subfolder_id = await drive_service.resolve_canonical_folder(
+                folder_name, root_folder_id, conn=conn
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="Cannot verify Drive destination") from exc
+
+        try:
+            upload_result = await drive_service.upload_file_to_folder(
+                folder_id=target_subfolder_id,
+                file_content=file_content,
+                file_name=data.file_name,
+                mime_type=data.mime_type,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to upload to drive: {exc}"
+            ) from exc
+
+        size_raw = upload_result.get("size")
+        file_size_kb = None
+        if size_raw:
+            try:
+                file_size_kb = max(1, int(size_raw) // 1024)
+            except (TypeError, ValueError):
+                file_size_kb = None
+
+        effective_file_id: str | None = upload_result.get("id")
+        effective_file_url: str | None = upload_result.get("webViewLink")
+        deduplicated_in_tx = False
+        async with conn.transaction():
+            recheck = await conn.fetchrow(
+                "SELECT id, status FROM companies WHERE id = $1 FOR SHARE",
+                company_id,
+            )
+            if recheck is None or str(recheck["status"] or "").lower() == "deleted":
+                logger.error(
+                    "orphaned_drive_file file_id=%s company_id=%s reason=company_identity_unresolved",
+                    upload_result.get("id"),
+                    company_id,
+                )
+                raise HTTPException(status_code=409, detail="company_identity_unresolved")
+
+            comp_has_idem = "intake_idempotency_key" in comp_cols
+            company_doc_id: int | None = None
+            if data.intake_idempotency_key:
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(742019, hashtext($1))",
+                    f"{company_id}:{data.intake_idempotency_key}",
+                )
+                existing_tx = await _probe_existing_company_intake_doc(
+                    conn, company_id, data.intake_idempotency_key, comp_cols
+                )
+                if existing_tx is not None:
+                    company_doc_id = int(existing_tx["id"])
+                    deduplicated_in_tx = True
+                    effective_file_id = existing_tx["google_drive_file_id"]
+                    effective_file_url = existing_tx["google_drive_file_url"]
+                    if upload_result.get("id") and upload_result.get("id") != effective_file_id:
+                        logger.warning(
+                            "orphaned_drive_file file_id=%s company_id=%s "
+                            "reason=concurrent_intake_dedup",
+                            upload_result.get("id"),
+                            company_id,
+                        )
+
+            if company_doc_id is None:
+                company_doc_id = await conn.fetchval(
+                    """
+                    SELECT id FROM company_documents
+                    WHERE company_id = $1 AND google_drive_file_id = $2
+                    """,
+                    company_id,
+                    upload_result["id"],
+                )
+            if company_doc_id is None:
+                comp_notes = (
+                    _append_intake_marker(data.notes, data.intake_idempotency_key)
+                    if (data.intake_idempotency_key and not comp_has_idem)
+                    else data.notes
+                )
+                col_values: list[tuple[str, Any]] = [
+                    ("company_id", company_id),
+                    ("document_type", data.document_type),
+                    ("google_drive_file_id", upload_result["id"]),
+                    ("google_drive_file_url", upload_result.get("webViewLink")),
+                    ("file_name", data.file_name),
+                    ("file_size_kb", file_size_kb),
+                    ("mime_type", data.mime_type),
+                    ("notes", comp_notes),
+                    ("uploaded_by", current_user.get("email", "system")),
+                    ("status", "active"),
+                    ("is_verified", False),
+                ]
+                if "document_subtype" in comp_cols and data.document_category is not None:
+                    col_values.append(("document_subtype", category))
+                if "document_number" in comp_cols and data.document_number is not None:
+                    col_values.append(("document_number", data.document_number))
+                if "expiry_date" in comp_cols and data.expiry_date is not None:
+                    col_values.append(("expiry_date", _parse_date_or_none(data.expiry_date)))
+                if "client_visible" in comp_cols and data.client_visible is not None:
+                    col_values.append(("client_visible", bool(data.client_visible)))
+                if comp_has_idem and data.intake_idempotency_key:
+                    col_values.append(("intake_idempotency_key", data.intake_idempotency_key))
+
+                col_parts = [name for name, _ in col_values]
+                ph_parts = [f"${i}" for i in range(1, len(col_values) + 1)]
+                if "created_at" in comp_cols:
+                    col_parts.append("created_at")
+                    ph_parts.append("now()")
+                if "updated_at" in comp_cols:
+                    col_parts.append("updated_at")
+                    ph_parts.append("now()")
+                col_sql = ", ".join(col_parts)
+                ph_sql = ", ".join(ph_parts)
+                args = [val for _, val in col_values]
+                company_doc_id = await conn.fetchval(
+                    f"INSERT INTO company_documents ({col_sql}) VALUES ({ph_sql}) RETURNING id",
+                    *args,
+                )
+
+    if deduplicated_in_tx:
+        return {
+            "success": True,
+            "company_document_id": int(company_doc_id),
+            "company_id": company_id,
+            "file_id": effective_file_id,
+            "file_url": effective_file_url,
+            "deduplicated": True,
+        }
+
+    await invalidate_cache("zantara:crm_clients_stats:*")
+    return {
+        "success": True,
+        "company_document_id": int(company_doc_id),
+        "company_id": company_id,
+        "file_id": effective_file_id,
+        "file_url": effective_file_url,
+    }
+
+
+@router.post("/companies/{company_ref}/documents/upload", responses=_UPLOAD_CONFLICT)
+async def upload_company_document_base64(
+    company_ref: str,
+    data: CompanyDocumentUploadBase64 = Body(...),
+    pool: Any = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Upload a standalone document directly to a company workspace."""
+    parsed_ref = _parse_company_ref(company_ref)
+    return await _upload_company_document_impl(
+        company_ref=parsed_ref,
+        data=data,
+        pool=pool,
+        current_user=current_user,
+        require_uuid_identity=isinstance(parsed_ref, UUID),
+        access_already_verified=False,
+    )
+
+
+@router.post("/internal/companies/{company_uuid}/documents/upload", responses=_UPLOAD_CONFLICT)
+async def upload_company_document_base64_internal(
+    company_uuid: str,
+    data: CompanyDocumentUploadBase64 = Body(...),
+    pool: Any = Depends(get_database_pool),
+    actor: str = Depends(verify_crm_write_key),
+) -> dict[str, Any]:
+    """Service-to-service standalone company intake upload keyed by canonical UUID."""
+    if not re.fullmatch(
+        r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
+        company_uuid,
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="company_uuid must be a canonical hyphenated UUID",
+        )
+    return await _upload_company_document_impl(
+        company_ref=UUID(company_uuid),
+        data=data,
+        pool=pool,
+        current_user={
+            "email": actor,
+            "user_id": actor,
+            "role": "service",
+            "permissions": ["crm:write"],
+        },
+        require_uuid_identity=True,
         access_already_verified=True,
     )
 
