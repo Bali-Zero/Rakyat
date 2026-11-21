@@ -1139,7 +1139,10 @@ Make it feel natural and helpful, not forced.
                         "verdict_available",
                         verdict_available,
                     )
-                    if final_verdict_available:
+                    if (
+                        final_verdict_available
+                        and processed.get("verification_status") != "skipped"
+                    ):
                         state.verification_score = processed.get(
                             "verification_score",
                             verification_score,
