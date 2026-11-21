@@ -321,6 +321,10 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
         },
     )
     _METRICS_PATHS = frozenset({"/metrics", "/metrics/"})
+    # The health router's routes share the /metrics gate. Its probes are
+    # listed one by one in the public registry, so they stay open whatever
+    # this gate answers.
+    _METRICS_PREFIXES = ("/health/",)
 
     def _is_protected_infra_endpoint(self, request: Request) -> bool:
         """
@@ -330,7 +334,7 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
         is_docs = path in self._PROTECTED_INFRA_PATHS or path.startswith("/docs")
-        is_metrics = path in self._METRICS_PATHS
+        is_metrics = path in self._METRICS_PATHS or path.startswith(self._METRICS_PREFIXES)
 
         if not is_docs and not is_metrics:
             return False
