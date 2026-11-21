@@ -325,13 +325,14 @@ describe("Accounting control centre", () => {
     );
   });
 
-  it("keeps Money out inert", async () => {
-    renderCentre();
+  it("Money out opens the outgoings view and changes nothing here", async () => {
+    const { onOpenOutgoings, onOpenCashout } = renderCentre();
     await ready();
     await screen.findByTestId("cc-count-done");
     const moneyOut = screen.getByTestId("cc-money-out");
-    expect(moneyOut.tagName).toBe("SPAN");
-    expect(moneyOut).toHaveAttribute("aria-disabled", "true");
+    expect(moneyOut.tagName).toBe("BUTTON");
+    expect(moneyOut).not.toHaveAttribute("role");
+    expect(moneyOut).toHaveTextContent(/^Money out$/);
     const requestsBefore =
       api.getReconciliationInbox.mock.calls.length +
       api.getMatchCandidates.mock.calls.length +
@@ -346,6 +347,8 @@ describe("Accounting control centre", () => {
 
     fireEvent.click(moneyOut);
 
+    expect(onOpenOutgoings).toHaveBeenCalledTimes(1);
+    expect(onOpenCashout).not.toHaveBeenCalled();
     expect(tab("confirm")).toHaveAttribute("aria-selected", "true");
     expect(tab("done")).toHaveAttribute("aria-selected", "false");
     expect(screen.queryByTestId("cc-done")).toBeNull();
@@ -1180,25 +1183,12 @@ describe("Accounting control centre", () => {
     ).not.toBeNull();
   });
 
-  it("renders cc-more with the cash-out card then the outgoings card", async () => {
+  it("renders cc-more with only the cash-out card", async () => {
     renderCentre();
     await ready();
     const more = screen.getByTestId("cc-more");
-    expect(Array.from(more.children)).toEqual([
-      screen.getByTestId("cc-cashout-card"),
-      screen.getByTestId("cc-outgoings-card"),
-    ]);
-  });
-
-  it("opens the outgoings view from its card without an amount or a request", async () => {
-    const { onOpenOutgoings, onOpenCashout } = renderCentre();
-    await ready();
-    const card = screen.getByTestId("cc-outgoings-card");
-    expect(card).toHaveTextContent("Outgoings to justify");
-    expect(card).not.toHaveTextContent("Rp");
-    fireEvent.click(within(card).getByRole("button", { name: "Open" }));
-    expect(onOpenOutgoings).toHaveBeenCalledTimes(1);
-    expect(onOpenCashout).not.toHaveBeenCalled();
+    expect(more.children).toHaveLength(1);
+    expect(more.firstElementChild).toBe(screen.getByTestId("cc-cashout-card"));
   });
 
   it("pins compact candidate row and reasons classes", async () => {

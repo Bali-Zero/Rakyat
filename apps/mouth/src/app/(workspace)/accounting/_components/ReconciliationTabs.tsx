@@ -36,6 +36,7 @@ export function ReconciliationTabs({
   done,
   doneUnavailable,
   onSelect,
+  onOpenMoneyOut,
 }: {
   active: ReconciliationTab | null;
   counts: Record<Situation, number>;
@@ -43,6 +44,8 @@ export function ReconciliationTabs({
   done: DoneTodayResponse | null;
   doneUnavailable: boolean;
   onSelect: (tab: ReconciliationTab) => void;
+  /** Opens the outgoings still to justify: another view, not a tab of this one. */
+  onOpenMoneyOut: () => void;
 }) {
   return (
     <div
@@ -87,13 +90,14 @@ export function ReconciliationTabs({
         aria-hidden="true"
         className="mx-1.5 h-[22px] w-px bg-[var(--cc-edge)]"
       />
-      <span
+      <button
+        type="button"
         data-testid="cc-money-out"
-        aria-disabled="true"
-        className="inline-flex h-[42px] items-center gap-2.5 px-4 text-base font-medium text-[var(--cc-tx-2)]"
+        onClick={onOpenMoneyOut}
+        className={`${TAB_BASE} ${TAB_READY}`}
       >
-        Money out <i className="text-xs not-italic">coming</i>
-      </span>
+        Money out <CcGlyph name="arrow" className="h-3.5 w-3.5" />
+      </button>
       <span aria-hidden="true" className="flex-1" />
       {!doneUnavailable && (
         <button

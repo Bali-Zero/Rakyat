@@ -511,6 +511,7 @@ export function ReconciliationInbox({
           done={done}
           doneUnavailable={unavailable}
           onSelect={setSelectedTab}
+          onOpenMoneyOut={onOpenOutgoings}
         />
       )}
       {view !== "dayone" && (
@@ -547,10 +548,7 @@ export function ReconciliationInbox({
         onShowDone={() => setSelectedTab("done")}
         onUpload={() => document.getElementById(BANK_FILE_INPUT_ID)?.click()}
       />
-      <ReconciliationMore
-        onOpenCashout={onOpenCashout}
-        onOpenOutgoings={onOpenOutgoings}
-      />
+      <ReconciliationMore onOpenCashout={onOpenCashout} />
       {modal && (
         <ConfirmModal
           txn={modal.txn}

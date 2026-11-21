@@ -160,10 +160,8 @@ export function ReconciliationBody({
 
 export function ReconciliationMore({
   onOpenCashout,
-  onOpenOutgoings,
 }: {
   onOpenCashout: () => void;
-  onOpenOutgoings: () => void;
 }) {
   return (
     <section data-testid="cc-more" className="mt-6 grid grid-cols-2 gap-6">
@@ -181,24 +179,6 @@ export function ReconciliationMore({
           type="button"
           className="ml-auto flex items-center gap-1 text-sm font-bold text-[var(--cc-tx)] underline decoration-1 underline-offset-4"
           onClick={onOpenCashout}
-        >
-          Open <CcGlyph name="arrow" className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      <div
-        data-testid="cc-outgoings-card"
-        className="flex h-20 items-center gap-4 rounded-[14px] border border-[var(--cc-edge)] bg-[var(--cc-card)] px-6"
-      >
-        <span className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--cc-wash)] text-[var(--cc-tx-2)]">
-          <CcGlyph name="out" className="h-[18px] w-[18px]" />
-        </span>
-        <p className="text-sm font-semibold text-[var(--cc-tx-2)]">
-          Outgoings to justify
-        </p>
-        <button
-          type="button"
-          className="ml-auto flex items-center gap-1 text-sm font-bold text-[var(--cc-tx)] underline decoration-1 underline-offset-4"
-          onClick={onOpenOutgoings}
         >
           Open <CcGlyph name="arrow" className="h-3.5 w-3.5" />
         </button>

@@ -3,7 +3,7 @@
  * and the inbox carries the bank statement card. Data is invented.
  */
 
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import AccountingPage from "../page";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
@@ -82,11 +82,7 @@ describe("AccountingPage", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Income (in)")).toBeNull();
     expect(screen.queryByText("Weekly Cashout")).toBeNull();
-    fireEvent.click(
-      within(screen.getByTestId("cc-cashout-card")).getByRole("button", {
-        name: "Open",
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(await screen.findByText("No cashout rows yet.")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /import cashout pdf/i }),
@@ -107,11 +103,7 @@ describe("AccountingPage", () => {
     });
     const { container } = render(<AccountingPage />);
     await screen.findByText("CONTOH TRANSFER");
-    fireEvent.click(
-      within(screen.getByTestId("cc-cashout-card")).getByRole("button", {
-        name: "Open",
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
     await screen.findByText("No cashout rows yet.");
     const pdf = new File(["x"], "contoh.pdf", { type: "application/pdf" });
     const el = container.querySelector(
@@ -144,7 +136,7 @@ describe("AccountingPage", () => {
     expect(screen.getByText(/new transactions stored/)).toBeInTheDocument();
   });
 
-  it("enters the outgoings view from its card and comes back", async () => {
+  it("enters the outgoings view from Money out and comes back", async () => {
     api.getOutgoings.mockResolvedValue({
       items: [],
       by_kind: [],
@@ -154,11 +146,7 @@ describe("AccountingPage", () => {
     render(<AccountingPage />);
     await screen.findByText("CONTOH TRANSFER");
     expect(api.getOutgoings).not.toHaveBeenCalled();
-    fireEvent.click(
-      within(screen.getByTestId("cc-outgoings-card")).getByRole("button", {
-        name: "Open",
-      }),
-    );
+    fireEvent.click(screen.getByTestId("cc-money-out"));
     expect(
       await screen.findByRole("heading", { name: "Outgoings to justify" }),
     ).toBeInTheDocument();
