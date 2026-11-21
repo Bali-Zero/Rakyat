@@ -388,3 +388,28 @@ async def test_resolve_entity_phone_wins_over_folder() -> None:
     assert out["candidates"][0]["method"] == "sender_phone"
     # Folder fuzzy never queried: phone resolved first.
     assert not any("similarity" in q for q in conn.queries)
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_team_number_lets_the_folder_speak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A staffer's upload: the team number is not looked up, so the client
+    # folder the file sits in decides. Roster and numbers are synthetic.
+    from backend.services.intake import auto_attach as aa
+
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_NUMBERS", ())
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_PREFIXES", ())
+    monkeypatch.setenv("BZ_INTERNAL_PHONE_NUMBERS", "+628400027000")
+    conn = FakeConn(
+        phone_rows=[{"id": 42, "full_name": "Wira Phone"}],
+        client_fuzzy_rows=[{"id": 7, "name": "Budi Santoso", "sim": 0.84}],
+    )
+    out = await rt.resolve_entity(
+        {}, "unknown", FakePool(conn),
+        sender_phone="+62 840-002-7000", source_path="BUDI/passport.jpg",
+    )
+    assert out["decision"] == rt.DECISION_LINK_CANDIDATE
+    assert (out["candidates"][0]["id"], out["candidates"][0]["method"]) == (7, "folder_name")
+    assert out["reason"]["sender_phone"] == rt.SENDER_PHONE_INTERNAL_IGNORED
+    assert not any("phone_normalized" in q for q in conn.queries)
