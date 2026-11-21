@@ -16,6 +16,7 @@ Key features:
 """
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -68,6 +69,7 @@ from backend.services.rag.agentic._reasoning_tier1 import (
     emit_tier1_failure_metrics,
     emit_tier1_success_metrics,
 )
+from backend.services.rag.agentic._tool_denial import is_denial_observation
 from backend.services.rag.agentic.query_helpers import detect_query_language
 from backend.services.rag.agentic.reasoning_utils import (
     calculate_evidence_score,  # noqa: F401  re-exported for tests that patch reasoning.calculate_evidence_score
@@ -1204,6 +1206,15 @@ Make it feel natural and helpful, not forced.
             getattr(state, "caller_profile", None),
         )
 
+        def _is_real_crm_result(observation: str) -> bool:
+            if is_denial_observation(observation) or observation.lstrip().startswith("Error"):
+                return False
+            try:
+                parsed_observation = json.loads(observation)
+            except json.JSONDecodeError:
+                return True
+            return not (isinstance(parsed_observation, dict) and "error" in parsed_observation)
+
         # ==================== REACT LOOP ====================
         while state.current_step < state.max_steps:
             state.current_step += 1
@@ -1324,7 +1335,11 @@ Make it feel natural and helpful, not forced.
                 ):
                     logger.info("🚀 [Stream Early Exit] Sufficient context from retrieval.")
                     break
-                if tool_call.tool_name == "crm_query" and len(tool_result) > 10:
+                if (
+                    tool_call.tool_name == "crm_query"
+                    and len(tool_result) > 10
+                    and _is_real_crm_result(tool_result)
+                ):
                     # CRM returns structured JSON data — one call is always enough
                     logger.info("🚀 [Stream Early Exit] CRM data retrieved, skipping extra steps.")
                     state.trusted_tools_used = True
