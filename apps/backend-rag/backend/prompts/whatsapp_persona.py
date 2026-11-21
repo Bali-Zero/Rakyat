@@ -43,8 +43,8 @@ def build_system_prompt(
     Kept short and natural — less rules = more natural output.
 
     `time_of_day` is accepted and deliberately unused today, but its NAME is
-    part of a live contract: `whatsapp_chat.process_whatsapp_message` — the
-    only production caller — passes it by keyword. It was renamed to
+    part of a contract: its callers passed it by keyword (the former WhatsApp
+    router caller has since been removed; the name stays pinned by a test). It was renamed to
     `_time_of_day` on 2026-03-17 against a call site written on 2026-02-07,
     and from that day every fallback-RAG WhatsApp reply raised
     `TypeError: unexpected keyword argument 'time_of_day'` and answered the

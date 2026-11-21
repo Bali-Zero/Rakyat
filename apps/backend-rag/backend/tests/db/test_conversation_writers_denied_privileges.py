@@ -248,51 +248,6 @@ FAST_BOUND_MS = 2000
 
 
 @pytest.mark.asyncio
-async def test_denied_whatsapp_insert_is_swallowed_and_update_still_works(
-    open_env, monkeypatch
-) -> None:
-    from unittest.mock import AsyncMock
-
-    from backend.app.routers import whatsapp_chat
-
-    audit = AsyncMock()
-    monkeypatch.setattr(whatsapp_chat, "_persist_audit_messages", audit)
-    env = await open_env()
-
-    def wa(session: str, row_id: int | None) -> Callable[[], Awaitable[Any]]:
-        return lambda: whatsapp_chat._save_conversation(
-            db_pool=env.pool,
-            wa_user_id="whatsapp_synthetic",
-            session_id=session,
-            existing_row_id=row_id,
-            message_text="wa-in",
-            response_text="wa-out",
-            client_profile={"source": "wa"},
-            sender_name="synthetic",
-            phone="synthetic-phone",
-        )
-
-    out = await observe(
-        "3a_wa_absent_session", wa("wa_s_absent", None), env, "session_id=$1", "wa_s_absent"
-    )
-    assert out["status"] == "return" and out["exc"] == "-" and out["body"] is None
-    assert out["rows"] == 0 and out["ms"] < FAST_BOUND_MS  # no retry loop, no hang
-    assert audit.await_count == 1  # the reply flow still reaches the audit step
-
-    row = await env.seed("wa_s_exist", user="whatsapp_synthetic")
-    out = await observe(
-        "3b_wa_existing_row", wa("wa_s_exist", row), env, "session_id=$1", "wa_s_exist"
-    )
-    assert out["status"] == "return" and out["exc"] == "-" and out["ms"] < FAST_BOUND_MS
-    assert await env.message_count("id=$1", row) == 3  # 1 seeded + user + assistant
-    assert (
-        await env.admin.fetchval("SELECT metadata->>'source' FROM conversations WHERE id=$1", row)
-        == "wa"
-    )
-    assert audit.await_count == 2
-
-
-@pytest.mark.asyncio
 async def test_denied_clear_and_delete_are_503_and_remove_nothing(open_env) -> None:
     from backend.app.routers import conversations
 
@@ -445,30 +400,13 @@ async def test_denied_retention_paths(open_env, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_guilt_with_insert_granted_every_insert_writer_reports_db(
-    open_env, monkeypatch
-) -> None:
-    from unittest.mock import AsyncMock
-
-    from backend.app.routers import whatsapp_chat
+async def test_guilt_with_insert_granted_every_insert_writer_reports_db(open_env) -> None:
     from backend.db.repositories.conversation_repository import ConversationRepository
 
-    monkeypatch.setattr(whatsapp_chat, "_persist_audit_messages", AsyncMock())
     env = await open_env(("INSERT",))
     msgs = [{"role": "user", "content": "synthetic"}]
     assert await ConversationRepository(env.pool).save_messages("syn-guilt-repo", USER, msgs) > 0
-    await whatsapp_chat._save_conversation(
-        db_pool=env.pool,
-        wa_user_id="whatsapp_synthetic",
-        session_id="wa_guilt",
-        existing_row_id=None,
-        message_text="in",
-        response_text="out",
-        client_profile={},
-        sender_name="synthetic",
-        phone="synthetic-phone",
-    )
-    assert await env.rows("session_id IN ('syn-guilt-repo','wa_guilt')") == 2
+    assert await env.rows("session_id='syn-guilt-repo'") == 1
 
 
 @pytest.mark.asyncio

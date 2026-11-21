@@ -154,12 +154,6 @@ async def test_web_user_with_wa_session_id_leaves_the_whatsapp_row_alone(pool) -
     assert web_id != wa_id
     assert await row_of(pool, wa_id) == before
 
-    # innocence: the WhatsApp context builder still reads only the WhatsApp row
-    from backend.services.whatsapp_context_builder import build_context
-
-    ctx = await build_context(PHONE, "Synthetic", "hello", pool)
-    assert ctx["conversation_history"] == WA_MSG
-
 
 # ------------------------------------------------------------------ get_messages
 

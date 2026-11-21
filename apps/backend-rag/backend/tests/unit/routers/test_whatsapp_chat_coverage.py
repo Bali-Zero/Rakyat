@@ -8,8 +8,6 @@ X-Hub-Signature-256 HMAC verification.
 import hashlib
 import hmac
 import json
-import logging
-import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -210,7 +208,6 @@ def test_whatsapp_webhook_returns_ok(client):
         patch(
             "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
         ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
     ):
         mock_settings.whatsapp_app_secret = None
         response = client.post("/webhook/whatsapp", json=_make_webhook_payload())
@@ -330,7 +327,6 @@ def test_whatsapp_webhook_multiple_messages(client):
         patch(
             "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
         ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
     ):
         mock_settings.whatsapp_app_secret = None
         response = client.post("/webhook/whatsapp", json=payload)
@@ -367,7 +363,6 @@ def test_whatsapp_webhook_no_contacts(client):
         patch(
             "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
         ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
     ):
         mock_settings.whatsapp_app_secret = None
         response = client.post("/webhook/whatsapp", json=payload)
@@ -504,7 +499,6 @@ def test_hmac_valid_signature_accepted(client):
         patch(
             "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
         ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
     ):
         mock_settings.whatsapp_app_secret = _TEST_APP_SECRET
         response = client.post(
@@ -525,7 +519,6 @@ def test_hmac_skipped_when_no_secret(client):
         patch(
             "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
         ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
     ):
         mock_settings.whatsapp_app_secret = None
         response = client.post("/webhook/whatsapp", json=_make_webhook_payload())
@@ -551,402 +544,19 @@ def test_hmac_malformed_signature_rejected(client):
 
 
 # ============================================================
-# process_whatsapp_message — unit tests (pure function)
+# Fakes shared by the webhook diagnostics tests below
 # ============================================================
 
 
 class _FakeConversationAcquire:
-    def __init__(self, conn: "_FakeConversationConn") -> None:
+    def __init__(self, conn: Any) -> None:
         self.conn = conn
 
-    async def __aenter__(self) -> "_FakeConversationConn":
+    async def __aenter__(self) -> Any:
         return self.conn
 
     async def __aexit__(self, *_args: Any) -> None:
         return None
-
-
-class _FakeConversationPool:
-    def __init__(self, conn: "_FakeConversationConn") -> None:
-        self.conn = conn
-
-    def acquire(self) -> _FakeConversationAcquire:
-        return _FakeConversationAcquire(self.conn)
-
-
-class _FakeConversationConn:
-    def __init__(self, existing_row: dict[str, Any] | None = None) -> None:
-        self.existing_row = existing_row
-        self.executed: list[tuple[str, tuple[Any, ...]]] = []
-
-    async def fetchrow(self, *_args: Any) -> dict[str, Any] | None:
-        return self.existing_row
-
-    async def execute(self, query: str, *args: Any) -> None:
-        self.executed.append((query, args))
-
-    def transaction(self) -> _FakeConversationAcquire:
-        return _FakeConversationAcquire(self)
-
-
-@pytest.mark.asyncio
-async def test_process_whatsapp_message_not_allowed():
-    """Should return early for non-allowed phone numbers."""
-    from backend.app.routers.whatsapp_chat import process_whatsapp_message
-
-    mock_request = MagicMock()
-    mock_triage_service = MagicMock()
-    mock_triage_service.is_allowed.return_value = False
-    mock_wa_service = MagicMock()
-    mock_wa_service.mark_message_read = AsyncMock()
-
-    with (
-        patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-        patch("backend.app.routers.whatsapp_chat.whatsapp_triage_service", mock_triage_service),
-        patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-    ):
-        # Should complete without error
-        await process_whatsapp_message(
-            phone="628999999999",
-            message_text="Hello",
-            sender_name="Unknown",
-            message_id="msg_test",
-            request=mock_request,
-        )
-
-    mock_triage_service.is_allowed.assert_called_once_with("628999999999")
-
-
-@pytest.mark.asyncio
-async def test_process_whatsapp_message_escalate_to_human():
-    """Should escalate to human and send Telegram notification."""
-    from backend.app.routers.whatsapp_chat import process_whatsapp_message
-    from backend.services.integrations.whatsapp_triage_service import TriageDecision
-
-    mock_request = MagicMock()
-    mock_triage_service = MagicMock()
-    mock_triage_service.is_allowed.return_value = True
-    mock_triage_service.should_escalate = AsyncMock(
-        return_value=(TriageDecision.ESCALATE_PERSONAL, "personal_contact")
-    )
-    mock_triage_service.get_escalation_message.return_value = "Transferring to team..."
-
-    mock_wa_service = MagicMock()
-    mock_wa_service.mark_message_read = AsyncMock()
-    mock_wa_service.send_message = AsyncMock()
-
-    mock_onboarding = MagicMock()
-    mock_onboarding.detect_and_trigger = AsyncMock(return_value=None)
-
-    with (
-        patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-        patch("backend.app.routers.whatsapp_chat.whatsapp_triage_service", mock_triage_service),
-        patch(
-            "backend.app.routers.whatsapp_chat.get_onboarding_detector",
-            return_value=mock_onboarding,
-        ),
-        patch("backend.app.routers.whatsapp_chat.notify_human_telegram", new=AsyncMock()),
-        patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-    ):
-        mock_settings.admin_telegram_chat_id = "123456"
-        await process_whatsapp_message(
-            phone="621234567890",
-            message_text="This is personal",
-            sender_name="Test Client",
-            message_id="msg_001",
-            request=mock_request,
-        )
-
-    mock_wa_service.send_message.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_process_whatsapp_message_offer_choice():
-    """Should send welcome message for OFFER_CHOICE decision."""
-    from backend.app.routers.whatsapp_chat import process_whatsapp_message
-    from backend.services.integrations.whatsapp_triage_service import TriageDecision
-
-    mock_request = MagicMock()
-    mock_triage_service = MagicMock()
-    mock_triage_service.is_allowed.return_value = True
-    mock_triage_service.should_escalate = AsyncMock(
-        return_value=(TriageDecision.OFFER_CHOICE, "ambiguous")
-    )
-    mock_triage_service.get_welcome_message.return_value = "How can I help?"
-
-    mock_wa_service = MagicMock()
-    mock_wa_service.mark_message_read = AsyncMock()
-    mock_wa_service.send_message = AsyncMock()
-
-    mock_onboarding = MagicMock()
-    mock_onboarding.detect_and_trigger = AsyncMock(return_value=None)
-
-    with (
-        patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-        patch("backend.app.routers.whatsapp_chat.whatsapp_triage_service", mock_triage_service),
-        patch(
-            "backend.app.routers.whatsapp_chat.get_onboarding_detector",
-            return_value=mock_onboarding,
-        ),
-        patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-    ):
-        await process_whatsapp_message(
-            phone="621234567890",
-            message_text="hi",
-            sender_name=None,
-            message_id="msg_002",
-            request=mock_request,
-        )
-
-    mock_wa_service.send_message.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_process_whatsapp_message_onboarding_triggered():
-    """Should send onboarding confirmation when detector triggers."""
-    from backend.app.routers.whatsapp_chat import process_whatsapp_message
-    from backend.services.integrations.whatsapp_triage_service import TriageDecision
-
-    mock_request = MagicMock()
-    mock_triage_service = MagicMock()
-    mock_triage_service.is_allowed.return_value = True
-    mock_triage_service.should_escalate = AsyncMock(
-        return_value=(TriageDecision.BOT_CAN_HANDLE, "business_query")
-    )
-
-    mock_wa_service = MagicMock()
-    mock_wa_service.mark_message_read = AsyncMock()
-    mock_wa_service.send_message = AsyncMock()
-
-    mock_onboarding = MagicMock()
-    mock_onboarding.detect_and_trigger = AsyncMock(
-        return_value={"chain": "new_client_onboarding", "status": "triggered"}
-    )
-
-    mock_audit = AsyncMock()
-    mock_telegram = MagicMock()
-    mock_telegram.send_message = AsyncMock()
-
-    with (
-        patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-        patch("backend.app.routers.whatsapp_chat.whatsapp_triage_service", mock_triage_service),
-        patch(
-            "backend.app.routers.whatsapp_chat.get_onboarding_detector",
-            return_value=mock_onboarding,
-        ),
-        patch("backend.app.routers.whatsapp_chat.telegram_bot", mock_telegram),
-        patch("backend.app.routers.whatsapp_chat._persist_audit_messages", mock_audit),
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-    ):
-        mock_settings.admin_telegram_chat_id = "synthetic-admin-chat"
-        await process_whatsapp_message(
-            phone="621234567890",
-            message_text="I want to set up a company",
-            sender_name="New Client",
-            message_id="msg_003",
-            request=mock_request,
-        )
-
-    # Should send onboarding confirmation to client
-    mock_wa_service.send_message.assert_awaited_once()
-    mock_audit.assert_awaited_once()
-    mock_telegram.send_message.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_process_whatsapp_message_corrects_openclaw_villa_kbli_reply():
-    """OpenClaw replies are guarded before WhatsApp delivery."""
-    from backend.app.routers.whatsapp_chat import process_whatsapp_message
-    from backend.services.integrations.whatsapp_triage_service import TriageDecision
-
-    mock_request = MagicMock()
-    mock_triage_service = MagicMock()
-    mock_triage_service.is_allowed.return_value = True
-    mock_triage_service.should_escalate = AsyncMock(
-        return_value=(TriageDecision.BOT_CAN_HANDLE, "business_query")
-    )
-
-    mock_wa_service = MagicMock()
-    mock_wa_service.mark_message_read = AsyncMock()
-    mock_wa_service.send_message = AsyncMock()
-    mock_wa_service.chunk_message.side_effect = lambda text, max_length: [text]
-
-    mock_onboarding = MagicMock()
-    mock_onboarding.detect_and_trigger = AsyncMock(return_value=None)
-
-    context = {
-        "_wa_user_id": "whatsapp_6281234567890",
-        "_session_id": "wa_session_6281234567890",
-        "_existing_row_id": None,
-        "client_name": "Test Client",
-        "client_profile": {"detected_language": "it"},
-        "conversation_history": [],
-        "detected_language": "it",
-        "is_first_message": False,
-        "time_of_day": "afternoon",
-    }
-
-    with (
-        patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-        patch("backend.app.routers.whatsapp_chat.whatsapp_triage_service", mock_triage_service),
-        patch(
-            "backend.app.routers.whatsapp_chat.get_onboarding_detector",
-            return_value=mock_onboarding,
-        ),
-        patch(
-            "backend.services.whatsapp_context_builder.build_context",
-            new=AsyncMock(return_value=context),
-        ),
-        patch(
-            "backend.app.routers.whatsapp_chat.ask_openclaw_whatsapp",
-            new=AsyncMock(return_value="55193 - Aktivitas Vila: usa questo per Airbnb."),
-        ),
-        patch("backend.app.routers.whatsapp_chat.notify_zero_conversation_log", new=AsyncMock()),
-        patch("backend.app.routers.whatsapp_chat._save_conversation", new=AsyncMock()),
-        patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-    ):
-        await process_whatsapp_message(
-            phone="6281234567890",
-            message_text="ma 55193 o 55203?",
-            sender_name="Test Client",
-            message_id="msg_kbli_guard",
-            request=mock_request,
-        )
-
-    sent_text = mock_wa_service.send_message.call_args.kwargs["text"]
-    assert "55203" in sent_text
-    assert "55193" in sent_text
-    assert "KBLI 2020/PP28" in sent_text
-    assert "usa questo per Airbnb" not in sent_text
-
-
-@pytest.mark.asyncio
-async def test_save_conversation_inserts_messages_as_jsonb_array_text():
-    """New WhatsApp conversations should store messages as parseable JSONB arrays."""
-    from backend.app.routers.whatsapp_chat import _save_conversation
-
-    conn = _FakeConversationConn()
-
-    await _save_conversation(
-        db_pool=_FakeConversationPool(conn),
-        wa_user_id="whatsapp_6281234567890",
-        session_id="wa_session_6281234567890",
-        existing_row_id=None,
-        message_text="Halo Zan",
-        response_text="Halo, bisa saya bantu.",
-        client_profile={"detected_language": "id"},
-        sender_name="Client",
-        phone="6281234567890",
-    )
-
-    query, args = next(item for item in conn.executed if "INSERT INTO conversations" in item[0])
-    assert "$3::text::jsonb" in query
-    assert "$4::text::jsonb" in query
-    messages = json.loads(args[2])
-    metadata = json.loads(args[3])
-    assert isinstance(messages, list)
-    assert messages == [
-        {"role": "user", "content": "Halo Zan"},
-        {"role": "assistant", "content": "Halo, bisa saya bantu."},
-    ]
-    assert metadata == {"detected_language": "id"}
-
-
-@pytest.mark.asyncio
-async def test_save_conversation_appends_from_legacy_jsonb_string_messages():
-    """Existing scalar-string JSONB rows should be repaired on append."""
-    from backend.app.routers.whatsapp_chat import _save_conversation
-
-    legacy_messages = json.dumps([{"role": "user", "content": "Old message"}])
-    conn = _FakeConversationConn(existing_row={"id": 42, "messages": legacy_messages})
-
-    await _save_conversation(
-        db_pool=_FakeConversationPool(conn),
-        wa_user_id="whatsapp_6281234567890",
-        session_id="wa_session_6281234567890",
-        existing_row_id=42,
-        message_text="New question",
-        response_text="New answer",
-        client_profile={"detected_language": "en"},
-        sender_name="Client",
-        phone="6281234567890",
-    )
-
-    query, args = next(item for item in conn.executed if "UPDATE conversations" in item[0])
-    assert "$1::text::jsonb" in query
-    assert "$2::text::jsonb" in query
-    messages = json.loads(args[0])
-    assert args[2] == 42
-    assert messages == [
-        {"role": "user", "content": "Old message"},
-        {"role": "user", "content": "New question"},
-        {"role": "assistant", "content": "New answer"},
-    ]
-
-
-# ============================================================
-# notify_zero_conversation_log — unit test
-# ============================================================
-
-
-@pytest.mark.asyncio
-async def test_notify_zero_conversation_log_no_chat_id():
-    """Should return early when no admin_telegram_chat_id configured."""
-    from backend.app.routers.whatsapp_chat import notify_zero_conversation_log
-
-    with (
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch(
-            "backend.app.routers.whatsapp_chat.telegram_bot.send_message",
-            new_callable=AsyncMock,
-        ) as mock_send,
-    ):
-        mock_settings.admin_telegram_chat_id = None
-        # Should not raise, and must return before ever reaching the
-        # Telegram send call (no chat_id to send to).
-        result = await notify_zero_conversation_log(
-            phone="621234567890",
-            sender_name="Client",
-            client_message="Hello",
-            bot_response="Hi!",
-            language="en",
-        )
-    assert result is None
-    mock_send.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_notify_zero_conversation_log_sends_message():
-    """Should send Telegram message when chat_id is configured."""
-    from backend.app.routers.whatsapp_chat import notify_zero_conversation_log
-
-    mock_telegram = MagicMock()
-    mock_telegram.send_message = AsyncMock()
-
-    with (
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.telegram_bot", mock_telegram),
-    ):
-        mock_settings.admin_telegram_chat_id = "8847435604"
-        await notify_zero_conversation_log(
-            phone="621234567890",
-            sender_name="Test",
-            client_message="What is a PT PMA?",
-            bot_response="PT PMA is a foreign investment company...",
-            language="en",
-        )
-
-    mock_telegram.send_message.assert_called_once()
 
 
 # ============================================================
@@ -957,11 +567,10 @@ async def test_notify_zero_conversation_log_sends_message():
 @pytest.mark.asyncio
 async def test_notify_human_telegram_no_chat_id():
     """Should return early when no admin_telegram_chat_id."""
-    # The function moved to `human_escalation_notifier` (2026-08-11) so the WA
-    # inbox bot can reach it too. It is still importable from the router, but it
-    # now reads `settings`/`telegram_bot` from ITS OWN module — patching the
-    # router's globals no longer reaches them, so the patch target moved with it.
-    from backend.app.routers.whatsapp_chat import notify_human_telegram
+    # `notify_human_telegram` lives in `human_escalation_notifier` so the WA
+    # inbox bot can reach it. It reads `settings`/`telegram_bot` from ITS OWN
+    # module, so those are the patch targets.
+    from backend.services.integrations.human_escalation_notifier import notify_human_telegram
 
     mock_telegram = MagicMock()
     mock_telegram.send_message = AsyncMock()
@@ -985,7 +594,7 @@ async def test_notify_human_telegram_no_chat_id():
 @pytest.mark.asyncio
 async def test_notify_human_telegram_with_context():
     """Should format and send message with client profile and history."""
-    from backend.app.routers.whatsapp_chat import notify_human_telegram
+    from backend.services.integrations.human_escalation_notifier import notify_human_telegram
 
     mock_telegram = MagicMock()
     mock_telegram.send_message = AsyncMock()
@@ -1020,217 +629,6 @@ async def test_notify_human_telegram_with_context():
     mock_telegram.send_message.assert_called_once()
 
 
-# ============================================================
-# F7: raw phone must NEVER appear in a log record (guilt/innocence)
-# ============================================================
-#
-# whatsapp_chat.py is the LIVE client-bot WhatsApp path — 20 raw-phone log
-# sites, all now routed through backend.security.pii_log_identifier.
-# redact_identifier_for_log. Per cicatrix-superscar.md family #3, a guard
-# (here: a redaction) needs both a guilt test (the raw value never survives)
-# and an innocence test (the digest stays present/stable, so an operator can
-# still correlate lines across one client's conversation).
-
-_LOGGER_NAME = "backend.app.routers.whatsapp_chat"
-_NON_DIGITS_RE = re.compile(r"\D+")
-
-# Obviously-synthetic — never a shape mistakable for a real client's number.
-_SYNTHETIC_PHONE = "628000111222"
-
-
-def _digits_only(text: str) -> str:
-    """Collapse a log line to its bare digit run.
-
-    Load-bearing: several sites in whatsapp_chat.py build f-strings that
-    interpolate ``phone`` directly, so an exact-string check against the raw
-    literal can miss a leak that survives in a slightly different textual
-    form (e.g. wrapped, or with adjacent characters). Comparing digit runs
-    is robust to that — see the same discipline in
-    test_messaging_identity_service.py (F7 reference fix, PR 43bb93e11).
-    """
-    return _NON_DIGITS_RE.sub("", text)
-
-
-def _all_log_text(records: list[logging.LogRecord]) -> str:
-    """Every rendered message across every captured record, concatenated —
-    guilt must be checked across ALL lines, not just the one line a fix
-    happened to target."""
-    return "\n".join(r.getMessage() for r in records)
-
-
-class TestRawPhoneNeverInLogsGuilt:
-    """Guilt: the synthetic phone must never survive into ANY log record
-    emitted while processing a message, across two independent branches of
-    process_whatsapp_message (non-allowed-number short-circuit, and the
-    escalate-to-human path — both log the phone at least once)."""
-
-    @pytest.mark.asyncio
-    async def test_non_allowed_number_never_logs_raw_phone(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        from backend.app.routers.whatsapp_chat import process_whatsapp_message
-
-        mock_request = MagicMock()
-        mock_triage_service = MagicMock()
-        mock_triage_service.is_allowed.return_value = False
-        mock_wa_service = MagicMock()
-        mock_wa_service.mark_message_read = AsyncMock()
-
-        with (
-            caplog.at_level(logging.INFO, logger=_LOGGER_NAME),
-            patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-            patch(
-                "backend.app.routers.whatsapp_chat.whatsapp_triage_service",
-                mock_triage_service,
-            ),
-        ):
-            await process_whatsapp_message(
-                phone=_SYNTHETIC_PHONE,
-                message_text="Hello",
-                sender_name="Unknown",
-                message_id="msg_test",
-                request=mock_request,
-            )
-
-        text = _all_log_text(caplog.records)
-        assert _SYNTHETIC_PHONE not in text
-        assert _SYNTHETIC_PHONE not in _digits_only(text)
-
-    @pytest.mark.asyncio
-    async def test_escalate_to_human_never_logs_raw_phone(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        from backend.app.routers.whatsapp_chat import process_whatsapp_message
-        from backend.services.integrations.whatsapp_triage_service import TriageDecision
-
-        mock_request = MagicMock()
-        mock_triage_service = MagicMock()
-        mock_triage_service.is_allowed.return_value = True
-        mock_triage_service.should_escalate = AsyncMock(
-            return_value=(TriageDecision.ESCALATE_PERSONAL, "personal_contact")
-        )
-        mock_triage_service.get_escalation_message.return_value = "Transferring to team..."
-
-        mock_wa_service = MagicMock()
-        mock_wa_service.mark_message_read = AsyncMock()
-        mock_wa_service.send_message = AsyncMock()
-
-        mock_onboarding = MagicMock()
-        mock_onboarding.detect_and_trigger = AsyncMock(return_value=None)
-
-        with (
-            caplog.at_level(logging.INFO, logger=_LOGGER_NAME),
-            patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-            patch(
-                "backend.app.routers.whatsapp_chat.whatsapp_triage_service",
-                mock_triage_service,
-            ),
-            patch(
-                "backend.app.routers.whatsapp_chat.get_onboarding_detector",
-                return_value=mock_onboarding,
-            ),
-            patch("backend.app.routers.whatsapp_chat.notify_human_telegram", new=AsyncMock()),
-            patch("backend.app.routers.whatsapp_chat._get_db_pool", return_value=None),
-            patch("backend.app.routers.whatsapp_chat.settings") as mock_settings,
-        ):
-            mock_settings.admin_telegram_chat_id = "123456"
-            await process_whatsapp_message(
-                phone=_SYNTHETIC_PHONE,
-                message_text="This is personal",
-                sender_name="Test Client",
-                message_id="msg_001",
-                request=mock_request,
-            )
-
-        text = _all_log_text(caplog.records)
-        assert _SYNTHETIC_PHONE not in text
-        assert _SYNTHETIC_PHONE not in _digits_only(text)
-
-
-class TestRedactedPhoneStaysCorrelatable:
-    """Innocence: the fix must not collapse every line to the same opaque
-    placeholder — a stable digest must appear, so an operator can still
-    follow one client's conversation across log lines."""
-
-    @pytest.mark.asyncio
-    async def test_digest_present_for_non_allowed_number(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        from backend.app.routers.whatsapp_chat import process_whatsapp_message
-
-        mock_request = MagicMock()
-        mock_triage_service = MagicMock()
-        mock_triage_service.is_allowed.return_value = False
-        mock_wa_service = MagicMock()
-        mock_wa_service.mark_message_read = AsyncMock()
-
-        with (
-            caplog.at_level(logging.INFO, logger=_LOGGER_NAME),
-            patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-            patch(
-                "backend.app.routers.whatsapp_chat.whatsapp_triage_service",
-                mock_triage_service,
-            ),
-        ):
-            await process_whatsapp_message(
-                phone=_SYNTHETIC_PHONE,
-                message_text="Hello",
-                sender_name="Unknown",
-                message_id="msg_test",
-                request=mock_request,
-            )
-
-        text = _all_log_text(caplog.records)
-        assert "id:" in text
-
-    @pytest.mark.asyncio
-    async def test_same_phone_yields_same_digest_across_two_calls(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        from backend.app.routers.whatsapp_chat import process_whatsapp_message
-
-        mock_request = MagicMock()
-        mock_triage_service = MagicMock()
-        mock_triage_service.is_allowed.return_value = False
-        mock_wa_service = MagicMock()
-        mock_wa_service.mark_message_read = AsyncMock()
-
-        with (
-            caplog.at_level(logging.INFO, logger=_LOGGER_NAME),
-            patch("backend.app.routers.whatsapp_chat.whatsapp_service", mock_wa_service),
-            patch(
-                "backend.app.routers.whatsapp_chat.whatsapp_triage_service",
-                mock_triage_service,
-            ),
-        ):
-            await process_whatsapp_message(
-                phone=_SYNTHETIC_PHONE,
-                message_text="Hello",
-                sender_name="Unknown",
-                message_id="msg_test_1",
-                request=mock_request,
-            )
-            first_text = _all_log_text(caplog.records)
-            caplog.clear()
-
-            await process_whatsapp_message(
-                phone=_SYNTHETIC_PHONE,
-                message_text="Hello again",
-                sender_name="Unknown",
-                message_id="msg_test_2",
-                request=mock_request,
-            )
-            second_text = _all_log_text(caplog.records)
-
-        first_digest = next(tok for tok in first_text.split() if "id:" in tok)
-        second_digest = next(tok for tok in second_text.split() if "id:" in tok)
-        assert first_digest == second_digest
-
-
 # R4 regression fixtures use only synthetic identifiers and stub all effects.
 _R4_PRIVATE = "R4_SYNTHETIC_PRIVATE_SENTINEL"
 
@@ -1258,174 +656,18 @@ def _r4_pool():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "branch",
-    ["claim", "duplicate", "onboarding", "payload", "context", "ack", "processing", "send"],
-)
-async def test_r4_legacy_branches_keep_effects_without_private_logs(branch, monkeypatch, caplog):
-    import logging
-    from types import SimpleNamespace
-
-    import backend.app.routers.whatsapp_chat as wa
-    import backend.services.whatsapp_ack as ack
-    import backend.services.whatsapp_context_builder as context_builder
-    from backend.services.integrations.whatsapp_triage_service import TriageDecision
-
-    caplog.set_level(logging.DEBUG)
-    pool, _ = _r4_pool()
-    settings = _seeded_settings_mock()
-    settings.admin_telegram_chat_id = None
-    monkeypatch.setattr(wa, "settings", settings)
-    service = MagicMock()
-    service.mark_message_read = AsyncMock()
-    service.send_message = AsyncMock()
-    service.chunk_message.side_effect = lambda text, max_length: [text]
-    monkeypatch.setattr(wa, "whatsapp_service", service)
-    triage = MagicMock()
-    triage.is_allowed.return_value = True
-    decision = {
-        "context": TriageDecision.ESCALATE_PERSONAL,
-        "ack": TriageDecision.BOT_CAN_HANDLE,
-    }.get(branch, TriageDecision.OFFER_CHOICE)
-    triage.should_escalate = AsyncMock(return_value=(decision, "business_query"))
-    triage.get_welcome_message.return_value = "Synthetic welcome"
-    triage.get_escalation_message.return_value = "Synthetic handoff"
-    monkeypatch.setattr(wa, "whatsapp_triage_service", triage)
-    detector = SimpleNamespace(detect_and_trigger=AsyncMock(return_value=None))
-    monkeypatch.setattr(wa, "get_onboarding_detector", lambda: detector)
-    monkeypatch.setattr(wa, "_get_db_pool", lambda _: pool)
-    claim = AsyncMock(return_value=branch != "duplicate")
-    monkeypatch.setattr(wa, "_claim_wamid_reply", claim)
-    audit = AsyncMock()
-    save = AsyncMock()
-    notify = AsyncMock()
-    monkeypatch.setattr(wa, "_persist_audit_messages", audit)
-    monkeypatch.setattr(wa, "_save_conversation", save)
-    monkeypatch.setattr(wa, "notify_zero_conversation_log", AsyncMock())
-    monkeypatch.setattr(wa, "notify_human_telegram", notify)
-    context = {
-        "_wa_user_id": "synthetic",
-        "_session_id": "synthetic",
-        "_existing_row_id": None,
-        "client_name": "Synthetic",
-        "client_profile": {},
-        "conversation_history": [],
-        "detected_language": "en",
-        "is_first_message": False,
-        "sender_identity": {},
-        "time_of_day": "afternoon",
-    }
-    build = AsyncMock(return_value=context)
-    monkeypatch.setattr(context_builder, "build_context", build)
-    monkeypatch.setattr(ack, "should_send_ack", lambda *_: False)
-    monkeypatch.setattr(wa, "ask_openclaw_whatsapp", AsyncMock(return_value="Synthetic answer"))
-
-    if branch == "claim":
-        claim.side_effect = RuntimeError(_R4_PRIVATE)
-    elif branch == "onboarding":
-        detector.detect_and_trigger.side_effect = RuntimeError(_R4_PRIVATE)
-    elif branch == "payload":
-        detector.detect_and_trigger.return_value = {"chain": "synthetic", "payload": _R4_PRIVATE}
-    elif branch == "context":
-        build.side_effect = RuntimeError(_R4_PRIVATE)
-    elif branch == "ack":
-        monkeypatch.setattr(
-            ack, "should_send_ack", MagicMock(side_effect=RuntimeError(_R4_PRIVATE))
-        )
-    elif branch in {"processing", "send"}:
-        service.mark_message_read.side_effect = RuntimeError(_R4_PRIVATE)
-        if branch == "send":
-            service.send_message.side_effect = ValueError(_R4_PRIVATE)
-
-    assert (
-        await wa.process_whatsapp_message(
-            _R4_PRIVATE, "Synthetic question", "Synthetic", _R4_PRIVATE, MagicMock()
-        )
-        is None
-    )
-    if branch == "duplicate":
-        service.send_message.assert_not_awaited()
-        triage.should_escalate.assert_not_awaited()
-        _r4_assert_logs(caplog, "already claimed")
-    elif branch == "payload":
-        service.send_message.assert_awaited_once()
-        assert "onboarding" in service.send_message.await_args.kwargs["text"]
-        assert detector.detect_and_trigger.return_value["payload"] == _R4_PRIVATE
-        audit.assert_awaited_once()
-        _r4_assert_logs(caplog, "Auto-triggered onboarding")
-    elif branch == "context":
-        # Preserve the existing None-context fallback, including its outer error response.
-        assert service.send_message.await_count == 2
-        notify.assert_not_awaited()
-        _r4_assert_logs(caplog, "Error building context")
-    elif branch == "ack":
-        service.send_message.assert_awaited_once()
-        assert service.send_message.await_args.kwargs["text"] == "Synthetic answer"
-        save.assert_awaited_once()
-        _r4_assert_logs(caplog, "Concierge ack failed")
-    elif branch == "send":
-        service.send_message.assert_awaited_once()
-        audit.assert_not_awaited()
-        _r4_assert_logs(caplog, "Failed to send error message: ValueError")
-    else:
-        service.send_message.assert_awaited_once()
-        audit.assert_awaited_once()
-        _r4_assert_logs(
-            caplog,
-            {
-                "claim": "Cross-path claim failed",
-                "onboarding": "Onboarding detection failed",
-                "processing": "Error processing WhatsApp message",
-            }[branch],
-        )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("branch", ["notify", "database", "mark"])
-async def test_r4_auxiliary_failures_keep_fallbacks(branch, monkeypatch, caplog):
+async def test_r4_database_lookup_failure_keeps_fallback(monkeypatch, caplog):
     import logging
 
     import backend.app.dependencies as dependencies
     import backend.app.routers.whatsapp_chat as wa
-    from backend.services.channels import inbound_webhook_repo
 
     caplog.set_level(logging.DEBUG)
-    if branch == "notify":
-        settings = _seeded_settings_mock()
-        settings.admin_telegram_chat_id = "synthetic-chat"
-        monkeypatch.setattr(wa, "settings", settings)
-        sender = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
-        monkeypatch.setattr(wa.telegram_bot, "send_message", sender)
-        assert (
-            await wa.notify_zero_conversation_log(
-                _R4_PRIVATE, "Synthetic", "Synthetic question", "Synthetic answer", "en"
-            )
-            is None
-        )
-        sender.assert_awaited_once()
-        expected = "Failed to send conversation log"
-    elif branch == "database":
-        getter = MagicMock(side_effect=RuntimeError(_R4_PRIVATE))
-        monkeypatch.setattr(dependencies, "get_database", getter)
-        assert wa._get_db_pool(MagicMock()) is None
-        getter.assert_called_once()
-        expected = "Error getting database"
-    else:
-        process = AsyncMock()
-        mark = AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
-        pool, _ = _r4_pool()
-        monkeypatch.setattr(wa, "process_whatsapp_message", process)
-        monkeypatch.setattr(wa, "_get_db_pool", lambda _: pool)
-        monkeypatch.setattr(inbound_webhook_repo, "mark_processed", mark)
-        assert (
-            await wa.process_whatsapp_message_and_mark_processed(
-                _R4_PRIVATE, "Synthetic", None, _R4_PRIVATE, MagicMock()
-            )
-            is None
-        )
-        process.assert_awaited_once()
-        mark.assert_awaited_once_with(pool, channel="whatsapp", dedup_key=_R4_PRIVATE)
-        expected = "failed to mark inbound row processed"
+    getter = MagicMock(side_effect=RuntimeError(_R4_PRIVATE))
+    monkeypatch.setattr(dependencies, "get_database", getter)
+    assert wa._get_db_pool(MagicMock()) is None
+    getter.assert_called_once()
+    expected = "Error getting database"
     _r4_assert_logs(caplog, expected)
     assert any("RuntimeError" in r.getMessage() for r in caplog.records)
 
@@ -1500,7 +742,7 @@ async def test_r4_meta_payload_fallbacks_keep_ack_and_recovery(branch, monkeypat
         legacy = AsyncMock()
         assert await wa.route_whatsapp_recovery(payload, db_pool=pool, legacy_route=legacy) is None
         legacy.assert_awaited_once_with(payload)
-        expected = "defaulting to legacy route"
+        expected = "could not be classified"
     else:
         assert await wa.process_meta_inbox_payload(payload, None, db_pool=pool) is (
             branch != "processing"
@@ -1599,15 +841,18 @@ async def test_r4_webhook_diagnostics_preserve_response_and_scheduling(branch, m
         expected = "signature verification failed" if branch == "peer" else "body parse error"
     else:
         assert await wa.whatsapp_webhook(request=request, background_tasks=tasks) == {"status": "ok"}
-        assert len(tasks.tasks) == (0 if branch in {"duplicate", "field", "type"} else 1)
+        # A persisted row for a number with no handler is closed with a reason;
+        # nothing persisted (persist failed) or no message change means no task.
+        assert len(tasks.tasks) == (0 if branch in {"persist", "field"} else 1)
         if tasks.tasks:
-            assert tasks.tasks[0].kwargs["message_id"] == _R4_PRIVATE
+            assert tasks.tasks[0].func is wa._close_retired_legacy_rows
+            assert tasks.tasks[0].args[1] == [_R4_PRIVATE]
         expected = {
             "persist": "persist failed",
-            "duplicate": "Duplicate WhatsApp webhook skipped",
+            "duplicate": "closing with reason",
             "object": "Webhook received",
             "field": "Ignoring non-message change",
-            "type": "Ignoring non-text message",
+            "type": "closing with reason",
         }[branch]
     _r4_assert_logs(caplog, expected)
 
