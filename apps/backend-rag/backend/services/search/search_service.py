@@ -32,6 +32,7 @@ from backend.services.ingestion.collection_warmup_service import CollectionWarmu
 from backend.services.misc.cultural_insights_service import CulturalInsightsService
 from backend.services.misc.result_formatter import format_search_results
 from backend.services.routing.conflict_resolver import ConflictResolver
+from backend.services.search.log_safety import exc_summary
 from backend.services.search.query_expander import QueryExpander
 from backend.services.search.search_filters import build_search_filter
 
@@ -331,8 +332,7 @@ class SearchService:
         except Exception as exc:
             logger.warning(
                 "SurfaceRouter routing failed; falling back to QueryRouterIntegration: %s",
-                exc,
-                exc_info=True,
+                exc_summary(exc),
             )
             return legacy_route()
 
@@ -498,7 +498,11 @@ class SearchService:
         translator = get_keyword_translator()
         expanded_query = translator.translate(query)
         if expanded_query != query:
-            logger.debug(f"Query expanded for embedding: '{query}' → '{expanded_query[:100]}...'")
+            logger.debug(
+                "Query expanded for embedding: query_len=%d → expanded_len=%d",
+                len(query),
+                len(expanded_query),
+            )
 
         # Generate query embedding — check process-level LRU cache first
         # This avoids redundant OpenAI calls for: (a) repeated queries, (b) federated search
@@ -531,7 +535,7 @@ class SearchService:
         collection_substituted = False
         vector_db = self.collection_manager.get_collection(collection_name)
         if not vector_db:
-            logger.error("❌ Unknown collection: %s, defaulting to legal_unified", collection_name)
+            logger.error("❌ Unknown collection, defaulting to legal_unified")
             vector_db = self.collection_manager.get_collection("legal_unified")
             collection_name = "legal_unified"
             collection_substituted = True
@@ -615,7 +619,7 @@ class SearchService:
                     if multi_result and multi_result.get("results"):
                         return multi_result
                 except Exception as e:
-                    logger.warning("Multi-query expansion failed, falling back: %s", e)
+                    logger.warning("Multi-query expansion failed, falling back: %s", exc_summary(e))
 
             # Query Expansion - translate to multiple languages for better matching
             expanded_query = await self.query_expander.expand(query)
@@ -642,11 +646,14 @@ class SearchService:
 
             # Debug logging (only in debug mode)
             logger.debug(
-                f"Query: '{query[:50]}...', embedding_dim={len(query_embedding)}, provider={self.embedder.provider}",
+                "Query: query_len=%d, embedding_dim=%d, provider=%s",
+                len(query),
+                len(query_embedding),
+                self.embedder.provider,
             )
             logger.debug(
-                "Parameters: collection_override=%s, user_level=%s, limit=%s",
-                collection_override,
+                "Parameters: collection_override_set=%s, user_level=%s, limit=%s",
+                collection_override is not None,
                 user_level,
                 limit,
             )
@@ -689,11 +696,10 @@ class SearchService:
                 except Exception as e:
                     logger.warning(
                         "⚠️ Hybrid search failed, falling back to dense-only: %s",
-                        e,
+                        exc_summary(e),
                         extra={
-                            "query": query[:100],
-                            "collection": collection_name,
-                            "error": str(e),
+                            "query_len": len(query),
+                            "collection": collection_name if collection_override is None else "<override>",
                         },
                     )
                     if metrics_collector:
@@ -753,13 +759,19 @@ class SearchService:
                 "collection_substituted": collection_substituted,
             }
 
-        except (qdrant_exceptions.UnexpectedResponse, httpx.HTTPError, ValueError, KeyError):
-            logger.exception(
-                "❌ Search failed completely",
+        except (
+            qdrant_exceptions.UnexpectedResponse,
+            httpx.HTTPError,
+            ValueError,
+            KeyError,
+        ) as search_exc:
+            logger.error(
+                "❌ Search failed completely: %s",
+                exc_summary(search_exc),
                 extra={
-                    "query": query[:100],
+                    "query_len": len(query),
                     "user_level": user_level,
-                    "collection_override": collection_override,
+                    "collection_override_set": collection_override is not None,
                 },
             )
             if metrics_collector:
@@ -811,7 +823,7 @@ class SearchService:
             # No expansion happened — fall through to normal search
             return {}
 
-        logger.info("Multi-query expansion: '%s' → %d queries", query[:40], len(alt_queries))
+        logger.info("Multi-query expansion: query_len=%d → %d queries", len(query), len(alt_queries))
 
         # Search each alternative (limit=3 per query to keep cost/latency down)
         per_query_limit = max(3, limit)
@@ -829,7 +841,7 @@ class SearchService:
                     )
                     return res.get("results", [])
             except Exception as e:
-                logger.warning("Multi-expansion sub-query failed: %s", e)
+                logger.warning("Multi-expansion sub-query failed: %s", exc_summary(e))
                 return []
 
         # Structured concurrency (Python 3.11+); _single_search swallows exceptions.
@@ -1046,7 +1058,7 @@ class SearchService:
         if results["results"] and results["results"][0].get("score", 0) > 0.85:
             logger.info(
                 f"⚡ Early exit: Top result score {results['results'][0]['score']:.3f} > 0.85, "
-                f"skipping reranking for query: '{query}'",
+                "skipping reranking",
             )
             if METRICS_AVAILABLE:
                 rag_early_exit_total.inc()
@@ -1058,7 +1070,7 @@ class SearchService:
         # 2. Re-rank (track duration)
         reranker = self._init_reranker()
         if reranker.enabled:
-            logger.info(f"🔍 Re-ranking {len(results['results'])} candidates for query: '{query}'")
+            logger.info(f"🔍 Re-ranking {len(results['results'])} candidates")
             rerank_start = time.time() if METRICS_AVAILABLE else None
             reranked_docs = await reranker.rerank(query, results["results"], top_k=limit)
             if METRICS_AVAILABLE and rerank_start:
@@ -1067,7 +1079,7 @@ class SearchService:
             results["reranked"] = True
             results["early_exit"] = False
         else:
-            logger.warning(f"⚠️ ReRanker disabled - skipping rerank for query: '{query[:50]}'")
+            logger.warning("⚠️ ReRanker disabled - skipping rerank")
             results["reranked"] = False
             results["early_exit"] = False
             results["results"] = results["results"][:limit]
@@ -1251,7 +1263,7 @@ class SearchService:
             return result
 
         except Exception as e:
-            logger.error("Hybrid search error: %s", e, exc_info=True)
+            logger.error("Hybrid search error: %s", exc_summary(e))
             if not fallback_to_plain:
                 # Zero-LLM contract path (BOT-V4 S2): `self.search()` runs
                 # Gemini query expansion, so falling back here would put an
@@ -1324,7 +1336,7 @@ class SearchService:
         reranker = self._init_reranker()
         if reranker.enabled:
             logger.info(
-                f"🔍 Re-ranking {len(results['results'])} hybrid candidates for: '{query[:50]}'",
+                f"🔍 Re-ranking {len(results['results'])} hybrid candidates",
             )
             rerank_start = time.time() if METRICS_AVAILABLE else None
             reranked_docs = await reranker.rerank(query, results["results"], top_k=limit)
@@ -1579,7 +1591,7 @@ class SearchService:
             RuntimeError,
             Exception,  # Catch route_query/embedding/etc failures for fallback
         ) as e:
-            logger.error("Search with conflict resolution error: %s", e, exc_info=True)
+            logger.error("Search with conflict resolution error: %s", exc_summary(e))
             # Fallback to simple search
             return await self.search(query, user_level, limit, tier_filter)
 
@@ -1680,5 +1692,5 @@ class SearchService:
             return {"query": query, "results": formatted_results, "collection": collection_name}
 
         except (qdrant_exceptions.UnexpectedResponse, httpx.HTTPError, ValueError, KeyError) as e:
-            logger.error("Collection search failed: %s", e, exc_info=True)
+            logger.error("Collection search failed: %s", exc_summary(e))
             return {"results": [], "error": str(e)}
