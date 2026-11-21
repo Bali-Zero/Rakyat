@@ -12,14 +12,14 @@ adult/minor split runs on the full date before masking.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.dependencies import get_database_pool
-from backend.app.routers.portal import _mask_passport_number, get_current_client
+from backend.app.routers.portal import _WITA, _mask_passport_number, get_current_client
 from backend.app.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/portal/family", tags=["portal-family"])
 def _is_adult(dob: date | None) -> bool:
     if not dob:
         return True  # default to adult when unknown; safer re: editability
-    today = date.today()
+    today = datetime.now(_WITA).date()
     age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     return age >= 18
 
