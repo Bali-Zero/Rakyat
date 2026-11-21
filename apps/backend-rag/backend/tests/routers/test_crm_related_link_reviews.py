@@ -1359,7 +1359,7 @@ async def test_t8_the_detail_grows_by_at_most_two_selects(conn):
         )
         await conn.execute(
             "INSERT INTO related_document_sightings (kind, ref, sha256, seen_on, created_by) "
-            "VALUES ('drive', 'ZzDriveRef0007', $1, '2026-01-01', 'zz-seed')",
+            "VALUES ('drive', 'ZzDriveRef000000000000000000000000000007', $1, '2026-01-01', 'zz-seed')",
             sha,
         )
         await conn.execute(
