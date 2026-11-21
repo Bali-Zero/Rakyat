@@ -535,8 +535,12 @@ async def check_hallucination_node(state: WorkflowState) -> WorkflowState:
 
     # Check if generation references content from documents
     doc_texts = " ".join(
-        (d.get("content", d.get("text", ""))[:200] if isinstance(d, dict) else str(d)[:200])
-        for d in filtered_docs
+        (
+            d.get("content", d.get("text", ""))[:CONTEXT_WINDOW_CHARACTERS]
+            if isinstance(d, dict)
+            else str(d)[:CONTEXT_WINDOW_CHARACTERS]
+        )
+        for d in filtered_docs[:5]
     )
 
     if not doc_texts:

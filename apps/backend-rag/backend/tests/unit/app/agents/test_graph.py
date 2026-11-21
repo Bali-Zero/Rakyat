@@ -399,6 +399,30 @@ class TestCheckHallucination:
         assert result["hallucination_check"] == "passed"
 
     @pytest.mark.asyncio
+    async def test_passes_grounding_from_generation_context_window(self, base_state):
+        generation = "investor kitas requires an investment plan and a director appointment"
+        base_state["generation"] = generation
+        base_state["filtered_documents"] = [
+            "filler " * 40 + generation + " supporting synthetic detail " * 20,
+        ]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "passed"
+
+    @pytest.mark.asyncio
+    async def test_fails_when_grounding_only_in_sixth_document(self, base_state):
+        generation = "synthetic investor kitas needs a director appointment"
+        base_state["generation"] = generation
+        base_state["filtered_documents"] = [
+            "unrelated synthetic document content" for _ in range(5)
+        ] + [generation]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "failed"
+
+    @pytest.mark.asyncio
     async def test_hallucination_detected(self, base_state):
         base_state["generation"] = "completely unrelated generated content"
         base_state["filtered_documents"] = [{"content": "KBLI codes for restaurant business setup"}]
