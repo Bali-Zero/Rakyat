@@ -234,5 +234,8 @@ def rank_candidates(
             )
         )
 
-    candidates.sort(key=lambda c: c.confidence, reverse=True)
+    # Equal confidence: the invoice whose amount is closest to the transfer first. Without it a
+    # weak signal (partial, over) kept the pool's order, so one large undated invoice headed the
+    # list of every smaller transfer.
+    candidates.sort(key=lambda c: (-c.confidence, abs(c.amount_delta_idr)))
     return candidates[:limit]
