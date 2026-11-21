@@ -1,21 +1,17 @@
 """
 Nuzantara RAG - Evaluation and A/B Testing Module
 
-This module provides A/B testing capabilities and quality monitoring for
-the RAG system, including retrieval quality metrics, alerting, and dashboards.
+This module provides A/B testing capabilities, metrics tracking, RAGAS
+evaluation and benchmarking for the RAG system.
 
 Components:
 - ABTestManager: Core A/B testing logic with statistical significance
 - MetricsTracker: Persistent storage for experiment metrics
-- RetrievalQualityMonitor: Real-time RAG quality monitoring and metrics
-- AlertThresholds: Configurable alert thresholds
 
 Usage:
     from backend.services.rag.evaluation import (
         ABTestManager,
         MetricsTracker,
-        RetrievalQualityMonitor,
-        retrieval_quality_monitor,
     )
 
     # A/B Testing
@@ -30,13 +26,6 @@ Usage:
         value=1.0,
         user_id="user123",
         query_id="query456"
-    )
-
-    # Monitoring
-    retrieval_quality_monitor.record_query_metrics(
-        query="test query",
-        results=results,
-        latency_ms=150.0,
     )
 """
 
@@ -54,13 +43,6 @@ from backend.services.rag.evaluation.metrics_tracker import (
     MetricsTracker,
     QueryMetric,
 )
-from backend.services.rag.evaluation.monitoring import (
-    AlertThresholds,
-    QueryMetricsRecord,
-    RetrievalQualityMonitor,
-    get_retrieval_quality_monitor,
-    retrieval_quality_monitor,
-)
 from backend.services.rag.evaluation.ragas_evaluator import (
     EvaluationResult,
     RAGASEvaluator,
@@ -70,23 +52,17 @@ from backend.services.rag.evaluation.ragas_evaluator import (
 __all__ = [
     # A/B Testing
     "ABTestManager",
-    # Quality Monitoring
-    "AlertThresholds",
     "BenchmarkResult",
     "EvaluationResult",
     "ExperimentConfig",
     # Metrics Tracking
     "MetricsTracker",
     "QueryMetric",
-    "QueryMetricsRecord",
     # RAGAS Evaluation
     "RAGASEvaluator",
     # Benchmark
     "RAGBenchmark",
-    "RetrievalQualityMonitor",
     "Variant",
     "get_ragas_evaluator",
-    "get_retrieval_quality_monitor",
-    "retrieval_quality_monitor",
     "run_weekly_benchmark",
 ]

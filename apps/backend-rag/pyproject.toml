@@ -390,7 +390,6 @@ exclude = [
 "backend/migrations/*.py" = ["ARG001", "E402", "G", "LOG"]  # Migration scripts with placeholder params and late imports; f-string OK in CLI one-shots
 "backend/cli/*.py" = ["E402", "G", "LOG"]  # CLI scripts with late imports; f-string OK in CLI one-shots
 "backend/app/routers/agents.py" = ["E402"]  # Lazy imports
-"backend/app/routers/monitoring_rag.py" = ["E402"]  # Lazy imports
 "backend/jobs/*.py" = ["ARG001", "G", "LOG"]  # Job scripts with placeholder params; f-string OK in CLI one-shots
 "backend/scripts/*.py" = ["ARG001", "E402", "SIM", "G", "LOG"]  # Utility scripts; f-string OK in CLI one-shots
 "backend/scripts/drop_kbli_phantoms.py" = ["T20"]  # manual DB-maintenance one-shot; the before/after/status prints ARE the script's output — no logger setup in this file, unlike its siblings

@@ -54,7 +54,6 @@ async def list_all_handlers() -> dict[str, Any]:
         crm_interactions,
         crm_practices,
         health,
-        ingest,
         intel,
         oracle_universal,
     )
@@ -66,7 +65,6 @@ async def list_all_handlers() -> dict[str, Any]:
         crm_interactions,
         crm_practices,
         health,
-        ingest,
         intel,
         oracle_universal,
     ]
