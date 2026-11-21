@@ -24,19 +24,132 @@ LOG_LEVELS = {
     "CRITICAL": logging.CRITICAL,
 }
 
+_REDACTED = "[REDACTED]"
 _MAGIC_LINK_VERIFY_PREFIX = "/api/auth/verify-magic/"
 _MAGIC_LINK_VERIFY_PATTERN = re.compile(
     r"^/+api/+auth/+verify-magic(?:/+|%2f)",
     flags=re.IGNORECASE,
 )
 
+# Public routes whose token sits after a fixed base: everything after the base
+# is redacted, whatever its depth.
+_TOKEN_TAIL_BASES = (
+    "/api/portal/invite/validate",
+    "/api/portal/invite/complete",
+    "/api/hr/late-reply",
+    "/api/prime/v2/proposal",
+    "/api/blog/newsletter/confirm",
+    "/api/blog/newsletter/unsubscribe",
+    "/api/news/unsubscribe",
+    "/api/funnel_email/unsubscribe",
+)
+
+# Public routes with a parameter between fixed segments (FastAPI syntax): each
+# `{param}` is redacted and the fixed segments are kept.
+_PARAM_ROUTE_TEMPLATES = (
+    "/api/visa/clock/{hash}",
+    "/api/visa/match/{hash}",
+    "/api/visa/voa/eligibility-checks/{result_id}",
+    "/api/visa/voa/orders/{order_id}",
+    "/api/visa/voa/orders/{order_id}/browser-return-observations",
+    "/api/visa/voa/orders/{order_id}/checkout-session",
+    "/api/crm/internal/clients/{client_id}/documents/upload",
+    "/api/crm/internal/companies/{company_uuid}/documents/upload",
+    "/api/workspace-marketing/news/{item_id}",
+    "/api/workspace-marketing/news/{item_id}/editorial",
+    "/api/workspace-marketing/news/{item_id}/publish",
+    "/api/workspace-marketing/news/{item_id}/cover",
+    "/api/workspace-marketing/news/{item_id}/publication-status",
+    "/api/workspace-marketing/news/{item_id}/confirm-live",
+    "/api/news/{slug}",
+    "/api/knowledge/visa/{visa_id}",
+    "/api/knowledge/visa/code/{code}",
+    "/api/v1/kbli-notebook/inspect/{code}",
+    "/api/v1/visa-oracle/visa-types/{code}",
+    "/preview/{article_id}.html",
+)
+
+# Fixed routes that share a template's shape: their last segment is a name,
+# not a value, and stays readable. test_sanitize_log_path_public_routes.py
+# fails on a mounted fixed route missing here.
+_LITERAL_SIBLINGS = frozenset(
+    {
+        "/api/visa/clock/email",
+        "/api/news/bulk",
+        "/api/news/categories",
+        "/api/news/subscribe",
+        "/api/news/unsubscribe",
+        "/api/workspace-marketing/news/pending",
+    }
+)
+
+_PARAM_RE = re.compile(r"\{[^/{}]+\}")
+_ENCODED_SLASH_RE = re.compile(r"%2f", flags=re.IGNORECASE)
+_REPEATED_SLASH_RE = re.compile(r"/{2,}")
+
+
+def _compile_segment(segment: str) -> re.Pattern[str] | None:
+    if not _PARAM_RE.search(segment):
+        return None
+    parts = _PARAM_RE.split(segment)
+    return re.compile("[^/]+".join(re.escape(part) for part in parts), flags=re.IGNORECASE)
+
+
+_COMPILED_TEMPLATES = tuple(
+    (
+        tuple(template.strip("/").split("/")),
+        tuple(_compile_segment(seg) for seg in template.strip("/").split("/")),
+    )
+    for template in _PARAM_ROUTE_TEMPLATES
+)
+
+
+def is_magic_link_path(path: str) -> bool:
+    """True for the magic-link verification route, whose token is the last segment."""
+    return bool(_MAGIC_LINK_VERIFY_PATTERN.match(str(path)))
+
+
+def _redact_template(normalized: str) -> str | None:
+    segments = normalized.strip("/").split("/")
+    lowered = [seg.lower() for seg in segments]
+    for template_segments, patterns in _COMPILED_TEMPLATES:
+        if len(template_segments) != len(segments):
+            continue
+        out: list[str] = []
+        for expected, pattern, actual, actual_lower in zip(
+            template_segments, patterns, segments, lowered, strict=True
+        ):
+            if pattern is None:
+                if actual_lower != expected.lower():
+                    break
+                out.append(expected)
+            elif actual and pattern.fullmatch(actual):
+                out.append(_PARAM_RE.sub(_REDACTED, expected))
+            else:
+                break
+        else:
+            return "/" + "/".join(out)
+    return None
+
 
 def sanitize_log_path(path: str) -> str:
-    """Redact credentials embedded in route path parameters before logging."""
+    """Redact tokens, hashes and record ids carried in public route paths before logging.
+
+    The result also feeds metric labels and rate-limit keys, so it must never
+    hold a value a caller chose.
+    """
     path_text = str(path)
-    if _MAGIC_LINK_VERIFY_PATTERN.match(path_text):
-        return f"{_MAGIC_LINK_VERIFY_PREFIX}[REDACTED]"
-    return path_text
+    if is_magic_link_path(path_text):
+        return f"{_MAGIC_LINK_VERIFY_PREFIX}{_REDACTED}"
+    normalized = _REPEATED_SLASH_RE.sub("/", _ENCODED_SLASH_RE.sub("/", path_text))
+    lowered = normalized.lower()
+    if lowered.rstrip("/") in _LITERAL_SIBLINGS:
+        return path_text
+    for base in _TOKEN_TAIL_BASES:
+        if lowered.startswith(base + "/") and lowered[len(base) + 1 :].strip("/"):
+            return f"{base}/{_REDACTED}"
+    redacted = _redact_template(normalized)
+    return redacted if redacted is not None else path_text
 
 
 # CWE-117 log forging: every character str.splitlines() treats as a line

@@ -268,6 +268,33 @@ async def test_dispatch_denied_redacts_magic_token_and_client_ip_from_log(
 
 
 @pytest.mark.asyncio
+async def test_token_routes_keep_one_bucket_per_path_without_the_token(
+    middleware: RateLimitMiddleware, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    limiter_mock = MagicMock()
+    limiter_mock.is_allowed = MagicMock(
+        return_value=(True, {"limit": 120, "remaining": 119, "reset": 1})
+    )
+    monkeypatch.setattr("backend.middleware.rate_limiter.rate_limiter", limiter_mock)
+
+    async def key_for(path: str) -> str:
+        request = _make_request(path, user=None, client_host="203.0.113.5")
+        await middleware.dispatch(request, AsyncMock(return_value=MagicMock(headers={})))
+        return limiter_mock.is_allowed.call_args.args[0]
+
+    first = await key_for("/api/prime/v2/proposal/synthetic-proposal-token-one")
+    second = await key_for("/api/prime/v2/proposal/synthetic-proposal-token-two")
+    magic_one = await key_for("/api/auth/verify-magic/synthetic-magic-token-one")
+    magic_two = await key_for("/api/auth/verify-magic/synthetic-magic-token-two")
+
+    assert "synthetic-proposal-token" not in first + second
+    assert first != second
+    assert "synthetic-magic-token" not in magic_one + magic_two
+    assert magic_one == magic_two
+    assert (await key_for("/api/crm/clients")).endswith(":/api/crm/clients")
+
+
+@pytest.mark.asyncio
 async def test_private_visa_429_log_omits_client_identity(
     middleware: RateLimitMiddleware,
     monkeypatch: pytest.MonkeyPatch,

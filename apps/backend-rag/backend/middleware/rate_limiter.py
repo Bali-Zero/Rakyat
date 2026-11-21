@@ -16,7 +16,7 @@ from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.app.utils.logging_utils import sanitize_log_path
+from backend.app.utils.logging_utils import is_magic_link_path, sanitize_log_path
 from backend.middleware.visa_oracle_privacy import is_private_visa_evaluation
 from backend.services.pii.violation_store import hash_subject
 
@@ -313,12 +313,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Find matching rate limit
         limit, window = self._get_rate_limit(request.url.path)
-        log_path = sanitize_log_path(request.url.path)
+        raw_path = request.url.path
+        log_path = sanitize_log_path(raw_path)
+        # A path whose value the sanitizer redacts keeps a bucket of its own,
+        # named by a digest: one shared bucket would rate-limit together every
+        # anonymous caller behind the same proxy address. The magic-link
+        # route keeps its single bucket, as before.
+        bucket_path = log_path
+        if log_path != raw_path and not is_magic_link_path(raw_path):
+            bucket_path = f"{log_path}#{hash_subject(raw_path)}"
 
         # Fail-open if the limiter malfunctions beyond its internal Redis fallback —
         # a hot-path middleware bug must not take the whole API offline.
         subject_reference = hash_subject(user_id) or "unknown"
-        rate_limit_key = f"ratelimit:{subject_reference}:{log_path}"
+        rate_limit_key = f"ratelimit:{subject_reference}:{bucket_path}"
         try:
             allowed, info = rate_limiter.is_allowed(rate_limit_key, limit, window)
         except Exception as exc:
