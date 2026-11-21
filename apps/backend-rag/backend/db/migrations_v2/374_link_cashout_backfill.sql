@@ -74,10 +74,34 @@ FROM (
 WHERE i.id = added.invoice_id;
 
 -- === ROLLBACK ===
--- Reverses, as a reopen does, each row added above that nobody has reversed since: a copy
+-- First each invoice whose paid_date is still the date a standing added row gave it: paid_date =
+-- the latest date of its other standing invoice_payment rows, or NULL. Every later write moves
+-- paid_date only forward (GREATEST) or recomputes it from the standing rows, so an invoice
+-- whose paid_date is past that date already holds what the same history without 374 would
+-- hold, an undated confirmation's instant included, and is left as it is.
+UPDATE invoices i
+SET paid_date = (
+    SELECT (max(wc.movement_date))::timestamp AT TIME ZONE 'UTC'
+    FROM weekly_cashout wc
+    WHERE wc.linked_invoice_id = i.id
+      AND wc.type = 'invoice_payment'
+      AND wc.reversed_by_id IS NULL
+      AND wc.description IS DISTINCT FROM 'older link, added to the cash-out by migration 374'
+)
+FROM (
+    SELECT linked_invoice_id AS invoice_id,
+           (max(movement_date))::timestamp AT TIME ZONE 'UTC' AS added_date
+    FROM weekly_cashout
+    WHERE description = 'older link, added to the cash-out by migration 374'
+      AND reversed_by_id IS NULL
+    GROUP BY linked_invoice_id
+) added
+WHERE i.id = added.invoice_id
+  AND i.paid_date = added.added_date;
+
+-- Then reverses, as a reopen does, each row added above that nobody has reversed since: a copy
 -- whose reversed_by_id is the row, then the row's reversed_by_id = the copy (a mutual pair,
--- hidden by every reader). Then each of their invoices: paid_date = the latest standing
--- invoice_payment date, or NULL.
+-- hidden by every reader).
 WITH added AS (
     SELECT id
     FROM weekly_cashout
@@ -101,17 +125,3 @@ UPDATE weekly_cashout wc
 SET reversed_by_id = reversals.id
 FROM reversals
 WHERE wc.id = reversals.original_id;
-
-UPDATE invoices i
-SET paid_date = (
-    SELECT (max(wc.movement_date))::timestamp AT TIME ZONE 'UTC'
-    FROM weekly_cashout wc
-    WHERE wc.linked_invoice_id = i.id
-      AND wc.type = 'invoice_payment'
-      AND wc.reversed_by_id IS NULL
-)
-WHERE i.id IN (
-    SELECT linked_invoice_id
-    FROM weekly_cashout
-    WHERE description = 'older link, added to the cash-out by migration 374'
-);
