@@ -29,6 +29,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
     importCashout: vi.fn(),
     previewBankStatement: vi.fn(),
     importBankStatement: vi.fn(),
+    getOutgoings: vi.fn(),
   },
 }));
 
@@ -133,5 +134,26 @@ describe("AccountingPage", () => {
     });
     // the result line survives the list reload
     expect(screen.getByText(/new transactions stored/)).toBeInTheDocument();
+  });
+
+  it("enters the outgoings view from Money out and comes back", async () => {
+    api.getOutgoings.mockResolvedValue({
+      items: [],
+      by_kind: [],
+      n: 0,
+      total_idr: 0,
+    });
+    render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    expect(api.getOutgoings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("cc-money-out"));
+    expect(
+      await screen.findByRole("heading", { name: "Outgoings to justify" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to justify.")).toBeInTheDocument();
+    expect(api.getOutgoings).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("back-to-centre"));
+    expect(await screen.findByText("CONTOH TRANSFER")).toBeInTheDocument();
+    expect(screen.queryByTestId("outgoings")).toBeNull();
   });
 });

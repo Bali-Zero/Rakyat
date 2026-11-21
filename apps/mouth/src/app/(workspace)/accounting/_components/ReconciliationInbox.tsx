@@ -64,10 +64,12 @@ export function ReconciliationInbox({
   onConfirmed,
   doneVersion,
   onOpenCashout,
+  onOpenOutgoings,
 }: {
   onConfirmed: () => void;
   doneVersion: number;
   onOpenCashout: () => void;
+  onOpenOutgoings: () => void;
 }) {
   const { error, success } = useToast();
   const [items, setItems] = useState<ReconciliationInboxItem[]>([]);
@@ -509,6 +511,7 @@ export function ReconciliationInbox({
           done={done}
           doneUnavailable={unavailable}
           onSelect={setSelectedTab}
+          onOpenMoneyOut={onOpenOutgoings}
         />
       )}
       {view !== "dayone" && (

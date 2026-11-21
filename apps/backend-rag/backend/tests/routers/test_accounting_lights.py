@@ -874,3 +874,28 @@ def test_the_matcher_carries_each_identity_value_from_the_pool_row_to_the_candid
         open_invoices=[inv],
     )
     assert getattr(cand, field) == value
+
+
+# ── outgoings (owner 2026-11-21: the debits are justified too) ───────────────────────────
+
+
+def test_outgoings_is_admin_only(mock_db_pool) -> None:
+    resp = _client(mock_db_pool, OUTSIDER).get(f"{BASE}/outgoings")
+    assert resp.status_code == 403
+    _pool, conn = mock_db_pool
+    conn.fetch.assert_not_called()
+
+
+def test_outgoings_returns_the_service_reading_with_the_limit(mock_db_pool) -> None:
+    reading = {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
+        resp = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"limit": 50})
+    assert resp.status_code == 200
+    assert resp.json() == reading
+    assert load.await_args.kwargs == {"limit": 50}
+
+
+@pytest.mark.parametrize("limit", [0, 5001])
+def test_outgoings_refuses_a_limit_out_of_range(mock_db_pool, limit) -> None:
+    resp = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"limit": limit})
+    assert resp.status_code == 422

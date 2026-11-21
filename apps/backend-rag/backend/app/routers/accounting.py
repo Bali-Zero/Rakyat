@@ -46,6 +46,7 @@ from backend.services.accounting.companies import (
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
 from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
+from backend.services.accounting.outgoings import load_outgoings
 from backend.services.accounting.reconcile_service import ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
@@ -584,6 +585,18 @@ async def reconciliation_inbox(
         for r in rows
     ]
     return await asyncio.to_thread(_classify_inbox, txns, open_invoices, recorded_invoices)
+
+
+@router.get("/outgoings")
+async def outgoings(
+    limit: int = Query(1000, ge=1, le=5000),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Debits still to justify, newest first, with the bank text read apart. Reads only."""
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        return await load_outgoings(conn, limit=limit)
 
 
 @router.get("/companies")

@@ -5,12 +5,13 @@
  *
  * Modelled on Asya's own "Weekly Cashout" Google Sheet: each invoice-payment
  * row carries the price decomposition (PNBP / URGENT / RPTKA-IMTA / MARGIN /
- * FINAL PRICE). Two surfaces:
+ * FINAL PRICE). Three surfaces:
  *   1. Weekly Cashout — the money-log table (read), grouped newest-first.
  *   2. Reconciliation inbox — unmatched incoming bank transfers; pick the
  *      matching invoice (candidate ranking from the backend matcher) and
  *      confirm. Confirm is the SINGLE writer of payment_status (superscar #9);
- *      it never auto-advances the practice (Zero's decision: Asya clicks again).
+ *      paid in full, it starts a case waiting for payment (owner rule a).
+ *   3. Outgoings to justify — the debits nobody has justified yet, read only.
  *
  * RBAC is enforced server-side (403 → error boundary). Money is IDR.
  */
@@ -33,13 +34,27 @@ import { ReconciliationInbox } from "./_components/ReconciliationInbox";
 import "./control-centre.css";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
+import { OutgoingsView } from "./_components/OutgoingsView";
 import {
   accountingApi,
   type CashoutRow,
   type CashbookSummary,
 } from "@/lib/api/workspace/accounting.api";
 
-type View = "centre" | "cashout";
+type View = "centre" | "cashout" | "outgoings";
+
+function BackToCentre({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-testid="back-to-centre"
+      className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
+      onClick={onClick}
+    >
+      <ArrowLeft className="h-4 w-4" /> Back to reconciliation
+    </button>
+  );
+}
 
 // ── Summary cards ────────────────────────────────────────────────────────────
 
@@ -261,17 +276,16 @@ export default function AccountingPage() {
           onConfirmed={handleConfirmed}
           doneVersion={doneVersion}
           onOpenCashout={() => setView("cashout")}
+          onOpenOutgoings={() => setView("outgoings")}
         />
+      ) : view === "outgoings" ? (
+        <div className="space-y-6">
+          <BackToCentre onClick={() => setView("centre")} />
+          <OutgoingsView />
+        </div>
       ) : (
         <div className="space-y-6">
-          <button
-            type="button"
-            data-testid="back-to-centre"
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
-            onClick={() => setView("centre")}
-          >
-            <ArrowLeft className="h-4 w-4" /> Back to reconciliation
-          </button>
+          <BackToCentre onClick={() => setView("centre")} />
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Wallet className="h-6 w-6 text-[var(--bz-accent)]" />

@@ -119,6 +119,7 @@ const renderInbox = () =>
       onConfirmed={vi.fn()}
       doneVersion={0}
       onOpenCashout={vi.fn()}
+      onOpenOutgoings={vi.fn()}
     />,
   );
 const card = (key: string) => screen.getByTestId(`cc-company-${key}`);
