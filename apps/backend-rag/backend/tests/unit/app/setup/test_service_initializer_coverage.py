@@ -607,6 +607,12 @@ async def test_init_database_success(mock_app):
 
         result = await initialize_database_services(mock_app)
         assert result is mock_pool
+        assert mock_app.state.attendance_monitor is mock_att_instance
+        assert mock_app.state.ts_service is mock_ts_instance
+        mock_att_instance.start_schedulers.assert_not_awaited()
+        mock_ts_instance.start_auto_logout_monitor.assert_not_awaited()
+        mock_daily_instance.start.assert_awaited_once()
+        mock_weekly_instance.start.assert_awaited_once()
 
 
 # ============================================================================

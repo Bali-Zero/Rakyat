@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -178,6 +179,16 @@ def test_clean_database_dsn_removes_only_sslmode() -> None:
     )
     assert unchanged_dsn == "postgresql://user:pass@db.example/test"
     assert default_ssl_context is None
+
+
+def test_olympus_starts_only_on_the_light_api_path() -> None:
+    """Olympus runs on the always-on api process only, never twice."""
+    light = inspect.getsource(initializer.initialize_services_light)
+    full = inspect.getsource(initializer.initialize_services)
+
+    assert "olympus.start()" in light
+    assert "OlympusGuardian" not in full
+    assert "olympus.start" not in full
 
 
 @pytest.mark.asyncio
