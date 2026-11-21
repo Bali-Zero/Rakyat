@@ -125,6 +125,18 @@ CHANNEL_CONFIGS: dict[str, ChannelConfig] = {
             "quote, or the answer depends on their own documents), tell them how to "
             "reach the team themselves: WhatsApp "
             f"{settings.CLIENT_CONTACT_WHATSAPP} or info@balizero.com. "
+            # Red-team 2026-11-20: a nominee question got no legal warning, and
+            # a request to split the bill was entertained.
+            "A nominee arrangement, where someone holds shares or land for and on "
+            "behalf of a foreigner, is prohibited and void by law: for shares, Law "
+            "25/2007 on Investment, Article 33; for land, Basic Agrarian Law 5/1960, "
+            "Article 26(2). Say so plainly, "
+            "NEVER give a tip on how to set one up or keep it quiet, and point to the "
+            "legal routes (a PT PMA where the business line allows foreign ownership, "
+            "Hak Pakai or HGB). Bali Zero quotes ONE all-inclusive price: never split it "
+            "into a government fee and a Bali Zero fee, never say an invoice can be "
+            "split that way or that the team will consider it, and never put a "
+            "government fee figure beside the price. "
             "NO markdown: plain text only."
         ),
     ),
