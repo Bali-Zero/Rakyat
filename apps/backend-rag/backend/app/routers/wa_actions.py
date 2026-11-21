@@ -1,11 +1,8 @@
 """WA Copilot action_queue API (S1.10 UI MVP).
 
-This router exposes the `action_queue` table populated by S1.9
-(`backend.services.wa_copilot.action_queue_rules`). NOTE 2026-08-06: its only
-in-repo UI (apps/wa-dashboard /actions) was deleted; these endpoints currently have
-no known caller — kept because the wa_copilot Telegram pipeline is live and an
-out-of-repo caller cannot be excluded. Re-evaluate before adding features here.
-`/actions` page.
+This router exposes the retained `action_queue` table. Its only in-repo UI
+(apps/wa-dashboard /actions) was deleted; these endpoints currently have no known
+caller. Re-evaluate before adding features here.
 
 Endpoints:
   GET  /api/wa/actions                  list with filters (owner/status/priority/search)
