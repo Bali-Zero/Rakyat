@@ -110,7 +110,9 @@ _ACCOUNT_LINE_RE = re.compile(
     r"[\s:.]*(\d[\d .\-]*\d)",
     re.IGNORECASE,
 )
-_ACCOUNT_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]*)\s*\)")
+# a currency is a parenthesised 3-letter code or a blank "( )"; the bank prints it last on the
+# line, so an account name with its own parentheses never supplies it
+_ACCOUNT_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]{3}|)\s*\)")
 _MORE_THAN_ONE_ACCOUNT = "file holds more than one account: upload one statement per file"
 
 
@@ -132,8 +134,8 @@ def _account_lines(words: list[Word], left_limit: float) -> list[tuple[str, str 
         digits = re.sub(r"\D", "", m.group(1))
         if len(digits) < 6:
             continue
-        cur = _ACCOUNT_CURRENCY_RE.search(text, m.end())
-        found.append((digits, _currency(cur.group(1)) if cur else None, text))
+        codes = _ACCOUNT_CURRENCY_RE.findall(text, m.end())
+        found.append((digits, _currency(codes[-1]) if codes else None, text))
     return found
 
 
@@ -626,7 +628,7 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
 
 _BNI_DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
 _BNI_TIME_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}")
-_BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*?)\s*\(\s*([A-Za-z]*)\s*\)")
+_BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*)\(\s*([A-Za-z]{3}|)\s*\)")
 _BNI_AMT = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})"
 _BNI_CREDIT, _BNI_DEBIT = ("C", "K"), ("D",)
 _BNI_STATEMENT_REFUSED = (

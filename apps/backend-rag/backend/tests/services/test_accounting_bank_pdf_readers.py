@@ -326,6 +326,17 @@ def test_permata_the_same_account_in_any_spelling_reads_as_one_statement(tokens)
     assert stmt.account_number == ACCOUNT and len(stmt.transactions) == 4
 
 
+def test_permata_parentheses_in_the_account_name_are_never_its_currency() -> None:
+    stmt = parse_permata_pages([_permata(name="PT (CONTOH) SATU")])
+    assert stmt.account_name == "PT (CONTOH) SATU" and len(stmt.transactions) == 4
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_permata_pages(
+            _permata_with_line("Account", ":", "0000000001/PT", "(IDR)", "(", "USD", ")")
+        )
+    same = _permata_with_line("Account", ":", "0000000001/PT", "(USD)", "(", "IDR", ")")
+    assert len(parse_permata_pages(same).transactions) == 4
+
+
 def test_permata_a_description_that_mentions_another_account_never_refuses_the_file() -> None:
     first, *rest = P_DAYS
     rows = [(*first[2][0][:5], ["PB transfer", "ACCOUNT : 1234567890"]), *first[2][1:]]
@@ -669,6 +680,16 @@ def test_bni_a_blank_currency_reads_as_idr_on_every_account_line() -> None:
     ]
     with pytest.raises(BankParseError, match="more than one account"):
         parse_bni_pages([page + usd])
+
+
+def test_bni_parentheses_in_the_account_name_are_never_its_currency() -> None:
+    # the currency is the last parenthesised code of the line, after the name
+    stmt = parse_bni_pages([_bni(B_ROWS, name="PT (ABC) SATU")])
+    assert stmt.account_name == "PT (ABC) SATU" and len(stmt.transactions) == 3
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages(_bni_with_line("Account", ":", "0000000001/PT", "(IDR)", "(", "USD", ")"))
+    same = _bni_with_line("Account", ":", "0000000001/PT", "(USD)", "(", "IDR", ")")
+    assert len(parse_bni_pages(same).transactions) == 3
 
 
 def test_bni_a_description_that_mentions_another_account_never_refuses_the_file() -> None:
