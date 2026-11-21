@@ -83,6 +83,7 @@ import { clearCompanyDetailCache } from "./components/company/companyDetailCache
 import { BusinessStoryPanel } from "./components/BusinessStoryPanel";
 import { viewerCanChangeDocumentVisibility } from "./components/modals/document-visibility";
 import { viewerCanCreateCompany } from "./components/modals/company-create";
+import { viewerCanManageTaxDocuments } from "./components/tax-documents-access";
 import { earlyKey, takeEarly } from "./components/early-fetch";
 import { startClientDetailEarly } from "./prefetch";
 import { TabSkeleton } from "./components/TabSkeleton";
@@ -523,6 +524,12 @@ export function ClientDetailClient({
     typeof profile.viewer_can_create_company === "boolean"
       ? profile.viewer_can_create_company
       : viewerCanCreateCompany(currentUserRole);
+  const canManageTaxDocuments = viewerCanManageTaxDocuments(
+    profile,
+    profileClient,
+    currentUserEmail,
+    currentUserRole,
+  );
   const setupOption = client.assigned_to
     ? teamMemberOptions.find(
         (m) => m.value === client.assigned_to!.toLowerCase(),
@@ -1310,6 +1317,7 @@ export function ClientDetailClient({
               documents={taxDocuments}
               attention={profile?.attention}
               day={profileDay!}
+              canManageDocuments={canManageTaxDocuments}
             />
           )}
         </div>
