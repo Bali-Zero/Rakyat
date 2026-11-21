@@ -14,8 +14,12 @@
  * current search, kind, client-link filter and offset, and only the detail request for the
  * subject currently selected. A superseded answer, error included, is ignored
  * (the effect cleanup flips a per-request flag). A saved decision re-reads the
- * detail through a refresh counter that supersedes every earlier detail request,
- * and a POST that completes after another subject was opened changes nothing.
+ * detail through a refresh counter that supersedes every earlier detail request.
+ * Saves in flight are tracked per subject, so a subject's buttons stay disabled
+ * while its own save is pending, whichever subjects were opened meanwhile. A
+ * save that completes re-reads only the subject on screen if it is the saved
+ * one, and shows its error only if the admin never left that subject since
+ * starting it (a selection epoch, bumped on every change of subject).
  * The search text is sent only
  * as the query key `q` and is never logged.
  */
@@ -354,9 +358,12 @@ export default function RelatedRegistryPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
 
   const [refresh, setRefresh] = useState(0);
-  const [saving, setSaving] = useState<number | null>(null);
+  const [pending, setPending] = useState<ReadonlySet<number>>(
+    () => new Set<number>(),
+  );
   const [saveError, setSaveError] = useState(false);
   const selectedRef = useRef<number | null>(null);
+  const selectionEpochRef = useRef(0);
   const loadedForRef = useRef<number | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -426,6 +433,7 @@ export default function RelatedRegistryPage() {
   // (after a saved decision) re-reads the same subject without blanking the
   // panel and supersedes every earlier detail request.
   useEffect(() => {
+    if (selectedRef.current !== selectedId) selectionEpochRef.current += 1;
     selectedRef.current = selectedId;
     setSaveError(false);
     if (selectedId === null) {
@@ -464,7 +472,8 @@ export default function RelatedRegistryPage() {
     decision: "confirmed" | "rejected",
     relation?: RegistryReviewRelation,
   ) => {
-    setSaving(subjectId);
+    const epoch = selectionEpochRef.current;
+    setPending((prev) => new Set(prev).add(subjectId));
     setSaveError(false);
     const body =
       decision === "confirmed" && relation
@@ -485,11 +494,16 @@ export default function RelatedRegistryPage() {
         setRefresh((n) => n + 1);
       })
       .catch(() => {
-        if (selectedRef.current !== subjectId) return;
+        if (selectionEpochRef.current !== epoch) return;
         setSaveError(true);
       })
       .finally(() => {
-        setSaving((prev) => (prev === subjectId ? null : prev));
+        setPending((prev) => {
+          if (!prev.has(subjectId)) return prev;
+          const next = new Set(prev);
+          next.delete(subjectId);
+          return next;
+        });
       });
   };
 
@@ -924,7 +938,7 @@ export default function RelatedRegistryPage() {
                             <ReviewControl
                               key={`${detail.id}:${link.client_id}:${link.review?.decided_at ?? "none"}`}
                               link={link}
-                              busy={saving === detail.id}
+                              busy={pending.has(detail.id)}
                               onDecide={(clientId, decision, relation) =>
                                 decide(detail.id, clientId, decision, relation)
                               }

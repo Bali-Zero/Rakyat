@@ -998,6 +998,88 @@ describe("related subjects registry page", () => {
         "Confirmed: Spouse — zz.admin@example.test, 2026-11-20",
       );
     });
+
+    const rowAt = (i: number) => screen.getAllByTestId("registry-row")[i];
+
+    it("F65 a subject's buttons stay disabled while its own save is pending, after another subject was opened and saved", async () => {
+      const postA = deferred<unknown>();
+      const postB = deferred<unknown>();
+      apiMock.post
+        .mockImplementationOnce(() => postA.promise)
+        .mockImplementationOnce(() => postB.promise);
+      await openTwo(() => Promise.resolve(withLinks([linkOf()])));
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(1));
+      await settle();
+      expect(notRelatedButton().disabled).toBe(false);
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(0));
+      await settle();
+      expect(notRelatedButton().disabled).toBe(true);
+      expect(confirmButton().disabled).toBe(true);
+      await act(async () =>
+        postB.resolve({ status: "recorded", review: reviewOf() }),
+      );
+      expect(notRelatedButton().disabled).toBe(true);
+      fireEvent.click(notRelatedButton());
+      expect(apiMock.post).toHaveBeenCalledTimes(2);
+      await act(async () =>
+        postA.resolve({ status: "recorded", review: reviewOf() }),
+      );
+      await settle();
+      expect(notRelatedButton().disabled).toBe(false);
+    });
+
+    it("F66 a save that fails after the admin left the subject and came back shows no error", async () => {
+      const post = deferred<unknown>();
+      apiMock.post.mockImplementation(() => post.promise);
+      await openTwo(() => Promise.resolve(withLinks([linkOf()])));
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(1));
+      await settle();
+      fireEvent.click(rowAt(0));
+      await settle();
+      await act(async () => {
+        post.resolve(Promise.reject(new ApiError("ZzServerText", 500, {})));
+      });
+      expect(screen.queryByText("Could not save the decision.")).toBeNull();
+      expect(document.body.textContent).not.toContain("ZzServerText");
+      expect(notRelatedButton().disabled).toBe(false);
+    });
+
+    it("F67 a save that succeeds after the admin left the subject and came back re-reads that subject", async () => {
+      const post = deferred<unknown>();
+      apiMock.post.mockImplementation(() => post.promise);
+      let reads7 = 0;
+      await openTwo(() => {
+        reads7 += 1;
+        return Promise.resolve(
+          reads7 >= 3
+            ? withLinks([linkOf({ review: reviewOf() })])
+            : withLinks([linkOf()]),
+        );
+      });
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(1));
+      await settle();
+      fireEvent.click(rowAt(0));
+      await settle();
+      expect(reads7).toBe(2);
+      await act(async () =>
+        post.resolve({ status: "recorded", review: reviewOf() }),
+      );
+      await settle();
+      expect(reads7).toBe(3);
+      expect(lastUrl()).toBe("/api/crm/related-registry/7");
+      expect(screen.getByTestId("registry-review-status").textContent).toBe(
+        "Confirmed: Spouse — zz.admin@example.test, 2026-11-20",
+      );
+      expect(screen.queryByText("Could not save the decision.")).toBeNull();
+    });
   });
 
   it("F64 a failed save shows only the fixed message, never the server text, and reads nothing again", async () => {
