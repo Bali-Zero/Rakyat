@@ -13,6 +13,7 @@ import asyncio
 import datetime as dt
 import logging
 import os
+import re
 import tempfile
 from datetime import date
 from decimal import Decimal
@@ -520,6 +521,15 @@ async def confirm_reconciliation(
 # names the payer from the first 256 characters only: the longest bank line in production is
 # 112, so every real line is read whole. Matching (classify_transfer) still reads the whole line.
 PAYER_LINE_CHARS = 256
+# A token of four or more digits is a payment code, not a name: one sending bank puts
+# "PY<8 digits> 261" in the BI-FAST name slot (5 inbox rows on 2026-11-22). Display only:
+# the matcher reads the line as it always did.
+_PAYMENT_CODE_TOKEN = re.compile(r"\d{4,}")
+
+
+def _display_payer(name: str) -> str:
+    """The payer name the inbox shows, or "" when the name slot carries a payment code."""
+    return "" if _PAYMENT_CODE_TOKEN.search(name) else name
 
 
 def _classify_inbox(
@@ -556,7 +566,9 @@ def _classify_inbox(
                 "amount_idr": tx["amount_idr"],
                 "description": tx["description"],
                 # The payer the bank line names ("" when it names none), for the list to show.
-                "payer_name": extract_payer_name((tx["description"] or "")[:PAYER_LINE_CHARS]),
+                "payer_name": _display_payer(
+                    extract_payer_name((tx["description"] or "")[:PAYER_LINE_CHARS])
+                ),
                 "company_key": tx["company_key"],
                 "light": res.light,
                 "open_candidates": res.open_candidates,
