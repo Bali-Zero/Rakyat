@@ -549,6 +549,53 @@ def test_bni_a_page_printing_the_same_account_in_another_currency_is_refused() -
         parse_bni_pages(_bni_two_pages(currency="USD"))
 
 
+def _bni_with_line(*tokens: str) -> list[list[Word]]:
+    """B_ROWS on one page plus one more line under the rows, starting at the account block's x."""
+    page = _bni(B_ROWS)
+    y = max(w.top for w in page) + 40
+    return [page + [Word(t, 97 + 45 * i, 97 + 45 * i + 40, y) for i, t in enumerate(tokens)]]
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        ("ACCOUNT", ":", "0000000002/PT", "CONTOH", "(", "IDR", ")"),
+        ("account", "no.", ":", "0000000002"),
+        ("Account", "Number", "0000000002"),
+        ("Acct.", "No", ":", "0000-0000-02"),
+        ("A/C", ":", "0000.0000.02"),
+        ("No.", "Rekening", ":", "0000", "0000", "02"),
+        ("NOMOR", "REKENING", "0000000002"),
+        ("Account", ":", "0000000001/PT", "CONTOH", "(", "USD", ")"),
+    ],
+)
+def test_bni_another_account_line_in_any_spelling_is_refused(tokens) -> None:
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages(_bni_with_line(*tokens))
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        ("ACCOUNT", ":", "0000-0000-01"),
+        ("Account", "No.", ":", "0000000001"),
+        ("account", ":", "0000", "0000", "01", "(", "idr", ")"),
+        ("Account", "Information"),
+    ],
+)
+def test_bni_the_same_account_in_any_spelling_reads_as_one_statement(tokens) -> None:
+    stmt = parse_bni_pages(_bni_with_line(*tokens))
+    assert stmt.account_number == ACCOUNT and len(stmt.transactions) == 3
+
+
+def test_bni_a_description_that_mentions_another_account_never_refuses_the_file() -> None:
+    # the mention sits in the description column, right of the journal column: never an account
+    # line (row 3, away from the page-chrome lines, whose own filter is not under test here)
+    rows = [*B_ROWS[:2], (*B_ROWS[2][:3], "TRF KE\nACCOUNT : 1234567890", *B_ROWS[2][4:])]
+    stmt = parse_bni_pages([_bni(rows)])
+    assert stmt.account_number == ACCOUNT and len(stmt.transactions) == 3
+
+
 def test_bni_a_description_carried_over_a_page_break_never_lands_on_another_row() -> None:
     rows = [(*B_ROWS[0][:3], "ALPHA\nA1\nA2\nA3", *B_ROWS[0][4:]), *B_ROWS[1:]]
     # the same rows, with the last line of row 1 printed at the top of page 2, above row 2's number

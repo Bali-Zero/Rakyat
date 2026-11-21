@@ -100,6 +100,38 @@ def _text(words: list[Word]) -> str:
     return " ".join(w.text for w in sorted(words, key=lambda w: (round(w.top / 3), w.x0)))
 
 
+# A statement file holds one account. An ACCOUNT LINE is recognised as an entity, not by one
+# print's spelling: a label from this list in any letter case, then a number of 6+ digits once
+# spaces, dots and dashes are removed, on a line that starts left of the reader's description
+# column (so a description that mentions an account is never one).
+_ACCOUNT_LINE_RE = re.compile(
+    r"(?:a/c|acc(?:oun)?t|acc|no\.?\s*rek(?:ening)?|nomor\s+rekening|rekening)\b\.?"
+    r"(?:\s*(?:no|number|nomor)\b\.?)?"
+    r"[\s:.]*(\d[\d .\-]*\d)",
+    re.IGNORECASE,
+)
+_ACCOUNT_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]*)\s*\)")
+_MORE_THAN_ONE_ACCOUNT = "file holds more than one account: upload one statement per file"
+
+
+def _account_lines(words: list[Word], left_limit: float) -> list[tuple[str, str | None, str]]:
+    """(digits, printed currency or None, line text) of every account line of a page."""
+    found: list[tuple[str, str | None, str]] = []
+    for line in _lines(words):
+        if line[0].x0 >= left_limit:
+            continue
+        text = " ".join(w.text for w in line)
+        m = _ACCOUNT_LINE_RE.match(text)
+        if m is None:
+            continue
+        digits = re.sub(r"\D", "", m.group(1))
+        if len(digits) < 6:
+            continue
+        cur = _ACCOUNT_CURRENCY_RE.search(text, m.end())
+        found.append((digits, cur.group(1).upper() if cur else None, text))
+    return found
+
+
 def _amount(raw: str) -> Decimal:
     return Decimal(raw.replace(",", ""))
 
@@ -585,8 +617,6 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
 _BNI_DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
 _BNI_TIME_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}")
 _BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*?)\s*\(\s*([A-Za-z]*)\s*\)")
-_BNI_ANY_ACCOUNT_RE = re.compile(r"\bAccount(?:\s+No\.?)?\s*:\s*(\d{6,})")
-_BNI_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]*)\s*\)")
 _BNI_AMT = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})"
 _BNI_CREDIT, _BNI_DEBIT = ("C", "K"), ("D",)
 _BNI_STATEMENT_REFUSED = (
@@ -749,26 +779,16 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
         flag_h, amt_h, _ = cols
         # the header row repeats anywhere on later pages: only page 1's marks where rows start
         top0 = flag_h.top + 2 if page_no == 0 else -1.0
-        # every "Account : <number>" line of every page, in any spelling, must print the first
-        # account's number and currency (not only a page's first line)
-        for line in _lines(words):
-            text = " ".join(w.text for w in line)
-            any_account = _BNI_ANY_ACCOUNT_RE.search(text)
-            if not any_account:
-                continue
-            m = _BNI_ACCOUNT_RE.search(text)
+        # every account line of every page names the first one's number and, where it prints
+        # one, its currency; descriptions start right of the journal column
+        for digits, cur, text in _account_lines(words, cols[2].x0):
             if account is None:
-                if not m:
+                m = _BNI_ACCOUNT_RE.search(text)
+                if not m or m.group(1) != digits:
                     raise BankParseError("statement header has no account")
-                account = (m.group(1), m.group(2).strip(), m.group(3).upper())
-                continue
-            cur = _BNI_CURRENCY_RE.search(text)
-            if any_account.group(1) != account[0] or (
-                (cur.group(1).upper() if cur else None) != account[2]
-            ):
-                raise BankParseError(
-                    "file holds more than one account: upload one statement per file"
-                )
+                account = (digits, m.group(2).strip(), m.group(3).upper())
+            elif digits != account[0] or (cur is not None and cur != account[2]):
+                raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         flags = sorted(
             (
                 w
