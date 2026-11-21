@@ -733,6 +733,28 @@ async def reopen_transaction(
     return _action_json(result)
 
 
+@router.post("/undo-confirmation")
+async def undo_confirmation(
+    payload: ReopenTransactionRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Owner rule (b): take back a payment confirmed today (WITA). Sends no email."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            result = await reconcile_service.undo_confirmation(
+                conn,
+                bank_txn_id=payload.bank_txn_id,
+                undone_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except ReconcileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+    return _action_json(result)
+
+
 # ── P3: Google Sheets export ────────────────────────────────────────────────
 
 # The service account cannot CREATE a Drive file (no Drive quota): Zero creates
