@@ -226,7 +226,7 @@ async def _read_statement_upload(file: UploadFile) -> bytes:
 
 @router.post("/bank-statement/preview")
 async def preview_bank_statement(
-    file: UploadFile = File(..., description="CIMB Niaga CSV, Bank Mandiri PDF or Bank Permata PDF statement"),
+    file: UploadFile = File(..., description="CIMB Niaga CSV, or Bank Mandiri, BNI or Bank Permata PDF statement"),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Parse a bank statement and return a summary report. Writes nothing."""
@@ -242,7 +242,7 @@ async def preview_bank_statement(
 
 @router.post("/bank-statement/import")
 async def import_bank_statement(
-    file: UploadFile = File(..., description="CIMB Niaga CSV, Bank Mandiri PDF or Bank Permata PDF statement"),
+    file: UploadFile = File(..., description="CIMB Niaga CSV, or Bank Mandiri, BNI or Bank Permata PDF statement"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
