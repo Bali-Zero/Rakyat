@@ -30,6 +30,7 @@ from backend.prompts.channel_overlays import apply_channel_overlay
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.common.background import spawn
 from backend.services.llm_clients.pricing import TokenUsage
+from backend.services.rag.agentic._memory_identity import is_non_personal_memory_identity
 from backend.services.rag.agentic.entity_extractor import EntityExtractionService
 from backend.services.rag.agentic.llm_gateway import LLMGateway
 from backend.services.rag.agentic.memory_handler import MemoryHandler
@@ -112,6 +113,22 @@ _E33_CLAIM_GUARD_ENFORCE = os.getenv("E33_CLAIM_GUARD_ENFORCE", "false").lower()
     "1",
     "yes",
 )
+
+
+def _kg_expansion_query(query: str | None, user_id: str | None) -> str | None:
+    """Return the query KG auto-expansion may learn from, or None.
+
+    With no source chunks, ``KGAutoExpansion.expand_from_response`` falls back
+    to extracting entities from the raw query and stages them in the SHARED
+    knowledge graph. For an identity that stands for many people (the
+    anonymous blog visitor, ``anonymous``, the WA mirror) that turns one
+    person's words into staged global facts that can reach everyone else after
+    promotion (cross-family gate notice on Rakyat #542, 2026-11-21). Extraction
+    from source chunks is untouched: those are documents, not anyone's words.
+    """
+    if is_non_personal_memory_identity(user_id):
+        return None
+    return query
 
 
 def _apply_e33_claim_guard(result: CoreResult) -> None:
@@ -1781,7 +1798,7 @@ class OrchestratorCore:
                     evidence_score=evidence_score_val,
                     source_chunks_text=source_chunks_text,
                     source_chunk_ids=source_chunk_ids,
-                    query=query,
+                    query=_kg_expansion_query(query, user_id),
                 ),
             )
 
