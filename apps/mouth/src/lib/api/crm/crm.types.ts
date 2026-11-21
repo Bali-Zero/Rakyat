@@ -623,6 +623,11 @@ export interface ClientProfile {
    *  tax team or a member of a shared client pool; absent on an older
    *  backend (the desk then falls back to the role rule). */
   viewer_can_create_company?: boolean;
+  /** The server's answer for this viewer: may they upload, edit or delete
+   *  documents in this client's Tax Documents Drive folders? True for CRM
+   *  admins and human team members associated with the profile (assigned_to,
+   *  tax_consultant, created_by, or their validated client-pool peers). */
+  viewer_can_manage_tax_documents?: boolean;
   stats: {
     family_count: number;
     documents_count: number;

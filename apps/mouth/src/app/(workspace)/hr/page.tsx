@@ -116,12 +116,24 @@ const initials = (name: string) =>
     .map((w) => w[0]!.toUpperCase())
     .join("");
 
-const GROUP_FIRST = ["Setup", "Tax"];
+// The roster groups by the card's unit (the group-wide units of 2026-11-16); a person
+// without one falls back to the team department, spelled like a unit so the two merge.
+const GROUP_FIRST = [
+  "BOARD",
+  "SETUP",
+  "IMIGRASI",
+  "TAX",
+  "CORPORATE & LEGAL",
+  "FINANCE & HR",
+  "OPERASIONAL",
+  "SECURITY",
+  "MARKETING / IT",
+];
 const GROUP_LAST = ["Office", "Former"];
 function groupOf(p: PersonRow): string {
   if (!p.active) return "Former";
-  const d = (p.department ?? "").trim();
-  return d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Office";
+  const g = (p.unit ?? "").trim() || (p.department ?? "").trim();
+  return g ? g.toUpperCase() : "Office";
 }
 function groupRank(g: string) {
   const first = GROUP_FIRST.indexOf(g);
