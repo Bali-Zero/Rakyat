@@ -954,3 +954,33 @@ def test_undo_id_that_is_not_a_json_integer_is_422(mock_db_pool, bad) -> None:
         resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": bad})
     assert resp.status_code == 422
     assert not u.called
+
+
+# ── owner 2026-11-22: justify a debit ────────────────────────────────────────────────────
+
+
+def test_outgoings_passes_the_state_filter_and_refuses_an_unknown_one(mock_db_pool) -> None:
+    reading = {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
+        ok = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "justified"})
+        bad = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "nope"})
+    assert ok.status_code == 200 and load.await_args.kwargs == {"limit": 1000, "state": "justified"}
+    assert bad.status_code == 422
+
+
+def test_justify_and_undo_are_admin_only(mock_db_pool) -> None:
+    client = _client(mock_db_pool, OUTSIDER)
+    assert client.post(f"{BASE}/outgoings/1/justify", json={"category": "tax"}).status_code == 403
+    assert client.post(f"{BASE}/outgoings/1/undo").status_code == 403
+
+
+def test_justify_maps_the_services_refusal_to_its_status(mock_db_pool) -> None:
+    from backend.services.accounting.outgoing_justify import OutgoingError
+
+    boom = AsyncMock(side_effect=OutgoingError(409, "this debit is already justified: undo it first"))
+    with patch.object(accounting_module, "justify_outgoing", boom):
+        resp = _client(mock_db_pool).post(f"{BASE}/outgoings/1/justify", json={"category": "tax"})
+    assert (resp.status_code, resp.json()) == (
+        409,
+        {"detail": "this debit is already justified: undo it first"},
+    )

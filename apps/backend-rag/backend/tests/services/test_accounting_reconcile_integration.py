@@ -47,6 +47,9 @@ MIGRATION_373 = (
     Path(__file__).resolve().parents[2]
     / "db" / "migrations_v2" / "373_reconciliation_log_before_state.sql"
 )
+MIGRATION_375 = (
+    Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "375_outgoing_justifications.sql"
+)
 
 # A statement of the default company's account. A transfer settles only invoices of the company
 # that owns the account it reached, and an invoice with no issuer is the default company's.

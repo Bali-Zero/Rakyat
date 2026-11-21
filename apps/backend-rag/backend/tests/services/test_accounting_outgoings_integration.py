@@ -12,7 +12,12 @@ import pytest
 
 from backend.services.accounting.outgoings import load_outgoings, read_outgoing
 from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
-from backend.tests.services.test_accounting_reconcile_integration import _drop_db, _fresh_db
+from backend.tests.services.test_accounting_reconcile_integration import (
+    MIGRATION_375,
+    _drop_db,
+    _forward_sql_of,
+    _fresh_db,
+)
 
 ACCOUNT = ENTITIES[DEFAULT_ENTITY_KEY].bank_account_number
 TRANSFER = "OCTO Biz TO CONTOH PENERIMA IBI261121000000001 CENAIDJA Reimburse PNBP an. Contoh"
@@ -22,6 +27,7 @@ TRANSFER = "OCTO Biz TO CONTOH PENERIMA IBI261121000000001 CENAIDJA Reimburse PN
 async def db():
     conn, dbname, user = await _fresh_db()
     try:
+        await conn.execute(_forward_sql_of(MIGRATION_375))
         yield conn
     finally:
         await _drop_db(conn, dbname, user)
@@ -156,6 +162,7 @@ async def test_only_unjustified_debits_newest_first_with_totals(db) -> None:
         {"kind": "government_fee", "label": "PNBP", "n": 2, "total_idr": 6_000_000},
     ]
     assert (result["n"], result["total_idr"]) == (3, 13_000_000)
+    assert (result["n_justified"], result["justified_total_idr"]) == (0, 0)
     first = result["items"][0]
     assert first["posted_at"] is not None and first["txn_date"] == date(2026, 11, 21)
     assert {k: v for k, v in first.items() if k not in ("posted_at", "txn_date")} == {
@@ -170,6 +177,8 @@ async def test_only_unjustified_debits_newest_first_with_totals(db) -> None:
             "detail": "e-billing 820261121000001",
         },
         "fee_of_txn_id": None,
+        "state": "to_justify",
+        "justification": None,
     }
 
 
@@ -265,4 +274,11 @@ async def test_an_account_no_company_owns_is_other_and_the_limit_bounds_the_list
 
 
 async def test_nothing_to_justify(db) -> None:
-    assert await load_outgoings(db) == {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    assert await load_outgoings(db) == {
+        "items": [],
+        "by_kind": [],
+        "n": 0,
+        "total_idr": 0,
+        "n_justified": 0,
+        "justified_total_idr": 0,
+    }
