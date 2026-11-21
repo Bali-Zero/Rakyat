@@ -61,7 +61,7 @@ def read_outgoing(kind: str, description: str, payment_type: str | None) -> dict
     return out
 
 
-_STATES = ("to_justify", "justified")
+_STATES = ("to_justify", "justified", "all")
 
 # Every unmatched debit with its pair and its justification; the state is derived here once so
 # the list and the totals cannot disagree.
@@ -84,11 +84,12 @@ _BASE = f"""
 
 
 async def load_outgoings(
-    conn: asyncpg.Connection, *, limit: int = 1000, state: str | None = None
+    conn: asyncpg.Connection, *, limit: int = 1000, state: str = "to_justify"
 ) -> dict[str, Any]:
     """Debits newest first, each with its reading and state, and the totals per kind.
 
-    `state` filters the list (`to_justify` or `justified`); none lists both. `by_kind`, `n` and
+    `state` filters the list: `to_justify` (the default, what the Slice 1 view always listed),
+    `justified`, or `all`. `by_kind`, `n` and
     `total_idr` always count what is still to justify; `n_justified` and `justified_total_idr`
     count the rest.
 
@@ -98,7 +99,7 @@ async def load_outgoings(
     with no such transfer, or with two, stays unpaired. The pair is looked for among ALL rows
     of the statement, not only the listed ones.
     """
-    if state is not None and state not in _STATES:
+    if state not in _STATES:
         raise ValueError(f"state must be one of {_STATES}")
     rows = await conn.fetch(
         f"""
@@ -108,7 +109,7 @@ async def load_outgoings(
         LIMIT $1
         """,
         limit,
-        state,
+        None if state == "all" else state,
     )
     totals = await conn.fetch(
         f"""

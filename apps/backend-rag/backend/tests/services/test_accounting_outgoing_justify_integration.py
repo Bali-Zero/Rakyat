@@ -108,6 +108,14 @@ async def test_cash_withdrawal_needs_recipient_note_and_lines(db) -> None:
     assert (await _justify(db, txn, "cash_withdrawal", **ok))["state"] == "justified"
 
 
+async def test_a_cash_withdrawal_debit_cannot_dodge_its_breakdown_by_another_category(db) -> None:
+    txn = await _debit(db, "cash_withdrawal", 1_000_000)
+    for category in ("tax", "other", "payroll", "bank_charges"):
+        await _refused(db, 422, txn, category, note="anything")
+    ok = {"recipient": "CONTOH PENARIK", "note": "cash for the week", "lines": [_line(1_000_000)]}
+    assert (await _justify(db, txn, "cash_withdrawal", **ok))["state"] == "justified"
+
+
 async def test_cash_withdrawal_lines_must_sum_exactly_to_the_debit(db) -> None:
     txn = await _debit(db, "cash_withdrawal", 1_000_000)
     base = {"recipient": "CONTOH PENARIK", "note": "cash"}
@@ -119,7 +127,7 @@ async def test_cash_withdrawal_lines_must_sum_exactly_to_the_debit(db) -> None:
     assert "1 IDR too much" in over
     assert await db.fetchval("SELECT count(*) FROM outgoing_justifications") == 0
     await _justify(db, txn, "cash_withdrawal", **base, lines=[_line(600_000), _line(400_000)])
-    item = (await load_outgoings(db))["items"][0]
+    item = (await load_outgoings(db, state="justified"))["items"][0]
     assert [ln["amount_idr"] for ln in item["justification"]["lines"]] == [600_000, 400_000]
 
 
@@ -137,18 +145,18 @@ async def test_a_paired_fee_cannot_be_justified_directly_and_follows_its_transfe
     def by_id(result):
         return {i["id"]: i for i in result["items"]}
 
-    before = by_id(await load_outgoings(db))
+    before = by_id(await load_outgoings(db, state="all"))
     assert (before[fee]["state"], before[fee]["justification"]) == ("to_justify", None)
 
     await _justify(db, transfer, "vendor_case", recipient="CONTOH PENERIMA")
-    after = await load_outgoings(db)
+    after = await load_outgoings(db, state="all")
     assert (by_id(after)[transfer]["state"], by_id(after)[fee]["state"]) == ("justified",) * 2
     followed = by_id(after)[fee]["justification"]
     assert followed["follows_txn_id"] == transfer and followed["category"] == "vendor_case"
     assert (after["n"], after["n_justified"]) == (0, 2)
 
     await undo_justification(db, txn_id=transfer, undone_by=WHO)
-    assert by_id(await load_outgoings(db))[fee]["state"] == "to_justify"
+    assert by_id(await load_outgoings(db, state="all"))[fee]["state"] == "to_justify"
 
 
 async def test_an_unpaired_fee_can_be_justified_on_its_own(db) -> None:
@@ -184,8 +192,10 @@ async def test_the_list_filters_by_state_and_carries_the_justification(db) -> No
     done = await _row(db, sid, "payroll", 7_000_000, "BULAN OKTOBER", AT)
     todo = await _row(db, sid, "tax", 1_000_000, "x", AT.replace(hour=14))
     await _justify(db, done, "payroll", note="October")
-    both = await load_outgoings(db)
+    both = await load_outgoings(db, state="all")
     assert {i["id"]: i["state"] for i in both["items"]} == {done: "justified", todo: "to_justify"}
+    # the default is what the Slice 1 view has always listed: only what is still to justify
+    assert [i["id"] for i in (await load_outgoings(db))["items"]] == [todo]
     assert [i["id"] for i in (await load_outgoings(db, state="to_justify"))["items"]] == [todo]
     only = (await load_outgoings(db, state="justified"))["items"]
     assert [i["id"] for i in only] == [done]

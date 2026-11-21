@@ -103,6 +103,11 @@ async def justify_outgoing(
         )
         if bt is None or bt["direction"] != "debit":
             raise OutgoingError(404, "no such debit")
+        if bt["kind"] == "cash_withdrawal" and category != "cash_withdrawal":
+            raise OutgoingError(
+                422,
+                "a cash withdrawal is justified as a cash withdrawal: recipient, note and lines",
+            )
         if bt["kind"] == "transfer_fee" and bt["fee_of_txn_id"] is not None:
             raise OutgoingError(409, "a transfer fee follows its transfer: justify the transfer")
         if await conn.fetchval(

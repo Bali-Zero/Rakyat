@@ -595,15 +595,13 @@ async def reconciliation_inbox(
 @router.get("/outgoings")
 async def outgoings(
     limit: int = Query(1000, ge=1, le=5000),
-    state: Literal["to_justify", "justified"] | None = Query(None),
+    state: Literal["to_justify", "justified", "all"] = Query("to_justify"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Debits newest first, each with its state and justification, bank text read apart."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        if state is None:
-            return await load_outgoings(conn, limit=limit)
         return await load_outgoings(conn, limit=limit, state=state)
 
 
