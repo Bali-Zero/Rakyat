@@ -84,6 +84,13 @@ class ScraperSubmission(BaseModel):
     source_url: str
     source_name: str
     category: str  # visa, immigration, news, etc.
+    destination: Literal["editorial_news"] | None = Field(
+        None,
+        description=(
+            "Explicit News Room staging destination, independent of the article category. "
+            "Omit to use automatic visa/news classification."
+        ),
+    )
     relevance_score: int  # 0-100
     published_at: str | None = None
     extraction_method: str | None = IntelConstants.DEFAULT_EXTRACTION_METHOD

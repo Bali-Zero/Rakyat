@@ -117,6 +117,7 @@ function roster(
     can_edit: scope === "all",
     people: [
       row(ID_A, "Made Contoh", {
+        unit: "OPERASIONAL",
         ...withPhoto(ID_A),
         flags: {
           papers_missing: 3,
@@ -125,10 +126,15 @@ function roster(
           on_leave_today: true,
         },
       }),
-      row(ID_B, "Wayan Dua", { department: "tax", ...withPhoto(ID_B) }),
+      row(ID_B, "Wayan Dua", {
+        department: "tax",
+        unit: "IMIGRASI",
+        ...withPhoto(ID_B),
+      }),
       row(ID_N, "Ketut Tanpa", {
         employee_id: null,
         has_record: false,
+        unit: null,
         hire_date: null,
         flags: {
           papers_missing: null,
@@ -271,7 +277,7 @@ describe("People page (/hr)", () => {
     expect(screen.getAllByText("WD").length).toBeGreaterThan(0);
   });
 
-  it("reads the roster with the bearer, groups it by department and opens the first person", async () => {
+  it("reads the roster with the bearer, groups it by card unit and opens the first person", async () => {
     const token = tokenFor("A");
     localStorage.setItem("auth_token", token);
     render(<PeoplePage />);
@@ -282,8 +288,15 @@ describe("People page (/hr)", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "People",
     );
-    expect(screen.getByText(/^Setup/)).toBeInTheDocument();
-    expect(screen.getByText(/^Tax/)).toBeInTheDocument();
+    // the unit on the card wins over the team department; a person without a unit
+    // falls back to the department, in the unit's spelling, and the units keep their order
+    const headers = screen
+      .getAllByText(
+        (_, el) => el?.tagName === "P" && / · \d+$/.test(el.textContent ?? ""),
+      )
+      .map((el) => el.textContent);
+    expect(headers).toEqual(["SETUP · 1", "IMIGRASI · 1", "OPERASIONAL · 1"]);
+    expect(screen.queryByText(/^Tax/)).toBeNull();
     expect(screen.queryByText(/^Office/)).toBeNull();
     for (const n of ["Made Contoh", "Wayan Dua", "Ketut Tanpa"]) {
       expect(screen.getAllByText(n).length).toBeGreaterThan(0);

@@ -2307,7 +2307,9 @@ PRIVACY_CASES = {
     # row 5: invalid bodies, each with its own submitted values
     "row5_invalid_date": pcase(req(P1, doc_of(N_PLAIN), birth="1977-02-30"), 422),
     "row5_out_of_range": pcase(req(P1, doc_of(N_PLAIN), birth="1899-12-31"), 422),
-    "row5_future_date": pcase(req(P1, doc_of(N_PLAIN), birth="2026-11-20"), 422),
+    # Keep the synthetic future date distinct from wall-clock log timestamps.
+    # The route's validation clock remains pinned to TODAY by the today fixture.
+    "row5_future_date": pcase(req(P1, doc_of(N_PLAIN), birth=date.max.isoformat()), 422),
     "row5_company_kind": pcase(
         req(P1, doc_of(N_PLAIN), subject={"kind": "company", "identifiers": keys(P1)}), 422
     ),
