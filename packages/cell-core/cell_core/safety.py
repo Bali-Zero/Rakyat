@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,13 @@ class DNAInterpreter:
     def validate(self, proposal: Proposal, budget_spent: float) -> SafetyCheckResult:
         if proposal.action == "none":
             return SafetyCheckResult(can_proceed=True)
+        cost = proposal.cost_usd
+        try:
+            valid_cost = not isinstance(cost, bool) and math.isfinite(cost) and cost >= 0
+        except TypeError:
+            valid_cost = False
+        if not valid_cost:
+            return SafetyCheckResult(can_proceed=False, reason="Invalid cost")
         max_budget = self._dna.constraints.get("max_daily_budget_usd", 10.0)
         max_investigation = self._dna.constraints.get("max_cost_per_investigation_usd", 0.5)
         if budget_spent + proposal.cost_usd > max_budget * 0.9:
