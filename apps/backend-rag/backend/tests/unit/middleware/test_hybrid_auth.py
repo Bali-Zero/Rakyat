@@ -231,6 +231,32 @@ async def test_public_endpoint_metrics_carry_no_client_reference(middleware, moc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/knowledge/visa/sentinelq7zk/extra",
+        "/preview/sentinelq7zk%2Fextra.html",
+        "/api/bridge/sentinelq7zk%2Fx",
+        "/docs/sentinelq7zk",
+    ],
+)
+async def test_public_endpoint_metric_label_never_carries_a_caller_value(
+    middleware, mock_request, monkeypatch, path
+):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    mock_request.url.path = path
+    mock_request.headers = {"user-agent": "test-agent"}
+    call_next = AsyncMock(return_value=Response("OK"))
+
+    with patch("backend.app.metrics.public_endpoint_access_total") as total_metric:
+        response = await middleware.dispatch(mock_request, call_next)
+
+    assert response.headers["X-Auth-Type"] == "public"
+    label = total_metric.labels.call_args.kwargs["endpoint"]
+    assert "sentinelq7zk" not in label.lower()
+
+
+@pytest.mark.asyncio
 async def test_temporary_endpoints_removed(middleware, mock_request):
     """Test that TEMPORARY/FIX/DEBUG endpoints are no longer public"""
     temporary_endpoints = [

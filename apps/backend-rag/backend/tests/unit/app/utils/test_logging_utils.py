@@ -110,6 +110,21 @@ class TestSanitizeLogPath:
             assert raw_token not in sanitized, path
             assert sanitized == expected, path
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/knowledge/visa/sentinelq7zk/extra",
+            "/preview/sentinelq7zk%2Fextra.html",
+            "/api/news/bulk/sentinelq7zk",
+            "/API/V1/KBLI-NOTEBOOK/sentinelq7zk/x",
+        ],
+    )
+    def test_redacts_a_descendant_of_a_public_base_whatever_its_depth(self, path):
+        sanitized = sanitize_log_path(path)
+
+        assert "sentinelq7zk" not in sanitized.lower()
+        assert sanitized.endswith("/[REDACTED]")
+
     def test_keeps_fixed_routes_that_share_a_token_route_shape(self):
         for path in ("/api/visa/clock/email", "/api/news/bulk", "/api/portal/invite/complete"):
             assert sanitize_log_path(path) == path

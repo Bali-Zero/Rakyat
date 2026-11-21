@@ -14,7 +14,7 @@ import re
 import pytest
 
 from backend.app.auth.public_endpoints import PUBLIC_ENDPOINTS, find_entry
-from backend.app.utils.logging_utils import sanitize_log_path
+from backend.app.utils.logging_utils import _LITERAL_SIBLINGS, sanitize_log_path
 
 SYNTHETIC = "synthval7f3a9c2e"
 _PARAM = re.compile(r"\{[^/}]+\}")
@@ -73,10 +73,6 @@ def test_every_registry_entry_with_a_parameter_loses_its_value():
             concrete = entry.prefix + SYNTHETIC
         else:
             continue
-        if entry.prefix in ("/api/bridge/", "/api/v1/kbli-notebook/", "/preview/"):
-            # Route families, not a parameter: their mounted routes are
-            # checked one by one by the test above.
-            continue
         if SYNTHETIC in sanitize_log_path(concrete):
             leaked.append(entry.prefix)
     assert not leaked, f"registry entries whose path value reaches the log: {leaked}"
@@ -89,3 +85,48 @@ def test_fixed_routes_are_logged_unchanged(mounted_routes):
         if "{" not in path and sanitize_log_path(path) != path
     ]
     assert not rewritten, f"fixed routes rewritten by the sanitizer: {rewritten}"
+
+
+SENTINEL = "sentinelq7zk"
+
+
+def _descendants(prefix: str, match: str):
+    if "{" in prefix:
+        concrete = _PARAM.sub(SENTINEL, prefix)
+        yield concrete
+        yield concrete + "/"
+        yield concrete + "/extra"
+        yield concrete.replace(SENTINEL, SENTINEL + "%2Fextra", 1)
+        base = prefix[: prefix.index("{")]
+    elif match == "prefix":
+        base = prefix
+    else:
+        return
+    root = base.rstrip("/")
+    yield f"{root}/{SENTINEL}"
+    yield f"{root}/{SENTINEL}/"
+    yield f"{root}/{SENTINEL}/extra"
+    yield f"{root}/extra/{SENTINEL}"
+    yield f"{root}/{SENTINEL}%2Fextra.html"
+    yield f"{root}/{SENTINEL}%2fextra"
+    yield f"{root}//{SENTINEL}//extra"
+    yield f"{root}/{SENTINEL}/extra".upper()
+    if not base.endswith("/"):
+        yield f"{root}{SENTINEL}"
+
+
+def test_no_descendant_of_a_public_prefix_or_parameter_keeps_a_caller_value():
+    leaked = []
+    checked = 0
+    for entry in PUBLIC_ENDPOINTS:
+        for path in _descendants(entry.prefix, entry.match):
+            checked += 1
+            if SENTINEL in sanitize_log_path(path).lower():
+                leaked.append(path)
+    assert checked >= 300, f"only {checked} descendants were built"
+    assert not leaked, "descendants recorded with their value:\n  " + "\n  ".join(leaked)
+
+
+def test_every_named_fixed_route_is_mounted(mounted_routes):
+    mounted = {path for path, _ in mounted_routes}
+    assert not _LITERAL_SIBLINGS - mounted, sorted(_LITERAL_SIBLINGS - mounted)

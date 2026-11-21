@@ -295,6 +295,32 @@ async def test_token_routes_keep_one_bucket_per_path_without_the_token(
 
 
 @pytest.mark.asyncio
+async def test_bucket_name_of_a_guessable_id_is_a_keyed_digest(
+    middleware: RateLimitMiddleware, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    limiter_mock = MagicMock()
+    limiter_mock.is_allowed = MagicMock(
+        return_value=(True, {"limit": 120, "remaining": 119, "reset": 1})
+    )
+    monkeypatch.setattr("backend.middleware.rate_limiter.rate_limiter", limiter_mock)
+    raw_path = "/api/hr/late-reply/1042"
+
+    request = _make_request(raw_path, user=None, client_host="203.0.113.5")
+    await middleware.dispatch(request, AsyncMock(return_value=MagicMock(headers={})))
+    key = limiter_mock.is_allowed.call_args.args[0]
+
+    assert "1042" not in key.split("#")[0]
+    full = hashlib.sha256(raw_path.encode("utf-8")).hexdigest()
+    assert full[:16] not in key
+    assert hash_subject(raw_path) not in key
+
+    await middleware.dispatch(request, AsyncMock(return_value=MagicMock(headers={})))
+    assert limiter_mock.is_allowed.call_args.args[0] == key
+
+
+@pytest.mark.asyncio
 async def test_private_visa_429_log_omits_client_identity(
     middleware: RateLimitMiddleware,
     monkeypatch: pytest.MonkeyPatch,
