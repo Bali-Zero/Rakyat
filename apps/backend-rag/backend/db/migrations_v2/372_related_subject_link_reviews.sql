@@ -42,3 +42,5 @@ COMMENT ON TABLE related_subject_link_reviews IS
     'History of human decisions on proposed registry links, insert-only by application rule. The latest (created_at, id) per subject and client is the effective review.';
 
 -- === ROLLBACK ===
+
+DROP TABLE IF EXISTS related_subject_link_reviews;
