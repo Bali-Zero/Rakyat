@@ -17,7 +17,7 @@ import tempfile
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, Literal, NoReturn
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -50,6 +50,11 @@ from backend.services.accounting.matcher import (
     OpenInvoice,
     extract_payer_name,
     rank_candidates,
+)
+from backend.services.accounting.outgoing_justify import (
+    OutgoingError,
+    justify_outgoing,
+    undo_justification,
 )
 from backend.services.accounting.outgoings import load_outgoings
 from backend.services.accounting.reconcile_service import ReconcileError
@@ -603,13 +608,79 @@ async def reconciliation_inbox(
 @router.get("/outgoings")
 async def outgoings(
     limit: int = Query(1000, ge=1, le=5000),
+    state: Literal["to_justify", "justified", "all"] = Query("to_justify"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Debits still to justify, newest first, with the bank text read apart. Reads only."""
+    """Debits newest first, each with its state and justification, bank text read apart."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        return await load_outgoings(conn, limit=limit)
+        return await load_outgoings(conn, limit=limit, state=state)
+
+
+class JustifyLine(BaseModel):
+    amount_idr: int = Field(gt=0)
+    category: str
+    note: str
+    practice_id: int | None = Field(None, gt=0)
+
+
+class JustifyOutgoingRequest(BaseModel):
+    category: str
+    practice_id: int | None = Field(None, gt=0)
+    recipient: str | None = None
+    note: str | None = None
+    lines: list[JustifyLine] | None = None
+
+
+@router.post("/outgoings/{txn_id}/justify")
+async def justify_outgoing_route(
+    txn_id: int,
+    payload: JustifyOutgoingRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Justify one bank debit (append-only log). Writes nothing to the cash-out."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await justify_outgoing(
+                conn,
+                txn_id=txn_id,
+                category=payload.category,
+                practice_id=payload.practice_id,
+                recipient=payload.recipient,
+                note=payload.note,
+                lines=[ln.model_dump() for ln in payload.lines] if payload.lines else None,
+                justified_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except asyncpg.UniqueViolationError as exc:  # a parallel justify won the race
+        raise HTTPException(
+            status_code=409, detail="this debit is already justified: undo it first"
+        ) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+
+
+@router.post("/outgoings/{txn_id}/undo")
+async def undo_outgoing_justification(
+    txn_id: int,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Take back a justification made today (WITA), as undo-confirmation does. Deletes nothing."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await undo_justification(
+                conn, txn_id=txn_id, undone_by=(current_user.get("email") or "unknown").lower()
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
 
 
 @router.get("/companies")
