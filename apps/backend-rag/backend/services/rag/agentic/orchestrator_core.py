@@ -30,6 +30,7 @@ from backend.prompts.channel_overlays import apply_channel_overlay
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.common.background import spawn
 from backend.services.llm_clients.pricing import TokenUsage
+from backend.services.rag.agentic._memory_identity import is_non_personal_memory_identity
 from backend.services.rag.agentic.entity_extractor import EntityExtractionService
 from backend.services.rag.agentic.llm_gateway import LLMGateway
 from backend.services.rag.agentic.memory_handler import MemoryHandler
@@ -112,6 +113,23 @@ _E33_CLAIM_GUARD_ENFORCE = os.getenv("E33_CLAIM_GUARD_ENFORCE", "false").lower()
     "1",
     "yes",
 )
+
+
+def _kg_expansion_allowed(user_id: str | None) -> bool:
+    """Whether this turn may feed KG auto-expansion at all.
+
+    Expansion stages entities in the SHARED knowledge graph. Two of its inputs
+    can carry the asker's own words: the raw query (its fallback when a turn
+    has no source chunks) and tool output that echoes the query back, such as
+    the KG tool's "no entity found for <term>", which arrives as a source
+    chunk. For an identity that stands for many people (the anonymous blog
+    visitor, ``anonymous``, the WA mirror) either one turns one person's words
+    into staged global facts that can reach everyone else after promotion.
+    Found by the cross-family gates on Rakyat #542 and #545 (2026-11-21).
+    A shared identity's turn therefore stages nothing; personal identities
+    keep today's behaviour.
+    """
+    return not is_non_personal_memory_identity(user_id)
 
 
 def _apply_e33_claim_guard(result: CoreResult) -> None:
@@ -1769,7 +1787,12 @@ class OrchestratorCore:
         # 14. [GraphRAG v6] KG Auto-Expansion (fire-and-forget)
         # Extract from SOURCE CHUNKS, not from LLM response — avoids feedback loop.
         evidence_score_val = getattr(state, "evidence_score", evidence_score)
-        if self._kg_auto_expansion and evidence_score_val and evidence_score_val > 0.6:
+        if (
+            self._kg_auto_expansion
+            and _kg_expansion_allowed(user_id)
+            and evidence_score_val
+            and evidence_score_val > 0.6
+        ):
             # Collect source chunk texts from tool results
             source_chunks_text = self._extract_source_chunks_text(state)
             source_chunk_ids = [
