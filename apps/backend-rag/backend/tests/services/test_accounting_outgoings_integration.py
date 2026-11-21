@@ -223,6 +223,37 @@ async def test_a_reference_shared_by_two_transfers_pairs_no_fee(db) -> None:
     assert by_id[fee]["fee_of_txn_id"] is None
 
 
+async def test_the_limit_never_makes_a_shared_reference_look_unique(db) -> None:
+    """Gate 555 round 1: two transfers under one reference, the limit hiding one of them."""
+    sid = await _statement(db)
+    older = datetime(2026, 11, 20, 10, 0, 0)
+    await _row(db, sid, "transfer_out", 1_000_000, TRANSFER, older, reference="R1")
+    newer = older.replace(day=21)
+    transfer = await _row(db, sid, "transfer_out", 2_000_000, TRANSFER, newer, reference="R1")
+    fee = await _row(db, sid, "transfer_fee", 2_500, "x", newer, reference="R1")
+    listed = (await load_outgoings(db, limit=2))["items"]
+    assert [i["id"] for i in listed] == [fee, transfer]
+    assert listed[0]["fee_of_txn_id"] is None
+    assert listed[0]["reading"] == {"label": "Transfer fee", "detail": "x"}
+
+
+async def test_a_fee_pairs_with_its_transfer_even_when_that_transfer_is_not_listed(db) -> None:
+    sid = await _statement(db)
+    at = datetime(2026, 11, 21, 10, 0, 0)
+    justified = await _row(
+        db, sid, "transfer_out", 1_000_000, TRANSFER, at, reference="R1", status="manual"
+    )
+    beyond = await _row(
+        db, sid, "transfer_out", 1_000_000, TRANSFER, at.replace(day=1), reference="R2"
+    )
+    fee1 = await _row(db, sid, "transfer_fee", 2_500, "x", at, reference="R1")
+    fee2 = await _row(db, sid, "transfer_fee", 2_500, "x", at.replace(day=2), reference="R2")
+    by_id = {i["id"]: i for i in (await load_outgoings(db, limit=2))["items"]}
+    assert set(by_id) == {fee1, fee2}
+    assert (by_id[fee1]["fee_of_txn_id"], by_id[fee2]["fee_of_txn_id"]) == (justified, beyond)
+    assert by_id[fee1]["reading"]["payee"] == "CONTOH PENERIMA"
+
+
 async def test_an_account_no_company_owns_is_other_and_the_limit_bounds_the_list(db) -> None:
     sid = await _statement(db, account="000-NOT-OURS")
     at = datetime(2026, 11, 21, 10, 0, 0)

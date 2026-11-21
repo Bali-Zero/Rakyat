@@ -64,15 +64,28 @@ async def load_outgoings(conn: asyncpg.Connection, *, limit: int = 1000) -> dict
 
     A transfer fee is paired with the transfer of the same statement that carries the same bank
     "Other Reference" (the bank posts both under one; 60 of 60 unique on 2026-11-21); the fee
-    then carries that transfer's id and payee. A fee with no such transfer stays unpaired.
+    then carries that transfer's id and payee. A fee with no such transfer, or with two, stays
+    unpaired. The transfer may be listed or not (justified, or beyond the limit).
     """
+    # The pair is looked for among ALL rows of the statement, not only the listed ones: a
+    # reference shared by two transfers stays unpaired even when the limit hides one of them.
     rows = await conn.fetch(
         """
-        SELECT bt.id, bt.statement_id, bt.txn_date, bt.posted_at, bt.amount_idr, bt.kind,
-               bt.description, bt.raw_row->>'Payment Type' AS payment_type,
-               NULLIF(btrim(bt.raw_row->>'Other Reference'), '') AS reference, bs.account_number
+        SELECT bt.id, bt.txn_date, bt.posted_at, bt.amount_idr, bt.kind, bt.description,
+               bt.raw_row->>'Payment Type' AS payment_type, bs.account_number,
+               CASE WHEN pair.n = 1 THEN pair.id END AS fee_of_txn_id,
+               CASE WHEN pair.n = 1 THEN pair.description END AS fee_of_description
         FROM bank_transactions bt
         LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
+        LEFT JOIN LATERAL (
+            SELECT count(*) AS n, min(t.id) AS id, min(t.description) AS description
+            FROM bank_transactions t
+            WHERE bt.kind = 'transfer_fee'
+              AND t.kind = 'transfer_out'
+              AND t.statement_id = bt.statement_id
+              AND NULLIF(btrim(t.raw_row->>'Other Reference'), '')
+                  = NULLIF(btrim(bt.raw_row->>'Other Reference'), '')
+        ) pair ON true
         WHERE bt.direction = 'debit' AND bt.reconciled_status = 'unmatched'
         ORDER BY bt.txn_date DESC, bt.posted_at DESC NULLS LAST, bt.id DESC
         LIMIT $1
@@ -89,34 +102,26 @@ async def load_outgoings(conn: asyncpg.Connection, *, limit: int = 1000) -> dict
         """
     )
     items: list[dict[str, Any]] = []
-    by_reference: dict[tuple[Any, str], dict[str, list[dict[str, Any]]]] = {}
     for r in rows:
         kind = r["kind"] or "other"
-        item = {
-            "id": r["id"],
-            "txn_date": r["txn_date"],
-            "posted_at": r["posted_at"],
-            "amount_idr": int(r["amount_idr"]),
-            "kind": kind,
-            "description": r["description"] or "",
-            "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
-            "reading": read_outgoing(kind, r["description"] or "", r["payment_type"]),
-            "fee_of_txn_id": None,
-        }
-        if kind in ("transfer_out", "transfer_fee") and r["reference"] is not None:
-            group = by_reference.setdefault((r["statement_id"], r["reference"]), {})
-            group.setdefault(kind, []).append(item)
-        items.append(item)
-    for group in by_reference.values():
-        transfers = group.get("transfer_out", [])
-        if len(transfers) != 1:
-            continue  # no transfer, or more than one: the fee is not ours to attribute
-        transfer = transfers[0]
-        for fee in group.get("transfer_fee", []):
-            payee = transfer["reading"].get("payee")
-            fee["fee_of_txn_id"] = transfer["id"]
-            fee["reading"]["payee"] = payee
-            fee["reading"]["detail"] = f"fee of the transfer to {payee}"
+        reading = read_outgoing(kind, r["description"] or "", r["payment_type"])
+        if r["fee_of_txn_id"] is not None:
+            payee = read_outgoing("transfer_out", r["fee_of_description"] or "", None).get("payee")
+            reading["payee"] = payee
+            reading["detail"] = f"fee of the transfer to {payee}"
+        items.append(
+            {
+                "id": r["id"],
+                "txn_date": r["txn_date"],
+                "posted_at": r["posted_at"],
+                "amount_idr": int(r["amount_idr"]),
+                "kind": kind,
+                "description": r["description"] or "",
+                "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
+                "reading": reading,
+                "fee_of_txn_id": r["fee_of_txn_id"],
+            }
+        )
     by_kind = [
         {
             "kind": t["kind"],
