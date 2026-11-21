@@ -490,7 +490,20 @@ def detect_query_language(query: str) -> str:
 
     # Cyrillic (Russian/Ukrainian)
     if any("\u0400" <= char <= "\u04ff" for char in query):
-        if any(word in query_lower for word in ["привіт", "як", "справи", "добре", "дякую"]):
+        # Red-team 2026-11-20 (2/9 Russian questions answered in Ukrainian on
+        # /api/blog/ask): the marker test below reads "добре" inside the Russian
+        # "одобрение"/"одобрена". Two gates blocked every attempt to restrict
+        # WHERE a marker may sit, because each one also lost Ukrainian words the
+        # substring test caught (недобре, завдяки, подякувати). So the marker
+        # test stays exactly as it was and two letter checks run first. Each is
+        # a letter the other language does not have: Ukrainian has no ыэъё and
+        # Russian has no іїєґ. Neither can flip a monolingual sentence away from
+        # the language it is written in.
+        if re.search(r"[ыэъё]", query_lower):
+            return "RUSSIAN"
+        if re.search(r"[іїєґ]", query_lower) or any(
+            word in query_lower for word in ["привіт", "як", "справи", "добре", "дякую"]
+        ):
             return "UKRAINIAN"
         return "RUSSIAN"
 
