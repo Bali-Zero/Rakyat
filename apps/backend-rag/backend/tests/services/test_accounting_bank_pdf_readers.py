@@ -567,6 +567,8 @@ def _bni_with_line(*tokens: str) -> list[list[Word]]:
         ("No.", "Rekening", ":", "0000", "0000", "02"),
         ("NOMOR", "REKENING", "0000000002"),
         ("Account", ":", "0000000001/PT", "CONTOH", "(", "USD", ")"),
+        ("Account0000000002/PT", "CONTOH", "(", "IDR", ")"),
+        ("ACCOUNT:0000000002",),
     ],
 )
 def test_bni_another_account_line_in_any_spelling_is_refused(tokens) -> None:
@@ -581,11 +583,31 @@ def test_bni_another_account_line_in_any_spelling_is_refused(tokens) -> None:
         ("Account", "No.", ":", "0000000001"),
         ("account", ":", "0000", "0000", "01", "(", "idr", ")"),
         ("Account", "Information"),
+        ("account", ":", "0000000001", "(", ")"),
+        ("Account0000000001",),
     ],
 )
 def test_bni_the_same_account_in_any_spelling_reads_as_one_statement(tokens) -> None:
     stmt = parse_bni_pages(_bni_with_line(*tokens))
     assert stmt.account_number == ACCOUNT and len(stmt.transactions) == 3
+
+
+def test_bni_a_blank_currency_reads_as_idr_on_every_account_line() -> None:
+    # the readers accept a blank currency as IDR: a blank and an IDR line name the same currency
+    for first, later in (("", "IDR"), ("IDR", "")):
+        page = _bni(B_ROWS, currency=first)
+        y = max(w.top for w in page) + 40
+        line = ["Account", ":", "0000000001", "(", *([later] if later else []), ")"]
+        extra = [Word(t, 97 + 45 * i, 97 + 45 * i + 40, y) for i, t in enumerate(line)]
+        assert len(parse_bni_pages([page + extra]).transactions) == 3
+    page = _bni(B_ROWS, currency="")
+    y = max(w.top for w in page) + 40
+    usd = [
+        Word(t, 97 + 45 * i, 97 + 45 * i + 40, y)
+        for i, t in enumerate(["Account", ":", "0000000001", "(", "USD", ")"])
+    ]
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages([page + usd])
 
 
 def test_bni_a_description_that_mentions_another_account_never_refuses_the_file() -> None:

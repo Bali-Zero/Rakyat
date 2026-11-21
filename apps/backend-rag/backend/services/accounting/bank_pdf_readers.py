@@ -105,13 +105,18 @@ def _text(words: list[Word]) -> str:
 # spaces, dots and dashes are removed, on a line that starts left of the reader's description
 # column (so a description that mentions an account is never one).
 _ACCOUNT_LINE_RE = re.compile(
-    r"(?:a/c|acc(?:oun)?t|acc|no\.?\s*rek(?:ening)?|nomor\s+rekening|rekening)\b\.?"
-    r"(?:\s*(?:no|number|nomor)\b\.?)?"
+    r"(?:a/c|acc(?:oun)?t|acc|no\.?\s*rek(?:ening)?|nomor\s+rekening|rekening)(?![a-z])\.?"
+    r"(?:\s*(?:no|number|nomor)(?![a-z])\.?)?"
     r"[\s:.]*(\d[\d .\-]*\d)",
     re.IGNORECASE,
 )
 _ACCOUNT_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]*)\s*\)")
 _MORE_THAN_ONE_ACCOUNT = "file holds more than one account: upload one statement per file"
+
+
+def _currency(printed: str) -> str:
+    """A printed currency code; a blank one reads as IDR, as the readers already accept it."""
+    return printed.strip().upper() or "IDR"
 
 
 def _account_lines(words: list[Word], left_limit: float) -> list[tuple[str, str | None, str]]:
@@ -128,7 +133,7 @@ def _account_lines(words: list[Word], left_limit: float) -> list[tuple[str, str 
         if len(digits) < 6:
             continue
         cur = _ACCOUNT_CURRENCY_RE.search(text, m.end())
-        found.append((digits, cur.group(1).upper() if cur else None, text))
+        found.append((digits, _currency(cur.group(1)) if cur else None, text))
     return found
 
 
@@ -787,7 +792,7 @@ def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
                 if not m or m.group(1) != digits:
                     raise BankParseError("statement header has no account")
                 account = (digits, m.group(2).strip(), m.group(3).upper())
-            elif digits != account[0] or (cur is not None and cur != account[2]):
+            elif digits != account[0] or (cur is not None and cur != _currency(account[2])):
                 raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         flags = sorted(
             (
