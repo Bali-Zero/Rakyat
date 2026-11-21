@@ -6,7 +6,10 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import AccountingPage from "../page";
-import { accountingApi } from "@/lib/api/workspace/accounting.api";
+import {
+  accountingApi,
+  type CashoutRow,
+} from "@/lib/api/workspace/accounting.api";
 import { importFixture, inboxItem, previewFixture } from "./fixtures";
 
 // Stable identities: the page's load callbacks depend on them.
@@ -92,6 +95,55 @@ describe("AccountingPage", () => {
     );
     expect(await screen.findByText("CONTOH TRANSFER")).toBeInTheDocument();
     expect(api.importBankStatement).not.toHaveBeenCalled();
+  });
+
+  it("the cashout Process column names the case's service before the raw type", async () => {
+    const row = (id: number, extra: Partial<CashoutRow>): CashoutRow => ({
+      id,
+      movement_date: "2026-06-25",
+      week_label: "2026-W26",
+      direction: "in",
+      type: "invoice_payment",
+      amount_idr: 1000000,
+      pnbp_idr: 0,
+      urgent_idr: 0,
+      rptka_imta_idr: 0,
+      margin_idr: 0,
+      final_price_idr: 1000000,
+      original_currency: null,
+      original_amount: null,
+      fx_rate: null,
+      fx_date: null,
+      pph_withheld_idr: 0,
+      bank_fee_idr: 0,
+      linked_practice_id: null,
+      linked_invoice_id: null,
+      category: null,
+      description: null,
+      counterparty: null,
+      payment_method: null,
+      recorded_by: null,
+      recorded_at: null,
+      reversed_by_id: null,
+      client_name: `CONTOH KLIEN ${id}`,
+      ...extra,
+    });
+    api.getCashout.mockResolvedValue([
+      row(1, { service_name: "Contoh Layanan" }),
+      row(2, { category: "Contoh Kategori", service_name: "Contoh Layanan" }),
+      row(3, {}),
+    ]);
+    render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    const cells = async (name: string) =>
+      Array.from(
+        (await screen.findByText(name)).closest("tr")?.querySelectorAll("td") ??
+          [],
+      ).map((td) => td.textContent);
+    expect((await cells("CONTOH KLIEN 1"))[2]).toBe("Contoh Layanan");
+    expect((await cells("CONTOH KLIEN 2"))[2]).toBe("Contoh Kategori");
+    expect((await cells("CONTOH KLIEN 3"))[2]).toBe("invoice_payment");
   });
 
   it("U6: the cashout import still calls importCashout with the chosen file", async () => {
