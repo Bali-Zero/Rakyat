@@ -137,6 +137,82 @@ async def test_reopening_a_link_keeps_the_date_a_confirmation_wrote(db) -> None:
     )
 
 
+async def _confirm_on(conn, tx, pid, iid, day: date):
+    return await confirm_payment(
+        conn,
+        bank_txn_id=tx,
+        practice_id=pid,
+        invoice_id=iid,
+        amount_applied_idr=4_000_000,
+        new_status="paid",
+        confirmed_by=WHO,
+        movement_date=day,
+    )
+
+
+async def test_an_older_transfer_confirmed_after_a_newer_link_keeps_the_newer_date(
+    db,  # noqa: F811
+) -> None:
+    """An invoice paid in parts is paid on its latest part, whichever action recorded it."""
+    conn, _ = db
+    pid, iid = await _practice(conn, "paid", amount=8_000_000)
+    later = await _bank_on(conn, date(2026, 6, 25))
+    earlier = await _bank_on(conn, date(2026, 6, 10))
+    await _link(conn, later, pid, iid)
+    await _confirm_on(conn, earlier, pid, iid, date(2026, 6, 10))
+    assert await _paid_date(conn, iid) == _utc(date(2026, 6, 25))
+    standing = await conn.fetch(
+        "SELECT linked_bank_txn_id FROM weekly_cashout WHERE reversed_by_id IS NULL ORDER BY id"
+    )
+    assert [r["linked_bank_txn_id"] for r in standing] == [later, earlier]
+
+
+async def test_an_older_confirmation_after_a_newer_one_keeps_the_newer_date(db) -> None:  # noqa: F811
+    conn, _ = db
+    pid, iid = await _practice(conn, "partial", amount=8_000_000)
+    later = await _bank_on(conn, date(2026, 6, 25))
+    earlier = await _bank_on(conn, date(2026, 6, 10))
+    await _confirm_on(conn, later, pid, iid, date(2026, 6, 25))
+    await _confirm_on(conn, earlier, pid, iid, date(2026, 6, 10))
+    assert await _paid_date(conn, iid) == _utc(date(2026, 6, 25))
+
+
+@pytest.mark.parametrize("first", ["link", "confirm"])
+async def test_a_link_and_a_confirmation_crossing_on_one_invoice_keep_the_latest_date(
+    db,  # noqa: F811
+    first,
+) -> None:
+    """Either action parked while holding the practice, the other queued on it: the invoice
+    ends on the later transfer's date whichever commits last."""
+    conn, dbname = db
+    pid, iid = await _practice(conn, "paid", amount=8_000_000)
+    later = await _bank_on(conn, date(2026, 6, 25))
+    earlier = await _bank_on(conn, date(2026, 6, 10))
+
+    def do_link(x):
+        return _link(x, later, pid, iid)
+
+    def do_confirm(x):
+        return _confirm_on(x, earlier, pid, iid, date(2026, 6, 10))
+
+    if first == "link":
+        await _park_trigger(
+            conn, "bank_transactions", 11, "WHEN (NEW.reconciled_status = 'manual')"
+        )
+        pair = (do_link, do_confirm)
+    else:
+        await _park_trigger(conn, "practices", 11)
+        pair = (do_confirm, do_link)
+    async with _Conns(conn, dbname) as c:
+        a, b = await _crossing(c, 11, *pair)
+    assert not isinstance(a, BaseException), a
+    assert not isinstance(b, BaseException), b
+    assert await _paid_date(conn, iid) == _utc(date(2026, 6, 25))
+    assert (
+        await conn.fetchval("SELECT count(*) FROM weekly_cashout WHERE reversed_by_id IS NULL") == 2
+    )
+
+
 async def test_link_reopen_link_counts_the_transfer_once_in_the_cashout_and_its_summary(
     db,  # noqa: F811
 ) -> None:

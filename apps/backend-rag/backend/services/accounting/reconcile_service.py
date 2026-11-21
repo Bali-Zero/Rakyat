@@ -222,11 +222,16 @@ async def confirm_payment(
         #    money landed: the transfer's date when it is known (a statement row has a date only,
         #    so midnight UTC whatever the session time zone: the same calendar day in UTC, where
         #    production reports group by month, and in Bali), the confirmation time otherwise.
+        #    An invoice paid in parts is paid on its LATEST part: an older transfer confirmed
+        #    after a newer one, confirmed or linked, keeps the newer date (link_recorded does
+        #    the same).
         if invoice_id is not None:
             await conn.execute(
                 """
                 UPDATE invoices
-                SET paid_date = COALESCE(($5::date)::timestamp AT TIME ZONE 'UTC', now()),
+                SET paid_date = GREATEST(
+                        paid_date, COALESCE(($5::date)::timestamp AT TIME ZONE 'UTC', now())
+                    ),
                     payment_method = $1,
                     payment_reference = $2,
                     paid_amount_idr = COALESCE(paid_amount_idr, 0) + $3
