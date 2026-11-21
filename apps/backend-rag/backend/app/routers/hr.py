@@ -111,6 +111,10 @@ class LeaveRequestCreate(BaseModel):
         if self.start_date > self.end_date:
             msg = "start_date must be on or before end_date"
             raise ValueError(msg)
+        calendar_days = (self.end_date - self.start_date).days + 1
+        if self.total_days > calendar_days:
+            msg = "total_days cannot exceed the calendar days from start_date to end_date"
+            raise ValueError(msg)
         return self
 
 
