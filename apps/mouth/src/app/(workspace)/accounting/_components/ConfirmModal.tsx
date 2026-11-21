@@ -192,8 +192,9 @@ export function ConfirmModal({
         <p className="mt-4 text-xs text-[var(--state-warning)]">
           Confirming records this payment on the practice, the invoice and the
           cashout. It cannot be undone from this page.
-          {historical &&
-            " Historical mode: no email goes to the client or the team."}
+          {historical
+            ? " Historical mode: no email goes to the client or the team."
+            : " Paid in full, a case waiting for payment moves to On Process."}
         </p>
 
         <div className="mt-6 flex justify-end gap-2">

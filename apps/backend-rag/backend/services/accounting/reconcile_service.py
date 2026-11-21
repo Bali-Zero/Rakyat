@@ -73,6 +73,49 @@ def _require_issuer(company: str, issuer_entity_key: str | None, bank_txn_id: in
         )
 
 
+# What the CRM writes when a case enters On Process by hand (crm_practices STATUS_TIMELINE_EVENTS
+# and its activity row): the client's timeline entry and the card's status history.
+START_TIMELINE_EVENT = ("milestone", "Application in process", "info")
+_UNDEFINED_TABLE = "42P01"
+
+
+async def _record_start(conn: asyncpg.Connection, prac: asyncpg.Record, by: str) -> None:
+    """The client timeline entry and the activity row of a case that starts on confirmation."""
+    # As the CRM PATCH: bool(client_visible), so a NULL visibility writes no entry.
+    if prac["client_id"] is not None and bool(prac["client_visible"]):
+        event_type, title, color = START_TIMELINE_EVENT
+        try:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO timeline_events (
+                        client_id, practice_id, event_type, title, description,
+                        event_date, client_visible, color, created_by
+                    )
+                    VALUES ($1, $2, $3, $4, $5, NOW(), true, $6, $7)
+                    """,
+                    prac["client_id"],
+                    prac["id"],
+                    event_type,
+                    title,
+                    prac["client_summary"] or "Status: on_process",
+                    color,
+                    by,
+                )
+        except asyncpg.PostgresError as exc:
+            if getattr(exc, "sqlstate", None) != _UNDEFINED_TABLE:
+                raise
+    await conn.execute(
+        """
+        INSERT INTO activity_log (entity_type, entity_id, action, performed_by, description, changes)
+        VALUES ('practice', $1, 'updated', $2, 'Updated: status', $3)
+        """,
+        prac["id"],
+        by,
+        {"status": "on_process"},  # a dict: the pool's jsonb codec encodes it
+    )
+
+
 def _iso_week_label(d: date) -> str:
     """A human week label like Asya's tabs, derived from ISO week."""
     iso = d.isocalendar()
@@ -156,12 +199,17 @@ async def confirm_payment(
 
         # 1. Read current practice state (lock the row) — verify it exists.
         prac = await conn.fetchrow(
-            "SELECT id, payment_status, paid_amount FROM practices WHERE id = $1 FOR UPDATE",
+            "SELECT id, payment_status, paid_amount, status, client_id, client_visible,"
+            " client_summary FROM practices WHERE id = $1 FOR UPDATE",
             practice_id,
         )
         if prac is None:
             raise ReconcileError(f"practice {practice_id} not found")
         status_before = prac["payment_status"]
+        # Owner rule (a): paid in full, a case waiting for payment starts. A historical
+        # confirmation never moves the case: the listener recognises it only while the
+        # case's status is unchanged, and an old payment must not email anyone.
+        starts = not historical and new_status == "paid" and prac["status"] == "sending_invoice"
         prior_paid = int(prac["paid_amount"] or 0)
         new_paid = prior_paid + amount_applied_idr
 
@@ -203,20 +251,39 @@ async def confirm_payment(
                     _require_issuer(company, row["issuer_entity_key"], bank_txn_id, row["id"])
 
         # 2. Update practices — SAME columns/path the CRM PATCH writes (superscar #9).
-        #    The invoice amount fills actual_price only while it is still NULL.
-        await conn.execute(
-            """
-            UPDATE practices
-            SET payment_status = $1, paid_amount = $2,
-                actual_price = COALESCE(actual_price, $4),
-                updated_at = now()
-            WHERE id = $3
-            """,
-            new_status,
-            new_paid,
-            practice_id,
-            invoice_amount,
-        )
+        #    The invoice amount fills actual_price only while it is still NULL. A case that
+        #    starts moves in the SAME statement, so the listener sees payment and start as one
+        #    change and sends only the payment emails (the start mail is skipped when paid).
+        if starts:
+            await conn.execute(
+                """
+                UPDATE practices
+                SET payment_status = $1, paid_amount = $2,
+                    actual_price = COALESCE(actual_price, $4),
+                    status = 'on_process', start_date = COALESCE(start_date, NOW()),
+                    updated_at = now()
+                WHERE id = $3
+                """,
+                new_status,
+                new_paid,
+                practice_id,
+                invoice_amount,
+            )
+            await _record_start(conn, prac, confirmed_by)
+        else:
+            await conn.execute(
+                """
+                UPDATE practices
+                SET payment_status = $1, paid_amount = $2,
+                    actual_price = COALESCE(actual_price, $4),
+                    updated_at = now()
+                WHERE id = $3
+                """,
+                new_status,
+                new_paid,
+                practice_id,
+                invoice_amount,
+            )
 
         # 3. Fill invoice payment fields, if an invoice is linked. The invoice was paid when the
         #    money landed: the transfer's date when it is known (a statement row has a date only,
