@@ -14,7 +14,7 @@ from typing import Any
 
 import asyncpg
 
-from backend.services.invoicing.entities import ENTITIES
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 
 OTHER_KEY = "other"
 
@@ -36,6 +36,15 @@ def company_key_for_account(account_number: str | None) -> str | None:
         if _digits(entity.bank_account_number) == digits:
             return entity.key
     return None
+
+
+def company_key_for_issuer(issuer_entity_key: str | None) -> str:
+    """The company that issued an invoice: its stored issuer, or the default issuer when NULL.
+
+    Invoices made before issuer routing carry NULL and were issued by the default company, the
+    rule the invoice service itself applies to them.
+    """
+    return issuer_entity_key or DEFAULT_ENTITY_KEY
 
 
 def _later(a: date | None, b: date | None) -> date | None:

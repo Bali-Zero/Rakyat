@@ -28,6 +28,7 @@ from backend.services.accounting.reconcile_service import (
 )
 from backend.services.crm.practice_status_listener import PracticeStatusListener
 from backend.tests.services.test_accounting_reconcile_integration import (
+    DEFAULT_COMPANY_STATEMENT_SQL,
     _base_dsn,
     _connect,
     _drop_db,
@@ -108,9 +109,7 @@ class _Db:
             pid,
             f"INV-TEST-{n}",
         )
-        stmt = await self.conn.fetchval(
-            "INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id"
-        )
+        stmt = await self.conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
         txid = await self.conn.fetchval(
             "INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction)"
             " VALUES ($1, '2026-01-10', 1500000, 'credit') RETURNING id",

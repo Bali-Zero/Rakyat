@@ -24,6 +24,7 @@ from backend.services.accounting.reconcile_service import (
     link_recorded,
 )
 from backend.tests.services.test_accounting_reconcile_integration import (
+    DEFAULT_COMPANY_STATEMENT_SQL,
     _base_dsn,
     _drop_db,
     _fresh_db,
@@ -56,9 +57,7 @@ class _Bank:
     async def row(self, day: date, amount: int, direction: str = "credit") -> int:
         """A row of an imported statement, waiting in the inbox."""
         if self.statement is None:
-            self.statement = await self.conn.fetchval(
-                "INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id"
-            )
+            self.statement = await self.conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
         return await self.conn.fetchval(
             "INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction)"
             " VALUES ($1, $2, $3, $4) RETURNING id",

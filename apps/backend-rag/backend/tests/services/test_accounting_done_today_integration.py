@@ -20,7 +20,11 @@ from backend.services.accounting.reconcile_service import (
     link_recorded,
     reopen_transaction,
 )
-from backend.tests.services.test_accounting_reconcile_integration import _drop_db, _fresh_db
+from backend.tests.services.test_accounting_reconcile_integration import (
+    DEFAULT_COMPANY_STATEMENT_SQL,
+    _drop_db,
+    _fresh_db,
+)
 
 WHO = "SENTINEL-WHO@example.test"
 TABLES = (
@@ -79,9 +83,7 @@ async def _practice(conn, *, paid: bool, client: str | None = "PT CONTOH SATU", 
 async def _bank(conn, *, direction="credit") -> int:
     sid = await conn.fetchval("SELECT id FROM bank_statements ORDER BY id LIMIT 1")
     if sid is None:
-        sid = await conn.fetchval(
-            "INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id"
-        )
+        sid = await conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
     return await conn.fetchval(
         "INSERT INTO bank_transactions (statement_id, txn_date, description, amount_idr, direction)"
         " VALUES ($1, $2, 'TRF PT CONTOH SATU', 4000000, $3) RETURNING id",
@@ -291,7 +293,9 @@ async def test_a_missing_invoice_or_a_practice_without_client_gives_nulls_not_a_
     conn = db
     no_invoice, gone_invoice, no_client = await _bank(conn), await _bank(conn), await _bank(conn)
 
-    p1, _ = await _practice(conn, paid=False, invoice=False)
+    # A confirmation that names no invoice. Its practice has one: a transfer settles only
+    # invoices of the company whose account it reached, so a practice with none is refused.
+    p1, _ = await _practice(conn, paid=False)
     await _stamp(conn, await _confirm(conn, no_invoice, p1, None), IN_WINDOW)
 
     p2, i2 = await _practice(conn, paid=False)

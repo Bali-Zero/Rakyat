@@ -40,6 +40,7 @@ from backend.services.accounting.bank_pdf_readers import (
 from backend.services.accounting.companies import (
     OTHER_KEY,
     company_key_for_account,
+    company_key_for_issuer,
     load_companies,
 )
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
@@ -317,7 +318,7 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
         SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
                i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
                c.full_name AS client_name,
-               i.invoice_number, pt.name AS service_name
+               i.invoice_number, pt.name AS service_name, i.issuer_entity_key
         FROM invoices i
         JOIN practices p ON i.practice_id = p.id
         LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
@@ -336,9 +337,21 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
             invoice_number=r.get("invoice_number"),
             invoice_issued_at=_iso(r["generated_at"]),
             service_name=r.get("service_name"),
+            issuer_entity_key=r.get("issuer_entity_key"),
         )
         for r in rows
     ]
+
+
+def _own_company(invoices: list[OpenInvoice], company_key: str | None) -> list[OpenInvoice]:
+    """The invoices issued by the company that owns the receiving account (owner rule d).
+
+    A transfer into one company's account never settles another company's invoice, and a
+    transfer into an account no company owns settles none.
+    """
+    if company_key is None:
+        return []
+    return [i for i in invoices if company_key_for_issuer(i.issuer_entity_key) == company_key]
 
 
 def _candidate_json(c: MatchCandidate) -> dict[str, Any]:
@@ -370,7 +383,13 @@ async def match_candidates(
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
         tx = await conn.fetchrow(
-            "SELECT id, txn_date, amount_idr, direction, description FROM bank_transactions WHERE id = $1",
+            """
+            SELECT bt.id, bt.txn_date, bt.amount_idr, bt.direction, bt.description,
+                   bs.account_number
+            FROM bank_transactions bt
+            LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
+            WHERE bt.id = $1
+            """,
             txn_id,
         )
         if tx is None:
@@ -378,8 +397,9 @@ async def match_candidates(
         if tx["direction"] != "credit":
             raise HTTPException(status_code=422, detail="only incoming (credit) transactions are matched")
 
-        open_invoices = await _fetch_invoice_pool(conn, recorded=False)
-        recorded_invoices = await _fetch_invoice_pool(conn, recorded=True)
+        company_key = company_key_for_account(tx["account_number"])
+        open_invoices = _own_company(await _fetch_invoice_pool(conn, recorded=False), company_key)
+        recorded_invoices = _own_company(await _fetch_invoice_pool(conn, recorded=True), company_key)
         candidates = rank_candidates(
             transfer_amount_idr=int(tx["amount_idr"]),
             transfer_date=tx["txn_date"],
@@ -489,15 +509,27 @@ def _classify_inbox(
     open_invoices: list[OpenInvoice],
     recorded_invoices: list[OpenInvoice],
 ) -> list[dict[str, Any]]:
-    """Pure CPU work over in-memory rows; run off the event loop."""
+    """Pure CPU work over in-memory rows; run off the event loop.
+
+    Each transfer is classified against the invoices of the company that owns its account only.
+    """
+    pools: dict[str, tuple[list[OpenInvoice], list[OpenInvoice]]] = {}
     items: list[dict[str, Any]] = []
     for tx in txns:
+        key = tx["company_key"]
+        if key not in pools:
+            owner = None if key == OTHER_KEY else key
+            pools[key] = (
+                _own_company(open_invoices, owner),
+                _own_company(recorded_invoices, owner),
+            )
+        own_open, own_recorded = pools[key]
         res = classify_transfer(
             transfer_amount_idr=tx["amount_idr"],
             transfer_date=tx["txn_date"],
             payer_memo=tx["description"],
-            open_invoices=open_invoices,
-            recorded_invoices=recorded_invoices,
+            open_invoices=own_open,
+            recorded_invoices=own_recorded,
         )
         items.append(
             {
