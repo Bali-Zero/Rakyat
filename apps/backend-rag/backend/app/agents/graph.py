@@ -520,10 +520,16 @@ async def check_hallucination_node(state: WorkflowState) -> WorkflowState:
     filtered_docs = state.get("filtered_documents", [])
     retries = state.get("reflection_retries", 0)
 
-    state["execution_path"] = [*state.get("execution_path", []), "check_hallucination"]
+    execution_path = state.get("execution_path", [])
+    last_execution_path_entry = execution_path[-1] if execution_path else None
+    state["execution_path"] = [*execution_path, "check_hallucination"]
 
     # Skip reflection if no generation or max retries reached
-    if not generation or retries >= MAX_REFLECTION_RETRIES:
+    if (
+        not generation
+        or retries >= MAX_REFLECTION_RETRIES
+        or last_execution_path_entry == "generate_error"
+    ):
         state["hallucination_check"] = "skipped"
         return state
 

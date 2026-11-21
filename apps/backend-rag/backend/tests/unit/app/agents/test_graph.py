@@ -359,6 +359,17 @@ class TestGenerateNode:
 
 class TestCheckHallucination:
     @pytest.mark.asyncio
+    async def test_skips_generation_error_without_reflection(self, base_state):
+        base_state["generation"] = "I apologize, but the synthetic generator failed"
+        base_state["filtered_documents"] = ["KITAS permit requirements"]
+        base_state["execution_path"] = ["generate_error"]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "skipped"
+        assert should_reflect_or_end(result) == "__end__"
+
+    @pytest.mark.asyncio
     async def test_skip_no_generation(self, base_state):
         base_state["generation"] = ""
         base_state["filtered_documents"] = []
@@ -392,7 +403,18 @@ class TestCheckHallucination:
         base_state["generation"] = "completely unrelated generated content"
         base_state["filtered_documents"] = [{"content": "KBLI codes for restaurant business setup"}]
         result = await check_hallucination_node(base_state)
-        assert result["hallucination_check"] in ("failed", "passed")
+        assert result["hallucination_check"] == "failed"
+        assert should_reflect_or_end(result) == "transform_query"
+
+    @pytest.mark.asyncio
+    async def test_grounded_generation_passes(self, base_state):
+        base_state["generation"] = "KITAS permit requirements apply"
+        base_state["filtered_documents"] = ["KITAS permit requirements apply in Indonesia"]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "passed"
+        assert should_reflect_or_end(result) == "__end__"
 
 
 # ============================================================================
