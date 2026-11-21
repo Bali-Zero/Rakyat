@@ -892,6 +892,24 @@ async def undo_confirmation(
             raise ReconcileError(
                 f"practice {practice_id} has changed since this confirmation: undo the newer one first"
             )
+        # An earlier entry of the case reversed after this confirmation (a link reopened since):
+        # the before_state still counts it, so restoring it would date the invoice by a payment
+        # that no longer stands. Reopen's own log row carries no practice: reach it through the
+        # row it reverses. Same lock as above: reopening a link takes this practice's lock first.
+        reopened_since = await conn.fetchval(
+            """
+            SELECT count(*) FROM reconciliation_log r
+            JOIN reconciliation_log o ON o.id = r.reversal_of_id
+            WHERE o.practice_id = $1 AND o.id < $2 AND r.id > $2
+            """,
+            practice_id,
+            log["id"],
+        )
+        if reopened_since:
+            raise ReconcileError(
+                f"practice {practice_id} had an earlier payment entry reopened after this"
+                " confirmation: it cannot be undone"
+            )
         started = bool(
             await conn.fetchval(
                 "SELECT 1 FROM activity_log WHERE entity_type = 'practice' AND entity_id = $1"

@@ -19,6 +19,7 @@ from backend.services.accounting.reconcile_service import (
     ignore_transaction,
     link_recorded,
     recorded_without_notifications,
+    reopen_transaction,
     undo_confirmation,
 )
 from backend.tests.services.test_accounting_confirm_starts_case_integration import (
@@ -378,6 +379,22 @@ async def _started_then_moved_on(db):
     return txid
 
 
+async def _an_earlier_link_reopened_since(db):
+    """A link, then a confirmation on the same invoice, then the link reopened: the
+    confirmation's before_state still holds the link's date, which no payment stands for."""
+    pid, iid, linked = await _case(db, "on_process")
+    await db.execute("UPDATE practices SET payment_status = 'paid' WHERE id = $1", pid)
+    await db.execute("UPDATE bank_transactions SET amount_idr = 1000000 WHERE id = $1", linked)
+    await link_recorded(db, bank_txn_id=linked, practice_id=pid, invoice_id=iid, linked_by=WHO)
+    txid = await _another_transfer(db, 1_000_000, date(2026, 6, 28))
+    await confirm_payment(
+        db, bank_txn_id=txid, practice_id=pid, invoice_id=iid, amount_applied_idr=1_000_000,
+        new_status="paid", confirmed_by=WHO, movement_date=date(2026, 6, 28),
+    )  # fmt: skip
+    await reopen_transaction(db, bank_txn_id=linked, reopened_by=WHO)
+    return txid
+
+
 async def _never_confirmed(db):
     _pid, _iid, txid = await _case(db, "on_process")
     return txid
@@ -407,6 +424,7 @@ async def _recorded_before_373(db):
         (_missing, "not found"),
         (_paid_by_hand_since, "has changed since this confirmation"),
         (_started_then_moved_on, "has moved on since this confirmation started it"),
+        (_an_earlier_link_reopened_since, "had an earlier payment entry reopened"),
         (_recorded_before_373, "before its undo could be recorded"),
     ],
 )
@@ -428,3 +446,23 @@ async def test_an_undone_transfer_can_be_confirmed_again(db) -> None:
     assert (prac["payment_status"], prac["paid_amount"]) == ("paid", 4_000_000)
     assert await _standing_cashout(db) == 4_000_000
     assert DAY.year == 2026
+
+
+async def test_a_newer_link_reopened_since_does_not_stop_the_undo(db) -> None:
+    """The mirror case: a link made AFTER the confirmation and reopened is not in the
+    confirmation's before_state, so the undo still puts the invoice back exactly."""
+    pid, iid, txid = await _case(db, "on_process")
+    await db.execute("UPDATE bank_transactions SET amount_idr = 1000000 WHERE id = $1", txid)
+    await confirm_payment(
+        db, bank_txn_id=txid, practice_id=pid, invoice_id=iid, amount_applied_idr=1_000_000,
+        new_status="paid", confirmed_by=WHO, movement_date=date(2026, 6, 25),
+    )  # fmt: skip
+    linked = await _another_transfer(db, 1_000_000, date(2026, 6, 28))
+    await link_recorded(db, bank_txn_id=linked, practice_id=pid, invoice_id=iid, linked_by=WHO)
+    await reopen_transaction(db, bank_txn_id=linked, reopened_by=WHO)
+
+    await _undo(db, txid)
+
+    inv = await db.fetchrow("SELECT paid_amount_idr, paid_date FROM invoices WHERE id = $1", iid)
+    assert (inv["paid_amount_idr"], inv["paid_date"]) == (0, None)
+    assert await _standing_cashout(db) == 0
