@@ -62,7 +62,20 @@ CREATE TABLE IF NOT EXISTS practice_types (
 CREATE TABLE IF NOT EXISTS practices (
     id SERIAL PRIMARY KEY, client_id INT, payment_status VARCHAR DEFAULT 'unpaid',
     practice_type_id INT REFERENCES practice_types(id),
-    paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now());
+    paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now(),
+    status VARCHAR DEFAULT 'inquiry', start_date DATE, client_visible BOOLEAN DEFAULT true,
+    client_summary TEXT);
+-- Real columns of the two tables a case that starts on confirmation writes (uuid, icon and the
+-- action columns of timeline_events left out: nothing here writes them).
+CREATE TABLE IF NOT EXISTS timeline_events (
+    id SERIAL PRIMARY KEY, client_id INT NOT NULL, practice_id INT,
+    event_type VARCHAR NOT NULL, title VARCHAR NOT NULL, description TEXT,
+    event_date TIMESTAMPTZ NOT NULL, client_visible BOOLEAN DEFAULT true,
+    color VARCHAR DEFAULT 'info', created_at TIMESTAMPTZ DEFAULT now(), created_by VARCHAR);
+CREATE TABLE IF NOT EXISTS activity_log (
+    id SERIAL PRIMARY KEY, entity_type VARCHAR NOT NULL, entity_id INT NOT NULL,
+    action VARCHAR NOT NULL, performed_by VARCHAR NOT NULL, changes JSONB, description TEXT,
+    performed_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE IF NOT EXISTS invoices (
     id SERIAL PRIMARY KEY, practice_id INT UNIQUE, invoice_number VARCHAR,
     amount_idr BIGINT, generated_at TIMESTAMPTZ DEFAULT now());

@@ -448,8 +448,9 @@ async def confirm_reconciliation(
 ) -> dict[str, Any]:
     """Confirm a payment match. Single writer of payment_status (superscar #9).
 
-    Does NOT auto-transition the practice to on_process — Zero's decision #1:
-    Asya moves it with a second explicit click.
+    Paid in full, a case in sending_invoice moves to on_process in the same transaction (owner
+    rule a, 2026-11-18, replacing the earlier "second explicit click"); historical
+    confirmations never move it.
     """
     _require_accounting_access(current_user)
     confirmed_by = (current_user.get("email") or "unknown").lower()

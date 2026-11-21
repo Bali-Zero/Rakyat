@@ -304,7 +304,7 @@ export function OpenedTransfer({
       ? "Linking adds this transfer to the cash-out and dates the invoice; the case does not change. You can reopen this transfer any time from Done today."
       : nothing
         ? "Ignoring moves no money. You can reopen this transfer any time from Done today."
-        : "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page.";
+        : "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page. Paid in full, a case waiting for payment moves to On Process.";
   const primaryLabel =
     pick?.group === "recorded" ? "Link, no money moved" : "Confirm payment";
   const noteGlyph = pick?.group === "recorded" || nothing ? "undo" : "lock";

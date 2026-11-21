@@ -225,8 +225,9 @@ class PracticeStatusListener:
         """True when a historical confirmation made this change: nobody is notified.
 
         The payload is read again with its numbers as text, so the trigger's `ts` keeps its
-        microseconds. A confirmation moves the payment and never the practice's status, so a
-        change of status, or a change that leaves the payment where it was, is ordinary. If the
+        microseconds. A historical confirmation moves the payment and never the practice's status
+        (only a live one paid in full starts a case), so a change of status, or a change that
+        leaves the payment where it was, is ordinary. If the
         answer cannot be read, nothing is sent: an email about an old payment cannot be taken
         back, a missing one can be sent by hand.
         """
