@@ -343,7 +343,7 @@ export const accountingApi = {
     );
   },
 
-  /** Attach a transfer to the invoice of a payment already recorded. Moves no money. */
+  /** Attach a transfer to the invoice of a payment already recorded; it enters the cash-out. */
   async linkRecorded(
     payload: LinkRecordedRequest,
   ): Promise<ReconciliationActionResponse> {

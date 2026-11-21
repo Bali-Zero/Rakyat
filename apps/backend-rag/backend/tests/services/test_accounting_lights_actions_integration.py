@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from datetime import date
+from datetime import date, datetime, timezone
 
 import asyncpg
 import pytest
@@ -20,6 +20,7 @@ from backend.services.accounting.reconcile_service import (
     LINK_NOTE,
     REASON_REFUSAL,
     REOPEN_NOTE,
+    REOPEN_REVERSED_NOTE,
     ReconcileError,
     confirm_payment,
     ignore_transaction,
@@ -94,13 +95,14 @@ async def _bank(
     )
 
 
-async def _forbid_money_writes(conn) -> None:
-    """From now on ANY statement that writes to practices, invoices or weekly_cashout fails."""
+async def _forbid_money_writes(conn, tables=MONEY_TABLES) -> None:
+    """From now on ANY statement that writes to one of `tables` (by default practices, invoices
+    and weekly_cashout) fails."""
     await conn.execute(
         "CREATE FUNCTION forbid_write() RETURNS trigger LANGUAGE plpgsql AS"
         " $$ BEGIN RAISE EXCEPTION 'money table written'; END $$"
     )
-    for t in MONEY_TABLES:
+    for t in tables:
         await conn.execute(
             f"CREATE TRIGGER no_write_{t} BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON {t}"
             " FOR EACH STATEMENT EXECUTE FUNCTION forbid_write()"
@@ -129,11 +131,15 @@ def _ids(raw) -> list | None:
 # ── A1 link ──────────────────────────────────────────────────────────────────────────────
 
 
-async def test_a1_link_writes_exactly_the_bank_row_and_one_log_row(db) -> None:
+async def test_a1_link_writes_the_bank_row_the_paid_date_one_cashout_row_and_one_log_row(
+    db,
+) -> None:
+    """Owner rule (e): the case is not touched; the invoice is dated paid on the transfer's
+    day, the transfer enters the cash-out once, and the log row points at that cash-out row."""
     conn, _ = db
     pid, iid = await _practice(conn, "paid")
     txid = await _bank(conn)
-    await _forbid_money_writes(conn)  # A4: any write to the three money tables would raise
+    await _forbid_money_writes(conn, ("practices",))  # the case is never written by a link
     before = await _full(conn)
 
     res = await link_recorded(
@@ -141,11 +147,45 @@ async def test_a1_link_writes_exactly_the_bank_row_and_one_log_row(db) -> None:
     )
 
     after = await _full(conn)
-    for t in MONEY_TABLES + ("clients", "bank_statements"):
+    for t in ("practices", "clients", "bank_statements"):
         assert after[t] == before[t], t
     expected = dict(before["bank_transactions"][0])
     expected.update(reconciled_status="manual", matched_practice_id=pid, matched_invoice_id=iid)
     assert after["bank_transactions"] == [expected]
+    invoice = dict(before["invoices"][0])
+    invoice.update(paid_date=datetime(2026, 6, 25, tzinfo=timezone.utc))
+    assert after["invoices"] == [invoice]  # the paid date and nothing else
+    assert len(after["weekly_cashout"]) == 1
+    cash = after["weekly_cashout"][0]
+    assert cash["recorded_at"] is not None
+    assert {k: v for k, v in cash.items() if k not in ("id", "recorded_at")} == {
+        "movement_date": date(2026, 6, 25),
+        "week_label": "2026-W26",
+        "direction": "in",
+        "type": "invoice_payment",
+        "amount_idr": 4_000_000,
+        "pnbp_idr": 0,
+        "urgent_idr": 0,
+        "rptka_imta_idr": 0,
+        "margin_idr": 0,
+        "final_price_idr": 0,
+        "original_currency": "IDR",
+        "original_amount": None,
+        "fx_rate": None,
+        "fx_date": None,
+        "pph_withheld_idr": 0,
+        "bank_fee_idr": 0,
+        "linked_practice_id": pid,
+        "linked_invoice_id": iid,
+        "linked_bank_txn_id": txid,
+        "category": None,
+        "description": None,
+        "counterparty": None,
+        "payment_method": "bank_transfer",
+        "receipt_drive_file_id": None,
+        "recorded_by": WHO,
+        "reversed_by_id": None,
+    }
     assert len(after["reconciliation_log"]) == 1
     log = after["reconciliation_log"][0]
     assert res.reconciliation_log_id == log["id"] and res.reconciled_status == "manual"
@@ -153,7 +193,7 @@ async def test_a1_link_writes_exactly_the_bank_row_and_one_log_row(db) -> None:
     assert {k: v for k, v in log.items() if k not in ("id", "invoice_ids", "confirmed_at")} == {
         "bank_txn_id": txid,
         "practice_id": pid,
-        "cashout_id": None,
+        "cashout_id": cash["id"],
         "confirmed_by": WHO,
         "status_before": "paid",
         "status_after": "paid",
@@ -163,7 +203,7 @@ async def test_a1_link_writes_exactly_the_bank_row_and_one_log_row(db) -> None:
         "reversal_of_id": None,
         "note": LINK_NOTE,
     }
-    assert LINK_NOTE == "linked to a payment already recorded; no money moved"
+    assert LINK_NOTE == "linked to a payment already recorded; added to the cash-out"
     assert log["confirmed_at"] is not None
 
 
@@ -435,26 +475,37 @@ async def test_a2_every_refusal_changes_nothing(db) -> None:
 # ── A3 reopen ────────────────────────────────────────────────────────────────────────────
 
 
-async def test_a3_reopen_a_linked_row_reverses_the_link_log_row(db) -> None:
+async def test_a3_reopen_a_linked_row_reverses_the_link_log_row_and_its_cashout_row(db) -> None:
     conn, _ = db
     pid, iid = await _practice(conn, "paid")
     txid = await _bank(conn)
     link = await link_recorded(
         conn, bank_txn_id=txid, practice_id=pid, invoice_id=iid, linked_by=WHO
     )
-    await _forbid_money_writes(conn)
+    await _forbid_money_writes(conn, ("practices",))
     before = await _full(conn)
 
     res = await reopen_transaction(conn, bank_txn_id=txid, reopened_by="other@example.test")
 
     after = await _full(conn)
-    for t in MONEY_TABLES + ("clients", "bank_statements"):
+    for t in ("practices", "clients", "bank_statements"):
         assert after[t] == before[t], t
     expected = dict(before["bank_transactions"][0])
     expected.update(
         reconciled_status="unmatched", matched_practice_id=None, matched_invoice_id=None
     )
     assert after["bank_transactions"] == [expected]
+    invoice = dict(before["invoices"][0])
+    invoice.update(paid_date=None)  # no cash-out row of this invoice is left standing
+    assert after["invoices"] == [invoice]
+    original, reversal = after["weekly_cashout"]
+    assert original == {**before["weekly_cashout"][0], "reversed_by_id": reversal["id"]}
+    assert {k: v for k, v in reversal.items() if k not in ("id", "recorded_at")} == {
+        **{k: v for k, v in original.items() if k not in ("id", "recorded_at")},
+        "description": f"reversal of cash-out row {original['id']}: link reopened",
+        "recorded_by": "other@example.test",
+        "reversed_by_id": original["id"],
+    }
     assert (
         after["reconciliation_log"][:1] == before["reconciliation_log"]
     )  # the old row is immutable
@@ -465,7 +516,7 @@ async def test_a3_reopen_a_linked_row_reverses_the_link_log_row(db) -> None:
         "bank_txn_id": txid,
         "invoice_ids": None,
         "practice_id": None,
-        "cashout_id": None,
+        "cashout_id": reversal["id"],
         "confirmed_by": "other@example.test",
         "status_before": None,
         "status_after": None,
@@ -473,8 +524,38 @@ async def test_a3_reopen_a_linked_row_reverses_the_link_log_row(db) -> None:
         "pph_delta_idr": 0,
         "bank_fee_delta_idr": 0,
         "reversal_of_id": link.reconciliation_log_id,
-        "note": REOPEN_NOTE,
+        "note": REOPEN_REVERSED_NOTE,
     }
+    assert REOPEN_REVERSED_NOTE == "reopened; the link's cash-out row reversed"
+
+
+async def test_a3_reopen_a_link_made_before_rule_e_writes_no_money_table(db) -> None:
+    """A link recorded before owner rule (e) has no cash-out row: reopening it is what it was."""
+    conn, _ = db
+    pid, iid = await _practice(conn, "paid")
+    txid = await _bank(conn, status="manual", practice=pid, invoice=iid)
+    old = await conn.fetchval(
+        "INSERT INTO reconciliation_log (bank_txn_id, invoice_ids, practice_id, confirmed_by,"
+        " status_before, status_after, amount_applied_idr, note)"
+        " VALUES ($1, $2, $3, $4, 'paid', 'paid', 0,"
+        " 'linked to a payment already recorded; no money moved') RETURNING id",
+        txid,
+        [iid],
+        pid,
+        WHO,
+    )
+    await _forbid_money_writes(conn)
+    before = await _full(conn)
+
+    res = await reopen_transaction(conn, bank_txn_id=txid, reopened_by=WHO)
+
+    after = await _full(conn)
+    for t in MONEY_TABLES + ("clients", "bank_statements"):
+        assert after[t] == before[t], t
+    log = await conn.fetchrow(
+        "SELECT * FROM reconciliation_log WHERE id = $1", res.reconciliation_log_id
+    )
+    assert (log["reversal_of_id"], log["cashout_id"], log["note"]) == (old, None, REOPEN_NOTE)
 
 
 async def test_a3_the_reversal_points_at_the_latest_log_row_of_that_bank_transaction(db) -> None:
@@ -691,9 +772,13 @@ async def test_a5_link_then_confirm_the_second_sees_the_first_committed_state(db
         )
     assert not isinstance(a, BaseException), a
     assert isinstance(b, ReconcileError) and str(b) == f"bank transaction {txid} is not unmatched"
-    assert (
-        await conn.fetchval("SELECT count(*) FROM weekly_cashout") == 0
-    )  # the confirm wrote nothing
+    # the confirm wrote nothing: the one cash-out row is the link's (owner rule e)
+    assert [
+        tuple(r)
+        for r in await conn.fetch(
+            "SELECT linked_practice_id, linked_bank_txn_id FROM weekly_cashout"
+        )
+    ] == [(p1, txid)]
     assert await conn.fetchval("SELECT payment_status FROM practices WHERE id = $1", p2) == "unpaid"
     assert (
         await conn.fetchval("SELECT reconciled_status FROM bank_transactions WHERE id = $1", txid)
@@ -1148,7 +1233,7 @@ async def test_a5_a_link_holding_the_practice_and_a_confirm_on_the_same_invoice_
         (t_link, "manual"),
         (t_confirm, "matched"),
     ]
-    assert await conn.fetchval("SELECT count(*) FROM weekly_cashout") == 1
+    assert await conn.fetchval("SELECT count(*) FROM weekly_cashout") == 2  # link + confirm
     assert await conn.fetchval("SELECT count(*) FROM reconciliation_log") == 2
     assert await conn.fetchval("SELECT paid_amount FROM practices WHERE id = $1", pid) == 4_000_000
 
@@ -1194,7 +1279,7 @@ async def test_a5_a_randomised_stress_of_link_and_confirm_pairs_on_one_practice_
         )
         == PAIRS
     )
-    assert await conn.fetchval("SELECT count(*) FROM weekly_cashout") == PAIRS
+    assert await conn.fetchval("SELECT count(*) FROM weekly_cashout") == 2 * PAIRS
     assert await conn.fetchval("SELECT count(*) FROM reconciliation_log") == 2 * PAIRS
 
 

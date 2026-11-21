@@ -627,7 +627,7 @@ describe("Accounting control centre", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("cc-foot")).getByText(
-        "Linking moves no money. You can reopen this transfer any time from Done today.",
+        "Linking adds this transfer to the cash-out and dates the invoice; the case does not change. You can reopen this transfer any time from Done today.",
       ),
     ).toBeInTheDocument();
     fireEvent.click(
