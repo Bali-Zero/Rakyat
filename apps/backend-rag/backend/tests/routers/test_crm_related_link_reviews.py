@@ -1366,20 +1366,60 @@ def body_tokens(raw, extra=()):
     return out | set(extra)
 
 
-def surfaces_leaks(tokens, resp, records, rows, types, *, status):
-    """The leaks of every surface. A 200 answer is scanned without the four fields of `review`
-    (decision, relation, deciding admin, timestamp); the audit rows without `user_email`."""
+REVIEW_KEYS = {"decision", "relation", "decided_by", "decided_at"}
+ISO_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})")
+
+
+def review_is(got, expected):
+    """True only when `got` is exactly the review the request must produce: the four keys, the
+    expected decision, relation and deciding admin, and an ISO time stamp."""
+    return (
+        isinstance(got, dict)
+        and set(got) == REVIEW_KEYS
+        and {k: got[k] for k in ("decision", "relation", "decided_by")} == expected
+        and isinstance(got["decided_at"], str)
+        and ISO_STAMP.fullmatch(got["decided_at"]) is not None
+    )
+
+
+def audit_leaks(forbidden, rows, types, session_email):
+    """An audit row's `user_email` is left out of the scan only when it is the session's own
+    email; any other value in that column is scanned like every other column."""
+    kept = [
+        {**r, "user_email": None}
+        if session_email is not None and r.get("user_email") == session_email
+        else r
+        for r in rows
+    ]
+    return privacy.leaks(forbidden, privacy.audit_texts(kept, types))
+
+
+def one_audit_row(rows, *, method, endpoint, status, email):
+    """Exactly one audit row for the one request, and it is that request's row."""
+    assert len(rows) == 1, len(rows)
+    row = rows[0]
+    got = (row["method"], row["endpoint"], row["response_status"], row["user_email"])
+    assert got == (method, endpoint, status, email), got
+
+
+def surfaces_leaks(tokens, resp, records, rows, types, *, status, review=None, session_email=None):
+    """The leaks of every surface. A 200 answer's `review` is left out of the scan only when it is
+    exactly `review` (decision, relation, deciding admin) with an ISO time stamp; an audit row's
+    `user_email` only when it is the session's own email. A value planted in an exempt field
+    breaks the match, so the field is scanned and the value is caught."""
     forbidden = privacy.probe_forms(tokens)
     text = resp.text
-    if status == 200:
+    if status == 200 and review is not None:
         data = resp.json()
-        assert set(data) == {"status", "review"}
-        assert set(data["review"]) == {"decision", "relation", "decided_by", "decided_at"}
-        text = json.dumps({"status": data["status"]})
+        if (
+            isinstance(data, dict)
+            and set(data) == {"status", "review"}
+            and review_is(data["review"], review)
+        ):
+            text = json.dumps({"status": data["status"]})
     found = {"answer": privacy.leaks(forbidden, privacy.response_surface(text))}
     found["log"] = privacy.leaks(forbidden, privacy.log_surface(records))
-    scrubbed = [{**r, "user_email": None} for r in rows]
-    found["audit"] = privacy.leaks(forbidden, privacy.audit_texts(scrubbed, types))
+    found["audit"] = audit_leaks(forbidden, rows, types, session_email)
     return {k: v for k, v in found.items() if v}
 
 
@@ -1447,10 +1487,25 @@ async def test_t9_post_answer_log_and_audit_row_carry_nothing_from_the_request(
         extra.append("ZZBOOM99X")
     tokens = body_tokens(raw, extra)
     rows, types = await privacy.audit_snapshot(conn)
-    assert all(r["request_body"] is None for r in rows), case
+    session_email = identity.get("email")
+    one_audit_row(rows, method="POST", endpoint=URL, status=status, email=session_email)
+    assert rows[0]["request_body"] is None, case
+    review = None
+    if status == 200:
+        review = {"decision": raw["decision"], "relation": raw.get("relation"), "decided_by": ACTOR}
+        assert review_is(resp.json()["review"], review), (case, resp.json()["review"])
     records = [r for r in caplog.records if not privacy.is_http_client_logger(r.name)]
-    assert surfaces_leaks(tokens, resp, records, rows, types, status=status) == {}, case
-    assert all(r["endpoint"] == URL for r in rows if r["method"] == "POST"), case
+    leaks = surfaces_leaks(
+        tokens,
+        resp,
+        records,
+        rows,
+        types,
+        status=status,
+        review=review,
+        session_email=session_email,
+    )
+    assert leaks == {}, case
 
 
 GET_CASES = {
@@ -1509,18 +1564,10 @@ async def test_t9_get_adds_closed_fields_only_and_never_a_copy_of_the_client_car
     assert set(link["suggestion_basis"]) <= {
         "passport_equal", "passport_one_char_apart", "nik_encodes_client_birth_date", "birth_date_equal"
     }  # fmt: skip
-    assert set(link["review"]) == {"decision", "relation", "decided_by", "decided_at"}
+    assert review_is(
+        link["review"], {"decision": "confirmed", "relation": "self", "decided_by": READER}
+    )
     client_values = {CLIENT_PASSPORT, "ZZGM987654", "ZZGC654321", "1971-08-09", "19710809"}
-    scrubbed = {
-        k: v
-        for k, v in data.items()
-        if k not in {"identifiers", "date_of_birth", "names", "display_name"}
-    }
-    scrubbed["links"] = [
-        {k: v for k, v in item.items() if k != "client_name"} for item in data["links"]
-    ]
-    surface = privacy.response_surface(json.dumps(scrubbed))
-    assert privacy.leaks(privacy.probe_forms(client_values), surface) == []
     if case == "non_matching":
         assert (
             privacy.leaks(privacy.probe_forms(client_values), privacy.response_surface(resp.text))
@@ -1529,10 +1576,133 @@ async def test_t9_get_adds_closed_fields_only_and_never_a_copy_of_the_client_car
         assert link["suggested_relation"] is None and link["suggestion_basis"] == []
     records = [r for r in caplog.records if not privacy.is_http_client_logger(r.name)]
     rows, types = await privacy.audit_snapshot(conn)
-    forbidden = privacy.probe_forms(client_values | {spec["client_name"]})
-    assert privacy.leaks(forbidden, privacy.log_surface(records)) == []
-    scrubbed_rows = [{**r, "user_email": None} for r in rows]
-    assert privacy.leaks(forbidden, privacy.audit_texts(scrubbed_rows, types)) == []
+    one_audit_row(rows, method="GET", endpoint=f"{READ}/{sid}", status=200, email=ADMIN["email"])
+    probes = client_values | {spec["client_name"]}
+    assert get_leaks(data, records, rows, types, probes, ADMIN["email"]) == {}
+
+
+READER = "zz-reader@example.test"
+GET_PREEXISTING = {"identifiers", "date_of_birth", "names", "display_name"}
+
+
+def get_leaks(data, records, rows, types, probes, session_email):
+    """GET: a client-card value may show only at a pre-existing path that carries the subject's own
+    equal value (identifiers, birth date, names, display name) or at a link's `client_name`.
+    Everywhere else in the answer — the three new fields included — and in every log record and
+    audit column (the session's own `user_email` excepted) it is a leak. A digits-only DERIVED
+    form shorter than six characters (the NIK form of a short passport such as `ZZ124`) is no
+    client value and would match ids and time stamps; the raw and upper-cased forms stay."""
+    forbidden = {
+        f for f in privacy.probe_forms(p for p in probes if p) if not (f.isdigit() and len(f) < 6)
+    }
+    scrubbed = {k: v for k, v in data.items() if k not in GET_PREEXISTING}
+    scrubbed["links"] = [
+        {k: v for k, v in item.items() if k != "client_name"} for item in data.get("links", [])
+    ]
+    found = {
+        "answer": privacy.leaks(forbidden, privacy.response_surface(json.dumps(scrubbed))),
+        "log": privacy.leaks(forbidden, privacy.log_surface(records)),
+        "audit": audit_leaks(forbidden, rows, types, session_email),
+    }
+    return {k: v for k, v in found.items() if v}
+
+
+def card_probes(kwargs):
+    """The client card's values of a suggestion case, in their stored and date forms."""
+    dob = kwargs.get("dob")
+    values = [kwargs.get("client_name", "ZzMatch Person"), kwargs.get("passport")]
+    if dob is not None:
+        values += [dob.isoformat(), dob.strftime("%Y%m%d")]
+    return {v for v in values if v}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label,kwargs,expected", SUGGESTION_CASES, ids=[c[0] for c in SUGGESTION_CASES]
+)
+async def test_t9_get_privacy_holds_on_every_case_of_the_suggestion_matrix(
+    client, conn, caplog, label, kwargs, expected
+):
+    caplog.set_level(logging.DEBUG)
+    sid = await seed_subject(
+        conn,
+        "person",
+        "ZzMatch Person",
+        list(kwargs.get("subject_ids", [])),
+        dob=kwargs.get("subject_dob"),
+    )
+    await seed_client(
+        conn,
+        C1,
+        kwargs.get("client_name", "ZzMatch Person"),
+        passport=kwargs.get("passport"),
+        dob=kwargs.get("dob"),
+        deleted=kwargs.get("deleted", False),
+    )
+    await seed_link(conn, sid, C1)
+    await seed_review(conn, sid, C1, "confirmed", "self", at=T0, by=READER)
+    async with unmeasured(conn):
+        await conn.execute("DELETE FROM api_audit_trail")
+    caplog.clear()
+    resp = await client.get(f"{READ}/{sid}")
+    assert resp.status_code == 200, label
+    data = resp.json()
+    link = link_of(data, C1)
+    assert (link["suggested_relation"], link["suggestion_basis"]) == expected, label
+    assert review_is(
+        link["review"], {"decision": "confirmed", "relation": "self", "decided_by": READER}
+    ), label
+    records = [r for r in caplog.records if not privacy.is_http_client_logger(r.name)]
+    rows, types = await privacy.audit_snapshot(conn)
+    one_audit_row(rows, method="GET", endpoint=f"{READ}/{sid}", status=200, email=ADMIN["email"])
+    assert get_leaks(data, records, rows, types, card_probes(kwargs), ADMIN["email"]) == {}, label
+
+
+def test_t9_the_get_check_catches_a_client_value_copied_outside_the_preexisting_paths():
+    import copy
+
+    review = {
+        "decision": "confirmed",
+        "relation": "self",
+        "decided_by": READER,
+        "decided_at": "2026-01-01T00:00:00+00:00",
+    }
+    base = {
+        "id": 1,
+        "display_name": CLIENT_NAME,
+        "names": [{"name": CLIENT_NAME}],
+        "identifiers": [{"id_type": "passport", "value": CLIENT_PASSPORT}],
+        "date_of_birth": CLIENT_BIRTH,
+        "links": [
+            {
+                "client_id": C1,
+                "client_name": CLIENT_NAME,
+                "review": review,
+                "suggested_relation": "self",
+                "suggestion_basis": ["passport_equal"],
+            }
+        ],
+    }
+    probes = {CLIENT_NAME, CLIENT_PASSPORT, CLIENT_BIRTH}
+    types = {"user_email": "text", "id": "integer"}
+    own_row = [{"user_email": ADMIN["email"], "id": 1}]
+    assert get_leaks(base, [], own_row, types, probes, ADMIN["email"]) == {}
+    for value in sorted(probes):
+        for field in ("decided_by", "decided_at", "relation"):
+            planted = copy.deepcopy(base)
+            planted["links"][0]["review"][field] = value
+            assert get_leaks(planted, [], [], {}, probes, None).get("answer"), (field, value)
+        for key, planted_value in (
+            ("suggested_relation", value),
+            ("suggestion_basis", [value]),
+            ("nationality", value),
+        ):
+            planted = copy.deepcopy(base)
+            target = planted if key == "nationality" else planted["links"][0]
+            target[key] = planted_value
+            assert get_leaks(planted, [], [], {}, probes, None).get("answer"), (key, value)
+        stranger_row = [{"user_email": value, "id": 1}]
+        assert get_leaks(base, [], stranger_row, types, probes, ADMIN["email"]).get("audit")
 
 
 AUDIT_TYPES = {
@@ -1578,24 +1748,18 @@ def test_t9_the_detector_honours_the_allowed_exceptions_and_nothing_else():
         "decided_by": ACTOR,
         "decided_at": "2026-11-21T00:00:00+00:00",
     }
+    expected = {"decision": "confirmed", "relation": "self", "decided_by": ACTOR}
     ok = Resp({"status": "recorded", "review": review})
     tokens = {"confirmed", "self", ACTOR, "2026-11-21t00:00:00+00:00"}
-    assert (
-        surfaces_leaks(
-            tokens,
-            ok,
-            [],
-            [{"user_email": ACTOR, "id": 1}],
-            {"user_email": "text", "id": "integer"},
-            status=200,
-        )
-        == {}
-    )
+    types = {"user_email": "text", "id": "integer"}
+    own_row = [{"user_email": ACTOR, "id": 1}]
+    allowed = {"status": 200, "review": expected, "session_email": ACTOR}
+    assert surfaces_leaks(tokens, ok, [], own_row, types, **allowed) == {}
     # the same words anywhere else are caught: in the status field, in the log, in the audit row
     leaked = Resp({"status": "confirmed", "review": review})
-    assert surfaces_leaks(tokens, leaked, [], [], {}, status=200)["answer"]
+    assert surfaces_leaks(tokens, leaked, [], [], {}, **allowed)["answer"]
     record = logging.LogRecord("zz", logging.INFO, __file__, 1, "x %s", (ACTOR,), None)
-    assert surfaces_leaks(tokens, ok, [record], [], {}, status=200)["log"]
+    assert surfaces_leaks(tokens, ok, [record], [], {}, **allowed)["log"]
     row = {"user_email": None, "error_message": "self", "id": 1}
     assert surfaces_leaks(
         tokens,
@@ -1603,5 +1767,20 @@ def test_t9_the_detector_honours_the_allowed_exceptions_and_nothing_else():
         [],
         [row],
         {"user_email": "text", "error_message": "text", "id": "integer"},
-        status=200,
+        **allowed,
     )["audit"]
+    # a forbidden value planted INSIDE an exempt field breaks the match and is caught
+    planted_tokens = tokens | {CLIENT_PASSPORT, CLIENT_NAME, CLIENT_BIRTH}
+    for value in (CLIENT_PASSPORT, CLIENT_NAME, CLIENT_BIRTH):
+        for field in ("decision", "relation", "decided_by", "decided_at"):
+            planted = Resp({"status": "recorded", "review": {**review, field: value}})
+            found = surfaces_leaks(planted_tokens, planted, [], [], {}, **allowed)
+            assert found.get("answer"), (field, value)
+        extra = Resp({"status": "recorded", "review": {**review, "client": value}})
+        assert surfaces_leaks(planted_tokens, extra, [], [], {}, **allowed).get("answer"), value
+        stranger_row = [{"user_email": value, "id": 1}]
+        found = surfaces_leaks(planted_tokens, ok, [], stranger_row, types, **allowed)
+        assert found.get("audit"), value
+    # without a session email nothing in user_email is exempt
+    no_session = {**allowed, "session_email": None}
+    assert surfaces_leaks(tokens, ok, [], own_row, types, **no_session).get("audit")
