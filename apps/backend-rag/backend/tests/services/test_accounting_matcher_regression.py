@@ -2,7 +2,10 @@
 
 The expected values below were computed from the matcher as it was BEFORE the structured
 fields (amount_relation, name_score, in_window) were added. Those fields are additive; the
-ranking itself must not move. All names are invented.
+ranking itself must not move, with one deliberate change (2026-11-21): candidates of EQUAL
+confidence now come closest amount first instead of in the pool's order. The pinned lists keep
+their old order and the test applies that one rule to them, so every confidence, reason and
+delta stays pinned as it was. All names are invented.
 """
 
 from __future__ import annotations
@@ -496,7 +499,22 @@ def test_ranking_is_exactly_what_it_was_before_the_structured_fields(
     got = [
         (c.invoice_id, c.confidence, c.reasons, c.amount_delta_idr, c.likely_withheld) for c in out
     ]
-    assert got == expected
+    # The old order, re-ranked only inside equal confidence: closest amount first (stable).
+    assert got == sorted(expected, key=lambda e: (-e[1], abs(e[3])))
+
+
+def test_the_tie_rule_moves_only_ties() -> None:
+    """Every pinned case keeps its confidences in the same non-increasing sequence."""
+    for amount, memo, expected in _PINNED:
+        out = rank_candidates(
+            transfer_amount_idr=amount,
+            transfer_date=_DAY,
+            payer_memo=memo,
+            open_invoices=_INVOICES,
+            limit=50,
+        )
+        assert [c.confidence for c in out] == [e[1] for e in expected]
+        assert sorted(c.invoice_id for c in out) == sorted(e[0] for e in expected)
 
 
 def test_default_limit_is_still_five() -> None:
