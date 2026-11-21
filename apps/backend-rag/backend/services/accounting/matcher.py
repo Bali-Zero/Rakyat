@@ -126,14 +126,19 @@ _PAYER_PATTERNS = (
     re.compile(r"\bINCOMING SWIFT\s+\d+\s+" + _NAME + r"\s*/"),
 )
 _INVOICE_NUMBER = re.compile(r"INV-\d{6}-\d{5}(?!\d)")
+# The payer patterns backtrack quadratically on a long run of spaces (16 000 spaces took seconds).
+# A bank line is at most 112 characters in production: reading the first 256 keeps every real
+# line whole and bounds the scan.
+_PAYER_SCAN_CHARS = 256
 # Score of a payer whose every word matches a client word, with at least two matched.
 _FULL_NAME_SCORE = 97.0
 
 
 def extract_payer_name(description: str) -> str:
     """The payer name inside a bank description line, or "" when it carries none."""
+    text = (description or "")[:_PAYER_SCAN_CHARS]
     for pattern in _PAYER_PATTERNS:
-        found = pattern.search(description or "")
+        found = pattern.search(text)
         if found:
             name = " ".join(found.group(1).split())
             if re.search(r"[A-Za-z]{2}", name):

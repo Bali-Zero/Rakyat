@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import date
 
 import pytest
@@ -126,3 +127,25 @@ def test_a_payer_with_only_a_first_name_does_not_reach_the_floor_on_a_first_name
     line = "ATM Prima TRF FR MARIO 9999999999979803 BANK PERMATA TRANSFER RINTIS"
     assert extract_payer_name(line) == "MARIO"
     assert _name_score(line, "Mario") < NAME_HINT_FLOOR
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "TRF FR A" + " " * 16000 + "!",
+        "INCOMING SKN x/y/A" + " " * 16000 + "!",
+        "INCOMING SWIFT 1 A" + " " * 16000 + "!",
+    ],
+    ids=["trf", "skn", "swift"],
+)
+def test_a_long_run_of_spaces_does_not_stall_the_extraction(line: str) -> None:
+    started = time.perf_counter()
+    assert extract_payer_name(line) == ""
+    assert time.perf_counter() - started < 0.25
+
+
+def test_a_line_as_long_as_the_longest_real_one_keeps_its_whole_payer_name() -> None:
+    tail = " BFS FR BBBAIDJA UN MARIO ROSSINELLI"
+    line = "20260101BBBAIDJA010O0000000001" + " " * (112 - 30 - len(tail)) + tail
+    assert len(line) == 112
+    assert extract_payer_name(line) == "MARIO ROSSINELLI"
