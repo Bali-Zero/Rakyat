@@ -1,9 +1,9 @@
-"""Root confinement for the three ingestion HTTP entry points.
+"""Root confinement for the legal-ingestion HTTP entry points.
 
-`POST /api/ingest/file`, `POST /api/ingest/batch` and `POST /api/legal/ingest` take a
-filesystem path straight out of the request body — that is their documented purpose
-("Ingest a book from local file path"), and `_require_ingest_admin` is today their only
-defense. Two measured facts make that insufficient:
+`POST /api/legal/ingest` takes a filesystem path straight out of the request body (its
+documented purpose), and `POST /api/legal/upload` names its temp file after the client's
+filename; `_require_ingest_admin` is otherwise their only defense. Two measured facts make
+that insufficient:
 
 * **The principal set is wider than the three admin emails.** `is_crm_admin` also accepts
   the practices-full-view allowlist and *any* user whose `role` is one of
@@ -14,7 +14,7 @@ defense. Two measured facts make that insufficient:
   privilege *escalation*, not a read: ``/proc/self/environ`` would put every Fly secret
   into a chat-queryable corpus.
 
-Scope is deliberately the three HTTP handlers and nothing below them. The library layer
+Scope is deliberately the HTTP handlers and nothing below them. The library layer
 (`backend/core/parsers.py`, `backend/services/ingestion/*`) is called with arbitrary
 operator-chosen paths by `backend/cli/ingestion_cli.py`, `scripts/ingest_*.py` and
 `infra/eventbus/regulatory_ingest_runner.py` — those are not remote input, and confining
