@@ -3,7 +3,7 @@
  * one more load (with one more summary) after a statement import. Data is invented.
  */
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import AccountingPage from "../page";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
@@ -69,7 +69,11 @@ describe("AccountingPage Done today", () => {
     render(<AccountingPage />);
     await screen.findByText("CONTOH TRANSFER");
     expect(api.getDoneToday).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(
+      within(screen.getByTestId("cc-cashout-card")).getByRole("button", {
+        name: "Open",
+      }),
+    );
     expect(await screen.findByText("No cashout rows yet.")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /^done today/i })).toBeNull();
     expect(api.getDoneToday).toHaveBeenCalledTimes(1);

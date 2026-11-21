@@ -3,7 +3,7 @@
  * and the inbox carries the bank statement card. Data is invented.
  */
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import AccountingPage from "../page";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
@@ -29,6 +29,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
     importCashout: vi.fn(),
     previewBankStatement: vi.fn(),
     importBankStatement: vi.fn(),
+    getOutgoings: vi.fn(),
   },
 }));
 
@@ -81,7 +82,11 @@ describe("AccountingPage", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Income (in)")).toBeNull();
     expect(screen.queryByText("Weekly Cashout")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(
+      within(screen.getByTestId("cc-cashout-card")).getByRole("button", {
+        name: "Open",
+      }),
+    );
     expect(await screen.findByText("No cashout rows yet.")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /import cashout pdf/i }),
@@ -102,7 +107,11 @@ describe("AccountingPage", () => {
     });
     const { container } = render(<AccountingPage />);
     await screen.findByText("CONTOH TRANSFER");
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(
+      within(screen.getByTestId("cc-cashout-card")).getByRole("button", {
+        name: "Open",
+      }),
+    );
     await screen.findByText("No cashout rows yet.");
     const pdf = new File(["x"], "contoh.pdf", { type: "application/pdf" });
     const el = container.querySelector(
@@ -133,5 +142,30 @@ describe("AccountingPage", () => {
     });
     // the result line survives the list reload
     expect(screen.getByText(/new transactions stored/)).toBeInTheDocument();
+  });
+
+  it("enters the outgoings view from its card and comes back", async () => {
+    api.getOutgoings.mockResolvedValue({
+      items: [],
+      by_kind: [],
+      n: 0,
+      total_idr: 0,
+    });
+    render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    expect(api.getOutgoings).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(screen.getByTestId("cc-outgoings-card")).getByRole("button", {
+        name: "Open",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Outgoings to justify" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to justify.")).toBeInTheDocument();
+    expect(api.getOutgoings).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("back-to-centre"));
+    expect(await screen.findByText("CONTOH TRANSFER")).toBeInTheDocument();
+    expect(screen.queryByTestId("outgoings")).toBeNull();
   });
 });

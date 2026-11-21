@@ -150,6 +150,7 @@ const renderInbox = (onConfirmed = vi.fn()) => {
       onConfirmed={onConfirmed}
       doneVersion={0}
       onOpenCashout={vi.fn()}
+      onOpenOutgoings={vi.fn()}
     />,
   );
   return onConfirmed;
@@ -1238,6 +1239,7 @@ describe("ported reconciliation contract", () => {
           onConfirmed={vi.fn()}
           doneVersion={0}
           onOpenCashout={vi.fn()}
+          onOpenOutgoings={vi.fn()}
         />,
       );
       await screen.findByText(memo || "(no memo)");
@@ -1258,6 +1260,7 @@ describe("ported reconciliation contract", () => {
         onConfirmed={vi.fn()}
         doneVersion={0}
         onOpenCashout={vi.fn()}
+        onOpenOutgoings={vi.fn()}
       />,
     );
     await ready();
@@ -1285,6 +1288,7 @@ describe("ported reconciliation contract", () => {
         onConfirmed={vi.fn()}
         doneVersion={0}
         onOpenCashout={vi.fn()}
+        onOpenOutgoings={vi.fn()}
       />,
     );
     await ready();
@@ -1310,6 +1314,7 @@ describe("ported reconciliation contract", () => {
           onConfirmed={vi.fn()}
           doneVersion={0}
           onOpenCashout={vi.fn()}
+          onOpenOutgoings={vi.fn()}
         />,
       );
       await ready();
@@ -1341,6 +1346,7 @@ describe("ported reconciliation contract", () => {
           onConfirmed={vi.fn()}
           doneVersion={0}
           onOpenCashout={vi.fn()}
+          onOpenOutgoings={vi.fn()}
         />,
       );
       expect(

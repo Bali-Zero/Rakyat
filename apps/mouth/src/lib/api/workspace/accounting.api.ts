@@ -222,6 +222,43 @@ export interface ImportCashoutResponse {
 }
 
 /** Amounts in a statement report are 2-decimal strings (e.g. "1500000.00"). */
+/** What the bank's text says about one debit (GET /outgoings); never stored. */
+export interface OutgoingReading {
+  label: string;
+  detail: string;
+  payee?: string | null;
+  purpose?: string;
+  billing_code?: string;
+  cheque?: string;
+}
+
+export interface OutgoingItem {
+  id: number;
+  txn_date: string;
+  posted_at: string | null;
+  amount_idr: number;
+  kind: string;
+  description: string;
+  company_key: string;
+  reading: OutgoingReading;
+  /** A transfer fee: the transfer it was charged for. */
+  fee_of_txn_id: number | null;
+}
+
+export interface OutgoingKindTotal {
+  kind: string;
+  label: string;
+  n: number;
+  total_idr: number;
+}
+
+export interface OutgoingsResponse {
+  items: OutgoingItem[];
+  by_kind: OutgoingKindTotal[];
+  n: number;
+  total_idr: number;
+}
+
 export interface BankStatementKindSum {
   count: number;
   total: string;
@@ -332,6 +369,13 @@ export const accountingApi = {
   /** The issuing companies, each with its bank account and how far its statements reach. */
   async getCompanies(): Promise<AccountingCompany[]> {
     return api.get<AccountingCompany[]>("/api/crm/accounting/companies");
+  },
+
+  /** Debits still to justify, newest first, with their reading; read-only. */
+  async getOutgoings(limit?: number): Promise<OutgoingsResponse> {
+    return api.get<OutgoingsResponse>(
+      `/api/crm/accounting/outgoings${qs({ limit })}`,
+    );
   },
 
   /** Unmatched incoming transfers with their light, newest first. */

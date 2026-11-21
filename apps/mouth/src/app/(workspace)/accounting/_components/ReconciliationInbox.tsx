@@ -64,10 +64,12 @@ export function ReconciliationInbox({
   onConfirmed,
   doneVersion,
   onOpenCashout,
+  onOpenOutgoings,
 }: {
   onConfirmed: () => void;
   doneVersion: number;
   onOpenCashout: () => void;
+  onOpenOutgoings: () => void;
 }) {
   const { error, success } = useToast();
   const [items, setItems] = useState<ReconciliationInboxItem[]>([]);
@@ -545,7 +547,10 @@ export function ReconciliationInbox({
         onShowDone={() => setSelectedTab("done")}
         onUpload={() => document.getElementById(BANK_FILE_INPUT_ID)?.click()}
       />
-      <ReconciliationMore onOpenCashout={onOpenCashout} />
+      <ReconciliationMore
+        onOpenCashout={onOpenCashout}
+        onOpenOutgoings={onOpenOutgoings}
+      />
       {modal && (
         <ConfirmModal
           txn={modal.txn}

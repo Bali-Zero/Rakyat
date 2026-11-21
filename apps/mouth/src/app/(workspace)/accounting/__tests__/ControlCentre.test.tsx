@@ -194,15 +194,20 @@ beforeEach(() => {
   });
 });
 
-const renderCentre = (onOpenCashout = vi.fn(), onConfirmed = vi.fn()) => {
+const renderCentre = (
+  onOpenCashout = vi.fn(),
+  onConfirmed = vi.fn(),
+  onOpenOutgoings = vi.fn(),
+) => {
   render(
     <ReconciliationInbox
       onConfirmed={onConfirmed}
       doneVersion={0}
       onOpenCashout={onOpenCashout}
+      onOpenOutgoings={onOpenOutgoings}
     />,
   );
-  return { onOpenCashout, onConfirmed };
+  return { onOpenCashout, onConfirmed, onOpenOutgoings };
 };
 const ready = async () => screen.findByText("CONTOH TRANSFER ONE");
 const tab = (key: string) => screen.getByTestId(`cc-tab-${key}`);
@@ -392,7 +397,11 @@ describe("Accounting control centre", () => {
   });
 
   it("leaves the Done view when a later load says the route is unavailable", async () => {
-    const props = { onConfirmed: vi.fn(), onOpenCashout: vi.fn() };
+    const props = {
+      onConfirmed: vi.fn(),
+      onOpenCashout: vi.fn(),
+      onOpenOutgoings: vi.fn(),
+    };
     const { rerender } = render(
       <ReconciliationInbox {...props} doneVersion={0} />,
     );
@@ -1171,12 +1180,25 @@ describe("Accounting control centre", () => {
     ).not.toBeNull();
   });
 
-  it("renders cc-more with only the cash-out card", async () => {
+  it("renders cc-more with the cash-out card then the outgoings card", async () => {
     renderCentre();
     await ready();
     const more = screen.getByTestId("cc-more");
-    expect(more.children).toHaveLength(1);
-    expect(more.firstElementChild).toBe(screen.getByTestId("cc-cashout-card"));
+    expect(Array.from(more.children)).toEqual([
+      screen.getByTestId("cc-cashout-card"),
+      screen.getByTestId("cc-outgoings-card"),
+    ]);
+  });
+
+  it("opens the outgoings view from its card without an amount or a request", async () => {
+    const { onOpenOutgoings, onOpenCashout } = renderCentre();
+    await ready();
+    const card = screen.getByTestId("cc-outgoings-card");
+    expect(card).toHaveTextContent("Outgoings to justify");
+    expect(card).not.toHaveTextContent("Rp");
+    fireEvent.click(within(card).getByRole("button", { name: "Open" }));
+    expect(onOpenOutgoings).toHaveBeenCalledTimes(1);
+    expect(onOpenCashout).not.toHaveBeenCalled();
   });
 
   it("pins compact candidate row and reasons classes", async () => {
