@@ -399,7 +399,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="portal_notification_prefs", process_groups=_API, tags=("portal",)),
     RouterEntry(name="portal_process_timeline", process_groups=_API, tags=("portal",)),
     # ── Preview ──
-    RouterEntry(name="preview", process_groups=_API, tags=("blog",)),
     # ── Prime ──
     RouterEntry(name="prime", process_groups=_API, tags=("prime",)),
     RouterEntry(name="prime_v2", process_groups=_API, tags=("prime",)),
@@ -566,7 +565,7 @@ portal_billing portal_dashboard portal_drive portal_family portal_invite portal_
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
 wr2_publish workspace_analytics research_control legal_ingest naga
-oracle_universal kbli_notebook kbli_notebook_chat preview websocket telegram twitter
+oracle_universal kbli_notebook kbli_notebook_chat websocket telegram twitter
 twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
 wa_broker wa_inbox wa_package instagram_chat instagram_chat:webhook_router intel_lake intel
 intel_scraper intel_analytics intel_observability webhooks messaging_identity zoho_email
@@ -596,7 +595,7 @@ notifications notifications_admin cron_notifiers portal portal_admin portal_bill
 portal_dashboard portal_drive portal_family portal_invite portal_matters
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
-wr2_publish workspace_analytics research_control preview websocket telegram twitter
+wr2_publish workspace_analytics research_control websocket telegram twitter
 twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
 wa_broker wa_inbox instagram_chat instagram_chat:webhook_router webhooks messaging_identity
 zoho_email google_drive documents_proxy dynamic_pricing team_drive sheets admin_crm_kg

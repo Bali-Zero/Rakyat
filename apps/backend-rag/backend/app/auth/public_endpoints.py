@@ -656,11 +656,6 @@ _MARKETING = (
 )
 
 _PREVIEW = (
-    PublicEndpoint(
-        "/preview/",
-        Category.PREVIEW,
-        "Article preview pages for Telegram approval — no indexing, public preview",
-    ),
     # REMOVED 2026-08-12 (P0, measured live): "/api/dashboard/map/" was a PREFIX
     # entry, so every route the dashboard router ever mounts inherited public
     # access — including `GET /api/dashboard/map/clients/geo`, which ran

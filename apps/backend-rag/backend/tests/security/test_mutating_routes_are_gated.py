@@ -628,13 +628,6 @@ INTENTIONALLY_PUBLIC_MUTATIONS: tuple[IntentionalPublicMutation, ...] = (
         "/api/knowledge/visa/{visa_id}",
         "Same Depends(get_admin_user) verified chain as POST /api/knowledge/visa/.",
     ),
-    IntentionalPublicMutation(
-        "POST",
-        "/preview/upload",
-        "Docstring says scraper-only — VERIFIED: Depends(verify_internal_api_key) "
-        "(preview.py:46) is a real in-router dependency, independent of the "
-        "middleware's public-path skip.",
-    ),
     # ── GARUDA VOA L2/L3 (PR #4946 allowlist additions) — reviewed 2026-08-26,
     #    against the handlers in garuda_voa_public.py / garuda_orders_router.py,
     #    NOT copied from either module's own docstrings. ──
