@@ -387,7 +387,7 @@ def parse_mandiri_pages(pages: list[list[Word]]) -> ParsedStatement:
         if header is None:
             header = page_header
         elif page_header != header:
-            raise BankParseError("file holds more than one account: upload one statement per file")
+            raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         foot = min((w.top for w in words if "questions" in w.text), default=float("inf"))
         rows += _mandiri_rows([w for w in words if table + 6 < w.top < foot - 3])
     if header is None:
@@ -506,7 +506,12 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
         if identity is None:
             identity = ident
         elif ident != identity:
-            raise BankParseError("file holds more than one account: upload one statement per file")
+            raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
+        # every account line of the page, not only its first, names the first page's account;
+        # descriptions sit right of 500 pt, the account block and row numbers left of 100 pt
+        for digits, cur, _ in _account_lines(words, 100):
+            if digits != identity[0] or (cur is not None and cur != identity[2]):
+                raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         code_top = next((w.top for w in words if w.text == "Code" and 200 < w.x0 < 270), None)
         if code_top is None:
             raise BankParseError("statement page has no transaction table")
