@@ -1,9 +1,15 @@
 /**
- * Outgoings to justify (owner 2026-11-21): the debits nobody has justified, read only.
+ * Outgoings (owner 2026-11-21/22): list, state switch, and the Justify / Undo actions.
  * Names, codes and amounts are invented.
  */
 
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { OutgoingsView } from "../_components/OutgoingsView";
 import {
@@ -11,9 +17,15 @@ import {
   type OutgoingsResponse,
 } from "@/lib/api/workspace/accounting.api";
 
+const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
+vi.mock("@/components/ui/toast", () => ({ useToast: () => toast }));
 vi.mock("@/lib/logger");
 vi.mock("@/lib/api/workspace/accounting.api", () => ({
-  accountingApi: { getOutgoings: vi.fn() },
+  accountingApi: {
+    getOutgoings: vi.fn(),
+    justifyOutgoing: vi.fn(),
+    undoOutgoingJustification: vi.fn(),
+  },
 }));
 
 const api = vi.mocked(accountingApi);
@@ -34,6 +46,8 @@ const DATA: OutgoingsResponse = {
         detail: "fee of the transfer to CONTOH PENERIMA",
       },
       fee_of_txn_id: 2,
+      state: "to_justify",
+      justification: null,
     },
     {
       id: 2,
@@ -50,6 +64,8 @@ const DATA: OutgoingsResponse = {
         detail: "Reimburse PNBP",
       },
       fee_of_txn_id: null,
+      state: "to_justify",
+      justification: null,
     },
     {
       id: 1,
@@ -65,6 +81,8 @@ const DATA: OutgoingsResponse = {
         detail: "e-billing 820261120000001",
       },
       fee_of_txn_id: null,
+      state: "to_justify",
+      justification: null,
     },
   ],
   by_kind: [
@@ -74,7 +92,122 @@ const DATA: OutgoingsResponse = {
   ],
   n: 3,
   total_idr: 17002500,
+  n_justified: 2,
+  justified_total_idr: 1300000,
 };
+
+const todayIso = () => new Date().toISOString();
+const JUSTIFIED: OutgoingsResponse = {
+  items: [
+    {
+      id: 6,
+      txn_date: "2026-11-19",
+      posted_at: "2026-11-19T10:00:00",
+      amount_idr: 1000000,
+      kind: "transfer_out",
+      description: "OCTO Biz TO CONTOH LAIN",
+      company_key: "bayu",
+      reading: { label: "Transfer", payee: "CONTOH LAIN", detail: "notary" },
+      fee_of_txn_id: null,
+      state: "justified",
+      justification: {
+        category: "vendor_case",
+        practice_id: 321,
+        recipient: null,
+        note: "Deed for a test company",
+        lines: [],
+        by: "staff@example.test",
+        at: todayIso(),
+      },
+    },
+    {
+      id: 7,
+      txn_date: "2026-11-19",
+      posted_at: "2026-11-19T10:00:00",
+      amount_idr: 2500,
+      kind: "transfer_fee",
+      description: "OCTO Biz TO CONTOH LAIN",
+      company_key: "bayu",
+      reading: { label: "Transfer fee", payee: "CONTOH LAIN", detail: "fee" },
+      fee_of_txn_id: 6,
+      state: "justified",
+      justification: {
+        category: "vendor_case",
+        practice_id: 321,
+        recipient: null,
+        note: null,
+        lines: [],
+        by: "staff@example.test",
+        at: todayIso(),
+        follows_txn_id: 6,
+      },
+    },
+    {
+      id: 5,
+      txn_date: "2026-11-01",
+      posted_at: "2026-11-01T10:00:00",
+      amount_idr: 300000,
+      kind: "bank_fee",
+      description: "ADMIN FEE",
+      company_key: "bayu",
+      reading: { label: "Bank charge", detail: "admin fee" },
+      fee_of_txn_id: null,
+      state: "justified",
+      justification: {
+        category: "bank_charges",
+        practice_id: null,
+        recipient: null,
+        note: null,
+        lines: [],
+        by: "staff@example.test",
+        at: "2026-11-02T03:00:00+00:00",
+      },
+    },
+  ],
+  by_kind: [],
+  n: 3,
+  total_idr: 17002500,
+  n_justified: 3,
+  justified_total_idr: 1302500,
+};
+const CASH: OutgoingsResponse = {
+  items: [
+    {
+      id: 9,
+      txn_date: "2026-11-21",
+      posted_at: "2026-11-21T09:00:00",
+      amount_idr: 1000000,
+      kind: "cash_withdrawal",
+      description: "BDS CLEARING",
+      company_key: "bayu",
+      reading: { label: "Cash withdrawal", detail: "cheque 0001" },
+      fee_of_txn_id: null,
+      state: "to_justify",
+      justification: null,
+    },
+  ],
+  by_kind: [
+    {
+      kind: "cash_withdrawal",
+      label: "Cash withdrawal",
+      n: 1,
+      total_idr: 1000000,
+    },
+  ],
+  n: 1,
+  total_idr: 1000000,
+  n_justified: 0,
+  justified_total_idr: 0,
+};
+
+const dialog = () =>
+  screen.getByRole("dialog", { name: "Justify this outgoing" });
+const field = (name: string) => within(dialog()).getByLabelText(name);
+const save = () => within(dialog()).getByRole("button", { name: "Save" });
+const type = (name: string, value: string) =>
+  fireEvent.change(field(name), { target: { value } });
+const addLine = () =>
+  fireEvent.click(within(dialog()).getByRole("button", { name: /Add a line/ }));
 
 const row = (id: number) => screen.getByTestId(`outgoing-${id}`);
 const cells = (id: number) =>
@@ -112,13 +245,8 @@ describe("OutgoingsView", () => {
       "e-billing 820261120000001",
     ]);
     expect(cells(2)[4]).toMatch(/12\.000\.000/);
-    expect(api.getOutgoings).toHaveBeenCalledWith();
+    expect(api.getOutgoings).toHaveBeenCalledWith({ state: "to_justify" });
     expect(screen.queryByText(/Showing the newest/)).toBeNull();
-    expect(
-      screen.getByText(
-        /Justifying them comes next: this page changes nothing\./,
-      ),
-    ).toBeInTheDocument();
   });
 
   it("filters by kind with the totals of every kind and back to all", async () => {
@@ -157,6 +285,8 @@ describe("OutgoingsView", () => {
       by_kind: [],
       n: 0,
       total_idr: 0,
+      n_justified: 0,
+      justified_total_idr: 0,
     });
     render(<OutgoingsView />);
     expect(await screen.findByText("Nothing to justify.")).toBeInTheDocument();
@@ -173,5 +303,210 @@ describe("OutgoingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByTestId("outgoing-1")).toBeInTheDocument();
     expect(api.getOutgoings).toHaveBeenCalledTimes(2);
+  });
+
+  it("switches between to justify and justified with both counts", async () => {
+    api.getOutgoings.mockImplementation(async (opts) =>
+      opts?.state === "justified" ? JUSTIFIED : DATA,
+    );
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-1");
+    const group = screen.getByRole("group", { name: "Outgoings state" });
+    expect(
+      within(group).getByRole("button", { name: "To justify (3)" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(group).getByRole("button", { name: /^Justified/ }));
+    await screen.findByTestId("outgoing-6");
+    expect(api.getOutgoings).toHaveBeenLastCalledWith({ state: "justified" });
+    expect(screen.queryByTestId("outgoing-1")).toBeNull();
+    expect(
+      within(group).getByRole("button", { name: "Justified (3)" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const block = screen.getByTestId("justification-6");
+    expect(block).toHaveTextContent("Notary / agent / freelancer for a case");
+    expect(block).toHaveTextContent("case 321");
+    expect(block).toHaveTextContent("Deed for a test company");
+    expect(block).toHaveTextContent("staff@example.test");
+  });
+
+  it("offers Justify on a row and none on a fee that follows its transfer", async () => {
+    api.getOutgoings.mockResolvedValue(DATA);
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-1");
+    expect(screen.getByTestId("justify-1")).toBeInTheDocument();
+    expect(screen.getByTestId("justify-2")).toBeInTheDocument();
+    expect(screen.queryByTestId("justify-3")).toBeNull();
+    expect(
+      within(row(3)).getByText("Follows its transfer"),
+    ).toBeInTheDocument();
+  });
+
+  it("preselects the category from the reading and sends exactly the body", async () => {
+    api.getOutgoings.mockResolvedValue(DATA);
+    api.justifyOutgoing.mockResolvedValue({
+      txn_id: 1,
+      justification_id: 1,
+      state: "justified",
+    });
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-1");
+    fireEvent.click(screen.getByTestId("justify-1"));
+    expect(field("Category")).toHaveValue("pnbp_case");
+    expect(save()).toBeEnabled();
+    type("Case id", "4a5b");
+    expect(field("Case id")).toHaveValue("45");
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(api.justifyOutgoing).toHaveBeenCalledWith(1, {
+        category: "pnbp_case",
+        practice_id: 45,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(toast.success).toHaveBeenCalled();
+    await waitFor(() => expect(api.getOutgoings).toHaveBeenCalledTimes(2));
+  });
+
+  it("needs a note for Other before Save is enabled", async () => {
+    api.getOutgoings.mockResolvedValue(DATA);
+    api.justifyOutgoing.mockResolvedValue({
+      txn_id: 2,
+      justification_id: 1,
+      state: "justified",
+    });
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-2");
+    fireEvent.click(screen.getByTestId("justify-2"));
+    expect(field("Category")).toHaveValue("other");
+    expect(save()).toBeDisabled();
+    type("Note", "  Office water  ");
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(api.justifyOutgoing).toHaveBeenCalledWith(2, {
+        category: "other",
+        note: "Office water",
+      }),
+    );
+  });
+
+  it("holds a cash withdrawal until recipient, note and lines add up exactly", async () => {
+    api.getOutgoings.mockResolvedValue(CASH);
+    api.justifyOutgoing.mockResolvedValue({
+      txn_id: 9,
+      justification_id: 1,
+      state: "justified",
+    });
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-9");
+    fireEvent.click(screen.getByTestId("justify-9"));
+    expect(field("Category")).toHaveValue("cash_withdrawal");
+    expect(save()).toBeDisabled();
+    type("Recipient", "Contoh Penerima");
+    type("Note", "Weekly cash");
+    expect(save()).toBeDisabled(); // no line yet
+    addLine();
+    type("Line 1 amount", "600000");
+    type("Line 1 note", "Courier");
+    expect(screen.getByTestId("justify-remaining").textContent).toMatch(
+      /400\.000/,
+    );
+    expect(save()).toBeDisabled(); // remaining is not 0
+    addLine();
+    type("Line 2 amount", "500000");
+    type("Line 2 note", "Stamps");
+    expect(save()).toBeDisabled(); // 100000 too much
+    type("Line 2 amount", "400000");
+    type("Line 2 case id", "77");
+    expect(save()).toBeEnabled();
+    type("Recipient", "  ");
+    expect(save()).toBeDisabled();
+    type("Recipient", "Contoh Penerima");
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(api.justifyOutgoing).toHaveBeenCalledWith(9, {
+        category: "cash_withdrawal",
+        recipient: "Contoh Penerima",
+        note: "Weekly cash",
+        lines: [
+          { amount_idr: 600000, category: "other", note: "Courier" },
+          {
+            amount_idr: 400000,
+            category: "other",
+            note: "Stamps",
+            practice_id: 77,
+          },
+        ],
+      }),
+    );
+  });
+
+  it("removing a line moves the remaining amount", async () => {
+    api.getOutgoings.mockResolvedValue(CASH);
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-9");
+    fireEvent.click(screen.getByTestId("justify-9"));
+    addLine();
+    type("Line 1 amount", "1000000");
+    expect(screen.getByTestId("justify-remaining").textContent).not.toMatch(
+      /[1-9]/,
+    );
+    fireEvent.click(
+      within(dialog()).getByRole("button", { name: "Remove line 1" }),
+    );
+    expect(screen.getByTestId("justify-remaining").textContent).toMatch(
+      /1\.000\.000/,
+    );
+  });
+
+  it("shows the server's message as is when justify fails, and keeps the dialog", async () => {
+    api.getOutgoings.mockResolvedValue(DATA);
+    api.justifyOutgoing.mockRejectedValue(
+      new Error("this debit is already justified: undo it first"),
+    );
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-1");
+    fireEvent.click(screen.getByTestId("justify-1"));
+    fireEvent.click(save());
+    expect(await within(dialog()).findByRole("alert")).toHaveTextContent(
+      "this debit is already justified: undo it first",
+    );
+    expect(save()).toBeEnabled();
+    expect(api.getOutgoings).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Undo only for a justification made today and not on a followed fee", async () => {
+    api.getOutgoings.mockResolvedValue(JUSTIFIED);
+    api.undoOutgoingJustification.mockResolvedValue({
+      txn_id: 6,
+      justification_id: 1,
+      state: "to_justify",
+    });
+    render(<OutgoingsView />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Justified/ }));
+    await screen.findByTestId("outgoing-6");
+    expect(screen.getByTestId("undo-6")).toBeInTheDocument();
+    expect(screen.queryByTestId("undo-7")).toBeNull(); // fee follows its transfer
+    expect(screen.queryByTestId("undo-5")).toBeNull(); // justified on an earlier day
+    fireEvent.click(screen.getByTestId("undo-6"));
+    await waitFor(() =>
+      expect(api.undoOutgoingJustification).toHaveBeenCalledWith(6),
+    );
+    expect(toast.success).toHaveBeenCalled();
+  });
+
+  it("shows the server's message when undo is refused", async () => {
+    api.getOutgoings.mockResolvedValue(JUSTIFIED);
+    api.undoOutgoingJustification.mockRejectedValue(
+      new Error("justified before today: it cannot be undone"),
+    );
+    render(<OutgoingsView />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Justified/ }));
+    await screen.findByTestId("undo-6");
+    fireEvent.click(screen.getByTestId("undo-6"));
+    expect(await within(row(6)).findByRole("alert")).toHaveTextContent(
+      "justified before today: it cannot be undone",
+    );
+    expect(toast.error).toHaveBeenCalled();
   });
 });

@@ -194,13 +194,15 @@ describe("AccountingPage", () => {
       by_kind: [],
       n: 0,
       total_idr: 0,
+      n_justified: 0,
+      justified_total_idr: 0,
     });
     render(<AccountingPage />);
     await screen.findByText("CONTOH TRANSFER");
     expect(api.getOutgoings).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId("cc-money-out"));
     expect(
-      await screen.findByRole("heading", { name: "Outgoings to justify" }),
+      await screen.findByRole("heading", { name: "Outgoings" }),
     ).toBeInTheDocument();
     expect(await screen.findByText("Nothing to justify.")).toBeInTheDocument();
     expect(api.getOutgoings).toHaveBeenCalledTimes(1);
