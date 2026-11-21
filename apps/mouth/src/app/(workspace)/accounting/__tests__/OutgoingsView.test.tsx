@@ -359,7 +359,9 @@ describe("OutgoingsView", () => {
     expect(field("Category")).toHaveValue("pnbp_case");
     expect(save()).toBeEnabled();
     type("Case id", "4a5b");
-    expect(field("Case id")).toHaveValue("45");
+    expect(save()).toBeDisabled(); // never read as 45
+    type("Case id", "45");
+    expect(save()).toBeEnabled();
     fireEvent.click(save());
     await waitFor(() =>
       expect(api.justifyOutgoing).toHaveBeenCalledWith(1, {
@@ -439,6 +441,53 @@ describe("OutgoingsView", () => {
             amount_idr: 400000,
             category: "other",
             note: "Stamps",
+            practice_id: 77,
+          },
+        ],
+      }),
+    );
+  });
+
+  it("never turns a signed, decimal or foreign amount into another number", async () => {
+    api.getOutgoings.mockResolvedValue(CASH);
+    api.justifyOutgoing.mockResolvedValue({
+      txn_id: 9,
+      justification_id: 1,
+      state: "justified",
+    });
+    render(<OutgoingsView />);
+    await screen.findByTestId("outgoing-9");
+    fireEvent.click(screen.getByTestId("justify-9"));
+    type("Recipient", "Contoh Penerima");
+    type("Note", "Weekly cash");
+    addLine();
+    type("Line 1 note", "Courier");
+    for (const bad of [
+      "-1000000",
+      "1000000.5",
+      "1000000,5",
+      "1e6",
+      "Rp 1000000",
+    ]) {
+      type("Line 1 amount", bad);
+      expect(save()).toBeDisabled();
+    }
+    type("Line 1 amount", "1.000.000");
+    type("Line 1 case id", "-77");
+    expect(save()).toBeDisabled();
+    type("Line 1 case id", "77");
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(api.justifyOutgoing).toHaveBeenCalledWith(9, {
+        category: "cash_withdrawal",
+        recipient: "Contoh Penerima",
+        note: "Weekly cash",
+        lines: [
+          {
+            amount_idr: 1000000,
+            category: "other",
+            note: "Courier",
             practice_id: 77,
           },
         ],

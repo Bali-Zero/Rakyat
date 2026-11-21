@@ -42,9 +42,19 @@ interface DraftLine {
   caseId: string;
 }
 
-const digits = (v: string) => v.replace(/\D/g, "");
+/**
+ * A typed amount in whole rupiah, or null. Plain digits, or digits grouped by three with
+ * "." or "," (1.000.000); a sign, a decimal part or any other text is not an amount, so it
+ * is never turned into a different number.
+ */
+const parseRupiah = (raw: string): number | null => {
+  const t = raw.trim();
+  if (/^\d+$/.test(t)) return Number(t);
+  if (/^\d{1,3}([.,]\d{3})+$/.test(t)) return Number(t.replace(/[.,]/g, ""));
+  return null;
+};
 /** Empty is fine (the case is optional); otherwise a positive whole number. */
-const caseOk = (v: string) => v === "" || /^[1-9]\d*$/.test(v);
+const caseOk = (v: string) => v.trim() === "" || /^[1-9]\d*$/.test(v.trim());
 
 const inputCls =
   "w-full rounded-md border border-[var(--bz-border)] bg-transparent px-2 py-1.5 text-sm";
@@ -72,7 +82,7 @@ export function JustifyDialog({
   const [failure, setFailure] = useState<string | null>(null);
 
   const cash = category === "cash_withdrawal";
-  const sum = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
+  const sum = lines.reduce((t, l) => t + (parseRupiah(l.amount) ?? 0), 0);
   const remaining = item.amount_idr - sum;
 
   const problem = useMemo(() => {
@@ -84,7 +94,10 @@ export function JustifyDialog({
       if (lines.length === 0) return "Add at least one line.";
       if (
         lines.some(
-          (l) => !(Number(l.amount) > 0) || !l.note.trim() || !caseOk(l.caseId),
+          (l) =>
+            !((parseRupiah(l.amount) ?? 0) > 0) ||
+            !l.note.trim() ||
+            !caseOk(l.caseId),
         )
       )
         return "Every line needs an amount, a note and a valid case.";
@@ -102,15 +115,15 @@ export function JustifyDialog({
     setBusy(true);
     setFailure(null);
     const body: JustifyOutgoingRequest = { category };
-    if (caseId) body.practice_id = Number(caseId);
+    if (caseId.trim()) body.practice_id = Number(caseId.trim());
     if (cash) body.recipient = recipient.trim();
     if (note.trim()) body.note = note.trim();
     if (cash) {
       body.lines = lines.map((l) => ({
-        amount_idr: Number(l.amount),
+        amount_idr: parseRupiah(l.amount) as number,
         category: l.category,
         note: l.note.trim(),
-        ...(l.caseId ? { practice_id: Number(l.caseId) } : {}),
+        ...(l.caseId.trim() ? { practice_id: Number(l.caseId.trim()) } : {}),
       }));
     }
     try {
@@ -186,7 +199,7 @@ export function JustifyDialog({
               inputMode="numeric"
               className={inputCls}
               value={caseId}
-              onChange={(e) => setCaseId(digits(e.target.value))}
+              onChange={(e) => setCaseId(e.target.value)}
             />
           </label>
           {cash && (
@@ -230,9 +243,7 @@ export function JustifyDialog({
                     placeholder="Amount (Rp)"
                     className={inputCls}
                     value={l.amount}
-                    onChange={(e) =>
-                      setLine(l.key, { amount: digits(e.target.value) })
-                    }
+                    onChange={(e) => setLine(l.key, { amount: e.target.value })}
                   />
                   <select
                     aria-label={`Line ${idx + 1} category`}
@@ -265,9 +276,7 @@ export function JustifyDialog({
                     placeholder="Case"
                     className={inputCls}
                     value={l.caseId}
-                    onChange={(e) =>
-                      setLine(l.key, { caseId: digits(e.target.value) })
-                    }
+                    onChange={(e) => setLine(l.key, { caseId: e.target.value })}
                   />
                   <button
                     type="button"
