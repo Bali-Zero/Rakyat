@@ -12,10 +12,8 @@ over the REDACTED content, never the original), and reverses the
 substitution on the codex-generated answer so the client still sees the
 real value.
 
-Pure, regex-only, dependency-free by design (no Presidio in the hot path —
-apps/backend-rag/backend/middleware/pii_scanner.py already carries that
-dependency for a different, offline surface). No I/O, no logging of any
-matched ORIGINAL string anywhere in this module — every log line here
+Pure, regex-only, dependency-free by design (no NLP engine in the hot path). No I/O, no
+logging of any matched ORIGINAL string anywhere in this module — every log line here
 carries category + count only, never content (project CLAUDE.md §14 PII
 boundary).
 
@@ -177,8 +175,8 @@ def _validate_key_prefix(_source: str, match: re.Match[str]) -> bool:
         return True
     return _KEY_ENTROPY_RUN_RE.search(surface[3:]) is not None
 
-# NPWP — reused verbatim from backend/middleware/pii_scanner.py's Presidio
-# patterns (already hardened, already the codebase's chosen shapes):
+# NPWP — shapes carried over from the former Presidio-based scanner
+# (already hardened, already the codebase's chosen shapes):
 # old 15-digit dotted, new 16-digit bare (leading zero), new 16-digit
 # dotted. Order among the three does not matter (their shapes are mutually
 # exclusive by word-boundary construction — a dotted string never satisfies
@@ -237,14 +235,14 @@ _DATE_SHAPE_RE = re.compile(
     r")(?!\d)"
 )
 
-# PASSPORT — reused verbatim from pii_scanner.py, now (Kimi M2) case-
+# PASSPORT — carried over from the former Presidio-based scanner, now (Kimi M2) case-
 # INSENSITIVE: a lowercase-first-letter passport ("b1234567") is a real
 # shape that the original `[A-Z]` char class silently missed. Widening to
 # `(?i)` alone would over-match common alphanumeric codes that are NOT
 # passports — purchase orders, reference numbers, invoice numbers — so a
 # validator declines the letter-prefixes that are near-universally one of
 # those instead (Kimi MINOR-4, "PO123456" false-positive). The codebase has
-# 5 divergent passport shapes across sentry_config/pii_scanner; per the
+# 5 divergent passport shapes across sentry_config and the former scanner; per the
 # design spec this is the ONE chosen for this module, not an attempt to
 # unify the other 4.
 _PASSPORT_RE = re.compile(r"(?i)\b[A-Za-z]{1,2}\d{6,7}\b")

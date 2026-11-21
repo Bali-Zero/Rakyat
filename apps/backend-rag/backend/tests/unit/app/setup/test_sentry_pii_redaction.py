@@ -649,7 +649,7 @@ def test_known_gap_a_bare_personal_name_in_free_text_is_not_redactable():
 
     `logger.info(f"Created client {id}: {client.full_name}")` produces a name in
     a sentence, and a name has no regex-recognisable shape — catching it needs
-    NER (`backend/middleware/pii_scanner.py`, Presidio), which cannot live on
+    NER, which cannot live on
     the error path of a hook that must never itself raise. The only real fix is
     the call site: do not log the value. Flip this test the day the hook grows
     a name detector.
