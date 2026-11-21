@@ -288,6 +288,9 @@ async def client_already_has_blob(
 # Sender-phone exact match (m225). High confidence but NEVER auto-attach: a
 # phone can be shared by spouse/agent — the sender is not always the subject.
 CONF_PHONE_MATCH = 0.90
+# ``reason["sender_phone"]`` when the sender is a team number: the phone was
+# not looked up (a forward never names the subject). The number is not stored.
+SENDER_PHONE_INTERNAL_IGNORED = "internal_number_ignored"
 # Boost applied when sender phone AND fuzzy name agree on the same client.
 PHONE_NAME_AGREE_BOOST = 0.05
 
@@ -1006,6 +1009,9 @@ async def resolve_entity(
     ``sender_phone`` (m225) is the raw transport-layer sender number; it is
     consulted only when no strong document identifier matched, as a
     high-confidence (~0.90) person hint — see :func:`_classify_decision`.
+    A team number (``auto_attach._is_internal_sender_phone``) is never looked
+    up and disables ``client_id_hint``; ``reason["sender_phone"]`` then reads
+    ``SENDER_PHONE_INTERNAL_IGNORED``.
     ``source_path`` (m227) is the Drive-intake folder path relative to the
     watched root (``<Client Name>/file.pdf``); its first segment is consulted
     only when neither a strong identifier nor the phone resolved (~0.85 hint).
@@ -1089,16 +1095,30 @@ async def resolve_entity(
         # Sender-phone signal (m225) — the transport layer knows who SENT the
         # blob. Only consulted when no strong identifier resolved (a strong ID
         # names the SUBJECT; the phone names the SENDER — document wins).
+        # A team number (``BZ_INTERNAL_PHONE_NUMBERS``) forwards other people's
+        # documents, so it never names the subject: it is not looked up, and
+        # neither is a hint derived from it.
+        sender_is_internal = False
         if not strong and sender_phone:
-            phone = await _match_sender_phone(conn, sender_phone)
-            if phone and subject_kind == "unknown":
-                subject_kind = "person"
+            # Local import: ``auto_attach`` imports this module at load time.
+            from backend.services.intake.auto_attach import _is_internal_sender_phone
+
+            if _is_internal_sender_phone(sender_phone):
+                sender_is_internal = True
+            else:
+                phone = await _match_sender_phone(conn, sender_phone)
+                if phone and subject_kind == "unknown":
+                    subject_kind = "person"
 
         # client_id_hint fallback (P0-3, 2026-07-18) — see docstring above.
-        # Only consulted when the fresh sender_phone lookup found NOTHING;
-        # a hint is never stamped for internal/group senders, so this cannot
-        # reintroduce the forwarder ≠ subject risk.
-        if not strong and not phone and client_id_hint is not None:
+        # Only consulted when the fresh sender_phone lookup found NOTHING and
+        # the sender is not a team number.
+        if (
+            not strong
+            and not phone
+            and not sender_is_internal
+            and client_id_hint is not None
+        ):
             hint_row = await conn.fetchrow(
                 "SELECT id, full_name FROM clients"
                 " WHERE id = $1 AND deleted_at IS NULL",
@@ -1178,6 +1198,8 @@ async def resolve_entity(
         decision, candidates, reason = _classify_decision(
             strong, fuzzy, phone, subject_name=subject_name
         )
+        if sender_is_internal:
+            reason = {**reason, "sender_phone": SENDER_PHONE_INTERNAL_IGNORED}
         return {
             "decision": decision,
             "candidates": candidates,

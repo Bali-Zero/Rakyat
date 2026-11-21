@@ -450,3 +450,161 @@ async def test_resolve_entity_phone_match_no_subject_name_links() -> None:
     )
     assert out["decision"] == rt.DECISION_LINK_CANDIDATE
     assert "sender_subject_mismatch" not in out["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Team numbers (BZ_INTERNAL_PHONE_NUMBERS) forward other people's documents:
+# the resolver never looks them up and never uses a hint derived from them.
+# The roster and every number below are synthetic.
+# ---------------------------------------------------------------------------
+
+TEAM_NUMBER = "+62 840-002-7000"
+TEAM_NORMALISED = "628400027000"
+
+
+@pytest.fixture
+def team_roster(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.services.intake import auto_attach as aa
+
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_NUMBERS", ())
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_PREFIXES", ())
+    monkeypatch.setenv("BZ_INTERNAL_PHONE_NUMBERS", "+628400027000")
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_team_number_is_never_looked_up(team_roster: None) -> None:
+    conn = FakeConn(phone_rows=[{"id": 1526, "full_name": "Client C"}])
+    out = await rt.resolve_entity({}, "unknown", FakePool(conn), sender_phone=TEAM_NUMBER)
+    assert out["decision"] == rt.DECISION_NO_MATCH
+    assert out["candidates"] == []
+    assert out["subject_kind"] == "unknown"
+    assert out["reason"]["sender_phone"] == rt.SENDER_PHONE_INTERNAL_IGNORED
+    assert not any("phone_normalized" in q for q in conn.queries)
+    assert TEAM_NORMALISED not in repr(out)
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_team_number_leaves_the_document_name_to_decide(
+    team_roster: None,
+) -> None:
+    # The live defect: a staffer forwards a client's visa, the phone matched
+    # the staffer's own card. Now only the document's subject name speaks.
+    conn = FakeConn(
+        phone_rows=[{"id": 1526, "full_name": "Client C"}],
+        fuzzy_rows=[{"id": 9001, "name": "Someone Elses Visa", "sim": 0.71}],
+    )
+    out = await rt.resolve_entity(
+        {"name": {"value": "Someone Elses Visa"}}, "kitas",
+        FakePool(conn), sender_phone=TEAM_NUMBER,
+    )
+    assert out["decision"] == rt.DECISION_LINK_CANDIDATE
+    assert [c["id"] for c in out["candidates"]] == [9001]
+    assert out["candidates"][0]["method"] != "sender_phone"
+    assert "sender_subject_mismatch" not in out["reason"]
+    assert out["reason"]["sender_phone"] == rt.SENDER_PHONE_INTERNAL_IGNORED
+    assert not any("phone_normalized" in q for q in conn.queries)
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_team_number_disables_the_client_id_hint(
+    team_roster: None,
+) -> None:
+    conn = FakeConn(hint_client_row={"id": 99, "full_name": "Hinted Client"})
+    out = await rt.resolve_entity(
+        {}, "unknown", FakePool(conn), sender_phone=TEAM_NUMBER, client_id_hint=99,
+    )
+    assert out["decision"] == rt.DECISION_NO_MATCH
+    assert out["candidates"] == []
+    assert conn.fetchrow_queries == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_team_number_does_not_touch_a_strong_identifier(
+    team_roster: None,
+) -> None:
+    conn = FakeConn(
+        passport_rows=[{"id": 7, "full_name": "Alice Strong", "id_verified": True}],
+        phone_rows=[{"id": 1526, "full_name": "Client C"}],
+    )
+    out = await rt.resolve_entity(
+        {"passport_no": {"value": "ZZ9988770"}}, "passport",
+        FakePool(conn), sender_phone=TEAM_NUMBER,
+    )
+    assert out["decision"] == rt.DECISION_AUTO_ATTACH
+    assert out["candidates"][0]["id"] == 7
+    assert "sender_phone" not in out["reason"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_other_number_is_still_looked_up(team_roster: None) -> None:
+    conn = FakeConn(phone_rows=[{"id": 42, "full_name": "Wira Phone"}])
+    out = await rt.resolve_entity(
+        {}, "unknown", FakePool(conn), sender_phone="0812-345-6789"
+    )
+    assert out["decision"] == rt.DECISION_LINK_CANDIDATE
+    assert (out["candidates"][0]["id"], out["candidates"][0]["method"]) == (42, "sender_phone")
+    assert "sender_phone" not in out["reason"]
+    assert any("phone_normalized" in q for q in conn.queries)
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_other_number_still_uses_the_hint(team_roster: None) -> None:
+    conn = FakeConn(phone_rows=[], hint_client_row={"id": 99, "full_name": "Hinted Client"})
+    out = await rt.resolve_entity(
+        {}, "unknown", FakePool(conn), sender_phone="08123456789", client_id_hint=99,
+    )
+    assert (out["candidates"][0]["id"], out["candidates"][0]["method"]) == (99, "client_id_hint")
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_team_prefix_is_never_looked_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.services.intake import auto_attach as aa
+
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_NUMBERS", ())
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_PREFIXES", ())
+    monkeypatch.setenv("BZ_INTERNAL_PHONE_NUMBERS", "0840002*")
+    conn = FakeConn(phone_rows=[{"id": 1526, "full_name": "Client C"}])
+    out = await rt.resolve_entity({}, "unknown", FakePool(conn), sender_phone=TEAM_NUMBER)
+    assert out["decision"] == rt.DECISION_NO_MATCH
+    assert out["reason"]["sender_phone"] == rt.SENDER_PHONE_INTERNAL_IGNORED
+    assert not any("phone_normalized" in q for q in conn.queries)
+
+
+@pytest.mark.asyncio
+async def test_resolve_entity_without_a_roster_looks_every_number_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.services.intake import auto_attach as aa
+
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_NUMBERS", ())
+    monkeypatch.setattr(aa, "INTERNAL_PHONE_PREFIXES", ())
+    monkeypatch.delenv("BZ_INTERNAL_PHONE_NUMBERS", raising=False)
+    conn = FakeConn(phone_rows=[{"id": 1526, "full_name": "Client C"}])
+    out = await rt.resolve_entity({}, "unknown", FakePool(conn), sender_phone=TEAM_NUMBER)
+    assert out["decision"] == rt.DECISION_LINK_CANDIDATE
+    assert out["candidates"][0]["method"] == "sender_phone"
+    assert "sender_phone" not in out["reason"]
+
+
+@pytest.mark.asyncio
+async def test_build_routing_proposal_records_the_ignored_team_number(
+    team_roster: None,
+) -> None:
+    class _PoolLikeConn(FakeConn):
+        # build_routing_proposal hands its connection to resolve_entity, which
+        # acquires again from anything that is not a real asyncpg.Connection.
+        def acquire(self) -> Any:
+            return FakePool(self).acquire()
+
+    conn = _PoolLikeConn(phone_rows=[{"id": 1526, "full_name": "Client C"}])
+    prop = await rt.build_routing_proposal(
+        1, {}, "unknown", conn, sender_phone=TEAM_NUMBER,
+    )
+    er = prop["entity_resolution"]
+    assert er["decision"] == rt.DECISION_NO_MATCH
+    assert er["candidates"] == []
+    assert er["reason"]["sender_phone"] == rt.SENDER_PHONE_INTERNAL_IGNORED
+    assert prop["routing"]["client_id"] is None
+    assert TEAM_NORMALISED not in repr(prop)
