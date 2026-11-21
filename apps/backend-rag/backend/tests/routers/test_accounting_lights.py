@@ -292,6 +292,15 @@ def test_the_payer_bound_leaves_matching_on_a_long_line_as_it_was(mock_db_pool) 
     assert item["description"] == line
 
 
+def test_a_payment_code_in_the_name_slot_is_not_shown_as_the_payer(mock_db_pool) -> None:
+    code = "20261120SAHMIDJA010O0000000001 PY80000001 26112 BFS        FR SAHMIDJA UN PY80000001 261"
+    named = "20261120CENAIDJA010O0000000002 BFS        FR CENAIDJA UN CONTOH PEMBAYAR"
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, code), _tx(2, 5_000_000, named)], [], [])
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert {i["txn_id"]: i["payer_name"] for i in items} == {1: "", 2: "CONTOH PEMBAYAR"}
+    assert {i["txn_id"]: i["description"] for i in items} == {1: code, 2: named}
+
+
 def test_a_line_as_long_as_the_longest_real_one_names_its_whole_payer(mock_db_pool) -> None:
     tail = " BFS FR CENAIDJA UN CONTOH PEMBAYAR"
     line = "20260101CENAIDJA010O0000000001" + " " * (112 - 30 - len(tail)) + tail
