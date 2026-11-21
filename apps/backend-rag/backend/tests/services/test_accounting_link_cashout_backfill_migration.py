@@ -10,13 +10,13 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import asyncpg
 import pytest
 
 from backend.db.migration_base import split_migration_sql
 from backend.services.accounting.cashout_service import cashbook_summary, list_cashout
 from backend.services.accounting.reconcile_service import (
     _iso_week_label,
-    confirm_payment,
     link_recorded,
     reopen_transaction,
 )
@@ -299,88 +299,31 @@ async def test_reopening_an_old_link_after_the_migration_reverses_its_row(db) ->
     assert await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid) is None
 
 
-async def test_the_rollback_reverses_the_added_rows_and_restores_the_dates(db) -> None:
+async def test_the_rollback_refuses_and_changes_nothing(db) -> None:
     conn, _ = db
-    _, iid, _ = await _old_link(conn, date(2026, 10, 7))
-    pid2, iid2 = await _practice(conn, "paid")
-    tx2 = await _bank(conn)
-    await conn.execute(
-        "UPDATE bank_transactions SET txn_date = $1 WHERE id = $2", date(2026, 10, 2), tx2
-    )
-    await link_recorded(conn, bank_txn_id=tx2, practice_id=pid2, invoice_id=iid2, linked_by=WHO)
-    _, iid3, _ = await _old_link(conn, date(2026, 10, 9), invoice=(pid2, iid2))
+    await _old_link(conn, date(2026, 10, 7))
     await _forward(conn)
-    assert iid3 == iid2
+    before = await _rows(conn)
+    paid_before = await conn.fetch("SELECT id, paid_date FROM invoices ORDER BY id")
 
-    await _rollback(conn)
-
-    rows = await _rows(conn)
-    standing = [r for r in rows if r["reversed_by_id"] is None]
-    assert [r["description"] for r in standing] == [None]  # only the post-rule link's row
-    by_id = {r["id"]: r for r in rows}
-    for r in rows:
-        if r["description"] == MARK:
-            pair = by_id[r["reversed_by_id"]]
-            assert pair["reversed_by_id"] == r["id"]
-            assert pair["amount_idr"] == r["amount_idr"]
-    assert await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid) is None
-    assert await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid2) == _utc(
-        date(2026, 10, 2)
-    )
-    summary = await cashbook_summary(
-        conn, period_start=date(2026, 10, 1), period_end=date(2026, 10, 31)
-    )
-    assert summary["income_idr"] == 4_000_000
-
-
-async def _later_payments(conn, pid: int, iid: int, *, dated: bool) -> None:
-    """After the migration, on the same invoice: a new link, then a confirmation."""
-    tx = await _bank(conn, amount=100_000)
-    await conn.execute(
-        "UPDATE bank_transactions SET txn_date = $1 WHERE id = $2", date(2026, 10, 9), tx
-    )
-    await link_recorded(conn, bank_txn_id=tx, practice_id=pid, invoice_id=iid, linked_by=WHO)
-    tx = await _bank(conn, amount=100_000)
-    await confirm_payment(
-        conn,
-        bank_txn_id=tx,
-        practice_id=pid,
-        invoice_id=iid,
-        amount_applied_idr=100_000,
-        new_status="paid",
-        confirmed_by=WHO,
-        movement_date=date(2026, 10, 10) if dated else None,
-    )
-
-
-@pytest.mark.parametrize("dated", [True, False])
-async def test_the_rollback_keeps_the_paid_date_later_payments_gave(db, dated) -> None:
-    conn, _ = db
-    async with conn.transaction():  # one now() for both histories
-        pid, iid, _ = await _old_link(conn, date(2026, 10, 7), 1_000_000)
-        without_374 = conn.transaction()
-        await without_374.start()
-        await _later_payments(conn, pid, iid, dated=dated)
-        expected = await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid)
-        await without_374.rollback()
-
-        await _forward(conn)
-        await _later_payments(conn, pid, iid, dated=dated)
+    with pytest.raises(asyncpg.RaiseError, match="rollback 374 refused"):
         await _rollback(conn)
 
-        assert await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid) == expected
+    assert await _rows(conn) == before
+    assert await conn.fetch("SELECT id, paid_date FROM invoices ORDER BY id") == paid_before
 
 
-async def test_the_rollback_after_reopening_the_later_of_two_old_links_leaves_no_date(db) -> None:
+async def test_on_a_schema_without_the_accounting_tables_the_forward_skips(db) -> None:
+    """CI applies migrations_v2 to an empty schema: 374 must skip there, not fail."""
     conn, _ = db
-    pid, iid, _ = await _old_link(conn, date(2026, 10, 7))
-    _, _, later = await _old_link(conn, date(2026, 10, 9), invoice=(pid, iid))
-    await _forward(conn)
-    await reopen_transaction(conn, bank_txn_id=later, reopened_by=WHO)
-    assert await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid) == _utc(
-        date(2026, 10, 7)
-    )
-
-    await _rollback(conn)
-
-    assert await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid) is None
+    await conn.execute("CREATE SCHEMA empty_374")
+    try:
+        await conn.execute("SET search_path TO empty_374")
+        await _forward(conn)
+        assert (
+            await conn.fetchval("SELECT count(*) FROM pg_tables WHERE schemaname = 'empty_374'")
+            == 0
+        )
+    finally:
+        await conn.execute("SET search_path TO DEFAULT")
+        await conn.execute("DROP SCHEMA empty_374")
