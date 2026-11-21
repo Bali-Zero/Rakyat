@@ -176,9 +176,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="crm_shared_memory", process_groups=_API, tags=("crm",)),
     RouterEntry(name="crm_tax_pilot", process_groups=_API, tags=("crm", "pilot", "tax")),
     # ── Conversations / Memory ──
-    RouterEntry(name="collective_memory", process_groups=_RAG, tags=("memory",)),
     RouterEntry(name="conversations", process_groups=_RAG, tags=("memory",)),
-    RouterEntry(name="episodic_memory", process_groups=_RAG, tags=("memory",)),
     # ── Dashboard ──
     RouterEntry(name="dashboard", process_groups=_RAG, tags=("dashboard",)),
     RouterEntry(name="dashboard_featured_articles", process_groups=_RAG, tags=("dashboard",)),
@@ -312,9 +310,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     # ── Image Generation ──
     RouterEntry(name="image_generation", process_groups=_API, tags=("media",)),
     # ── Ingestion ──
-    RouterEntry(name="ingest", process_groups=_RAG, tags=("ingest",)),
     RouterEntry(name="legal_ingest", process_groups=_RAG, tags=("ingest",)),
-    RouterEntry(name="oracle_ingest", process_groups=_RAG, tags=("ingest",)),
     # ── Instagram ──
     RouterEntry(name="instagram_chat", attr="router", process_groups=_API, tags=("channels",)),
     RouterEntry(
@@ -365,8 +361,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="media", process_groups=_API, tags=("media",)),
     # ── Messaging ──
     RouterEntry(name="messaging_identity", process_groups=_API, tags=("channels",)),
-    # ── Monitoring ──
-    RouterEntry(name="monitoring_rag", process_groups=_RAG, tags=("monitoring",)),
     # ── Naga (Deep Research) ──
     RouterEntry(name="naga", process_groups=_RAG, tags=("research",)),
     # ── Newsletter ──
@@ -558,7 +552,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
 _ORDER_FULL = """
 auth health nusantara_health olympus:internal_router handlers debug debug:v1_router agent
 lam_memory agents autonomous_agents autonomous_execution autonomous_lab agentic_rag
-kg_agentic conversations session collective_memory episodic_memory experience skill
+kg_agentic conversations session experience skill
 metabolic_health federation feedback funnel lead_capture visa_check funnel_email garuda_voa
 garuda_voa_public garuda_orders_router garuda_portal_auth garuda_documents_router
 garuda_staff_router garuda_assignment_targets crm_clients intake_review
@@ -571,7 +565,7 @@ hr_people intake_gate notifications notifications_admin cron_notifiers portal po
 portal_billing portal_dashboard portal_drive portal_family portal_invite portal_matters
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
-wr2_publish workspace_analytics research_control ingest legal_ingest oracle_ingest naga
+wr2_publish workspace_analytics research_control legal_ingest naga
 oracle_universal kbli_notebook kbli_notebook_chat preview websocket telegram twitter
 twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
 wa_broker wa_inbox wa_package instagram_chat instagram_chat:webhook_router intel_lake intel
@@ -581,7 +575,7 @@ admin_drive_health admin_email_health admin_pii admin_rate_limit admin_drive_ref
 admin_drive_setup admin_self_healing admin_zoho_auth frontend_metrics llm_costs newsletter
 blog_ask article_composer asset_upload news performance prime prime_v2 dynamic_pricing dream
 identity knowledge knowledge_visa knowledge_activity team team_activity team_analytics media
-voice image_generation query_analytics workflow_analytics workflow_queue monitoring_rag
+voice image_generation query_analytics workflow_analytics workflow_queue
 admin_conversation_cleanup admin_practice_auto_create admin_logs admin_team_activity
 dashboard dashboard_featured_articles dashboard_summary cell_status event_bus bridge
 guardian visa_oracle visa_oracle_evaluate visa_oracle_testing
@@ -618,11 +612,11 @@ guardian knowledge_activity visa_oracle visa_oracle_evaluate visa_oracle_testing
 _ORDER_RAG = """
 health handlers admin_rate_limit admin_self_healing agent lam_memory agents
 autonomous_agents autonomous_execution agentic_rag kg_agentic conversations
-collective_memory episodic_memory crm_clients intake_review crm_enhanced crm_practices
-ingest legal_ingest oracle_ingest naga oracle_universal intel intel_scraper intel_analytics
+crm_clients intake_review crm_enhanced crm_practices
+legal_ingest naga oracle_universal intel intel_scraper intel_analytics
 intel_lake intel_observability kbli_notebook kbli_notebook_chat blog_ask news
 dynamic_pricing dream identity knowledge knowledge_visa voice whatsapp_chat wa_package
-dashboard dashboard_featured_articles dashboard_summary monitoring_rag
+dashboard dashboard_featured_articles dashboard_summary
 """.split()
 
 _ORDERS: dict[str, list[str]] = {"full": _ORDER_FULL, "api": _ORDER_API, "rag": _ORDER_RAG}
