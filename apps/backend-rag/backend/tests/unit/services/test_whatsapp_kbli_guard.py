@@ -85,3 +85,17 @@ def test_indonesian_villa_management_answer_mentions_management_and_platform_cod
     assert "55203" in result.reply
     assert "55901" in result.reply
     assert "55400" in result.reply
+
+
+def test_guard_corrects_a_villa_answer_before_any_channel_formatting() -> None:
+    """The guard reads the model's raw text. This drives the villa/KBLI
+    correction the guard exists for with the real sanitizer (it used to be
+    pinned through the removed router, with the formatter running after it)."""
+    result = sanitize_whatsapp_kbli_reply(
+        message_text="ma 55193 o 55203?",
+        reply="55193 - Aktivitas Vila: usa questo per Airbnb.",
+    )
+
+    assert result.corrected is True
+    assert "55203" in result.reply
+    assert "usa questo per Airbnb" not in result.reply

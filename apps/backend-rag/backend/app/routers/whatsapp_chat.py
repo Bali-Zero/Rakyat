@@ -1,24 +1,21 @@
 """
 WhatsApp Chat Router
-Handles incoming WhatsApp messages with intelligent triage (personal vs business).
 
-Architecture:
-- Webhook receives messages from Meta WhatsApp Cloud API
-- Triage service decides: personal → human, business → AI RAG
-- AI responses use Claude Sonnet 4.5 with dynamic persona + client memory
-- Notifications sent to admin via Telegram for personal messages
+Meta WhatsApp Cloud API webhook: signature check, ack-first persistence to
+``inbound_webhooks``, and routing by destination number.
 
-v2: Upgraded brain — Sonnet 4.5, dynamic persona "Zan", client profile memory,
-    context builder, proactive suggestions, human escalation with full context.
+- meta-inbox number: ledger persistence + media hand-off; replies are generated
+  by the wa_outbox worker, not here.
+- team-bot number: handed to the team-bot ingress seam (or dropped when its
+  kill switch is off).
+- any other number: the inline reply path that used to answer these was retired;
+  the persisted row is closed with an explicit reason, never retried.
 """
 
-import asyncio
 import json
 import logging
 import os
 import re
-import time
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,77 +24,29 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.core.config import settings
-from backend.channels.format import format_rich_text
-from backend.db.repositories.conversation_repository import (
-    conversation_write_connection,
-    lock_conversation_session,
-)
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.security.webhook_verifier import WebhookVerificationError, verify_meta_hmac
-
-# `notify_human_telegram` now lives in
-# `backend/services/integrations/human_escalation_notifier.py` so the WhatsApp
-# INBOX BOT (a background service) can reach the same notifier instead of
-# growing a second copy — the two paths already drifted once, which is how
-# `wa_inbox_bot.py` ended up stripping `[ESCALATE]` and telling nobody.
-#
-# Re-exported here under its original name, so the two call sites below and any
-# `patch("backend.app.routers.whatsapp_chat.notify_human_telegram")` still work.
-# What does NOT survive the move — measured, an earlier version of this comment
-# claimed otherwise and the suite disproved it: the function now reads
-# `settings` and `telegram_bot` from ITS OWN module, so patching THIS module's
-# globals no longer reaches its dependencies. Patch
-# `...human_escalation_notifier.settings` instead.
-from backend.services.integrations.human_escalation_notifier import (
-    notify_human_telegram,
-)
-from backend.services.integrations.openclaw_whatsapp_bridge import ask_openclaw_whatsapp
-from backend.services.integrations.telegram_bot_service import telegram_bot
 from backend.services.integrations.wa_outbox_worker import (
     META_INBOX_PHONE_NUMBER_IDS,
     _manners_enabled,
 )
 from backend.services.integrations.whatsapp_service import whatsapp_service
-from backend.services.integrations.whatsapp_triage_service import (
-    TriageDecision,
-    whatsapp_triage_service,
-)
-from backend.services.whatsapp_kbli_guard import sanitize_whatsapp_kbli_reply
-from backend.services.whatsapp_onboarding_detector import get_onboarding_detector
+from backend.services.integrations.whatsapp_triage_service import whatsapp_triage_service
 
 logger = logging.getLogger(__name__)
-
-
-def build_openclaw_context(ctx: dict[str, Any], *, send_stored_context: bool) -> dict[str, Any]:
-    """Context sent to the OpenClaw bridge. History and profile come from the
-    conversations row, so they leave only when the flag allows it; the keys stay."""
-    return {
-        "client_name": ctx.get("client_name"),
-        "client_profile": ctx.get("client_profile") if send_stored_context else {},
-        "conversation_history": ctx.get("conversation_history") if send_stored_context else [],
-        "detected_language": ctx.get("detected_language"),
-        "is_first_message": ctx.get("is_first_message"),
-        "sender_identity": ctx.get("sender_identity"),
-        "time_of_day": ctx.get("time_of_day"),
-    }
 
 
 # NB: media downloads do NOT happen on Fly (Law 2 — PII stays on the Pro). The
 # official-line media handoff publishes metadata only to events_outbox; the
 # sovereign Pro worker (scripts/wa_media_pull_worker.py) owns the blob root.
 
-# In-memory conversation history per phone number (fast fallback)
-_conversation_cache: dict[str, list[dict]] = defaultdict(list)
-MAX_HISTORY_MESSAGES = 20
-
 router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp"])
 WHATSAPP_FAST_PATH_RECOVERY_DELAY_SECONDS = 30
 
 # Claimant names for the wa_reply_claims race gate (2026-08-25 double-reply
-# scar, migration 281). One row per Meta wamid, written BEFORE either path
-# generates or sends a reply — whichever path's INSERT lands first wins.
+# scar, migration 281). One row per Meta wamid, written before a reply is
+# generated or sent.
 WAMID_CLAIMANT_META_INBOX = "meta_inbox"
-WAMID_CLAIMANT_LEGACY = "legacy"
 
 
 async def _claim_wamid_reply(conn: Any, wamid: str, claimant: str) -> bool:
@@ -163,615 +112,6 @@ class WhatsAppWebhook(BaseModel):
     entry: list[WhatsAppEntry]
 
 
-async def notify_zero_conversation_log(
-    phone: str,
-    sender_name: str | None,
-    client_message: str,
-    bot_response: str,
-    language: str | None = None,
-) -> Any:
-    """
-    Log EVERY bot conversation to Zero via Telegram.
-
-    Args:
-        phone: Client phone
-        sender_name: Client name
-        client_message: What the client asked
-        bot_response: What Zan replied
-        language: Detected language
-    """
-    if not settings.admin_telegram_chat_id:
-        return
-
-    display_name = sender_name or "Unknown"
-    lang_flag = {"it": "🇮🇹", "en": "🇬🇧", "de": "🇩🇪", "id": "🇮🇩"}.get(language or "?", "🌐")
-
-    # Keep it short for Zero
-    client_msg_preview = client_message[:200] + ("..." if len(client_message) > 200 else "")
-    bot_response_preview = bot_response[:300] + ("..." if len(bot_response) > 300 else "")
-
-    log_text = f"""💬 **WhatsApp Bot Conversation Log**
-
-**Cliente:** {display_name} (+{phone[:4]}***{phone[-2:] if len(phone) > 4 else ""}) {lang_flag}
-
-**Domanda:**
-_{client_msg_preview}_
-
-**Risposta Zan:**
-_{bot_response_preview}_
-
----
-_Log automatico - ogni conversazione viene tracciata_
-"""
-
-    try:
-        await telegram_bot.send_message(
-            chat_id=settings.admin_telegram_chat_id,
-            text=log_text,
-            parse_mode="Markdown",
-            disable_notification=True,  # Silent notification
-        )
-    except Exception as e:
-        logger.error("Failed to send conversation log to Zero: %s", type(e).__name__)
-
-
-async def process_whatsapp_message(
-    phone: str,
-    message_text: str,
-    sender_name: str | None,
-    message_id: str,
-    request: Request,
-) -> Any:
-    """
-    Background task to process WhatsApp message.
-
-    v2 Flow:
-    1. Triage (personal vs business)
-    2. Build rich context (history, profile, language)
-    3. Generate dynamic system prompt
-    4. Call Claude Sonnet 4.5
-    5. Handle [ESCALATE] markers
-    6. Save conversation + updated profile
-    """
-    try:
-        # Mark message as read
-        await whatsapp_service.mark_message_read(message_id)
-
-        # 0. ALLOWLIST CHECK: Silently ignore numbers not in whitelist
-        if not whatsapp_triage_service.is_allowed(phone):
-            logger.info(
-                "Ignored message from non-allowed number: %s", redact_identifier_for_log(phone)
-            )
-            return
-
-        # 0.5. CROSS-PATH ATOMIC CLAIM (2026-08-25 double-reply scar, hardened).
-        # The meta-inbox pipeline (wa_outbox_worker / _handle_meta_inbox_message)
-        # and this legacy inline path are two concurrent BackgroundTasks. The
-        # first fix here was a read-only SELECT against meta_inbox_messages —
-        # best-effort, but racy: it can run BEFORE the meta-inbox path's own
-        # write commits, so both paths can win the read and both reply (live
-        # 04:03-04:04Z 2026-08-25: an English abstain from one path, an
-        # Italian greeting from the other, same inbound message). Replaced
-        # with a write-before-send atomic claim on the SAME wamid — whichever
-        # path's INSERT lands first in wa_reply_claims wins and answers; the
-        # loser logs and discards. Best-effort ONLY for the "DB unreachable"
-        # case (a DB hiccup must never mute a genuinely legacy message) — once
-        # the DB responds, the claim outcome is binding.
-        #
-        # Placed AFTER the allowlist check, not before (self-review finding,
-        # cured before merge): claiming BEFORE the allowlist check let a
-        # number this legacy path will silently ignore anyway still WIN the
-        # wamid claim and then discard — if that same wamid also has a
-        # legitimate, later-arriving meta-inbox delivery (the exact
-        # double-subscription shape this PR defends against), meta-inbox's
-        # own claim attempt would then lose to a claimant that was never
-        # going to answer, leaving a real customer with silence from BOTH
-        # paths instead of one correct reply from meta-inbox. Ordering the
-        # claim after the allowlist check means legacy only ever claims a
-        # wamid it is actually going to try to answer.
-        dedup_db_pool = _get_db_pool(request)
-        if dedup_db_pool is not None:
-            try:
-                async with dedup_db_pool.acquire() as dedup_conn:
-                    won_claim = await _claim_wamid_reply(
-                        dedup_conn, message_id, WAMID_CLAIMANT_LEGACY
-                    )
-                if not won_claim:
-                    logger.info(
-                        "Legacy WhatsApp path skipped — wamid=%s already claimed by the meta-inbox pipeline",
-                        redact_identifier_for_log(message_id),
-                    )
-                    return
-            except Exception as r4_exc:
-                logger.error(
-                    "Cross-path claim failed (non-blocking) wamid=%s: %s",
-                    redact_identifier_for_log(message_id),
-                    type(r4_exc).__name__,
-                )
-
-        # 1. TRIAGE: Personal or Business?
-        decision, reason = await whatsapp_triage_service.should_escalate(
-            phone=phone,
-            message_text=message_text,
-            sender_name=sender_name,
-        )
-
-        logger.info(
-            "Triage decision for %s: %s (reason: %s)",
-            redact_identifier_for_log(phone),
-            decision,
-            reason,
-        )
-
-        # 1.5. AUTO-DETECT NEW CLIENT ONBOARDING INTENT
-        # Check if message indicates new client onboarding before processing
-        try:
-            onboarding_detector = get_onboarding_detector()
-            onboarding_result = await onboarding_detector.detect_and_trigger(
-                phone=phone,
-                message_text=message_text,
-                sender_name=sender_name,
-            )
-            if onboarding_result:
-                logger.info(
-                    "Auto-triggered onboarding chain for %s", redact_identifier_for_log(phone)
-                )
-                # Send confirmation message to client
-                onboarding_confirm_msg = (
-                    "Great! I've started your onboarding process. "
-                    "You'll receive updates shortly! 🎉"
-                )
-                await whatsapp_service.send_message(
-                    phone=phone,
-                    text=onboarding_confirm_msg,
-                    reply_to_message_id=message_id,
-                )
-                await _persist_audit_messages(
-                    db_pool=_get_db_pool(request),
-                    phone=phone,
-                    session_id="",
-                    message_text=message_text,
-                    response_text=onboarding_confirm_msg,
-                )
-                return
-        except Exception as e:
-            logger.error(
-                "Onboarding detection failed for %s: %s",
-                redact_identifier_for_log(phone),
-                type(e).__name__,
-            )
-            # Continue with normal flow if detection fails
-
-        # 2. ESCALATE TO HUMAN
-        if decision in [
-            TriageDecision.ESCALATE_PERSONAL,
-            TriageDecision.ESCALATE_REQUEST,
-            TriageDecision.ESCALATE_CONTEXT,
-        ]:
-            escalation_msg = whatsapp_triage_service.get_escalation_message(decision, sender_name)
-            await whatsapp_service.send_message(
-                phone=phone,
-                text=escalation_msg,
-                reply_to_message_id=message_id,
-            )
-
-            # Get context for richer Telegram notification
-            db_pool = _get_db_pool(request)
-            ctx = {}
-            if db_pool:
-                from backend.services.whatsapp_context_builder import build_context
-
-                try:
-                    ctx = await build_context(phone, sender_name, message_text, db_pool)
-                except Exception as e:
-                    logger.error("Error building context for WhatsApp: %s", type(e).__name__)
-                    ctx = None
-
-            await notify_human_telegram(
-                phone=phone,
-                message_text=message_text,
-                sender_name=sender_name,
-                reason=reason,
-                client_profile=ctx.get("client_profile"),
-                conversation_history=ctx.get("conversation_history"),
-            )
-
-            await _persist_audit_messages(
-                db_pool=db_pool,
-                phone=phone,
-                session_id="",
-                message_text=message_text,
-                response_text=escalation_msg,
-            )
-            logger.info(
-                "Message from %s escalated to human (reason: %s)",
-                redact_identifier_for_log(phone),
-                reason,
-            )
-            return
-
-        # 3. OFFER CHOICE (ambiguous)
-        if decision == TriageDecision.OFFER_CHOICE:
-            welcome_msg = whatsapp_triage_service.get_welcome_message(sender_name)
-            await whatsapp_service.send_message(
-                phone=phone,
-                text=welcome_msg,
-                reply_to_message_id=message_id,
-            )
-            await _persist_audit_messages(
-                db_pool=_get_db_pool(request),
-                phone=phone,
-                session_id="",
-                message_text=message_text,
-                response_text=welcome_msg,
-            )
-            logger.info("Welcome message sent to %s", redact_identifier_for_log(phone))
-            return
-
-        # 4. AI CAN HANDLE — OpenClaw bridge first, then Gemini RAG fallback.
-        from backend.services.whatsapp_context_builder import build_context
-
-        db_pool = _get_db_pool(request)
-
-        start_time = time.time()
-
-        try:
-            # Build rich context
-            ctx = await build_context(phone, sender_name, message_text, db_pool)
-
-            # Concierge ack: the AI path takes 10-50s wall-clock; on a
-            # non-trivial question tell the user we're on it BEFORE the slow
-            # call. Throttled per phone, kill-switch WHATSAPP_ACK_ENABLED.
-            # Never let the ack break the main path.
-            try:
-                from backend.services.whatsapp_ack import (
-                    ack_text,
-                    mark_acked,
-                    should_send_ack,
-                )
-
-                if should_send_ack(message_text, phone):
-                    await whatsapp_service.send_message(
-                        phone=phone,
-                        text=ack_text(ctx.get("detected_language")),
-                        reply_to_message_id=message_id,
-                    )
-                    mark_acked(phone)
-                    logger.info("Concierge ack sent to %s", redact_identifier_for_log(phone))
-            except Exception as r4_exc:
-                logger.error(
-                    "Concierge ack failed (non-blocking) phone=%s: %s",
-                    redact_identifier_for_log(phone),
-                    type(r4_exc).__name__,
-                )
-
-            openclaw_response = await ask_openclaw_whatsapp(
-                phone=phone,
-                message_text=message_text,
-                sender_name=sender_name,
-                message_id=message_id,
-                context=build_openclaw_context(
-                    ctx,
-                    send_stored_context=settings.whatsapp_openclaw_send_stored_context,
-                ),
-            )
-
-            if openclaw_response:
-                guarded_openclaw_response = sanitize_whatsapp_kbli_reply(
-                    message_text=message_text,
-                    reply=openclaw_response,
-                    detected_language=ctx.get("detected_language"),
-                )
-                if guarded_openclaw_response.corrected:
-                    logger.warning(
-                        "WhatsApp KBLI guard corrected OpenClaw reply (phone=%s message_id=%s reason=%s)",
-                        redact_identifier_for_log(phone),
-                        redact_identifier_for_log(message_id),
-                        guarded_openclaw_response.reason,
-                    )
-                openclaw_response = guarded_openclaw_response.reply
-
-                # Channel boundary. `format_rich_text` converts the model's
-                # generic markdown into what WhatsApp actually renders and
-                # drops bare citation markers — measured on 2026-07-28, the
-                # team beta: 18 of that day's 66 bot replies reached a reader
-                # carrying raw `[1]`…`[8]`. The formatter was armed on
-                # 2026-07-25 (#3118) and deployed well before that day, but
-                # only inside `wa_inbox_bot.py`; this router — which is what
-                # answers the webhook — never called it.
-                #
-                # BEFORE chunking, not per chunk: `chunk_message` splits on
-                # length, so a boundary can land inside a `**bold**` pair and
-                # leave each half unconvertible.
-                #
-                # AFTER `sanitize_whatsapp_kbli_reply`, so the KBLI guard keeps
-                # seeing exactly the text it sees today.
-                #
-                # Only the model's answer is formatted, never the canned
-                # messages this router also sends (`welcome_msg`,
-                # `escalation_msg`, `ack_text(...)`, ...). Those are a
-                # different entity: the citation strip removes `[<digits>]`,
-                # which in a template can be a reference or invoice number
-                # rather than a citation.
-                openclaw_response = format_rich_text(openclaw_response, "whatsapp")
-
-                chunks = whatsapp_service.chunk_message(openclaw_response, max_length=4000)
-
-                for i, chunk in enumerate(chunks):
-                    await whatsapp_service.send_message(
-                        phone=phone,
-                        text=chunk,
-                        reply_to_message_id=message_id if i == 0 else None,
-                    )
-                    if i < len(chunks) - 1:
-                        await asyncio.sleep(0.5)
-
-                await notify_zero_conversation_log(
-                    phone=phone,
-                    sender_name=sender_name,
-                    client_message=message_text,
-                    bot_response=openclaw_response,
-                    language=ctx.get("detected_language"),
-                )
-
-                await _save_conversation(
-                    db_pool=db_pool,
-                    wa_user_id=ctx["_wa_user_id"],
-                    session_id=ctx["_session_id"],
-                    existing_row_id=ctx["_existing_row_id"],
-                    message_text=message_text,
-                    response_text=openclaw_response,
-                    client_profile=ctx["client_profile"],
-                    sender_name=sender_name,
-                    phone=phone,
-                )
-
-                _conversation_cache[phone].append({"role": "user", "content": message_text})
-                _conversation_cache[phone].append(
-                    {"role": "assistant", "content": openclaw_response}
-                )
-                if len(_conversation_cache[phone]) > MAX_HISTORY_MESSAGES:
-                    _conversation_cache[phone] = _conversation_cache[phone][-MAX_HISTORY_MESSAGES:]
-
-                total_duration = time.time() - start_time
-                logger.info(
-                    "✅ OpenClaw WA responded to %s in %.1fs (%d chars)",
-                    redact_identifier_for_log(phone),
-                    total_duration,
-                    len(openclaw_response),
-                )
-                return
-
-            logger.info(
-                "🚀 Processing query from %s with Gemini 3 Flash (RAG + Zan persona)",
-                redact_identifier_for_log(phone),
-            )
-
-            from backend.prompts.whatsapp_persona import (
-                build_priming_turns,
-                build_system_prompt,
-            )
-
-            # Build dynamic WhatsApp persona instructions
-            whatsapp_persona_instructions = build_system_prompt(
-                client_name=ctx["client_name"],
-                client_profile=ctx["client_profile"],
-                is_first_message=ctx["is_first_message"],
-                detected_language=ctx["detected_language"],
-                time_of_day=ctx["time_of_day"],
-            )
-
-            # --- DIRECT RAG: Query with Gemini 2.5 Flash ---
-            from backend.app.dependencies import get_orchestrator
-
-            # `get_orchestrator` is `async def` (backend/app/deps/orchestrator.py)
-            # — it lazily builds the singleton under a lock. Without the await
-            # this binds a coroutine and the next line dies on
-            # `'coroutine' object has no attribute 'process_query'`.
-            orchestrator = await get_orchestrator(request)
-            wa_user_id = f"whatsapp_{phone}"
-            session_id = f"wa_session_{phone}"
-
-            # Inject WhatsApp persona at start of conversation history (system-like context)
-            # This guides Zantara's base persona to be more WhatsApp-natural
-            enhanced_history = []
-            if ctx["is_first_message"]:
-                # Add persona instructions as first "context" message.
-                # The pair is built in the CLIENT'S language: both halves used
-                # to be hardcoded Italian, including the assistant turn, so the
-                # model's most recent precedent for how it speaks here was
-                # Italian before the client had said a word — while the persona
-                # itself is written four times over precisely so that never
-                # happens. See build_priming_turns' docstring.
-                enhanced_history.extend(
-                    build_priming_turns(
-                        whatsapp_persona_instructions,
-                        ctx["detected_language"],
-                    ),
-                )
-
-            enhanced_history.extend(ctx["conversation_history"])
-
-            # Direct RAG query (Gemini will respond with Zantara + WhatsApp persona blend)
-            # max_steps=2 (default 3): real-time channel, see
-            # research/operations/2026-07-20-wa-bot-latency.md.
-            rag_result = await orchestrator.process_query(
-                query=message_text,
-                user_id=wa_user_id,
-                session_id=session_id,
-                conversation_history=enhanced_history,
-                max_steps=2,
-            )
-
-            # Extract response from RAG
-            if rag_result and hasattr(rag_result, "answer") and rag_result.answer:
-                response_text = rag_result.answer.strip()
-            else:
-                response_text = "Scusa, qualcosa è andato storto 😅 Riprova!"
-
-            if not response_text:
-                response_text = "Scusa, qualcosa è andato storto 😅 Riprova!"
-
-            # Check for [ESCALATE] marker
-            needs_escalation = "[ESCALATE]" in response_text
-            if needs_escalation:
-                # Remove the marker before sending to client
-                response_text = response_text.replace("[ESCALATE]", "").strip()
-
-            guarded_response = sanitize_whatsapp_kbli_reply(
-                message_text=message_text,
-                reply=response_text,
-                detected_language=ctx.get("detected_language"),
-            )
-            if guarded_response.corrected:
-                logger.warning(
-                    "WhatsApp KBLI guard corrected fallback RAG reply (phone=%s message_id=%s reason=%s)",
-                    redact_identifier_for_log(phone),
-                    redact_identifier_for_log(message_id),
-                    guarded_response.reason,
-                )
-            response_text = guarded_response.reply
-
-            # Channel boundary — same reasoning as the OpenClaw branch above
-            # (format the model's answer before chunking, after the KBLI guard,
-            # and never the canned messages).
-            response_text = format_rich_text(response_text, "whatsapp")
-
-            # Split into chunks if too long for WhatsApp
-            chunks = whatsapp_service.chunk_message(response_text, max_length=4000)
-
-            for i, chunk in enumerate(chunks):
-                await whatsapp_service.send_message(
-                    phone=phone,
-                    text=chunk,
-                    reply_to_message_id=message_id if i == 0 else None,
-                )
-                if i < len(chunks) - 1:
-                    await asyncio.sleep(0.5)
-
-            # Log EVERY conversation to Zero (silent notification)
-            await notify_zero_conversation_log(
-                phone=phone,
-                sender_name=sender_name,
-                client_message=message_text,
-                bot_response=response_text,
-                language=ctx.get("detected_language"),
-            )
-
-            # If AI flagged escalation, notify team with full context
-            if needs_escalation:
-                await notify_human_telegram(
-                    phone=phone,
-                    message_text=message_text,
-                    sender_name=sender_name,
-                    reason="ai_escalation",
-                    client_profile=ctx["client_profile"],
-                    conversation_history=ctx["conversation_history"],
-                )
-                logger.info("🔔 AI escalation triggered for %s", redact_identifier_for_log(phone))
-
-            # Save conversation to PostgreSQL
-            await _save_conversation(
-                db_pool=db_pool,
-                wa_user_id=ctx["_wa_user_id"],
-                session_id=ctx["_session_id"],
-                existing_row_id=ctx["_existing_row_id"],
-                message_text=message_text,
-                response_text=response_text,
-                client_profile=ctx["client_profile"],
-                sender_name=sender_name,
-                phone=phone,
-            )
-
-            # Also keep in-memory cache as fast fallback
-            _conversation_cache[phone].append({"role": "user", "content": message_text})
-            _conversation_cache[phone].append({"role": "assistant", "content": response_text})
-            if len(_conversation_cache[phone]) > MAX_HISTORY_MESSAGES:
-                _conversation_cache[phone] = _conversation_cache[phone][-MAX_HISTORY_MESSAGES:]
-
-            total_duration = time.time() - start_time
-            logger.info(
-                f"✅ Zan responded to {redact_identifier_for_log(phone)} in {total_duration:.1f}s "
-                f"({len(response_text)} chars, lang={ctx['detected_language']}, "
-                f"first={ctx['is_first_message']})",
-            )
-
-        except asyncio.TimeoutError:
-            timeout_msg = "Un attimo, ci sto mettendo troppo 😅 Riprova tra poco!"
-            await whatsapp_service.send_message(
-                phone=phone,
-                text=timeout_msg,
-                reply_to_message_id=message_id,
-            )
-            await _persist_audit_messages(
-                db_pool=_get_db_pool(request),
-                phone=phone,
-                session_id="",
-                message_text=message_text,
-                response_text=timeout_msg,
-            )
-
-    except Exception as e:
-        logger.error(
-            "Error processing WhatsApp message from %s: %s",
-            redact_identifier_for_log(phone),
-            type(e).__name__,
-        )
-
-        try:
-            error_msg = "Ops, errore tecnico 😬 Riprova tra un attimo!"
-            await whatsapp_service.send_message(
-                phone=phone,
-                text=error_msg,
-                reply_to_message_id=message_id,
-            )
-            await _persist_audit_messages(
-                db_pool=_get_db_pool(request),
-                phone=phone,
-                session_id="",
-                message_text=message_text,
-                response_text=error_msg,
-            )
-        except Exception as send_error:
-            logger.error("Failed to send error message: %s", type(send_error).__name__)
-
-
-async def process_whatsapp_message_and_mark_processed(
-    phone: str,
-    message_text: str,
-    sender_name: str | None,
-    message_id: str,
-    request: Request,
-) -> None:
-    """Run WhatsApp fast-path processing and close the durable recovery row."""
-    await process_whatsapp_message(
-        phone=phone,
-        message_text=message_text,
-        sender_name=sender_name,
-        message_id=message_id,
-        request=request,
-    )
-
-    db_pool = _get_db_pool(request)
-    if db_pool is None:
-        return
-
-    try:
-        from backend.services.channels import inbound_webhook_repo
-
-        await inbound_webhook_repo.mark_processed(
-            db_pool,
-            channel="whatsapp",
-            dedup_key=message_id,
-        )
-    except Exception as exc:
-        logger.warning(
-            "WhatsApp webhook: failed to mark inbound row processed (message_id=%s): %s",
-            redact_identifier_for_log(message_id),
-            type(exc).__name__,
-        )
-
-
 def _get_db_pool(request: Request) -> Any:
     """Get database pool safely."""
     try:
@@ -783,173 +123,11 @@ def _get_db_pool(request: Request) -> Any:
         return None
 
 
-def _conversation_jsonb_text(value: Any) -> str:
-    """Encode a Python value for explicit text-to-jsonb casting."""
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _decode_conversation_messages(raw_messages: Any) -> list[dict[str, Any]]:
-    """Return a normalized conversation message list from old or current JSONB shapes."""
-    if not raw_messages:
-        return []
-
-    decoded = raw_messages
-    for _ in range(2):
-        if not isinstance(decoded, str):
-            break
-        try:
-            decoded = json.loads(decoded)
-        except (TypeError, json.JSONDecodeError):
-            return []
-
-    if not isinstance(decoded, list):
-        return []
-
-    return [item for item in decoded if isinstance(item, dict)]
-
-
-async def _save_conversation(
-    db_pool,
-    wa_user_id: str,
-    session_id: str,
-    existing_row_id: int | None,
-    message_text: str,
-    response_text: str,
-    client_profile: dict,
-    sender_name: str | None,
-    phone: str,
-) -> Any:
-    """Save conversation messages and updated profile to PostgreSQL."""
-    if not db_pool:
-        return
-
-    try:
-        conversation_msgs = [
-            {"role": "user", "content": message_text},
-            {"role": "assistant", "content": response_text},
-        ]
-
-        async with conversation_write_connection(db_pool) as conn:
-            await lock_conversation_session(conn, session_id)
-            # Re-resolve after the absent-row lock so concurrent callers do
-            # not both take the insert branch. The initial row id remains a
-            # read hint only during the phase-1 compatibility release.
-            existing = await conn.fetchrow(
-                """
-                SELECT id, messages FROM conversations
-                WHERE session_id = $1 AND user_id = $2
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1 FOR UPDATE
-                """,
-                session_id,
-                wa_user_id,
-            )
-            if existing:
-                # Append to existing session
-                resolved_row_id = existing["id"]
-                if existing_row_id and existing_row_id != resolved_row_id:
-                    logger.info("Conversation row advanced before WhatsApp append")
-                old_msgs = []
-                if existing["messages"]:
-                    old_msgs = _decode_conversation_messages(existing["messages"])
-                all_msgs = (old_msgs or []) + conversation_msgs
-                all_msgs = all_msgs[-MAX_HISTORY_MESSAGES:]
-                await conn.execute(
-                    """
-                    UPDATE conversations
-                    SET messages = $1::text::jsonb, metadata = $2::text::jsonb
-                    WHERE id = $3
-                    """,
-                    _conversation_jsonb_text(all_msgs),
-                    _conversation_jsonb_text(client_profile),
-                    resolved_row_id,
-                )
-            else:
-                # Create new conversation row
-                await conn.execute(
-                    """
-                    INSERT INTO conversations
-                        (user_id, session_id, messages, metadata, created_at)
-                    VALUES ($1, $2, $3::text::jsonb, $4::text::jsonb, NOW())
-                    """,
-                    wa_user_id,
-                    session_id,
-                    _conversation_jsonb_text(conversation_msgs),
-                    _conversation_jsonb_text(client_profile),
-                )
-
-        logger.info(
-            "💾 Conversation saved for %s (session: %s)",
-            redact_identifier_for_log(phone),
-            redact_identifier_for_log(session_id),
-        )
-    except Exception as e:
-        logger.warning(
-            "Failed to save conversation for %s: %s",
-            redact_identifier_for_log(phone),
-            type(e).__name__,
-        )
-
-    # Unified audit trail (COS-LAW-013): the `conversations` JSONB above is a
-    # truncated history buffer (MAX_HISTORY_MESSAGES), not an audit record.
-    # Both directions land in conversation_messages like every ChannelRouter
-    # channel, so the bot's reply is durable and replayable.
-    await _persist_audit_messages(
-        db_pool=db_pool,
-        phone=phone,
-        session_id=session_id,
-        message_text=message_text,
-        response_text=response_text,
-    )
-
-
-async def _persist_audit_messages(
-    db_pool,
-    phone: str,
-    session_id: str,
-    message_text: str,
-    response_text: str,
-) -> None:
-    """Persist one inbound + one outbound row to conversation_messages.
-
-    Non-blocking: failures are logged but never break the reply flow.
-    """
-    if not db_pool:
-        return
-
-    rows = [
-        ("inbound", phone, message_text),
-        ("outbound", "zantara", response_text),
-    ]
-    for direction, sender_id, content in rows:
-        if not content:
-            continue
-        try:
-            await db_pool.execute(
-                """
-                INSERT INTO conversation_messages (channel, direction, sender_id, content, metadata)
-                VALUES ('whatsapp', $1, $2, $3, $4::text::jsonb)
-                """,
-                direction,
-                sender_id,
-                content[:10000],
-                json.dumps({"phone": phone, "session_id": session_id}),
-            )
-        except Exception as e:
-            logger.warning(
-                "WA audit persist failed (direction=%s, session=%s): %s",
-                direction,
-                redact_identifier_for_log(session_id),
-                type(e).__name__,
-            )
-
-
 # ============================================================
 # WA META INBOX — scoped persistence for phone_number_id=1104946272705747
 # (read/write console; see backend/app/routers/wa_inbox.py + spec
 #  docs/superpowers/specs/2026-06-03-wa-meta-inbox-design.md sezione 3).
-# Only the target Business number flows through this ledger; all other
-# numbers stay on the existing inline triage flow above — untouched.
+# Only the target Business number flows through this ledger.
 # ============================================================
 
 # Map Meta delivery-receipt status → ledger status. Only forward transitions
@@ -1262,7 +440,7 @@ async def _handle_meta_inbox_message(
         meta_ts = None
 
     # CROSS-PATH ATOMIC CLAIM (2026-08-25 double-reply scar, migration 281).
-    # Mirrors the legacy path's claim at the top of process_whatsapp_message —
+    # Mirrors the claim the (since retired) legacy inline path made —
     # whichever path's INSERT into wa_reply_claims lands first for this wamid
     # wins and proceeds; the loser logs and discards. A legitimate Meta retry
     # of this SAME delivery re-claims its own prior win (owner comparison, see
@@ -1466,8 +644,7 @@ async def process_meta_inbox_payload(
     Runs AFTER the webhook has persisted to inbound_webhooks and ACKed 200, so
     it never delays the Meta ACK. Scoped strictly to
     META_INBOX_PHONE_NUMBER_IDS (every phone_number_id known to route to this
-    number, not just the canonical one); any other number is ignored here (it
-    stays on the existing inline triage flow).
+    number, not just the canonical one); any other number is ignored here.
 
     ``db_pool`` lets a caller that has no ``Request`` (the WebhookProcessor
     recovery net, see ``route_whatsapp_recovery``) inject the pool directly
@@ -1476,8 +653,7 @@ async def process_meta_inbox_payload(
 
     ``mark_row`` (default True, the webhook/BackgroundTasks call site) marks
     the ``inbound_webhooks`` row processed itself after a message is handled
-    without raising (2026-08-25 double-reply scar prong 1) — mirroring the
-    legacy path's ``process_whatsapp_message_and_mark_processed``. The
+    without raising (2026-08-25 double-reply scar prong 1). The
     recovery net (``route_whatsapp_recovery``) passes ``mark_row=False``: its
     caller, ``WebhookProcessor._process_one``, already holds that SAME row
     ``FOR UPDATE SKIP LOCKED`` in an open transaction and marks it itself on
@@ -1560,76 +736,106 @@ async def process_meta_inbox_payload(
     return True
 
 
+# Reason recorded on a persisted ``inbound_webhooks`` row whose destination
+# number is neither the meta-inbox nor the team-bot number. The inline reply
+# path that used to answer such rows was retired; the row is closed with this
+# text so it is neither lost silently nor retried.
+LEGACY_PATH_RETIRED_REASON = (
+    "skipped: whatsapp number is neither meta-inbox nor team-bot; inline legacy reply path retired"
+)
+
+
+async def _close_retired_legacy_rows(request: Request, message_ids: list[str]) -> None:
+    """Mark persisted rows for the retired legacy path processed, with a reason."""
+    db_pool = _get_db_pool(request)
+    if db_pool is None:
+        return
+
+    from backend.services.channels import inbound_webhook_repo
+
+    for message_id in message_ids:
+        try:
+            await inbound_webhook_repo.mark_processed(
+                db_pool,
+                channel="whatsapp",
+                dedup_key=message_id,
+                error_message=LEGACY_PATH_RETIRED_REASON,
+            )
+        except Exception as exc:
+            logger.warning(
+                "WhatsApp webhook: failed to close retired-path row (message_id=%s): %s",
+                redact_identifier_for_log(message_id),
+                type(exc).__name__,
+            )
+
+
 async def route_whatsapp_recovery(
     payload: dict[str, Any],
     *,
     db_pool: Any,
     legacy_route: Any,
-) -> None:
+) -> str | None:
     """WebhookProcessor recovery-net dispatch for the ``whatsapp`` channel.
 
-    Keeps meta-inbox-targeted payloads out of the retired ChannelRouter
-    pipeline (2026-08-25 double-reply scar prong 2). ``ChannelRouter`` always
-    classifies intent itself and sends its own reply — it never passes
-    through ``wa_reply_claims`` — so routing a meta-inbox payload there on
-    recovery produced a second, different reply. Non-meta-inbox payloads are
-    unaffected: they still go through ``legacy_route`` exactly as before.
+    Keeps meta-inbox-targeted payloads out of the ChannelRouter pipeline
+    (2026-08-25 double-reply scar prong 2): ``ChannelRouter`` classifies intent
+    itself and sends its own reply, never passing through ``wa_reply_claims``,
+    so routing a meta-inbox payload there on recovery produced a second,
+    different reply.
 
-    ``legacy_route`` is an ``Awaitable``-returning callable taking the raw
-    payload — the caller supplies its own bound ``_route_via_channel_router``
-    so this function never has to know about ``ChannelRouter``'s shape.
+    Outcomes (the return value is what the WebhookProcessor stores as the
+    row's ``error_message`` while marking it processed):
 
-    Calls ``process_meta_inbox_payload`` with ``mark_row=False`` — this
-    function's caller, ``WebhookProcessor._process_one``, already holds the
-    row ``FOR UPDATE SKIP LOCKED`` in an open transaction and marks it itself
-    on success; a second ``mark_processed`` from a different connection would
-    block against that open transaction until ``statement_timeout`` (round-2
-    adversarial-gate finding). On a handler failure (``process_meta_inbox_payload``
-    returns False) this function RE-RAISES, so ``_process_one``'s own retry
-    ladder (backoff, MAX_ATTEMPTS, eventual "GIVING UP") applies to
-    meta-inbox rows exactly as it does to every other channel — without this,
-    ``process_meta_inbox_payload``'s internal catch-all silently discarded
-    those retry semantics and a handler crash during recovery was permanent,
-    silent message loss (round-2 finding).
-
-    Team-bot payloads (2026-08-26 same-WABA finding) get the identical
-    diversion as the fast-path webhook handler, for the same reason: a
-    payload only reaches this recovery net because the fast path missed it
-    (crash, unhandled exception, etc.), so a staff message that would have
-    been diverted on the fast path must be diverted here too — otherwise
-    recovery is a second, independent way for the exact defect this lane
-    fixes to reach production.
+    - payload cannot be fully classified (parse or classification raises):
+      handed to ``legacy_route`` (the caller's ChannelRouter) exactly as
+      before the legacy inline path was retired, so a deliverable message is
+      never discarded on a classification error. Returns ``None``.
+    - team-bot changes: handed to the ingress seam (or dropped when its switch
+      is off).
+    - meta-inbox changes: ``process_meta_inbox_payload`` with
+      ``mark_row=False`` (the processor already holds the row ``FOR UPDATE SKIP
+      LOCKED`` and marks it itself); a handler failure RE-RAISES so the
+      processor's retry ladder applies. It is idempotent per message
+      (``wa_reply_claims`` owner comparison + ``ON CONFLICT DO NOTHING``), so
+      recovering several rows that carry the same whole payload delivers each
+      meta message once.
+    - any change that is neither team-bot nor meta-inbox (a number whose
+      inline reply path is retired): not handled; the function returns
+      ``LEGACY_PATH_RETIRED_REASON``. Every row stores the WHOLE payload, so
+      this applies to whichever row is recovered: the unrelated-number row
+      closes with the reason, and a meta row of the same payload is handled
+      once AND carries the reason too, recording that part of its payload was
+      skipped. A payload with only meta/team changes returns ``None``.
     """
     try:
         webhook = WhatsAppWebhook(**payload)
-        # Team-bot changes are excluded from this verdict rather than argued
-        # away by set-disjointness: `_change_belongs_to_meta_inbox` has a
-        # SECOND signal (the display_phone_number fallback, 2026-08-25
-        # double-reply scar), so a team-bot change carrying the public visible
-        # number — a misconfiguration, but a reachable one — would otherwise
-        # set this True and send a REMAINDER that is not meta-inbox traffic
-        # into the client pipeline. Computing the verdict on the changes that
-        # actually survive removes the class instead of reasoning about it.
-        is_meta_inbox = any(
-            change.field == "messages"
-            and not _change_belongs_to_team_bot_ingress(change)
-            and _change_belongs_to_meta_inbox(change)
-            for entry in webhook.entry
-            for change in entry.changes
-        )
+        changes = [change for entry in webhook.entry for change in entry.changes]
+        # Team-bot changes are excluded from the meta verdict rather than argued
+        # away by set-disjointness: `_change_belongs_to_meta_inbox` has a SECOND
+        # signal (display_phone_number fallback, 2026-08-25 scar), so a team-bot
+        # change carrying the public number would otherwise set it and send a
+        # REMAINDER that is not meta-inbox traffic into the client pipeline.
         team_bot_changes = [
-            change
-            for entry in webhook.entry
-            for change in entry.changes
-            if change.field == "messages" and _change_belongs_to_team_bot_ingress(change)
+            c for c in changes if c.field == "messages" and _change_belongs_to_team_bot_ingress(c)
         ]
+        is_meta_inbox = any(
+            c.field == "messages"
+            and not _change_belongs_to_team_bot_ingress(c)
+            and _change_belongs_to_meta_inbox(c)
+            for c in changes
+        )
+        has_unhandled_change = any(
+            not (c.field == "messages" and _change_belongs_to_team_bot_ingress(c))
+            and not (c.field == "messages" and _change_belongs_to_meta_inbox(c))
+            for c in changes
+        )
     except Exception as r4_exc:
         logger.warning(
-            "whatsapp recovery: payload parse failed, defaulting to legacy route: %s",
+            "whatsapp recovery: payload could not be classified, using the ChannelRouter route: %s",
             type(r4_exc).__name__,
         )
-        is_meta_inbox = False
-        team_bot_changes = []
+        await legacy_route(payload)
+        return None
 
     if team_bot_changes:
         if _team_bot_ingress_enabled():
@@ -1642,10 +848,10 @@ async def route_whatsapp_recovery(
             )
         remainder = _payload_without_team_bot_changes(payload)
         if remainder is None:
-            return
+            return None
         # Mixed payload: the team half is handled (or dropped) above, and the
-        # rest MUST still be routed. `is_meta_inbox` was already computed with
-        # team-bot changes excluded, so it describes the remainder.
+        # rest MUST still be routed. `is_meta_inbox` was computed with team-bot
+        # changes excluded, so it describes the remainder.
         logger.info(
             "whatsapp recovery: mixed payload — team-bot changes handled, "
             "routing the remaining message change(s) onward."
@@ -1662,9 +868,13 @@ async def route_whatsapp_recovery(
                 "handler failure — re-raising so the WebhookProcessor's own "
                 "retry ladder applies"
             )
-        return
+        return LEGACY_PATH_RETIRED_REASON if has_unhandled_change else None
 
-    await legacy_route(payload)
+    logger.info(
+        "whatsapp recovery: payload targets neither the meta-inbox nor the "
+        "team-bot number — closing the row, legacy path retired."
+    )
+    return LEGACY_PATH_RETIRED_REASON
 
 
 @router.get("")
@@ -1870,72 +1080,28 @@ async def whatsapp_webhook(
                 continue
 
             # Target Business number → handled by the meta-inbox task above.
-            # Do NOT run the inline triage flow for it (would double-reply).
             # _change_belongs_to_meta_inbox checks BOTH phone_number_id and
             # display_phone_number (2026-08-25 double-reply scar), so neither
-            # an unlisted id nor a same-number resubscribe can re-arm this
-            # legacy path.
+            # an unlisted id nor a same-number resubscribe is mistaken for a
+            # number that has no handler.
             if _change_belongs_to_meta_inbox(change):
                 continue
 
-            value = change.value
-
-            messages = value.get("messages", [])
-            if not messages:
-                logger.debug("No messages in webhook")
-                continue
-
-            contacts = value.get("contacts", [])
-            sender_name = None
-            if contacts:
-                sender_name = contacts[0].get("profile", {}).get("name")
-
-            for msg in messages:
-                phone = msg.get("from")
-                message_id = msg.get("id")
-                message_type = msg.get("type")
-
+            # Neither meta-inbox nor team-bot: the inline reply path that used
+            # to answer these numbers is retired. The row persisted above is
+            # closed with an explicit reason instead of being left pending,
+            # which would hand it to the WebhookProcessor for endless retries.
+            retired_ids = [
+                msg_id
+                for msg in change.value.get("messages", [])
+                if (msg_id := msg.get("id")) and persisted_message_inserted.get(msg_id) is not None
+            ]
+            if retired_ids:
                 logger.info(
-                    "Message from %s: type=%s, id=%s",
-                    redact_identifier_for_log(phone),
-                    redact_identifier_for_log(message_type),
-                    redact_identifier_for_log(message_id),
+                    "WhatsApp webhook: %d message(s) for a number with no handler — closing with reason",
+                    len(retired_ids),
                 )
-
-                if message_type != "text":
-                    logger.info(
-                        "Ignoring non-text message type: %s",
-                        redact_identifier_for_log(message_type),
-                    )
-                    continue
-
-                text_obj = msg.get("text", {})
-                text = text_obj.get("body", "")
-
-                if not text:
-                    logger.warning("Empty text body from %s", redact_identifier_for_log(phone))
-                    continue
-
-                if persisted_message_inserted.get(message_id) is False:
-                    logger.info(
-                        "Duplicate WhatsApp webhook skipped: %s",
-                        redact_identifier_for_log(message_id),
-                    )
-                    continue
-
-                background_tasks.add_task(
-                    process_whatsapp_message_and_mark_processed,
-                    phone=phone,
-                    message_text=text,
-                    sender_name=sender_name,
-                    message_id=message_id,
-                    request=request,
-                )
-
-                logger.info(
-                    "Message from %s scheduled for processing",
-                    redact_identifier_for_log(phone),
-                )
+                background_tasks.add_task(_close_retired_legacy_rows, request, retired_ids)
 
     # Record webhook metric
     try:

@@ -17,6 +17,22 @@ if str(backend_path) not in sys.path:
 from backend.services.search.search_service import SearchService
 
 
+@pytest.fixture(autouse=True)
+def no_real_gemini_call():
+    """``QueryExpander._call_gemini`` answers None, its contract for any failure.
+
+    The real call opened a TLS connection to generativelanguage.googleapis.com
+    with the conftest's dummy key; the client it left behind was closed by its
+    own ``__del__`` on a LATER test's event loop and failed there ("Event loop
+    is closed").
+    """
+    with patch(
+        "backend.services.search.query_expander.QueryExpander._call_gemini",
+        new=AsyncMock(return_value=None),
+    ):
+        yield
+
+
 @pytest.fixture
 def mock_qdrant_client():
     """Mock Qdrant client"""

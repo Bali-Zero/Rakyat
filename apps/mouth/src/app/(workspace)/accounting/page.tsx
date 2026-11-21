@@ -157,7 +157,7 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
                     Worksheet
                   </span>
                 )}
-                {r.category ?? r.type}
+                {r.category ?? r.service_name ?? r.type}
               </td>
               <td className="px-3 py-2 text-right tabular-nums">
                 {r.pnbp_idr ? <Money value={r.pnbp_idr} /> : "—"}

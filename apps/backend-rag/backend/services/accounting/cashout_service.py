@@ -36,10 +36,11 @@ async def list_cashout(
                wc.bank_fee_idr, wc.linked_practice_id, wc.linked_invoice_id,
                wc.category, wc.description, wc.counterparty, wc.payment_method,
                wc.recorded_by, wc.recorded_at, wc.reversed_by_id,
-               c.full_name AS client_name
+               c.full_name AS client_name, pt.name AS service_name
         FROM weekly_cashout wc
         LEFT JOIN practices p ON wc.linked_practice_id = p.id
         LEFT JOIN clients c ON p.client_id = c.id
+        LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
         WHERE wc.reversed_by_id IS NULL
         """
     ]

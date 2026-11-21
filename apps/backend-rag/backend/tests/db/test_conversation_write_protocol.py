@@ -35,8 +35,6 @@ def test_source_snapshot_uses_its_own_root_pytest_guard() -> None:
 _CANONICAL_CALLERS = (
     "app/routers/admin_conversation_cleanup.py",
     "app/routers/conversations.py",
-    "app/routers/whatsapp_chat.py",
-    "services/whatsapp_context_builder.py",
 )
 _WRITE_METHODS = {
     "append_messages",

@@ -95,11 +95,24 @@ class TestGenerateConversationTitle:
         assert len(result) <= 20
 
     @pytest.mark.asyncio
-    async def test_message_too_short_threshold(self):
-        """Messages under 10 chars should be skipped."""
+    @patch("backend.services.crm.conversation_title_generator._generate_via_ollama")
+    @patch("backend.services.crm.conversation_title_generator._generate_via_gemini")
+    async def test_message_too_short_threshold(self, mock_gemini, mock_ollama):
+        """Messages under 10 chars are skipped; exactly 10 chars reach the providers.
+
+        Both providers are stubbed: the real Gemini path opened a TLS connection
+        with the conftest's dummy key, and the client it left behind failed a
+        later test when its ``__del__`` closed it on a closed event loop.
+        """
+        mock_ollama.return_value = None
+        mock_gemini.return_value = None
+
         result = await generate_conversation_title("conv_1", "short msg")
         assert result is None  # 9 chars
+        mock_ollama.assert_not_called()
+        mock_gemini.assert_not_called()
 
         result = await generate_conversation_title("conv_1", "0123456789")
-        # Exactly 10 chars - should proceed (not return None for being too short)
-        # But since no LLM is available, it will return None from LLM failure
+        assert result is None
+        mock_ollama.assert_called_once()
+        mock_gemini.assert_called_once()

@@ -398,8 +398,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="portal_notifications", process_groups=_API, tags=("portal",)),
     RouterEntry(name="portal_notification_prefs", process_groups=_API, tags=("portal",)),
     RouterEntry(name="portal_process_timeline", process_groups=_API, tags=("portal",)),
-    # ── Preview ──
-    RouterEntry(name="preview", process_groups=_API, tags=("blog",)),
     # ── Prime ──
     RouterEntry(name="prime", process_groups=_API, tags=("prime",)),
     RouterEntry(name="prime_v2", process_groups=_API, tags=("prime",)),
@@ -416,14 +414,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="team_activity", process_groups=_API, tags=("team",)),
     RouterEntry(name="team_analytics", process_groups=_API, tags=("team",)),
     RouterEntry(name="team_drive", process_groups=_API, tags=("team", "integrations")),
-    # ── Telegram ──
-    # telegram_webhook removed 2026-08-18 (Zero ruled REMOVE): structurally dead
-    # since inception — the `api` process it was mounted on runs
-    # initialize_services_light(), which sets app.state.channel_router = None
-    # by design, so Depends(get_channel_router) 503'd on every request. The live
-    # Telegram channel is Pro OpenClaw (CLAUDE.md §12), not this Fly-side surface.
-    # See .claude/skills/modus/PENDING-ARMS.md (closed lines) for the measurement.
-    RouterEntry(name="telegram", process_groups=_API, tags=("channels",)),
     # ── Twitter / X ──
     # Re-enabled 2026-04-29 (P0-6 zero-crash audit). Was previously DISABLED
     # 2026-04-03 ("CRC broken, OAuth incomplete"); the CRC handshake was
@@ -566,7 +556,7 @@ portal_billing portal_dashboard portal_drive portal_family portal_invite portal_
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
 wr2_publish workspace_analytics research_control legal_ingest naga
-oracle_universal kbli_notebook kbli_notebook_chat preview websocket telegram twitter
+oracle_universal kbli_notebook kbli_notebook_chat websocket twitter
 twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
 wa_broker wa_inbox wa_package instagram_chat instagram_chat:webhook_router intel_lake intel
 intel_scraper intel_analytics intel_observability webhooks messaging_identity zoho_email
@@ -596,7 +586,7 @@ notifications notifications_admin cron_notifiers portal portal_admin portal_bill
 portal_dashboard portal_drive portal_family portal_invite portal_matters
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
-wr2_publish workspace_analytics research_control preview websocket telegram twitter
+wr2_publish workspace_analytics research_control websocket twitter
 twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
 wa_broker wa_inbox instagram_chat instagram_chat:webhook_router webhooks messaging_identity
 zoho_email google_drive documents_proxy dynamic_pricing team_drive sheets admin_crm_kg

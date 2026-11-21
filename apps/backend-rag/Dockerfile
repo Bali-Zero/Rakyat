@@ -243,9 +243,13 @@ COPY apps/backend-rag/*.py ./
 # marker files; without them in the image the walk exhausts and the scripts
 # crash — they cannot run where their credentials (QDRANT_URL, OPENAI_API_KEY)
 # actually live.
+# apps/kbli-navigator/data/kbli-2025.json is a byte-identical copy of the canonical
+# (apps/mouth/src/lib/kbli-canonical-pins.test.ts enforces it), so the image holds the
+# canonical once and the second path is a link to it, not a second ~38 MB copy.
 COPY apps/kbli-navigator/lib/kbli-gold-content.ts ./apps/kbli-navigator/lib/kbli-gold-content.ts
-COPY apps/kbli-navigator/data/kbli-2025.json ./apps/kbli-navigator/data/kbli-2025.json
 COPY data/source_documents/KBLI_2025_FINAL_CLEAN.json ./source_documents/KBLI_2025_FINAL_CLEAN.json
+RUN mkdir -p ./apps/kbli-navigator/data \
+    && ln -s /app/source_documents/KBLI_2025_FINAL_CLEAN.json ./apps/kbli-navigator/data/kbli-2025.json
 COPY data/kbli-filiera/pma-editorial-certifications.json ./data/kbli-filiera/pma-editorial-certifications.json
 
 # Set Python path (cell-core included for explicit import resolution)

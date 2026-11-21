@@ -3,8 +3,8 @@
 PURE PYTHON — no LLM. Every check is a regex / format / cross-reference rule:
 the extraction model (extract.py) may be wrong, so this stage is the hard,
 auditable gate. Rules verified against the existing CRM extraction path
-(crm_clients_documents.py: NIB 13 digits, NPWP 15 digits; pii_scanner.py:
-NPWP_NEW_16 = NIK-based 16-digit format introduced 2024).
+(crm_clients_documents.py: NIB 13 digits, NPWP 15 digits; the former PII
+scanner: NPWP_NEW_16 = NIK-based 16-digit format introduced 2024).
 
 KBLI validation is DYNAMIC: a KBLI code is checked for *existence* against the
 live canonical KBLI store (Qdrant collection ``kbli_2025_final``, payload field
@@ -36,7 +36,7 @@ logger = logging.getLogger("zantara.intake.validate")
 # --- Format rules (authoritative, from existing CRM code). ---
 _NIB_RE = re.compile(r"^\d{13}$")          # crm_clients_documents.py:804
 _NPWP_LEGACY_RE = re.compile(r"^\d{15}$")  # crm_clients_documents.py:669
-_NPWP_NIK16_RE = re.compile(r"^\d{16}$")   # pii_scanner.py NPWP_NEW_16 (2024)
+_NPWP_NIK16_RE = re.compile(r"^\d{16}$")   # NPWP_NEW_16 (2024)
 _KBLI_RE = re.compile(r"^\d{5}$")          # KBLI codes are 5 digits.
 _PASSPORT_RE = re.compile(r"^[A-Z0-9]{6,9}$")
 

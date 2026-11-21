@@ -26,6 +26,23 @@ from backend.services.rag.query_expansion import (
 )
 
 
+@pytest.fixture(autouse=True)
+def no_real_genai_client():
+    """No test in this file reaches the real Gemini client.
+
+    With the conftest's dummy GOOGLE_API_KEY the real client opened a TLS
+    connection to generativelanguage.googleapis.com; the client it left behind
+    was closed by its own ``__del__`` on a LATER test's event loop and failed
+    there ("Event loop is closed"). A test that wants an LLM answer still
+    patches ``_get_genai_client`` on its expander, as before.
+    """
+    with patch(
+        "backend.services.rag.query_expansion.get_genai_client",
+        return_value=MagicMock(is_available=False),
+    ):
+        yield
+
+
 class TestQueryExpanderInitialization:
     """Test QueryExpander initialization and basic properties."""
 

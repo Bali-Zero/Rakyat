@@ -85,45 +85,6 @@ class MessagingIdentityService:
             )
             return None
 
-    async def get_user_by_telegram(self, chat_id: int) -> dict[str, Any] | None:
-        """
-        Get user ID mapped to a Telegram chat ID.
-
-        Args:
-            chat_id: Telegram numeric chat ID
-
-        Returns:
-            Dict with user_id, display_name, verified, or None if not mapped
-        """
-        try:
-            async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    """
-                    SELECT user_id, display_name, verified, last_message_at
-                    FROM messaging_users
-                    WHERE telegram_chat_id = $1 AND channel = 'telegram' AND active = TRUE
-                    """,
-                    chat_id,
-                )
-
-                if row:
-                    logger.info(
-                        "Found user mapping for Telegram %s: %s",
-                        redact_identifier_for_log(chat_id),
-                        row["user_id"],
-                    )
-                    return dict(row)
-
-                return None
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logger.error(
-                "Database error getting user by telegram %s: %s",
-                redact_identifier_for_log(chat_id),
-                e,
-            )
-            return None
-
     async def create_mapping(
         self,
         user_id: str,

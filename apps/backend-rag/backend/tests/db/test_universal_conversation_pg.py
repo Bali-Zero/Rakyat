@@ -7,7 +7,6 @@ The target identity guard runs before any schema write.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import subprocess
 from collections.abc import AsyncIterator
@@ -944,49 +943,6 @@ async def test_synthetic_backup_restore_preserves_post_change_records(
 
 
 @pytest.mark.asyncio
-async def test_actual_stage_one_whatsapp_and_repository_share_absent_session_lock(
-    conversation_pool, monkeypatch
-):
-    from unittest.mock import AsyncMock
-
-    from backend.app.routers import whatsapp_chat
-
-    monkeypatch.setattr(whatsapp_chat, "_persist_audit_messages", AsyncMock())
-    repository = ConversationRepository(conversation_pool)
-    append = repository._save_messages_locked
-    session = "synthetic-cross-stage"
-    await asyncio.gather(
-        whatsapp_chat._save_conversation(
-            db_pool=conversation_pool,
-            wa_user_id="synthetic-wa-user",
-            session_id=session,
-            existing_row_id=None,
-            message_text="wa-in",
-            response_text="wa-out",
-            client_profile={"source": "wa"},
-            sender_name="synthetic",
-            phone="synthetic-phone",
-        ),
-        append(
-            session,
-            "synthetic-wa-user",
-            [{"role": "user", "content": "web-in"}, {"role": "assistant", "content": "web-out"}],
-        ),
-    )
-    async with conversation_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT messages FROM conversations WHERE session_id=$1", session)
-    assert len(rows) == 1
-    assert {message["content"] for message in rows[0]["messages"]} == {
-        "wa-in",
-        "wa-out",
-        "web-in",
-        "web-out",
-    }
-    assert len(rows[0]["messages"]) == 4
-    whatsapp_chat._persist_audit_messages.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_actual_administrator_retention_preserves_atomic_window(
     conversation_pool, monkeypatch
 ):
@@ -1025,76 +981,6 @@ async def test_actual_administrator_retention_preserves_atomic_window(
     assert by_session["synthetic-anonymize"]["messages"] == []
     assert by_session["synthetic-anonymize"]["metadata"]["anonymized"] is True
     assert by_session["synthetic-fresh"]["messages"] == [{"content": "synthetic"}]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("foreign_owner", ["synthetic-foreign", "anonymized_9000"])
-@pytest.mark.parametrize("owner_exists", [True, False])
-async def test_actual_whatsapp_append_preserves_owner_scope(
-    conversation_pool, monkeypatch, foreign_owner, owner_exists
-):
-    from unittest.mock import AsyncMock
-
-    from backend.app.routers import whatsapp_chat
-
-    session = "wa_session_synthetic-owner"
-    owner = "whatsapp_synthetic-owner"
-    before_messages = [{"role": "assistant", "content": "owner-before"}]
-    async with conversation_pool.acquire() as conn:
-        if owner_exists:
-            await conn.execute(
-                "INSERT INTO conversations(user_id,session_id,messages,metadata,created_at) "
-                "VALUES ($1,$2,$3::text::jsonb,'{}',now()-interval '1 minute')",
-                owner,
-                session,
-                json.dumps(before_messages),
-            )
-        foreign_id = await conn.fetchval(
-            "INSERT INTO conversations(user_id,session_id,messages,metadata) "
-            "VALUES ($1,$2,$3::text::jsonb,$4::text::jsonb) RETURNING id",
-            foreign_owner,
-            session,
-            '[{"content":"foreign-before"}]',
-            '{"keep":"foreign"}',
-        )
-        foreign_before = dict(
-            await conn.fetchrow("SELECT * FROM conversations WHERE id=$1", foreign_id)
-        )
-        owner_id = await conn.fetchval(
-            "SELECT id FROM conversations WHERE user_id=$1 AND session_id=$2", owner, session
-        )
-    audit = AsyncMock()
-    monkeypatch.setattr(whatsapp_chat, "_persist_audit_messages", audit)
-    profile = {"marker": "synthetic-owner-private-profile"}
-    await whatsapp_chat._save_conversation(
-        db_pool=conversation_pool,
-        wa_user_id=owner,
-        session_id=session,
-        existing_row_id=owner_id,
-        message_text="owner-in",
-        response_text="owner-out",
-        client_profile=profile,
-        sender_name="synthetic",
-        phone="synthetic-owner",
-    )
-    async with conversation_pool.acquire() as conn:
-        foreign_after = dict(
-            await conn.fetchrow("SELECT * FROM conversations WHERE id=$1", foreign_id)
-        )
-        owned = await conn.fetch(
-            "SELECT messages,metadata FROM conversations WHERE user_id=$1 AND session_id=$2",
-            owner,
-            session,
-        )
-    assert foreign_after == foreign_before, "OWNER_SCOPE_FOREIGN_ROW_CHANGED"
-    assert len(owned) == 1
-    expected = (before_messages if owner_exists else []) + [
-        {"role": "user", "content": "owner-in"},
-        {"role": "assistant", "content": "owner-out"},
-    ]
-    assert owned[0]["messages"] == expected
-    assert owned[0]["metadata"] == profile
-    audit.assert_awaited_once()
 
 
 async def _observe_advisory_wait(observer, task, session_id, row_id, *, bulk=False):
@@ -1167,67 +1053,6 @@ async def test_actual_owned_delete_waits_for_its_physical_identity(conversation_
                 dict(await conn.fetchrow("SELECT * FROM conversations WHERE id=$1", late_id))
                 == late_before
             )
-    finally:
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-
-
-@pytest.mark.asyncio
-async def test_actual_context_profile_update_waits_and_preserves_late_row(
-    conversation_pool, monkeypatch
-):
-    from unittest.mock import AsyncMock
-
-    from backend.services import whatsapp_context_builder, whatsapp_identity
-
-    phone = "synthetic-context"
-    session, user = f"wa_session_{phone}", f"whatsapp_{phone}"
-    monkeypatch.setattr(
-        whatsapp_identity, "resolve_sender_identity", AsyncMock(return_value={"role": "unknown"})
-    )
-    async with conversation_pool.acquire() as conn:
-        identifier = await conn.fetchval(
-            "INSERT INTO conversations(user_id,session_id,messages,metadata) "
-            "VALUES ($1,$2,'[]','{\"keep\":true,\"message_count\":4}') RETURNING id",
-            user,
-            session,
-        )
-        before = dict(await conn.fetchrow("SELECT * FROM conversations WHERE id=$1", identifier))
-    task = None
-    try:
-        async with conversation_pool.acquire() as blocker:
-            async with blocker.transaction():
-                await lock_conversation_session(blocker, session)
-                task = asyncio.create_task(
-                    whatsapp_context_builder.build_context(
-                        phone=phone,
-                        message_text="hello",
-                        sender_name="synthetic",
-                        db_pool=conversation_pool,
-                    )
-                )
-                async with conversation_pool.acquire() as observer:
-                    await _observe_advisory_wait(observer, task, session, identifier)
-                    late_id = await observer.fetchval(
-                        "INSERT INTO conversations(user_id,session_id,messages,metadata) "
-                        "VALUES ($1,$2,'[]','{\"late\":true}') RETURNING id",
-                        user,
-                        session,
-                    )
-                    late_before = dict(
-                        await observer.fetchrow("SELECT * FROM conversations WHERE id=$1", late_id)
-                    )
-            result = await asyncio.wait_for(task, timeout=2)
-        async with conversation_pool.acquire() as conn:
-            after = dict(await conn.fetchrow("SELECT * FROM conversations WHERE id=$1", identifier))
-            late_after = dict(
-                await conn.fetchrow("SELECT * FROM conversations WHERE id=$1", late_id)
-            )
-        assert after == {**before, "metadata": result["client_profile"]}
-        assert after["metadata"]["keep"] is True
-        assert after["metadata"]["message_count"] == 5
-        assert late_after == late_before
     finally:
         if task is not None and not task.done():
             task.cancel()

@@ -3097,3 +3097,16 @@ html[data-oracle-theme-bootstrap="dark"]
     display: block;
   }
 }
+
+/* ─── Living Web (Linea 7): Zantara Z2 while the verdict is computed ─────── */
+/* Replaces the orbit spinner; the box keeps its ratio, so no layout shift
+   when the poster becomes the playing loop. */
+.oracle-living-z2 {
+  margin-top: var(--space-4);
+  width: 100%;
+  max-width: 28rem;
+  overflow: hidden;
+  border-radius: var(--oracle-radius-card);
+  border: 1px solid var(--oracle-border-strong);
+  background: var(--oracle-bg-elevated);
+}

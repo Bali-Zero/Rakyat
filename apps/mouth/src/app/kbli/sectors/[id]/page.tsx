@@ -8,6 +8,8 @@ import {
 import { KBLIBreadcrumb } from "@/components/kbli/KBLIBreadcrumb";
 import { KBLICard } from "@/components/kbli/KBLICard";
 import { KBLIBreadcrumbJsonLd } from "@/components/kbli/KBLIStructuredData";
+import { LivingLoop } from "@/components/living/LivingLoop";
+import { kbliSectionLoop } from "@/lib/living/manifest";
 
 export async function generateStaticParams() {
   return getSections()
@@ -50,6 +52,10 @@ export default async function SectorDetailPage({
   const codes = getCodesBySection(id);
   if (codes.length === 0) notFound();
 
+  // The section's cinemagraph (Linea 7): the single moving peak of this page.
+  // Sections not filmed yet keep today's header untouched.
+  const loop = kbliSectionLoop(id);
+
   return (
     <div className="space-y-8">
       <KBLIBreadcrumbJsonLd
@@ -69,6 +75,14 @@ export default async function SectorDetailPage({
           { label: `Section ${id.toUpperCase()}` },
         ]}
       />
+
+      {loop && (
+        <LivingLoop
+          asset={loop}
+          aspectRatio="21 / 9"
+          className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--kbli-bg-surface)]"
+        />
+      )}
 
       <div>
         <div className="flex items-center gap-3 mb-2">
