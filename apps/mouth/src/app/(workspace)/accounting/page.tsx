@@ -11,7 +11,7 @@
  *      matching invoice (candidate ranking from the backend matcher) and
  *      confirm. Confirm is the SINGLE writer of payment_status (superscar #9);
  *      paid in full, it starts a case waiting for payment (owner rule a).
- *   3. Outgoings to justify — the debits nobody has justified yet, read only.
+ *   3. Outgoings — every bank debit, to justify or justified (justify, undo the same day).
  *
  * RBAC is enforced server-side (403 → error boundary). Money is IDR.
  */

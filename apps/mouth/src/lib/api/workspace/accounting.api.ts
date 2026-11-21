@@ -247,6 +247,57 @@ export interface OutgoingItem {
   reading: OutgoingReading;
   /** A transfer fee: the transfer it was charged for. */
   fee_of_txn_id: number | null;
+  state: OutgoingState;
+  /** The active justification; for a fee that follows its transfer, that transfer's. */
+  justification: OutgoingJustification | null;
+}
+
+export type OutgoingState = "to_justify" | "justified";
+
+export type OutgoingCategory =
+  | "pnbp_case"
+  | "vendor_case"
+  | "staff_reimbursement"
+  | "payroll"
+  | "cash_withdrawal"
+  | "bank_charges"
+  | "tax"
+  | "own_transfer"
+  | "other";
+
+/** One line of a cash withdrawal's breakdown; the lines sum to the debit. */
+export interface OutgoingJustifyLine {
+  amount_idr: number;
+  category: OutgoingCategory;
+  note: string;
+  practice_id?: number | null;
+}
+
+export interface OutgoingJustification {
+  category: OutgoingCategory;
+  practice_id: number | null;
+  recipient: string | null;
+  note: string | null;
+  lines: OutgoingJustifyLine[];
+  by: string;
+  at: string;
+  /** Set on a fee: the transfer whose justification covers it. */
+  follows_txn_id?: number;
+}
+
+/** Body of POST /outgoings/{id}/justify; absent optional keys are left out. */
+export interface JustifyOutgoingRequest {
+  category: OutgoingCategory;
+  practice_id?: number;
+  recipient?: string;
+  note?: string;
+  lines?: OutgoingJustifyLine[];
+}
+
+export interface OutgoingActionResponse {
+  txn_id: number;
+  justification_id: number;
+  state: OutgoingState;
 }
 
 export interface OutgoingKindTotal {
@@ -259,8 +310,11 @@ export interface OutgoingKindTotal {
 export interface OutgoingsResponse {
   items: OutgoingItem[];
   by_kind: OutgoingKindTotal[];
+  /** Still to justify. */
   n: number;
   total_idr: number;
+  n_justified: number;
+  justified_total_idr: number;
 }
 
 export interface BankStatementKindSum {
@@ -375,10 +429,33 @@ export const accountingApi = {
     return api.get<AccountingCompany[]>("/api/crm/accounting/companies");
   },
 
-  /** Debits still to justify, newest first, with their reading; read-only. */
-  async getOutgoings(limit?: number): Promise<OutgoingsResponse> {
+  /** Debits newest first with their reading and state; `state` lists one side only. */
+  async getOutgoings(opts?: {
+    limit?: number;
+    state?: OutgoingState;
+  }): Promise<OutgoingsResponse> {
     return api.get<OutgoingsResponse>(
-      `/api/crm/accounting/outgoings${qs({ limit })}`,
+      `/api/crm/accounting/outgoings${qs({ limit: opts?.limit, state: opts?.state })}`,
+    );
+  },
+
+  /** Justify one debit. Writes nothing to the cash-out. 404/409/422 carry a `detail` message. */
+  async justifyOutgoing(
+    txnId: number,
+    body: JustifyOutgoingRequest,
+  ): Promise<OutgoingActionResponse> {
+    return api.post<OutgoingActionResponse>(
+      `/api/crm/accounting/outgoings/${txnId}/justify`,
+      body,
+    );
+  },
+
+  /** Take back a justification made today (WITA). */
+  async undoOutgoingJustification(
+    txnId: number,
+  ): Promise<OutgoingActionResponse> {
+    return api.post<OutgoingActionResponse>(
+      `/api/crm/accounting/outgoings/${txnId}/undo`,
     );
   },
 
