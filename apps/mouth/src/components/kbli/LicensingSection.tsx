@@ -9,7 +9,13 @@ import type {
   KBLILicenseByScale,
   KBLIPmaInfo,
 } from "@/lib/kbli-types";
-import { formatTimeframe } from "@/lib/kbli-derive";
+import {
+  formatScalesEn,
+  formatTimeframe,
+  summarizeLicenseRange,
+  summarizeRiskRange,
+  summarizeTimeframeRange,
+} from "@/lib/kbli-derive";
 import {
   describeObligation,
   TRUNCATION_HINT,
@@ -303,28 +309,35 @@ function KeyFacts({
   // the census says it fires on 3 of the 1,342 codes that serve rows, of which
   // one (49213) prints a full-weight tier on a page that separately states the
   // rows were removed for want of a verifiable source.
+  const allInstant =
+    licensing.length > 0 &&
+    licensing.every((t) => t.timeframe?.toLowerCase().includes("otomatis"));
+
   const facts: { label: string; value: string; accent?: string }[] = [
     {
       label: "Risk Level",
       value: rowsVerified
-        ? `${riskEn(primary.riskCategory)} (${primary.riskCategory})`
+        ? (summarizeRiskRange(licensing, "en-with-id") ??
+          `${riskEn(primary.riskCategory)} (${primary.riskCategory})`)
         : UNVERIFIED_LICENSING_FACT,
       accent: rowsVerified ? undefined : "var(--foreground-muted)",
     },
     {
       label: "License Type",
-      value: rowsVerified ? primary.licenseType : UNVERIFIED_LICENSING_FACT,
+      value: rowsVerified
+        ? (summarizeLicenseRange(licensing) ?? primary.licenseType)
+        : UNVERIFIED_LICENSING_FACT,
       accent: rowsVerified ? undefined : "var(--foreground-muted)",
     },
     {
       label: "Processing",
       value: rowsVerified
-        ? (formatTimeframe(primary.timeframe) ?? "Through OSS")
+        ? (summarizeTimeframeRange(licensing) ?? "Through OSS")
         : UNVERIFIED_LICENSING_FACT,
-      // green accent for instant issuance (raw "Otomatis" → formatted "Instant")
+      // green accent only when every scale row is instant ("Otomatis" → "Instant")
       accent: !rowsVerified
         ? "var(--foreground-muted)"
-        : primary.timeframe?.toLowerCase().includes("otomatis")
+        : allInstant
           ? "var(--kbli-pma-open)"
           : undefined,
     },
@@ -420,7 +433,7 @@ function TierTabs({
               : "border-transparent font-medium text-[var(--foreground-muted)] hover:text-[var(--foreground-secondary)]"
           }`}
         >
-          {tier.scales.join(" + ")}
+          {formatScalesEn(tier.scales, " + ")}
         </button>
       ))}
     </div>
@@ -463,7 +476,10 @@ function TierDetail({ tier }: { tier: KBLILicenseByScale }) {
                   >
                     {i + 1}
                   </span>
-                  <span className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+                  <span
+                    lang="id"
+                    className="text-sm leading-relaxed text-[var(--foreground-secondary)]"
+                  >
                     {duty.text}
                     {duty.truncated && (
                       <span
@@ -488,7 +504,7 @@ function TierDetail({ tier }: { tier: KBLILicenseByScale }) {
             className="flex cursor-pointer items-center gap-3 px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[var(--foreground-muted)] transition-colors hover:text-[var(--foreground-secondary)]"
             style={{ background: "var(--kbli-bg-elevated)" }}
           >
-            <span>Post-License Obligations</span>
+            <span>Post-License Obligations (Indonesian)</span>
             <span className="ml-auto rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-medium">
               {tier.obligations.length}
             </span>
@@ -510,7 +526,10 @@ function TierDetail({ tier }: { tier: KBLILicenseByScale }) {
                 >
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--kbli-accent)]/40" />
                   <div>
-                    <span className="text-sm leading-relaxed text-[var(--foreground-secondary)]">
+                    <span
+                      lang="id"
+                      className="text-sm leading-relaxed text-[var(--foreground-secondary)]"
+                    >
                       {duty.text}
                       {duty.truncated && (
                         <span
@@ -1350,16 +1369,18 @@ export function LicensingSection({ kbli, gold }: LicensingSectionProps) {
             )}
             {/* A DIFFERENT provenance question from the line above. That one asks
                 whether the KBLI-2025 crosswalk has been verified; this one asks
-                where the PP 28/2025 rows came from in the first place. 336 codes
-                have no PP 28 row of their own and were filled from OTHER KBLI-2020
-                codes — 62110 (video games) inherits three defence-industry
-                permits that way. Those codes are NOT the record's
-                `bps_2020_ancestors`: `pp28_sources` is the licensing-basis
-                pointer, a separate field, and 0 of the 390 inherited rows have
-                sources contained in their ancestors (62110 lists one ancestor
-                and five sources). The indexed <meta> goes SILENT on the licence
-                type for these (kbli-meta.ts); a body can qualify, so it keeps the
-                value and names the source instead. */}
+                where the PP 28/2025 rows came from in the first place. 340 served
+                codes (390 total in canonical, 50 with empty per_skala) have no
+                PP 28 row of their own and were filled from OTHER KBLI-2020
+                codes — 62110 (video games) had three defence-industry permits in
+                legacy pb_umku that way. Those codes are NOT identical to the
+                record's `bps_2020_ancestors`: `pp28_sources` is the
+                licensing-basis pointer, a separate field, and only 227 of the
+                390 inherited records have sources contained in their ancestors
+                (163 do not; 62110 lists one ancestor and five sources). The
+                indexed <meta> goes SILENT on the licence type for these
+                (kbli-meta.ts); a body can qualify, so it keeps the value and
+                names the source instead. */}
             {licensingContentInheritedFrom(kbli) && (
               <p className="text-[11px] text-[var(--foreground-muted)]">
                 ↩ This code has no PP 28/2025 licensing row of its own — the
@@ -1386,7 +1407,7 @@ export function LicensingSection({ kbli, gold }: LicensingSectionProps) {
             {/* Tier header */}
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-sm font-semibold text-[var(--foreground)]">
-                {currentTier.scales.join(", ")}
+                {formatScalesEn(currentTier.scales, ", ")}
               </span>
               <RiskBadge
                 category={currentTier.riskCategory}
@@ -1412,7 +1433,9 @@ export function LicensingSection({ kbli, gold }: LicensingSectionProps) {
                       : "var(--kbli-pma-restricted)",
                   }}
                 >
-                  ⏱ {currentTier.timeframe}
+                  ⏱{" "}
+                  {formatTimeframe(currentTier.timeframe) ??
+                    currentTier.timeframe}
                 </span>
               )}
               {currentTier.fictivePositive && (

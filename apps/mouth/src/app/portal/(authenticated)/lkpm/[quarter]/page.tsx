@@ -274,12 +274,18 @@ export default function LKPMReviewPage() {
     );
   }
 
-  const redAlerts =
-    draft.validation_alerts?.filter((a) => a.severity === "red") ?? [];
-  const yellowAlerts =
-    draft.validation_alerts?.filter((a) => a.severity === "yellow") ?? [];
-  const greenAlerts =
-    draft.validation_alerts?.filter((a) => a.severity === "green") ?? [];
+  // The backend emits alerts nested under `validation.alerts`; the flat
+  // `validation_alerts` mirror is read as a fallback so both shapes gate approval.
+  const alerts = draft.validation?.alerts ?? draft.validation_alerts ?? [];
+  const redAlerts = alerts.filter((a) => a.severity === "red");
+  const yellowAlerts = alerts.filter((a) => a.severity === "yellow");
+  const greenAlerts = alerts.filter((a) => a.severity === "green");
+  const quarterlyRevenue =
+    draft.quarterly_revenue ?? draft.revenue_quarterly ?? 0;
+  const annualRevenue = draft.annual_revenue ?? draft.revenue_annual ?? 0;
+  const narrativeObstacles =
+    draft.narrative_obstacles ?? draft.obstacles ?? null;
+  const narrativePlans = draft.narrative_plans ?? draft.plans ?? null;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -428,6 +434,71 @@ export default function LKPMReviewPage() {
           </div>
         </div>
       </section>
+
+      {/* Revenue & Narrative */}
+      {(quarterlyRevenue > 0 ||
+        annualRevenue > 0 ||
+        Boolean(narrativeObstacles) ||
+        Boolean(narrativePlans)) && (
+        <section
+          className="rounded-xl border p-6 space-y-4"
+          style={DETAIL_CARD_STYLE}
+        >
+          <h2 className="text-lg font-semibold">Revenue &amp; Operations</h2>
+          {(quarterlyRevenue > 0 || annualRevenue > 0) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div
+                className="p-4 rounded-lg"
+                style={{ background: "var(--glass-rim)" }}
+              >
+                <p
+                  className="text-xs mb-1"
+                  style={{ color: "var(--bz-text-2)" }}
+                >
+                  Quarterly Revenue
+                </p>
+                <p className="text-lg font-bold">
+                  {formatIDR(quarterlyRevenue)}
+                </p>
+              </div>
+              <div
+                className="p-4 rounded-lg"
+                style={{ background: "var(--glass-rim)" }}
+              >
+                <p
+                  className="text-xs mb-1"
+                  style={{ color: "var(--bz-text-2)" }}
+                >
+                  Annual Revenue
+                </p>
+                <p className="text-lg font-bold">{formatIDR(annualRevenue)}</p>
+              </div>
+            </div>
+          )}
+          {narrativeObstacles && (
+            <div>
+              <p
+                className="text-xs mb-1"
+                style={{ color: "var(--bz-text-2)" }}
+              >
+                Obstacles
+              </p>
+              <p className="text-sm">{narrativeObstacles}</p>
+            </div>
+          )}
+          {narrativePlans && (
+            <div>
+              <p
+                className="text-xs mb-1"
+                style={{ color: "var(--bz-text-2)" }}
+              >
+                Future Plans
+              </p>
+              <p className="text-sm">{narrativePlans}</p>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Validation Summary */}
       {greenAlerts.length > 0 && (

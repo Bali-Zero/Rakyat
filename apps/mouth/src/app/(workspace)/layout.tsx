@@ -13,12 +13,15 @@ import { logger } from "@/lib/logger";
 import { ErrorBoundary } from "@/components/optimization";
 import { ZantaraWidget } from "@/components/workspace/ZantaraWidget";
 import { KitaCommandPalette } from "@/components/workspace/KitaCommandPalette";
-import { PortalChampionCelebration } from "@/components/workspace/PortalChampionCelebration";
 import { VisaOracleTestingGuideOverlay } from "./dashboard/VisaOracleTestingGuideOverlay";
 import { I18nProvider } from "@/i18n";
 import { routeTitles } from "@/types/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { removeDashboardQueries } from "@/hooks/useDashboardData";
+import {
+  clientIdFromPath,
+  prefetchClientDetail,
+} from "./clients/[id]/prefetch";
 
 /**
  * R19 typefaces for the whole kita workspace. The faces are declared once in
@@ -199,6 +202,13 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
     }
   }, []);
 
+  // Route data that does not depend on the gate's answer, started once auth
+  // is known (see clients/[id]/prefetch.ts). A no-op on every other route.
+  const startRouteData = () => {
+    const clientId = clientIdFromPath(window.location.pathname);
+    if (clientId) prefetchClientDetail(queryClient, clientId);
+  };
+
   // Check authentication and load data
   useEffect(() => {
     const checkAuth = () => {
@@ -219,6 +229,12 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
             );
             return;
           }
+
+          // Auth is confirmed: start the open page's first-screen data now,
+          // in parallel with the gate probe, instead of after the gate lets
+          // `children` mount. Only fills caches; nothing renders before the
+          // gate decision below.
+          startRouteData();
 
           // INTAKE gate probe alongside the profile load (spec §5). Awaited so
           // the loading state stays up until clearance is known — never flash
@@ -282,6 +298,7 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
               team: "Team",
               avatar: undefined,
             });
+            startRouteData();
             await refetchGate();
             return;
           }
@@ -438,7 +455,6 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
             onRefresh={refetchGate}
             onEnter={() => setGateBypassed(true)}
           />
-          <PortalChampionCelebration key={user.email} identity={user.email} />
         </ToastProvider>
       </I18nProvider>
     );
@@ -530,7 +546,6 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
           onClose={() => setIsZantaraOpen(false)}
         />
         <KitaCommandPalette />
-        <PortalChampionCelebration key={user.email} identity={user.email} />
         <VisaOracleTestingGuideOverlay
           identity={api.getUserProfile()?.email?.trim().toLowerCase() ?? ""}
         />

@@ -115,7 +115,7 @@ export class AuthApi {
   async verifyMagicLink(token: string): Promise<LoginResponse> {
     const response = await this.client.request<BackendLoginResponse>(
       `/api/auth/verify-magic/${encodeURIComponent(token)}`,
-      { method: "GET" },
+      { method: "GET", redirectOnUnauthorized: false },
       90000,
     );
 

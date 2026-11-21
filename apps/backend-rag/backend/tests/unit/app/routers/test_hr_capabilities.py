@@ -10,6 +10,18 @@ from backend.app.routers.hr import get_my_capabilities
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.hr_utils import is_hr_admin
 
+
+@pytest.fixture
+def it_admin_in_allowlist(monkeypatch):
+    """A synthetic IT account that IS a global admin: it must still not write HR data."""
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "admin_emails", "zero@balizero.com,asya@balizero.com,it.dev@balizero.com"
+    )
+    assert "it.dev@balizero.com" in settings.admin_emails_set
+
+
 HR_ONLY_ADMIN = "adit@balizero.com"
 MEMBER = "krisna@balizero.com"
 
@@ -35,6 +47,8 @@ async def test_member_sees_only_their_own_card():
         "has_employee_record": True,
         "people_scope": None,
         "hr_edit": False,
+        "hr_card_write": False,
+        "hr_payroll_write": False,
     }
 
 
@@ -79,3 +93,25 @@ async def test_answer_matches_the_route_guards(email: str, role: str):
     caps = await _caps(email, role=role)
     assert caps["hr_admin"] is is_hr_admin(user)
     assert caps["accounting_admin"] is is_crm_admin(user)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "email,role,expected",
+    [
+        ("zero@balizero.com", "member", True),
+        ("asya@balizero.com", "member", True),
+        (HR_ONLY_ADMIN, "member", False),  # HR extra: view + bonus powers, no card writes
+        ("ruslana@balizero.com", "member", False),  # scoped viewer
+        (MEMBER, "member", False),
+        (MEMBER, "admin", False),  # the role claim grants nothing here
+        ("zero@balizero.com", "client", False),
+        ("it.dev@balizero.com", "member", False),  # global admin, not an HR writer
+    ],
+)
+async def test_card_and_payroll_write_are_for_the_hr_writers_only(
+    it_admin_in_allowlist, email: str, role: str, expected: bool
+):
+    caps = await _caps(email, role=role)
+    assert caps["hr_card_write"] is expected
+    assert caps["hr_payroll_write"] is expected

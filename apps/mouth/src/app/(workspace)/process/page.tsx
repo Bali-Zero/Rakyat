@@ -41,6 +41,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import {
+  QUOTED_PRICE_REQUIRED_TEXT_ID,
+  isQuotedPriceRefusal,
+  needsQuotedPriceBefore,
+} from "@/lib/api/crm/state-machine";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
@@ -66,6 +71,7 @@ import {
   initializeAnalytics,
 } from "@/lib/analytics";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
+import { useDebounce } from "@/hooks/useDebounce";
 import {
   PROCESS_VIEW_MODE_KEY,
   loadViewMode,
@@ -229,6 +235,11 @@ export default function PratichePage() {
   const [practices, setPractices] = useState<Practice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  // The backend folds case, accents, word order and phone formats; the list on screen was loaded
+  // for `loadedSearch`. The local text filter only answers while that differs from the typed text.
+  const debouncedSearch = useDebounce(searchQuery.trim(), 300);
+  const [loadedSearch, setLoadedSearch] = useState("");
+  const loadedMonthRef = useRef<string | null>(null);
   // P2.2: persist the view toggle across navigations (lazy-init + write-through)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     loadViewMode(PROCESS_VIEW_MODE_KEY, ["kanban", "list"], "kanban"),
@@ -311,9 +322,13 @@ export default function PratichePage() {
   useEffect(() => {
     // Initialize analytics on component mount
     initializeAnalytics();
+  }, []);
 
+  useEffect(() => {
+    let cancelled = false;
     const loadPractices = async () => {
-      setIsLoading(true);
+      // A new month shows the skeleton; a new search text refines the list in place.
+      if (loadedMonthRef.current !== selectedMonth) setIsLoading(true);
       try {
         // RBAC is enforced server-side (can_view_all_practices in crm_utils.py).
         // Non-admin users automatically see only their assigned practices.
@@ -323,9 +338,15 @@ export default function PratichePage() {
           limit: 200,
           month: selectedMonth,
           include_history: true,
+          ...(debouncedSearch ? { search: debouncedSearch } : {}),
         });
+        // A newer month or text started another load: this answer is stale.
+        if (cancelled) return;
+        loadedMonthRef.current = selectedMonth;
         setPractices(data);
+        setLoadedSearch(debouncedSearch);
       } catch (error) {
+        if (cancelled) return;
         logger.error(
           "Failed to load practices",
           { component: "Process", action: "loadPractices" },
@@ -333,12 +354,15 @@ export default function PratichePage() {
         );
         toast.error("Error", "Failed to load process");
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     loadPractices();
-  }, [selectedMonth]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMonth, debouncedSearch]);
 
   useEffect(() => {
     // Live "Process Type" filter options — same catalog endpoint the
@@ -450,7 +474,12 @@ export default function PratichePage() {
         { component: "Process", action: "updateStatus" },
         toError(error),
       );
-      toast.error("Error", "Failed to update process status");
+      toast.error(
+        "Error",
+        isQuotedPriceRefusal(error)
+          ? QUOTED_PRICE_REQUIRED_TEXT_ID
+          : "Failed to update process status",
+      );
     } finally {
       setUpdatingId(null);
     }
@@ -589,7 +618,7 @@ export default function PratichePage() {
       practices
         .filter((p) => {
           // Search filter
-          if (searchQuery) {
+          if (searchQuery && searchQuery.trim() !== loadedSearch) {
             const matchesSearch =
               p.id.toString().includes(searchQuery) ||
               p.client_name
@@ -707,7 +736,7 @@ export default function PratichePage() {
 
           return sortOrder === "asc" ? comparison : -comparison;
         }),
-    [practices, searchQuery, filters, sortField, sortOrder],
+    [practices, searchQuery, loadedSearch, filters, sortField, sortOrder],
   );
 
   // Memoize practices by status to avoid unnecessary recalculations
@@ -1324,12 +1353,12 @@ export default function PratichePage() {
                                     practice.payment_status !== "paid")) && (
                                   <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                                     {practice.priority === "urgent" && (
-                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] uppercase tracking-wide">
+                                      <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] uppercase tracking-wide">
                                         urgent
                                       </span>
                                     )}
                                     {practice.priority === "high" && (
-                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] uppercase tracking-wide">
+                                      <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] uppercase tracking-wide">
                                         high
                                       </span>
                                     )}
@@ -1339,7 +1368,7 @@ export default function PratichePage() {
                                     {practice.payment_status &&
                                       practice.payment_status !== "paid" && (
                                         <span
-                                          className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide ${
+                                          className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide ${
                                             practice.payment_status === "unpaid"
                                               ? "bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)]"
                                               : "bg-[color-mix(in_srgb,var(--state-warning)_20%,transparent)] text-[var(--state-warning)]"
@@ -1478,7 +1507,7 @@ export default function PratichePage() {
                                         if (d < 0)
                                           return (
                                             <span
-                                              className="text-[9px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] tabular-nums"
+                                              className="text-[11px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-danger)_20%,transparent)] text-[var(--state-danger)] tabular-nums"
                                               title={`Expired on ${expiryDateStr}`}
                                             >
                                               exp {Math.abs(d)}d ago
@@ -1487,7 +1516,7 @@ export default function PratichePage() {
                                         if (d <= 30)
                                           return (
                                             <span
-                                              className="text-[9px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] tabular-nums"
+                                              className="text-[11px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] tabular-nums"
                                               title={`Expires ${expiryDateStr}`}
                                             >
                                               ⏰ {d}d
@@ -1511,7 +1540,7 @@ export default function PratichePage() {
                                             : `${ageDays}d`;
                                         return (
                                           <span
-                                            className={`text-[9px] px-1.5 py-0.5 rounded tabular-nums ${
+                                            className={`text-[11px] px-1.5 py-0.5 rounded tabular-nums ${
                                               ageDays > 14
                                                 ? "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)]"
                                                 : ageDays > 7
@@ -1554,7 +1583,7 @@ export default function PratichePage() {
                           <>
                             <div className="flex items-center gap-2 py-1">
                               <div className="flex-1 border-t border-dashed border-[var(--bz-border)]" />
-                              <span className="text-[9px] uppercase tracking-wider text-[var(--bz-text-2)]/50 font-medium">
+                              <span className="text-[11px] uppercase tracking-wider text-[var(--bz-text-2)]/50 font-medium">
                                 passate
                               </span>
                               <div className="flex-1 border-t border-dashed border-[var(--bz-border)]" />
@@ -2015,34 +2044,50 @@ export default function PratichePage() {
             </div>
           </div>
           <div className="max-h-[300px] overflow-y-auto p-1 space-y-0.5">
-            {STATUS_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                onClick={() =>
-                  handleStatusChange(selectedPractice.id, option.value)
-                }
-                disabled={
-                  selectedPractice.status === option.value ||
-                  updatingId !== null
-                }
-                className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center justify-between group ${
-                  selectedPractice.status === option.value
-                    ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] font-medium"
-                    : "text-[var(--bz-text-1)] hover:bg-[var(--bz-accent)]/10 hover:text-[var(--bz-accent)]"
-                } ${updatingId !== null ? "opacity-50 cursor-not-allowed" : ""}`}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={statusDotStyle(option.column)}
-                  />
-                  {option.label}
-                </div>
-                {selectedPractice.status === option.value && (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                )}
-              </button>
-            ))}
+            {STATUS_OPTIONS.map((option) => {
+              const needsPrice = needsQuotedPriceBefore(
+                option.value,
+                selectedPractice.quoted_price,
+                selectedPractice.status,
+              );
+              return (
+                <button
+                  key={option.value}
+                  title={needsPrice ? QUOTED_PRICE_REQUIRED_TEXT_ID : undefined}
+                  onClick={() =>
+                    handleStatusChange(selectedPractice.id, option.value)
+                  }
+                  disabled={
+                    selectedPractice.status === option.value ||
+                    needsPrice ||
+                    updatingId !== null
+                  }
+                  className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center justify-between group ${
+                    selectedPractice.status === option.value
+                      ? "bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] font-medium"
+                      : "text-[var(--bz-text-1)] hover:bg-[var(--bz-accent)]/10 hover:text-[var(--bz-accent)]"
+                  } ${updatingId !== null || needsPrice ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  <div className="flex flex-col">
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={statusDotStyle(option.column)}
+                      />
+                      {option.label}
+                    </span>
+                    {needsPrice && (
+                      <span className="text-[10px] text-[var(--bz-text-2)] pl-4">
+                        {QUOTED_PRICE_REQUIRED_TEXT_ID}
+                      </span>
+                    )}
+                  </div>
+                  {selectedPractice.status === option.value && (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              );
+            })}
           </div>
           {/* Payment Status Section */}
           <div className="border-t border-[var(--bz-border)] px-3 py-2">

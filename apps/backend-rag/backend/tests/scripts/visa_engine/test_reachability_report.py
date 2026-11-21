@@ -236,14 +236,16 @@ def test_not_asked_facts_are_exactly_the_five_hardcoded_in_the_mapper() -> None:
     # way `immigration.renewal_paid` and `investment.investment_amount_usd`
     # dropped out before them.
     #
-    # `intent.requested_product_code` stays: no seq-21 rule for the nine new
-    # products reads it, so no question was owed for it here.
+    # `intent.requested_product_code` used to stay NOT_ASKED until seq-33:
+    # `mapRequestedProductCode(facts)` in fact-mapper.ts maps an explicit
+    # destination or derives E28A for onshore PT PMA conversion or bridging.
+    # It leaves UNKNOWN(NOT_ASKED) when the destination is unresolved. So it
+    # drops out of the unconditional-placeholder list — five back to four.
     assert found == [
         "commercial.service_fee_budget_idr",
         "commercial.wants_quote",
         "immigration.last_entry_date",
         "intent.desired_entry_date",
-        "intent.requested_product_code",
     ]
 
     report = build_report(SEQ7_PACK)

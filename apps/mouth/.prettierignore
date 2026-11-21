@@ -1,3 +1,4 @@
 apps/mouth/data/*.json
 coverage/
 data/*.json
+public/data/prime/

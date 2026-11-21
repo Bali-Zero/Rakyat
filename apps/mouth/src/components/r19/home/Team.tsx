@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { socialProofRoster } from "@/app/v2/_components/socialProofRoster";
+import { socialProofRoster } from "@/components/r19/home/socialProofRoster";
 import styles from "./Team.module.css";
 
 export function Team() {

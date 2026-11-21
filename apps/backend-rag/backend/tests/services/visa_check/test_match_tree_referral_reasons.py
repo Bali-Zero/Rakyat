@@ -127,6 +127,27 @@ def test_every_referral_in_the_input_space_explains_itself(
     )
 
 
+@pytest.mark.parametrize("nationality", ["USA", "ID", "IDN", "NG", "NGA", "PK", "PAK"])
+@pytest.mark.parametrize("purpose", list(Purpose))
+@pytest.mark.parametrize("months", [1, 6, 12])
+def test_nationality_referrals_also_satisfy_specificity_and_whatsapp_exit(
+    nationality: str, purpose: Purpose, months: int
+) -> None:
+    result = recommend_visa(
+        nationality=nationality,
+        purpose=purpose,
+        duration_months=months,
+        budget_band=BudgetBand.MID_50_500M,
+    )
+    if not result.referral_mode:
+        return
+    reason = (result.referral_reason or "").strip()
+    assert reason
+    assert reason not in RETIRED_VAGUE_SENTENCES
+    assert _is_specific(reason, purpose=purpose, months=months), reason
+    assert "whatsapp" in reason.lower(), reason
+
+
 # --------------------------------------------------------------------------
 # The two causes behind an empty ranking, which used to share one sentence
 # --------------------------------------------------------------------------

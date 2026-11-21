@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { normalizeHostname } from "@/lib/hostname";
+import { classifyTwoSegmentPath } from "@/lib/blog/two-segment-gate";
 
 /**
  * Multi-domain Middleware
@@ -334,6 +335,13 @@ export function canonicalPathname(pathname: string): string {
   return decoded.replace(RSC_TRANSPORT_SUFFIX, "") || "/";
 }
 
+// Rewrite to a one-segment path no category owns. `(blog)/[category]` answers
+// those with a real 404 before any rendering (generateStaticParams plus
+// `dynamicParams = false`). `/[category]/[slug]` cannot give that status itself:
+// app/loading.tsx puts it in a Suspense boundary, so its 200 head is sent
+// before notFound() runs (measured on a production build).
+export const STATUS_GATE_404_PATH = "/gate-not-found";
+
 export function proxy(request: NextRequest) {
   const hostname = normalizeHostname(request.headers.get("host") || "");
   const pathname = request.nextUrl.pathname;
@@ -645,6 +653,18 @@ export function proxy(request: NextRequest) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = newPath;
       return NextResponse.redirect(redirectUrl, 301);
+    }
+
+    // Two-segment paths no route and no article category can serve:
+    // `/foo/bar`, `/visa/typo`. See lib/blog/two-segment-gate.ts.
+    if (classifyTwoSegmentPath(routePath) === "not-found") {
+      const url = request.nextUrl.clone();
+      url.pathname = STATUS_GATE_404_PATH;
+      url.search = "";
+      const rewrite = NextResponse.rewrite(url);
+      rewrite.headers.set("x-pathname", pathname);
+      rewrite.headers.set("X-Robots-Tag", "noindex, nofollow");
+      return rewrite;
     }
 
     // Allow public routes

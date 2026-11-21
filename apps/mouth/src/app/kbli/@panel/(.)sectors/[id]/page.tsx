@@ -71,7 +71,15 @@ export default async function SectorPanelPage({
             <h2 className="mt-0.5 truncate text-lg font-bold leading-snug text-white">
               {meta.nameEn}
             </h2>
-            <p className="truncate text-sm text-zinc-400">{meta.nameId}</p>
+            <p
+              className="truncate text-sm text-zinc-400"
+              title={`Official BPS section (Bahasa Indonesia): ${meta.nameId}`}
+            >
+              <span className="mr-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                Official ID:
+              </span>
+              <span lang="id">{meta.nameId}</span>
+            </p>
           </div>
         </div>
         <p className="mt-2 text-xs text-zinc-500">

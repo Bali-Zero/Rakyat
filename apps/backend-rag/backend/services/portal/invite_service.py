@@ -16,6 +16,7 @@ import asyncpg
 import bcrypt
 
 from backend.app.utils.logging_utils import get_logger
+from backend.app.utils.service_accounts import is_group_staff
 from backend.services.common.cache import cache_invalidating
 from backend.services.portal.portal_profile_service import PLACEHOLDER_PIN_HASH
 
@@ -280,12 +281,16 @@ class InviteService:
                 # Check if team_member already exists for this client
                 existing_user = await conn.fetchrow(
                     """
-                    SELECT id, active, pin_hash FROM team_members
+                    SELECT id, active, pin_hash, role FROM team_members
                     WHERE linked_client_id = $1
                     ORDER BY (role = 'client') DESC, created_at
                     """,
                     invitation["client_id"],
                 )
+
+                if existing_user and is_group_staff(existing_user.get("role")):
+                    # Group staff hold an HR card, never an app login.
+                    raise ValueError("This account cannot be registered")
 
                 if existing_user:
                     # Consuming an invitation is not proof the consumer controls

@@ -24,8 +24,8 @@ usage (cache reads and writes included) and the model that actually answered,
 which is what the cost ledger records.
 
 Kept intentionally minimal — no streaming, no tool-use — because every backend
-consumer (``article_composer``, ``coreference``, ``multi_ai_adapter``,
-``mail_loop.draft``, …) does the same thing: one-shot prompt → one-shot
+consumer (``article_composer``, ``coreference``, ``mail_loop.draft``, …)
+does the same thing: one-shot prompt → one-shot
 completion. Module and class names keep their ``OAuth`` spelling on purpose:
 they are the public API of a dozen call sites and the ledger history; only the
 credential behind them changed.

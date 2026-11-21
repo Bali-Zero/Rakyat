@@ -104,13 +104,21 @@ const row = (
   ...over,
 });
 
-function roster(viewer: string, scope: "all" | "scoped" = "all"): PeopleRoster {
+function roster(
+  viewer: string,
+  scope: "all" | "scoped" = "all",
+  photos: Record<string, string | null> = {},
+): PeopleRoster {
+  const withPhoto = (id: string) =>
+    id in photos ? { avatar_url: photos[id] } : {};
   return {
     viewer_team_member_id: viewer,
     scope,
     can_edit: scope === "all",
     people: [
       row(ID_A, "Made Contoh", {
+        unit: "OPERASIONAL",
+        ...withPhoto(ID_A),
         flags: {
           papers_missing: 3,
           bonuses_pending: 2,
@@ -118,10 +126,15 @@ function roster(viewer: string, scope: "all" | "scoped" = "all"): PeopleRoster {
           on_leave_today: true,
         },
       }),
-      row(ID_B, "Wayan Dua", { department: "tax" }),
+      row(ID_B, "Wayan Dua", {
+        department: "tax",
+        unit: "IMIGRASI",
+        ...withPhoto(ID_B),
+      }),
       row(ID_N, "Ketut Tanpa", {
         employee_id: null,
         has_record: false,
+        unit: null,
         hire_date: null,
         flags: {
           papers_missing: null,
@@ -173,8 +186,15 @@ function overview(owner: string, name: string): MyHrOverview {
       marital_status: null,
       employer_entity: "PT Contoh",
       unit: "Unit Contoh",
-      contract: { number: "C-000", file_id: null },
-      docs: {},
+      contract: { number: "C-000" },
+      documents: {
+        ktp: { present: false, file_id: null },
+        kk: { present: false, file_id: null },
+        npwp: { present: false, file_id: null },
+        bpjs_kes: { present: false, file_id: null },
+        bpjs_tk: { present: false, file_id: null },
+        contract: { present: false, file_id: null },
+      },
       end_date: null,
     },
     payslips: [
@@ -234,7 +254,30 @@ afterEach(() => {
 });
 
 describe("People page (/hr)", () => {
-  it("reads the roster with the bearer, groups it by department and opens the first person", async () => {
+  it("shows the portrait of a person who has one and initials for one who has none", async () => {
+    localStorage.setItem("auth_token", tokenFor("A"));
+    render(<PeoplePage />);
+    await waitFor(() => expect(call("/api/hr/people")).toHaveLength(1));
+    await act(async () =>
+      call("/api/hr/people")[0].resolve(
+        roster("A", "all", {
+          [ID_A]: "/static/team/contoh.jpg",
+          [ID_B]: null,
+        }),
+      ),
+    );
+    // Made Contoh: strip + list row + card header = three photos, all the same file.
+    const photos = screen.getAllByAltText("Made Contoh");
+    expect(photos.length).toBeGreaterThanOrEqual(3);
+    for (const img of photos) {
+      expect(img).toHaveAttribute("src", "/static/team/contoh.jpg");
+    }
+    // Wayan Dua has no avatar: no image anywhere, the initials disc stays.
+    expect(screen.queryAllByAltText("Wayan Dua")).toHaveLength(0);
+    expect(screen.getAllByText("WD").length).toBeGreaterThan(0);
+  });
+
+  it("reads the roster with the bearer, groups it by card unit and opens the first person", async () => {
     const token = tokenFor("A");
     localStorage.setItem("auth_token", token);
     render(<PeoplePage />);
@@ -245,8 +288,15 @@ describe("People page (/hr)", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "People",
     );
-    expect(screen.getByText(/^Setup/)).toBeInTheDocument();
-    expect(screen.getByText(/^Tax/)).toBeInTheDocument();
+    // the unit on the card wins over the team department; a person without a unit
+    // falls back to the department, in the unit's spelling, and the units keep their order
+    const headers = screen
+      .getAllByText(
+        (_, el) => el?.tagName === "P" && / · \d+$/.test(el.textContent ?? ""),
+      )
+      .map((el) => el.textContent);
+    expect(headers).toEqual(["SETUP · 1", "IMIGRASI · 1", "OPERASIONAL · 1"]);
+    expect(screen.queryByText(/^Tax/)).toBeNull();
     expect(screen.queryByText(/^Office/)).toBeNull();
     for (const n of ["Made Contoh", "Wayan Dua", "Ketut Tanpa"]) {
       expect(screen.getAllByText(n).length).toBeGreaterThan(0);
@@ -505,17 +555,16 @@ describe("People page (/hr)", () => {
     expect(call(`/api/hr/people/${ID_A}/overview`)).toHaveLength(0);
   });
 
-  it("shows a friendly empty state for a person without a record, with Create record for admins only", async () => {
+  it("shows a friendly empty state for a person without a record, with no Create link for an admin who cannot write cards", async () => {
     nav.person = ID_N;
     await open("A");
     // the empty-state card (the roster badge says the same thing as sr-only text)
     expect(
       screen.getByText(/There is nothing to show for this person/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Create record/ })).toHaveAttribute(
-      "href",
-      "/hr/employees",
-    );
+    // hr_card_write is false in these capabilities: nothing leads to the old page
+    expect(screen.queryByRole("link", { name: /Create record/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add to HR/ })).toBeNull();
     expect(call(`/api/hr/people/${ID_N}/overview`)).toHaveLength(0);
   });
 

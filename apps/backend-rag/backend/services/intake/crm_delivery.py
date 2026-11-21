@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -278,11 +281,68 @@ async def _resolve_and_push_locked(
                         status="practice_identity_unresolved",
                         detail="local practice has no verified canonical identity for this client",
                     )
+
+            plan_company_id = getattr(plan, "company_id", None)
+            if plan.client_id is None and plan_company_id is not None:
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(742018, $1)",
+                    int(plan_company_id),
+                )
+                company_uuid = await conn.fetchval(
+                    "SELECT uuid FROM companies WHERE id = $1 AND COALESCE(status, '') != 'deleted' FOR SHARE",
+                    int(plan_company_id),
+                )
+                if company_uuid is None:
+                    return crm_push.CrmPushResult(
+                        ok=False,
+                        status="company_identity_unresolved",
+                        detail="local company has no verified canonical UUID",
+                    )
+                return await crm_push.push_committed_company_document(
+                    bearer_token=bearer_token,
+                    crm_write_key=crm_write_key,
+                    company_id=int(plan_company_id),
+                    company_uuid=str(company_uuid),
+                    file_name=payload.get("file_name") or os.path.basename(blob_path),
+                    document_type=payload.get("document_type") or "unknown",
+                    document_category=payload.get("document_category"),
+                    document_number=payload.get("document_number"),
+                    blob_path=blob_path,
+                    mime_type=mime_type,
+                    expiry_date=payload.get("expiry_date"),
+                    notes=payload.get("notes"),
+                    client_visible=_delivery_client_visible(plan, payload),
+                    intake_idempotency_key=getattr(plan, "idempotency_key", None),
+                )
+
+            company_uuid = None
+            if plan_company_id is not None and plan.client_id is not None:
+                company_uuid = await conn.fetchval(
+                    """
+                    SELECT c.uuid
+                    FROM companies c
+                    JOIN client_company_links l ON l.company_id = c.id
+                    WHERE c.id = $1 AND l.client_id = $2 AND COALESCE(c.status, '') != 'deleted'
+                    FOR SHARE OF c
+                    """,
+                    int(plan_company_id),
+                    int(plan.client_id),
+                )
+                if company_uuid is None:
+                    return crm_push.CrmPushResult(
+                        ok=False,
+                        status="company_identity_unresolved",
+                        detail="local company has no verified canonical UUID for this client",
+                    )
+
             push = await crm_push.push_committed_document(
                 bearer_token=bearer_token,
                 crm_write_key=crm_write_key,
                 client_id=int(plan.client_id),  # type: ignore[arg-type]  # committed means non-None
                 practice_uuid=str(practice_uuid) if practice_uuid is not None else None,
+                company_id=plan_company_id,
+                company_uuid=str(company_uuid) if company_uuid is not None else None,
+                intake_idempotency_key=getattr(plan, "idempotency_key", None),
                 document_type=payload.get("document_type") or "unknown",
                 document_category=payload.get("document_category"),
                 file_name=payload.get("file_name") or os.path.basename(blob_path),
@@ -334,6 +394,15 @@ async def _resolve_and_push_locked(
     return push
 
 
+def _verify_blob_file_sha256(blob_path: str, expected_sha256: str) -> bool:
+    """Verify on-disk blob matches expected SHA-256 when present on disk."""
+    path = Path(blob_path)
+    if not path.is_file():
+        return True
+    actual = hashlib.sha256(path.read_bytes()).hexdigest().lower()
+    return actual == expected_sha256
+
+
 async def deliver_committed_to_crm(
     *,
     pool: asyncpg.Pool,
@@ -342,6 +411,8 @@ async def deliver_committed_to_crm(
     result: intake_writer.CommitResult,
     bearer_token: str | None = None,
     crm_write_key: str | None = None,
+    expected_blob_path: str | None = None,
+    expected_blob_hash: str | None = None,
 ) -> dict[str, Any]:
     """Best-effort delivery of a COMMITTED local intake document to Kita.
 
@@ -353,54 +424,126 @@ async def deliver_committed_to_crm(
     if not crm_push.push_enabled():
         return {"status": "disabled"}
 
-    if not bearer_token and crm_write_key is None:
+    if crm_write_key is None:
         crm_write_key = crm_write_key_from_env()
 
     blob_path: str | None = None
+    q_blob_hash: str | None = None
     mime_type: str | None = None
     already: asyncpg.Record | None = None
-    async with pool.acquire() as conn:
-        if queue_id is not None:
-            qrow = await conn.fetchrow(
-                """
-                SELECT q.blob_path, di.mime_type
-                FROM intake_queue q
-                LEFT JOIN document_instances di ON di.id = q.instance_id
-                WHERE q.id = $1
-                """,
-                queue_id,
-            )
-            if qrow is not None:
-                blob_path = qrow["blob_path"]
-                mime_type = qrow["mime_type"]
-        if result.doc_id is not None:
-            already = await conn.fetchrow(
-                "SELECT file_id, file_url FROM documents WHERE id = $1", result.doc_id
-            )
-
+    already_company: asyncpg.Record | None = None
+    company_doc_id = getattr(result, "company_doc_id", None)
     payload = plan.payload
-    if already is not None and (already["file_id"] or already["file_url"]):
+    try:
+        async with pool.acquire() as conn:
+            if queue_id is not None:
+                qrow = await conn.fetchrow(
+                    """
+                    SELECT q.blob_path, q.blob_hash, di.mime_type
+                    FROM intake_queue q
+                    LEFT JOIN document_instances di ON di.id = q.instance_id
+                    WHERE q.id = $1
+                    """,
+                    queue_id,
+                )
+                if qrow is not None:
+                    qrow_dict = dict(qrow)
+                    blob_path = qrow_dict.get("blob_path")
+                    q_blob_hash = qrow_dict.get("blob_hash")
+                    mime_type = qrow_dict.get("mime_type")
+            if result.doc_id is not None:
+                already = await conn.fetchrow(
+                    "SELECT file_id, file_url FROM documents WHERE id = $1", result.doc_id
+                )
+            if company_doc_id is not None:
+                already_company = await conn.fetchrow(
+                    "SELECT google_drive_file_id, google_drive_file_url "
+                    "FROM company_documents WHERE id = $1",
+                    company_doc_id,
+                )
+
+        has_client_drive = (result.doc_id is None) or (
+            already is not None and bool(already["file_id"] or already["file_url"])
+        )
+        has_company_drive = (company_doc_id is None) or (
+            already_company is not None
+            and bool(
+                already_company["google_drive_file_id"]
+                or already_company["google_drive_file_url"]
+            )
+        )
+        any_local_row = (result.doc_id is not None) or (company_doc_id is not None)
+        if any_local_row and has_client_drive and has_company_drive:
+            push = crm_push.CrmPushResult(
+                ok=False,
+                status="already_delivered",
+                file_id=(
+                    already["file_id"]
+                    if already is not None and already["file_id"]
+                    else (already_company["google_drive_file_id"] if already_company else None)
+                ),
+                file_url=(
+                    already["file_url"]
+                    if already is not None and already["file_url"]
+                    else (already_company["google_drive_file_url"] if already_company else None)
+                ),
+                detail="local document row(s) already have a Drive file - skipping re-upload",
+            )
+        elif not blob_path:
+            push = crm_push.CrmPushResult(
+                ok=False, status="missing_blob", detail="no blob_path on intake_queue row"
+            )
+        elif expected_blob_path is not None and blob_path != expected_blob_path:
+            push = crm_push.CrmPushResult(
+                ok=False,
+                status="blob_mismatch",
+                detail="intake_queue.blob_path diverged from approved commit snapshot",
+            )
+        elif (
+            expected_blob_hash is not None
+            and q_blob_hash is not None
+            and str(q_blob_hash).strip().lower() != expected_blob_hash.strip().lower()
+        ):
+            push = crm_push.CrmPushResult(
+                ok=False,
+                status="blob_mismatch",
+                detail="intake_queue.blob_hash diverged from approved commit snapshot",
+            )
+        elif (
+            expected_blob_hash
+            and len(expected_blob_hash.strip()) == 64
+            and not await asyncio.to_thread(
+                _verify_blob_file_sha256,
+                blob_path,
+                expected_blob_hash.strip().lower(),
+            )
+        ):
+            push = crm_push.CrmPushResult(
+                ok=False,
+                status="blob_mismatch",
+                detail="blob sha256 diverged from approved commit snapshot",
+            )
+        else:
+            push = await _resolve_and_push_locked(
+                pool=pool,
+                plan=plan,
+                payload=payload,
+                queue_id=queue_id,
+                blob_path=blob_path,
+                mime_type=mime_type,
+                bearer_token=bearer_token,
+                crm_write_key=crm_write_key,
+            )
+    except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as exc:
+        logger.warning(
+            "intake.crm_delivery.db_error proposal=%s err=%s",
+            plan.proposal_id,
+            exc,
+        )
         push = crm_push.CrmPushResult(
             ok=False,
-            status="already_delivered",
-            file_id=already["file_id"],
-            file_url=already["file_url"],
-            detail="local documents row already has a Drive file - skipping re-upload",
-        )
-    elif not blob_path:
-        push = crm_push.CrmPushResult(
-            ok=False, status="missing_blob", detail="no blob_path on intake_queue row"
-        )
-    else:
-        push = await _resolve_and_push_locked(
-            pool=pool,
-            plan=plan,
-            payload=payload,
-            queue_id=queue_id,
-            blob_path=blob_path,
-            mime_type=mime_type,
-            bearer_token=bearer_token,
-            crm_write_key=crm_write_key,
+            status="error",
+            detail=f"{type(exc).__name__}: {exc}",
         )
 
     crm_info: dict[str, Any] = {
@@ -408,21 +551,25 @@ async def deliver_committed_to_crm(
         "fly_doc_id": push.fly_doc_id,
         "file_url": push.file_url,
     }
+    if push.fly_company_doc_id is not None:
+        crm_info["fly_company_doc_id"] = push.fly_company_doc_id
     if push.detail:
         crm_info["detail"] = push.detail
 
-    if push.status in {"identity_unresolved", "practice_identity_unresolved"}:
+    if push.status in {
+        "identity_unresolved",
+        "practice_identity_unresolved",
+        "company_identity_unresolved",
+    }:
         # Distinct, greppable marker (round-5 F8): the document IS committed
         # locally but could not be delivered to Kita because no unambiguous
-        # Fly identity exists (no phone / shared phone / no service key).
-        # There is deliberately NO auto-requeue: a retry cannot succeed until
-        # the identity mapping itself changes — these rows are found via this
-        # marker + the persisted delivery status, not by blind redelivery.
+        # Fly identity exists (no phone / shared phone / no service key / missing UUID).
         logger.warning(
-            "intake.delivery.identity_unresolved queue=%s doc=%s client=%s detail=%s",
+            "intake.delivery.identity_unresolved queue=%s doc=%s client=%s company=%s detail=%s",
             queue_id,
             result.doc_id,
             plan.client_id,
+            getattr(plan, "company_id", None),
             push.detail,
         )
 
@@ -440,6 +587,19 @@ async def deliver_committed_to_crm(
                      WHERE id = $1
                     """,
                     result.doc_id,
+                    push.file_id,
+                    push.file_url,
+                )
+            if push.ok and company_doc_id is not None:
+                await conn.execute(
+                    """
+                    UPDATE company_documents
+                       SET google_drive_file_id = COALESCE($2, google_drive_file_id),
+                           google_drive_file_url = COALESCE($3, google_drive_file_url),
+                           updated_at = NOW()
+                     WHERE id = $1
+                    """,
+                    company_doc_id,
                     push.file_id,
                     push.file_url,
                 )
@@ -462,9 +622,10 @@ async def deliver_committed_to_crm(
 
     if not push.ok and push.status not in ("disabled", "already_delivered"):
         logger.warning(
-            "intake.crm_delivery.failed proposal=%s doc=%s status=%s detail=%s",
+            "intake.crm_delivery.failed proposal=%s doc=%s company_doc=%s status=%s detail=%s",
             plan.proposal_id,
             result.doc_id,
+            company_doc_id,
             push.status,
             push.detail,
         )

@@ -587,6 +587,16 @@ const en = {
   "q.secondhome_own_name.hint": "Do not combine accounts or account holders.",
   "why.secondhome_own_name":
     "Your yes or no is recorded separately. We never assume ownership.",
+  "q.secondhome_property_title":
+    "What type of Indonesian property title can you document?",
+  "q.secondhome_property_title.hint":
+    "Under Permenkumham 22/2023, only a completed apartment or flat registered under strata title (hak pakai atas satuan rumah susun) in your own name counts toward the Second Home property route. Villas, leasehold or freehold land, HGB titles, and off-plan units do not.",
+  "q.secondhome_property_title.opt.completed_strata":
+    "Completed strata-title apartment or flat (hak pakai atas satuan rumah susun)",
+  "q.secondhome_property_title.opt.non_qualifying_leasehold_villa_offplan":
+    "Villa, leasehold or freehold land, HGB title, or off-plan unit",
+  "why.secondhome_property_title":
+    "Under Permenkumham 22/2023, only a completed strata-title unit qualifies for the Second Home property route. Selecting another property type records zero qualifying property value and skips the dollar-amount question.",
   "q.secondhome_property_value_usd":
     "What property value can you document for this plan?",
   "q.secondhome_property_value_usd.hint":
@@ -717,6 +727,8 @@ const en = {
     "You weren’t sure where your clients are based, so this remains unresolved. You can discuss it with a Bali Zero advisor.",
   "assumption.secondhome_deposit_usd":
     "For this assessment, a bank-deposit amount you cannot confirm counts as zero. You can discuss it with a Bali Zero advisor.",
+  "assumption.secondhome_property_title":
+    "If you are unsure whether the property has a completed strata title in your own name, this assessment counts the qualifying property value as zero. You can discuss it with a Bali Zero advisor.",
   "assumption.secondhome_property_value_usd":
     "For this assessment, a property value you cannot confirm counts as zero. You can discuss it with a Bali Zero advisor.",
   "assumption.secondhome_passive_income_usd":
@@ -1687,6 +1699,16 @@ const id: Record<Keys, string> = {
     "Jangan gabungkan rekening atau pemilik rekening.",
   "why.secondhome_own_name":
     "Jawaban ya atau tidak Anda dicatat terpisah. Kami tidak pernah mengasumsikan kepemilikan.",
+  "q.secondhome_property_title":
+    "Jenis hak atas properti Indonesia apa yang dapat Anda buktikan?",
+  "q.secondhome_property_title.hint":
+    "Berdasarkan Permenkumham 22/2023, hanya unit rumah susun atau apartemen yang telah selesai dengan hak pakai atas satuan rumah susun atas nama Anda sendiri yang memenuhi syarat jalur properti Second Home. Vila, tanah sewa (leasehold) atau hak milik, HGB, dan unit inden (off-plan) tidak memenuhi syarat.",
+  "q.secondhome_property_title.opt.completed_strata":
+    "Apartemen atau rumah susun selesai dibangun dengan hak pakai atas satuan rumah susun",
+  "q.secondhome_property_title.opt.non_qualifying_leasehold_villa_offplan":
+    "Vila, tanah sewa (leasehold) atau hak milik, HGB, atau unit inden (off-plan)",
+  "why.secondhome_property_title":
+    "Berdasarkan Permenkumham 22/2023, hanya unit rumah susun selesai dibangun dengan hak pakai atas satuan rumah susun yang memenuhi syarat jalur properti Second Home. Memilih jenis properti lain mencatat nilai properti yang memenuhi syarat sebesar nol dan melewati pertanyaan jumlah dolar.",
   "q.secondhome_property_value_usd":
     "Berapa nilai properti yang dapat Anda buktikan untuk rencana ini?",
   "q.secondhome_property_value_usd.hint":
@@ -1809,6 +1831,8 @@ const id: Record<Keys, string> = {
     "Anda belum yakin di mana klien Anda berada, jadi hal ini belum dipastikan. Anda dapat membahasnya dengan konsultan Bali Zero.",
   "assumption.secondhome_deposit_usd":
     "Dalam penilaian ini, jumlah deposito bank yang belum dapat Anda konfirmasi dihitung sebagai nol. Anda dapat membahasnya dengan konsultan Bali Zero.",
+  "assumption.secondhome_property_title":
+    "Jika Anda belum yakin apakah properti tersebut memiliki hak pakai atas satuan rumah susun yang telah selesai atas nama Anda sendiri, penilaian ini menghitung nilai properti yang memenuhi syarat sebagai nol. Anda dapat membahasnya dengan konsultan Bali Zero.",
   "assumption.secondhome_property_value_usd":
     "Dalam penilaian ini, nilai properti yang belum dapat Anda konfirmasi dihitung sebagai nol. Anda dapat membahasnya dengan konsultan Bali Zero.",
   "assumption.secondhome_passive_income_usd":

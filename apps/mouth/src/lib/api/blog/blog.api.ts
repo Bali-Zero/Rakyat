@@ -8,12 +8,17 @@ import type { IApiClient } from "../types/api-client.types";
 // --- Types ---
 
 export interface BlogArticleSummary {
+  id?: string;
   slug: string;
   title: string;
+  subtitle?: string;
   category: string;
   publishedAt: string;
   excerpt?: string;
+  coverImage?: string;
+  cardImage?: string;
   cover_image?: string;
+  readingTime?: number;
 }
 
 export interface BlogArticlesResponse {

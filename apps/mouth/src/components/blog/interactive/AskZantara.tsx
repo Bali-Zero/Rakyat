@@ -45,11 +45,18 @@ export interface AskZantaraProps {
   variant?: "inline" | "floating" | "sidebar";
 }
 
+interface MessageSource {
+  title: string;
+  /** Absent for RAG sources: the backend returns `{ title, snippet }`. */
+  url?: string | null;
+  snippet?: string;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  sources?: { title: string; url: string }[];
+  sources?: MessageSource[];
   timestamp: Date;
 }
 
@@ -143,7 +150,7 @@ export function AskZantara({
           id: `assistant-${Date.now()}`,
           role: "assistant",
           content: data.answer || "I couldn't find an answer to that question.",
-          sources: data.sources,
+          sources: Array.isArray(data.sources) ? data.sources : undefined,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, assistantMessage]);
@@ -376,16 +383,27 @@ function AskZantaraContent({
               {message.sources && message.sources.length > 0 && (
                 <div className="mt-3 pt-2 border-t border-white/10">
                   <p className="text-xs text-white/40 mb-1">Sources:</p>
-                  {message.sources.map((source, i) => (
-                    <a
-                      key={i}
-                      href={source.url}
-                      className="flex items-center gap-1 text-xs text-accent-blue-editorial hover:underline"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      {source.title}
-                    </a>
-                  ))}
+                  {message.sources.map((source, i) =>
+                    source.url ? (
+                      <a
+                        key={i}
+                        href={source.url}
+                        className="flex items-center gap-1 text-xs text-accent-blue-editorial hover:underline"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        {source.title}
+                      </a>
+                    ) : (
+                      <div key={i} className="text-xs text-white/60">
+                        <span className="font-medium">{source.title}</span>
+                        {source.snippet ? (
+                          <span className="block text-white/40 line-clamp-2">
+                            {source.snippet}
+                          </span>
+                        ) : null}
+                      </div>
+                    ),
+                  )}
                 </div>
               )}
 

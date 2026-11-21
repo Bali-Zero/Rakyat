@@ -17,6 +17,13 @@ import {
   E33_LIVE_PRICE_CATEGORY,
   E33_LIVE_PRICE_KEY,
 } from "@/lib/secondhome-studio/pricing-key";
+import { trackVisaCTA } from "@/lib/analytics";
+
+/** Both fit-check CTAs lead to the studio; `position` tells them apart in
+ * the funnel (visa_cta_click, same dispatcher as the funnel home blocks). */
+function trackFitCheckClick(position: "hero" | "footer"): void {
+  trackVisaCTA("cta_click", { source: "second_home", position });
+}
 
 /**
  * E33 Second Home Visa landing — Fit-Memo funnel (2026-07-24).
@@ -292,6 +299,7 @@ export function SecondHomeLanding() {
         <Link
           href="/visa/second-home/studio"
           data-testid="hero-fit-check-cta"
+          onClick={() => trackFitCheckClick("hero")}
           style={{ ...fitCheckCtaStyle, justifySelf: "start" }}
         >
           {t("secondHome.cta.fitCheck")}
@@ -668,6 +676,7 @@ export function SecondHomeLanding() {
         <Link
           href="/visa/second-home/studio"
           data-testid="footer-fit-check-cta"
+          onClick={() => trackFitCheckClick("footer")}
           style={fitCheckCtaStyle}
         >
           {t("secondHome.cta.fitCheck")}

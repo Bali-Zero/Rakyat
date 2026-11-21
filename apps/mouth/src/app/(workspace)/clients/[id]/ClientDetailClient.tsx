@@ -16,7 +16,6 @@ import {
   AlertCircle,
   Bell,
   MessageCircle,
-  Loader2,
   AlertTriangle,
   Mail,
 } from "lucide-react";
@@ -83,8 +82,13 @@ import {
 import { clearCompanyDetailCache } from "./components/company/companyDetailCache";
 import { BusinessStoryPanel } from "./components/BusinessStoryPanel";
 import { viewerCanChangeDocumentVisibility } from "./components/modals/document-visibility";
-import { startEarly, earlyKey } from "./components/early-fetch";
+import { viewerCanCreateCompany } from "./components/modals/company-create";
+import { viewerCanManageTaxDocuments } from "./components/tax-documents-access";
+import { earlyKey, takeEarly } from "./components/early-fetch";
+import { startClientDetailEarly } from "./prefetch";
 import { TabSkeleton } from "./components/TabSkeleton";
+import { ClientDetailSkeleton } from "./components/ClientDetailSkeleton";
+import { isImmigrationDocType } from "./components/immigration-doc-type";
 
 /*
  * Only Overview is in this chunk. Every other tab and every modal is its own
@@ -228,23 +232,13 @@ export function ClientDetailClient({
   const clientId = params?.id ? Number(params.id) : 0;
   const { options: teamMemberOptions } = useTeamMemberOptions();
 
-  // The calls that only need the client id start NOW, in parallel with the
-  // profile request, not after it resolves and the Overview mounts. Their
-  // owning components take these promises on first load (early-fetch.ts).
+  // The calls that only need the client id start NOW, all in parallel with
+  // the profile request, not after it resolves and the Overview mounts. On a
+  // first load the layout already started them (prefetch.ts) and this is a
+  // no-op; on client-side navigation it is the start. Their owning components
+  // take these promises on first load (early-fetch.ts).
   useEffect(() => {
-    if (!clientId) return;
-    startEarly(earlyKey("ai-summary", clientId), () =>
-      api.crm.getClientAiSummary(clientId),
-    );
-    startEarly(earlyKey("wa-case-intel", clientId), () =>
-      api.crm.getClientWaCaseIntelligence(clientId),
-    );
-    startEarly(earlyKey("portal-status", clientId), () =>
-      api.crm.getPortalStatus(clientId),
-    );
-    startEarly(earlyKey("portal-messages", clientId), () =>
-      api.crm.getPortalMessages(clientId),
-    );
+    startClientDetailEarly(clientId);
   }, [clientId]);
 
   const {
@@ -353,8 +347,10 @@ export function ClientDetailClient({
   const [lkpmReports, setLkpmReports] = useState(0);
   useEffect(() => {
     let alive = true;
-    lkpmApi
-      .getClientHistory(clientId)
+    (
+      takeEarly<{ count: number }>(earlyKey("lkpm-history", clientId)) ??
+      lkpmApi.getClientHistory(clientId)
+    )
       .then((r) => {
         if (alive) setLkpmReports(r.count);
       })
@@ -493,11 +489,8 @@ export function ClientDetailClient({
   const formatDate = (dateStr: string) => formatCardDate(dateStr, isMounted);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--tx-secondary)]" />
-      </div>
-    );
+    // The page's own layout, section by section, while the profile loads.
+    return <ClientDetailSkeleton />;
   }
 
   if (error || !profile) {
@@ -513,7 +506,7 @@ export function ClientDetailClient({
   }
 
   const {
-    client,
+    client: profileClient,
     family_members,
     documents,
     practices,
@@ -521,6 +514,22 @@ export function ClientDetailClient({
     stats,
     attention_stats: attentionStats,
   } = profile;
+  // `viewer_can_write` is the server's answer for THIS viewer (it knows the
+  // shared client pools); it rides on `client` so the delete predicate sees it.
+  const client = {
+    ...profileClient,
+    viewer_can_write: profile.viewer_can_write,
+  };
+  const canCreateCompany =
+    typeof profile.viewer_can_create_company === "boolean"
+      ? profile.viewer_can_create_company
+      : viewerCanCreateCompany(currentUserRole);
+  const canManageTaxDocuments = viewerCanManageTaxDocuments(
+    profile,
+    profileClient,
+    currentUserEmail,
+    currentUserRole,
+  );
   const setupOption = client.assigned_to
     ? teamMemberOptions.find(
         (m) => m.value === client.assigned_to!.toLowerCase(),
@@ -535,14 +544,7 @@ export function ClientDetailClient({
     d.document_type?.toLowerCase().includes("passport");
   const isImmigrationDoc = (d: ClientDocument) =>
     d.document_category === "immigration" ||
-    d.document_type?.toLowerCase().includes("kitas") ||
-    d.document_type?.toLowerCase().includes("kitap") ||
-    d.document_type?.toLowerCase().includes("visa") ||
-    d.document_type?.toLowerCase().includes("permit") ||
-    d.document_type?.toLowerCase().includes("imta") ||
-    d.document_type?.toLowerCase().includes("rptka") ||
-    d.document_type?.toLowerCase().includes("evisa") ||
-    d.document_type?.toLowerCase().includes("voa");
+    isImmigrationDocType(d.document_type);
   const isCompanyDoc = (d: ClientDocument) => d.document_category === "pma";
   // The row-23 guard: only LIVE general documents are grouped by category.
   const generalDocuments = documents.filter(
@@ -1142,13 +1144,15 @@ export function ClientDetailClient({
                   tone="wait"
                   title="Company & tax"
                   actions={
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsAddingCompany(true)}
-                    >
-                      Add company
-                    </Button>
+                    canCreateCompany ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsAddingCompany(true)}
+                      >
+                        Add company
+                      </Button>
+                    ) : undefined
                   }
                 >
                   <EmptyState>No company linked yet.</EmptyState>
@@ -1229,6 +1233,8 @@ export function ClientDetailClient({
               day={profileDay!}
               documents={documentRows}
               documentsByCategory={documentsByCategory}
+              clientFolderId={client.google_drive_folder_id}
+              companyLinks={company_links ?? []}
               formatDate={formatDate}
               onAddClick={() => setActiveModal("add_document")}
               onEditClick={(doc) => {
@@ -1296,6 +1302,7 @@ export function ClientDetailClient({
               onOpenDocuments={() => handleTabChange("documents")}
               onOpenRemoved={openRemovedDocuments}
               companyLinks={company_links}
+              canCreateCompany={canCreateCompany}
             />
           )}
 
@@ -1310,6 +1317,7 @@ export function ClientDetailClient({
               documents={taxDocuments}
               attention={profile?.attention}
               day={profileDay!}
+              canManageDocuments={canManageTaxDocuments}
             />
           )}
         </div>

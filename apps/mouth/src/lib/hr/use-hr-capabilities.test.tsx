@@ -26,6 +26,8 @@ describe("useHrCapabilities", () => {
         has_employee_record: false,
         people_scope: null,
         hr_edit: false,
+        hr_card_write: false,
+        hr_payroll_write: false,
       },
       loaded: false,
       failed: false,
@@ -39,6 +41,8 @@ describe("useHrCapabilities", () => {
       has_employee_record: true,
       people_scope: "all" as const,
       hr_edit: true,
+      hr_card_write: true,
+      hr_payroll_write: true,
     };
     getCapabilitiesMock.mockResolvedValue(answer);
     const { result } = renderHook(() => useHrCapabilities());

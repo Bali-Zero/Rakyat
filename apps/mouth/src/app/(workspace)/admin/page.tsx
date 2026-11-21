@@ -189,6 +189,14 @@ export default function AdminPage() {
             />
             Refresh
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/admin/related-subjects")}
+          >
+            <Users className="w-4 h-4 mr-2" />
+            Related registry
+          </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="w-4 h-4 mr-2" />
             Export CSV

@@ -427,7 +427,7 @@ describe("AuthApi", () => {
       // token is URL-encoded into the path
       expect(mockRequest).toHaveBeenCalledWith(
         "/api/auth/verify-magic/raw%20token%2Fwith%3Fchars",
-        { method: "GET" },
+        { method: "GET", redirectOnUnauthorized: false },
         90000,
       );
       expect(mockClient.setCsrfToken).toHaveBeenCalledWith("csrf-magic");

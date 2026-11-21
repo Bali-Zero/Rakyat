@@ -100,16 +100,10 @@ DEFAULT_MAX_ATTEMPTS = 5
 
 KILL_SWITCH_ENV = "GARUDA_OUTBOX_CONSUMER_ENABLED"
 
-# Owner-retired transport. Original jobs remain durable and undispatched for
-# internal attention, without using retry attempts or starving customer emails.
-RETIRED_TELEGRAM_JOB_TYPES = (
-    "staff_page_duplicate_charge",
-    "staff_page_late_paid_after_refund",
-    "staff_page_late_paid_after_terminal",
-    "staff_page_charge_without_webhook",
-    "staff_page_payment_failure",
-    "staff_page_refund_out_of_order",
-)
+# Owner-retired transport hold list. Empty now that all six `staff_page_*`
+# money-anomaly job types route through the internal email channel; kept so
+# the consumer's hold predicate remains tested and ready without SQL churn.
+RETIRED_TELEGRAM_JOB_TYPES: tuple[str, ...] = ()
 
 
 def is_consumer_enabled(env: dict[str, str] | None = None) -> bool:

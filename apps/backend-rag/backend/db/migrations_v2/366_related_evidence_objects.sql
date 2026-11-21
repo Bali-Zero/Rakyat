@@ -1,0 +1,84 @@
+-- ============================================================
+-- 366_related_evidence_objects.sql
+-- The registry tables written by the older writers (361 subjects and identifiers,
+-- 362 documents and subject-document links) hold `evidence` as a jsonb STRING
+-- scalar whose text is a JSON object, not as the jsonb object the column is meant
+-- to carry. Cause: the writers called json.dumps before binding to a ::jsonb
+-- parameter, and the production asyncpg codec encodes a second time. The writers
+-- are fixed in the same change; this migration repairs the rows already written
+-- and forbids the wrong shape from now on.
+-- Date: 2026-11-18
+--
+-- Forward, per table: (1) unwrap every string-typed evidence whose text starts with
+-- '{', with (evidence #>> '{}')::jsonb: the repair shape of migrations 242 and 243,
+-- which fixed this same defect on other columns; only '{' because these columns
+-- must hold objects, and the left()/ltrim() test keeps the cast away from text
+-- that is not an object; (2) add CHECK (jsonb_typeof(evidence) = 'object') as NOT
+-- VALID, then VALIDATE it. The runner applies this file inside ONE transaction, so
+-- every lock is held until the commit and the NOT VALID / VALIDATE pair gives no
+-- lock benefit here; it is kept as the lint-friendly habit. The four tables are
+-- small (under 8,000 rows each) and nothing writes to them meanwhile: the registry
+-- write routes are behind a flag that is off. A row that is neither an object nor a
+-- string holding an object is not touched by the UPDATE and makes VALIDATE fail:
+-- the transaction rolls back and the migration aborts instead of guessing. Uses
+-- nothing newer than PostgreSQL 15.
+--
+-- These tables are insert-only for the application (no route updates or deletes
+-- a row). This one-time UPDATE is the gated way to repair rows the application
+-- wrote in the wrong shape; it changes only the representation of evidence,
+-- never its content, and touches no other column. 365's related_subject_names
+-- already carries the same CHECK and is not involved.
+--
+-- Rollback drops the four constraints only. It does NOT turn objects back into
+-- strings: the object shape is the intended one and nothing reads the string.
+--
+-- Consumer: services/crm/related_subjects.py and related_documents.py through
+-- POST /api/crm/related-subjects/register and .../documents/register, and the
+-- read routes of services/crm/related_registry_read.py.
+-- ============================================================
+
+SET lock_timeout = '5s';
+SET statement_timeout = '60s';
+
+UPDATE related_subjects
+   SET evidence = (evidence #>> '{}')::jsonb
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
+
+UPDATE related_subject_identifiers
+   SET evidence = (evidence #>> '{}')::jsonb
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
+
+UPDATE related_documents
+   SET evidence = (evidence #>> '{}')::jsonb
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
+
+UPDATE related_subject_documents
+   SET evidence = (evidence #>> '{}')::jsonb
+ WHERE jsonb_typeof(evidence) = 'string' AND left(ltrim(evidence #>> '{}'), 1) = '{';
+
+ALTER TABLE related_subjects
+    ADD CONSTRAINT related_subjects_evidence_object_chk
+    CHECK (jsonb_typeof(evidence) = 'object') NOT VALID;
+ALTER TABLE related_subjects VALIDATE CONSTRAINT related_subjects_evidence_object_chk;
+
+ALTER TABLE related_subject_identifiers
+    ADD CONSTRAINT related_subject_identifiers_evidence_object_chk
+    CHECK (jsonb_typeof(evidence) = 'object') NOT VALID;
+ALTER TABLE related_subject_identifiers VALIDATE CONSTRAINT related_subject_identifiers_evidence_object_chk;
+
+ALTER TABLE related_documents
+    ADD CONSTRAINT related_documents_evidence_object_chk
+    CHECK (jsonb_typeof(evidence) = 'object') NOT VALID;
+ALTER TABLE related_documents VALIDATE CONSTRAINT related_documents_evidence_object_chk;
+
+ALTER TABLE related_subject_documents
+    ADD CONSTRAINT related_subject_documents_evidence_object_chk
+    CHECK (jsonb_typeof(evidence) = 'object') NOT VALID;
+ALTER TABLE related_subject_documents VALIDATE CONSTRAINT related_subject_documents_evidence_object_chk;
+
+-- === ROLLBACK ===
+
+ALTER TABLE related_subjects DROP CONSTRAINT IF EXISTS related_subjects_evidence_object_chk;
+ALTER TABLE related_subject_identifiers DROP CONSTRAINT IF EXISTS related_subject_identifiers_evidence_object_chk;
+ALTER TABLE related_documents DROP CONSTRAINT IF EXISTS related_documents_evidence_object_chk;
+ALTER TABLE related_subject_documents DROP CONSTRAINT IF EXISTS related_subject_documents_evidence_object_chk;

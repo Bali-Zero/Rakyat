@@ -48,23 +48,39 @@ describe("/team — the public directory", () => {
     await renderTeamPage();
 
     const expected: Array<[string, string]> = [
-      ["Pak Heru", "Komisaris · Founder (30 years)"],
-      ["Zainal Abidin", "Chief Executive Officer · Founder"],
+      ["Pak Heru", "Commissioner · Founder (30 years)"],
+      ["Zainal Abidin", "CEO · Founder"],
       ["Ruslana", "Special Advisory"],
-      ["Adit", "Direktur"],
+      ["Dian Purnomo", "Corporate Manager"],
+      ["Adi", "Operations Manager"],
+      ["Adit", "Director"],
       ["Ari", "Tax Responsible"],
       ["Krisna", "Senior Consultant"],
-      ["Dea", "Executive Consultant"],
-      ["Candra", "Consultant"],
+      ["Surya", "Senior Consultant"],
+      ["Damar", "Junior Consultant"],
       ["Vino", "Junior Consultant"],
+      ["Rio", "Junior Consultant"],
       ["Angel", "Tax Supervisor"],
       ["Kadek", "Tax Consultant"],
       ["Dewa Ayu", "Tax Consultant"],
+      ["Dea", "Tax Consultant"],
+      ["Candra", "Tax Consultant"],
       ["Asya Nadia", "HR & Accounting"],
       ["Rina", "Reception"],
+      ["Oman Maturi", "Bank Relations"],
+      ["Herdini Agustin", "Finance & HR"],
+      ["Agus Satrio", "Chief Immigration Denpasar"],
+      ["Farid Catur Prasetyo", "Chief Immigration Ngurah Rai"],
+      ["Nanang Tri Jaya", "Immigration Denpasar"],
+      ["Yoyok Supriadi", "General Affairs"],
+      ["Yudi Agus Setiawan", "General Affairs"],
+      ["Megi Saputra", "Business Licensing & OSS"],
+      ["David Prawira", "Immigration Processing"],
+      ["Novitasari", "Immigration Processing Supervisor"],
+      ["Lia Amaliya", "Immigration Processing"],
+      ["Sri Wijayanti", "Work Permit Supervisor"],
+      ["Ropik", "Security"],
       ["Zero", "SOTA Marketing"],
-      ["Surya", "Marketing Specialist"],
-      ["Damar", "Marketing Junior"],
       ["Subhi", "AI"],
     ];
 
@@ -76,7 +92,7 @@ describe("/team — the public directory", () => {
         `${name} lost the role label "${role}"`,
       ).toContain(role);
     }
-    // 19 people, no more: the two excluded are the only difference from the
+    // 34 people, no more: the two excluded are the only difference from the
     // composition this page shipped before.
     expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(
       expected.length,
@@ -120,6 +136,9 @@ describe("/team — the public directory", () => {
       "setup",
       "tax",
       "accounting",
+      "immigration",
+      "operations",
+      "security",
       "marketing",
     ]) {
       expect(document.getElementById(id), `#${id} is missing`).not.toBeNull();

@@ -270,15 +270,17 @@ export interface KBLIProvenance {
      *
      * `status`/`locator`/`vintage` above are derived from `_l2_source`, which
      * names the OSS-RBA **risk** source. `pp28_sources` is a different field
-     * recording where the PP 28 rows came from, and the two disagree on **337**
-     * codes: `_l2_source === "OSS_RBA_resiko_2025"` (so the risk tier is
-     * genuinely 2025-native and `status` is `oss_native`) while every entry of
-     * `pp28_sources` names a DIFFERENT code. **217** of those inherit a
-     * `pb_umku` permit that way.
+     * recording where the PP 28 rows came from, and **390** canonical records
+     * carry `pp28_sources` naming only OTHER codes: **340** of those have
+     * `_l2_source === "OSS_RBA_resiko_2025"` and serve `per_skala` rows (so the
+     * risk tier is genuinely 2025-native and `status` is `oss_native` while the
+     * licensing content is carried over), and **50** have empty `per_skala`.
+     * (`pb_umku` is currently empty on all served `per_skala` rows; the 217
+     * inherited `pb_umku` entries sit in unrendered `per_skala_legacy`.)
      *
      * `62110` (video game development) is the case that surfaced it: sourced
-     * from `["62011","62019","62015","62013","62012"]`, and its inherited
-     * `pb_umku` lists three defence-industry permits.
+     * from `["62011","62019","62015","62013","62012"]` (its legacy `pb_umku`
+     * listed three defence-industry permits).
      *
      * Deliberately a SEPARATE field rather than a new `status` value: the risk
      * claim on these codes is verified and must keep being stated; only the

@@ -35,10 +35,10 @@ relatedArticles:
   - "foreign-company-incorporation-steps"
 tableOfContents: true
 seoTitle: "VAT PPN Indonesia 2026 | Business Compliance Guide"
-seoDescription: "Indonesian VAT (PPN) guide for 2026. 11% standard rate, PKP registration, faktur pajak invoicing, input-output tax credits, and compliance for PT PMA companies."
+seoDescription: "Guida IVA (PPN) Indonesia 2026 ex PMK 131/2024: aliquota effettiva 11% su beni/servizi ordinari tramite DPP Nilai Lain 11/12 (12% sui beni di lusso), soglia PKP 4,8 mld IDR e Coretax e-Faktur."
 aiOptimization:
-  primaryQuestion: "How does VAT (PPN) work for businesses in Indonesia?"
-  answerSnippet: "Indonesia's VAT (PPN) standard rate is 11%. Businesses with annual revenue exceeding IDR 4.8 billion must register as PKP (taxable entrepreneur) and charge PPN. Issue faktur pajak (tax invoices) via e-Faktur system. Input tax credits offset output tax. File SPT Masa PPN monthly by end of following month."
+  primaryQuestion: "Come funziona l'IVA (PPN) per le aziende in Indonesia?"
+  answerSnippet: "Ai sensi del PMK 131/2024, l'aliquota PPN legale è del 12%, ma beni e servizi ordinari applicano la base imponibile ridotta 11/12 (DPP Nilai Lain) mantenendo l'aliquota effettiva all'11% (solo i beni di lusso pagano il 12% pieno). Le società con fatturato superiore a 4,8 miliardi di IDR/anno devono registrarsi come PKP, emettere fatture via Coretax e-Faktur e presentare la SPT Masa PPN entro la fine del mese successivo."
   entityMentions:
     - type: "GovernmentOrganization"
       name: "Direktorat Jenderal Pajak"
@@ -47,8 +47,8 @@ aiOptimization:
       name: "e-Faktur"
       sameAs: "https://efaktur.pajak.go.id"
 faq:
-  - question: "What is the VAT rate in Indonesia for 2026?"
-    answer: "The standard PPN rate is 11% (since April 2022). A planned increase to 12% has been discussed but not yet implemented as of early 2026. Certain goods and services are exempt or zero-rated, including basic necessities, education, and exports."
+  - question: "Qual è l'aliquota IVA (PPN) in Indonesia nel 2026?"
+    answer: "Ai sensi del PMK 131/2024 (in vigore dal 1° gennaio 2025), l'aliquota legale PPN è del 12%, mentre beni e servizi ordinari non di lusso utilizzano la base imponibile ridotta 11/12 (DPP Nilai Lain) con aliquota effettiva dell'11%. Il 12% pieno senza riduzione si applica solo ai beni di lusso (PPnBM). Le esportazioni sono ad aliquota 0%."
   - question: "When must a business register for PPN (VAT) in Indonesia?"
     answer: "Registration as PKP (Pengusaha Kena Pajak) is mandatory when annual gross revenue exceeds IDR 4.8 billion. Businesses can voluntarily register below this threshold. PKP registration requires issuing faktur pajak for all taxable transactions."
   - question: "How do input tax credits work for Indonesian PPN?"
@@ -73,49 +73,50 @@ canonicalUrl: "https://balizero.com/tax/vat-ppn-guide"
 ogImage: "/static/insights/tax/vat-ppn.jpg"
 twitterCard: "summary_large_image"
 locale: "it"
-source_sha256: "9d9e83b83d03b8c009ab1f2098ef6df2e3f2e19ac271ae049a63ccd25cf46c1c"
+source_sha256: "150fa343cd5bd54565418d8309d80795a3c3ec995e3f29852e1c53d1e25ebf21"
 ---
 
 # IVA (PPN) in Indonesia nel 2026: Guida Completa per le Imprese
 
 Il Pajak Pertambahan Nilai (PPN) è l’IVA indonesiana. Comprendere il suo funzionamento è fondamentale per la conformità aziendale.
 
-<InfoCard variant="warning" title="Aggiornamento IVA 2026 (Fonte: pajak.go.id)">
-**IVA al 12% in vigore dal 1 gennaio 2025:**
+<InfoCard variant="warning" title="Aggiornamento IVA 2026 (PMK 131/2024 — Fonte: pajak.go.id)">
+**Struttura PPN 12% nominale vs 11% effettiva:**
 
-L’IVA indonesiana è ufficialmente al **12%** dal 1 gennaio 2025. Tuttavia, grazie al meccanismo **DPP Nilai Lain** (Base Imponibile Altra), l'aliquota effettiva per la maggior parte dei beni e servizi rimane all'**11%**.
+Dal 1° gennaio 2025 l'aliquota PPN legale è al **12%**, ma il regolamento **PMK 131/2024** applica una base imponibile alternativa (**DPP Nilai Lain = 11/12**) a beni e servizi ordinari non di lusso:
 
-- **Beni normali**: 12% × (11/12) = **11% effettivo**
-- **Beni di lusso**: **12% pieno** (senza DPP Nilai Lain)
-- **Tutte le fatture (Faktur Pajak)** devono essere emesse tramite **Coretax/e-Faktur**
+- **Beni e servizi ordinari**: 12% × (11/12) = **11% effettivo**
+- **Beni di lusso (categoria PPnBM)**: **12% pieno** (senza riduzione 11/12 DPP Nilai Lain)
+- **Fatture fiscali (Faktur Pajak)**: Emesse elettronicamente tramite **Coretax e-Faktur**
+- **Versamento e invio**: Entro la **fine del mese successivo** (PMK 81/2024)
 
-**Nota Importante**: Questa struttura è stata implementata per minimizzare l'impatto sui consumatori mantenendo formalmente l'aliquota del 12% prevista dalla legge.
+**Nota Importante**: Il meccanismo mantiene l'aliquota effettiva all'**11%** sulle transazioni ordinarie riservando il 12% pieno ai soli beni di lusso.
 
 </InfoCard>
 
 ## Aliquote IVA
 
 <ComparisonTable
-  title="Aliquote IVA in Indonesia"
-  description="Aliquote 2026 in vigore"
+  title="Aliquote IVA (PPN) in Indonesia — PMK 131/2024"
+  description="Aliquote attive nel 2026"
   items={[
     {
-      name: "Aliquota Standard (Effettiva)",
-      subtitle: "Maggior parte beni/servizi",
+      name: "Aliquota Standard (Ordinaria)",
+      subtitle: "Maggior parte beni e servizi",
       values: {
         Rate: "11% effettivo",
-        Nominale: "12% con DPP Nilai Lain",
-        "Applies To": "Transazioni generali",
+        Meccanismo: "12% × 11/12 DPP Nilai Lain",
+        "Applies To": "Transazioni nazionali ordinarie",
       },
       highlight: true,
     },
     {
       name: "Aliquota Beni di Lusso",
-      subtitle: "Beni di lusso",
+      subtitle: "Articoli di lusso PPnBM",
       values: {
         Rate: "12% pieno",
-        Nominale: "Senza DPP Nilai Lain",
-        "Applies To": "Beni considerati lusso",
+        Meccanismo: "Base piena (senza riduzione 11/12)",
+        "Applies To": "Beni di lusso ex PMK 131/2024",
       },
     },
     {
@@ -123,17 +124,17 @@ L’IVA indonesiana è ufficialmente al **12%** dal 1 gennaio 2025. Tuttavia, gr
       subtitle: "Export di beni",
       values: {
         Rate: "0%",
-        Nominale: "Zero-rated",
-        "Applies To": "Exported goods",
+        Meccanismo: "Aliquota zero (PMK 131/2024)",
+        "Applies To": "Beni esportati",
       },
     },
     {
-      name: "Alcuni Servizi",
-      subtitle: "Alcuni servizi all'estero",
+      name: "Servizi Qualificati",
+      subtitle: "Servizi verso l'estero",
       values: {
         Rate: "0%",
-        Nominale: "Zero-rated",
-        "Applies To": "Exported services",
+        Meccanismo: "Aliquota zero (PMK 131/2024)",
+        "Applies To": "Servizi esportati",
       },
     },
   ]}
@@ -239,6 +240,16 @@ Come PKP, devi:
       suffix: "IDR"
     },
     {
+      id: "category",
+      label: "Categoria Beni / Servizi (PMK 131/2024)",
+      type: "select",
+      options: [
+        { value: "general", label: "Beni / Servizi Ordinari (11% effettivo con DPP 11/12)" },
+        { value: "luxury", label: "Beni di Lusso PPnBM (12% pieno)" }
+      ],
+      defaultValue: "general"
+    },
+    {
       id: "type",
       label: "Tipo di Transazione",
       type: "select",
@@ -251,7 +262,8 @@ Come PKP, devi:
   ]}
   calculateResult={(values) => {
     const amount = Number(values.amount);
-    const rate = 0.11; // 11%
+    const isLuxury = values.category === "luxury";
+    const rate = isLuxury ? 0.12 : 0.11;
 
     let baseAmount, vatAmount, totalAmount;
 
@@ -266,14 +278,16 @@ Come PKP, devi:
     }
 
     return {
-      total: vatAmount,
+      total: Math.round(vatAmount),
       breakdown: [
-        { label: "Base Amount (DPP)", amount: Math.round(baseAmount) },
-        { label: "VAT (11%)", amount: Math.round(vatAmount) },
-        { label: "Total with VAT", amount: Math.round(totalAmount) }
+        { label: "Prezzo Base (Imponibile Reale)", amount: Math.round(baseAmount) },
+        { label: isLuxury ? "PPN Beni di Lusso (12%)" : "PPN Effettiva (11% = 12% × 11/12 DPP)", amount: Math.round(vatAmount) },
+        { label: "Totale con IVA", amount: Math.round(totalAmount) }
       ],
       currency: "IDR",
-      note: "Rate: 11% (standard)"
+      note: isLuxury
+        ? "Aliquota: 12% pieno (Beni di lusso ex PMK 131/2024)"
+        : "Aliquota: 11% effettivo (12% su DPP Nilai Lain 11/12 ex PMK 131/2024)"
     };
 
 }}

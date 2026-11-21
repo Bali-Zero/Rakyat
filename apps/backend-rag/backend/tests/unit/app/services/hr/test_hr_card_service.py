@@ -51,7 +51,7 @@ async def test_merge_card_on_coalesces_columns_and_passes_a_dict_to_the_codec():
     conn.fetchrow = AsyncMock(return_value={"id": 7, "profile_type": "object"})
     assert await HRService(None).merge_card_on(conn, "tm-1", {"npwp": "N-1"}, {"unit": "u"}) == 7
     sql, *params = conn.fetchrow.await_args.args
-    assert "npwp = COALESCE($3, npwp)" in sql and "jsonb_typeof(profile) = 'object'" in sql
+    assert "COALESCE($3, npwp)" in sql and "jsonb_typeof(profile) = 'object'" in sql
     assert "base_salary_idr" not in sql and "notes" not in sql
     assert params[0] == "tm-1" and params[2] == "N-1" and params[1] is None
     assert params[10] == {"unit": "u"}
@@ -108,3 +108,46 @@ def test_the_legacy_employee_shape_never_carries_the_profile():
         "id": 1,
         "npwp": "n",
     }
+
+
+@pytest.mark.asyncio
+async def test_merge_card_on_passes_the_cleared_keys_sorted_as_a_text_array():
+    _, conn = _pool()
+    conn.fetchrow = AsyncMock(return_value={"id": 7, "profile_type": "object"})
+    await HRService(None).merge_card_on(conn, "tm-1", {}, {}, clear=["nik", "bank_name"])
+    sql, *params = conn.fetchrow.await_args.args
+    assert params[11] == ["bank_name", "nik"] and "$12::text[]" in sql
+    await HRService(None).merge_card_on(conn, "tm-1", {}, {})  # the import passes none
+    assert conn.fetchrow.await_args.args[12] == []
+
+
+@pytest.mark.asyncio
+async def test_edit_card_locks_the_member_then_merges_with_a_lock_timeout():
+    pool, conn = _pool()
+    conn.fetchval = AsyncMock(return_value="tm-1")
+    conn.fetchrow = AsyncMock(return_value={"id": 7, "profile_type": "object"})
+    assert await HRService(pool).edit_card("tm-1", "a@b.c", {"npwp": "N"}, {}, ["nik"]) == 7
+    sqls = [c.args[0] for c in conn.execute.await_args_list]
+    assert "lock_timeout" in sqls[0]
+    # one lock order with the HR document door (C13): member advisory lock, then the row lock
+    assert "hr_docs_folder" in sqls[1] and conn.execute.await_args_list[1].args[1] == "tm-1"
+    assert "FOR SHARE" in conn.fetchval.await_args.args[0]
+    assert conn.fetchrow.await_args.args[-1] == ["nik"]
+
+
+@pytest.mark.asyncio
+async def test_edit_card_returns_none_when_the_member_no_longer_matches():
+    pool, conn = _pool()
+    conn.fetchval = AsyncMock(return_value=None)
+    assert await HRService(pool).edit_card("tm-1", "a@b.c", {}, {}, []) is None
+    conn.fetchrow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_edit_card_failures_are_codes_without_driver_text():
+    pool, conn = _pool()
+    conn.fetchval = AsyncMock(return_value="tm-1")
+    conn.fetchrow = AsyncMock(side_effect=RuntimeError("ZQXLEAK"))
+    with pytest.raises(HRCardError) as exc:
+        await HRService(pool).edit_card("tm-1", "a@b.c", {}, {}, [])
+    assert exc.value.code is HRCardCode.DB_ERROR and "ZQXLEAK" not in str(exc.value)

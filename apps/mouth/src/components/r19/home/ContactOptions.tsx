@@ -57,8 +57,8 @@ export function ContactOptions({
         </a>
       </div>
       <p className={styles.note}>
-        Your topic carries into the next step. Review your message before
-        sending.
+        Your topic carries into WhatsApp or your email app. Write your message
+        there and review it before sending.
       </p>
     </div>
   );

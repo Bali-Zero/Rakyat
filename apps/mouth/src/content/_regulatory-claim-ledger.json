@@ -1,7 +1,7 @@
 {
   "$schema_version": "1.0",
   "description": "Knowledge-freshness claim ledger — the SSOT for regulatory facts the client-facing site must NOT contradict. Each entry pairs a STALE pattern (what the site used to say / must never reassert) with the VERIFIED current fact and its ground-truth source. The sentinel test (content-freshness-sentinel.test.ts) fails if any `stale_pattern` reappears in published MDX without being inside a recognised migration/correction note. Born 2026-06-14 (Mythos M3) from the knowledge-decay audit (2026-06-13). To update: re-verify against NotebookLM ground-truth, bump `verified_on`, cite the source verbatim.",
-  "verified_on": "2026-06-14",
+  "verified_on": "2026-11-17",
   "ground_truth_source": "NotebookLM NB-2 Immigration (cff93ab0), NB-3 Company (933509f9), NB-5 Property (d9438180) — Permenkumham 22/2023 & 11/2024, Permen Investasi/BKPM 5/2025, Peraturan BPS 7/2025 (KBLI 2025), PP 28/2025, Permenpar tourism framework",
   "claims": [
     {
@@ -80,16 +80,16 @@
       "id": "RETIRE-NO-SPONSOR-SINGLE",
       "domain": "visa",
       "stale_pattern": "Min. USD 1,500/month income evidence",
-      "current_fact": "Retirement is two tracks: E33F (55+, REQUIRES a licensed sponsor/guarantor, 1yr) vs E33E Silver Hair (no sponsor, ~USD 50k deposit in a BUMN state bank, 5yr). A single 'no corporate sponsor' rule conflates them.",
-      "source": "Permenkumham 11/2024 index E33E/E33F; sponsor/deposit distinction verbatim in NB-2",
+      "current_fact": "Retirement is two tracks (55+ in E33E.json; 60+ under Kepmen M.IP-08.GR.01.01/2025): E33F (retirement guarantor/sponsor required, 1yr, >= USD 3,000/mo income) vs E33E Silver Hair Golden Visa (no corporate sponsor required, USD 50,000 deposit in a state-owned BUMN bank AND >= USD 3,000/mo income or allowance, 5yr extendable up to 10yr). A single 'no corporate sponsor' or USD 1,500/mo rule conflates them.",
+      "source": "Permenkumham 22/2023 Art. 113 & 11/2024 index E33E/E33F; E33E.json; E33E (Extend) in bali_zero_official_prices_2026.json",
       "severity": "P0"
     },
     {
       "id": "PONDOK-WISATA-FOREIGN",
       "domain": "property",
       "stale_pattern": "must possess a valid Pondok Wisata license",
-      "current_fact": "Pondok Wisata is reserved for Indonesian citizens (WNI) as individuals (usaha perseorangan); a foreigner / PT PMA CANNOT hold it. Foreigner route = PT PMA + Villa KBLI (55203) in a Pink tourism zone via OSS-RBA. Nominee = criminal under Perda Bali 4/2026.",
-      "source": "Permenpar tourism framework: 'Perseorangan ... merupakan warga negara Indonesia'; 'The compliant path is a PT PMA with a Villa license'",
+      "current_fact": "Pondok Wisata (KBLI 55201) and Villa (KBLI 55203) are BOTH TERBATAS (0% PMA — allocated exclusively to Indonesian Koperasi & UMKM under Perpres 10/2021 jo. Perpres 49/2021 Lampiran II, and 55203 has no Skala Besar track in PP 28/2025). A foreigner / PT PMA CANNOT register 55201 or 55203. Foreigner hospitality route = open PMA codes (e.g., 55101 Star Hotel or 55204 Serviced Apartments) in Pink tourism zone with PKKPR, PBG & SLF via SIMBG. Nominee = criminal under Perda Bali 4/2026.",
+      "source": "Perpres 49/2021 Lampiran II; PP 28/2025; kbli-2025.json; PropertyEligibilityBody.tsx; PP 16/2021 (PBG/SLF)",
       "severity": "P0"
     },
     {

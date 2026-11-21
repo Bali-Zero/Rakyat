@@ -10,6 +10,11 @@ from typing import Annotated, Any
 from pydantic import AfterValidator
 
 from backend.app.core.config import settings
+from backend.app.utils.client_pools import (
+    caller_in_client_pool,
+    can_write_client,
+    ensure_client_pools_validated,
+)
 from backend.core.env_lists import crm_extra_admin_emails
 
 # CRM-specific admin additions on top of the global allowlist
@@ -128,7 +133,16 @@ def is_crm_admin(user: dict) -> bool:
 #: Job titles (``team_members.role``, lower-cased) that may flip a document's
 #: client visibility besides the CRM admins.
 DOCUMENT_VISIBILITY_ROLES = frozenset(
-    {"team leader", "tax lead", "supervisor", "direktur", "tax supervisor", "tax responsible"}
+    {
+        "team leader",
+        "tax lead",
+        "supervisor",
+        "direktur",
+        "tax supervisor",
+        "tax responsible",
+        # owner order 2026-11-15: same as Tax Lead
+        "tax consultant",
+    }
 )
 
 
@@ -139,6 +153,37 @@ def can_change_document_visibility(user: dict) -> bool:
     if is_crm_admin(user):
         return True
     return (user.get("role") or "").lower().strip() in DOCUMENT_VISIBILITY_ROLES
+
+
+#: Job titles (``team_members.role``, lower-cased) that may CREATE a company
+#: besides the CRM admins and every validated client-pool member. Edit follows
+#: ``client_pools.can_edit_company``; delete stays admin-only (``is_crm_admin``).
+#: Mirrored on the desk by ``apps/mouth/.../modals/company-create.ts``.
+COMPANY_CREATE_ROLES = frozenset(
+    {
+        # is_crm_admin role branch
+        "admin",
+        "board member",
+        "ceo",
+        "founder",
+        # tax team
+        "tax consultant",
+        "tax lead",
+        "tax supervisor",
+        "tax responsible",
+    }
+)
+
+
+def can_create_company(user: dict) -> bool:
+    """CRM admins, the tax team (``COMPANY_CREATE_ROLES``) and client-pool members may create a company."""
+    if not user:
+        return False
+    if is_crm_admin(user):
+        return True
+    if (user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES:
+        return True
+    return caller_in_client_pool(user)
 
 
 def can_view_all_practices(user: dict) -> bool:
@@ -218,6 +263,8 @@ async def verify_client_access(
 
     user_email = (current_user.get("email") or "").lower().strip()
 
+    await ensure_client_pools_validated(conn)
+
     row = await conn.fetchrow(
         "SELECT id, assigned_to, created_by FROM clients WHERE id = $1 AND deleted_at IS NULL",
         client_id,
@@ -233,12 +280,7 @@ async def verify_client_access(
         return True, assigned_to
 
     if write:
-        owner_emails = {
-            (assigned_to or "").lower().strip(),
-            (_record_value(row, "created_by") or "").lower().strip(),
-        }
-        owner_emails.discard("")
-        if user_email in owner_emails:
+        if can_write_client(current_user, assigned_to, _record_value(row, "created_by")):
             return True, assigned_to
 
         logger.warning(

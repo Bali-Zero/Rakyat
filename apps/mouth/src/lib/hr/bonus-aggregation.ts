@@ -13,7 +13,12 @@
  * about the same payroll. Live prod data already contains such rows.
  */
 
-import type { Bonus, BonusHistoricalRecord, BonusStatus } from "@/types/hr";
+import type {
+  Bonus,
+  BonusHistoricalRecord,
+  BonusStatus,
+  HREmployee,
+} from "@/types/hr";
 
 /** Business timezone for month cut-off. Bali Zero operates on WITA. */
 const BUSINESS_TZ = "Asia/Makassar";
@@ -40,6 +45,7 @@ export interface MemberMonthAggregate {
   employeeName: string;
   employeeEmail: string;
   count: number;
+  /** What the member earned: rejected and reversed rows are not counted. */
   total: number;
   /** Amount per status. Absent statuses are 0. */
   byStatus: Record<BonusStatus, number>;
@@ -64,7 +70,10 @@ export interface MemberTotal {
   employeeId: number | null;
   employeeName: string;
   employeeEmail: string;
+  /** Org-chart department chip (tax | setup | office), "" when unknown. */
+  department: string;
   count: number;
+  /** What the member earned: rejected and reversed rows are not counted. */
   total: number;
   /** Number of distinct months this member earned a bonus in. */
   monthCount: number;
@@ -81,6 +90,13 @@ function emptyStatusMap(): Record<BonusStatus, number> {
 function amountOf(bonus: Bonus): number {
   const n = Number(bonus.amount_idr);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Rejected and reversed bonuses are shown by status but never counted as earned. */
+function countedAmountOf(bonus: Bonus): number {
+  return bonus.status === "rejected" || bonus.status === "reversed"
+    ? 0
+    : amountOf(bonus);
 }
 
 function memberKeyOf(bonus: Bonus): string {
@@ -168,7 +184,7 @@ export function groupBonusesByMonth(bonuses: Bonus[]): MonthAggregate[] {
 
     const amount = amountOf(bonus);
     member.count += 1;
-    member.total += amount;
+    member.total += countedAmountOf(bonus);
     addStatus(member.byStatus, bonus.status, amount);
     member.bonuses.push(bonus);
   }
@@ -222,6 +238,7 @@ export function aggregateByMember(bonuses: Bonus[]): MemberTotal[] {
         employeeId: bonus.employee_id ?? null,
         employeeName: bonus.employee_name || bonus.employee_email || "Unknown",
         employeeEmail: bonus.employee_email || "",
+        department: bonus.employee_department ?? "",
         count: 0,
         total: 0,
         monthCount: 0,
@@ -234,9 +251,10 @@ export function aggregateByMember(bonuses: Bonus[]): MemberTotal[] {
     const amount = amountOf(bonus);
     const monthKey = witaMonthKey(bonus.awarded_at);
     row.count += 1;
-    row.total += amount;
+    row.total += countedAmountOf(bonus);
     addStatus(row.byStatus, bonus.status, amount);
-    row.byMonth[monthKey] = (row.byMonth[monthKey] ?? 0) + amount;
+    row.byMonth[monthKey] =
+      (row.byMonth[monthKey] ?? 0) + countedAmountOf(bonus);
   }
 
   const result = [...rows.values()];
@@ -244,6 +262,52 @@ export function aggregateByMember(bonuses: Bonus[]): MemberTotal[] {
   return result.sort(
     (a, b) => b.total - a.total || a.employeeName.localeCompare(b.employeeName),
   );
+}
+
+export interface MemberTableRow extends MemberTotal {
+  /** Share of the grand total, 0..1 (0 for a member with nothing). */
+  share: number;
+}
+
+/**
+ * One row per active employee, bonus or not: a member with nothing yet (the tax
+ * team, today) is a row of zeros, never a missing row. Members that have bonuses
+ * but are not in the employee list (inactive, left) are kept. Sorted by total,
+ * then name.
+ */
+export function buildMemberTable(
+  totals: MemberTotal[],
+  employees: readonly HREmployee[],
+): MemberTableRow[] {
+  const byId = new Map<number, MemberTotal>();
+  for (const t of totals) if (t.employeeId != null) byId.set(t.employeeId, t);
+  const rows: MemberTotal[] = [...totals];
+  for (const e of employees) {
+    const have = byId.get(e.id);
+    if (have) {
+      if (!have.department) have.department = e.department ?? "";
+      continue;
+    }
+    rows.push({
+      memberKey: `id:${e.id}`,
+      employeeId: e.id,
+      employeeName: e.full_name || e.email || "Unknown",
+      employeeEmail: e.email || "",
+      department: e.department ?? "",
+      count: 0,
+      total: 0,
+      monthCount: 0,
+      byStatus: emptyStatusMap(),
+      byMonth: {},
+    });
+  }
+  const grand = rows.reduce((s, r) => s + r.total, 0);
+  return rows
+    .map((r) => ({ ...r, share: grand > 0 ? r.total / grand : 0 }))
+    .sort(
+      (a, b) =>
+        b.total - a.total || a.employeeName.localeCompare(b.employeeName),
+    );
 }
 
 function csvCell(value: string | number): string {
@@ -480,7 +544,7 @@ export function buildMonthlyReconciliation(
       }
       set.add(b.employee_id);
     }
-    ledgerTotals.set(key, (ledgerTotals.get(key) ?? 0) + amountOf(b));
+    ledgerTotals.set(key, (ledgerTotals.get(key) ?? 0) + countedAmountOf(b));
   }
 
   const pdfByMonth = new Map<string, BonusHistoricalRecord[]>();

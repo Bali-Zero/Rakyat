@@ -2,13 +2,20 @@ import { Loader2 } from "lucide-react";
 
 export default function Loading() {
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-[var(--background)]">
-      <div className="flex flex-col items-center gap-4">
-        <Loader2 className="h-10 w-10 animate-spin text-[var(--accent)]" />
-        <p className="text-sm text-[var(--foreground-muted)] animate-pulse">
-          Loading Zantara...
-        </p>
-      </div>
+    // No visible text. This root boundary wraps EVERY route, so its fallback
+    // is streamed into the server HTML of public pages (/, /cookies,
+    // /services/<slug>…) and crawlers read it as page copy: "Loading
+    // Zantara..." was being indexed on pages that are not Zantara. The
+    // spinner plus an accessible name is enough while a route streams.
+    <div
+      role="status"
+      aria-label="Loading"
+      className="flex h-screen w-full items-center justify-center bg-[var(--background)]"
+    >
+      <Loader2
+        aria-hidden="true"
+        className="h-10 w-10 animate-spin text-[var(--accent)]"
+      />
     </div>
   );
 }

@@ -14,10 +14,14 @@ replacement. The two properties we care about:
    project (`torch`, `transformers`, `sentence-transformers`, `presidio-*`)
    used to dominate cold-cache CI runs at ~3-5 min; with uv + warm
    `~/.cache/uv`, the same work is ~20-40s.
-2. **Hash-pinned reproducibility** via `--generate-hashes` + `--require-hashes`.
-   Every wheel installed in CI and in the Fly.io build is verified against
-   a SHA256 recorded in `requirements*.lock.txt`. A PyPI re-upload, MITM,
-   or accidental wheel swap fails the install instead of silently shipping.
+2. **Hash-pinned reproducibility** via `--generate-hashes`. uv verifies every
+   hash a lock carries by default, so in CI and in the Fly.io build every wheel
+   the lock pins is checked against its SHA256 in `requirements*.lock.txt`. A
+   PyPI re-upload, MITM, or accidental wheel swap fails the install instead of
+   silently shipping. Neither CI nor the Dockerfile passes `--require-hashes`.
+   That mode refuses the hashless `-e ../../packages/cell-core` line, and also
+   the packages the lock does not list, such as torch's Linux CUDA wheels,
+   which are resolved at install time.
 
 ## File layout
 
@@ -46,12 +50,19 @@ builder stage (Fly.io production image).
    ```bash
    cd apps/backend-rag
    uv pip compile requirements.txt -o requirements.lock.txt \
-       --generate-hashes --python-version 3.11
+       --generate-hashes --python-version 3.11.5
    uv pip compile requirements-prod.txt -o requirements-prod.lock.txt \
-       --generate-hashes --python-version 3.11
+       --generate-hashes --python-version 3.11.5
    ```
 3. Commit `requirements*.txt` AND `requirements*.lock.txt` together — they
    must always agree.
+
+Why `3.11.5` and not `3.11` (2026-11-13): uv reads a bare `3.11` as 3.11.0,
+and soupsieve 3.0.2+ declares `Requires-Python >=3.11.5`, so a `3.11` target
+can never resolve soupsieve 4.0, the first release that fixes CVE-2026-126190.
+Every runtime that installs these locks is past that floor: the Fly image
+(`python:3.11-slim`, 3.11.18), CI (`setup-python 3.11`, 3.11.18) and the Pro
+mirror venv (3.11.11). Do not lower it back to `3.11`.
 
 ### Upgrade an existing dependency
 
@@ -60,7 +71,7 @@ Same as add, but pass `--upgrade-package <name>` (or `--upgrade` for all):
 ```bash
 cd apps/backend-rag
 uv pip compile requirements.txt -o requirements.lock.txt \
-    --generate-hashes --python-version 3.11 \
+    --generate-hashes --python-version 3.11.5 \
     --upgrade-package fastapi
 ```
 
@@ -68,10 +79,24 @@ uv pip compile requirements.txt -o requirements.lock.txt \
 
 ```bash
 cd apps/backend-rag
-uv venv                                              # creates .venv/
+uv venv --python '>=3.11.5,<3.12'                    # creates .venv/
 source .venv/bin/activate
-uv pip install --require-hashes -r requirements.lock.txt
+uv pip install -r requirements.lock.txt
 ```
+
+The interpreter must be CPython 3.11.5 or newer, because the locks are compiled
+for that floor (see "Why `3.11.5`" above). On 3.11.4 the install stops at
+`soupsieve==4.1 depends on Python>=3.11.5`. The `<3.12` bound is a parity
+choice, not a requirement of the locks: it keeps a local environment on the
+same minor as CI and the Fly image, both 3.11.
+- A bare `uv venv` picks from whatever interpreters uv discovers, so it can
+  land on another minor: on one workstation it chose 3.12.
+- `requires-python = ">=3.11.5"` in `pyproject.toml` makes uv warn about an
+  interpreter under the floor, but it does not stop it.
+- No `--require-hashes`, because the lock's `-e ../../packages/cell-core` line
+  has no hash and that mode refuses the whole file. CI and the Dockerfile do
+  not pass the flag either. uv still verifies the hashes the lock does carry,
+  by default.
 
 Editable `cell-core` is included via the `-e ../../packages/cell-core` line
 in the lock file — runs from `apps/backend-rag/` cwd, same as pip used to.
@@ -109,9 +134,10 @@ Verify: `uv --version`.
 
 ## Gotchas
 
-- **`--require-hashes` is strict by design.** If PyPI re-publishes a wheel
+- **Hash checks are strict by design.** uv verifies every hash the lock
+  carries unless `--no-verify-hashes` is passed. If PyPI re-publishes a wheel
   (e.g. with new metadata but same version), the SHA256 changes and the
-  install fails. Regenerate the lock file — don't disable the flag.
+  install fails. Regenerate the lock file; never pass `--no-verify-hashes`.
 - **Editable install path is cwd-sensitive.** The `-e ../../packages/cell-core`
   line in the lock file resolves relative to wherever you run
   `uv pip install`. Always `cd apps/backend-rag` first (Dockerfile already

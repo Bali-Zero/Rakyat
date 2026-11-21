@@ -354,7 +354,7 @@ async def create_and_start_scheduler(
 
     Necropsy 2026-07-14: params for retired tasks (search_service,
     auto_ingestion_enabled, self_healing_enabled, conversation_trainer_enabled,
-    ai_client) were removed with their blocks — the sole caller (_init_background_services, §10) is commented out.
+    ai_client) were removed with their blocks — the sole caller (_init_background_services, §10) was deleted.
 
     Args:
         db_pool: Database connection pool

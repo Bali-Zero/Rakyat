@@ -162,3 +162,100 @@ def test_company_without_npwp_or_address_prints_neither() -> None:
     assert shows(text, "Attn: Synthetic Person")
     assert not shows(text, "NPWP: None")
     assert "None" not in text
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("Bayu Bali", (["bayu", "bali"], None)),
+        ("PT.BAYU", (["bayu"], None)),
+        ("pt bayu cv", (["bayu", "cv"], None)),
+        ("Bayu CV", (["bayu", "cv"], None)),
+        ("bayu pt", (["bayu", "pt"], None)),
+        ("pt b", ([], None)),
+        ("Straße", (["strasse"], None)),
+        ("bayu, Tbk,", (["bayu"], None)),
+        ("bayu, Tbk.", (["bayu"], None)),
+        ("pt", ([], None)),
+        ("b", ([], None)),
+        ("", ([], None)),
+        ("01.234.567.8-901", ([], "012345678901")),
+        ("12", ([], None)),
+    ],
+)
+def test_parse_search_query(typed: str, expected: tuple[list[str], str | None]) -> None:
+    from backend.services.invoicing.invoice_company import parse_search_query
+
+    assert parse_search_query(typed) == expected
+
+
+def test_match_tier_orders_exact_prefix_contains_and_needs_every_word() -> None:
+    from backend.services.invoicing.invoice_company import match_tier
+
+    assert match_tier("bayu", ["bayu"]) == 0
+    assert match_tier("bayubalinol", ["bayu"]) == 1
+    assert match_tier("bayubalinol", ["bayu", "bali"]) == 1
+    assert match_tier("balibayunol", ["bayu", "bali"]) == 2
+    assert match_tier("zetabayu", ["bayu"]) == 2
+    assert match_tier("bayubalinol", ["bayu", "jakarta"]) is None
+    assert match_tier("bayu", []) is None
+
+
+def test_normalizer_ignores_a_trailing_tbk() -> None:
+    from backend.services.invoicing.invoice_company import normalize_company_name
+
+    assert normalize_company_name("PT Maju Jaya, Tbk.") == normalize_company_name("maju jaya")
+    assert normalize_company_name("PT Maju (Tbk)") == "maju"
+    assert normalize_company_name("PT Maju Jaya Tbk,") == "majujaya"
+    assert normalize_company_name("PT Maju Jaya, Tbk.;") == "majujaya"
+    assert normalize_company_name("PT Straße") == "strasse"
+    assert normalize_company_name("PT Tbkmaju") == "tbkmaju"
+
+
+_EQUIVALENT_TO_BAYU = [
+    "bayu",
+    "PT Bayu",
+    "PT. Bayu",
+    "PT: Bayu",
+    "PT-Bayu",
+    "(PT) Bayu",
+    "CV. Bayu",
+    "Bayu Tbk",
+    "Bayu Tbk:",
+    "Bayu - Tbk",
+    "Bayu (Tbk).",
+    "Bayu Tbk,",
+    "PT. Bayu, Tbk.",
+    "  PT  BAYU  ",
+]
+
+
+@pytest.mark.parametrize("form", _EQUIVALENT_TO_BAYU)
+def test_every_affix_form_normalizes_to_the_same_key(form: str) -> None:
+    from backend.services.invoicing.invoice_company import (
+        normalize_company_name,
+        parse_search_query,
+    )
+
+    assert normalize_company_name(form) == "bayu"
+    assert parse_search_query(form) == (["bayu"], None)
+
+
+@pytest.mark.parametrize(
+    ("form", "key"),
+    [
+        ("PTB Bayu", "ptbbayu"),
+        ("Bayu Tbkx", "bayutbkx"),
+        ("Bayu CV", "bayucv"),
+        ("Bayu PT", "bayupt"),
+        ("PT Bayu PT", "bayupt"),
+        ("Atbk Bayu", "atbkbayu"),
+        ("Bayu Atbk", "bayuatbk"),
+        ("Tbk Bayu", "tbkbayu"),
+        ("Bayu Tbk Tbk", "bayutbk"),
+    ],
+)
+def test_letters_that_only_look_like_an_affix_are_kept(form: str, key: str) -> None:
+    from backend.services.invoicing.invoice_company import normalize_company_name
+
+    assert normalize_company_name(form) == key

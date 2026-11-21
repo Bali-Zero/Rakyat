@@ -137,6 +137,15 @@ export async function generateMetadata({
   };
 }
 
+// On-page headings for the services whose titles target a commercial query:
+// the H1/H2 echo the keywords the title already carries (visa: "visa agency",
+// "KITAS"; company: "PT PMA"). Other services keep their plain headings.
+const HEADING_OVERRIDES: Record<string, { h1?: string; includedH2?: string }> =
+  {
+    visa: { h1: "Bali Visa Agency: KITAS, Visit & Working Visas" },
+    company: { includedH2: "PT PMA Company Setup: What's Included" },
+  };
+
 export default async function ServiceDetailPage({
   params,
 }: {
@@ -150,6 +159,12 @@ export default async function ServiceDetailPage({
   if (!service) {
     notFound();
   }
+  const headingOverride = Object.prototype.hasOwnProperty.call(
+    HEADING_OVERRIDES,
+    slug,
+  )
+    ? HEADING_OVERRIDES[slug]
+    : undefined;
 
   // Structured logging for SEO monitoring
   // Wrapped in try-catch to prevent SSR errors from breaking page render
@@ -254,7 +269,7 @@ export default async function ServiceDetailPage({
                         color: "var(--text-primary)",
                       }}
                     >
-                      {service.name}
+                      {headingOverride?.h1 ?? service.name}
                     </h1>
                     <p
                       className="text-lg"
@@ -435,7 +450,7 @@ export default async function ServiceDetailPage({
                 color: "var(--text-primary)",
               }}
             >
-              What's Included
+              {headingOverride?.includedH2 ?? "What's Included"}
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

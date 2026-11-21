@@ -261,7 +261,7 @@ async def test_b3_non_admin_filter_applied_to_total_and_by_client(mock_db_pool) 
 
     result = await get_unread_messages_count(
         _current_user={"email": "alice@balizero.com", "role": "team"},
-        assigned_filter="alice@balizero.com",
+        assigned_filter=["alice@balizero.com"],
         db_pool=mock_db_pool,
     )
 
@@ -269,12 +269,12 @@ async def test_b3_non_admin_filter_applied_to_total_and_by_client(mock_db_pool) 
     assert len(result["data"]["by_client"]) == 1
 
     total_query, *total_params = conn.fetchval.await_args.args
-    assert "LOWER(c.assigned_to) = $1" in total_query
-    assert total_params == ["alice@balizero.com"]
+    assert "LOWER(c.assigned_to) = ANY($1::text[])" in total_query
+    assert total_params == [["alice@balizero.com"]]
 
     by_client_query, *by_client_params = conn.fetch.await_args.args
-    assert "LOWER(c.assigned_to) = $1" in by_client_query
-    assert by_client_params == ["alice@balizero.com"]
+    assert "LOWER(c.assigned_to) = ANY($1::text[])" in by_client_query
+    assert by_client_params == [["alice@balizero.com"]]
     # Archived-client leak must be closed on the query that carries names.
     assert "c.deleted_at IS NULL" in by_client_query
 

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import NewsPageClient from "./NewsPageClient";
 import type { ArticleListItem } from "@/lib/blog/types";
 
-vi.mock("@/app/v2/_components/NewsHero", () => ({
+vi.mock("@/components/blog/NewsHero", () => ({
   NewsHero: ({ articles }: { articles: ArticleListItem[] }) => (
     <div data-testid="featured">
       {articles.map((a) => (

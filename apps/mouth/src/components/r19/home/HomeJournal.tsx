@@ -1,5 +1,6 @@
 import { getAllArticles, getPinnedMdxArticles } from "@/lib/blog/articles";
 import homepageLayout from "@/content/homepage-layout.json";
+import Link from "next/link";
 import { Journal } from "./Journal";
 import {
   insightSlots,
@@ -54,7 +55,15 @@ export function JournalPending() {
         aria-label="The Bali Zero Journal"
       >
         <h2>The Bali Zero Journal</h2>
-        <p role="status">Loading the latest stories…</p>
+        {/* Streamed into the server HTML before the stories resolve, so it
+            must read as content, not as a placeholder: a crawler kept
+            "Loading the latest stories…" as homepage copy. */}
+        <p>
+          <Link className="textlink" href="/news">
+            Read the latest stories in the Journal{" "}
+            <span aria-hidden="true">↗</span>
+          </Link>
+        </p>
       </section>
     </div>
   );

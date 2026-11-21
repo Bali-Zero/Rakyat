@@ -551,6 +551,76 @@ describe("proxy catch-all route — public Visa Oracle boundary", () => {
     expect(serializedLogs).not.toContain("family");
   });
 
+  it("never logs the typed search text, whichever way the upstream call ends", async () => {
+    const value = "zetaquorum-fixture-search";
+    const makeRequest = () =>
+      new MockNextRequest(
+        `http://localhost/api/crm/practices?month=2026-11&search=${value}&q=${value}`,
+        { method: "GET" },
+      );
+
+    await POST(makeRequest() as never);
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response("unavailable", { status: 503 }),
+    );
+    await POST(makeRequest() as never);
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response("rejected", { status: 401 }),
+    );
+    await POST(makeRequest() as never);
+    vi.mocked(global.fetch).mockRejectedValueOnce(new Error("network down"));
+    await POST(makeRequest() as never);
+
+    const serializedLogs = JSON.stringify({
+      debug: vi.mocked(logger.debug).mock.calls,
+      error: vi.mocked(logger.error).mock.calls,
+      warn: vi.mocked(logger.warn).mock.calls,
+    });
+    expect(serializedLogs).not.toContain(value);
+    // innocence: the path is still there to read
+    expect(serializedLogs).toContain("/api/crm/practices");
+  });
+
+  it("never puts the search text in the error it logs for a failed upstream call", async () => {
+    const value = "zetaquorum-fixture-search";
+    const req = new MockNextRequest(
+      `http://localhost/api/crm/practices?search=${value}`,
+      { method: "GET" },
+    );
+    // a fetch parse error prints the whole target URL, query included
+    vi.mocked(global.fetch).mockRejectedValueOnce(
+      Object.assign(
+        new TypeError(
+          `Failed to parse URL from http://backend.test/api/crm/practices?search=${value}`,
+        ),
+        {
+          cause: new Error(
+            `inner http://backend.test/api/crm/practices?search=${value}`,
+          ),
+        },
+      ),
+    );
+
+    await POST(req as never);
+
+    const errors = vi
+      .mocked(logger.error)
+      .mock.calls.map(([message, ctx, err]) => {
+        const e = err as Error | undefined;
+        return (
+          JSON.stringify([message, ctx]) +
+          String(e?.message) +
+          String(e?.stack) +
+          String((e as { cause?: unknown } | undefined)?.cause)
+        );
+      });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.join("\n")).not.toContain(value);
+    // innocence: the failure is still diagnosable
+    expect(errors.join("\n")).toContain("Failed to parse URL from");
+    expect(errors.join("\n")).toContain("/api/crm/practices");
+  });
+
   it("does not log identifying request context for an upstream auth rejection", async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce(
       new Response("rejected", { status: 401 }),
@@ -729,4 +799,176 @@ describe("proxy catch-all route — bodyless upstream statuses (204/205/304)", (
       expect(rawBody.byteLength).toBe(0);
     },
   );
+});
+
+describe("proxy catch-all route — manual redirect origin guard (RT-06)", () => {
+  beforeEach(() => {
+    process.env.NUZANTARA_API_URL = "https://nuzantara-rag.fly.dev";
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    "https://evil.example/steal",
+    "//evil.example/steal",
+    "http://evil.example/steal",
+    (() => {
+      const u = new URL("https://nuzantara-rag.fly.dev/api/crm/clients");
+      u.username = "spoof";
+      return u.href;
+    })(),
+  ])(
+    "refuses off-origin redirect %s with 502 without forwarding auth/cookie/csrf headers",
+    async (location) => {
+      vi.mocked(global.fetch).mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: { Location: location },
+        }),
+      );
+
+      const req = new MockNextRequest(
+        "http://localhost/api/crm/clients?limit=1",
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer jwt-session-rt06",
+            "Content-Type": "application/json",
+          },
+          cookies: {
+            nz_access_token: "cookie-session-rt06",
+            nz_csrf_token: "csrf-session-rt06",
+          },
+          body: bodyArrayBuffer("{}"),
+        },
+      );
+
+      const response = await POST(req as never);
+
+      expect(response.status).toBe(502);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("follows same-origin redirects (including http->https upgrade on backend host) preserving auth and csrf", async () => {
+    vi.mocked(global.fetch)
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: {
+            Location: "http://nuzantara-rag.fly.dev/api/crm/clients/",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const req = new MockNextRequest("http://localhost/api/crm/clients", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer active-jwt",
+        "Content-Type": "application/json",
+      },
+      cookies: {
+        nz_csrf_token: "csrf-val-123",
+      },
+      body: bodyArrayBuffer("{}"),
+    });
+
+    const response = await POST(req as never);
+
+    expect(response.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const [secondUrl, secondInit] = vi.mocked(global.fetch).mock.calls[1] as [
+      string,
+      RequestInit,
+    ];
+    expect(secondUrl).toBe("https://nuzantara-rag.fly.dev/api/crm/clients/");
+    const sentHeaders = secondInit.headers as Headers;
+    expect(sentHeaders.get("authorization")).toBe("Bearer active-jwt");
+    expect(sentHeaders.get("x-csrf-token")).toBe("csrf-val-123");
+    expect(sentHeaders.get("cookie")).toContain("nz_csrf_token=csrf-val-123");
+  });
+
+  function sameOriginRedirect(step: number): Response {
+    return new Response(null, {
+      status: 307,
+      headers: {
+        Location: `https://nuzantara-rag.fly.dev/api/crm/clients/hop-${step}`,
+      },
+    });
+  }
+
+  function csrfPost(): unknown {
+    return new MockNextRequest("http://localhost/api/crm/clients", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer active-jwt",
+        "Content-Type": "application/json",
+      },
+      cookies: { nz_csrf_token: "csrf-val-123" },
+      body: bodyArrayBuffer("{}"),
+    });
+  }
+
+  it("fails closed when the chain is still redirecting after the limit, never returning the unchecked Location", async () => {
+    const fetchMock = vi.mocked(global.fetch);
+    for (let step = 1; step <= 5; step++) {
+      fetchMock.mockResolvedValueOnce(sameOriginRedirect(step));
+    }
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 307,
+        headers: { Location: "https://attacker.invalid/collect" },
+      }),
+    );
+
+    const response = await POST(csrfPost() as never);
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("location")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    for (const [target] of fetchMock.mock.calls) {
+      expect(String(target)).not.toContain("attacker.invalid");
+    }
+  });
+
+  it("still answers when the last allowed same-origin redirect lands on content", async () => {
+    const fetchMock = vi.mocked(global.fetch);
+    for (let step = 1; step <= 5; step++) {
+      fetchMock.mockResolvedValueOnce(sameOriginRedirect(step));
+    }
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await POST(csrfPost() as never);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("passes a 304 without Location through unchanged", async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response(null, { status: 304 }),
+    );
+
+    const response = await GET(
+      new MockNextRequest("http://localhost/api/crm/clients", {
+        method: "GET",
+      }) as never,
+    );
+
+    expect(response.status).toBe(304);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 });

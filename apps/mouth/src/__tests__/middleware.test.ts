@@ -824,3 +824,38 @@ describe("Middleware - Multi-domain Routing", () => {
     );
   });
 });
+
+describe("Middleware - two-segment status gate (public domain)", () => {
+  const rewritten = (url: string) =>
+    proxy(createRequest(url)).headers.get("x-middleware-rewrite") ?? "";
+
+  it.each([
+    "/foo/bar",
+    "/company/about",
+    "/visa/nonexistent-xyz",
+    "/news/nonexistent-xyz",
+  ])("%s is rewritten to the hard 404 route", (p) => {
+    expect(rewritten(`https://balizero.com${p}`)).toContain("/gate-not-found");
+  });
+
+  it.each([
+    "/visas/unknown-slug",
+    "/visa/voa",
+    "/visa/second-home",
+    "/taxes/gap",
+    "/news",
+    "/visa/voa/abc123",
+    "/services/visa",
+  ])("%s is left alone", (p) => {
+    expect(rewritten(`https://balizero.com${p}`)).toBe("");
+  });
+
+  it("leaves redirects that come first and other hosts alone", () => {
+    expect(proxy(createRequest("https://balizero.com/portal/x")).status).toBe(
+      301,
+    );
+    expect(rewritten("https://kita.balizero.com/foo/bar")).not.toContain(
+      "/gate-not-found",
+    );
+  });
+});

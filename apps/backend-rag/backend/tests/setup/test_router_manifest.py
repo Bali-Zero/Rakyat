@@ -39,7 +39,6 @@ NON_ROUTER_FILES: frozenset[str] = frozenset(
         "root_endpoints",  # mounted separately in app_factory
         "audio",  # mounted separately in app_factory
         "system_observability",  # mounted separately in app_factory
-        "memory_vector",  # orphan router — not registered anywhere (never was)
         # twitter: RE-ENABLED 2026-04-29 (P0-6 zero-crash audit) — now in manifest.
         # team_members: REMOVED 2026-08-19 (was DISABLED, duplicated team.py) — file
         # deleted rather than whitelisted here now that it no longer exists.
@@ -72,9 +71,7 @@ MODULE_ROUTER_NAMES: frozenset[str] = frozenset(
 #: keep it). This registry is the general form of that catch: if a file
 #: below changes, something edited a router that serves zero traffic, and
 #: this test forces an explicit acknowledgement instead of a silent no-op.
-DEAD_ROUTER_FILE_HASHES: dict[str, str] = {
-    "memory_vector": "5b15bdb8bc2ca82fbe94118f90b80204a2256a4cf31a71ee1aa8f172077ef8b7",
-}
+DEAD_ROUTER_FILE_HASHES: dict[str, str] = {}
 
 
 class TestDeadRouterFilesAreNoticedWhenEdited:

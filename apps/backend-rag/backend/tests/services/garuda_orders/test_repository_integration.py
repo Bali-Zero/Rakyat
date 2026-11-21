@@ -404,7 +404,9 @@ async def test_op_f04_late_paid_after_refund_keeps_refunded_and_opens_no_practic
     # the repository must handle it gracefully as OP-F04, not crash.
     late_paid_event = NormalizedPaidEvent(
         provider_event_id="evt-late-paid-1",
-        provider_charge_id="charge-x",
+        # A DIFFERENT charge than the refunded one ("charge-x"): independent
+        # new money. The same charge would be the original payment (OP-09).
+        provider_charge_id="charge-late-y",
         provider_session_id=f"sess-{order_id}",
         amount_idr=body["price_idr"],
         currency="IDR",
@@ -831,6 +833,8 @@ async def test_fresh_idempotency_key_against_a_still_live_order_does_not_crash(p
     assert replayed2 is False
     assert body2["order_id"] == order_id
     assert body2["order_state"] == "awaiting_payment"
+    assert body2["checkout_url"] is None
+    assert "pending-resume:" not in str(body2)
 
     count = await pool.fetchval(
         "SELECT count(*) FROM garuda_orders WHERE result_id_ref = 'result-9-0840000000'"
@@ -897,6 +901,8 @@ async def test_concurrent_order_creation_race_falls_back_to_the_winner_not_a_cra
     )
     assert replayed is False
     assert loser_body["order_id"] == winner_order_id  # falls back to the real winner, no crash
+    assert loser_body["checkout_url"] is None
+    assert "pending-resume:" not in str(loser_body)
 
     count = await pool.fetchval(
         "SELECT count(*) FROM garuda_orders WHERE result_id_ref = 'result-10-0840000000'"
@@ -1895,6 +1901,543 @@ async def test_honouring_a_paid_order_releases_against_the_payment_not_the_resol
         await pool.fetchval(
             "SELECT count(*) FROM garuda_practices WHERE source_paid_journal_event_id = $1",
             paid_event_id,
+        )
+        == 1
+    )
+
+
+# ---- resumeOrderCheckout: tracker "Pay now" (owner decision 2026-11-18) ----
+#
+# The tracker re-serves the order's ONE bound provider session, read from the
+# provider at request time. These tests pin the money-path promises: nothing
+# is written, the URL is stored nowhere, no second session is ever created,
+# and only the owning session reaches an `awaiting_payment` order.
+
+_RESUME_URL = "https://checkout.xendit.co/web/inv-resume-fake-0001"
+_GARUDA_TABLES = (
+    "garuda_orders",
+    "garuda_order_journal",
+    "garuda_order_outbox",
+    "garuda_order_idempotency",
+    "garuda_payment_inbox",
+)
+
+
+class _ResumableProvider(_FakeProvider):
+    checkout_hosts = frozenset({"checkout.xendit.co", "checkout-staging.xendit.co"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_calls = 0
+        self.resume_calls: list[str] = []
+        self.resume_answer: object = None
+
+    async def create_checkout_session(self, *, order_id, price_idr, idempotency_key):
+        self.create_calls += 1
+        return await super().create_checkout_session(
+            order_id=order_id, price_idr=price_idr, idempotency_key=idempotency_key
+        )
+
+    async def resume_checkout_session(self, *, provider_session_id: str):
+        from backend.services.payments.port import CheckoutSessionStatus
+
+        self.resume_calls.append(provider_session_id)
+        if isinstance(self.resume_answer, Exception):
+            raise self.resume_answer
+        if self.resume_answer is None:
+            return CheckoutSessionStatus(
+                is_open=True, checkout_url=_RESUME_URL, provider_status="PENDING"
+            )
+        return self.resume_answer
+
+
+@pytest.fixture
+def resumable(pool, repository):
+    provider = _ResumableProvider()
+    repository._provider = provider
+    repository._providers = {"xendit": provider}
+    return repository, provider
+
+
+async def _awaiting_order(repository, result_id: str) -> str:
+    body, _ = await repository.create_order_and_checkout(
+        result_id=result_id,
+        applicant=_applicant(),
+        review_confirmed=True,
+        idempotency_key_sha256=scoped_key_sha256(
+            actor=result_id, operation="createOrderFromCheck", raw_key=f"idem-{result_id}"
+        ),
+        canonical_payload_sha256=canonical_payload_sha256({"result_id": result_id}),
+    )
+    assert body["order_state"] == "awaiting_payment"
+    return body["order_id"]
+
+
+async def _snapshot(pool) -> dict[str, str]:
+    out = {}
+    for table in _GARUDA_TABLES:
+        out[table] = await pool.fetchval(
+            f"SELECT coalesce(string_agg(row_to_json(t)::text, '|' ORDER BY row_to_json(t)::text), '') FROM {table} t"
+        )
+    return out
+
+
+@pytest.mark.asyncio
+async def test_resume_reserves_the_open_session_and_writes_nothing(pool, resumable):
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-open-000001")
+    before = await _snapshot(pool)
+    creates_before = provider.create_calls
+
+    url = await repository.resume_checkout(order_id=order_id, result_id="result-resume-open-000001")
+    url_again = await repository.resume_checkout(
+        order_id=order_id, result_id="result-resume-open-000001"
+    )
+
+    assert url == url_again == _RESUME_URL
+    assert provider.resume_calls == [f"sess-{order_id}", f"sess-{order_id}"]
+    assert provider.create_calls == creates_before  # never a second session
+    after = await _snapshot(pool)
+    assert after == before  # no row written anywhere
+    assert all(_RESUME_URL not in dump for dump in after.values())
+
+
+@pytest.mark.parametrize("provider_status", ["PAID", "SETTLED", "EXPIRED", "SOMETHING_NEW"])
+@pytest.mark.asyncio
+async def test_resume_refuses_a_closed_session_and_never_mints_another(
+    pool, resumable, provider_status
+):
+    from backend.services.garuda_orders.errors import CheckoutNotResumable
+    from backend.services.payments.port import CheckoutSessionStatus
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, f"result-resume-closed-{provider_status}")
+    provider.resume_answer = CheckoutSessionStatus(is_open=False, provider_status=provider_status)
+    before = await _snapshot(pool)
+    creates_before = provider.create_calls
+
+    with pytest.raises(CheckoutNotResumable):
+        await repository.resume_checkout(
+            order_id=order_id, result_id=f"result-resume-closed-{provider_status}"
+        )
+    assert provider.create_calls == creates_before
+    assert await _snapshot(pool) == before
+    state = await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_id)
+    assert state == "awaiting_payment"
+
+
+@pytest.mark.asyncio
+async def test_resume_after_the_webhook_paid_the_order_is_refused_before_the_provider(
+    pool, resumable
+):
+    from backend.services.garuda_orders.errors import InvalidStateTransition
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-paid-0000001")
+    await repository.handle_paid_event(
+        NormalizedPaidEvent(
+            provider_event_id="evt-resume-paid-1",
+            provider_charge_id="charge-resume-1",
+            provider_session_id=f"sess-{order_id}",
+            amount_idr=790_000,
+            currency="IDR",
+        ),
+        canonical_payload_sha256=b"\x01" * 32,
+    )
+    with pytest.raises(InvalidStateTransition):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-paid-0000001")
+    assert provider.resume_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resume_refuses_an_expired_order(pool, resumable):
+    from backend.services.garuda_orders.errors import InvalidStateTransition
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-expired-0001")
+    outcome = await repository.expire_if_unpaid(
+        order_id=order_id, provider_session_id=f"sess-{order_id}"
+    )
+    assert outcome.expired is True
+    with pytest.raises(InvalidStateTransition):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-expired-0001")
+    assert provider.resume_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resume_for_another_sessions_order_is_not_found(pool, resumable):
+    from backend.services.garuda_orders.errors import OrderNotFound
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-owner-00001")
+    with pytest.raises(OrderNotFound):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-intruder-1")
+    with pytest.raises(OrderNotFound):
+        await repository.resume_checkout(
+            order_id="ord_does_not_exist", result_id="result-resume-owner-00001"
+        )
+    assert provider.resume_calls == []
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://checkout.xendit.co/web/inv-1",
+        "https://checkout.xendit.co.example.net/web/inv-1",
+        "https://checkout.xendit.co@example.net/web/inv-1",
+        "https://checkout.xendit.co:8443/web/inv-1",
+        "javascript:alert(1)",
+        "",
+    ],
+)
+@pytest.mark.asyncio
+async def test_resume_refuses_a_url_off_the_provider_checkout_hosts(pool, resumable, bad_url):
+    from backend.services.garuda_orders.errors import PaymentProviderUnavailable
+    from backend.services.payments.port import CheckoutSessionStatus
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-badurl-0001")
+    provider.resume_answer = CheckoutSessionStatus(
+        is_open=True, checkout_url=bad_url, provider_status="PENDING"
+    )
+    with pytest.raises(PaymentProviderUnavailable):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-badurl-0001")
+
+
+@pytest.mark.asyncio
+async def test_resume_provider_error_is_unavailable_and_writes_nothing(pool, resumable):
+    from backend.services.garuda_orders.errors import PaymentProviderUnavailable
+
+    repository, provider = resumable
+    order_id = await _awaiting_order(repository, "result-resume-error-00001")
+    provider.resume_answer = RuntimeError("provider transport down")
+    before = await _snapshot(pool)
+    with pytest.raises(PaymentProviderUnavailable):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-error-00001")
+    assert await _snapshot(pool) == before
+
+
+@pytest.mark.asyncio
+async def test_resume_on_an_adapter_without_the_capability_is_not_resumable(pool, repository):
+    from backend.services.garuda_orders.errors import CheckoutNotResumable
+
+    # The plain fake, like Midtrans, has no `resume_checkout_session`.
+    order_id = await _awaiting_order(repository, "result-resume-nocap-00001")
+    with pytest.raises(CheckoutNotResumable):
+        await repository.resume_checkout(order_id=order_id, result_id="result-resume-nocap-00001")
+
+
+# --- "Pay again": a closed (expired / failed) order does not block a new one
+# for the same check. The live-order unique index covers created /
+# awaiting_payment / paid only, so createOrderFromCheck with a fresh key
+# inserts order B with its own provider session and leaves order A untouched.
+
+
+async def _order_a_row_and_journal(pool, order_id: str) -> tuple[str, str]:
+    row = await pool.fetchval(
+        "SELECT row_to_json(o)::text FROM garuda_orders o WHERE order_id = $1", order_id
+    )
+    journal = await pool.fetchval(
+        "SELECT coalesce(string_agg(row_to_json(j)::text, '|' ORDER BY row_to_json(j)::text), '') "
+        "FROM garuda_order_journal j WHERE aggregate_id = $1",
+        order_id,
+    )
+    return row, journal
+
+
+async def _create_for(repository, result_id: str, raw_key: str):
+    return await repository.create_order_and_checkout(
+        result_id=result_id,
+        applicant=_applicant(),
+        review_confirmed=True,
+        idempotency_key_sha256=scoped_key_sha256(
+            actor=result_id, operation="createOrderFromCheck", raw_key=raw_key
+        ),
+        canonical_payload_sha256=canonical_payload_sha256({"result_id": result_id}),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closed_state", ["expired", "failed"])
+async def test_a_closed_order_lets_the_same_check_open_a_new_order(pool, repository, closed_state):
+    result_id = f"result-again-{closed_state}-00001"
+    body_a, _ = await _create_for(repository, result_id, f"idem-again-a-{closed_state}")
+    order_a = body_a["order_id"]
+
+    if closed_state == "failed":
+        transition = await repository.handle_failure_event(
+            NormalizedFailureEvent(
+                provider_event_id=f"evt-again-fail-{closed_state}",
+                provider_session_id=f"sess-{order_a}",
+                failure=classify(FailureOutcome.DECLINED_BY_ISSUER),
+            ),
+            canonical_payload_sha256=b"\x07" * 32,
+        )
+        assert transition == "OP-03"
+    else:
+        await pool.execute(
+            "UPDATE garuda_orders SET checkout_expires_at = now() - interval '1 hour' WHERE order_id = $1",
+            order_a,
+        )
+        from backend.services.garuda_orders.reconciliation import reconcile_expired_checkouts
+
+        summary = await reconcile_expired_checkouts(pool, repository, limit=10)
+        assert summary.expired == 1
+    assert (
+        await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_a)
+        == closed_state
+    )
+    before = await _order_a_row_and_journal(pool, order_a)
+
+    body_b, replayed = await _create_for(repository, result_id, f"idem-again-b-{closed_state}")
+
+    assert replayed is False
+    assert body_b["order_id"] != order_a
+    assert body_b["order_state"] == "awaiting_payment"
+    rows = await pool.fetch(
+        "SELECT order_id, state, provider_session_id FROM garuda_orders "
+        "WHERE result_id_ref = $1 ORDER BY created_at",
+        result_id,
+    )
+    assert [r["state"] for r in rows] == [closed_state, "awaiting_payment"]
+    assert rows[1]["provider_session_id"] == f"sess-{body_b['order_id']}"
+    assert rows[1]["provider_session_id"] != rows[0]["provider_session_id"]
+    # A's row (late-case fields included), and A's journal, are byte-identical.
+    assert await _order_a_row_and_journal(pool, order_a) == before
+
+
+@pytest.mark.asyncio
+async def test_a_live_order_is_returned_not_duplicated_when_pay_again_is_attempted(
+    pool, repository
+):
+    """Innocence: with A still awaiting_payment the same call yields A, no B."""
+    result_id = "result-again-live-0000001"
+    body_a, _ = await _create_for(repository, result_id, "idem-again-live-a")
+    body_b, _ = await _create_for(repository, result_id, "idem-again-live-b")
+    assert body_b["order_id"] == body_a["order_id"]
+    count = await pool.fetchval(
+        "SELECT count(*) FROM garuda_orders WHERE result_id_ref = $1", result_id
+    )
+    assert count == 1
+
+
+# --- Xendit event identity carries the lifecycle status ------------------------
+#
+# Events here are built THROUGH `XenditPaymentProvider.parse_event` from
+# realistic callback bodies, not hand-invented ids: the defect lived in the
+# adapter's identity, so a hand-built event would have hidden it.
+
+
+def _xendit_event(body: dict):
+    import json
+
+    import httpx
+
+    from backend.services.payments.xendit import XenditFeeConfig, XenditPaymentProvider
+
+    adapter = XenditPaymentProvider(
+        secret_key="xnd_development_fake_key_for_tests",  # pragma: allowlist secret
+        callback_verification_token="fake-token",  # pragma: allowlist secret
+        public_base_url="https://example.com",
+        fee_config=XenditFeeConfig(percentage_bps=350, fixed_idr=6000),
+        client=httpx.AsyncClient(),
+    )
+    raw = json.dumps(body).encode()
+    return adapter.parse_event(raw_body=raw, headers={}), raw
+
+
+def _digest(raw: bytes) -> bytes:
+    import hashlib
+
+    return hashlib.sha256(raw).digest()
+
+
+@pytest.mark.asyncio
+async def test_xendit_late_payment_after_expiry_is_a_late_case_not_a_duplicate(pool, repository):
+    order_id = await _awaiting_order(repository, "result-xid-late-000001")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    expired, raw_e = _xendit_event({"id": invoice, "status": "EXPIRED"})
+    assert (
+        await repository.handle_failure_event(expired, canonical_payload_sha256=_digest(raw_e))
+        == "OP-03"
+    )
+    assert (
+        await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_id)
+        == "failed"
+    )
+
+    paid, raw_p = _xendit_event(
+        {"id": invoice, "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p))
+        == "OP-F05"
+    )
+    state, late_open = await pool.fetchrow(
+        "SELECT state, late_case_open FROM garuda_orders WHERE order_id = $1", order_id
+    )
+    assert (state, late_open) == ("failed", True)
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM garuda_order_outbox WHERE order_id = $1 "
+            "AND job_type = 'staff_page_late_paid_after_terminal'",
+            order_id,
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_xendit_refund_after_paid_runs_the_refund_handler_not_a_duplicate(pool, repository):
+    order_id = await _awaiting_order(repository, "result-xid-refund-00001")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    paid, raw_p = _xendit_event(
+        {"id": invoice, "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-02"
+    )
+
+    refund, raw_r = _xendit_event({"id": invoice, "status": "REFUNDED", "refund_id": "rfd-xid-1"})
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-06"
+    )
+    assert (
+        await pool.fetchval("SELECT state FROM garuda_orders WHERE order_id = $1", order_id)
+        == "refunded"
+    )
+
+
+@pytest.mark.asyncio
+async def test_xendit_exact_redeliveries_are_still_duplicates(pool, repository):
+    # PAID twice
+    paid_order = await _awaiting_order(repository, "result-xid-dup-paid-001")
+    price = await pool.fetchval(
+        "SELECT price_idr FROM garuda_orders WHERE order_id = $1", paid_order
+    )
+    paid, raw_p = _xendit_event(
+        {"id": f"sess-{paid_order}", "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-02"
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-09"
+    )
+
+    # EXPIRED twice
+    exp_order = await _awaiting_order(repository, "result-xid-dup-exp-0001")
+    expired, raw_e = _xendit_event({"id": f"sess-{exp_order}", "status": "EXPIRED"})
+    assert (
+        await repository.handle_failure_event(expired, canonical_payload_sha256=_digest(raw_e))
+        == "OP-03"
+    )
+    assert (
+        await repository.handle_failure_event(expired, canonical_payload_sha256=_digest(raw_e))
+        == "OP-09"
+    )
+
+    # the same refund twice
+    ref_order = await _awaiting_order(repository, "result-xid-dup-ref-0001")
+    ref_price = await pool.fetchval(
+        "SELECT price_idr FROM garuda_orders WHERE order_id = $1", ref_order
+    )
+    rpaid, raw_rp = _xendit_event(
+        {"id": f"sess-{ref_order}", "status": "PAID", "paid_amount": ref_price, "currency": "IDR"}
+    )
+    await repository.handle_paid_event(rpaid, canonical_payload_sha256=_digest(raw_rp))
+    refund, raw_r = _xendit_event(
+        {"id": f"sess-{ref_order}", "status": "REFUNDED", "refund_id": "rfd-dup-1"}
+    )
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-06"
+    )
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-09"
+    )
+
+
+@pytest.mark.asyncio
+async def test_xendit_original_paid_after_out_of_order_refund_is_not_a_late_case(pool, repository):
+    order_id = await _awaiting_order(repository, "result-xid-oop-refund-01")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    refund, raw_r = _xendit_event({"id": invoice, "status": "REFUNDED", "refund_id": "rfd-oop-1"})
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-05"
+    )
+    assert (
+        await pool.fetchval(
+            "SELECT provider_charge_id FROM garuda_orders WHERE order_id = $1", order_id
+        )
+        == invoice
+    )
+    jobs_before = await pool.fetch(
+        "SELECT job_type FROM garuda_order_outbox WHERE order_id = $1 ORDER BY job_type", order_id
+    )
+
+    paid, raw_p = _xendit_event(
+        {"id": invoice, "status": "PAID", "paid_amount": price, "currency": "IDR"}
+    )
+    assert (
+        await repository.handle_paid_event(paid, canonical_payload_sha256=_digest(raw_p)) == "OP-09"
+    )
+    state, late_open, late_charge = await pool.fetchrow(
+        "SELECT state, late_case_open, late_case_charge_id FROM garuda_orders WHERE order_id = $1",
+        order_id,
+    )
+    assert (state, late_open, late_charge) == ("refunded", False, None)
+    jobs_after = await pool.fetch(
+        "SELECT job_type FROM garuda_order_outbox WHERE order_id = $1 ORDER BY job_type", order_id
+    )
+    assert [j["job_type"] for j in jobs_after] == [j["job_type"] for j in jobs_before]
+    assert "staff_page_late_paid_after_refund" not in [j["job_type"] for j in jobs_after]
+
+
+@pytest.mark.asyncio
+async def test_refunded_order_paid_with_a_different_charge_is_still_a_late_case(pool, repository):
+    from backend.services.payments.port import NormalizedPaidEvent
+
+    order_id = await _awaiting_order(repository, "result-xid-oop-refund-02")
+    price = await pool.fetchval("SELECT price_idr FROM garuda_orders WHERE order_id = $1", order_id)
+    invoice = f"sess-{order_id}"
+
+    refund, raw_r = _xendit_event({"id": invoice, "status": "REFUNDED", "refund_id": "rfd-oop-2"})
+    assert (
+        await repository.handle_refund_event(refund, canonical_payload_sha256=_digest(raw_r))
+        == "OP-05"
+    )
+
+    other = NormalizedPaidEvent(
+        provider_event_id="evt-independent-new-money-1",
+        provider_charge_id="charge-independent-new-money-1",
+        provider_session_id=invoice,
+        amount_idr=price,
+        currency="IDR",
+    )
+    assert (
+        await repository.handle_paid_event(other, canonical_payload_sha256=_digest(b"independent"))
+        == "OP-F04"
+    )
+    state, late_open, late_charge = await pool.fetchrow(
+        "SELECT state, late_case_open, late_case_charge_id FROM garuda_orders WHERE order_id = $1",
+        order_id,
+    )
+    assert (state, late_open, late_charge) == ("refunded", True, "charge-independent-new-money-1")
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM garuda_order_outbox WHERE order_id = $1 "
+            "AND job_type = 'staff_page_late_paid_after_refund'",
+            order_id,
         )
         == 1
     )

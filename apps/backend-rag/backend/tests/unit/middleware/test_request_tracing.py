@@ -126,6 +126,28 @@ class TestRequestTracingMiddleware:
         assert trace["status_code"] == 500
 
     @pytest.mark.asyncio
+    async def test_search_values_never_reach_the_trace(self, middleware):
+        mock_request = MagicMock()
+        mock_request.headers.get.return_value = None
+        mock_request.state = MagicMock()
+        mock_request.method = "GET"
+        mock_request.url.path = "/api/crm/practices"
+        mock_request.query_params = {
+            "search": "uji-nonpii-name",
+            "Q": "uji-nonpii-q",
+            "month": "2026-11",
+        }
+        response = MagicMock(status_code=200, headers={})
+
+        async def call_next(_request):
+            return response
+
+        result = await middleware.dispatch(mock_request, call_next)
+        trace = RequestTracingMiddleware.get_trace(result.headers["X-Correlation-ID"])
+        assert trace["query_params"] == {"search": "***", "Q": "***", "month": "2026-11"}
+        assert "uji-nonpii" not in repr(trace)
+
+    @pytest.mark.asyncio
     async def test_private_visa_trace_ignores_caller_ids_and_query_values(self, middleware):
         mock_request = MagicMock()
         mock_request.headers.get.side_effect = lambda name: {

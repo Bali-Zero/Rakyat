@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from backend.app.dependencies import get_current_user
 from backend.app.models import TierLevel
 from backend.app.utils.crm_utils import is_crm_admin
-from backend.app.utils.ingest_paths import resolve_ingest_path
+from backend.app.utils.ingest_paths import resolve_ingest_path, resolve_within_root
 from backend.app.utils.internal_api_auth import verify_internal_api_key
 from backend.app.utils.json_utils import to_jsonb
 from backend.core.legal_config import resolve_nb_target
@@ -29,6 +29,8 @@ from backend.services.ingestion.legal_ingestion_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+_MAX_LEGAL_UPLOAD_BYTES = 50 * 1024 * 1024
 
 router = APIRouter(prefix="/api/legal", tags=["legal-ingestion"])
 
@@ -204,23 +206,55 @@ async def upload_legal_document(
         Ingestion result with metadata and statistics
     """
     _require_ingest_admin(current_user)
-    # Validate file type
+    # Validate file type and confine upload filename (CWE-22) before reading bytes
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PDF files are supported",
         )
+    if (
+        "/" in file.filename
+        or "\\" in file.filename
+        or ".." in Path(file.filename).parts
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid upload filename",
+        )
+
+    declared_size = getattr(file, "size", None)
+    if isinstance(declared_size, int) and declared_size > _MAX_LEGAL_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="PDF exceeds maximum upload size (50 MB)",
+        )
 
     temp_path = None
     try:
-        # Save uploaded file temporarily
+        # Save uploaded file temporarily inside confined root
         temp_dir = Path("/tmp/legal_uploads")
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-        temp_path = temp_dir / file.filename
+        try:
+            temp_path = resolve_within_root(temp_dir, Path(file.filename).name)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
 
-        # Non-blocking file reading
-        content = await file.read()
+        # Bounded non-blocking file reading
+        content = await file.read(_MAX_LEGAL_UPLOAD_BYTES + 1)
+        if len(content) > _MAX_LEGAL_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="PDF exceeds maximum upload size (50 MB)",
+            )
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded PDF is empty",
+            )
 
         # Non-blocking file writing (offload to thread)
         await asyncio.to_thread(save_upload_file_sync, temp_path, content)

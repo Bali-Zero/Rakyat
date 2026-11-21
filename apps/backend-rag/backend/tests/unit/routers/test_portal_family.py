@@ -42,7 +42,7 @@ def test_shape_member_serializes_dates() -> None:
     }
     shaped = _shape_member(row)
     assert shaped["is_adult"] is True
-    assert shaped["date_of_birth"] == "1992-04-05"
+    assert shaped["date_of_birth"] == "1992"  # masked to the year (DAI-149)
     assert shaped["visa_expiry"] == "2027-06-01"
 
 

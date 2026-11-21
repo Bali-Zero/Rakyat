@@ -82,6 +82,15 @@ def validate_card(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         return None, "bad_shape"
     if "profile" in fields:  # a profile nested inside `fields` is a mistake, never overwritten
         return None, "unknown_key"
+    # R1 (C10/C13): a slot value, the legacy `docs.contract` duplicate and the proof are written by
+    # the document door ONLY. The card is refused whole; nothing else of it is written.
+    contract = profile.get("contract")
+    if (
+        "docs" in profile
+        or "doc_proof" in profile
+        or (isinstance(contract, dict) and "file_id" in contract)
+    ):
+        return None, "doc_keys_door_only"
     body = {**fields, "profile": profile}
     if raw.get("is_active") is not None:
         body["is_active"] = raw["is_active"]

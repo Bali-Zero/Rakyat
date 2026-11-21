@@ -30,7 +30,6 @@ WHITELIST_SUBSTRINGS: list[str] = [
     "/fallback_messages.py",
     "/retry_handler.py",
     "/token_estimator.py",
-    "/provider_registry.py",
     "/metrics_emitter.py",
     "/llm/adapters/",
     # OTEL/Langfuse instrumentation config — references provider names
@@ -38,14 +37,10 @@ WHITELIST_SUBSTRINGS: list[str] = [
     "core/observability.py",
     # Ollama (local, zero cost):
     "ollama_client.py",
-    "llm/providers/ollama.py",
     # Proxies that delegate to already-tracked clients:
     "article_composer/claude_client.py",
     "llm/zantara_ai_client.py",
     "llm/claude_oauth_langchain.py",
-    "llm/providers/gemini.py",
-    "llm/providers/openrouter.py",
-    "llm/providers/__init__.py",
     "services/llm_clients/gemini_service.py",
     # KG non-gemini files:
     "knowledge_graph/ontology.py",

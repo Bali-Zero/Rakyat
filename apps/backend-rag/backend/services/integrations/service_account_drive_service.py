@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import Any
@@ -118,8 +119,14 @@ class ServiceAccountDriveService:
         *,
         root_folder_id: str | None = None,
         delegated_user: str | None = None,
+        validate_folders: bool = True,
     ) -> None:
-        """Initialize Service Account Drive Service."""
+        """Initialize Service Account Drive Service.
+
+        `validate_folders=False` skips the boot-time probe of the configured parent folders (four
+        network calls): a per-request client (HR documents) must not pay them on every request.
+        `build()` itself uses the bundled discovery document, so it does not touch the network.
+        """
         import base64
 
         self.root_folder_id = root_folder_id or settings.google_drive_root_folder_id
@@ -181,7 +188,8 @@ class ServiceAccountDriveService:
         # 2026, silently breaking every company-client create_client_folder call. The
         # BackgroundTask exception was swallowed by crm_clients.py and never surfaced.
         # See cicatrix-scars.md (2026-05-21) for the full incident.
-        self._validate_configured_folders()
+        if validate_folders:
+            self._validate_configured_folders()
 
     def _validate_configured_folders(self) -> None:
         """Verify each configured parent folder ID exists and is accessible.
@@ -240,16 +248,19 @@ class ServiceAccountDriveService:
         name: str,
         parent_id: str | None = None,
         user_id: str | None = None,  # Kept for API compatibility
+        app_properties: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Create a new folder in Google Drive."""
         if not parent_id:
             parent_id = self.root_folder_id
 
-        folder_metadata = {
+        folder_metadata: dict[str, Any] = {
             "name": name,
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id] if parent_id else [],
         }
+        if app_properties:
+            folder_metadata["appProperties"] = dict(app_properties)
 
         # Build request
         request = self.service.files().create(
@@ -369,6 +380,7 @@ class ServiceAccountDriveService:
         file_name: str,
         mime_type: str | None = None,
         user_id: str | None = None,  # Kept for API compatibility
+        app_properties: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Upload a file to Google Drive folder."""
         if not mime_type:
@@ -378,7 +390,9 @@ class ServiceAccountDriveService:
             elif file_name.lower().endswith((".png", ".jpg", ".jpeg")):
                 mime_type = "image/jpeg"
 
-        file_metadata = {"name": file_name, "parents": [folder_id]}
+        file_metadata: dict[str, Any] = {"name": file_name, "parents": [folder_id]}
+        if app_properties:
+            file_metadata["appProperties"] = dict(app_properties)
 
         # Create file stream
         file_stream = BytesIO(file_content)
@@ -405,6 +419,7 @@ class ServiceAccountDriveService:
     # endpoint both saw google_drive_folder_id IS NULL and each created a root.
     DRIVE_FOLDER_LOCK_CLASS = 742001
     DRIVE_ARCHIVE_LOCK_CLASS = 742002
+    DRIVE_COMPANY_FOLDER_LOCK_CLASS = 742003
     _archive_locks: dict[str, asyncio.Lock] = {}
 
     STANDARD_SUBFOLDERS = standard_subfolder_paths()
@@ -727,6 +742,119 @@ class ServiceAccountDriveService:
             raise RuntimeError("Distributed Drive folder lock unavailable")
         return await self.ensure_client_folder(client_id, client_name, client_type, db_pool)
 
+    async def ensure_company_folder(
+        self,
+        company_id: int,
+        company_name: str | None = None,
+        db_pool: Any | None = None,
+        conn: Any | None = None,
+    ) -> dict[str, Any]:
+        """Idempotent chokepoint for company Drive root + subfolder provisioning."""
+        if conn is None:
+            if db_pool is None:
+                raise RuntimeError("Distributed Drive folder lock unavailable")
+            async with db_pool.acquire() as acquired:
+                return await self.ensure_company_folder(
+                    company_id,
+                    company_name,
+                    db_pool=db_pool,
+                    conn=acquired,
+                )
+
+        parent_folder_id = self._parent_folder_for_client_type("company")
+        created = False
+
+        await conn.execute(
+            "SELECT pg_advisory_lock($1, $2)",
+            self.DRIVE_COMPANY_FOLDER_LOCK_CLASS,
+            company_id,
+        )
+        try:
+            row = await conn.fetchrow(
+                "SELECT company_name, google_drive_folder_id "
+                "FROM companies WHERE id = $1 AND COALESCE(status, '') != 'deleted'",
+                company_id,
+            )
+            if row is None:
+                raise RuntimeError(f"Company {company_id} not found or deleted")
+            existing = row["google_drive_folder_id"]
+            if existing:
+                return {
+                    "success": True,
+                    "created": False,
+                    "root_folder_id": existing,
+                    "root_folder_url": f"https://drive.google.com/drive/folders/{existing}",
+                    "folder_id": existing,
+                    "folder_url": f"https://drive.google.com/drive/folders/{existing}",
+                    "subfolders": {},
+                }
+
+            clean_name = str(company_name or row["company_name"] or f"Company_{company_id}").strip()
+            root_folder_name = f"[COMPANY #{company_id}] {clean_name}"
+
+            async with canonical_folder_lock(conn, parent_folder_id, root_folder_name):
+                found = await self.find_folder(root_folder_name, parent_folder_id)
+                if found:
+                    root_folder_id = found["id"]
+                    root_folder_url = found.get(
+                        "webViewLink",
+                        f"https://drive.google.com/drive/folders/{found['id']}",
+                    )
+                    logger.info(
+                        "♻️ Reusing existing Drive folder for company %s: %s",
+                        company_id,
+                        root_folder_id,
+                    )
+                else:
+                    root_folder = await self.create_folder(
+                        name=root_folder_name,
+                        parent_id=parent_folder_id,
+                    )
+                    root_folder_id = root_folder["id"]
+                    root_folder_url = root_folder.get(
+                        "webViewLink",
+                        f"https://drive.google.com/drive/folders/{root_folder_id}",
+                    )
+                    created = True
+
+            await conn.execute(
+                "UPDATE companies SET google_drive_folder_id = $1, updated_at = NOW() WHERE id = $2",
+                root_folder_id,
+                company_id,
+            )
+        finally:
+            await conn.execute(
+                "SELECT pg_advisory_unlock($1, $2)",
+                self.DRIVE_COMPANY_FOLDER_LOCK_CLASS,
+                company_id,
+            )
+
+        subfolders: dict[str, Any] = {}
+        if created:
+            subfolders = await self._create_standard_subfolders(
+                root_folder_id,
+                client_id=company_id,
+                db_pool=db_pool,
+                client_type="company",
+                conn=conn,
+                persist_client_subfolders=False,
+            )
+            logger.info(
+                "✅ Created company folder structure for company %s: %s",
+                company_id,
+                root_folder_id,
+            )
+
+        return {
+            "success": True,
+            "created": created,
+            "root_folder_id": root_folder_id,
+            "root_folder_url": root_folder_url,
+            "folder_id": root_folder_id,
+            "folder_url": root_folder_url,
+            "subfolders": subfolders,
+        }
+
     async def _create_standard_subfolders(
         self,
         root_folder_id: str,
@@ -734,14 +862,20 @@ class ServiceAccountDriveService:
         db_pool: Any | None = None,
         client_type: str = "individual",
         conn: Any | None = None,
+        persist_client_subfolders: bool = True,
     ) -> dict[str, Any]:
-        """Create the standard subfolder tree under a client root folder."""
+        """Create the standard subfolder tree under a client or company root folder."""
         if conn is None:
             if db_pool is None:
                 raise RuntimeError("Distributed Drive folder lock unavailable")
             async with db_pool.acquire() as acquired:
                 return await self._create_standard_subfolders(
-                    root_folder_id, client_id, db_pool, client_type, conn=acquired
+                    root_folder_id,
+                    client_id,
+                    db_pool,
+                    client_type,
+                    conn=acquired,
+                    persist_client_subfolders=persist_client_subfolders,
                 )
         subfolders: dict[str, Any] = {}
         folder_id_cache = {"": root_folder_id}
@@ -770,7 +904,7 @@ class ServiceAccountDriveService:
                 continue
 
         # Persist subfolder IDs to DB so DrivePollService can match files to clients
-        if db_pool:
+        if db_pool and persist_client_subfolders:
             try:
                 for subfolder_path, subfolder_data in subfolders.items():
                     if "/" not in subfolder_path:  # top-level only
@@ -813,6 +947,140 @@ class ServiceAccountDriveService:
         result = await asyncio.to_thread(request.execute)
         logger.info("Moved file %s from %s to %s", file_id, from_parent_id, to_parent_id)
         return result
+
+    async def find_folders_by_app_property(
+        self, key: str, value: str, strict: bool = False
+    ) -> list[dict[str, Any]]:
+        """Every live (not trashed) physical folder carrying appProperties[key] == value. The
+        lookup reads at most 20 pages; with `strict` a lookup that stopped there with a page still
+        pending raises instead of returning a part."""
+        esc = lambda s: s.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+        query = (
+            f"appProperties has {{ key='{esc(key)}' and value='{esc(value)}' }} "
+            "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        )
+        found: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(20):
+            params: dict[str, Any] = {
+                "q": query,
+                "fields": "nextPageToken, files(id, name, parents)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "pageSize": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            result = await asyncio.to_thread(self.service.files().list(**params).execute)
+            found.extend(result.get("files", []))
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        if strict and page_token:
+            raise RuntimeError("lookup truncated")
+        return found
+
+    async def list_files_by_app_properties(
+        self,
+        props: dict[str, str],
+        parent_id: str,
+        mimes: Sequence[str] | None,
+        strict: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Live (not trashed) files directly inside `parent_id` whose appProperties equal ALL of
+        `props` and whose mimeType is one of `mimes` (`None`: any type but a folder). Every input
+        is one the caller resolved itself (a member id, a slot, a folder id Drive returned, a
+        closed set of types); nothing read from stored data may be passed here. Returns id,
+        mimeType, parents and appProperties. The listing reads at most 20 pages; with `strict` a
+        listing that stopped there with a page still pending raises instead of returning a part."""
+        esc = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+        clauses = [
+            f"appProperties has {{ key='{esc(k)}' and value='{esc(v)}' }}" for k, v in props.items()
+        ]
+        clauses.append(f"'{esc(parent_id)}' in parents")
+        clauses.append("trashed = false")
+        if mimes is None:
+            clauses.append("mimeType != 'application/vnd.google-apps.folder'")
+        else:
+            clauses.append("(" + " or ".join(f"mimeType = '{esc(m)}'" for m in mimes) + ")")
+        found: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(20):
+            params: dict[str, Any] = {
+                "q": " and ".join(clauses),
+                "fields": "nextPageToken, files(id, mimeType, parents, appProperties)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "pageSize": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            result = await asyncio.to_thread(self.service.files().list(**params).execute)
+            found.extend(result.get("files", []))
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        if strict and page_token:
+            raise RuntimeError("listing truncated")
+        return found
+
+    async def copy_file(
+        self, file_id: str, parent_id: str, name: str, app_properties: dict[str, str]
+    ) -> dict[str, Any]:
+        """`files.copy` of `file_id` into `parent_id`, named `name`, with `app_properties`. The
+        source is only read. Returns the COPY's id, mimeType and parents; logs nothing."""
+        request = self.service.files().copy(
+            fileId=file_id,
+            body={"name": name, "parents": [parent_id], "appProperties": dict(app_properties)},
+            fields="id, mimeType, parents",
+            supportsAllDrives=True,
+        )
+        return await asyncio.to_thread(request.execute)
+
+    async def rename_file(self, file_id: str, new_name: str) -> dict[str, Any]:
+        """Rename a file in Google Drive (Shared Drive safe)."""
+        request = self.service.files().update(
+            fileId=file_id,
+            body={"name": new_name},
+            fields="id, name, mimeType, size, modifiedTime, webViewLink",
+            supportsAllDrives=True,
+        )
+        updated = await asyncio.to_thread(request.execute)
+        logger.info("Renamed Drive file %s", file_id)
+        return updated
+
+    async def update_file_content(
+        self,
+        file_id: str,
+        file_content: bytes,
+        *,
+        file_name: str | None = None,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace a file's binary content in-place (preserving Drive file ID and revisions)."""
+        effective_mime = mime_type or "application/octet-stream"
+        body: dict[str, Any] = {}
+        if file_name:
+            body["name"] = file_name
+        media = MediaIoBaseUpload(BytesIO(file_content), mimetype=effective_mime, resumable=True)
+        request = self.service.files().update(
+            fileId=file_id,
+            body=body,
+            media_body=media,
+            fields="id, name, mimeType, size, modifiedTime, webViewLink",
+            supportsAllDrives=True,
+        )
+        updated = await asyncio.to_thread(request.execute)
+        logger.info("Replaced Drive file content %s (%s bytes)", file_id, len(file_content))
+        return updated
+
+    async def trash_file(self, file_id: str) -> None:
+        """Move one file to the Drive trash (recoverable). Never a permanent delete."""
+        request = self.service.files().update(
+            fileId=file_id, body={"trashed": True}, fields="id, trashed", supportsAllDrives=True
+        )
+        await asyncio.to_thread(request.execute)
+        logger.info("Trashed Drive file %s", file_id)
 
     async def get_start_page_token(self) -> str:
         """Get the current start page token for changes tracking."""

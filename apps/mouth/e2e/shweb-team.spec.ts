@@ -81,14 +81,13 @@ async function expectNoHorizontalOverflow(page: Page) {
 const PRESENCE_MARKER: Record<string, string> = {
   "/team": "Zainal Abidin",
   "/": "Zainal Abidin",
-  "/v2": "Zainal Abidin",
   "/about": "Zainal Abidin",
   "/book/team": "Ruslana",
   "/book": "Bali Zero",
 };
 
 test.describe("W2 — the two excluded people are on no public surface", () => {
-  for (const path of ["/team", "/", "/v2", "/about", "/book/team", "/book"]) {
+  for (const path of ["/team", "/", "/about", "/book/team", "/book"]) {
     test(`${path} publishes neither of them`, async ({ page }) => {
       const response = await page.goto(path, { waitUntil: "domcontentloaded" });
       expect(response?.status(), `${path} did not answer 200`).toBe(200);
@@ -167,7 +166,7 @@ test.describe("W2 — /team keeps the directory it had, plus the tool links", ()
 
     const nav = page.getByRole("navigation", { name: "Team sections" });
     const links = await nav.getByRole("link").all();
-    expect(links.length).toBe(5);
+    expect(links.length).toBe(8);
     for (const link of links) {
       const href = await link.getAttribute("href");
       expect(href).toMatch(/^#/);
@@ -221,7 +220,7 @@ test.describe("W2 — the R19 composition actually shipped", () => {
       .evaluate((el) => getComputedStyle(el).borderRadius);
     expect(radius.replace(/\s+/g, " ")).toContain("48px 48px 3px 3px");
 
-    // only the founders on the home — the four-row list belongs to /v2
+    // only the founders on the home — there is no four-row list here
     await expect(page.getByText("The team behind them")).toHaveCount(0);
     const link = page.getByRole("link", { name: /Meet the team/i });
     await expect(link).toHaveAttribute("href", "/team");
@@ -229,21 +228,6 @@ test.describe("W2 — the R19 composition actually shipped", () => {
     expect(linkBox?.height, "band link target height").toBeGreaterThanOrEqual(
       48,
     );
-  });
-
-  test("/v2 still renders the default: founders AND the three behind them", async ({
-    page,
-  }) => {
-    await page.goto("/v2", { waitUntil: "domcontentloaded" });
-
-    await expect(page.getByText("The team behind them")).toBeVisible();
-    for (const name of ["Ruslana", "Adit", "Angel"]) {
-      await expect(
-        page.getByText(name).first(),
-        `${name} missing on /v2`,
-      ).toBeVisible();
-    }
-    await expect(page.getByRole("link", { name: /All 18\+/ })).toBeVisible();
   });
 });
 

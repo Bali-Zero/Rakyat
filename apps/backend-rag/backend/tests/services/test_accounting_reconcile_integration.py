@@ -11,18 +11,20 @@ router; this test is the real-DB belt-and-braces for the single writer).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import asyncpg
 import pytest
 from asyncpg.exceptions import CheckViolationError
 
+from backend.core.pg_json_codec import init_asyncpg_connection
 from backend.services.accounting.cashout_service import cashbook_summary
-from backend.services.accounting.reconcile_service import confirm_payment
+from backend.services.accounting.reconcile_service import ReconcileError, confirm_payment
 
 MIGRATION_238 = (
     Path(__file__).resolve().parents[2]
@@ -36,9 +38,15 @@ MIGRATION_239 = (
 STUBS = """
 CREATE TABLE IF NOT EXISTS team_members (id VARCHAR PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, full_name VARCHAR);
+-- Real types: models.py PracticeType (id int PK, code VARCHAR(50) NOT NULL UNIQUE, name
+-- VARCHAR(255) NOT NULL) and Practice.practice_type_id (nullable int FK, migration 157 note,
+-- ci_bootstrap_schema.py:703). The pool query LEFT JOINs them.
+CREATE TABLE IF NOT EXISTS practice_types (
+    id SERIAL PRIMARY KEY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);
 CREATE TABLE IF NOT EXISTS practices (
     id SERIAL PRIMARY KEY, client_id INT, payment_status VARCHAR DEFAULT 'unpaid',
-    paid_amount NUMERIC DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT now());
+    practice_type_id INT REFERENCES practice_types(id),
+    paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE IF NOT EXISTS invoices (
     id SERIAL PRIMARY KEY, practice_id INT UNIQUE, invoice_number VARCHAR,
     amount_idr BIGINT, generated_at TIMESTAMPTZ DEFAULT now());
@@ -75,6 +83,18 @@ async def _try_connect() -> asyncpg.Connection | None:
         return None
 
 
+async def _connect(dbname: str) -> asyncpg.Connection:
+    """A connection to the test database, shaped like a production pool connection.
+
+    It registers the jsonb/json codec every production pool registers. Without it a
+    pre-encoded string reaches Postgres as JSON text and is stored correctly HERE, while
+    production stores it as a JSON string scalar: reconciliation_log.invoice_ids held "[5]".
+    """
+    conn = await asyncpg.connect(_base_dsn(), database=dbname)
+    await init_asyncpg_connection(conn)
+    return conn
+
+
 async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     """Create an ephemeral DB with the migration applied + minimal stubs.
 
@@ -88,7 +108,7 @@ async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     await admin.execute(f'CREATE DATABASE "{dbname}"')
     await admin.close()
     user = os.environ.get("USER", "postgres")
-    conn = await asyncpg.connect(_base_dsn(), database=dbname)
+    conn = await _connect(dbname)
     await conn.execute(STUBS)
     await conn.execute(_forward_sql_of(MIGRATION_238))
     await conn.execute(_forward_sql_of(MIGRATION_239))
@@ -150,7 +170,8 @@ async def test_confirm_payment_full_side_effects() -> None:
         inv = await conn.fetchrow(
             "SELECT paid_date, payment_method, payment_reference, paid_amount_idr FROM invoices WHERE id=$1", iid
         )
-        assert inv["paid_date"] is not None
+        # paid on the transfer's day, not on the day of the confirmation
+        assert inv["paid_date"] == datetime(2026, 6, 25, tzinfo=timezone.utc)
         assert inv["payment_reference"] == "CIMB-REF-123"
         assert int(inv["paid_amount_idr"]) == 4_000_000
 
@@ -178,6 +199,12 @@ async def test_confirm_payment_full_side_effects() -> None:
         assert rl["status_after"] == "paid"
         assert int(rl["amount_applied_idr"]) == 4_000_000
         assert rl["practice_id"] == pid
+        # the invoice list is a JSON ARRAY, read back as a list through the production codec
+        assert rl["invoice_ids"] == [iid]
+        assert await conn.fetchval(
+            "SELECT jsonb_typeof(invoice_ids) FROM reconciliation_log WHERE id=$1",
+            result.reconciliation_log_id,
+        ) == "array"
     finally:
         await _drop_db(conn, dbname, user)
 
@@ -237,6 +264,49 @@ async def test_confirm_payment_without_movement_date_uses_db_clock() -> None:
         rl = await conn.fetchrow("SELECT status_before, status_after FROM reconciliation_log WHERE id=$1",
                                  result.reconciliation_log_id)
         assert rl["status_before"] == "unpaid" and rl["status_after"] == "paid"
+
+        # no transfer date given: the invoice is paid at the confirmation's own time
+        paid_now = await conn.fetchval(
+            "SELECT paid_date = (SELECT confirmed_at FROM reconciliation_log WHERE id = $2)"
+            " FROM invoices WHERE id = $1",
+            iid, result.reconciliation_log_id,
+        )
+        assert paid_now is True
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_zone", ["UTC", "Asia/Makassar", "America/Los_Angeles"])
+async def test_the_invoice_is_paid_on_the_transfer_day_whatever_the_session_time_zone(
+    session_zone: str,
+) -> None:
+    """A transfer of 1 November is paid on 1 November, never on 31 October.
+
+    Production reports group by month in UTC: a midnight taken in the session's zone would move a
+    first-of-the-month payment into the previous month wherever the session is east of UTC.
+    """
+    conn, dbname, user = await _fresh_db()
+    try:
+        await conn.execute(f"SET TIME ZONE '{session_zone}'")
+        cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Placeholder') RETURNING id")
+        pid = await conn.fetchval(
+            "INSERT INTO practices (client_id, payment_status) VALUES ($1, 'unpaid') RETURNING id", cid
+        )
+        iid = await conn.fetchval(
+            "INSERT INTO invoices (practice_id, invoice_number, amount_idr) VALUES ($1, 'INV-TZ', 1000000) RETURNING id",
+            pid,
+        )
+        await confirm_payment(
+            conn, bank_txn_id=None, practice_id=pid, invoice_id=iid, amount_applied_idr=1_000_000,
+            new_status="paid", confirmed_by="staff@example.test", movement_date=date(2026, 11, 1),
+        )
+        paid = await conn.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid)
+        assert paid == datetime(2026, 11, 1, tzinfo=timezone.utc)
+        month_utc = await conn.fetchval(
+            "SELECT to_char(paid_date AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM invoices WHERE id = $1", iid
+        )
+        assert month_utc == "2026-11-01"
     finally:
         await _drop_db(conn, dbname, user)
 
@@ -308,5 +378,300 @@ async def test_cashout_worksheet_type_accepted_by_constraint() -> None:
                 "VALUES ($1, 'in', 'bogus_type', 100)",
                 date(2026, 3, 6),
             )
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+# ── a bank transaction is confirmed as a payment at most once (C1 to C4) ─────
+
+
+async def _world(conn, *, direction: str = "credit", status: str = "unmatched", practices: int = 1):
+    """Invented rows: `practices` practices each with an invoice, and one bank transaction."""
+    cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Contoh Klien') RETURNING id")
+    pids, iids = [], []
+    for n in range(practices):
+        pid = await conn.fetchval(
+            "INSERT INTO practices (client_id, payment_status) VALUES ($1, 'unpaid') RETURNING id", cid
+        )
+        iid = await conn.fetchval(
+            "INSERT INTO invoices (practice_id, invoice_number, amount_idr) VALUES ($1, $2, 4000000) RETURNING id",
+            pid, f"INV-C{n}",
+        )
+        pids.append(pid)
+        iids.append(iid)
+    sid = await conn.fetchval("INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id")
+    txid = await conn.fetchval(
+        "INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction, reconciled_status)"
+        " VALUES ($1, $2, 4000000, $3, $4) RETURNING id",
+        sid, date(2026, 6, 25), direction, status,
+    )
+    return pids, iids, txid
+
+
+async def _snapshot(conn):
+    return (
+        [tuple(r) for r in await conn.fetch("SELECT id, payment_status, paid_amount FROM practices ORDER BY id")],
+        [tuple(r) for r in await conn.fetch("SELECT id, paid_date, payment_reference, paid_amount_idr FROM invoices ORDER BY id")],
+        await conn.fetchval("SELECT count(*) FROM weekly_cashout"),
+        await conn.fetchval("SELECT count(*) FROM reconciliation_log"),
+        [tuple(r) for r in await conn.fetch(
+            "SELECT id, reconciled_status, matched_practice_id, matched_invoice_id FROM bank_transactions ORDER BY id")],
+    )
+
+
+def _confirm(conn, txid, pid, iid, **kw):
+    return confirm_payment(
+        conn, bank_txn_id=txid, practice_id=pid, invoice_id=iid, amount_applied_idr=4_000_000,
+        new_status="paid", confirmed_by="accountant@example.test", payment_reference="REF-ONCE",
+        margin_idr=4_000_000, movement_date=date(2026, 6, 25), **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_c1_the_second_confirmation_of_one_bank_transaction_is_refused_and_changes_nothing() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        await _confirm(conn, txid, pid, iid)
+        after_first = await _snapshot(conn)
+        assert after_first[0][0][2] == 4_000_000 and after_first[2] == 1 and after_first[3] == 1
+        with pytest.raises(ReconcileError, match=f"bank transaction {txid} is not unmatched"):
+            await _confirm(conn, txid, pid, iid)  # a double click, a retry, a second tab
+        assert await _snapshot(conn) == after_first  # amounts, cashout count and log count unchanged
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["matched", "manual", "ignored"])
+async def test_c1_every_status_but_unmatched_is_refused(status: str) -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn, status=status)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match=f"bank transaction {txid} is not unmatched"):
+            await _confirm(conn, txid, pid, iid)
+        assert await _snapshot(conn) == before  # C3
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c2_an_unknown_bank_transaction_is_refused_and_nothing_is_written() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match=r"bank transaction 987654 not found"):
+            await _confirm(conn, 987654, pid, iid)
+        assert await _snapshot(conn) == before
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c2_a_debit_is_refused_and_nothing_is_written() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn, direction="debit")
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match=f"bank transaction {txid} is not a credit"):
+            await _confirm(conn, txid, pid, iid)
+        assert await _snapshot(conn) == before
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c1_the_bank_transaction_is_checked_before_anything_else_is_read() -> None:
+    """First statement of the block: with BOTH ids unknown, the bank transaction is the one named."""
+    conn, dbname, user = await _fresh_db()
+    try:
+        await _world(conn)
+        with pytest.raises(ReconcileError, match=r"bank transaction 555555 not found"):
+            await _confirm(conn, 555555, 777777, None)
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c1_two_concurrent_confirmations_of_one_bank_transaction_succeed_exactly_once() -> None:
+    """Deterministic interleaving: A is parked on its practice's row lock AFTER it has taken the
+    bank transaction's lock; B (another practice) then arrives. With the lock B must wait and
+    then be refused; without it B would finish first and both would pay."""
+    conn, dbname, user = await _fresh_db()
+    holder = await _connect(dbname)
+    conn_a = await _connect(dbname)
+    conn_b = await _connect(dbname)
+    try:
+        (pa, pb), (ia, ib), txid = await _world(conn, practices=2)
+        tx = holder.transaction()
+        await tx.start()
+        await holder.execute("SELECT 1 FROM practices WHERE id = $1 FOR UPDATE", pa)
+
+        async def waiting() -> int:
+            return await holder.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+                "AND datname = current_database()"
+            )
+
+        task_a = asyncio.create_task(_confirm(conn_a, txid, pa, ia))
+        for _ in range(150):
+            if await waiting() >= 1:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            pytest.fail("A never reached its practice lock")
+        task_b = asyncio.create_task(_confirm(conn_b, txid, pb, ib))
+        await asyncio.sleep(0.5)  # B either waits on the bank row (lock) or has already finished (no lock)
+        await tx.rollback()
+        got = await asyncio.gather(task_a, task_b, return_exceptions=True)
+        assert not isinstance(got[0], BaseException), got[0]  # A took the bank transaction first and won
+        assert isinstance(got[1], ReconcileError), got[1]
+        snap = await _snapshot(conn)
+        assert [row[2] for row in snap[0]] == [4_000_000, 0]  # one payment, on A's practice
+        assert snap[2] == 1 and snap[3] == 1  # one cashout row, one log row
+        assert snap[4] == [(txid, "matched", pa, ia)]
+    finally:
+        await asyncio.gather(holder.close(), conn_a.close(), conn_b.close())
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c4_a_first_confirmation_of_an_unmatched_credit_still_performs_every_side_effect() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        result = await _confirm(conn, txid, pid, iid)
+        snap = await _snapshot(conn)
+        assert snap[0] == [(pid, "paid", 4_000_000)]
+        assert snap[1][0][2] == "REF-ONCE" and snap[1][0][3] == 4_000_000 and snap[1][0][1] is not None
+        assert snap[4] == [(txid, "matched", pid, iid)]
+        co = await conn.fetchrow("SELECT * FROM weekly_cashout WHERE id = $1", result.cashout_id)
+        assert (co["type"], co["direction"], co["linked_bank_txn_id"]) == ("invoice_payment", "in", txid)
+        rl = await conn.fetchrow("SELECT * FROM reconciliation_log WHERE id = $1", result.reconciliation_log_id)
+        assert (rl["status_before"], rl["status_after"], rl["bank_txn_id"]) == ("unpaid", "paid", txid)
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_c4_a_confirmation_without_a_bank_transaction_is_unchanged() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        first = await _confirm(conn, None, pid, iid)
+        second = await _confirm(conn, None, pid, iid)  # no bank row to protect: both are recorded, as before
+        assert first.cashout_id != second.cashout_id
+        snap = await _snapshot(conn)
+        assert snap[0] == [(pid, "paid", 8_000_000)] and snap[2] == 2 and snap[3] == 2
+        assert snap[4] == [(txid, "unmatched", None, None)]  # the bank row is untouched
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+# ── actual_price fill and invoice ownership on confirm (P1, P2) ──────────────
+
+
+async def _price(conn, pid):
+    return await conn.fetchval("SELECT actual_price FROM practices WHERE id = $1", pid)
+
+
+@pytest.mark.asyncio
+async def test_p1_a_given_invoice_fills_a_null_actual_price() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        assert await _price(conn, pid) is None
+        await _confirm(conn, txid, pid, iid)
+        assert await _price(conn, pid) == 4_000_000
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p1_a_non_null_actual_price_is_kept() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        await conn.execute("UPDATE practices SET actual_price = 1234500 WHERE id = $1", pid)
+        await _confirm(conn, txid, pid, iid)
+        assert await _price(conn, pid) == 1_234_500
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p1_without_a_given_invoice_actual_price_stays_null() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        result = await _confirm(conn, txid, pid, None)
+        assert await _price(conn, pid) is None
+        # no invoice named: the list is an EMPTY ARRAY, not a JSON string
+        rl = await conn.fetchrow(
+            "SELECT invoice_ids, jsonb_typeof(invoice_ids) AS kind FROM reconciliation_log WHERE id=$1",
+            result.reconciliation_log_id,
+        )
+        assert (rl["invoice_ids"], rl["kind"]) == ([], "array")
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+async def _forbid_any_write(conn) -> None:
+    """From now on ANY write to the confirm's tables raises, so a write made before a refusal shows."""
+    await conn.execute(
+        "CREATE FUNCTION forbid_write() RETURNS trigger LANGUAGE plpgsql AS"
+        " $$ BEGIN RAISE EXCEPTION 'table written'; END $$"
+    )
+    for t in ("practices", "invoices", "weekly_cashout", "bank_transactions", "reconciliation_log"):
+        await conn.execute(
+            f"CREATE TRIGGER no_write_{t} BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON {t}"
+            " FOR EACH STATEMENT EXECUTE FUNCTION forbid_write()"
+        )
+
+
+@pytest.mark.asyncio
+async def test_p2_an_invoice_of_another_practice_is_refused_before_any_write() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (p1, p2), (i1, i2), txid = await _world(conn, practices=2)
+        await _forbid_any_write(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match="does not belong"):
+            await _confirm(conn, txid, p1, i2)
+        assert await _snapshot(conn) == before
+        assert await _price(conn, p1) is None
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p2_a_missing_invoice_is_refused_before_any_write() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        await _forbid_any_write(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match="not found"):
+            await _confirm(conn, txid, pid, iid + 1000)
+        assert await _snapshot(conn) == before
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_p2_a_non_finite_invoice_amount_is_refused_before_any_write() -> None:
+    conn, dbname, user = await _fresh_db()
+    try:
+        (pid,), (iid,), txid = await _world(conn)
+        # the stub column is BIGINT and cannot hold NaN: widen it in this test only
+        await conn.execute("ALTER TABLE invoices ALTER COLUMN amount_idr TYPE NUMERIC")
+        await conn.execute("UPDATE invoices SET amount_idr = 'NaN' WHERE id = $1", iid)
+        await _forbid_any_write(conn)
+        before = await _snapshot(conn)
+        with pytest.raises(ReconcileError, match="no usable amount"):
+            await _confirm(conn, txid, pid, iid)
+        assert await _snapshot(conn) == before
     finally:
         await _drop_db(conn, dbname, user)

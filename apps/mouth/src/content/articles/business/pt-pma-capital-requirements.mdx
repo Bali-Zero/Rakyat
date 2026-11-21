@@ -90,16 +90,14 @@ The **IDR 10 billion** (~$625,000 USD) minimum investment for PT PMA is one of t
 
 ## The Two Key Numbers
 
-| Requirement          | Amount             | What It Means                              |
-| -------------------- | ------------------ | ------------------------------------------ |
-| **Total Investment** | IDR 10 billion min | Total planned investment over company life |
-| **Paid-up Capital**  | IDR 10 billion min | Cash deposited in company bank account     |
+| Requirement          | Amount                                                        | What It Means                                                |
+| -------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| **Total Investment** | > IDR 10 billion per 5-digit KBLI/location (excl. land & bldgs) | Minimum total project investment plan (Nilai Investasi)      |
+| **Paid-up Capital**  | IDR 2.5 billion min **per company** (BKPM Reg 5/2025 Art. 26) | Minimum issued/paid-up capital deposited (12-month lock-up)  |
 
-<InfoCard variant="important" title="Both Must Be Met">
+<InfoCard variant="important" title="BKPM Reg 5/2025 Clarification">
 
-As of current regulations, **both** the total investment plan AND the paid-up
-capital must be at least IDR 10 billion. This changed from previous rules
-where paid-up capital could be lower.
+Under **Perka BKPM 5/2025 Art. 26**, the minimum paid-up capital (*Modal Disetor*) is **IDR 2.5 billion per PT PMA company** (regardless of number of shareholders), subject to a 12-month lock-up in the corporate account unless used for verified business expenses. Meanwhile, the **> IDR 10 billion** total investment commitment (*Nilai Investasi*) remains required per 5-digit KBLI per project location and explicitly **excludes land and buildings** (for standard non-developer sectors).
 
 </InfoCard>
 
@@ -107,15 +105,15 @@ where paid-up capital could be lower.
 
 ## What Counts as Investment?
 
-Your IDR 10 billion investment plan can include:
+Your **> IDR 10 billion** investment commitment (excluding land & buildings) can include:
 
 <ComparisonTable
   title="What Counts Toward Investment"
-  description="Categories that count toward your IDR 10B"
+  description="Categories counted toward > IDR 10B (excl. land & buildings)"
   items={[
     {
       name: "Share Capital",
-      subtitle: "Cash deposited",
+      subtitle: "Cash deposited (min IDR 2.5B paid-up)",
       values: {
         Type: "Cash",
         "Counts?": "Yes - Primary",
@@ -125,9 +123,9 @@ Your IDR 10 billion investment plan can include:
     },
     {
       name: "Equipment & Assets",
-      subtitle: "Physical assets",
+      subtitle: "Machinery, tech & fit-out",
       values: {
-        Type: "Assets",
+        Type: "Non-land CAPEX",
         "Counts?": "Yes",
         Documentation: "Import documents, purchase receipts",
       },
@@ -136,7 +134,7 @@ Your IDR 10 billion investment plan can include:
       name: "Working Capital",
       subtitle: "Operating funds",
       values: {
-        Type: "Cash",
+        Type: "Cash / OPEX",
         "Counts?": "Yes",
         Documentation: "Financial projections",
       },
@@ -152,11 +150,11 @@ Your IDR 10 billion investment plan can include:
     },
     {
       name: "Land & Buildings",
-      subtitle: "If company-owned",
+      subtitle: "Property purchase or building shell",
       values: {
-        Type: "Assets",
-        "Counts?": "Yes",
-        Documentation: "Purchase agreements, valuations",
+        Type: "Real Estate",
+        "Counts?": "No (excluded from 10B calc for standard sectors)",
+        Documentation: "Tracked separately in LKPM (only property/estate sectors differ)",
       },
     },
   ]}
@@ -168,38 +166,38 @@ Your IDR 10 billion investment plan can include:
 
 <Calculator
   title="Investment Structure Planner"
-  description="Plan how to reach IDR 10B investment"
+  description="Plan how to meet IDR 2.5B paid-up capital and > IDR 10B BKPM investment (excl. land/buildings)"
   fields={[
     {
       id: "cash",
-      label: "Cash to Deposit (Share Capital)",
+      label: "Paid-Up Capital / Cash (IDR 2.5B min per company)",
       type: "number",
-      defaultValue: 10000000000,
+      defaultValue: 2500000000,
       min: 0,
       step: 500000000,
       suffix: "IDR"
     },
     {
       id: "equipment",
-      label: "Equipment & Machinery",
+      label: "Equipment, Tech & Machinery",
       type: "number",
-      defaultValue: 0,
+      defaultValue: 4000000000,
       min: 0,
       step: 100000000,
       suffix: "IDR"
     },
     {
       id: "working",
-      label: "Working Capital (Year 1)",
+      label: "Working Capital (Year 1+)",
       type: "number",
-      defaultValue: 0,
+      defaultValue: 4000000000,
       min: 0,
       step: 100000000,
       suffix: "IDR"
     },
     {
       id: "property",
-      label: "Property/Land",
+      label: "Property/Land (Excluded from >10B BKPM cap)",
       type: "number",
       defaultValue: 0,
       min: 0,
@@ -213,30 +211,33 @@ Your IDR 10 billion investment plan can include:
     const working = Number(values.working);
     const property = Number(values.property);
 
-    const total = cash + equipment + working + property;
-    const required = 10000000000;
-    const shortage = Math.max(0, required - total);
-    const paidUpShortage = Math.max(0, required - cash);
+    const qualifyingInvestment = cash + equipment + working;
+    const minInvestment = 10000000000;
+    const minPaidUp = 2500000000;
+    const shortage = Math.max(0, minInvestment - qualifyingInvestment);
+    const paidUpShortage = Math.max(0, minPaidUp - cash);
 
     const breakdown = [
-      { label: "Share Capital (Cash)", amount: cash },
+      { label: "Paid-Up Capital (Cash)", amount: cash },
       { label: "Equipment & Machinery", amount: equipment },
       { label: "Working Capital", amount: working },
-      { label: "Property/Land", amount: property },
-      { label: "Total Investment Plan", amount: total }
+      { label: "BKPM Qualifying Investment (excl. land/buildings)", amount: qualifyingInvestment },
+      { label: "Property/Land (Excluded from >10B BKPM threshold)", amount: property }
     ];
 
     let note = "";
-    if (total >= required && cash >= required) {
-      note = "Requirements met!";
-    } else if (cash < required) {
-      note = `Paid-up capital short by IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Must deposit IDR 10B minimum.`;
-    } else if (total < required) {
-      note = `Total investment short by IDR ${(shortage/1000000000).toFixed(1)}B`;
+    if (cash < minPaidUp) {
+      note = `Paid-up capital short by IDR ${(paidUpShortage/1000000000).toFixed(2)}B. Minimum IDR 2.5B per company required (BKPM Reg 5/2025 Art. 26).`;
+    } else if (qualifyingInvestment <= minInvestment) {
+      note = qualifyingInvestment === minInvestment
+        ? "Add > IDR 0 above IDR 10B (BKPM requires STRICTLY greater than IDR 10B excluding land & buildings)."
+        : `BKPM qualifying investment (excl. land/buildings) short by > IDR ${(shortage/1000000000).toFixed(2)}B.`;
+    } else {
+      note = "Paid-up capital (>= IDR 2.5B) and > IDR 10B qualifying investment (excl. land/buildings) met!";
     }
 
     return {
-      total,
+      total: qualifyingInvestment,
       breakdown,
       currency: "IDR",
       note
@@ -250,21 +251,21 @@ Your IDR 10 billion investment plan can include:
 ## Common Questions About Capital
 
 <InfoCard variant="note" title="FAQ">
-**Q: Do I need IDR 10B in my bank account on day 1?**
-A: Yes, paid-up capital of IDR 10B must be deposited to open the company bank account and complete registration.
+**Q: Do I need IDR 10B in cash in my bank account on day 1?**
+A: No. Under BKPM Regulation 5/2025 Art. 26, minimum paid-up capital is **IDR 2.5 billion per company** (subject to the 12-month lock-up unless spent on documented corporate operations). The remaining investment commitment up to > IDR 10 billion (excluding land/buildings) can be deployed via equipment, working capital, and operational expenditure over your investment timeline.
 
 **Q: Can I use it after depositing?**
-A: Yes, once deposited as share capital, you use these funds for business operations.
+A: Paid-up capital is subject to a 12-month lock-up period unless disbursed for legitimate, documented business assets or operations of the PT PMA.
 
-**Q: What if I can't meet IDR 10B?**
+**Q: What if I can't meet > IDR 10B investment?**
 A: Options include:
 
-- Joint venture with local partner
-- Different business structure (representative office, etc.)
-- Wait until you have sufficient capital
+- Joint venture / local partnership (PT PMDN requires domestic equity rules)
+- Representative Office (KPPA — non-revenue)
+- Defer incorporation until > IDR 10B investment plan is viable
 
 **Q: Is there any way around the minimum?**
-A: No legitimate way. Regulations are clear on IDR 10B minimum for PT PMA.
+A: No legitimate workaround. Regulations require > IDR 10B total investment per 5-digit KBLI/location (excluding land/buildings) and IDR 2.5B minimum paid-up capital per PT PMA company (higher in special sectors like finance or mining).
 
 </InfoCard>
 

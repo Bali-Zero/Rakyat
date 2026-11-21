@@ -222,6 +222,66 @@ class TestInnocenceOrdinaryLogsAreLeftAlone:
         assert TelegramTokenRedactionFilter().filter(bad) is True
 
 
+# URL-emitting loggers of httpx2 / httpcore2 2.12.0 (names read from the wheels, not
+# imported). Each is a child or a sibling: a filter on a parent never runs for them.
+SUCCESSOR_URL_LOGGERS = (
+    "httpx2",
+    "httpcore2.http11",
+    "httpcore2.http2",
+    "httpcore2.proxy",
+    "httpcore2.socks",
+)
+
+
+class TestTheSuccessorHttpLoggersAreCoveredToo:
+    @pytest.mark.parametrize("name", SUCCESSOR_URL_LOGGERS)
+    def test_a_record_born_on_the_logger_is_masked_like_an_httpx_one(self, name):
+        logger = logging.getLogger(name)
+        capture = _Capture()
+        saved = (list(logger.filters), logger.level, logger.propagate)
+        logger.addHandler(capture)
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        try:
+            install_telegram_token_redaction()
+            logger.info('HTTP Request: GET %s?search=synthetic-marker "HTTP/1.1 500 X"', FAKE_URL)
+        finally:
+            logger.removeHandler(capture)
+            logger.filters[:] = saved[0]
+            logger.setLevel(saved[1])
+            logger.propagate = saved[2]
+
+        (line,) = capture.rendered
+        assert SECRET_HALF not in line
+        assert "bot7654321098:<redacted>" in line
+
+    @pytest.mark.parametrize("name", SUCCESSOR_URL_LOGGERS)
+    def test_an_ordinary_line_on_the_logger_is_untouched(self, name):
+        logger = logging.getLogger(name)
+        capture = _Capture()
+        saved = (list(logger.filters), logger.level, logger.propagate)
+        logger.addHandler(capture)
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        original = 'HTTP Request: GET https://example.test/health "HTTP/1.1 200 OK"'
+        try:
+            install_telegram_token_redaction()
+            logger.info(original)
+        finally:
+            logger.removeHandler(capture)
+            logger.filters[:] = saved[0]
+            logger.setLevel(saved[1])
+            logger.propagate = saved[2]
+
+        assert capture.rendered == [original]
+
+    def test_an_unrelated_logger_is_not_given_the_filter(self):
+        name = "example.test.unrelated"
+        logging.getLogger(name).filters[:] = []
+        install_telegram_token_redaction()
+        assert logging.getLogger(name).filters == []
+
+
 class TestInstallingTwiceIsNotInstallingTwice:
     def test_the_filter_is_not_stacked_on_repeat_calls(self, clean_logging):
         clean_logging.addHandler(_Capture())

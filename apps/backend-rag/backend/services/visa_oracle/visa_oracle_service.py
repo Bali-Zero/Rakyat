@@ -16,6 +16,10 @@ from backend.services.pricing.pricing_service import (
     _is_internal_service,
     get_pricing_service,
 )
+from backend.services.visa_check.match_tree import (
+    NationalityClassification,
+    classify_nationality,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +47,10 @@ PURPOSE_KEYWORDS: dict[str, list[str]] = {
     "visit": ["tourism", "tourist", "c1", "visit", "voa"],
     "work": ["working", "work", "employment", "kitas", "imta"],
     "invest": ["investor", "invest", "kitas"],
-    "retire": ["e33f", "retirement", "retire", "pensioner", "pension"],
+    "retire": ["e33f", "e33e", "retirement", "retire", "pensioner", "pension"],
     "digital_nomad": ["remote", "freelance", "e33g", "digital", "nomad"],
     "family": ["spouse", "dependent", "family", "child"],
-    "study": ["internship", "student", "c22", "study", "education"],
+    "study": ["student", "study", "education", "higher", "e30b", "e30a", "internship", "c22"],
 }
 
 # Short / medium / long / permanent duration thresholds (days).
@@ -60,26 +64,51 @@ DURATION_THRESHOLDS: dict[str, tuple[int, int]] = {
 # Static visa metadata (duration/validity not stored in PricingService data).
 # Keys match exact visa names from the pricing JSON.
 VISA_METADATA: dict[str, dict[str, str]] = {
-    # Visa on Arrival
+    # Visa-free & Visa on Arrival
+    "A1 Visa-Free Tourism": {"duration": "30 days", "validity": "Single entry (non-extendable)"},
     "B1 Visa on Arrival (VOA)": {"duration": "30 days", "validity": "Extendable once (+30 days)"},
     "B1 Visa on Arrival Extension": {"duration": "30 days", "validity": "Extension only"},
     # Single-entry visas
-    "C1 Tourism": {"duration": "30 days", "validity": "Single entry"},
+    "C1 Tourism": {"duration": "60 days", "validity": "Single entry"},
     "C2 Business": {"duration": "60 days", "validity": "Single entry"},
-    "C7A&B Music/Art": {"duration": "60 days", "validity": "Single entry"},
-    "C18 Work Trial": {"duration": "60 days", "validity": "Single entry"},
+    "C7A&B Music/Art": {"duration": "30 days", "validity": "Single entry (non-extendable)"},
+    "C7A,B,C Music/Art": {"duration": "30 days", "validity": "Single entry (non-extendable)"},
+    "C18 Work Trial": {"duration": "90 days", "validity": "Single entry (non-extendable)"},
     "C22A&B Internship (60 Days)": {"duration": "60 days", "validity": "Single entry"},
     "C22A&B Internship (180 Days)": {"duration": "180 days", "validity": "Single entry"},
     # Multiple-entry visas
     "D12 Business Investigation (1 Year)": {
-        "duration": "Up to 60 days/stay",
+        "duration": "Up to 180 days/stay (non-extendable)",
         "validity": "1 year, multiple entry",
     },
     "D12 Business Investigation (2 Years)": {
-        "duration": "Up to 60 days/stay",
+        "duration": "Up to 180 days/stay (non-extendable)",
         "validity": "2 years, multiple entry",
     },
     # KITAS permits
+    "E30A Education Visa (1 Year)": {
+        "duration": "1 year",
+        "validity": "KITAS — primary & secondary education",
+    },
+    "E30A Education Visa (2 Years)": {
+        "duration": "2 years",
+        "validity": "KITAS — primary & secondary education",
+    },
+    "E30B Higher Education (1 Year)": {
+        "duration": "1 year",
+        "validity": "KITAS — higher education",
+    },
+    "E30B Higher Education (2 Years)": {
+        "duration": "2 years",
+        "validity": "KITAS — higher education",
+    },
+    "E30B Higher Education (4 Years)": {
+        "duration": "4 years",
+        "validity": "KITAS — higher education",
+    },
+    "E33 Second Home (5 Years)": {"duration": "5 years", "validity": "KITAS — 5-year stay"},
+    "E33E Second Home Senior (5 Years)": {"duration": "5 years", "validity": "KITAS — 5-year stay"},
+    "E33E Second Home Senior (Extend)": {"duration": "5 years", "validity": "KITAS — renewal"},
     "E33G Remote Worker (Altus/Onshore)": {"duration": "1 year", "validity": "KITAS — renewable"},
     "E33G Remote Worker (Extend)": {"duration": "1 year", "validity": "KITAS — renewal"},
     "E33G Remote Worker (Offshore)": {"duration": "1 year", "validity": "KITAS — offshore process"},
@@ -132,7 +161,7 @@ VISA_METADATA: dict[str, dict[str, str]] = {
     "Retirement KITAP + MERP": {"duration": "5 years", "validity": "KITAP — permanent residence"},
     "Dependent KITAP MERP": {"duration": "5 years", "validity": "KITAP dependent"},
     # Visa extensions
-    "C1 Tourism Extension": {"duration": "30 days", "validity": "Extension only"},
+    "C1 Tourism Extension": {"duration": "60 days", "validity": "Extension only"},
 }
 
 # Score weights
@@ -235,15 +264,24 @@ class VisaOracleService:
         """Score and rank visa types. Returns top-3 results.
 
         Args:
-            nationality: ISO country code or country name (informational only).
+            nationality: ISO country code or country name.
             purpose: One of visit/work/invest/retire/digital_nomad/family/study.
-            duration: One of short/medium/long.
+            duration: One of short/medium/long/permanent.
             family: True if applicant is bringing a spouse or dependents.
 
         Returns:
             List of up to 3 dicts with keys:
             visa_name, category, price, duration, validity, notes, score.
         """
+        nat_info: NationalityClassification = classify_nationality(nationality)
+        if nat_info.is_indonesian_citizen or nat_info.is_calling_visa:
+            logger.info(
+                "recommend_visas: nationality blocked/referred (wni=%s calling=%s)",
+                nat_info.is_indonesian_citizen,
+                nat_info.is_calling_visa,
+            )
+            return []
+
         purpose_lower = purpose.lower().strip()
         duration_lower = duration.lower().strip()
 
@@ -266,6 +304,17 @@ class VisaOracleService:
                 if not isinstance(details, dict) or _is_internal_service(
                     self._pricing, visa_name, details
                 ):
+                    continue
+                name_lower = visa_name.lower().strip()
+                if name_lower.endswith("(extend)"):
+                    continue
+                if (name_lower.startswith("a1 ") or "visa-free" in name_lower) and not nat_info.is_bvk_eligible:
+                    continue
+                if (
+                    name_lower.startswith("b1 ")
+                    or "visa on arrival" in name_lower
+                    or "(voa)" in name_lower
+                ) and not nat_info.is_voa_eligible:
                     continue
                 score = self._score_visa(
                     visa_name=visa_name,

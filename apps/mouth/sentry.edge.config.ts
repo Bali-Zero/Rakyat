@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 
 import { UNIVERSAL_NOISE, isKnownNoise } from "@/lib/sentry-noise";
+import { scrubSentryUrls } from "@/lib/sentry-url-scrub";
 
 Sentry.init({
   dataCollection: {
@@ -24,7 +25,11 @@ Sentry.init({
   // an actionable timeout. The same words, opposite meanings, and a shared list
   // would delete the second (cross-family gate).
   ignoreErrors: [...UNIVERSAL_NOISE],
+  beforeSendSpan: scrubSentryUrls,
   beforeSend(event) {
-    return isKnownNoise(event, { browser: false }) ? null : event;
+    return isKnownNoise(event, { browser: false })
+      ? null
+      : scrubSentryUrls(event);
   },
+  beforeBreadcrumb: scrubSentryUrls,
 });

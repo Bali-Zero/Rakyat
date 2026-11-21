@@ -547,18 +547,37 @@ async def test_count_undrained_reports_every_bucket_and_deletes_nothing(conn):
     )
 
 
-async def test_retired_staff_pages_stay_pending_while_customer_email_dispatches(conn):
-    from backend.services.garuda_orders.outbox_consumer import RETIRED_TELEGRAM_JOB_TYPES
+async def test_retired_staff_pages_stay_pending_while_customer_email_dispatches(conn, monkeypatch):
+    from backend.services.garuda_orders import outbox_consumer
+
+    assert outbox_consumer.RETIRED_TELEGRAM_JOB_TYPES == ()
 
     order_id = await _seed_order(conn)
-    held = [await _enqueue(conn, order_id, kind) for kind in RETIRED_TELEGRAM_JOB_TYPES]
+    # Previously-held staff_page_* jobs drain cleanly alongside customer email now.
+    staff_id = await _enqueue(conn, order_id, "staff_page_duplicate_charge")
     email_id = await _enqueue(conn, order_id, "payment_paid_email")
+    live_seen: list[OutboxJob] = []
+    live_stats = await drain_once(
+        conn,
+        {
+            "staff_page_duplicate_charge": _recording_handler(live_seen),
+            "payment_paid_email": _recording_handler(live_seen),
+        },
+    )
+    assert live_stats.dispatched == 2 and live_stats.failed == 0
+    assert [job.id for job in live_seen] == [staff_id, email_id]
+
+    synthetic_retired = tuple(f"synthetic_retired_tg_{i}" for i in range(6))
+    monkeypatch.setattr(outbox_consumer, "RETIRED_TELEGRAM_JOB_TYPES", synthetic_retired)
+
+    held = [await _enqueue(conn, order_id, kind) for kind in synthetic_retired]
+    email_id_2 = await _enqueue(conn, order_id, "payment_paid_email")
     seen = []
-    handlers = {kind: _recording_handler(seen) for kind in RETIRED_TELEGRAM_JOB_TYPES}
+    handlers = {kind: _recording_handler(seen) for kind in synthetic_retired}
     handlers["payment_paid_email"] = _recording_handler(seen)
     stats = await drain_once(conn, handlers)
     assert stats.dispatched == 1 and stats.failed == 0
-    assert [job.id for job in seen] == [email_id]
+    assert [job.id for job in seen] == [email_id_2]
     for row_id in held:
         row = await _row(conn, row_id)
         assert row["attempts"] == 0 and row["dispatched_at"] is None

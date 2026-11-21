@@ -1130,6 +1130,13 @@ function secondHomeBelowThresholdReason(
         ? facts.secondhome_basis
         : undefined;
   if (basis === "property") {
+    if (
+      facts.secondhome_property_title ===
+        "non_qualifying_leasehold_villa_offplan" ||
+      facts.secondhome_property_title === "unsure"
+    ) {
+      return undefined;
+    }
     const value = Number(facts.secondhome_property_value_usd);
     if (
       !Number.isFinite(value) ||
@@ -1455,7 +1462,10 @@ function secondHomeBasisClearsThreshold(facts: OracleFacts): boolean {
         : facts.category === "second_home"
           ? facts.secondhome_basis
           : undefined;
-  if (basis === "property") {
+    if (basis === "property") {
+    if (facts.secondhome_property_title !== "completed_strata") {
+      return false;
+    }
     const value = Number(facts.secondhome_property_value_usd);
     return (
       Number.isFinite(value) && value >= SECOND_HOME_PROPERTY_THRESHOLD_USD
@@ -1854,6 +1864,10 @@ export const REVIEW_REASON_COPY: Record<string, LocalizedText> = {
     "This case is paused because whether your sponsor holds a stay permit of their own has not been established here — confirming the sponsor's own stay permit is what resolves it.",
     "Kasus ini ditunda karena belum dapat dipastikan di sini apakah sponsor Anda memiliki izin tinggal sendiri — konfirmasi izin tinggal sponsor tersebut adalah yang akan menyelesaikannya.",
   ),
+  DISCLOSED_BLACKLIST_ENTRY_REVIEW: text(
+    "You flagged a blacklist entry in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can go over your situation with you.",
+    "Pengungkapan Anda menandai adanya pencantuman dalam daftar hitam, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat membahas situasi tersebut bersama Anda.",
+  ),
   DISCLOSED_CRIMINAL_RECORD_REVIEW: text(
     "You flagged a criminal record concern in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can review the details with you.",
     "Anda menandai adanya masalah catatan kriminal dalam pengungkapan Anda, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat meninjau detailnya bersama Anda.",
@@ -1865,6 +1879,10 @@ export const REVIEW_REASON_COPY: Record<string, LocalizedText> = {
   DISCLOSED_HEALTH_CONCERN_REVIEW: text(
     "You flagged a health concern in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can review the details with you.",
     "Anda menandai adanya masalah kesehatan dalam pengungkapan Anda, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat meninjau detailnya bersama Anda.",
+  ),
+  DISCLOSED_IMMIGRATION_INVESTIGATION_REVIEW: text(
+    "You flagged an open immigration investigation in your disclosures, so no path can be confirmed yet. A Bali Zero advisor can review its status with you.",
+    "Anda menandai adanya pemeriksaan keimigrasian yang sedang berjalan dalam pengungkapan Anda, sehingga belum ada jalur yang dapat dikonfirmasi. Konsultan Bali Zero dapat meninjau statusnya bersama Anda.",
   ),
   // fact-mapper.ts: raised when trip_scope === "multiple".
   DISCLOSED_MULTI_PURPOSE_TRIP_REVIEW: text(
@@ -1988,12 +2006,57 @@ export const GENERIC_REVIEW_REASON: LocalizedText = text(
 // `REVIEW_REASON_COPY` is correct for every caller now, STEPCHILD included —
 // pinned by the "gives a STEPCHILD walk the same ambiguous-sponsor copy..."
 // test in engine-adapter.test.ts.
+export const SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY: {
+  readonly non_qualifying: LocalizedText;
+  readonly unsure: LocalizedText;
+} = {
+  non_qualifying: text(
+    `The Second Home Visa (E33) is granted against a guarantee: a completed apartment or flat under strata title (hak pakai atas satuan rumah susun) in your own name worth at least ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "en-US")}, or a bank deposit of at least ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "en-US")} held in your own name at a state bank. Under Permenkumham 22/2023, villas, leasehold or freehold land, HGB titles, and off-plan units do not count toward the property route, so this route is not confirmed on your answers yet. The Second Home Studio shows the property and deposit routes and the numbers for your case.`,
+    `Visa Rumah Kedua (E33) diberikan atas dasar jaminan: apartemen atau rumah susun selesai dibangun dengan hak pakai atas satuan rumah susun atas nama Anda sendiri senilai minimal ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "id-ID")}, atau deposito bank minimal ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "id-ID")} atas nama Anda sendiri di bank milik negara. Berdasarkan Permenkumham 22/2023, vila, tanah sewa (leasehold) atau hak milik, HGB, dan unit inden (off-plan) tidak termasuk dalam jalur properti yang memenuhi syarat, sehingga jalur ini belum dapat dikonfirmasi berdasarkan jawaban Anda. Second Home Studio menampilkan jalur properti dan deposito beserta angka untuk kasus Anda.`,
+  ),
+  unsure: text(
+    `The Second Home Visa (E33) is granted against a guarantee: a completed apartment or flat under strata title (hak pakai atas satuan rumah susun) in your own name worth at least ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "en-US")}, or a bank deposit of at least ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "en-US")} held in your own name at a state bank. Because you were unsure whether the property has a completed strata title in your own name, this route is not confirmed on your answers yet. The Second Home Studio shows the property and deposit routes and the numbers for your case.`,
+    `Visa Rumah Kedua (E33) diberikan atas dasar jaminan: apartemen atau rumah susun selesai dibangun dengan hak pakai atas satuan rumah susun atas nama Anda sendiri senilai minimal ${usd(SECOND_HOME_PROPERTY_THRESHOLD_USD, "id-ID")}, atau deposito bank minimal ${usd(SECOND_HOME_DEPOSIT_THRESHOLD_USD, "id-ID")} atas nama Anda sendiri di bank milik negara. Karena Anda belum yakin apakah properti tersebut memiliki hak pakai atas satuan rumah susun yang telah selesai atas nama Anda sendiri, jalur ini belum dapat dikonfirmasi berdasarkan jawaban Anda. Second Home Studio menampilkan jalur properti dan deposito beserta angka untuk kasus Anda.`,
+  ),
+};
+
+function secondHomeStudioReviewReason(
+  facts: OracleFacts,
+): LocalizedText | undefined {
+  const basis =
+    facts.category === "invest"
+      ? facts.investment_vehicle
+      : facts.category === "retirement"
+        ? facts.retirement_basis
+        : facts.category === "second_home"
+          ? facts.secondhome_basis
+          : undefined;
+  if (basis !== undefined && basis !== "property") {
+    return undefined;
+  }
+  if (
+    facts.secondhome_property_title ===
+    "non_qualifying_leasehold_villa_offplan"
+  ) {
+    return SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY.non_qualifying;
+  }
+  if (facts.secondhome_property_title === "unsure") {
+    return SECOND_HOME_PROPERTY_TITLE_STUDIO_COPY.unsure;
+  }
+  return undefined;
+}
+
 function reviewReason(
   code: string,
   sourceIds: readonly string[],
   trustedIds: ReadonlySet<string>,
+  facts?: OracleFacts,
 ): OutcomeReason {
-  const message = REVIEW_REASON_COPY[code];
+  const factDerived =
+    code === SECOND_HOME_STUDIO_REVIEW_REASON_CODE && facts
+      ? secondHomeStudioReviewReason(facts)
+      : undefined;
+  const message = factDerived ?? REVIEW_REASON_COPY[code];
   if (message === undefined) {
     if (process.env.NODE_ENV !== "production") {
       throw new VisaOracleResponseError("RESPONSE_INVARIANT");
@@ -2070,22 +2133,13 @@ export const NOTICE_CONDITION_COPY: Record<string, LocalizedText> = {
     "Your answers about your current immigration status conflict with each other. A Bali Zero advisor can confirm which status is correct with you before submission and tell you what to prepare.",
     "Jawaban Anda tentang status keimigrasian Anda saat ini saling bertentangan. Konsultan Bali Zero dapat memastikan status mana yang benar bersama Anda sebelum pengajuan dan memberi tahu apa yang perlu disiapkan.",
   ),
-  // Slice A3-M (DRAFT-SPEC-A3-1.v2-M §4.1, M4): three new keys beside the
-  // eleven above, backed by `_DISCLOSED_CONDITION_REASON_CODES`
-  // (evaluate_path.py:1174-1176). N2 copy rules (A2): name what is checked,
-  // by whom, when, and what to prepare — never "cleared", "approved" or
-  // "guaranteed".
+  // Slice A3-M (DRAFT-SPEC-A3-1.v2-M §4.1, M4): backed by
+  // `_DISCLOSED_CONDITION_REASON_CODES` (evaluate_path.py). BLACKLIST_ENTRY
+  // and IMMIGRATION_INVESTIGATION moved to `HOLDING_DISCLOSED_FLAGS` +
+  // `REVIEW_REASON_COPY` (NC-03), leaving PAST_OVERSTAY as the condition row.
   DISCLOSED_PAST_OVERSTAY_CONDITION: text(
     "You flagged a past overstay in your disclosures. A Bali Zero advisor can review the dates and any penalty record with you before submission and tell you what to prepare.",
     "Anda menandai riwayat overstay dalam pengungkapan Anda. Konsultan Bali Zero dapat meninjau tanggal dan catatan sanksi terkait bersama Anda sebelum pengajuan dan memberi tahu apa yang perlu disiapkan.",
-  ),
-  DISCLOSED_BLACKLIST_ENTRY_CONDITION: text(
-    "You flagged a blacklist entry in your disclosures. A Bali Zero advisor can go over your situation with you before submission and tell you what to prepare.",
-    "Pengungkapan Anda menandai adanya pencantuman dalam daftar hitam. Konsultan Bali Zero dapat membahas situasi tersebut bersama Anda sebelum pengajuan dan memberi tahu apa yang perlu disiapkan.",
-  ),
-  DISCLOSED_IMMIGRATION_INVESTIGATION_CONDITION: text(
-    "You flagged an open immigration investigation. A Bali Zero advisor can review its status with you before submission and tell you what supporting documentation, if any, to prepare.",
-    "Anda menandai adanya pemeriksaan keimigrasian yang sedang berjalan. Konsultan Bali Zero dapat meninjau statusnya bersama Anda sebelum pengajuan dan memberi tahu dokumen pendukung, jika ada, yang perlu disiapkan.",
   ),
 };
 
@@ -3158,7 +3212,12 @@ function buildValidatedOutcome(
         pathsRemaining: Math.max(1, options.interviewBranchesRemaining ?? 1),
         reviewReasons: response.decision.review_reasons.map((item) => {
           requireReviewHoldRefs(item.source_refs);
-          return reviewReason(item.code, item.source_refs, trustedIds);
+          return reviewReason(
+            item.code,
+            item.source_refs,
+            trustedIds,
+            options.facts,
+          );
         }) as [OutcomeReason, ...OutcomeReason[]],
       };
     case "NO_SUPPORTED_PATH": {

@@ -128,6 +128,13 @@ $defs:
           retryable: { const: false }
           message_key: { const: garuda_voa.error.invalid_state_transition }
       - <<: *errorResponseBase
+        title: CHECKOUT_NOT_RESUMABLE
+        x-http-status: 409
+        properties:
+          code: { const: CHECKOUT_NOT_RESUMABLE }
+          retryable: { const: false }
+          message_key: { const: garuda_voa.error.checkout_not_resumable }
+      - <<: *errorResponseBase
         title: UNSUPPORTED_DOCUMENT_MEDIA_TYPE
         x-http-status: 415
         properties:

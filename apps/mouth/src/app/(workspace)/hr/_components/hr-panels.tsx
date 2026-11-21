@@ -137,6 +137,7 @@ export const greeting = () => {
   const h = new Date().getHours();
   return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 };
+export const UNVERIFIED = "On file — not yet in DOKUMEN KARYAWAN";
 export const driveUrl = (id: string | null | undefined) =>
   id && /^[A-Za-z0-9_-]{10,200}$/.test(id)
     ? `https://drive.google.com/file/d/${id}/view`
@@ -718,14 +719,28 @@ export const SLOTS: [string, string][] = [
   ["bpjs_tk", "BPJS Ketenagakerjaan"],
 ];
 
-export function MeDetail({ me, viewer = "self" }: { me: Me; viewer?: Viewer }) {
+export function MeDetail({
+  me,
+  viewer = "self",
+  showPapers = true,
+}: {
+  me: Me;
+  viewer?: Viewer;
+  // The People console renders its own Documents block (STAFF_CARD.md C13) in place of these chips.
+  showPapers?: boolean;
+}) {
   const you = viewer === "self";
   const c = me.card;
   const tone = TONE.me;
-  const papers: [string, string | null][] = [
-    ["Contract", c.contract?.file_id ?? null],
+  const none = { present: false, file_id: null };
+  const papers: [string, { present: boolean; file_id: string | null }][] = [
+    ["Contract", c.documents?.contract ?? none],
     ...SLOTS.map(
-      ([k, l]) => [l, c.docs?.[k] ?? null] as [string, string | null],
+      ([k, l]) =>
+        [l, c.documents?.[k as keyof typeof c.documents] ?? none] as [
+          string,
+          { present: boolean; file_id: string | null },
+        ],
     ),
   ];
   return (
@@ -757,7 +772,9 @@ export function MeDetail({ me, viewer = "self" }: { me: Me; viewer?: Viewer }) {
               ["Employer", s(c, "employer_entity")],
               [
                 "Role",
-                [s(c, "role"), s(c, "unit")].filter(Boolean).join(" · ") ||
+                [s(c, "position") ?? s(c, "role"), s(c, "unit")]
+                  .filter(Boolean)
+                  .join(" · ") ||
                   null,
               ],
               ["Started", dayLabel(s(c, "hire_date"))],
@@ -768,43 +785,47 @@ export function MeDetail({ me, viewer = "self" }: { me: Me; viewer?: Viewer }) {
             ]}
           />
         </Section>
-        <Section
-          title={you ? "Your papers" : "Papers"}
-          icon={FileText}
-          tone={tone}
-        >
-          <div className="flex flex-wrap gap-2">
-            {papers.map(([label, id]) => {
-              const url = driveUrl(id);
-              return url ? (
-                <a
-                  key={label}
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  referrerPolicy="no-referrer"
-                  className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-semibold transition-transform hover:-translate-y-0.5"
-                  style={{ color: tone, background: tint(tone, 14) }}
-                >
-                  <Check className="h-3.5 w-3.5" aria-hidden /> {label}{" "}
-                  <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
-                </a>
-              ) : (
-                <span
-                  key={label}
-                  className={`inline-flex items-center rounded-full border border-dashed ${HAIR} px-3.5 py-2 text-[13px] ${SOFT}`}
-                >
-                  {label} · missing
-                </span>
-              );
-            })}
-          </div>
-          {you && (
-            <p className={`mt-3 text-[12px] ${SOFT}`}>
-              Something missing or wrong? Tell HR and they will fix it.
-            </p>
-          )}
-        </Section>
+        {showPapers && (
+          <Section
+            title={you ? "Your papers" : "Papers"}
+            icon={FileText}
+            tone={tone}
+          >
+            <div className="flex flex-wrap gap-2">
+              {papers.map(([label, doc]) => {
+                const url = driveUrl(doc.file_id);
+                return url ? (
+                  <a
+                    key={label}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    referrerPolicy="no-referrer"
+                    className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-semibold transition-transform hover:-translate-y-0.5"
+                    style={{ color: tone, background: tint(tone, 14) }}
+                  >
+                    <Check className="h-3.5 w-3.5" aria-hidden /> {label}{" "}
+                    <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
+                  </a>
+                ) : (
+                  <span
+                    key={label}
+                    className={`inline-flex items-center rounded-full border border-dashed ${HAIR} px-3.5 py-2 text-[13px] ${SOFT}`}
+                  >
+                    {doc.present
+                      ? `${label} · ${UNVERIFIED}`
+                      : `${label} · missing`}
+                  </span>
+                );
+              })}
+            </div>
+            {you && (
+              <p className={`mt-3 text-[12px] ${SOFT}`}>
+                Something missing or wrong? Tell HR and they will fix it.
+              </p>
+            )}
+          </Section>
+        )}
       </div>
     </div>
   );
@@ -844,14 +865,11 @@ export function filled(c: Card) {
     "bank_account",
     "bank_account_holder",
   ];
-  const docs = ["ktp", "kk", "npwp", "bpjs_kes", "bpjs_tk"];
-  const have =
-    keys.filter((k) => s(c, k)).length +
-    docs.filter((k) => c.docs?.[k]).length +
-    (c.contract?.file_id ? 1 : 0);
-  const missingPapers =
-    docs.filter((k) => !c.docs?.[k]).length + (c.contract?.file_id ? 0 : 1);
-  return { have, total: keys.length + docs.length + 1, missingPapers };
+  const papers = Object.values(c.documents ?? {});
+  const onFile = papers.filter((d) => d.present).length;
+  const have = keys.filter((k) => s(c, k)).length + onFile;
+  const missingPapers = 6 - onFile;
+  return { have, total: keys.length + 6, missingPapers };
 }
 
 /**
@@ -864,12 +882,15 @@ export function PanelCards({
   onPick,
   viewer = "self",
   compact = false,
+  hidePay = false,
 }: {
   me: Me;
   open: Panel;
   onPick: (p: Panel) => void;
   viewer?: Viewer;
   compact?: boolean;
+  /** An off-payroll member's own page: no Pay panel at all. */
+  hidePay?: boolean;
 }) {
   const you = viewer === "self";
   const c = me.card;
@@ -890,41 +911,49 @@ export function PanelCards({
   const big = compact ? "text-[22px] @2xl:text-[28px]" : "text-[32px]";
   return (
     <>
-      <PanelCard id="pay" open={open} onPick={onPick} icon={Wallet} title="Pay">
-        <span>
-          <span
-            className={`block ${big} font-semibold leading-none tracking-tight ${INK}`}
-          >
-            {slip ? IDR.format(slip.net_salary_idr) : "—"}
+      {!hidePay && (
+        <PanelCard
+          id="pay"
+          open={open}
+          onPick={onPick}
+          icon={Wallet}
+          title="Pay"
+        >
+          <span>
+            <span
+              className={`block ${big} font-semibold leading-none tracking-tight ${INK}`}
+            >
+              {slip ? IDR.format(slip.net_salary_idr) : "—"}
+            </span>
+            <span className={`mt-1.5 block text-[13px] ${SOFT}`}>
+              {slip
+                ? `${you ? "Your take-home" : "Take-home"} for ${monthLabel(slipMonth(slip))}`
+                : you
+                  ? "Your first payslip is on its way"
+                  : "No payslip yet"}
+            </span>
           </span>
-          <span className={`mt-1.5 block text-[13px] ${SOFT}`}>
-            {slip
-              ? `${you ? "Your take-home" : "Take-home"} for ${monthLabel(slipMonth(slip))}`
-              : you
-                ? "Your first payslip is on its way"
-                : "No payslip yet"}
-          </span>
-        </span>
-        {me.payslips.length > 1 ? (
-          <PayBars slips={me.payslips} tone={TONE.pay} />
-        ) : (
-          <div className="h-[64px]" />
-        )}
-        <span className="flex flex-wrap gap-2">
-          {diff > 0 && (
-            <Chip tone={TONE.pay}>
-              <TrendingUp className="h-3.5 w-3.5" aria-hidden /> +
-              {IDR.format(diff)} vs {monthOnly(slipMonth(prev!))}
-            </Chip>
+          {me.payslips.length > 1 ? (
+            <PayBars slips={me.payslips} tone={TONE.pay} />
+          ) : (
+            <div className="h-[64px]" />
           )}
-          <Chip tone={TONE.pay}>
-            <PartyPopper className="h-3.5 w-3.5" aria-hidden />{" "}
-            {monthBon.month_count
-              ? `${IDR.format(monthBon.month_total_idr)} bonuses this month`
-              : "No bonus yet this month"}
-          </Chip>
-        </span>
-      </PanelCard>
+          <span className="flex flex-wrap gap-2">
+            {diff > 0 && (
+              <Chip tone={TONE.pay}>
+                <TrendingUp className="h-3.5 w-3.5" aria-hidden /> +
+                {IDR.format(diff)} vs {monthOnly(slipMonth(prev!))}
+              </Chip>
+            )}
+            <Chip tone={TONE.pay}>
+              <PartyPopper className="h-3.5 w-3.5" aria-hidden />{" "}
+              {monthBon.month_count
+                ? `${IDR.format(monthBon.month_total_idr)} bonuses this month`
+                : "No bonus yet this month"}
+            </Chip>
+          </span>
+        </PanelCard>
+      )}
 
       <PanelCard
         id="time"

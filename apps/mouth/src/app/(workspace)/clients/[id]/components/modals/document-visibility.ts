@@ -23,6 +23,8 @@ const DOCUMENT_VISIBILITY_ROLES: ReadonlySet<string> = new Set([
   "direktur",
   "tax supervisor",
   "tax responsible",
+  // owner order 2026-11-15: same access as Tax Lead
+  "tax consultant",
 ]);
 
 export function viewerCanChangeDocumentVisibility(

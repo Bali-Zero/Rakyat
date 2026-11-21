@@ -59,22 +59,18 @@ def is_enabled() -> bool:
 def init_observability(
     service_name: str = "nuzantara-rag",
     *,
-    instrument_anthropic: bool = True,
     instrument_google_genai: bool = True,
     instrument_openai: bool = True,
 ) -> Any | None:
     """Initialize Langfuse singleton + OpenInference instrumentation.
 
     Auto-traces:
-      - Anthropic SDK calls (kept for parity even though prod uses Claude
-        OAuth CLI; see `claude_oauth_client.py` for manual OTEL spans).
       - google-genai SDK calls — covers `GenAIClient.generate_content`,
         `generate_content_stream`, and `generate_structured` (PR #311).
       - OpenAI SDK calls — covers DeepSeek and Ollama clients which both
         ship through `openai.AsyncOpenAI`.
 
     Per-instrumentor opt-out via env var (overrides the kwargs above):
-      `LANGFUSE_INSTRUMENT_ANTHROPIC=false`
       `LANGFUSE_INSTRUMENT_GOOGLE_GENAI=false`
       `LANGFUSE_INSTRUMENT_OPENAI=false`
 
@@ -121,8 +117,6 @@ def init_observability(
             # Each instrumentor is gated by both the kwarg AND a per-env-var
             # so an operator can disable a single broken instrumentor at
             # runtime via `fly secrets set` without redeploy.
-            if instrument_anthropic and _instrument_enabled("ANTHROPIC"):
-                _try_instrument_anthropic()
             if instrument_google_genai and _instrument_enabled("GOOGLE_GENAI"):
                 _try_instrument_google_genai()
             if instrument_openai and _instrument_enabled("OPENAI"):
@@ -170,23 +164,6 @@ def _build_trace_config() -> Any:
         hide_input_text=not trace_messages,
         hide_output_text=not trace_messages,
     ), trace_messages
-
-
-def _try_instrument_anthropic() -> None:
-    """Install OpenInference Anthropic auto-instrumentation (idempotent)."""
-    try:
-        from openinference.instrumentation.anthropic import AnthropicInstrumentor
-
-        config, trace_messages = _build_trace_config()
-        instr = AnthropicInstrumentor()
-        if not instr.is_instrumented_by_opentelemetry:
-            instr.instrument(config=config)
-            logger.info(
-                "langfuse.anthropic_instrumentation.enabled hide_messages=%s",
-                not trace_messages,
-            )
-    except Exception as exc:
-        logger.warning("langfuse.anthropic_instrumentation.failed error=%s", exc)
 
 
 def _try_instrument_google_genai() -> None:

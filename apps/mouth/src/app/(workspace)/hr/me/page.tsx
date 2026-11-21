@@ -12,6 +12,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarHeart, Sparkles } from "lucide-react";
 import { DESK_SERIF } from "@balizero/core";
+import { ChampionPortrait } from "@/components/workspace/ChampionPortrait";
 import { ApiError } from "@/lib/api/error-handler";
 import { getMyHrOverview, type MyHrOverview } from "@/lib/api/hr/hr";
 import {
@@ -69,7 +70,7 @@ export default function MyHrPage() {
     owner: SessionIdentity | null;
     load: Load;
   }>({ owner: null, load: { kind: "loading" } });
-  const [open, setOpen] = useState<Panel>("pay");
+  const [picked, setPicked] = useState<Panel>("pay");
   const load: Load =
     identity && isSameIdentity(slot.owner, identity)
       ? slot.load
@@ -125,6 +126,10 @@ export default function MyHrPage() {
     );
   if (!me) return <div className="h-64" />;
   const c = me.card;
+  // A person whose card says they are not on payroll has no personal payroll to show: no Pay
+  // panel, no payslip or bonus block, and no empty "first payslip" nag.
+  const paid = c.on_payroll !== false;
+  const open: Panel = paid || picked !== "pay" ? picked : "time";
   const ends = daysUntil(c.end_date);
   const first = (c.full_name ?? c.legal_name ?? "").split(/\s+/)[0] || "there";
   const since = tenure(c.hire_date);
@@ -133,14 +138,28 @@ export default function MyHrPage() {
   return (
     <div className="sentry-block max-w-[1180px]" data-sentry-block="">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className={`text-[14px] font-medium ${SOFT}`}>{greeting()},</p>
-          <h1 className={`text-[40px] leading-tight ${INK}`} style={DESK_SERIF}>
-            {first} 👋
-          </h1>
-          <p className={`mt-1 text-[14px] ${SOFT}`}>
-            {[c.role, c.unit, c.employer_entity].filter(Boolean).join(" · ")}
-          </p>
+        <div className="flex items-center gap-4">
+          <ChampionPortrait
+            name={c.full_name ?? c.legal_name ?? "You"}
+            src={c.avatar_url}
+            face
+            sizes="72px"
+            className="h-[72px] w-[72px]"
+          />
+          <div>
+            <p className={`text-[14px] font-medium ${SOFT}`}>{greeting()},</p>
+            <h1
+              className={`text-[40px] leading-tight ${INK}`}
+              style={DESK_SERIF}
+            >
+              {first} 👋
+            </h1>
+            <p className={`mt-1 text-[14px] ${SOFT}`}>
+              {[c.position?.trim() || c.role, c.unit, c.employer_entity]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
         </div>
         {since && (
           <Chip tone={TONE.me}>
@@ -167,8 +186,10 @@ export default function MyHrPage() {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <PanelCards me={me} open={open} onPick={setOpen} />
+      <div
+        className={`grid gap-4 ${paid ? "md:grid-cols-3" : "md:grid-cols-2"}`}
+      >
+        <PanelCards me={me} open={open} onPick={setPicked} hidePay={!paid} />
       </div>
 
       <div

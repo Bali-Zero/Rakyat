@@ -7,7 +7,6 @@ Centralizes all application setup logic including:
 - Observability setup (Prometheus, OpenTelemetry)
 - Middleware registration
 - Service initialization
-- Plugin initialization
 - Router registration
 - Application factory
 """
@@ -22,7 +21,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "get_allowed_origins": ("backend.app.setup.cors_config", "get_allowed_origins"),
     "include_routers": ("backend.app.setup.router_registration", "include_routers"),
     "init_sentry": ("backend.app.setup.sentry_config", "init_sentry"),
-    "initialize_plugins": ("backend.app.setup.plugin_initializer", "initialize_plugins"),
     "initialize_services": ("backend.app.setup.service_initializer", "initialize_services"),
     "register_cors_middleware": (
         "backend.app.setup.cors_config",
@@ -48,7 +46,6 @@ __all__ = [
     "get_allowed_origins",
     "include_routers",
     "init_sentry",
-    "initialize_plugins",
     "initialize_services",
     "register_cors_middleware",
     "register_middleware",

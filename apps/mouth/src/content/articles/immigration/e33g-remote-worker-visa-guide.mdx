@@ -133,20 +133,20 @@ A Limited Stay Permit (ITAS/KITAS) for foreign nationals who:
 
 ### E33G vs Tourist Visa
 
-Many digital nomads in Bali operate on tourist visas (B211A or E-VOA extensions), but this comes with risks:
+Many digital nomads in Bali start by visiting on a C1 Tourist Visa or e-VOA (B1) extensions, but working — even remotely — on short-stay visit visas creates compliance risks:
 
-| Aspect                     | E33G Remote Worker   | Tourist Visa (B211A)          |
-| -------------------------- | -------------------- | ----------------------------- |
-| **Legal to work remotely** | ✅ Yes               | ❌ No (gray area)             |
-| **Duration**               | 1 year (6 yr max)    | Max 180 days                  |
-| **Cost (offshore)**        | IDR 13,000,000       | ~IDR 5,500,000 (6 extensions) |
-| **Renewable**              | Yes, indefinitely    | No (must leave Indonesia)     |
-| **Can sponsor family**     | Yes                  | No                            |
-| **Bank account**           | Easy to open         | Very difficult                |
-| **Risk of deportation**    | Very low             | Medium (if caught working)    |
-| **Exit requirement**       | No (re-entry permit) | Must leave every 180 days     |
+| Aspect                     | E33G Remote Worker   | Tourist Visa (C1)                                 |
+| -------------------------- | -------------------- | ------------------------------------------------- |
+| **Legal to work remotely** | ✅ Yes               | ❌ No (gray area)                                 |
+| **Duration**               | 1 year (renewable)   | 60 days initial + 2x60d ext (max 180 days total)  |
+| **Bali Zero Price (Offshore)** | IDR 13,000,000   | IDR 5,700,000 (initial 2.3M + 2x1.7M extensions)  |
+| **Renewable**              | Yes (onshore extend IDR 10,000,000) | No (max 180 days, then must exit)   |
+| **Can sponsor family**     | Yes                  | No                                                |
+| **Bank account**           | Easy to open         | Very difficult                                    |
+| **Risk of deportation**    | Very low             | Medium (if caught working)                        |
+| **Exit requirement**       | No (re-entry included) | Must leave at or before 180 days                |
 
-**Reality check:** While many nomads work on tourist visas in Bali, immigration crackdowns have increased. E33G provides legal peace of mind and is more cost-effective long-term.
+**Reality check:** While many nomads arrive on C1 or B1 visit visas, immigration crackdowns have increased. E33G provides full legal standing to work remotely for a foreign employer and costs less hassle long-term.
 
 ---
 
@@ -186,7 +186,7 @@ Many digital nomads in Bali operate on tourist visas (B211A or E-VOA extensions)
       currency: "USD",
       note: eligible
         ? `✅ You qualify! Your annual income of USD ${annual.toLocaleString()} meets the USD 60,000 minimum for E33G.`
-        : `❌ Income too low. You need USD ${shortfall.toLocaleString()} more per year. Consider B211A tourist visa (6 months max) or increasing your income.`
+        : `❌ Income too low. You need USD ${shortfall.toLocaleString()} more per year. Consider a C1 Tourist Visa (60 days + 2x60d extensions up to 180 days max, no remote work authorization) or increasing foreign income.`
     };
 
 }}
@@ -224,7 +224,7 @@ Violation = visa revocation + possible deportation.
 ## E33G vs Working KITAS Comparison
 
 <ComparisonTable
-  title="KITAS Comparison: E33G vs E25B vs E28A"
+  title="KITAS Comparison: E33G vs E23 vs E28A"
   description="Which KITAS is right for remote workers?"
   items={[
     {
@@ -236,24 +236,24 @@ Violation = visa revocation + possible deportation.
         "RPTKA Required": "No",
         "DKP-TKA Fee": "No",
         "Income Requirement": "USD 60K/year",
-        "Valid For": "1 year, renewable to 6",
+        "Valid For": "1 year, renewable",
         "Can Work for Indonesian Companies": "No",
-        "Bali Zero Price (Offshore)": "IDR 13,000,000",
+        "Bali Zero Price (Offshore)": "IDR 13,000,000 (Onshore IDR 14,000,000)",
       },
       highlight: true,
     },
     {
-      name: "E25B Director KITAS",
-      subtitle: "Company directors/commissioners",
+      name: "E23 Working KITAS (Director/Employee)",
+      subtitle: "Company directors & foreign staff",
       values: {
-        "Visa Code": "E25B",
+        "Visa Code": "E23",
         "Company Setup Required": "Yes (PT/PT PMA)",
         "RPTKA Required": "Yes",
         "DKP-TKA Fee": "Yes (USD 100/month)",
         "Income Requirement": "None",
-        "Valid For": "1 year, renewable to 6",
-        "Can Work for Indonesian Companies": "Yes (your company)",
-        "Bali Zero Price (Offshore)": "IDR 34,500,000",
+        "Valid For": "1 year, renewable",
+        "Can Work for Indonesian Companies": "Yes (sponsoring company)",
+        "Bali Zero Price (Offshore)": "IDR 34,500,000 (Onshore IDR 36,000,000)",
       },
     },
     {
@@ -264,10 +264,10 @@ Violation = visa revocation + possible deportation.
         "Company Setup Required": "Yes (PT PMA)",
         "RPTKA Required": "No (pure investor)",
         "DKP-TKA Fee": "No (pure investor)",
-        "Income Requirement": "IDR 10B shareholding",
+        "Income Requirement": "IDR 10B own shareholding",
         "Valid For": "2 years",
-        "Can Work for Indonesian Companies": "No (unless also have RPTKA)",
-        "Bali Zero Price (Offshore)": "IDR 17,000,000",
+        "Can Work for Indonesian Companies": "No (unless also holding RPTKA)",
+        "Bali Zero Price (Offshore)": "IDR 17,000,000 (Onshore IDR 19,000,000)",
       },
     },
   ]}
@@ -278,15 +278,15 @@ Violation = visa revocation + possible deportation.
 - You work remotely for foreign employer/clients only
 - You don't want to set up an Indonesian company
 - You earn USD 60K+/year
-- You want the cheapest long-term visa
+- You want the cleanest long-term remote-worker visa
 - You want to avoid RPTKA bureaucracy
 
-**When to choose E25B:**
+**When to choose E23 Working KITAS:**
 
-- You run a business IN Indonesia
+- You run or manage operational business IN Indonesia
 - You need to work for an Indonesian company
 - You want to hire Indonesian employees
-- You're opening a restaurant, villa, shop, etc.
+- Your PT PMA personal shareholding is below IDR 10B or you perform operational duties
 
 ---
 
@@ -524,8 +524,8 @@ If you want to bring your family:
 | ------------------------ | ----------- | ------------------------------------ |
 | E31 Spouse (Offshore)    | 11,000,000  | Your husband/wife                    |
 | E31 Spouse (Extend)      | 9,000,000   | Renewal                              |
-| E31 Dependent (Offshore) | 11,000,000  | Children under 18 or 25 (if student) |
-| E31 Dependent (Extend)   | 11,000,000  | Renewal                              |
+| E31 Dependent (Offshore) | 11,000,000             | Children under 18 or 25 (if student) |
+| E31 Dependent (Extend)   | 9,000,000 (1Y) / 15,000,000 (2Y) | Renewal (Onshore 1Y / 2Y)            |
 
 ---
 
@@ -618,7 +618,7 @@ If you stay in Indonesia for **more than 183 days in a 12-month period**, you be
 
 - E33G income MUST come from foreign sources only
 - Even if paid in USD, Indonesian clients = violation
-- Need E25B Working KITAS to work for Indonesian entities
+- Need E23 Working KITAS to work for Indonesian entities
 
 ### 2. Overstaying VITAS
 
@@ -701,30 +701,30 @@ Same as initial application:
   suggestedQuestions={[
     "Can I work for both US and Indonesian clients on E33G?",
     "What happens if my income drops below USD 60K?",
-    "Can I switch from B211A tourist visa to E33G while in Indonesia?",
+    "Can I switch from C1 tourist visa to E33G while in Indonesia?",
     "Do I need health insurance for E33G?",
   ]}
 />
 
 ### Can I switch from tourist visa to E33G while in Indonesia?
 
-**Yes, but it's complicated:**
+**Yes, via onshore conversion (`Altus/Onshore`):**
 
-1. **Onshore conversion** (inside Indonesia) costs IDR 14M (vs IDR 13M offshore)
-2. You need to be on a **long-term visa** (B211A with extensions), not a short-term VOA
+1. **Onshore conversion** (inside Indonesia) costs IDR 14,000,000 (vs IDR 13,000,000 offshore)
+2. You need to be on an eligible extendable visit visa (**C1**, 60 days + up to 2x60d extensions), not an expired stay
 3. Processing can take longer (2-3 weeks)
-4. **Easier option:** Exit Indonesia, apply for E33G from abroad, re-enter with VITAS
+4. **Easier option:** Exit Indonesia, apply for E33G offshore, re-enter with e-Visa
 
-**Bali Zero recommendation:** If you're on a tourist visa and want E33G, do a visa run (Singapore, KL, Bangkok) and apply for E33G offshore. Cheaper and faster.
+**Bali Zero recommendation:** If you're on a short stay and want E33G, check whether offshore or onshore conversion (`IDR 13M` vs `IDR 14M`) fits your travel plans best.
 
 ### What if I want to work for BOTH foreign and Indonesian clients?
 
-You need **two separate arrangements:**
+You need **two separate compliant arrangements:**
 
-1. **E33G for foreign income** - Keep working for US/EU/other clients
-2. **PT + E25B for Indonesian income** - Set up Indonesian company, get working KITAS
+1. **E33G for foreign income** - Work remotely for employers/clients outside Indonesia
+2. **PT PMA + E23 Working KITAS for Indonesian income** - Set up Indonesian company and hold proper RPTKA work authorization
 
-**Reality:** Most nomads just keep Indonesian clients as "foreign clients" (invoice through their home country company). But this is technically a gray area. If you're earning significant Indonesian income, set up a PT and get E25B.
+**Compliance note:** Never invoice Indonesian entities directly through an E33G. If you earn local Indonesian income, establish a company and obtain an E23 Working KITAS.
 
 ### Can I bring my partner (unmarried)?
 
@@ -736,7 +736,7 @@ You need **two separate arrangements:**
 **Unmarried partners** must apply for their own visa:
 
 - E33G (if they also earn USD 60K+/year remotely)
-- B211A tourist visa (max 180 days)
+- C1 tourist visa (60 days + 2x60d extensions up to 180 days max)
 - Or another visa type they qualify for
 
 **Bali Zero cannot sponsor unmarried partners as "dependents".**
@@ -745,7 +745,7 @@ You need **two separate arrangements:**
 
 **Yes, for renewal.**
 
-When you renew E33G:
+When you extend E33G (IDR 10,000,000 extension fee):
 
 - Must provide updated bank statements (last 6 months)
 - Must show continued income of USD 60K+/year
@@ -753,29 +753,29 @@ When you renew E33G:
 
 **What if income drops?**
 
-- Consider B211A tourist visa (6 months max)
+- Consider C1 tourist visa (60 days + 2x60d up to 180 days max, tourism only)
 - Or leave Indonesia and return when income recovers
-- Or switch to E28A investor KITAS (if you invest IDR 10B+ in PT PMA)
+- Or switch to E28A investor KITAS (if you hold IDR 10B+ own shares in a PT PMA)
 
 ---
 
 ## E33G vs Other Long-Term Options
 
-### Comparison: E33G vs B211A vs E25B vs E28A
+### Comparison: E33G vs C1 vs E23 vs E28A
 
-| Visa Type              | Duration     | Cost      | Work Allowed       | Company Needed  | Income Required |
-| ---------------------- | ------------ | --------- | ------------------ | --------------- | --------------- |
-| **E33G Remote Worker** | 1 yr (6 max) | IDR 13M   | Remote (foreign)   | No              | USD 60K/year    |
-| B211A Tourist          | Max 180 days | ~IDR 5.5M | No (gray area)     | No              | None            |
-| E25B Director KITAS    | 1-2 years    | IDR 34.5M | Yes (your company) | Yes (PT/PT PMA) | None            |
-| E28A Investor KITAS    | 2 years      | IDR 17M   | No (pure investor) | Yes (PT PMA)    | IDR 10B shares  |
+| Visa Type              | Duration     | Bali Zero Fee (Offshore) | Work Allowed       | Company Needed  | Income / Capital Required |
+| ---------------------- | ------------ | ------------------------ | ------------------ | --------------- | ------------------------- |
+| **E33G Remote Worker** | 1 yr (extend IDR 10M) | IDR 13,000,000 | Remote (foreign)   | No              | USD 60K/year              |
+| C1 Tourist Visa        | 60d + 2x60d (180d max) | IDR 2,300,000 (+1.7M/ext) | No | No | None                      |
+| E23 Working KITAS      | 1 year       | IDR 34,500,000           | Yes (sponsoring co.) | Yes (PT/PT PMA) | RPTKA + DKP-TKA          |
+| E28A Investor KITAS    | 2 years      | IDR 17,000,000           | No salaried role (investor/director checks apply) | Yes (PT PMA) | IDR 10B own shares |
 
 **When to choose each:**
 
-- **E33G:** Remote worker, don't want to set up company, earn USD 60K+
-- **B211A:** Short-term (< 6 months), budget-conscious, testing Bali
-- **E25B:** Running business IN Indonesia, need to hire locals, want to work for Indonesian clients
-- **E28A:** Have IDR 10B+ to invest in PT PMA, want pure investor status
+- **E33G:** Remote worker for foreign employers/clients only, earning USD 60K+
+- **C1:** Short-term visit (< 180 days total), tourism/meetings only, no remote work guarantee
+- **E23:** Running or working operationally IN Indonesia with Indonesian employer/entity
+- **E28A:** Holding IDR 10B+ personal shares in your sponsoring PT PMA
 
 ---
 

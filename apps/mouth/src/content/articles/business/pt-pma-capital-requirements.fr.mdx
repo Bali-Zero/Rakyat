@@ -75,7 +75,7 @@ ogImage: "/static/insights/business/pt-pma-capital-requirements.jpg"
 ogType: "article"
 twitterCard: "summary_large_image"
 locale: "fr"
-source_sha256: "4594685ab4c07a3bb7ed024d8a95a604169642966cf99d63da35e7e4ea92be85"
+source_sha256: "2fc8ab494a6a3674b9608fd2f03f61cafd29d70b92f71926b1473d337e35a30d"
 ---
 
 import {
@@ -93,16 +93,13 @@ L'investissement minimum de **10 milliards IDR** (environ 625 000 $ USD) pour un
 ## Les deux chiffres clés
 
 | Exigence | Montant | Ce que cela signifie |
-| -------------------- | ------------------ | Investissement total prévu sur la durée de vie de l'entreprise |
-| **Investissement total** | 10 milliards IDR min | Investissement total prévu sur la durée de vie de l'entreprise |
-| **Capital versé** | 10 milliards IDR min | Espèces déposées sur le compte bancaire de l'entreprise |
+| -------------------- | ----------------------------- | ------------------------------------------------------------------------------------ |
+| **Investissement total** | **> 10 milliards IDR** | Plan d'investissement hors terrains/bâtiments par KBLI à 5 chiffres / site (BKPM 5/2025) |
+| **Capital versé** | **2,5 milliards IDR / société** | Capital minimum libéré au niveau de l'entreprise à la création (BKPM Reg. 5/2025 Art. 26) |
 
-<InfoCard variant="important" title="Les deux doivent être respectés">
+<InfoCard variant="important" title="Deux règles distinctes (Règl. BKPM 5/2025)">
 
-Conformément à la réglementation en vigueur, **à la fois** le plan
-d'investissement total ET le capital versé doivent être d'au moins 10
-milliards IDR. Cela a changé par rapport aux règles précédentes où le capital
-versé pouvait être inférieur.
+Selon le **Règlement BKPM n° 5/2025**, le **capital versé minimum** est de **2,5 milliards IDR par société** (quel que soit le nombre d'actionnaires, bloqué 12 mois sauf dépenses opérationnelles documentées), tandis que l'**engagement d'investissement total** demeure **supérieur à 10 milliards IDR** (hors terrains et bâtiments dans la plupart des secteurs).
 
 </InfoCard>
 
@@ -157,9 +154,9 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
       name: "Terrains et bâtiments",
       subtitle: "Si propriété de l'entreprise",
       values: {
-        Type: "Actifs",
-        "Counts?": "Oui",
-        Documentation: "Accords d'achat, évaluations",
+        Type: "Immobilier",
+        "Counts?": "Non (exclu du seuil >10 Mrd IDR dans les secteurs ordinaires)",
+        Documentation: "Suivi séparé dans LKPM (hors secteurs immobiliers/zones)",
       },
     },
   ]}
@@ -171,38 +168,38 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
 
 <Calculator
   title="Planificateur de structure d'investissement"
-  description="Planifiez comment atteindre 10 milliards IDR d'investissement"
+  description="Planifiez le capital versé (2,5 Mrd IDR/société) et l'investissement > 10 Mrd IDR BKPM (hors terrains/bâtiments)"
   fields={[
     {
       id: "cash",
-      label: "Espèces à déposer (Capital social)",
+      label: "Capital versé / Espèces (Min 2,5 Mrd IDR par société)",
       type: "number",
-      defaultValue: 10000000000,
+      defaultValue: 2500000000,
       min: 0,
       step: 500000000,
       suffix: "IDR"
     },
     {
       id: "equipment",
-      label: "Équipement et machinerie",
+      label: "Équipements, Tech et Machines",
       type: "number",
-      defaultValue: 0,
+      defaultValue: 4000000000,
       min: 0,
       step: 100000000,
       suffix: "IDR"
     },
     {
       id: "working",
-      label: "Fonds de roulement (Année 1)",
+      label: "Fonds de roulement et exploitation (Année 1+)",
       type: "number",
-      defaultValue: 0,
+      defaultValue: 4000000000,
       min: 0,
       step: 100000000,
       suffix: "IDR"
     },
     {
       id: "property",
-      label: "Propriété/Terrain",
+      label: "Propriété/Terrain (Exclu du plafond >10 Mrd IDR BKPM)",
       type: "number",
       defaultValue: 0,
       min: 0,
@@ -216,30 +213,33 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
     const working = Number(values.working);
     const property = Number(values.property);
 
-    const total = cash + equipment + working + property;
-    const required = 10000000000;
-    const shortage = Math.max(0, required - total);
-    const paidUpShortage = Math.max(0, required - cash);
+    const qualifyingInvestment = cash + equipment + working;
+    const minInvestment = 10000000000;
+    const minPaidUp = 2500000000;
+    const shortage = Math.max(0, minInvestment - qualifyingInvestment);
+    const paidUpShortage = Math.max(0, minPaidUp - cash);
 
     const breakdown = [
-      { label: "Capital social (Espèces)", amount: cash },
-      { label: "Équipement et machinerie", amount: equipment },
+      { label: "Capital versé (Espèces)", amount: cash },
+      { label: "Équipements et machines", amount: equipment },
       { label: "Fonds de roulement", amount: working },
-      { label: "Propriété/Terrain", amount: property },
-      { label: "Plan d'investissement total", amount: total }
+      { label: "Investissement éligible BKPM (hors terrains/bâtiments)", amount: qualifyingInvestment },
+      { label: "Propriété/Terrain (Exclu du seuil >10 Mrd IDR)", amount: property }
     ];
 
     let note = "";
-    if (total >= required && cash >= required) {
-      note = "Exigences respectées !";
-    } else if (cash < required) {
-      note = `Le capital versé est insuffisant de IDR ${(paidUpShortage/1000000000).toFixed(1)}B. Doit déposer au minimum 10 milliards IDR.`;
-    } else if (total < required) {
-      note = `L'investissement total est insuffisant de IDR ${(shortage/1000000000).toFixed(1)}B`;
+    if (cash < minPaidUp) {
+      note = `Capital versé insuffisant de ${(paidUpShortage/1000000000).toFixed(2)} Mrd IDR. Minimum 2,5 Mrd IDR par société requis (BKPM 5/2025 Art. 26).`;
+    } else if (qualifyingInvestment <= minInvestment) {
+      note = qualifyingInvestment === minInvestment
+        ? "Ajoutez > 0 IDR au-delà de 10 Mrd IDR (BKPM exige STRICTEMENT plus de 10 Mrd IDR hors terrains et bâtiments)."
+        : `Investissement éligible BKPM (hors terrains/bâtiments) insuffisant de > ${(shortage/1000000000).toFixed(2)} Mrd IDR.`;
+    } else {
+      note = "Critères respectés : capital versé (>= 2,5 Mrd IDR) et investissement > 10 Mrd IDR (hors terrains/bâtiments) !";
     }
 
     return {
-      total,
+      total: qualifyingInvestment,
       breakdown,
       currency: "IDR",
       note
@@ -253,21 +253,21 @@ Votre plan d'investissement de 10 milliards IDR peut inclure :
 ## Questions courantes sur le capital
 
 <InfoCard variant="note" title="FAQ">
-**Q: Ai-je besoin de 10 milliards IDR sur mon compte bancaire dès le premier jour ?**
-R: Oui, un capital versé de 10 milliards IDR doit être déposé pour ouvrir le compte bancaire de l'entreprise et finaliser l'enregistrement.
+**Q: Ai-je besoin de 10 milliards IDR en espèces sur mon compte bancaire dès le premier jour ?**
+R: Non. Selon le règlement BKPM 5/2025 Art. 26, le capital versé minimum est de **2,5 milliards IDR par société** (bloqué 12 mois sauf dépenses opérationnelles documentées). Le solde de l'engagement d'investissement (> 10 milliards IDR, hors terrains/bâtiments) peut être déployé progressivement en équipements, fonds de roulement et coûts opérationnels déclarés via LKPM.
 
 **Q: Puis-je l'utiliser après le dépôt ?**
-R: Oui, une fois déposés en tant que capital social, vous utilisez ces fonds pour les opérations commerciales.
+R: Le capital versé est soumis à une période de blocage de 12 mois, sauf décaissement pour des actifs ou opérations commerciales légitimes et documentés de la PT PMA.
 
-**Q: Que faire si je ne peux pas atteindre 10 milliards IDR ?**
+**Q: Que faire si je ne peux pas atteindre > 10 milliards IDR ?**
 R: Les options incluent :
 
-- Joint venture avec un partenaire local
-- Structure d'entreprise différente (bureau de représentation, etc.)
-- Attendre d'avoir un capital suffisant
+- Joint-venture / PT PMDN avec un partenaire indonésien
+- Bureau de représentation (KPPA — sans revenus locaux)
+- Reporter la création jusqu'à ce qu'un plan > 10 milliards IDR soit viable
 
 **Q: Existe-t-il un moyen de contourner le minimum ?**
-R: Il n'y a aucun moyen légitime. La réglementation est claire sur le minimum de 10 milliards IDR pour une PT PMA.
+R: Aucun moyen légitime. La réglementation impose clairement 2,5 milliards IDR de capital versé par société et > 10 milliards IDR d'investissement (hors terrains/bâtiments) pour une PT PMA.
 
 </InfoCard>
 

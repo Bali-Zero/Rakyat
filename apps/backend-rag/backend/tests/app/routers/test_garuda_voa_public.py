@@ -418,6 +418,56 @@ def test_decline_case_never_carries_a_price_or_deadline(monkeypatch) -> None:
     assert "published_filing_deadline" not in payload
 
 
+@pytest.mark.parametrize("iso3", ["KOR", "JPN", "BRA", "ZAF"])
+def test_voa_eligible_iso3_nationalities_beyond_top_9_return_201_accept(
+    monkeypatch, iso3: str
+) -> None:
+    """Regression P17 / NC-09: all 97 decree-listed ISO-3 codes pass schema validation."""
+    from backend.services.garuda_flow import freshness, pricing
+
+    monkeypatch.setattr(
+        pricing,
+        "price_catalogue_freshness",
+        lambda *, today, **_: freshness.FreshnessReport(
+            source="price_catalogue",
+            verdict=freshness.FreshnessVerdict.FRESH,
+            stamp="2026-01-01",
+            age_days=0,
+            max_age_days=freshness.MAX_AGE_DAYS["price_catalogue"],
+            detail="synthetic fresh",
+        ),
+    )
+    monkeypatch.setenv("GARUDA_PUBLIC_ENABLED", "true")
+    app = _app()
+    _override_store(app, _FakeStore())
+    response = TestClient(app).post(
+        "/api/visa/voa/eligibility-checks",
+        json={**VALID_ISSUANCE_BODY, "nationality": iso3},
+        headers={"Idempotency-Key": f"{VALID_IDEMPOTENCY_KEY}-{iso3}"},
+    )
+    assert response.status_code == 201
+    assert response.json()["verdict"] == "ACCEPT"
+
+
+@pytest.mark.parametrize("iso3", ["NGA", "AFG", "PAK"])
+def test_non_voa_iso3_nationalities_return_201_decline_never_422(
+    monkeypatch, iso3: str
+) -> None:
+    """Regression P16 / NC-09: non-VOA countries submit real ISO-3 codes and get 201 DECLINE."""
+    monkeypatch.setenv("GARUDA_PUBLIC_ENABLED", "true")
+    app = _app()
+    _override_store(app, _FakeStore())
+    response = TestClient(app).post(
+        "/api/visa/voa/eligibility-checks",
+        json={**VALID_ISSUANCE_BODY, "nationality": iso3},
+        headers={"Idempotency-Key": f"{VALID_IDEMPOTENCY_KEY}-{iso3}"},
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["verdict"] == "DECLINE"
+    assert "NATIONALITY_NOT_ELIGIBLE" in payload["reason_codes"]
+
+
 # ============================================================
 # GET — non-enumerating result-not-found
 # ============================================================

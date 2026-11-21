@@ -27,10 +27,7 @@ _ADDR = "completed.process.probe@example.com"
 
 
 def _make_service() -> CompletedProcessService:
-    pool = MagicMock()
-    with patch("backend.services.crm.completed_process_service.ClientStorageProvisioner"):
-        svc = CompletedProcessService(pool)
-    return svc
+    return CompletedProcessService(MagicMock())
 
 
 class _FakeResponse:
@@ -128,9 +125,11 @@ async def test_innocence_brevo_failure_keeps_the_non_pii_diagnostic_text(caplog)
 
 
 # --- CALLER (trigger_on_completed) GUILT + INNOCENCE ---
+#
+# The client mail is gone (the listener sends the only one); the remaining failure path is the
+# team mail, reached when the client has no email on file.
 
-
-_PRACTICE_NO_TEAM_LEADER = {"client_id": 1, "assigned_to": None, "created_by": None}
+_PRACTICE = {"id": 99, "client_id": 1, "assigned_to": _ADDR, "created_by": None}
 
 
 def _make_caller_service(client_data: dict, practice_data: dict) -> CompletedProcessService:
@@ -142,39 +141,14 @@ def _make_caller_service(client_data: dict, practice_data: dict) -> CompletedPro
 
 
 @pytest.mark.asyncio
-async def test_send_completion_email_success_log_does_not_leak_the_client_address(caplog):
-    """The success log this C2 fix targets (~L296) lives INSIDE
-    _send_completion_email, not in the trigger_on_completed caller — it
-    fires right after _send_with_brevo_fallback returns, so it needs the
-    same email-infra patching as that method's own tests."""
-    svc = _make_service()
-    client = AsyncMock()
-    client.post = AsyncMock(return_value=_FakeResponse())
-    p1, p2, p3, p4 = _patch_email_infra(client)
-    with p1, p2, p3, p4, caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
-        await svc._send_completion_email(
-            client_email=_ADDR,
-            client_name="Alice",
-            practice_data={"id": 1, "client_id": 1},
-            documents=[],
-        )
-    joined = " ".join(r.getMessage() for r in caplog.records)
-    assert _ADDR not in joined
-    assert "completed.process.probe" not in joined
-    assert redact_identifier_for_log(_ADDR) in joined
-    assert "Completion email sent to client" in joined
-
-
-@pytest.mark.asyncio
 async def test_caller_except_log_does_not_leak_the_address_or_raw_exception_text(caplog):
-    client_data = {"id": 1, "email": _ADDR, "full_name": "Alice"}
-    svc = _make_caller_service(client_data, _PRACTICE_NO_TEAM_LEADER)
-    svc._send_completion_email = AsyncMock(
+    svc = _make_caller_service({"id": 1, "email": None, "full_name": "Alice"}, _PRACTICE)
+    svc._send_team_leader_completion_notification = AsyncMock(
         side_effect=RuntimeError(f"550 mailbox {_ADDR} rejected")
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         result = await svc.trigger_on_completed(practice_id=99, triggered_by="staff@balizero.com")
-    assert result["client_notified"] is False
+    assert result["team_notified"] is False
     joined = " ".join(r.getMessage() for r in caplog.records)
     assert _ADDR not in joined
     assert "completed.process.probe" not in joined
@@ -183,10 +157,28 @@ async def test_caller_except_log_does_not_leak_the_address_or_raw_exception_text
 
 @pytest.mark.asyncio
 async def test_caller_innocence_keeps_the_non_pii_exception_text(caplog):
-    client_data = {"id": 1, "email": _ADDR, "full_name": "Alice"}
-    svc = _make_caller_service(client_data, _PRACTICE_NO_TEAM_LEADER)
-    svc._send_completion_email = AsyncMock(side_effect=RuntimeError("connection reset by peer"))
+    svc = _make_caller_service({"id": 1, "email": None, "full_name": "Alice"}, _PRACTICE)
+    svc._send_team_leader_completion_notification = AsyncMock(
+        side_effect=RuntimeError("connection reset by peer")
+    )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         await svc.trigger_on_completed(practice_id=99, triggered_by="staff@balizero.com")
     joined = " ".join(r.getMessage() for r in caplog.records)
     assert "connection reset by peer" in joined
+
+
+@pytest.mark.asyncio
+async def test_outer_failure_log_does_not_leak_the_address(caplog):
+    svc = _make_caller_service({"id": 1, "email": None, "full_name": "Alice"}, _PRACTICE)
+    svc._log_activity = AsyncMock(side_effect=RuntimeError(f"insert failed for {_ADDR}"))
+    with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
+        result = await svc.trigger_on_completed(practice_id=99, triggered_by="staff@balizero.com")
+    assert result["success"] is False
+    # caplog.text is the FULLY formatted output, exception info and traceback included: the
+    # production formatter prints those too, and getMessage() alone would miss them.
+    assert _ADDR not in caplog.text
+    assert "completed.process.probe" not in caplog.text
+    assert "insert failed" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "Traceback" not in caplog.text
+    assert _ADDR not in result["error"]

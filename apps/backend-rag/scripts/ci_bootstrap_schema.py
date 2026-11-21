@@ -596,6 +596,40 @@ def main() -> int:
         )
     print("[bootstrap] hr_employees legacy table ensured (for Migration 354)")
 
+    # hr_bonus_ledger: same story (legacy migration_068). Migration 357 alters it
+    # with plain ALTERs that must fail loudly when the table is missing. DDL mirrors
+    # migration_068 except that payroll_period_id / bonus_rate_id are bare integers
+    # (their parent tables hr_payroll_periods / hr_bonus_rates are not bootstrapped).
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS hr_bonus_ledger (
+                    id              BIGSERIAL PRIMARY KEY,
+                    practice_id     INTEGER NOT NULL REFERENCES practices(id) ON DELETE RESTRICT,
+                    employee_id     INTEGER NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
+                    payroll_period_id INTEGER,
+                    bonus_rate_id   INTEGER,
+                    practice_type_code VARCHAR(50) NOT NULL,
+                    amount_idr      BIGINT NOT NULL CHECK (amount_idr >= 0),
+                    status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    awarded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    awarded_by      VARCHAR(36) REFERENCES team_members(id) ON DELETE SET NULL,
+                    approved_by     VARCHAR(36) REFERENCES team_members(id) ON DELETE SET NULL,
+                    approved_at     TIMESTAMPTZ,
+                    notes           TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_hr_bonus_practice_emp UNIQUE (practice_id, employee_id),
+                    CONSTRAINT ck_hr_bonus_status CHECK (
+                        status IN ('pending', 'approved', 'rejected', 'paid', 'reversed')
+                    )
+                )
+                """
+            )
+        )
+    print("[bootstrap] hr_bonus_ledger legacy table ensured (for Migration 357)")
+
     # practice_types prod-only divergence.
     #
     # The SQLModel `PracticeType` in `backend/app/modules/crm/models.py` declares

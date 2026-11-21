@@ -64,6 +64,7 @@ def conn() -> FakeConn:
 @pytest.fixture
 def client(conn: FakeConn, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(cr, "is_crm_admin", lambda user: True)
+    monkeypatch.setattr(cr, "can_create_company", lambda user: True)
     monkeypatch.setattr(cr, "verify_client_access", AsyncMock())
     app = FastAPI()
     app.include_router(cr.router)

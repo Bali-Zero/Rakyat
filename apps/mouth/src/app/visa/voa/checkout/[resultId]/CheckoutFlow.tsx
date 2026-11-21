@@ -10,6 +10,17 @@ import { VOA_PRIMARY_ACTION_STYLE } from "../../voa-action-style";
 import { useCheckout } from "./useCheckout";
 import type { Applicant } from "../../orders/types";
 
+function isSafeProviderCheckoutUrl(
+  url: string | null | undefined,
+): url is string {
+  if (!url) return false;
+  try {
+    return new URL(url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * GARUDA VOA — checkout (`/visa/voa/checkout/{resultId}`). Owner decision 7(b): ONE
  * all-inclusive price, never split into fee + PNBP anywhere the customer can see. This
@@ -61,14 +72,18 @@ export function CheckoutFlow({
     }
   }, [resultId]);
 
-  // A created order never stays on this page — awaiting_payment hands off to the
-  // provider, anything else (already paid/failed/expired/refunded on replay) hands off
-  // to the tracker, which is the only place order state is rendered from. This page
-  // must never itself render a success state off a 201 response.
+  // A created order never stays on this page — awaiting_payment with a valid
+  // provider https:// checkout URL hands off to the provider, while a resume
+  // without a safe provider URL (e.g. checkout_url: null or an invalid scheme)
+  // or any other state (paid/failed/expired/refunded) hands off cleanly to the
+  // tracker, which is the only place order state is rendered from.
   useEffect(() => {
     if (state.step !== "created") return;
     const { order } = state;
-    if (order.order_state === "awaiting_payment" && order.checkout_url) {
+    if (
+      order.order_state === "awaiting_payment" &&
+      isSafeProviderCheckoutUrl(order.checkout_url)
+    ) {
       window.location.href = order.checkout_url;
       return;
     }

@@ -63,32 +63,12 @@ from backend.services.intake.client_enricher import (
     _unwrap,
     enrich_client_from_extracted_fields,
 )
+from backend.services.intake.closed_taxonomy import COMPLETE_DOCUMENT_CATEGORY_MAP
 from backend.services.intake.enqueue import PIPELINE_VERSION
 
 logger = logging.getLogger("zantara.intake.writer")
 
-DOCUMENT_CATEGORY_MAP = {
-    "passport": "immigration",
-    "kitas": "immigration",
-    "visa": "immigration",
-    "itap": "immigration",
-    "itk": "immigration",
-    "ktp": "personal",
-    "family_card": "family",
-    "birth_certificate": "family",
-    "marriage_certificate": "family",
-    "payment_receipt": "other",
-    "travel_ticket": "other",
-    "bank_statement": "other",
-    "medical_insurance": "other",
-    "npwp": "tax",
-    "skt": "tax",
-    "nib": "pma",
-    "oss": "pma",
-    "akta_pendirian": "pma",
-    "profil_perseroan": "pma",
-    "sk_kemenkumham": "pma",
-}
+DOCUMENT_CATEGORY_MAP = dict(COMPLETE_DOCUMENT_CATEGORY_MAP)
 
 # Pipeline tags whose documents are written STAFF-ONLY: ``documents.client_visible``
 # is set to false in the SAME INSERT (locally here, and on the CRM through the
@@ -201,6 +181,9 @@ class CommitPlan:
     entity_confidence: float | None = None
     extraction_model: str | None = None
     validation_passed: bool | None = None
+    company_id: int | None = None
+    original_company_id: int | None = None
+    existing_company_doc_id: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -224,6 +207,8 @@ class CommitResult:
     would_write: list[dict[str, Any]] = field(default_factory=list)
     block_reasons: list[str] = field(default_factory=list)
     error: str | None = None
+    company_id: int | None = None
+    company_doc_id: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -267,6 +252,60 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _coerce_optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+", value.strip()):
+        return int(value.strip())
+    return None
+
+
+_DEFAULT_DOC_NUMBER_KEYS: tuple[str, ...] = (
+    "document_number",
+    "nib",
+    "npwp",
+    "npwp_number",
+    "akta_number",
+    "sk_number",
+    "passport_number",
+    "kitas_number",
+)
+_DOC_NUMBER_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "nib": ("document_number", "nib"),
+    "oss": ("document_number", "nib"),
+    "oss_certificate": ("document_number", "nib"),
+    "npwp": ("document_number", "npwp", "npwp_number"),
+    "npwp_company": ("document_number", "npwp", "npwp_number"),
+    "skt": ("document_number", "npwp", "npwp_number"),
+    "akta_pendirian": ("document_number", "akta_number"),
+    "profil_perseroan": ("document_number", "akta_number"),
+    "sk_kemenkumham": ("document_number", "sk_number"),
+    "passport": ("document_number", "passport_number"),
+    "itas": ("document_number", "kitas_number"),
+    "kitas": ("document_number", "kitas_number"),
+    "itap": ("document_number", "kitas_number"),
+    "itk": ("document_number", "kitas_number"),
+    "merp": ("document_number", "kitas_number"),
+}
+
+
+def _extract_document_number(
+    fields: dict[str, Any],
+    doc_type: str | None = None,
+) -> str | None:
+    keys = _DOC_NUMBER_KEYS_BY_TYPE.get(
+        (doc_type or "").strip().lower(),
+        _DEFAULT_DOC_NUMBER_KEYS,
+    )
+    for key in keys:
+        val = _unwrap(fields.get(key))
+        if val is not None and str(val).strip():
+            return str(val).strip()[:120]
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Document payload derivation (read-only — what create_document would receive)
 # --------------------------------------------------------------------------- #
@@ -289,12 +328,6 @@ def _document_payload(
         if not isinstance(fields, dict):
             fields = {}
 
-    # map intake doc_type → CRM document_category (folder) — mirrors create_document.
-    # NOTE: the canonical company category is "pma" (→ CATEGORY_TO_FOLDER["pma"] = "02_Company"),
-    # NOT "company": the latter is absent from document_categorizer.CATEGORY_TO_FOLDER, so it would
-    # silently fall through to the "99_Misc" default at crm_enhanced_documents.py and file NIB/akta
-    # into the Misc folder instead of 02_Company. Canonical value verified by
-    # tests/unit/app/services/portal/test_documents_mixin.py:45.
     category = DOCUMENT_CATEGORY_MAP.get(doc_type)
 
     file_name = stage_output.get("file_name") or f"{doc_type}-{source_ref}"
@@ -302,6 +335,7 @@ def _document_payload(
     return {
         "document_type": doc_type,
         "document_category": category,
+        "document_number": _extract_document_number(fields, doc_type=doc_type),
         "file_name": file_name,
         "file_id": stage_output.get("file_id"),
         "file_url": stage_output.get("file_url"),
@@ -315,6 +349,49 @@ def _document_payload(
     }
 
 
+async def _company_documents_columns(conn: asyncpg.Connection) -> set[str]:
+    rows = await conn.fetch(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'company_documents' "
+        "AND (table_schema = current_schema() OR table_schema LIKE 'pg_temp%')"
+    )
+    return {str(r["column_name"]) for r in rows}
+
+
+def _intake_company_marker(idempotency_key: str) -> str:
+    return f"[intake_key:{idempotency_key}]"
+
+
+async def _probe_existing_company_document(
+    conn: asyncpg.Connection,
+    company_id: int,
+    idempotency_key: str,
+) -> int | None:
+    cols = await _company_documents_columns(conn)
+    if "intake_idempotency_key" in cols:
+        row_id = await conn.fetchval(
+            """
+            SELECT id FROM company_documents
+            WHERE company_id = $1 AND intake_idempotency_key = $2
+            ORDER BY id ASC LIMIT 1
+            """,
+            company_id,
+            idempotency_key,
+        )
+        return int(row_id) if row_id is not None else None
+    marker = _intake_company_marker(idempotency_key)
+    row_id = await conn.fetchval(
+        """
+        SELECT id FROM company_documents
+        WHERE company_id = $1 AND position($2 in COALESCE(notes, '')) > 0
+        ORDER BY id ASC LIMIT 1
+        """,
+        company_id,
+        marker,
+    )
+    return int(row_id) if row_id is not None else None
+
+
 # --------------------------------------------------------------------------- #
 # plan_commit — build the plan + P0#3 in-TX validation (NO execution)
 # --------------------------------------------------------------------------- #
@@ -324,9 +401,13 @@ async def plan_commit(
     *,
     committed_by: str,
     override_client_id: int | None = None,
+    client_explicit: bool = False,
     override_practice_id: int | None = None,
     practice_explicit: bool = False,
+    override_company_id: int | None = None,
+    company_explicit: bool = False,
     final_fields: dict[str, Any] | None = None,
+    locked_queue: dict[str, Any] | asyncpg.Record | None = None,
 ) -> CommitPlan:
     """Build the structured write-plan for a proposal — and validate it.
 
@@ -334,10 +415,11 @@ async def plan_commit(
     targets, which is correct — the caller is already inside the commit TX and the
     lock is part of the plan; in 5B the TX rolls back so nothing persists).
 
-    ``override_client_id`` / ``override_practice_id`` let the HITL reviewer redirect
-    the attach (decision-level correction, design §5). ``practice_explicit=True``
-    means the reviewer DELIBERATELY chose the practice value — including ``None``
-    ("archive only, no practice"), which must NOT fall back to routing's hint.
+    ``override_client_id`` / ``override_practice_id`` / ``override_company_id``
+    let the HITL reviewer redirect the attach (decision-level correction, design
+    §5). ``client_explicit=True`` / ``practice_explicit=True`` /
+    ``company_explicit=True`` mean the reviewer DELIBERATELY chose the value —
+    including ``None`` — which must NOT fall back to routing's hint.
     ``final_fields`` are the human-edited extracted fields.
     """
     p = dict(proposal)
@@ -348,8 +430,8 @@ async def plan_commit(
     decision = entity_resolution.get("decision") or routing.get("decision")
 
     # Queue context (source/source_ref/blob_hash/pipeline_version/stage_output).
-    qrow = None
-    if queue_id is not None:
+    qrow: Any = locked_queue
+    if qrow is None and queue_id is not None:
         qrow = await conn.fetchrow(
             """
             SELECT id, source, source_ref, blob_hash, pipeline_version, stage_output
@@ -368,16 +450,35 @@ async def plan_commit(
     )
     doc_index = int(p.get("doc_index") or 0)
 
-    # Target client: explicit override (human chose) wins, else routing's resolved client.
-    client_id = override_client_id if override_client_id is not None else routing.get("client_id")
+    # Target client & company: explicit override (human chose) wins, else routing's target.
+    original_client_id = _coerce_optional_int(routing.get("client_id"))
+    if client_explicit:
+        client_id = _coerce_optional_int(override_client_id)
+    else:
+        client_id = (
+            _coerce_optional_int(override_client_id)
+            if override_client_id is not None
+            else original_client_id
+        )
     if practice_explicit:
-        # The reviewer chose deliberately — honour it even when it is None
-        # ("archive only"): no silent fallback to routing's practice hint.
-        practice_id = override_practice_id
+        practice_id = _coerce_optional_int(override_practice_id)
     else:
         practice_id = (
-            override_practice_id if override_practice_id is not None else routing.get("practice_id")
+            _coerce_optional_int(override_practice_id)
+            if override_practice_id is not None
+            else _coerce_optional_int(routing.get("practice_id"))
         )
+    original_company_id = _coerce_optional_int(routing.get("company_id"))
+    if company_explicit:
+        company_id = _coerce_optional_int(override_company_id)
+    elif override_company_id is not None:
+        company_id = _coerce_optional_int(override_company_id)
+    elif client_explicit and client_id != original_client_id:
+        # Reassigning to a different client (or standalone clearing) drops any
+        # stale company_id routed for the original target unless explicitly kept.
+        company_id = None
+    else:
+        company_id = original_company_id
 
     payload = _document_payload(routing, stage_output, source_ref)
     original_fields = payload.get("extracted_fields")
@@ -386,14 +487,8 @@ async def plan_commit(
     else:
         original_fields = dict(original_fields)
     human_field_overrides = dict(final_fields or {})
-    # Persist the resolved practice on the document row itself (documents.practice_id):
-    # _document_payload doesn't know it, but write_client_document writes
-    # payload["practice_id"], and rollback_commit reads it back to detach the link.
-    # Without this the column is NULL and rollback can't find the practice to clean.
     payload["practice_id"] = practice_id
-    # Staff-only tag (recovery-v1): the explicit visibility rides on the payload
-    # to the INSERT below and to the CRM delivery. Absent for every other tag,
-    # so their payload is exactly what it was.
+    payload["company_id"] = company_id
     explicit_visible = explicit_client_visible(str(pipeline_version))
     if explicit_visible is not None:
         payload["client_visible"] = explicit_visible
@@ -402,6 +497,12 @@ async def plan_commit(
             **original_fields,
             **human_field_overrides,
         }
+        overridden_doc_num = _extract_document_number(
+            payload["extracted_fields"],
+            doc_type=payload.get("document_type"),
+        )
+        if overridden_doc_num is not None:
+            payload["document_number"] = overridden_doc_num
 
     extract_output = _as_dict(stage_output.get("extract"))
     validate_output = _as_dict(stage_output.get("validate"))
@@ -425,7 +526,7 @@ async def plan_commit(
         pipeline_version=str(pipeline_version),
         original_fields=original_fields,
         human_field_overrides=human_field_overrides,
-        original_client_id=routing.get("client_id"),
+        original_client_id=_coerce_optional_int(routing.get("client_id")),
         entity_confidence=(
             float(entity_resolution["score"])
             if isinstance(entity_resolution.get("score"), (int, float))
@@ -438,19 +539,23 @@ async def plan_commit(
             else None
         ),
         validation_passed=validation_passed,
+        company_id=company_id,
+        original_company_id=original_company_id,
     )
 
     reasons: list[str] = []
 
     # --- P0#3 in-TX validation against CURRENT db state ---------------------- #
-    if client_id is None:
-        reasons.append("no_target_client (decision requires human to pick a client)")
-    else:
+    if client_id is None and company_id is None:
+        reasons.append("no_target_client (decision requires human to pick a client or company)")
+    if client_id is not None:
         crow = await conn.fetchrow("SELECT id, deleted_at FROM clients WHERE id = $1", client_id)
         if crow is None:
             reasons.append(f"client {client_id} does not exist")
         elif crow["deleted_at"] is not None:
             reasons.append(f"client {client_id} is soft-deleted (deleted_at set)")
+    elif practice_id is not None:
+        reasons.append(f"practice {practice_id} requires a target client_id")
 
     # practice.client_id must match the target client (cross-client orphan guard).
     if practice_id is not None and client_id is not None:
@@ -464,6 +569,30 @@ async def plan_commit(
             reasons.append(
                 f"practice {practice_id}.client_id={prow['client_id']} != target client {client_id}"
             )
+
+    # Company target validation (+ link check when combined with client_id).
+    if company_id is not None:
+        comprow = await conn.fetchrow(
+            "SELECT id, status FROM companies WHERE id = $1",
+            company_id,
+        )
+        if comprow is None:
+            reasons.append(f"company {company_id} does not exist")
+        elif str(comprow["status"] or "").lower() == "deleted":
+            reasons.append(f"company {company_id} is deleted")
+        elif client_id is not None:
+            link_row = await conn.fetchrow(
+                """
+                SELECT 1 AS ok
+                FROM client_company_links
+                WHERE client_id = $1 AND company_id = $2
+                LIMIT 1
+                """,
+                client_id,
+                company_id,
+            )
+            if link_row is None:
+                reasons.append(f"company {company_id} is not linked to client {client_id}")
 
     # family_member (if any) must belong to the client.
     fam_id = payload.get("family_member_id")
@@ -481,7 +610,7 @@ async def plan_commit(
     if cur_status not in ("review_pending", "review_claimed"):
         reasons.append(f"proposal status '{cur_status}' is not approvable")
 
-    # Idempotency probe: does a doc with this (client_id, key) already exist?
+    # Idempotency probe(s)
     if client_id is not None:
         exrow = await conn.fetchrow(
             """
@@ -493,52 +622,96 @@ async def plan_commit(
         )
         if exrow is not None:
             plan.existing_doc_id = exrow["id"]
+    if company_id is not None and not reasons:
+        plan.existing_company_doc_id = await _probe_existing_company_document(
+            conn, company_id, idem_key
+        )
 
     plan.blocked = bool(reasons)
     plan.block_reasons = reasons
 
     # --- Build the would-write ops (only meaningful when not blocked) -------- #
     if not plan.blocked:
-        if plan.existing_doc_id is not None:
-            plan.ops.append(
-                WriteOp(
-                    table="documents",
-                    verb="UPSERT",
-                    values={
-                        "client_id": client_id,
-                        "intake_idempotency_key": idem_key,
-                        "existing_doc_id": plan.existing_doc_id,
-                    },
-                    note="idempotent: document already exists for (client, key) → no-op, reuse doc_id",
+        if client_id is not None:
+            if plan.existing_doc_id is not None:
+                plan.ops.append(
+                    WriteOp(
+                        table="documents",
+                        verb="UPSERT",
+                        values={
+                            "client_id": client_id,
+                            "intake_idempotency_key": idem_key,
+                            "existing_doc_id": plan.existing_doc_id,
+                        },
+                        note="idempotent: document already exists for (client, key) → no-op, reuse doc_id",
+                    )
                 )
-            )
-        else:
-            plan.ops.append(
-                WriteOp(
-                    table="documents",
-                    verb="UPSERT",
-                    values={
-                        "client_id": client_id,
-                        "document_type": payload["document_type"],
-                        "document_category": payload["document_category"],
-                        "file_name": payload["file_name"],
-                        "file_id": payload["file_id"],
-                        "practice_id": practice_id,
-                        "status": "received",
-                        "storage_type": "google_drive",
-                        "ocr_status": "completed",  # P0#8: preserve FASE-3 OCR
-                        "intake_idempotency_key": idem_key,
-                        "intake_proposal_id": proposal_id,
-                        **(
-                            {"client_visible": explicit_visible}
-                            if explicit_visible is not None
-                            else {}
-                        ),
-                    },
-                    note="INSERT … ON CONFLICT (client_id, intake_idempotency_key) DO UPDATE RETURNING id (P0#2 always returns doc_id)",
+            else:
+                plan.ops.append(
+                    WriteOp(
+                        table="documents",
+                        verb="UPSERT",
+                        values={
+                            "client_id": client_id,
+                            "document_type": payload["document_type"],
+                            "document_category": payload["document_category"],
+                            "file_name": payload["file_name"],
+                            "file_id": payload["file_id"],
+                            "practice_id": practice_id,
+                            "status": "received",
+                            "storage_type": "google_drive",
+                            "ocr_status": "completed",  # P0#8: preserve FASE-3 OCR
+                            "intake_idempotency_key": idem_key,
+                            "intake_proposal_id": proposal_id,
+                            **(
+                                {"client_visible": explicit_visible}
+                                if explicit_visible is not None
+                                else {}
+                            ),
+                        },
+                        note="INSERT … ON CONFLICT (client_id, intake_idempotency_key) DO UPDATE RETURNING id (P0#2 always returns doc_id)",
+                    )
                 )
-            )
-        if practice_id is not None:
+        if company_id is not None:
+            if plan.existing_company_doc_id is not None:
+                plan.ops.append(
+                    WriteOp(
+                        table="company_documents",
+                        verb="UPSERT",
+                        values={
+                            "company_id": company_id,
+                            "intake_idempotency_key": idem_key,
+                            "existing_company_doc_id": plan.existing_company_doc_id,
+                        },
+                        note="idempotent: company document already exists for (company, key) → reuse id",
+                    )
+                )
+            else:
+                plan.ops.append(
+                    WriteOp(
+                        table="company_documents",
+                        verb="UPSERT",
+                        values={
+                            "company_id": company_id,
+                            "document_type": payload["document_type"],
+                            "document_subtype": payload["document_category"],
+                            "document_number": payload.get("document_number"),
+                            "file_name": payload["file_name"],
+                            "google_drive_file_id": payload["file_id"],
+                            "status": "active",
+                            "storage_type": "google_drive",
+                            "intake_idempotency_key": idem_key,
+                            "intake_proposal_id": proposal_id,
+                            **(
+                                {"client_visible": explicit_visible}
+                                if explicit_visible is not None
+                                else {}
+                            ),
+                        },
+                        note="schema-aware UPSERT into company_documents",
+                    )
+                )
+        if practice_id is not None and client_id is not None:
             plan.ops.append(
                 WriteOp(
                     table="practices.documents[]",
@@ -664,6 +837,19 @@ def _correction_evidence_rows(
                 "field_name": "__entity__",
                 "ai_value": _feedback_text(plan.original_client_id),
                 "human_value": _feedback_text(plan.client_id),
+                "ai_confidence": plan.entity_confidence,
+                "outcome": "corrected",
+                "model_id": "entity-resolution",
+                "stage": "route",
+                "rule_passed": None,
+            }
+        )
+    if not is_auto and plan.original_company_id != plan.company_id:
+        rows.append(
+            {
+                "field_name": "__company__",
+                "ai_value": _feedback_text(plan.original_company_id),
+                "human_value": _feedback_text(plan.company_id),
                 "ai_confidence": plan.entity_confidence,
                 "outcome": "corrected",
                 "model_id": "entity-resolution",
@@ -875,6 +1061,140 @@ async def write_client_document(
     return int(doc_id)
 
 
+async def _has_company_intake_unique_index(conn: asyncpg.Connection) -> bool:
+    """True only if ``company_documents`` has the exact partial unique index required by ON CONFLICT."""
+    rows = await conn.fetch(
+        """
+        SELECT pg_get_expr(i.indpred, i.indrelid) AS pred,
+               ARRAY(
+                   SELECT a.attname::text
+                   FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                   JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                   ORDER BY k.ord
+               ) AS cols
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE t.relname = 'company_documents'
+          AND (n.nspname = current_schema() OR n.nspname LIKE 'pg_temp%')
+          AND i.indisunique
+          AND i.indisvalid
+        """
+    )
+    for row in rows:
+        cols = list(row["cols"] or [])
+        pred_norm = " ".join(str(row["pred"] or "").lower().split())
+        if cols == ["company_id", "intake_idempotency_key"] and (
+            "intake_idempotency_key is not null" in pred_norm
+        ):
+            return True
+    return False
+
+
+async def write_company_document(
+    conn: asyncpg.Connection,
+    company_id: int,
+    payload: dict[str, Any],
+    *,
+    proposal_id: int | None,
+    idempotency_key: str,
+    committed_by: str,
+) -> int:
+    """Pure-DB writer for ``company_documents``, schema-aware across dev and PROD.
+
+    PROD carries 38 columns (including ``intake_idempotency_key``,
+    ``intake_proposal_id``, ``ocr_status``, ``storage_type``, and
+    ``client_visible``), whereas ``nuzantara_dev`` / ``nuzantara_test`` carry
+    the 25 base columns. Concurrent commits serialize on an advisory transaction
+    lock keyed by ``(company_id, idempotency_key)``, falling back to the
+    ``[intake_key:...]`` marker in ``notes`` when ``intake_idempotency_key`` is
+    absent.
+    """
+    cols = await _company_documents_columns(conn)
+    has_idem_idx = False
+    if "intake_idempotency_key" in cols:
+        has_idem_idx = await _has_company_intake_unique_index(conn)
+
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(742019, hashtext($1))",
+        f"{company_id}:{idempotency_key}",
+    )
+    existing_id = await _probe_existing_company_document(conn, company_id, idempotency_key)
+    if existing_id is not None:
+        return existing_id
+
+    raw_notes = payload.get("notes")
+    if "intake_idempotency_key" in cols:
+        notes_value = raw_notes
+    else:
+        marker = _intake_company_marker(idempotency_key)
+        notes_value = f"{raw_notes} {marker}".strip() if raw_notes else marker
+
+    col_values: list[tuple[str, Any]] = [
+        ("company_id", company_id),
+        ("document_type", payload["document_type"]),
+        ("file_name", payload.get("file_name")),
+        ("google_drive_file_id", payload.get("file_id")),
+        (
+            "google_drive_file_url",
+            payload.get("google_drive_file_url") or payload.get("file_url"),
+        ),
+        ("notes", notes_value),
+        ("uploaded_by", committed_by),
+        ("status", "active"),
+        ("is_verified", False),
+    ]
+    if "document_subtype" in cols:
+        col_values.append(("document_subtype", payload.get("document_category")))
+    if "document_number" in cols:
+        col_values.append(("document_number", payload.get("document_number")))
+    if "storage_type" in cols:
+        col_values.append(("storage_type", "google_drive"))
+    if "ocr_status" in cols:
+        col_values.append(("ocr_status", payload.get("ocr_status", "completed")))
+    if "intake_idempotency_key" in cols:
+        col_values.append(("intake_idempotency_key", idempotency_key))
+    if "intake_proposal_id" in cols and proposal_id is not None:
+        col_values.append(("intake_proposal_id", proposal_id))
+    if "client_visible" in cols and payload.get("client_visible") is not None:
+        col_values.append(("client_visible", bool(payload["client_visible"])))
+
+    col_parts = [name for name, _ in col_values]
+    ph_parts = [f"${i}" for i in range(1, len(col_values) + 1)]
+    if "created_at" in cols:
+        col_parts.append("created_at")
+        ph_parts.append("now()")
+    if "updated_at" in cols:
+        col_parts.append("updated_at")
+        ph_parts.append("now()")
+    col_sql = ", ".join(col_parts)
+    ph_sql = ", ".join(ph_parts)
+    args = [val for _, val in col_values]
+
+    conflict_sql = ""
+    if "intake_idempotency_key" in cols and has_idem_idx:
+        update_expr = (
+            "updated_at = now()" if "updated_at" in cols else "status = company_documents.status"
+        )
+        conflict_sql = (
+            "\n            ON CONFLICT (company_id, intake_idempotency_key)"
+            "\n                WHERE intake_idempotency_key IS NOT NULL"
+            f"\n            DO UPDATE SET {update_expr}"
+        )
+
+    company_doc_id = await conn.fetchval(
+        f"""
+        INSERT INTO company_documents ({col_sql})
+        VALUES ({ph_sql}){conflict_sql}
+        RETURNING id
+        """,
+        *args,
+    )
+    if company_doc_id is None:
+        raise RuntimeError("write_company_document: INSERT returned no company_doc_id")
+    return int(company_doc_id)
+
+
 # --------------------------------------------------------------------------- #
 # execute_commit — dry-run (5B) or real (5C, flag-gated)
 # --------------------------------------------------------------------------- #
@@ -925,15 +1245,17 @@ async def execute_commit(
             audit_id=audit_id,
             would_write=would_write,
             block_reasons=plan.block_reasons,
+            company_id=plan.company_id,
         )
 
     if dry_run:
         audit_id = await _write_audit(conn, plan, dry_run=True, outcome="dry_run", doc_id=None)
         logger.info(
-            "intake.writer.DRY_RUN proposal=%s client=%s practice=%s doc_type=%s ops=%d "
+            "intake.writer.DRY_RUN proposal=%s client=%s company=%s practice=%s doc_type=%s ops=%d "
             "(would write, NOTHING committed)",
             plan.proposal_id,
             plan.client_id,
+            plan.company_id,
             plan.practice_id,
             plan.doc_type,
             len(plan.ops),
@@ -944,6 +1266,7 @@ async def execute_commit(
             outcome="dry_run",
             audit_id=audit_id,
             would_write=would_write,
+            company_id=plan.company_id,
         )
 
     # --- REAL path (FASE 5C) — flag-gated, NOT reachable in 5B -------------- #
@@ -961,43 +1284,52 @@ async def execute_commit(
     # caller's `transaction()` rolls back; the audit `failed` row below is written on
     # a SEPARATE connection so it survives the rollback as forensic evidence.
     try:
-        doc_id = await write_client_document(
-            conn,
-            plan.client_id,  # type: ignore[arg-type]
-            plan.payload,
-            proposal_id=plan.proposal_id,
-            idempotency_key=plan.idempotency_key,
-        )
-        if plan.practice_id is not None:
-            await _append_practice_document(conn, plan, doc_id)
+        doc_id: int | None = None
+        if plan.client_id is not None:
+            doc_id = await write_client_document(
+                conn,
+                plan.client_id,
+                plan.payload,
+                proposal_id=plan.proposal_id,
+                idempotency_key=plan.idempotency_key,
+            )
+            if plan.practice_id is not None:
+                await _append_practice_document(conn, plan, doc_id)
+
+        company_doc_id: int | None = None
+        if plan.company_id is not None:
+            company_doc_id = await write_company_document(
+                conn,
+                plan.company_id,
+                plan.payload,
+                proposal_id=plan.proposal_id,
+                idempotency_key=plan.idempotency_key,
+                committed_by=plan.committed_by,
+            )
+
         # Client-card enrichment — in the SAME TX as the document write. The passport
         # number/expiry, KITAS expiry, NPWP, NIB etc. extracted by FASE-3 feed the
-        # client's profile (renewal-alert clock, identity fields). Before this the
-        # intake commit filed the file and discarded the structured data. Conservative:
-        # skips archive-only (client_id None), unknown doc_types, and absent fields —
-        # never overwrites an existing card value with NULL. Enrichment is metadata,
-        # best-effort by contract: it runs inside its OWN nested transaction
-        # (savepoint), so a failure in its SQL (schema introspection, the UPDATE
-        # itself) rolls back only the enrichment and can never abort the document
-        # commit it belongs to (Codex 2026-07-19: the bare call propagated).
+        # client's profile (renewal-alert clock, identity fields). Conservative:
+        # skips archive-only (client_id None), unknown doc_types, and absent fields.
         enriched: dict[str, Any] = {}
-        try:
-            async with conn.transaction():
-                enriched = await enrich_client_from_extracted_fields(
-                    conn,
+        if plan.client_id is not None:
+            try:
+                async with conn.transaction():
+                    enriched = await enrich_client_from_extracted_fields(
+                        conn,
+                        plan.client_id,
+                        plan.doc_type,
+                        plan.payload.get("extracted_fields"),
+                    )
+            except Exception:
+                logger.warning(
+                    "intake.writer: client enrichment failed for proposal=%s client=%s — "
+                    "document commit proceeds without card update",
+                    plan.proposal_id,
                     plan.client_id,
-                    plan.doc_type,
-                    plan.payload.get("extracted_fields"),
+                    exc_info=True,
                 )
-        except Exception:
-            logger.warning(
-                "intake.writer: client enrichment failed for proposal=%s client=%s — "
-                "document commit proceeds without card update",
-                plan.proposal_id,
-                plan.client_id,
-                exc_info=True,
-            )
-            enriched = {}
+                enriched = {}
         # F1 fill-only conflicts (client_enricher.py): surface loudly — the doc
         # carried an identifier that disagrees with the client's card and was
         # deliberately NOT written. Column names only, never the values (Law 2).
@@ -1033,13 +1365,16 @@ async def execute_commit(
             outcome="committed",
             doc_id=doc_id,
             enriched_columns=enriched_columns,
+            company_doc_id=company_doc_id,
         )
         logger.info(
-            "intake.writer.COMMITTED proposal=%s client=%s doc=%s practice=%s "
-            "enriched=%s corrections=%d (real write)",
+            "intake.writer.COMMITTED proposal=%s client=%s doc=%s company=%s company_doc=%s "
+            "practice=%s enriched=%s corrections=%d (real write)",
             plan.proposal_id,
             plan.client_id,
             doc_id,
+            plan.company_id,
+            company_doc_id,
             plan.practice_id,
             sorted(enriched.keys()) if enriched else [],
             correction_count,
@@ -1052,6 +1387,8 @@ async def execute_commit(
             practice_id=plan.practice_id,
             audit_id=audit_id,
             would_write=would_write,
+            company_id=plan.company_id,
+            company_doc_id=company_doc_id,
         )
     except Exception as exc:
         # The enclosing transaction WILL roll back doc/practice/proposal/audit. Surface
@@ -1290,52 +1627,103 @@ async def _revert_document_enrichment(
 async def rollback_commit(
     conn: asyncpg.Connection,
     *,
-    client_id: int,
+    client_id: int | None = None,
+    company_id: int | None = None,
     idempotency_key: str,
     committed_by: str,
 ) -> CommitResult:
     """Reverse a previously-committed intake instance, identified by its key.
 
-    The operator escape hatch the panel (Q5) elevated to a HARD prerequisite before
-    any production activation: if a real commit attached the wrong document (or to
-    the wrong client), this undoes it deterministically.
+    Supports both client commits (including linked client+company commits) and
+    standalone company commits (``client_id=None, company_id=<int>``).
 
     What it undoes, in ONE transaction (the caller wraps this in
     `async with conn.transaction()`):
 
     * the ``documents`` row keyed by ``(client_id, intake_idempotency_key)`` — removed;
+    * any ``company_documents`` row keyed by ``(company_id, intake_idempotency_key)`` — removed;
     * its membership entry in any ``practices.documents[]`` that linked it (matched by
       the stored ``doc_id``);
     * the originating ``document_routing_proposal`` — moved BACK to a review state so
-      a reviewer can re-decide (NOT to 'dead' — rollback is a do-over, not a
-      rejection): human-routed ``'routed'`` -> ``'review_claimed'``, system-committed
-      ``'auto_routed'`` -> ``'review_pending'`` (F2, design doc §8 — a never-claimed
-      auto-attach re-enters the queue rather than landing "claimed" by nobody);
-    * (F2b) any IDENTIFIER column (passport_number/kitas_number/npwp/nib) the rolled-
-      back document's commit enriched onto the client's card — CAS-reverted to NULL
-      only if the client's current value still matches what that document wrote (a
-      later human correction or newer document wins and is left untouched).
+      a reviewer can re-decide (``'routed'`` -> ``'review_claimed'``,
+      ``'auto_routed'`` -> ``'review_pending'``);
+    * (F2b) any IDENTIFIER column the rolled-back document's commit enriched onto
+      the client's card — CAS-reverted to NULL only if unchanged.
 
     Idempotent: if no document matches the key, nothing is undone and the result is
-    ``outcome='rolled_back', doc_id=None`` (a second rollback is a safe no-op). Writes
-    one ``intake_commit_audit(outcome='rolled_back')`` forensic row either way.
-
-    NOT flag-gated: rollback is a corrective action — it must work even with the
-    writer flag toggled back OFF after a bad commit.
+    ``outcome='rolled_back', doc_id=None, company_doc_id=None``.
     """
-    doc = await conn.fetchrow(
-        """
-        SELECT id, intake_proposal_id, practice_id
-        FROM documents
-        WHERE client_id = $1 AND intake_idempotency_key = $2
-        """,
-        client_id,
-        idempotency_key,
-    )
+    if client_id is None and company_id is None:
+        raise ValueError("rollback_commit requires client_id or company_id")
+
+    doc = None
+    if client_id is not None:
+        doc = await conn.fetchrow(
+            """
+            SELECT id, intake_proposal_id, practice_id
+            FROM documents
+            WHERE client_id = $1 AND intake_idempotency_key = $2
+            """,
+            client_id,
+            idempotency_key,
+        )
+
     doc_id = doc["id"] if doc else None
     proposal_id = doc["intake_proposal_id"] if doc else None
     practice_id = doc["practice_id"] if doc else None
     reverted_columns: list[str] = []
+
+    if client_id is not None:
+        audit_row = await conn.fetchrow(
+            """
+            SELECT proposal_id, plan FROM intake_commit_audit
+            WHERE client_id = $1 AND idempotency_key = $2 AND outcome = 'committed'
+            ORDER BY id DESC LIMIT 1
+            """,
+            client_id,
+            idempotency_key,
+        )
+    else:
+        audit_row = await conn.fetchrow(
+            """
+            SELECT client_id, proposal_id, plan FROM intake_commit_audit
+            WHERE idempotency_key = $1
+              AND outcome = 'committed'
+              AND COALESCE((plan->>'company_id')::bigint, -1) = $2
+            ORDER BY id DESC LIMIT 1
+            """,
+            idempotency_key,
+            company_id,
+        )
+        if audit_row is not None:
+            linked_cid = (
+                audit_row["client_id"]
+                if audit_row["client_id"] is not None
+                else _coerce_optional_int(_as_dict(audit_row["plan"]).get("client_id"))
+            )
+            if linked_cid is not None:
+                raise ValueError(
+                    "Cannot run standalone company rollback on a linked client+company commit; pass client_id"
+                )
+    audit_plan = _as_dict(audit_row["plan"]) if audit_row is not None else {}
+    effective_company_id = (
+        company_id if company_id is not None else _coerce_optional_int(audit_plan.get("company_id"))
+    )
+
+    company_doc_id: int | None = None
+    if effective_company_id is not None:
+        company_doc_id = await _probe_existing_company_document(
+            conn, effective_company_id, idempotency_key
+        )
+        if company_doc_id is not None and proposal_id is None:
+            comp_cols = await _company_documents_columns(conn)
+            if "intake_proposal_id" in comp_cols:
+                proposal_id = await conn.fetchval(
+                    "SELECT intake_proposal_id FROM company_documents WHERE id = $1",
+                    company_doc_id,
+                )
+            if proposal_id is None and audit_row is not None:
+                proposal_id = audit_row["proposal_id"]
 
     if doc_id is not None:
         # Detach from the practice membership array (match by stored doc_id).
@@ -1354,41 +1742,32 @@ async def rollback_commit(
                     json.dumps(remaining),
                     practice_id,
                 )
-        # Remove the document itself.
+        # Remove the client document itself.
         await conn.execute("DELETE FROM documents WHERE id = $1", doc_id)
-        # Re-open the proposal for re-decision. Human approve: 'routed' -> 'review_claimed'.
-        # System auto-attach (F2, design doc §8): 'auto_routed' -> 'review_pending' — a
-        # never-claimed system commit re-enters the queue, it isn't "claimed" by nobody.
-        # Single CASE-guarded UPDATE; any other status is left untouched.
-        if proposal_id is not None:
-            await conn.execute(
-                """
-                UPDATE document_routing_proposal
-                   SET status = CASE status
-                                   WHEN 'routed' THEN 'review_claimed'
-                                   WHEN 'auto_routed' THEN 'review_pending'
-                                   ELSE status
-                                 END
-                 WHERE id = $1
-                   AND status IN ('routed', 'auto_routed')
-                """,
-                proposal_id,
-            )
 
-        # F2b de-enrichment: undo the IDENTIFIER columns THIS document's commit wrote
-        # onto the client's card. The committed audit row is the only durable record
-        # of which columns were written and what the document's extracted values
-        # were (the `documents` row itself carries no extracted_fields column, and
-        # it is being deleted above) — CAS against it, never a blind revert.
-        audit_row = await conn.fetchrow(
+    if company_doc_id is not None:
+        await conn.execute("DELETE FROM company_documents WHERE id = $1", company_doc_id)
+
+    if (doc_id is not None or company_doc_id is not None) and proposal_id is not None:
+        # Re-open the proposal for re-decision. Human approve: 'routed' -> 'review_claimed'.
+        # System auto-attach (F2, design doc §8): 'auto_routed' -> 'review_pending'.
+        await conn.execute(
             """
-            SELECT plan FROM intake_commit_audit
-            WHERE client_id = $1 AND idempotency_key = $2 AND outcome = 'committed'
-            ORDER BY id DESC LIMIT 1
+            UPDATE document_routing_proposal
+               SET status = CASE status
+                               WHEN 'routed' THEN 'review_claimed'
+                               WHEN 'auto_routed' THEN 'review_pending'
+                               ELSE status
+                             END
+             WHERE id = $1
+               AND status IN ('routed', 'auto_routed')
             """,
-            client_id,
-            idempotency_key,
+            proposal_id,
         )
+
+    if doc_id is not None and client_id is not None:
+        # F2b de-enrichment: undo the IDENTIFIER columns THIS document's commit wrote
+        # onto the client's card.
         if audit_row is None:
             logger.warning(
                 "intake.writer.deenrich_skip_legacy client=%s key=%s "
@@ -1397,7 +1776,6 @@ async def rollback_commit(
                 idempotency_key,
             )
         else:
-            audit_plan = _as_dict(audit_row["plan"])
             enriched_columns = audit_plan.get("enriched_columns")
             if not isinstance(enriched_columns, list) or not enriched_columns:
                 logger.warning(
@@ -1423,12 +1801,16 @@ async def rollback_commit(
                     enriched_columns=enriched_columns,
                 )
 
-    # Forensic audit ONLY when something was actually undone. A no-op rollback (no
-    # matching document → doc_id/proposal_id are None) writes nothing: intake_commit_audit
-    # requires a non-null proposal_id (FK to document_routing_proposal), and there is
-    # no proposal to attribute a no-op to. The no-op stays idempotent and silent.
+    # Forensic audit ONLY when something was actually undone.
     audit_id: int | None = None
-    if doc_id is not None and proposal_id is not None:
+    if (doc_id is not None or company_doc_id is not None) and proposal_id is not None:
+        rb_plan: dict[str, Any] = {
+            "rolled_back_doc_id": doc_id,
+            "reverted_enrichment_columns": reverted_columns,
+        }
+        if company_doc_id is not None:
+            rb_plan["company_id"] = effective_company_id
+            rb_plan["rolled_back_company_doc_id"] = company_doc_id
         audit_id = await conn.fetchval(
             """
             INSERT INTO intake_commit_audit (
@@ -1449,17 +1831,17 @@ async def rollback_commit(
             False,
             "rolled_back",
             idempotency_key,
-            json.dumps(
-                {"rolled_back_doc_id": doc_id, "reverted_enrichment_columns": reverted_columns},
-                default=str,
-            ),
+            json.dumps(rb_plan, default=str),
             None,
         )
     logger.warning(
-        "intake.writer.ROLLED_BACK client=%s key=%s doc=%s proposal=%s by=%s",
+        "intake.writer.ROLLED_BACK client=%s company=%s key=%s doc=%s company_doc=%s "
+        "proposal=%s by=%s",
         client_id,
+        effective_company_id,
         idempotency_key,
         doc_id,
+        company_doc_id,
         proposal_id,
         committed_by,
     )
@@ -1470,6 +1852,8 @@ async def rollback_commit(
         doc_id=doc_id,
         practice_id=practice_id,
         audit_id=int(audit_id) if audit_id is not None else None,
+        company_id=effective_company_id,
+        company_doc_id=company_doc_id,
     )
 
 
@@ -1482,6 +1866,7 @@ async def _write_audit(
     doc_id: int | None,
     error: str | None = None,
     enriched_columns: list[str] | None = None,
+    company_doc_id: int | None = None,
 ) -> int:
     """Append one intake_commit_audit row (the ONLY write a 5B dry-run performs).
 
@@ -1496,6 +1881,8 @@ async def _write_audit(
     payload = plan.to_dict()
     if enriched_columns:
         payload["enriched_columns"] = enriched_columns
+    if company_doc_id is not None:
+        payload["company_doc_id"] = company_doc_id
     audit_id = await conn.fetchval(
         """
         INSERT INTO intake_commit_audit (

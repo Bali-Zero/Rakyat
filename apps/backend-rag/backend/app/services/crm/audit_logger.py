@@ -4,6 +4,7 @@ Tracks all state changes with user attribution and timestamps
 """
 
 import functools
+import hashlib
 import inspect
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +22,12 @@ async def get_database_pool() -> asyncpg.Pool:
     raise RuntimeError(
         "CRMAuditLogger not initialized with pool. Call .initialize(pool) first.",
     )
+
+
+def _actor_ref(user_email: str | None) -> str:
+    """Stable non-reversible reference for an actor, safe to put in a log line."""
+    digest = hashlib.sha256((user_email or "").strip().lower().encode()).hexdigest()
+    return f"actor:{digest[:10]}"
 
 
 class CRMAuditLogger:
@@ -99,15 +106,23 @@ class CRMAuditLogger:
                     datetime.now(tz=timezone.utc),
                 )
 
-            # Log structured message
+            # Log structured message. Names the changed FIELDS only: the values
+            # (names, emails, passport data) live in the crm_audit_log row and
+            # never go into a log record. The actor is a short hash, not an email.
+            actor = _actor_ref(user_email)
             logger.info(
-                f"🔍 [CRM AUDIT] {entity_type.title()} {entity_id} {change_type} by {user_email}",
+                "🔍 [CRM AUDIT] %s %s %s by %s: %s",
+                entity_type.title(),
+                entity_id,
+                change_type,
+                actor,
+                ",".join(sorted(changes)),
                 extra={
                     "entity_type": entity_type,
                     "entity_id": entity_id,
                     "change_type": change_type,
-                    "user_email": user_email,
-                    "changes": changes,
+                    "actor": actor,
+                    "changed_fields": sorted(changes),
                     "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                 },
             )

@@ -181,7 +181,10 @@ async def test_handoff_no_divergence_warning_when_client_matches_server(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_handoff_uses_server_visas_for_telegram_summary(monkeypatch):
+async def test_handoff_uses_server_visas_for_telegram_summary(monkeypatch, caplog):
+    """Telegram outbound retired 2026-11-07: never calls telegram_bot.send_message
+    even when TELEGRAM_OWNER_CHAT_ID is set, while recording server-verified visa
+    in the internal attention log."""
     from backend.app.routers import visa_oracle as mod
 
     server_row = {
@@ -199,12 +202,15 @@ async def test_handoff_uses_server_visas_for_telegram_summary(monkeypatch):
         recommended_visas=[{"visa_name": "Not The Real One", "price": "0 IDR"}],
         messages=[],
     )
-    await mod.handoff(_build_request(), body, db_pool=pool)
+    with caplog.at_level("INFO"):
+        resp = await mod.handoff(_build_request(), body, db_pool=pool)
 
-    fake_telegram.send_message.assert_awaited_once()
-    sent_text = fake_telegram.send_message.call_args.kwargs.get("text", "")
-    assert "Retirement KITAS" in sent_text
-    assert "Not The Real One" not in sent_text
+    assert resp.telegram_sent is False
+    fake_telegram.send_message.assert_not_awaited()
+    attention_logs = [r.message for r in caplog.records if "lead attention recorded" in r.message]
+    assert len(attention_logs) == 1
+    assert "Retirement KITAS" in attention_logs[0]
+    assert "Not The Real One" not in attention_logs[0]
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +316,8 @@ async def test_handoff_uses_server_quiz_answers_for_whatsapp_url(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handoff_uses_server_quiz_answers_for_telegram_summary(monkeypatch):
-    """Same server-preference for the Telegram lead summary."""
+    """Telegram retired 2026-11-07: never calls telegram_bot.send_message while
+    still preferring server quiz_answers for the WhatsApp handoff URL."""
     from backend.app.routers import visa_oracle as mod
 
     server_row = {
@@ -330,11 +337,12 @@ async def test_handoff_uses_server_quiz_answers_for_telegram_summary(monkeypatch
         recommended_visas=[],
         messages=[],
     )
-    await mod.handoff(_build_request(), body, db_pool=pool)
+    resp = await mod.handoff(_build_request(), body, db_pool=pool)
 
-    sent_text = fake_telegram.send_message.call_args.kwargs.get("text", "")
-    assert "Germany" in sent_text
-    assert "France" not in sent_text
+    assert resp.telegram_sent is False
+    fake_telegram.send_message.assert_not_awaited()
+    assert "Germany" in resp.whatsapp_url
+    assert "France" not in resp.whatsapp_url
 
 
 @pytest.mark.asyncio
@@ -359,10 +367,10 @@ async def test_handoff_falls_back_to_body_quiz_answers_when_no_snapshot(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_handoff_body_only_lead_marked_unverified_not_suppressed(monkeypatch):
-    """FIX-5: a body-only handoff (no server session at all) must still
-    fire the Telegram lead — leads matter commercially — but tagged
-    UNVERIFIED rather than silently suppressed or presented as verified."""
+async def test_handoff_body_only_lead_marked_unverified_not_suppressed(monkeypatch, caplog):
+    """FIX-5 + Telegram retirement (2026-11-07): a body-only handoff (no server
+    session at all) still records internal attention tagged UNVERIFIED and builds
+    the WhatsApp URL without calling telegram_bot.send_message."""
     from backend.app.routers import visa_oracle as mod
 
     pool, _conn = _fake_pool(None)  # no persisted row — genuinely no session
@@ -374,18 +382,21 @@ async def test_handoff_body_only_lead_marked_unverified_not_suppressed(monkeypat
         recommended_visas=[],
         messages=[],
     )
-    resp = await mod.handoff(_build_request(), body, db_pool=pool)
+    with caplog.at_level("INFO"):
+        resp = await mod.handoff(_build_request(), body, db_pool=pool)
 
-    assert resp.telegram_sent is True
-    fake_telegram.send_message.assert_awaited_once()
-    sent_text = fake_telegram.send_message.call_args.kwargs.get("text", "")
-    assert "UNVERIFIED" in sent_text
+    assert resp.success is True
+    assert resp.telegram_sent is False
+    fake_telegram.send_message.assert_not_awaited()
+    attention_logs = [r.message for r in caplog.records if "lead attention recorded" in r.message]
+    assert len(attention_logs) == 1
+    assert "UNVERIFIED" in attention_logs[0]
 
 
 @pytest.mark.asyncio
-async def test_handoff_verified_session_has_no_unverified_marker(monkeypatch):
+async def test_handoff_verified_session_has_no_unverified_marker(monkeypatch, caplog):
     """Innocence: a genuinely server-verified session must NOT carry the
-    UNVERIFIED marker."""
+    UNVERIFIED marker in the internal attention log and never calls Telegram."""
     from backend.app.routers import visa_oracle as mod
 
     server_row = {
@@ -403,10 +414,15 @@ async def test_handoff_verified_session_has_no_unverified_marker(monkeypatch):
         recommended_visas=[],
         messages=[],
     )
-    await mod.handoff(_build_request(), body, db_pool=pool)
+    with caplog.at_level("INFO"):
+        resp = await mod.handoff(_build_request(), body, db_pool=pool)
 
-    sent_text = fake_telegram.send_message.call_args.kwargs.get("text", "")
-    assert "UNVERIFIED" not in sent_text
+    assert resp.telegram_sent is False
+    fake_telegram.send_message.assert_not_awaited()
+    attention_logs = [r.message for r in caplog.records if "lead attention recorded" in r.message]
+    assert len(attention_logs) == 1
+    assert "UNVERIFIED" not in attention_logs[0]
+    assert "[VERIFIED]" in attention_logs[0]
 
 
 # ---------------------------------------------------------------------------

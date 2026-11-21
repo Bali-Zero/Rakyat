@@ -972,13 +972,15 @@ ws.on('close', () => scheduleReconnect());
 
 ```typescript
 // Configurazione automatica via @sentry/nextjs
-// File: sentry.client.config.ts, sentry.server.config.ts
+// File: sentry.client.config.ts, sentry.server.config.ts, sentry.edge.config.ts
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   environment: process.env.NODE_ENV,
   tracesSampleRate: 0.1,
-  replaysSessionSampleRate: 0.1,
+  // Session Replay is intentionally OFF: it records navigation URLs with typed
+  // search text and beforeSend does not run on replay envelopes.
+  beforeSendSpan: scrubSentryUrls,
 });
 ```
 

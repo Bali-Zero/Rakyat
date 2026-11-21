@@ -153,6 +153,13 @@ const money = (text: string) =>
 // line by line. "Initial 30" after the 60 is the corrected rule and is spared.
 // A negated sentence ("cannot be extended twice") would trip: say it as the
 // article does, "there is no second extension".
+// The rule is the B1's, so a line about another visa is not judged by it: the
+// line's own visa name decides, and a line that names none takes its heading's.
+// A line or heading that names no visa is read as the B1, the article's subject.
+const b1Visa = /\bB1\b|\bE-?VOA\b|\bVOA\b|visa on arrival/iu;
+const otherVisa = /\b[CDE]\d{1,2}[A-Z]?\b|\bB211[AB]?\b|\bKITA[SP]\b/u;
+const aboutOtherVisa = (text: string) =>
+  otherVisa.test(text) && !b1Visa.test(text);
 const initialWord = "(?:\\binitial|\\binizial|\\bawal|начальн)";
 const initialSixty = new RegExp(
   [
@@ -163,18 +170,42 @@ const initialSixty = new RegExp(
   "iu",
 );
 const initialLabel = new RegExp(initialWord, "iu");
-const twiceWord =
-  /\btwice\b|\b(?:2|two) extensions\b|\bdua kali\b|\bdue (?:volte|proroghe)\b|\bdeux (?:fois|prolongations)\b|дважды|два продления/iu;
-const extensionWord =
-  /exten[ds]|perpanjang|prorog|estensi|estendi|prolong|продл/iu;
+// "Twice" counts only when it is bound to the extension: the word itself
+// ("two extensions"), an extension word next to it ("extendable twice"), or a
+// table row whose label asks about the extension. "Check the address twice
+// before requesting an extension" is about the address.
+const twoExtensions =
+  /\b(?:2|two) extensions\b|\bdue proroghe\b|\bdeux prolongations\b|два продления/iu;
+const twice =
+  "(?:\\btwice\\b|\\bdua kali\\b|\\bdue volte\\b|\\bdeux fois\\b|дважды)";
+const extension =
+  "(?:exten[ds]|perpanjang|prorog|estensi|estendi|prolong|продл)";
+const twiceWord = new RegExp(twice, "iu");
+const extensionWord = new RegExp(extension, "iu");
+const extendedTwice = new RegExp(
+  `${extension}\\S*\\s+(?:\\S+\\s+)?${twice}|${twice}\\s+(?:\\S+\\s+)?${extension}`,
+  "iu",
+);
 const secondWindow = /\b91\s*[-–]\s*120\b/;
-const restatesOldRule = (rawLine: string) => {
+const restatesOldRule = (rawLine: string, heading = "") => {
   const line = normalize(rawLine).trim();
+  if (aboutOtherVisa(line)) return false;
+  if (!b1Visa.test(line) && aboutOtherVisa(normalize(heading))) return false;
   if (secondWindow.test(line)) return true;
-  if (twiceWord.test(line) && extensionWord.test(line)) return true;
+  if (twoExtensions.test(line) || extendedTwice.test(line)) return true;
   if (!line.startsWith("|")) return initialSixty.test(line);
   const [, label = "", ...cells] = line.split("|");
+  if (extensionWord.test(label) && cells.some((c) => twiceWord.test(c)))
+    return true;
   return initialLabel.test(label) && cells.some((c) => /^\s*60\b/.test(c));
+};
+// The file is read top to bottom so each line carries its nearest heading.
+const linesRestatingOldRule = (raw: string) => {
+  let heading = "";
+  return raw.split("\n").filter((line) => {
+    if (/^#{1,6}\s/.test(line)) heading = line;
+    return restatesOldRule(line, heading);
+  });
 };
 
 describe("B1 claim guard on the KITAS-closure and comparison articles", () => {
@@ -212,6 +243,20 @@ describe("B1 claim guard on the KITAS-closure and comparison articles", () => {
     expect(amounts.map((amount) => amount.value)).toContain(750000);
     expect(amounts.map((amount) => amount.value)).toContain(850000);
   });
+  it.each(comparisonFiles)(
+    "%s names only related articles that exist",
+    (file) => {
+      const { data } = matter(fs.readFileSync(path.join(root, file), "utf8"));
+      const articles = path.dirname(root);
+      const categories = fs.readdirSync(articles);
+      for (const slug of data.relatedArticles ?? []) {
+        const found = categories.some((dir) =>
+          fs.existsSync(path.join(articles, dir, `${slug}.mdx`)),
+        );
+        expect(found, `${file}: ${slug}`).toBe(true);
+      }
+    },
+  );
   it("reads money only where it is written as money", () => {
     expect(money("cover image 1,000 pixels wide, checked in 2026")).toEqual([]);
     expect(money("IDR 500,000 (~USD 32)")[0].value).toBe(500000);
@@ -261,12 +306,32 @@ describe("B1 claim guard on the KITAS-closure and comparison articles", () => {
     "A 60-day maximum (initial 30 days, one extension of 30).",
     "Periksa paspor Anda dua kali sebelum berangkat.",
     "Check your booking twice before you pay.",
+    "Check the address twice before requesting an extension.",
+    "Periksa alamat dua kali sebelum mengajukan perpanjangan.",
+    "C1 initial stay: 60 days",
+    "C1 allows two extensions of 60 days",
+    "- **C1:** initial 60 days, extendable twice under its own rules",
+    "| **Initial stay** | 30 days | C1: 60 days |",
+    "KITAS holders may extend twice before converting to KITAP.",
   ])("spares the corrected comparison line: %s", (sample) => {
     expect(restatesOldRule(sample)).toBe(false);
   });
+  it.each([
+    ["- **60 days** initial stay", "### C1 tourist visit visa", false],
+    [
+      "- **Extendable twice:** +60 days each",
+      "### C1 tourist visit visa",
+      false,
+    ],
+    ["- **60 days** initial stay", "### E-VOA: Deep Dive", true],
+    ["- **Extendable twice:** +30 days each", "### Key Features", true],
+    ["- **B1: 60 days** initial stay", "### C1 tourist visit visa", true],
+  ])("judges %s under %s by the visa it is about", (line, heading, wrong) => {
+    expect(restatesOldRule(line, heading)).toBe(wrong);
+  });
   it.each(comparisonFiles)("%s restates the old rule on no line", (file) => {
     const raw = fs.readFileSync(path.join(root, file), "utf8");
-    expect(raw.split("\n").filter(restatesOldRule)).toEqual([]);
+    expect(linesRestatingOldRule(raw)).toEqual([]);
   });
   for (const slug of otherSlugs) {
     it(`${slug} translations carry the hash of the current English body`, async () => {

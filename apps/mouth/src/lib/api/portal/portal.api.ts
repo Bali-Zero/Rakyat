@@ -17,6 +17,7 @@ import type {
   SendMessageRequest,
   PortalPreferences,
   PortalProfile,
+  PortalProfileIdentity,
   UpdateProfileRequest,
   InviteValidationResponse,
   CompleteRegistrationRequest,
@@ -188,6 +189,8 @@ export class PortalApi {
       gender: data.gender,
       address: data.address,
       memberSince: data.member_since,
+      identityMasked: data.identity_masked,
+      birthdayToday: data.birthday_today,
       assignedTo: data.assigned_to
         ? {
             email: data.assigned_to.email,
@@ -195,6 +198,24 @@ export class PortalApi {
             avatarUrl: data.assigned_to.avatar_url,
           }
         : undefined,
+    };
+  }
+
+  /**
+   * Full passport number + date of birth for the signed-in client only. The
+   * backend refuses impersonation sessions and audit-logs every reveal.
+   */
+  async revealProfileIdentity(): Promise<PortalProfileIdentity> {
+    const response = await this.client.request<
+      PortalApiResponse<{
+        passport_number: string | null;
+        date_of_birth: string | null;
+      }>
+    >("/api/portal/profile/reveal", { method: "POST" });
+    const d = response.data!;
+    return {
+      passportNumber: d.passport_number ?? undefined,
+      dateOfBirth: d.date_of_birth ?? undefined,
     };
   }
 
@@ -221,6 +242,8 @@ export class PortalApi {
       gender: d.gender,
       address: d.address,
       memberSince: d.member_since,
+      identityMasked: d.identity_masked,
+      birthdayToday: d.birthday_today,
       assignedTo: d.assigned_to
         ? {
             email: d.assigned_to.email,
@@ -269,8 +292,14 @@ export class PortalApi {
       history: (raw.history ?? []).map((h: Record<string, unknown>) => ({
         id: String(h.id ?? ""),
         type: (h.visa_type as string) ?? (h.type as string) ?? "",
-        period: `${h.issue_date ?? h.issueDate ?? ""} — ${h.expiry_date ?? h.expiryDate ?? ""}`,
-        status: h.status === "active" ? "completed" : "expired",
+        period:
+          typeof h.period === "string" && h.period.trim().length > 0
+            ? h.period
+            : `${h.issue_date ?? h.issueDate ?? ""} — ${h.expiry_date ?? h.expiryDate ?? ""}`,
+        status:
+          h.status === "completed" || h.status === "active"
+            ? "completed"
+            : "expired",
       })),
       documents: (raw.documents ?? []).map((d: Record<string, unknown>) => ({
         id: String(d.id ?? ""),
@@ -375,14 +404,61 @@ export class PortalApi {
   // Documents
   // ============================================================================
 
+  private normalizeDocument(raw: Record<string, unknown>): PortalDocument {
+    const id = String(raw.id ?? "");
+    const size =
+      typeof raw.size === "string"
+        ? raw.size
+        : raw.size_kb != null
+          ? `${raw.size_kb} KB`
+          : "";
+    const downloadUrl =
+      typeof raw.downloadUrl === "string"
+        ? raw.downloadUrl
+        : typeof raw.download_url === "string"
+          ? raw.download_url
+          : raw.downloadable && id
+            ? `/api/portal/documents/${id}/download`
+            : "";
+    const doc: PortalDocument = {
+      id,
+      name: String(raw.name ?? raw.file_name ?? ""),
+      type: String(raw.type ?? raw.document_type ?? ""),
+      category: String(raw.category ?? raw.type ?? raw.document_type ?? ""),
+      uploadDate: String(
+        raw.uploadDate ?? raw.upload_date ?? raw.created_at ?? "",
+      ),
+      size,
+      status: (raw.status as PortalDocument["status"]) ?? "pending",
+      downloadUrl,
+    };
+    const expiryDate = raw.expiryDate ?? raw.expiry_date;
+    if (typeof expiryDate === "string" && expiryDate.length > 0) {
+      doc.expiryDate = expiryDate;
+    }
+    const practiceId = raw.practiceId ?? raw.practice_id;
+    if (typeof practiceId === "number") {
+      doc.practiceId = practiceId;
+    }
+    return doc;
+  }
+
   async getDocuments(documentType?: string): Promise<PortalDocument[]> {
     const params = documentType
       ? `?document_type=${encodeURIComponent(documentType)}`
       : "";
     const response = await this.client.request<
-      PortalApiResponse<PortalDocument[]>
+      PortalApiResponse<
+        Record<string, unknown>[] | { documents?: Record<string, unknown>[] }
+      >
     >(`/api/portal/documents${params}`, { method: "GET" });
-    return response.data!;
+    const payload = response.data;
+    const rawList = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.documents)
+        ? payload.documents
+        : [];
+    return rawList.map((item) => this.normalizeDocument(item));
   }
 
   async uploadDocument(
@@ -405,13 +481,13 @@ export class PortalApi {
         }
 
         const response = await this.client.request<
-          PortalApiResponse<PortalDocument>
+          PortalApiResponse<Record<string, unknown>>
         >("/api/portal/documents/upload", {
           method: "POST",
           body: formData,
           // Don't set Content-Type - browser will set it with boundary for multipart
         });
-        return response.data!;
+        return this.normalizeDocument((response.data ?? {}) as Record<string, unknown>);
       },
     );
   }
@@ -484,11 +560,13 @@ export class PortalApi {
   // LKPM (Investment Reports)
   // ============================================================================
 
-  async getLKPMHistory(clientId: number): Promise<LKPMDraftSummary[]> {
+  async getLKPMHistory(_clientId?: number): Promise<LKPMDraftSummary[]> {
     const response = await this.client.request<
-      PortalApiResponse<{ items: LKPMDraftSummary[] }>
-    >(`/api/v1/lkpm/history/${clientId}`, { method: "GET" });
-    return response.data?.items ?? [];
+      PortalApiResponse<{ items?: LKPMDraftSummary[] }> & {
+        items?: LKPMDraftSummary[];
+      }
+    >("/api/v1/lkpm/history/me", { method: "GET" });
+    return response.items ?? response.data?.items ?? [];
   }
 
   async getLKPMDraft(
@@ -508,11 +586,17 @@ export class PortalApi {
   }
 
   async approveLKPMDraft(draftId: number): Promise<{ success: boolean }> {
-    const response = await this.client.request<PortalApiResponse<void>>(
-      `/api/v1/lkpm/approve/${draftId}`,
-      { method: "POST" },
-    );
-    return { success: response.success };
+    const response = await this.client.request<
+      PortalApiResponse<{ success?: boolean }> & { status?: string }
+    >(`/api/v1/lkpm/approve/${draftId}`, { method: "POST" });
+    return {
+      success:
+        response.success ??
+        response.data?.success ??
+        (response.status === "approved" || response.status === "ok"
+          ? true
+          : Boolean(response)),
+    };
   }
 
   // ============================================================================
@@ -521,25 +605,49 @@ export class PortalApi {
 
   async validateInviteToken(token: string): Promise<InviteValidationResponse> {
     // Public endpoint - no auth required (backend allows unauthenticated access)
-    const response = await this.client.request<InviteValidationResponse>(
+    const response = await this.client.request<Record<string, unknown>>(
       `/api/portal/invite/validate/${token}`,
       { method: "GET" },
     );
-    return response;
+    const raw = ((response.data as Record<string, unknown> | undefined) ??
+      response) as Record<string, unknown>;
+    const normalized: InviteValidationResponse = {
+      valid: Boolean(raw.valid),
+    };
+    if (raw.error != null) normalized.error = String(raw.error);
+    if (raw.message != null) normalized.message = String(raw.message);
+    const clientName = raw.clientName ?? raw.client_name;
+    if (clientName != null) normalized.clientName = String(clientName);
+    if (raw.email != null) normalized.email = String(raw.email);
+    const invitationId = raw.invitationId ?? raw.invitation_id;
+    if (typeof invitationId === "number") normalized.invitationId = invitationId;
+    const clientId = raw.clientId ?? raw.client_id;
+    if (typeof clientId === "number") normalized.clientId = clientId;
+    return normalized;
   }
 
   async completeRegistration(
     request: CompleteRegistrationRequest,
   ): Promise<RegistrationResponse> {
     // Public endpoint - no auth required (backend allows unauthenticated access)
-    const response = await this.client.request<RegistrationResponse>(
+    const response = await this.client.request<Record<string, unknown>>(
       "/api/portal/invite/complete",
       {
         method: "POST",
         body: JSON.stringify(request),
       },
     );
-    return response;
+    const raw = ((response.data as Record<string, unknown> | undefined) ??
+      response) as Record<string, unknown>;
+    const normalized: RegistrationResponse = {
+      success: Boolean(raw.success ?? true),
+      message: String(raw.message ?? ""),
+    };
+    const userId = raw.userId ?? raw.user_id;
+    if (userId != null) normalized.userId = String(userId);
+    const redirectTo = raw.redirectTo ?? raw.redirect_to;
+    if (redirectTo != null) normalized.redirectTo = String(redirectTo);
+    return normalized;
   }
 
   // ============================================================================

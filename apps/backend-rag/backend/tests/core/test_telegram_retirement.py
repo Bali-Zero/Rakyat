@@ -96,23 +96,29 @@ async def test_sla_preserves_expiry_without_alert_adapter():
 
 
 @pytest.mark.asyncio
-async def test_claim_excludes_six_retired_types_before_increment():
-    from backend.services.garuda_orders.outbox_consumer import _claim_one
+async def test_claim_excludes_six_retired_types_before_increment(monkeypatch):
+    from backend.services.garuda_orders import outbox_consumer
+
+    assert outbox_consumer.RETIRED_TELEGRAM_JOB_TYPES == ()
 
     conn = AsyncMock()
     conn.fetchrow.return_value = None
-    await _claim_one(conn, max_attempts=5, exclude_ids=[])
+    await outbox_consumer._claim_one(conn, max_attempts=5, exclude_ids=[])
+    sql, maximum, ids, retired = conn.fetchrow.await_args.args
+    assert "AND NOT (c.job_type = ANY($3::text[]))" in sql
+    assert maximum == 5 and ids == [] and retired == []
+
+    monkeypatch.setattr(
+        outbox_consumer,
+        "RETIRED_TELEGRAM_JOB_TYPES",
+        ("synthetic_retired_tg_a", "synthetic_retired_tg_b"),
+    )
+    conn.fetchrow.reset_mock()
+    await outbox_consumer._claim_one(conn, max_attempts=5, exclude_ids=[])
     sql, maximum, ids, retired = conn.fetchrow.await_args.args
     assert "AND NOT (c.job_type = ANY($3::text[]))" in sql
     assert maximum == 5 and ids == []
-    assert set(retired) == {
-        "staff_page_duplicate_charge",
-        "staff_page_late_paid_after_refund",
-        "staff_page_late_paid_after_terminal",
-        "staff_page_charge_without_webhook",
-        "staff_page_payment_failure",
-        "staff_page_refund_out_of_order",
-    }
+    assert set(retired) == {"synthetic_retired_tg_a", "synthetic_retired_tg_b"}
 
 
 @pytest.mark.asyncio
@@ -132,3 +138,72 @@ async def test_sla_cli_needs_no_telegram_credential_or_owner_chat(monkeypatch, c
         assert await cli.run() == 0
     pool.close.assert_awaited_once()
     assert '"expired_count": 0' in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_hardening_clis_run_without_telegram_owner_chat_id(monkeypatch, capsys):
+    from backend.services.hardening import missed_runs_cli, quota_cli, token_watchdog_cli
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://synthetic-test-target")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_OWNER_CHAT_ID", raising=False)
+
+    assert await token_watchdog_cli.run() == 0
+    assert '"warnings_sent": 0' in capsys.readouterr().out
+
+    pool = AsyncMock()
+    missed_result = MagicMock(
+        ran_at=datetime.now(timezone.utc),
+        pending_count=0,
+        notified_count=0,
+        message_sent=False,
+        error=None,
+    )
+    with (
+        patch.object(missed_runs_cli.asyncpg, "create_pool", new=AsyncMock(return_value=pool)),
+        patch.object(missed_runs_cli, "WarRoomRepository", return_value=AsyncMock()),
+        patch.object(
+            missed_runs_cli,
+            "MissedRunsAlerter",
+            return_value=MagicMock(sweep_once=AsyncMock(return_value=missed_result)),
+        ),
+    ):
+        assert await missed_runs_cli.run() == 0
+    assert '"message_sent": false' in capsys.readouterr().out
+
+    quota_result = MagicMock(
+        ran_at=datetime.now(timezone.utc),
+        reports=[],
+        alerts_sent=0,
+        errors=[],
+    )
+    with (
+        patch.object(quota_cli.asyncpg, "create_pool", new=AsyncMock(return_value=pool)),
+        patch.object(quota_cli, "WarRoomRepository", return_value=AsyncMock()),
+        patch.object(
+            quota_cli,
+            "QuotaMonitor",
+            return_value=MagicMock(sweep_once=AsyncMock(return_value=quota_result)),
+        ),
+    ):
+        assert await quota_cli.run() == 0
+    assert '"alerts_sent": 0' in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_cognitive_deliver_clis_skip_when_telegram_retired(monkeypatch, capsys):
+    from backend.services.cognitive import oracle_cli, strategos_cli
+
+    monkeypatch.setattr(oracle_cli, "DEFAULT_OWNER", "stale-owner-chat")
+    monkeypatch.setattr(strategos_cli, "DEFAULT_OWNER", "stale-owner-chat")
+    pool = AsyncMock()
+
+    with patch.object(oracle_cli, "TelegramReviewAdapter") as oracle_adapter:
+        assert await oracle_cli._deliver(pool) == 0
+        oracle_adapter.assert_not_called()
+    assert '"Telegram is retired"' in capsys.readouterr().out
+
+    with patch.object(strategos_cli, "TelegramReviewAdapter") as strategos_adapter:
+        assert await strategos_cli._deliver(pool) == 0
+        strategos_adapter.assert_not_called()
+    assert '"Telegram is retired"' in capsys.readouterr().out

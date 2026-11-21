@@ -8,7 +8,8 @@
 name = "nuzantara-backend-rag"
 version = "1.0.0"
 description = "NUZANTARA RAG Backend with FastAPI"
-requires-python = ">=3.10"
+# Floor of the compiled locks (docs/uv-migration.md): soupsieve 4.x needs 3.11.5.
+requires-python = ">=3.11.5"
 
 # ============================================================================
 # BLACK - Code Formatter
@@ -94,8 +95,6 @@ module = [
     "backend.core.claims.*",
     "backend.core.legal.chunker",
     "backend.core.legal.cleaner",
-    "backend.core.plugins.plugin",
-    "backend.core.plugins.executor",
     "backend.core.qdrant_db",
     "backend.app.models.*",
     "backend.core.cache",
@@ -175,10 +174,6 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "sentence_transformers.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "passlib.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -391,7 +386,6 @@ exclude = [
 "backend/app/modules/**/router*.py" = ["ARG001", "B904"]  # Same for module routers
 "backend/app/modules/**/*router*.py" = ["ARG001", "B904"]  # Module routers with different naming
 "backend/app/modules/**/test_*.py" = ["ARG001", "B904"]  # Test files in modules
-"backend/agents/**/test_*.py" = ["ARG001"]  # Test files in agents
 "backend/generals/tests/*.py" = ["ARG002"]  # General test files
 "backend/migrations/*.py" = ["ARG001", "E402", "G", "LOG"]  # Migration scripts with placeholder params and late imports; f-string OK in CLI one-shots
 "backend/cli/*.py" = ["E402", "G", "LOG"]  # CLI scripts with late imports; f-string OK in CLI one-shots

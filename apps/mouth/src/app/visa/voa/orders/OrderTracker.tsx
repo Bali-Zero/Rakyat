@@ -1,12 +1,20 @@
 "use client";
 
+import { useState } from "react";
 import { AppFrame } from "@balizero/core";
 import { formatIDR } from "@balizero/core/utils";
 import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
-import { humanizePracticeKey } from "./messages";
+import { GarudaOrderError, resumeOrderCheckout } from "./api-client";
+import { humanizePracticeKey, messageFor } from "./messages";
+import {
+  checkoutNavigation,
+  isProviderCheckoutUrl,
+} from "./provider-checkout-url";
 import { useOrderTracking } from "./useOrderTracking";
 import type { OrderView, PracticeState } from "./types";
 import { VOA_PRIMARY_ACTION_STYLE } from "../voa-action-style";
+import { useVoaLocale } from "../useVoaLocale";
+import { voaCopy } from "../voa-copy";
 
 /**
  * GARUDA VOA — order tracker + visa delivery view (`/visa/voa/orders/{orderId}`).
@@ -84,6 +92,9 @@ export function OrderTracker({ orderId }: { orderId: string }) {
 }
 
 function OrderTrackerReady({ order }: { order: OrderView }) {
+  // The journey's language, for the closed-order panel only: the rest of the
+  // tracker stays as it is.
+  const t = voaCopy(useVoaLocale());
   const subtitle = subtitleFor(order);
 
   return (
@@ -124,7 +135,10 @@ function OrderTrackerReady({ order }: { order: OrderView }) {
 
       {order.order_state === "awaiting_payment" ||
       order.order_state === "created" ? (
-        <AwaitingPaymentPanel />
+        <AwaitingPaymentPanel
+          orderId={order.order_id}
+          canPay={order.order_state === "awaiting_payment"}
+        />
       ) : null}
 
       {order.order_state === "failed" || order.order_state === "expired" ? (
@@ -132,10 +146,12 @@ function OrderTrackerReady({ order }: { order: OrderView }) {
           tone="retry"
           heading={
             order.order_state === "failed"
-              ? "This checkout couldn't be completed."
-              : "This checkout session expired."
+              ? t("order.closed.failed.heading")
+              : t("order.closed.expired.heading")
           }
-          body="A consultant can verify your payment status before you try again."
+          body={t("order.closed.safetyBody")}
+          payAgainLabel={t("order.closed.payAgain")}
+          payAgainResultId={order.result_id}
         />
       ) : null}
 
@@ -304,30 +320,87 @@ function stepStyle(step: {
 }
 
 /**
- * `getOrderAndPractice`'s `OrderView` (unlike `createOrderFromCheck`'s `OrderCheckout`)
- * carries no `checkout_url` — the contract never lets this read-only view hand back a
- * live provider capability. A customer who lands here still `awaiting_payment` (e.g.
- * they closed the payment tab and came back later) — or still `created`, meaning
- * checkout has not even started yet (e.g. a provider-call failure before the first
- * redirect) — therefore has no self-service resume button this page can honestly
- * render; a consultant reopening checkout for them is the real path, not a link this
- * component would have to invent.
+ * `getOrderAndPractice`'s `OrderView` carries no `checkout_url` — the read-only view never
+ * holds a provider capability. "Pay now" (owner decision 2026-11-18) asks
+ * `resumeOrderCheckout` for the order's ONE bound session at click time and leaves the
+ * site only for an `https:` page on the provider's checkout host. Only `awaiting_payment`
+ * gets the button: a `created` order has no session yet, and every other state has
+ * nothing to pay. A refusal keeps the consultant link, which stays the fallback.
  */
-function AwaitingPaymentPanel() {
+function resumeErrorMessage(error: unknown): string {
+  if (error instanceof GarudaOrderError) return messageFor(error.code);
+  return "We couldn't open the payment page right now. Please try again in a moment.";
+}
+
+function AwaitingPaymentPanel({
+  orderId,
+  canPay,
+}: {
+  orderId: string;
+  canPay: boolean;
+}) {
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function payNow() {
+    if (pending) return;
+    setPending(true);
+    setMessage(null);
+    try {
+      const { checkout_url } = await resumeOrderCheckout({ orderId });
+      // Re-enabled after the hand-off too: a page restored from the
+      // back/forward cache must not keep a dead "Opening payment…" button.
+      if (isProviderCheckoutUrl(checkout_url)) {
+        checkoutNavigation.assign(checkout_url);
+      } else {
+        setMessage(resumeErrorMessage(null));
+      }
+    } catch (error) {
+      setMessage(resumeErrorMessage(error));
+    }
+    setPending(false);
+  }
+
   return (
-    <p style={{ margin: 0, color: "var(--color-text-muted)" }}>
-      Haven&apos;t finished paying yet?{" "}
-      <a
-        href={buildWhatsAppLink(
-          "visa",
-          "Hi Bali Zero, I need help finishing payment for my Visa on Arrival order.",
-        )}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        A consultant can help you complete it →
-      </a>
-    </p>
+    <div style={{ display: "grid", gap: "var(--space-2, 0.5rem)" }}>
+      {canPay ? (
+        <button
+          type="button"
+          onClick={payNow}
+          disabled={pending}
+          aria-busy={pending}
+          style={{
+            padding: "0.9rem 1.4rem",
+            borderRadius: 8,
+            border: "none",
+            ...VOA_PRIMARY_ACTION_STYLE,
+            fontWeight: 600,
+            cursor: pending ? "progress" : "pointer",
+            width: "fit-content",
+          }}
+        >
+          {pending ? "Opening payment…" : "Pay now"}
+        </button>
+      ) : null}
+      {message ? (
+        <p role="alert" style={{ margin: 0 }}>
+          {message}
+        </p>
+      ) : null}
+      <p style={{ margin: 0, color: "var(--color-text-muted)" }}>
+        Haven&apos;t finished paying yet?{" "}
+        <a
+          href={buildWhatsAppLink(
+            "visa",
+            "Hi Bali Zero, I need help finishing payment for my Visa on Arrival order.",
+          )}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          A consultant can help you complete it →
+        </a>
+      </p>
+    </div>
   );
 }
 
@@ -461,14 +534,24 @@ export const EXCEPTION_RULE: Record<ExceptionTone, string> = {
   closed: "var(--state-info)",
 };
 
+/** Mirrors the contract's ResultId schema (`^[A-Za-z0-9_-]{22,128}$`). */
+const RESULT_ID_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
+
 function ExceptionPanel({
   heading,
   body,
   tone,
+  payAgainResultId,
+  payAgainLabel,
 }: {
   heading: string;
   body: string;
   tone: ExceptionTone;
+  /** Only the failed/expired panel passes this; a same-origin link, rendered only
+   * when it matches the result-id pattern. */
+  payAgainResultId?: string;
+  /** The localised CTA text; passed with `payAgainResultId`. */
+  payAgainLabel?: string;
 }) {
   return (
     <section
@@ -484,6 +567,23 @@ function ExceptionPanel({
     >
       <p style={{ margin: 0, fontWeight: 600 }}>{heading}</p>
       <p style={{ margin: 0, lineHeight: 1.6 }}>{body}</p>
+      {payAgainResultId !== undefined &&
+      RESULT_ID_PATTERN.test(payAgainResultId) ? (
+        <a
+          href={`/visa/voa/checkout/${encodeURIComponent(payAgainResultId)}`}
+          style={{
+            display: "inline-block",
+            width: "fit-content",
+            padding: "0.7rem 1.1rem",
+            borderRadius: 8,
+            textDecoration: "none",
+            fontWeight: 600,
+            ...VOA_PRIMARY_ACTION_STYLE,
+          }}
+        >
+          {payAgainLabel}
+        </a>
+      ) : null}
       <WhatsAppHelp />
     </section>
   );

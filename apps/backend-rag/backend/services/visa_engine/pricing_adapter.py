@@ -58,6 +58,7 @@ class PricingResolution:
     catalog_sha256: str | None = None
     row_sha256: str | None = None
     amount: int | None = None
+    pricing_key: PricingKey | None = None
 
     def as_json(self) -> dict[str, JsonValue]:
         return {
@@ -135,9 +136,62 @@ def select_duration_option(
     return next((o for o in options if o.days >= stay_days), options[-1])
 
 
-def effective_pricing_key(product: VisaProductVersion, stay_days: int | None) -> PricingKey | None:
+def _onshore_candidate_item_keys(item_key: str) -> tuple[str, ...]:
+    if item_key.endswith("(Offshore)"):
+        prefix = item_key[: -len("(Offshore)")]
+        return (f"{prefix}(Altus/Onshore)", f"{prefix}(Onshore)")
+    if item_key.endswith(", Offshore)"):
+        prefix = item_key[: -len(", Offshore)")]
+        return (f"{prefix}, Altus/Onshore)", f"{prefix}, Onshore)")
+    return ()
+
+
+def resolve_channel_pricing_key(
+    pricing_key: PricingKey | None,
+    *,
+    application_channel: str | None = None,
+    pricing_catalog: ExactPricingCatalog | None = None,
+) -> PricingKey | None:
+    """Resolve an Onshore/Altus sibling key for ``ONSHORE_CONVERSION`` when catalogued.
+
+    Products without a separate onshore SKU (e.g. ``E33`` 5y, ``E33E`` 5y, ``E30*``)
+    keep their base ``pricing_key`` unchanged.
+    """
+
+    if pricing_key is None or application_channel != "ONSHORE_CONVERSION":
+        return pricing_key
+    candidates = _onshore_candidate_item_keys(pricing_key.item_key)
+    if not candidates or pricing_catalog is None:
+        return pricing_key
+    try:
+        if pricing_catalog.loaded is not True:
+            return pricing_key
+        catalog = pricing_catalog.get_all_prices()
+        if not isinstance(catalog, dict) or "error" in catalog:
+            return pricing_key
+        for candidate_item_key in candidates:
+            row = pricing_catalog.get_service_by_key(candidate_item_key)
+            if isinstance(row, dict) and row.get("category") == pricing_key.category:
+                return PricingKey(category=pricing_key.category, item_key=candidate_item_key)
+    except Exception:
+        return pricing_key
+    return pricing_key
+
+
+def effective_pricing_key(
+    product: VisaProductVersion,
+    stay_days: int | None,
+    application_channel: str | None = None,
+    *,
+    pricing_catalog: ExactPricingCatalog | None = None,
+) -> PricingKey | None:
     option = select_duration_option(product, stay_days)
-    return product.pricing_key if option is None else option.pricing_key
+    base_key = product.pricing_key if option is None else option.pricing_key
+    return resolve_channel_pricing_key(
+        base_key,
+        application_channel=application_channel,
+        pricing_catalog=pricing_catalog,
+    )
 
 
 def resolve_candidate_pricing(
@@ -146,11 +200,17 @@ def resolve_candidate_pricing(
     pricing_catalog: ExactPricingCatalog,
     evaluated_at: datetime,
     stay_days: int | None = None,
+    application_channel: str | None = None,
 ) -> PricingResolution:
     """Resolve one product without guessing or fuzzy matching."""
 
     return resolve_pricing_key(
-        effective_pricing_key(product, stay_days),
+        effective_pricing_key(
+            product,
+            stay_days,
+            application_channel=application_channel,
+            pricing_catalog=pricing_catalog,
+        ),
         pricing_catalog=pricing_catalog,
         evaluated_at=evaluated_at,
     )
@@ -186,6 +246,7 @@ def resolve_pricing_key(
                 catalog_last_updated=last_updated,
                 catalog_version=catalog_version,
                 catalog_sha256=catalog_sha256,
+                pricing_key=pricing_key,
             )
         row_sha256 = _sha256_jcs(row)
     except Exception:
@@ -196,6 +257,7 @@ def resolve_pricing_key(
             status="UNKNOWN",
             reason_code="PRICING_CATALOG_UNAVAILABLE",
             evaluated_at=evaluated_at,
+            pricing_key=pricing_key,
         )
 
     amount = _parse_exact_idr_amount(row.get("price"))
@@ -208,6 +270,7 @@ def resolve_pricing_key(
             catalog_version=catalog_version,
             catalog_sha256=catalog_sha256,
             row_sha256=row_sha256,
+            pricing_key=pricing_key,
         )
 
     return PricingResolution(
@@ -219,6 +282,7 @@ def resolve_pricing_key(
         catalog_sha256=catalog_sha256,
         row_sha256=row_sha256,
         amount=amount,
+        pricing_key=pricing_key,
     )
 
 
@@ -228,11 +292,21 @@ def build_price_quote(
     *,
     decision_id: uuid.UUID,
     stay_days: int | None = None,
+    application_channel: str | None = None,
+    pricing_catalog: ExactPricingCatalog | None = None,
 ) -> PriceQuote | None:
     """Convert one exact-key resolution into the signed decision contract."""
 
-    pricing_key = effective_pricing_key(product, stay_days)
-    if pricing_key is None or resolution.status != "AVAILABLE":
+    base_key = effective_pricing_key(product, stay_days)
+    if base_key is None or resolution.status != "AVAILABLE":
+        return None
+    pricing_key = resolution.pricing_key or effective_pricing_key(
+        product,
+        stay_days,
+        application_channel=application_channel,
+        pricing_catalog=pricing_catalog,
+    )
+    if pricing_key is None:
         return None
     seed_parts = [
         str(product.product_version_id),
@@ -267,6 +341,7 @@ __all__ = [
     "build_price_quote",
     "effective_pricing_key",
     "resolve_candidate_pricing",
+    "resolve_channel_pricing_key",
     "resolve_pricing_key",
     "select_duration_option",
 ]

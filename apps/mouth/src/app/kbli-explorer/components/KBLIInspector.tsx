@@ -27,10 +27,25 @@ import {
   STATUS_RETIRED_KBLI_2020,
   summariseLicences,
 } from "@/lib/kbli-licence-summary";
+import { formatTimeframe, riskLabelEn } from "@/lib/kbli-derive";
 
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+const SCALE_LABEL_EN: Record<string, string> = {
+  mikro: "Micro",
+  kecil: "Small",
+  menengah: "Medium",
+  besar: "Large",
+  semua: "All",
+};
+
+export function formatLicenseScaleEn(scales: string[]): string {
+  return scales
+    .map((scale) => SCALE_LABEL_EN[scale.trim().toLowerCase()] ?? scale)
+    .join(", ");
+}
 
 export function getPmaBadge(record: KBLIPmaDisclosure): {
   label: string;
@@ -357,20 +372,20 @@ const KBLIInspector = ({
                       )}
                     </span>
                     <span className="text-[10px] uppercase px-2 py-1 rounded-full bg-[#151921] text-[var(--kbli-text-muted)] border border-[var(--border)]">
-                      {lic.sla}
+                      {formatTimeframe(lic.sla) ?? lic.sla}
                     </span>
                   </div>
                   <div className="flex flex-col gap-1 text-xs text-[var(--kbli-text-muted)]">
                     <span>
                       Business Size:{" "}
                       <span className="text-[var(--kbli-text-muted)]">
-                        {lic.scale.join(", ")}
+                        {formatLicenseScaleEn(lic.scale)}
                       </span>
                     </span>
                     <span>
                       Risk Level:{" "}
                       <span className="text-[var(--kbli-text-muted)]">
-                        {lic.risk_level}
+                        {riskLabelEn(lic.risk_level) ?? lic.risk_level}
                       </span>
                     </span>
                   </div>
