@@ -14,6 +14,7 @@ accounting, T8 the detail read (reviews and suggestions), T9 privacy.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -1578,29 +1579,68 @@ async def test_t9_get_adds_closed_fields_only_and_never_a_copy_of_the_client_car
     rows, types = await privacy.audit_snapshot(conn)
     one_audit_row(rows, method="GET", endpoint=f"{READ}/{sid}", status=200, email=ADMIN["email"])
     probes = client_values | {spec["client_name"]}
-    assert get_leaks(data, records, rows, types, probes, ADMIN["email"]) == {}
+    own = subject_own(
+        spec["subject_name"],
+        spec.get("subject_ids", []),
+        spec.get("subject_dob"),
+        {C1: spec["client_name"]},
+    )
+    assert get_leaks(data, records, rows, types, probes, ADMIN["email"], own) == {}
 
 
 READER = "zz-reader@example.test"
-GET_PREEXISTING = {"identifiers", "date_of_birth", "names", "display_name"}
 
 
-def get_leaks(data, records, rows, types, probes, session_email):
-    """GET: a client-card value may show only at a pre-existing path that carries the subject's own
-    equal value (identifiers, birth date, names, display name) or at a link's `client_name`.
-    Everywhere else in the answer — the three new fields included — and in every log record and
-    audit column (the session's own `user_email` excepted) it is a leak. A digits-only DERIVED
-    form shorter than six characters (the NIK form of a short passport such as `ZZ124`) is no
-    client value and would match ids and time stamps; the raw and upper-cased forms stay."""
+def subject_own(name, ids, dob, client_names):
+    """The values a pre-existing path may carry, from what the test seeded: the subject's display
+    name (also its registration name), its (type, raw) identifier pairs, its birth date, and the
+    name of each linked client."""
+    return {
+        "display_name": name,
+        "names": {name} if name else set(),
+        "identifiers": {(t, raw) for t, raw in ids},
+        "date_of_birth": dob.isoformat() if dob else None,
+        "client_names": dict(client_names),
+    }
+
+
+def get_leaks(data, records, rows, types, probes, session_email, own):
+    """GET privacy check. Closed table of the only places a client-card value may show; each is
+    exempt ONLY while it holds the seeded value in `own`:
+
+        path                    exempt when
+        display_name            equals own display name
+        names[].name            is one of own names
+        identifiers[].value     (identifiers[].type, value) is one of own seeded pairs
+        date_of_birth           equals own birth date (ISO), or both are null
+        links[].client_name     equals the seeded name of that item's client_id
+
+    An exempt value is blanked; a value that does not match stays and is scanned, and so does
+    every other key of the same item. Everywhere else in the answer (the three new fields
+    included), in every log record and in every audit column (the session's own `user_email`
+    excepted) a client-card value is a leak. A digits-only DERIVED form shorter than six
+    characters (the NIK form of a short passport such as `ZZ124`) is no client value and would
+    match ids and time stamps; the raw and upper-cased forms stay."""
     forbidden = {
         f for f in privacy.probe_forms(p for p in probes if p) if not (f.isdigit() and len(f) < 6)
     }
-    scrubbed = {k: v for k, v in data.items() if k not in GET_PREEXISTING}
-    scrubbed["links"] = [
-        {k: v for k, v in item.items() if k != "client_name"} for item in data.get("links", [])
-    ]
+    shown = copy.deepcopy(data)
+    if shown.get("display_name") == own["display_name"]:
+        shown["display_name"] = None
+    if shown.get("date_of_birth") == own["date_of_birth"]:
+        shown["date_of_birth"] = None
+    for item in shown.get("names") or []:
+        if item.get("name") in own["names"]:
+            item["name"] = None
+    for item in shown.get("identifiers") or []:
+        if (item.get("type"), item.get("value")) in own["identifiers"]:
+            item["value"] = None
+    for item in shown.get("links") or []:
+        expected = own["client_names"].get(item.get("client_id"))
+        if expected is not None and item.get("client_name") == expected:
+            item["client_name"] = None
     found = {
-        "answer": privacy.leaks(forbidden, privacy.response_surface(json.dumps(scrubbed))),
+        "answer": privacy.leaks(forbidden, privacy.response_surface(json.dumps(shown))),
         "log": privacy.leaks(forbidden, privacy.log_surface(records)),
         "audit": audit_leaks(forbidden, rows, types, session_email),
     }
@@ -1624,17 +1664,15 @@ async def test_t9_get_privacy_holds_on_every_case_of_the_suggestion_matrix(
     client, conn, caplog, label, kwargs, expected
 ):
     caplog.set_level(logging.DEBUG)
+    subject_ids = list(kwargs.get("subject_ids", []))
+    client_name = kwargs.get("client_name", "ZzMatch Person")
     sid = await seed_subject(
-        conn,
-        "person",
-        "ZzMatch Person",
-        list(kwargs.get("subject_ids", [])),
-        dob=kwargs.get("subject_dob"),
+        conn, "person", "ZzMatch Person", subject_ids, dob=kwargs.get("subject_dob")
     )
     await seed_client(
         conn,
         C1,
-        kwargs.get("client_name", "ZzMatch Person"),
+        client_name,
         passport=kwargs.get("passport"),
         dob=kwargs.get("dob"),
         deleted=kwargs.get("deleted", False),
@@ -1655,24 +1693,41 @@ async def test_t9_get_privacy_holds_on_every_case_of_the_suggestion_matrix(
     records = [r for r in caplog.records if not privacy.is_http_client_logger(r.name)]
     rows, types = await privacy.audit_snapshot(conn)
     one_audit_row(rows, method="GET", endpoint=f"{READ}/{sid}", status=200, email=ADMIN["email"])
-    assert get_leaks(data, records, rows, types, card_probes(kwargs), ADMIN["email"]) == {}, label
+    own = subject_own("ZzMatch Person", subject_ids, kwargs.get("subject_dob"), {C1: client_name})
+    leaks = get_leaks(data, records, rows, types, card_probes(kwargs), ADMIN["email"], own)
+    assert leaks == {}, label
 
 
-def test_t9_the_get_check_catches_a_client_value_copied_outside_the_preexisting_paths():
-    import copy
+def _set(path, value):
+    """A pollution: put `value` at `path` (keys and list indexes) of a detail answer; an index
+    equal to the list's length appends a copy of the list's first item carrying the value."""
 
+    def apply(data):
+        target = data
+        for step in path[:-1]:
+            if isinstance(target, list) and step == len(target):
+                target.append(copy.deepcopy(target[0]))
+            target = target[step]
+        target[path[-1]] = value
+
+    return apply
+
+
+def test_t9_the_get_check_exempts_only_the_subject_s_own_values_at_the_preexisting_paths():
     review = {
         "decision": "confirmed",
         "relation": "self",
         "decided_by": READER,
         "decided_at": "2026-01-01T00:00:00+00:00",
     }
+    own_passport = "ZZSUBJ4321"
     base = {
         "id": 1,
-        "display_name": CLIENT_NAME,
-        "names": [{"name": CLIENT_NAME}],
-        "identifiers": [{"id_type": "passport", "value": CLIENT_PASSPORT}],
-        "date_of_birth": CLIENT_BIRTH,
+        "display_name": "ZzOwn Subject",
+        "names": [{"name": "ZzOwn Subject", "source": "registration", "from_subject_id": None}],
+        "identifiers": [{"type": "passport", "value": own_passport, "from_subject_id": None}],
+        "date_of_birth": None,
+        "nationality": None,
         "links": [
             {
                 "client_id": C1,
@@ -1683,26 +1738,66 @@ def test_t9_the_get_check_catches_a_client_value_copied_outside_the_preexisting_
             }
         ],
     }
+    own = subject_own("ZzOwn Subject", [("passport", own_passport)], None, {C1: CLIENT_NAME})
     probes = {CLIENT_NAME, CLIENT_PASSPORT, CLIENT_BIRTH}
     types = {"user_email": "text", "id": "integer"}
     own_row = [{"user_email": ADMIN["email"], "id": 1}]
-    assert get_leaks(base, [], own_row, types, probes, ADMIN["email"]) == {}
+    assert get_leaks(base, [], own_row, types, probes, ADMIN["email"], own) == {}
+
+    # a subject whose own seeded values equal the client card's: exempt at the pre-existing paths
+    same = copy.deepcopy(base)
+    for pollute in (
+        _set(["display_name"], CLIENT_NAME),
+        _set(["names", 0, "name"], CLIENT_NAME),
+        _set(["identifiers", 0, "value"], CLIENT_PASSPORT),
+        _set(["date_of_birth"], CLIENT_BIRTH),
+    ):
+        pollute(same)
+    same_own = subject_own(
+        CLIENT_NAME,
+        [("passport", CLIENT_PASSPORT)],
+        date.fromisoformat(CLIENT_BIRTH),
+        {C1: CLIENT_NAME},
+    )
+    assert get_leaks(same, [], [], {}, probes, None, same_own) == {}
+
+    # every pollution with a client-card value is caught: at a pre-existing path whose value is
+    # not the subject's own (round-2 counter-example: the client's passport in place of the
+    # subject's identifier), at another key of the same item, in an added item, in a new field
+    paths = [
+        ["display_name"],
+        ["date_of_birth"],
+        ["nationality"],
+        ["names", 0, "name"],
+        ["names", 0, "source"],
+        ["names", 1, "name"],
+        ["identifiers", 0, "value"],
+        ["identifiers", 0, "type"],
+        ["identifiers", 1, "value"],
+        ["links", 0, "suggested_relation"],
+        ["links", 0, "review", "decided_by"],
+        ["links", 0, "review", "decided_at"],
+        ["links", 0, "review", "relation"],
+    ]
     for value in sorted(probes):
-        for field in ("decided_by", "decided_at", "relation"):
+        for path in paths:
             planted = copy.deepcopy(base)
-            planted["links"][0]["review"][field] = value
-            assert get_leaks(planted, [], [], {}, probes, None).get("answer"), (field, value)
-        for key, planted_value in (
-            ("suggested_relation", value),
-            ("suggestion_basis", [value]),
-            ("nationality", value),
-        ):
+            _set(path, value)(planted)
+            assert get_leaks(planted, [], [], {}, probes, None, own).get("answer"), (path, value)
+        planted = copy.deepcopy(base)
+        _set(["links", 0, "suggestion_basis"], [value])(planted)
+        assert get_leaks(planted, [], [], {}, probes, None, own).get("answer"), value
+        if value != CLIENT_NAME:
             planted = copy.deepcopy(base)
-            target = planted if key == "nationality" else planted["links"][0]
-            target[key] = planted_value
-            assert get_leaks(planted, [], [], {}, probes, None).get("answer"), (key, value)
+            _set(["links", 0, "client_name"], value)(planted)
+            assert get_leaks(planted, [], [], {}, probes, None, own).get("answer"), value
         stranger_row = [{"user_email": value, "id": 1}]
-        assert get_leaks(base, [], stranger_row, types, probes, ADMIN["email"]).get("audit")
+        found = get_leaks(base, [], stranger_row, types, probes, ADMIN["email"], own)
+        assert found.get("audit"), value
+    # a link of another client carries no exemption for this client's name
+    planted = copy.deepcopy(base)
+    planted["links"].append({**base["links"][0], "client_id": C2})
+    assert get_leaks(planted, [], [], {}, probes, None, own).get("answer")
 
 
 AUDIT_TYPES = {
