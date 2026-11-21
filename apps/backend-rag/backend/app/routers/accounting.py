@@ -656,7 +656,7 @@ async def link_recorded(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Link an unmatched credit to a payment its practice already records. Moves no money."""
+    """Link an unmatched credit to a payment its practice already records; it enters the cash-out."""
     _require_accounting_access(current_user)
     try:
         async with db_pool.acquire() as conn:

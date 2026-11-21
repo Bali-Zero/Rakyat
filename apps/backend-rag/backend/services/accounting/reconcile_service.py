@@ -222,11 +222,16 @@ async def confirm_payment(
         #    money landed: the transfer's date when it is known (a statement row has a date only,
         #    so midnight UTC whatever the session time zone: the same calendar day in UTC, where
         #    production reports group by month, and in Bali), the confirmation time otherwise.
+        #    An invoice paid in parts is paid on its LATEST part: an older transfer confirmed
+        #    after a newer one, confirmed or linked, keeps the newer date (link_recorded does
+        #    the same).
         if invoice_id is not None:
             await conn.execute(
                 """
                 UPDATE invoices
-                SET paid_date = COALESCE(($5::date)::timestamp AT TIME ZONE 'UTC', now()),
+                SET paid_date = GREATEST(
+                        paid_date, COALESCE(($5::date)::timestamp AT TIME ZONE 'UTC', now())
+                    ),
                     payment_method = $1,
                     payment_reference = $2,
                     paid_amount_idr = COALESCE(paid_amount_idr, 0) + $3
@@ -397,15 +402,19 @@ async def recorded_without_notifications(
     )
 
 
-# ── Actions that move no money: link to a recorded payment, ignore, reopen ───────────────
+# ── Actions that change no case: link to a recorded payment, ignore, reopen ──────────────
 #
 # Each one is one transaction that locks the bank transaction row FIRST (as confirm_payment
-# does) and checks its own preconditions on the rows it holds. None of them issues a
-# statement that writes to practices, invoices or weekly_cashout. A refusal carries fixed
-# text and ids: which precondition failed and the ids involved, nothing else of a row.
+# does) and checks its own preconditions on the rows it holds. None of them writes to
+# practices. A link also writes the invoice's paid date and one cash-out row (owner rule e);
+# reopening that link reverses the row and recomputes the date. Ignore writes neither. A
+# refusal carries fixed text and ids: which precondition failed and the ids involved,
+# nothing else of a row.
 
-LINK_NOTE = "linked to a payment already recorded; no money moved"
+LINK_NOTE = "linked to a payment already recorded; added to the cash-out"
 REOPEN_NOTE = "reopened; no money moved"
+REOPEN_REVERSED_NOTE = "reopened; the link's cash-out row reversed"
+REVERSAL_DESCRIPTION = "reversal of cash-out row {id}: link reopened"
 REASON_MIN_LEN = 3
 REASON_MAX_LEN = 200
 REASON_REFUSAL = f"reason must be {REASON_MIN_LEN} to {REASON_MAX_LEN} printable characters"
@@ -421,7 +430,8 @@ class ActionResult:
 async def _lock_bank_row(conn: asyncpg.Connection, bank_txn_id: int) -> asyncpg.Record:
     """First statement of every action: lock the bank transaction, refuse if it is missing."""
     bank = await conn.fetchrow(
-        "SELECT direction, reconciled_status, amount_idr FROM bank_transactions WHERE id = $1 FOR UPDATE",
+        "SELECT direction, reconciled_status, amount_idr, txn_date, matched_practice_id,"
+        " matched_invoice_id FROM bank_transactions WHERE id = $1 FOR UPDATE",
         bank_txn_id,
     )
     if bank is None:
@@ -437,7 +447,11 @@ async def link_recorded(
     invoice_id: int,
     linked_by: str,
 ) -> ActionResult:
-    """Link an unmatched credit to the invoice of a payment already recorded. Moves no money.
+    """Link an unmatched credit to the invoice of a payment already recorded.
+
+    The case is not changed: its payment was recorded by hand. Owner rule (e): the transfer
+    enters the cash-out (one `invoice_payment` row on its own date) and dates the invoice
+    paid (the latest of its date and any date already there).
 
     Locks the bank transaction first and the practice second (FOR UPDATE, the statement
     confirm_payment uses), then reads the invoice under a share lock, so its amount cannot change
@@ -504,17 +518,43 @@ async def link_recorded(
             invoice_id,
             bank_txn_id,
         )
+        txn_date = bank["txn_date"]
+        # Midnight UTC of the statement date, as confirm_payment stores it.
+        await conn.execute(
+            "UPDATE invoices SET paid_date = GREATEST(paid_date, ($1::date)::timestamp AT TIME ZONE 'UTC')"
+            " WHERE id = $2",
+            txn_date,
+            invoice_id,
+        )
+        cashout_id = await conn.fetchval(
+            """
+            INSERT INTO weekly_cashout
+                (movement_date, week_label, direction, type, amount_idr,
+                 linked_practice_id, linked_invoice_id, linked_bank_txn_id,
+                 payment_method, recorded_by, recorded_at)
+            VALUES ($1, $2, 'in', 'invoice_payment', $3, $4, $5, $6, 'bank_transfer', $7, now())
+            RETURNING id
+            """,
+            txn_date,
+            _iso_week_label(txn_date),
+            bank["amount_idr"],
+            practice_id,
+            invoice_id,
+            bank_txn_id,
+            linked_by,
+        )
         log_id = await conn.fetchval(
             """
             INSERT INTO reconciliation_log
-                (bank_txn_id, invoice_ids, practice_id, confirmed_by, confirmed_at,
+                (bank_txn_id, invoice_ids, practice_id, cashout_id, confirmed_by, confirmed_at,
                  status_before, status_after, amount_applied_idr, note)
-            VALUES ($1, $2, $3, $4, now(), 'paid', 'paid', 0, $5)
+            VALUES ($1, $2, $3, $4, $5, now(), 'paid', 'paid', 0, $6)
             RETURNING id
             """,
             bank_txn_id,
             [invoice_id],  # a list: see confirm_payment
             practice_id,
+            cashout_id,
             linked_by,
             LINK_NOTE,
         )
@@ -574,12 +614,60 @@ async def reopen_transaction(
 ) -> ActionResult:
     """Put a linked (`manual`) or `ignored` transfer back to `unmatched`.
 
-    A `matched` row is never reopened here: money was recorded for it.
+    A `matched` row is never reopened here: money was recorded for it. A link that wrote a
+    cash-out row (owner rule e) gets it reversed, append-only: a copy marked as its reversal,
+    the two pointing at each other so every reader of the cash-out leaves both out; the
+    invoice's paid date becomes the latest date of its cash-out rows still standing, or none.
+    Locks the bank transaction, then the practice, then the cash-out row, then the invoice:
+    the order link_recorded and confirm_payment take, so the paid date is recomputed only after
+    a link or confirmation in flight on the same practice has committed.
     """
     async with conn.transaction():
         bank = await _lock_bank_row(conn, bank_txn_id)
         if bank["reconciled_status"] not in ("manual", "ignored"):
             raise ReconcileError(f"bank transaction {bank_txn_id} is not manual or ignored")
+
+        written: list[asyncpg.Record] = []
+        if bank["reconciled_status"] == "manual":
+            if bank["matched_practice_id"] is not None:
+                await conn.execute(
+                    "SELECT 1 FROM practices WHERE id = $1 FOR UPDATE", bank["matched_practice_id"]
+                )
+            written = await conn.fetch(
+                "SELECT id, linked_invoice_id FROM weekly_cashout"
+                " WHERE linked_bank_txn_id = $1 AND type = 'invoice_payment' AND reversed_by_id IS NULL"
+                " ORDER BY id FOR UPDATE",
+                bank_txn_id,
+            )
+        reversal_id = None
+        for row in written:
+            reversal_id = await conn.fetchval(
+                """
+                INSERT INTO weekly_cashout
+                    (movement_date, week_label, direction, type, amount_idr,
+                     pnbp_idr, urgent_idr, rptka_imta_idr, margin_idr, final_price_idr,
+                     original_currency, original_amount, fx_rate, fx_date,
+                     pph_withheld_idr, bank_fee_idr,
+                     linked_practice_id, linked_invoice_id, linked_bank_txn_id,
+                     category, description, counterparty, payment_method,
+                     recorded_by, recorded_at, reversed_by_id)
+                SELECT movement_date, week_label, direction, type, amount_idr,
+                       pnbp_idr, urgent_idr, rptka_imta_idr, margin_idr, final_price_idr,
+                       original_currency, original_amount, fx_rate, fx_date,
+                       pph_withheld_idr, bank_fee_idr,
+                       linked_practice_id, linked_invoice_id, linked_bank_txn_id,
+                       category, $2, counterparty, payment_method,
+                       $3, now(), id
+                FROM weekly_cashout WHERE id = $1
+                RETURNING id
+                """,
+                row["id"],
+                REVERSAL_DESCRIPTION.format(id=row["id"]),
+                reopened_by,
+            )
+            await conn.execute(
+                "UPDATE weekly_cashout SET reversed_by_id = $1 WHERE id = $2", reversal_id, row["id"]
+            )
 
         # Safe to read now: every writer of this bank transaction's log rows holds its lock.
         latest = await conn.fetchval(
@@ -596,18 +684,33 @@ async def reopen_transaction(
             """,
             bank_txn_id,
         )
+        for invoice_id in sorted({r["linked_invoice_id"] for r in written} - {None}):
+            await conn.execute(
+                """
+                UPDATE invoices
+                SET paid_date = (
+                    SELECT (max(wc.movement_date))::timestamp AT TIME ZONE 'UTC'
+                    FROM weekly_cashout wc
+                    WHERE wc.linked_invoice_id = $1 AND wc.type = 'invoice_payment'
+                      AND wc.reversed_by_id IS NULL
+                )
+                WHERE id = $1
+                """,
+                invoice_id,
+            )
         log_id = await conn.fetchval(
             """
             INSERT INTO reconciliation_log
-                (bank_txn_id, confirmed_by, confirmed_at, amount_applied_idr,
+                (bank_txn_id, cashout_id, confirmed_by, confirmed_at, amount_applied_idr,
                  reversal_of_id, note)
-            VALUES ($1, $2, now(), 0, $3, $4)
+            VALUES ($1, $2, $3, now(), 0, $4, $5)
             RETURNING id
             """,
             bank_txn_id,
+            reversal_id,
             reopened_by,
             latest,
-            REOPEN_NOTE,
+            REOPEN_REVERSED_NOTE if written else REOPEN_NOTE,
         )
     logger.info("Reconcile reopen: bank_txn=%s recon=%s", bank_txn_id, log_id)
     return ActionResult(bank_txn_id, "unmatched", log_id)
