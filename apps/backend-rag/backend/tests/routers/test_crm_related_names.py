@@ -94,6 +94,8 @@ CLIENTS_SCHEMA = """
 CREATE TABLE clients (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     full_name text NOT NULL,
+    passport_number varchar(100),
+    date_of_birth date,
     deleted_at timestamptz
 );
 """
@@ -175,6 +177,7 @@ async def pool(writes):
                 "367_related_subject_links.sql",
                 "369_related_subject_merges.sql",
                 "370_related_subject_detachments.sql",
+                "372_related_subject_link_reviews.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -435,6 +438,7 @@ async def test_n1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "related_subject_links",
             "related_subject_merges",
             "related_subject_detachments",
+            "related_subject_link_reviews",
         }
         assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
 

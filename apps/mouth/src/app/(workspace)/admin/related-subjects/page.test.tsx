@@ -12,7 +12,7 @@ import { ApiError } from "@/lib/api/error-handler";
 
 import RelatedRegistryPage from "./page";
 
-const apiMock = vi.hoisted(() => ({ get: vi.fn() }));
+const apiMock = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api: apiMock }));
 vi.mock("@/lib/logger", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -107,6 +107,7 @@ function defaults(list: unknown = page([ROW_A, ROW_UNNAMED])) {
 
 beforeEach(() => {
   apiMock.get.mockReset();
+  apiMock.post.mockReset();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -485,7 +486,9 @@ describe("related subjects registry page", () => {
       "Clients",
     );
     expect(
-      within(block).getByText("Proposed from documents, not confirmed."),
+      within(block).getByText(
+        "Proposed from documents. A CRM admin confirms each link below.",
+      ),
     ).toBeTruthy();
     const entries = within(block).getAllByTestId("registry-client");
     expect(entries).toHaveLength(2);
@@ -584,11 +587,16 @@ describe("related subjects registry page", () => {
     expect(screen.getByRole("group", { name: "Subject kind" })).toBeTruthy();
   });
 
-  it("F23 no control of the Clients block writes: no button, and every call is a read", async () => {
+  it("F23 the Clients block has no button other than Confirm and Not related, and every read goes to the registry", async () => {
     await openDetail(withLinks([linkOf(), linkOf({ client_live: false })]));
     const block = screen.getByTestId("registry-clients");
-    expect(within(block).queryAllByRole("button")).toHaveLength(0);
-    expect(Object.keys(apiMock)).toEqual(["get"]);
+    expect(
+      within(block)
+        .queryAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Confirm", "Not related"]);
+    expect(Object.keys(apiMock)).toEqual(["get", "post"]);
+    expect(apiMock.post).not.toHaveBeenCalled();
     for (const call of apiMock.get.mock.calls) {
       expect(String(call[0])).toMatch(/^\/api\/crm\/related-registry/);
     }
@@ -648,6 +656,9 @@ describe("related subjects registry page", () => {
       "ZzClient One · WhatsApp phone · 2026-03-04",
       "ZzClient One · — · 2026-03-04",
     ]);
+    // the decision control sits beside the entries, once per client, outside the legend
+    expect(screen.getAllByTestId("registry-review-item")).toHaveLength(4);
+    expect(within(legend).queryByRole("button")).toBeNull();
   });
 
   it("F31 the other two bases have their sentence", async () => {
@@ -670,6 +681,423 @@ describe("related subjects registry page", () => {
     expect(screen.getByTestId("registry-clients")).toBeTruthy();
     expect(screen.queryByTestId("registry-basis-legend")).toBeNull();
     expect(screen.queryByTestId("registry-basis-caveat")).toBeNull();
+  });
+
+  const LINK_REVIEWS = "/api/crm/related-registry/link-reviews";
+  const reviewOf = (over: Record<string, unknown> = {}) => ({
+    decision: "confirmed",
+    relation: "spouse",
+    decided_by: "zz.admin@example.test",
+    decided_at: "2026-11-20T09:30:00Z",
+    ...over,
+  });
+  const relationSelect = () =>
+    within(screen.getByTestId("registry-clients")).getByRole(
+      "combobox",
+    ) as HTMLSelectElement;
+  const confirmButton = () =>
+    screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+  const notRelatedButton = () =>
+    screen.getByRole("button", { name: "Not related" }) as HTMLButtonElement;
+  const suggested = (basis: string[], over: Record<string, unknown> = {}) =>
+    linkOf({ suggested_relation: "self", suggestion_basis: basis, ...over });
+
+  it("F50 the status line says proposed, confirmed with relation, who and when, or not related", async () => {
+    await openDetail(
+      withLinks([
+        linkOf({ client_id: 424242, review: null }),
+        linkOf({ client_id: 424243, review: reviewOf() }),
+        linkOf({
+          client_id: 424244,
+          review: reviewOf({ decision: "rejected", relation: null }),
+        }),
+        linkOf({
+          client_id: 424245,
+          review: reviewOf({ relation: "self" }),
+        }),
+      ]),
+    );
+    expect(
+      screen.getAllByTestId("registry-review-status").map((e) => e.textContent),
+    ).toEqual([
+      "Proposed, not confirmed.",
+      "Confirmed: Spouse — zz.admin@example.test, 2026-11-20",
+      "Not related — zz.admin@example.test, 2026-11-20",
+      "Confirmed: The client themself — zz.admin@example.test, 2026-11-20",
+    ]);
+  });
+
+  it("F51 the control shows once per client even when two bases link the same client", async () => {
+    await openDetail(
+      withLinks([
+        linkOf({ basis: "drive_folder" }),
+        linkOf({ basis: "whatsapp_phone" }),
+        linkOf({ client_id: 424243, basis: "drive_folder" }),
+      ]),
+    );
+    expect(screen.getAllByTestId("registry-client")).toHaveLength(3);
+    expect(screen.getAllByTestId("registry-review")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Confirm" })).toHaveLength(2);
+    expect(
+      Array.from(
+        (
+          within(screen.getByTestId("registry-clients")).getAllByRole(
+            "combobox",
+          )[0] as HTMLSelectElement
+        ).options,
+      ).map((o) => o.textContent),
+    ).toEqual([
+      "Relation…",
+      "The client themself",
+      "Spouse",
+      "Child",
+      "Employee",
+      "Other",
+    ]);
+  });
+
+  it("F52 a suggestion with no review preselects the client themself and says why", async () => {
+    await openDetail(
+      withLinks([suggested(["passport_equal", "birth_date_equal"])]),
+    );
+    expect(relationSelect().value).toBe("self");
+    expect(confirmButton().disabled).toBe(false);
+    expect(screen.getByTestId("registry-review-caption").textContent).toBe(
+      "Preselected: the name and the passport number and the birth date agree with the client card.",
+    );
+  });
+
+  it("F53 the caption words follow each basis, three joined with a comma and and", async () => {
+    await openDetail(
+      withLinks([
+        suggested([
+          "passport_one_char_apart",
+          "nik_encodes_client_birth_date",
+          "birth_date_equal",
+        ]),
+      ]),
+    );
+    expect(screen.getByTestId("registry-review-caption").textContent).toBe(
+      "Preselected: the name and the passport number (one character apart), the birth date in the NIK and the birth date agree with the client card.",
+    );
+  });
+
+  it("F54 a REJECTED review with suggestion self preselects nothing and shows no caption", async () => {
+    await openDetail(
+      withLinks([
+        suggested(["passport_equal"], {
+          review: reviewOf({ decision: "rejected", relation: null }),
+        }),
+      ]),
+    );
+    expect(relationSelect().value).toBe("");
+    expect(screen.queryByTestId("registry-review-caption")).toBeNull();
+    expect(confirmButton().disabled).toBe(true);
+    expect(notRelatedButton().disabled).toBe(false);
+  });
+
+  it("F55 a confirmed review shows its relation, and no caption even with a suggestion", async () => {
+    await openDetail(
+      withLinks([
+        suggested(["passport_equal"], {
+          review: reviewOf({ relation: "child" }),
+        }),
+      ]),
+    );
+    expect(relationSelect().value).toBe("child");
+    expect(screen.queryByTestId("registry-review-caption")).toBeNull();
+    expect(confirmButton().disabled).toBe(false);
+  });
+
+  it("F56 with no suggestion Confirm is disabled until a relation is chosen", async () => {
+    await openDetail(withLinks([linkOf()]));
+    expect(relationSelect().value).toBe("");
+    expect(confirmButton().disabled).toBe(true);
+    expect(screen.queryByTestId("registry-review-caption")).toBeNull();
+    fireEvent.change(relationSelect(), { target: { value: "employee" } });
+    expect(confirmButton().disabled).toBe(false);
+  });
+
+  it("F57 Confirm and Not related post the exact bodies to the static path", async () => {
+    apiMock.post.mockResolvedValue({ status: "recorded", review: reviewOf() });
+    await openDetail(withLinks([linkOf()]));
+    fireEvent.change(relationSelect(), { target: { value: "spouse" } });
+    fireEvent.click(confirmButton());
+    await settle();
+    expect(apiMock.post).toHaveBeenLastCalledWith(LINK_REVIEWS, {
+      subject_id: 7,
+      client_id: 424242,
+      decision: "confirmed",
+      relation: "spouse",
+    });
+    fireEvent.click(notRelatedButton());
+    await settle();
+    expect(apiMock.post).toHaveBeenLastCalledWith(LINK_REVIEWS, {
+      subject_id: 7,
+      client_id: 424242,
+      decision: "rejected",
+    });
+    expect(apiMock.post).toHaveBeenCalledTimes(2);
+    expect(LINK_REVIEWS).not.toContain("?");
+  });
+
+  it("F58 both buttons are disabled while a request is in flight", async () => {
+    const pending = deferred<unknown>();
+    apiMock.post.mockImplementation(() => pending.promise);
+    await openDetail(withLinks([suggested(["passport_equal"])]));
+    fireEvent.click(confirmButton());
+    await settle();
+    expect(confirmButton().disabled).toBe(true);
+    expect(notRelatedButton().disabled).toBe(true);
+    fireEvent.click(notRelatedButton());
+    expect(apiMock.post).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      pending.resolve({ status: "recorded", review: reviewOf() }),
+    );
+    expect(notRelatedButton().disabled).toBe(false);
+  });
+
+  it("F59 after a 200 the detail is read again and shows the saved review", async () => {
+    apiMock.post.mockResolvedValue({
+      status: "recorded",
+      review: reviewOf({ relation: "self" }),
+    });
+    await openDetail(withLinks([suggested(["passport_equal"])]));
+    const readsBefore = apiMock.get.mock.calls.length;
+    apiMock.get.mockImplementation((url: string) =>
+      Promise.resolve(
+        isDetail(url)
+          ? withLinks([
+              suggested(["passport_equal"], {
+                review: reviewOf({ relation: "self" }),
+              }),
+            ])
+          : page([ROW_A]),
+      ),
+    );
+    fireEvent.click(confirmButton());
+    await settle();
+    expect(apiMock.get.mock.calls.length).toBe(readsBefore + 1);
+    expect(lastUrl()).toBe("/api/crm/related-registry/7");
+    expect(screen.getByTestId("registry-review-status").textContent).toBe(
+      "Confirmed: The client themself — zz.admin@example.test, 2026-11-20",
+    );
+    expect(screen.queryByTestId("registry-review-caption")).toBeNull();
+    expect(screen.queryByText("Could not save the decision.")).toBeNull();
+  });
+
+  describe("completion order across subjects", () => {
+    const detailB = withLinks([linkOf({ client_id: 424250 })]);
+    const detailBWithId = { ...detailB, id: 9, display_name: "ZzBbb Person" };
+
+    async function openTwo(detail7: () => Promise<unknown>) {
+      apiMock.get.mockImplementation((url: string) => {
+        if (url === "/api/crm/related-registry/7") return detail7();
+        if (url === "/api/crm/related-registry/9")
+          return Promise.resolve(detailBWithId);
+        return Promise.resolve(page([ROW_A, ROW_B]));
+      });
+      render(<RelatedRegistryPage />);
+      await settle();
+      fireEvent.click(screen.getAllByTestId("registry-row")[0]);
+      await settle();
+    }
+
+    it("F60 a POST that completes after another subject was opened re-reads nothing and shows nothing", async () => {
+      const post = deferred<unknown>();
+      apiMock.post.mockImplementation(() => post.promise);
+      await openTwo(() => Promise.resolve(withLinks([linkOf()])));
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(screen.getAllByTestId("registry-row")[1]);
+      await settle();
+      const reads = apiMock.get.mock.calls.length;
+      await act(async () =>
+        post.resolve({ status: "recorded", review: reviewOf() }),
+      );
+      expect(apiMock.get.mock.calls.length).toBe(reads);
+      expect(lastUrl()).toBe("/api/crm/related-registry/9");
+      expect(screen.queryByText("Could not save the decision.")).toBeNull();
+      expect(screen.getByTestId("registry-review-status").textContent).toBe(
+        "Proposed, not confirmed.",
+      );
+      expect(notRelatedButton().disabled).toBe(false);
+    });
+
+    it("F61 a POST that fails after another subject was opened shows no error on the new subject", async () => {
+      const post = deferred<unknown>();
+      apiMock.post.mockImplementation(() => post.promise);
+      await openTwo(() => Promise.resolve(withLinks([linkOf()])));
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(screen.getAllByTestId("registry-row")[1]);
+      await settle();
+      await act(async () => {
+        post.resolve(Promise.reject(new ApiError("ZzServerText", 500, {})));
+      });
+      expect(screen.queryByText("Could not save the decision.")).toBeNull();
+      expect(document.body.textContent).not.toContain("ZzServerText");
+    });
+
+    it("F62 a re-read of the saved subject that answers after another subject was opened is dropped", async () => {
+      apiMock.post.mockResolvedValue({
+        status: "recorded",
+        review: reviewOf(),
+      });
+      const reread = deferred<unknown>();
+      let reads7 = 0;
+      await openTwo(() => {
+        reads7 += 1;
+        return reads7 === 1
+          ? Promise.resolve(withLinks([linkOf()]))
+          : reread.promise;
+      });
+      fireEvent.click(notRelatedButton());
+      await settle();
+      expect(reads7).toBe(2);
+      fireEvent.click(screen.getAllByTestId("registry-row")[1]);
+      await settle();
+      await act(async () =>
+        reread.resolve(
+          withLinks([
+            linkOf({ client_name: "ZzStaleClient", review: reviewOf() }),
+          ]),
+        ),
+      );
+      expect(
+        within(screen.getByLabelText("Subject detail")).getByText(
+          "ZzBbb Person",
+        ),
+      ).toBeTruthy();
+      expect(document.body.textContent).not.toContain("ZzStaleClient");
+    });
+
+    it("F63 an earlier re-read that answers after a later one does not overwrite it", async () => {
+      apiMock.post.mockResolvedValue({
+        status: "recorded",
+        review: reviewOf(),
+      });
+      const earlier = deferred<unknown>();
+      let reads7 = 0;
+      await openTwo(() => {
+        reads7 += 1;
+        if (reads7 === 1) return Promise.resolve(withLinks([linkOf()]));
+        if (reads7 === 2) return earlier.promise;
+        return Promise.resolve(withLinks([linkOf({ review: reviewOf() })]));
+      });
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(notRelatedButton());
+      await settle();
+      expect(reads7).toBe(3);
+      expect(screen.getByTestId("registry-review-status").textContent).toBe(
+        "Confirmed: Spouse — zz.admin@example.test, 2026-11-20",
+      );
+      await act(async () => earlier.resolve(withLinks([linkOf()])));
+      expect(screen.getByTestId("registry-review-status").textContent).toBe(
+        "Confirmed: Spouse — zz.admin@example.test, 2026-11-20",
+      );
+    });
+
+    const rowAt = (i: number) => screen.getAllByTestId("registry-row")[i];
+
+    it("F65 a subject's buttons stay disabled while its own save is pending, after another subject was opened and saved", async () => {
+      const postA = deferred<unknown>();
+      const postB = deferred<unknown>();
+      apiMock.post
+        .mockImplementationOnce(() => postA.promise)
+        .mockImplementationOnce(() => postB.promise);
+      await openTwo(() => Promise.resolve(withLinks([linkOf()])));
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(1));
+      await settle();
+      expect(notRelatedButton().disabled).toBe(false);
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(0));
+      await settle();
+      expect(notRelatedButton().disabled).toBe(true);
+      expect(confirmButton().disabled).toBe(true);
+      await act(async () =>
+        postB.resolve({ status: "recorded", review: reviewOf() }),
+      );
+      expect(notRelatedButton().disabled).toBe(true);
+      fireEvent.click(notRelatedButton());
+      expect(apiMock.post).toHaveBeenCalledTimes(2);
+      await act(async () =>
+        postA.resolve({ status: "recorded", review: reviewOf() }),
+      );
+      await settle();
+      expect(notRelatedButton().disabled).toBe(false);
+    });
+
+    it("F66 a save that fails after the admin left the subject and came back shows no error", async () => {
+      const post = deferred<unknown>();
+      apiMock.post.mockImplementation(() => post.promise);
+      await openTwo(() => Promise.resolve(withLinks([linkOf()])));
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(1));
+      await settle();
+      fireEvent.click(rowAt(0));
+      await settle();
+      await act(async () => {
+        post.resolve(Promise.reject(new ApiError("ZzServerText", 500, {})));
+      });
+      expect(screen.queryByText("Could not save the decision.")).toBeNull();
+      expect(document.body.textContent).not.toContain("ZzServerText");
+      expect(notRelatedButton().disabled).toBe(false);
+    });
+
+    it("F67 a save that succeeds after the admin left the subject and came back re-reads that subject", async () => {
+      const post = deferred<unknown>();
+      apiMock.post.mockImplementation(() => post.promise);
+      let reads7 = 0;
+      await openTwo(() => {
+        reads7 += 1;
+        return Promise.resolve(
+          reads7 >= 3
+            ? withLinks([linkOf({ review: reviewOf() })])
+            : withLinks([linkOf()]),
+        );
+      });
+      fireEvent.click(notRelatedButton());
+      await settle();
+      fireEvent.click(rowAt(1));
+      await settle();
+      fireEvent.click(rowAt(0));
+      await settle();
+      expect(reads7).toBe(2);
+      await act(async () =>
+        post.resolve({ status: "recorded", review: reviewOf() }),
+      );
+      await settle();
+      expect(reads7).toBe(3);
+      expect(lastUrl()).toBe("/api/crm/related-registry/7");
+      expect(screen.getByTestId("registry-review-status").textContent).toBe(
+        "Confirmed: Spouse — zz.admin@example.test, 2026-11-20",
+      );
+      expect(screen.queryByText("Could not save the decision.")).toBeNull();
+    });
+  });
+
+  it("F64 a failed save shows only the fixed message, never the server text, and reads nothing again", async () => {
+    apiMock.post.mockRejectedValue(
+      new ApiError("ZzServerText zz.admin@example.test", 409, {
+        detail: "subject_is_merged ZzServerText",
+      }),
+    );
+    await openDetail(withLinks([linkOf()]));
+    const reads = apiMock.get.mock.calls.length;
+    fireEvent.change(relationSelect(), { target: { value: "other" } });
+    fireEvent.click(confirmButton());
+    await settle();
+    expect(screen.getByText("Could not save the decision.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("ZzServerText");
+    expect(document.body.textContent).not.toContain("subject_is_merged");
+    expect(apiMock.get.mock.calls.length).toBe(reads);
+    expect(confirmButton().disabled).toBe(false);
   });
 
   const MERGED_AT = "2026-02-03T08:00:00Z";
@@ -816,7 +1244,8 @@ describe("related subjects registry page", () => {
     expect(asked).toEqual(["/api/crm/related-registry/7"]);
     expect(screen.getByTestId("registry-merged-from")).toBeTruthy();
     expect(screen.queryByText(/This record was merged into/)).toBeNull();
-    expect(Object.keys(apiMock)).toEqual(["get"]);
+    expect(Object.keys(apiMock)).toEqual(["get", "post"]);
+    expect(apiMock.post).not.toHaveBeenCalled();
   });
 
   it("F28 a subject in no merge, and an answer without the new fields, show no line, banner or mark; every call is a GET", async () => {
@@ -838,7 +1267,8 @@ describe("related subjects registry page", () => {
       expect(screen.queryByTestId(id)).toBeNull();
     }
     expect(screen.queryByText(/merged/)).toBeNull();
-    expect(Object.keys(apiMock)).toEqual(["get"]);
+    expect(Object.keys(apiMock)).toEqual(["get", "post"]);
+    expect(apiMock.post).not.toHaveBeenCalled();
     for (const call of apiMock.get.mock.calls) {
       expect(String(call[0])).toMatch(/^\/api\/crm\/related-registry/);
     }

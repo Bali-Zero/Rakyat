@@ -1,5 +1,6 @@
-"""Read-only access to the related-subjects registry (tables of migrations 361, 362, 365, 367, 369
-and 370, and ``clients``, SELECT only, to show the name of a linked client).
+"""Read-only access to the related-subjects registry (tables of migrations 361, 362, 365, 367, 369,
+370 and 372, and ``clients``, SELECT only, to show the name of a linked client and to compute the
+link suggestion).
 
 Every statement here is a SELECT with bound parameters; no user text is interpolated into SQL.
 Evidence columns (``evidence``, ``created_by``) are never selected, with ONE exception: the whole
@@ -207,6 +208,75 @@ ORDER BY x.created_at ASC, x.id ASC
 LIMIT $2
 """
 
+# The effective review (latest (created_at, id)) of each client over the member set ($1).
+_REVIEWS_SQL = """
+SELECT DISTINCT ON (client_id) client_id, decision, relation, decided_by, created_at
+FROM related_subject_link_reviews
+WHERE subject_id = ANY($1::bigint[]) AND client_id = ANY($2::int[])
+ORDER BY client_id, created_at DESC, id DESC
+"""
+
+# The suggestion for each live client of $3 over the member set $1 and the opened subject $2.
+# Only clients whose name equals a name of the member set are returned, and only booleans leave
+# SQL: the client's passport number, birth date and name are compared here and never selected.
+# The NIK cast is guarded by a CASE so that no other value is ever cast.
+_SUGGESTIONS_SQL = r"""
+SELECT c.id AS client_id,
+       EXISTS (
+           SELECT 1 FROM related_subject_identifiers i
+           WHERE i.subject_id = ANY($1::bigint[]) AND i.id_type = 'passport'
+             AND p.num <> '' AND i.id_norm = p.num
+       ) AS passport_equal,
+       EXISTS (
+           SELECT 1 FROM related_subject_identifiers i
+           WHERE i.subject_id = ANY($1::bigint[]) AND i.id_type = 'passport'
+             AND length(p.num) >= 6 AND length(i.id_norm) = length(p.num)
+             AND (
+                 SELECT count(*) FROM generate_series(1, length(p.num)) g
+                 WHERE substr(i.id_norm, g, 1) <> substr(p.num, g, 1)
+             ) = 1
+       ) AS passport_one_char_apart,
+       EXISTS (
+           SELECT 1 FROM related_subject_identifiers i
+           WHERE i.subject_id = ANY($1::bigint[]) AND i.id_type = 'nik'
+             AND c.date_of_birth IS NOT NULL
+             AND i.id_norm ~ '^[0-9]{16}$'
+             AND substr(i.id_norm, 9, 4) = to_char(c.date_of_birth, 'MMYY')
+             AND CASE WHEN i.id_norm ~ '^[0-9]{16}$' THEN substr(i.id_norm, 7, 2)::int END
+                 IN (extract(day FROM c.date_of_birth)::int,
+                     extract(day FROM c.date_of_birth)::int + 40)
+       ) AS nik_encodes_client_birth_date,
+       EXISTS (
+           SELECT 1 FROM related_subjects own
+           WHERE own.id = $2 AND own.date_of_birth IS NOT NULL
+             AND own.date_of_birth = c.date_of_birth
+       ) AS birth_date_equal
+FROM clients c
+CROSS JOIN LATERAL (
+    SELECT upper(regexp_replace(coalesce(c.passport_number, ''), '[^A-Za-z0-9]', '', 'g')) AS num
+) p
+WHERE c.id = ANY($3::int[]) AND c.deleted_at IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM (
+          SELECT n.name AS name FROM related_subject_names n
+          WHERE n.subject_id = ANY($1::bigint[])
+          UNION ALL
+          SELECT r.display_name FROM related_subjects r
+          WHERE r.id = ANY($1::bigint[]) AND r.display_name IS NOT NULL
+      ) nm
+      WHERE upper(regexp_replace(btrim(nm.name), '\s+', ' ', 'g'))
+          = upper(regexp_replace(btrim(c.full_name), '\s+', ' ', 'g'))
+  )
+"""
+
+SUGGESTION_BASES = (
+    "passport_equal",
+    "passport_one_char_apart",
+    "nik_encodes_client_birth_date",
+    "birth_date_equal",
+)
+
 # One document per sha256: the opened subject's own link when it has one ($2), else the earliest.
 _DOCUMENTS_SQL = """
 SELECT x.subject_id, x.sha256, x.doc_type, d.mime_type, d.byte_size, d.first_seen_on
@@ -390,6 +460,24 @@ async def get_subject(conn: asyncpg.Connection, subject_id: int) -> dict[str, An
         }
         for r in link_rows
     ]
+    client_ids = sorted({r["client_id"] for r in link_rows})
+    reviews: dict[int, dict[str, Any]] = {}
+    suggestions: dict[int, list[str]] = {}
+    if client_ids:
+        for r in await conn.fetch(_REVIEWS_SQL, ids, client_ids):
+            reviews[r["client_id"]] = {
+                "decision": r["decision"],
+                "relation": r["relation"],
+                "decided_by": r["decided_by"],
+                "decided_at": r["created_at"],
+            }
+        for r in await conn.fetch(_SUGGESTIONS_SQL, ids, subject_id, client_ids):
+            suggestions[r["client_id"]] = [b for b in SUGGESTION_BASES if r[b]]
+    for link in links:
+        basis_words = suggestions.get(link["client_id"], [])
+        link["review"] = reviews.get(link["client_id"])
+        link["suggested_relation"] = "self" if basis_words else None
+        link["suggestion_basis"] = basis_words
     member_set = set(ids)
     detached_into: list[dict[str, Any]] = []
     detached_from: list[dict[str, Any]] = []

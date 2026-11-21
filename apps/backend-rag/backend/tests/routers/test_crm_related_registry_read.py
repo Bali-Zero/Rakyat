@@ -48,6 +48,7 @@ REGISTRY_TABLES = (
     "related_subject_links",
     "related_subject_merges",
     "related_subject_detachments",
+    "related_subject_link_reviews",
 )
 
 ADMIN = {"email": "zz-admin@example.test", "user_id": 1, "role": "admin"}
@@ -59,6 +60,8 @@ CLIENTS_SCHEMA = """
 CREATE TABLE clients (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     full_name text NOT NULL,
+    passport_number varchar(100),
+    date_of_birth date,
     deleted_at timestamptz
 );
 """
@@ -150,6 +153,7 @@ async def pool():
                 "367_related_subject_links.sql",
                 "369_related_subject_merges.sql",
                 "370_related_subject_detachments.sql",
+                "372_related_subject_link_reviews.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -581,8 +585,9 @@ def test_t10_every_sql_text_of_the_service_is_a_plain_select():
     ]
     # slice 4A added the recorded-names statement of the detail page, slice 4B the links
     # statement, slice 4C the members statement of the detail page, the file-count slice the
-    # detachments statement: 11 complete statements
-    assert len(statements) == 11
+    # detachments statement, slice 4F the reviews and the suggestions statements: 13 complete
+    # statements
+    assert len(statements) == 13
     for sql in statements:
         assert sql.lstrip().upper().startswith("SELECT"), sql[:40]
     # the executed statements are exactly the module's constants (no inline SQL in a call)

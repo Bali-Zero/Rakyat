@@ -1645,6 +1645,33 @@ export interface components {
         | "shareholder"
         | "employee"
         | "sponsor";
+      review: components["schemas"]["RelatedRegistryLinkReview"] | null;
+      /** Suggested Relation */
+      suggested_relation: "self" | null;
+      /** Suggestion Basis */
+      suggestion_basis: (
+        | "passport_equal"
+        | "passport_one_char_apart"
+        | "nik_encodes_client_birth_date"
+        | "birth_date_equal"
+      )[];
+    };
+    /** RelatedRegistryLinkReview */
+    RelatedRegistryLinkReview: {
+      /**
+       * Decided At
+       * Format: date-time
+       */
+      decided_at: string;
+      /** Decided By */
+      decided_by: string;
+      /**
+       * Decision
+       * @enum {string}
+       */
+      decision: "confirmed" | "rejected";
+      /** Relation */
+      relation: ("self" | "spouse" | "child" | "employee" | "other") | null;
     };
     /** RelatedRegistryListOut */
     RelatedRegistryListOut: {
@@ -1687,6 +1714,29 @@ export interface components {
         | "registration"
         | "ocr_corroborated"
         | "ocr_single";
+    };
+    /** RelatedRegistryReviewAnswer */
+    RelatedRegistryReviewAnswer: {
+      review: components["schemas"]["RelatedRegistryReviewOut"];
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "recorded" | "unchanged";
+    };
+    /** RelatedRegistryReviewOut */
+    RelatedRegistryReviewOut: {
+      /** Decided At */
+      decided_at: string;
+      /** Decided By */
+      decided_by: string;
+      /**
+       * Decision
+       * @enum {string}
+       */
+      decision: "confirmed" | "rejected";
+      /** Relation */
+      relation: ("self" | "spouse" | "child" | "employee" | "other") | null;
     };
     /** RelatedRegistrySubjectDetail */
     RelatedRegistrySubjectDetail: {
