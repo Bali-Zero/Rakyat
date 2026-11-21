@@ -739,11 +739,10 @@ async def test_r4_meta_payload_fallbacks_keep_ack_and_recovery(branch, monkeypat
             wa, "_resolve_webhook_id", AsyncMock(side_effect=RuntimeError(_R4_PRIVATE))
         )
     if branch == "recovery":
-        assert (
-            await wa.route_whatsapp_recovery(payload, db_pool=pool)
-            == wa.LEGACY_PATH_RETIRED_REASON
-        )
-        expected = "closing as retired legacy"
+        legacy = AsyncMock()
+        assert await wa.route_whatsapp_recovery(payload, db_pool=pool, legacy_route=legacy) is None
+        legacy.assert_awaited_once_with(payload)
+        expected = "could not be classified"
     else:
         assert await wa.process_meta_inbox_payload(payload, None, db_pool=pool) is (
             branch != "processing"

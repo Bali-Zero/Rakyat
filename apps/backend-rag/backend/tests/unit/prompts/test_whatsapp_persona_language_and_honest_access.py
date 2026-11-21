@@ -164,3 +164,23 @@ class TestTheModelMaySayItCannotSee:
         assert "Always call the get_pricing tool" in prompt
         assert "CLIENT CONTEXT:" in prompt
         assert "Client name: Test Client." in prompt
+
+
+def test_persona_builder_accepts_the_keywords_its_callers_pass() -> None:
+    """Bind, do not read. A keyword rename on `build_system_prompt` once made
+    every fallback WhatsApp reply die on `TypeError` for ~5 months because no
+    test executed the call. The router that passed these keywords is gone;
+    the contract (name set) stays pinned here for any caller."""
+    import inspect
+
+    from backend.prompts.whatsapp_persona import build_priming_turns, build_system_prompt
+
+    inspect.signature(build_system_prompt).bind(
+        client_name="Test Client",
+        client_profile={},
+        is_first_message=True,
+        detected_language="en",
+        time_of_day="afternoon",
+    )
+    assert callable(build_priming_turns)
+    assert build_system_prompt(detected_language="en", time_of_day="afternoon")

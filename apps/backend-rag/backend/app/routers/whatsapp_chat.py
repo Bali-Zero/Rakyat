@@ -773,72 +773,69 @@ async def route_whatsapp_recovery(
     payload: dict[str, Any],
     *,
     db_pool: Any,
+    legacy_route: Any,
 ) -> str | None:
     """WebhookProcessor recovery-net dispatch for the ``whatsapp`` channel.
 
-    Keeps meta-inbox-targeted payloads out of the retired ChannelRouter
-    pipeline (2026-08-25 double-reply scar prong 2). ``ChannelRouter`` always
-    classifies intent itself and sends its own reply — it never passes
-    through ``wa_reply_claims`` — so routing a meta-inbox payload there on
-    recovery produced a second, different reply.
+    Keeps meta-inbox-targeted payloads out of the ChannelRouter pipeline
+    (2026-08-25 double-reply scar prong 2): ``ChannelRouter`` classifies intent
+    itself and sends its own reply, never passing through ``wa_reply_claims``,
+    so routing a meta-inbox payload there on recovery produced a second,
+    different reply.
 
-    A payload that is neither meta-inbox nor team-bot used to go to a
-    ``legacy_route`` callable. That path is retired: the function now returns
-    ``LEGACY_PATH_RETIRED_REASON`` and the WebhookProcessor closes the row
-    with it as its ``error_message``, so such a row is neither lost silently
-    nor retried.
+    Outcomes (the return value is what the WebhookProcessor stores as the
+    row's ``error_message`` while marking it processed):
 
-    Calls ``process_meta_inbox_payload`` with ``mark_row=False`` — this
-    function's caller, ``WebhookProcessor._process_one``, already holds the
-    row ``FOR UPDATE SKIP LOCKED`` in an open transaction and marks it itself
-    on success; a second ``mark_processed`` from a different connection would
-    block against that open transaction until ``statement_timeout`` (round-2
-    adversarial-gate finding). On a handler failure (``process_meta_inbox_payload``
-    returns False) this function RE-RAISES, so ``_process_one``'s own retry
-    ladder (backoff, MAX_ATTEMPTS, eventual "GIVING UP") applies to
-    meta-inbox rows exactly as it does to every other channel — without this,
-    ``process_meta_inbox_payload``'s internal catch-all silently discarded
-    those retry semantics and a handler crash during recovery was permanent,
-    silent message loss (round-2 finding).
-
-    Team-bot payloads (2026-08-26 same-WABA finding) get the identical
-    diversion as the fast-path webhook handler, for the same reason: a
-    payload only reaches this recovery net because the fast path missed it
-    (crash, unhandled exception, etc.), so a staff message that would have
-    been diverted on the fast path must be diverted here too — otherwise
-    recovery is a second, independent way for the exact defect this lane
-    fixes to reach production.
+    - payload cannot be fully classified (parse or classification raises):
+      handed to ``legacy_route`` (the caller's ChannelRouter) exactly as
+      before the legacy inline path was retired, so a deliverable message is
+      never discarded on a classification error. Returns ``None``.
+    - team-bot changes: handed to the ingress seam (or dropped when its switch
+      is off).
+    - meta-inbox changes: ``process_meta_inbox_payload`` with
+      ``mark_row=False`` (the processor already holds the row ``FOR UPDATE SKIP
+      LOCKED`` and marks it itself); a handler failure RE-RAISES so the
+      processor's retry ladder applies. It is idempotent per message
+      (``wa_reply_claims`` owner comparison + ``ON CONFLICT DO NOTHING``), so
+      recovering several rows that carry the same whole payload delivers each
+      meta message once.
+    - any change that is neither team-bot nor meta-inbox (a number whose
+      inline reply path is retired): not handled; the function returns
+      ``LEGACY_PATH_RETIRED_REASON``. Every row stores the WHOLE payload, so
+      this applies to whichever row is recovered: the unrelated-number row
+      closes with the reason, and a meta row of the same payload is handled
+      once AND carries the reason too, recording that part of its payload was
+      skipped. A payload with only meta/team changes returns ``None``.
     """
     try:
         webhook = WhatsAppWebhook(**payload)
-        # Team-bot changes are excluded from this verdict rather than argued
-        # away by set-disjointness: `_change_belongs_to_meta_inbox` has a
-        # SECOND signal (the display_phone_number fallback, 2026-08-25
-        # double-reply scar), so a team-bot change carrying the public visible
-        # number — a misconfiguration, but a reachable one — would otherwise
-        # set this True and send a REMAINDER that is not meta-inbox traffic
-        # into the client pipeline. Computing the verdict on the changes that
-        # actually survive removes the class instead of reasoning about it.
-        is_meta_inbox = any(
-            change.field == "messages"
-            and not _change_belongs_to_team_bot_ingress(change)
-            and _change_belongs_to_meta_inbox(change)
-            for entry in webhook.entry
-            for change in entry.changes
-        )
+        changes = [change for entry in webhook.entry for change in entry.changes]
+        # Team-bot changes are excluded from the meta verdict rather than argued
+        # away by set-disjointness: `_change_belongs_to_meta_inbox` has a SECOND
+        # signal (display_phone_number fallback, 2026-08-25 scar), so a team-bot
+        # change carrying the public number would otherwise set it and send a
+        # REMAINDER that is not meta-inbox traffic into the client pipeline.
         team_bot_changes = [
-            change
-            for entry in webhook.entry
-            for change in entry.changes
-            if change.field == "messages" and _change_belongs_to_team_bot_ingress(change)
+            c for c in changes if c.field == "messages" and _change_belongs_to_team_bot_ingress(c)
         ]
+        is_meta_inbox = any(
+            c.field == "messages"
+            and not _change_belongs_to_team_bot_ingress(c)
+            and _change_belongs_to_meta_inbox(c)
+            for c in changes
+        )
+        has_unhandled_change = any(
+            not (c.field == "messages" and _change_belongs_to_team_bot_ingress(c))
+            and not (c.field == "messages" and _change_belongs_to_meta_inbox(c))
+            for c in changes
+        )
     except Exception as r4_exc:
         logger.warning(
-            "whatsapp recovery: payload parse failed, closing as retired legacy: %s",
+            "whatsapp recovery: payload could not be classified, using the ChannelRouter route: %s",
             type(r4_exc).__name__,
         )
-        is_meta_inbox = False
-        team_bot_changes = []
+        await legacy_route(payload)
+        return None
 
     if team_bot_changes:
         if _team_bot_ingress_enabled():
@@ -853,8 +850,8 @@ async def route_whatsapp_recovery(
         if remainder is None:
             return None
         # Mixed payload: the team half is handled (or dropped) above, and the
-        # rest MUST still be routed. `is_meta_inbox` was already computed with
-        # team-bot changes excluded, so it describes the remainder.
+        # rest MUST still be routed. `is_meta_inbox` was computed with team-bot
+        # changes excluded, so it describes the remainder.
         logger.info(
             "whatsapp recovery: mixed payload — team-bot changes handled, "
             "routing the remaining message change(s) onward."
@@ -871,7 +868,7 @@ async def route_whatsapp_recovery(
                 "handler failure — re-raising so the WebhookProcessor's own "
                 "retry ladder applies"
             )
-        return None
+        return LEGACY_PATH_RETIRED_REASON if has_unhandled_change else None
 
     logger.info(
         "whatsapp recovery: payload targets neither the meta-inbox nor the "

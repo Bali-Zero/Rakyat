@@ -356,8 +356,9 @@ async def lifespan(app: FastAPI):
                 # scar prong 2): a meta-inbox-targeted payload must recover
                 # through process_meta_inbox_payload (idempotent, passes the
                 # wa_reply_claims gate), never through the retired
-                # ChannelRouter pipeline used for every other channel. A payload
-                # for any other number is closed with an explicit reason.
+                # ChannelRouter pipeline used for every other channel. A payload for
+                # any other number is closed with an explicit reason; a payload
+                # that cannot be classified still goes to ChannelRouter.
                 async def _route_whatsapp(payload: dict) -> str | None:
                     from backend.app.routers.whatsapp_chat import (
                         route_whatsapp_recovery,
@@ -366,6 +367,7 @@ async def lifespan(app: FastAPI):
                     return await route_whatsapp_recovery(
                         payload,
                         db_pool=app.state.db_pool,
+                        legacy_route=lambda p: _route_via_channel_router("whatsapp", p),
                     )
 
                 webhook_processor = WebhookProcessor(

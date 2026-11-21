@@ -35,6 +35,11 @@ from backend.app.routers import whatsapp_chat
 from backend.services.integrations import wa_outbox_worker
 
 
+def _no_channel_router() -> AsyncMock:
+    """A ChannelRouter stand-in that must NOT run: the payload is classified."""
+    return AsyncMock(side_effect=AssertionError("ChannelRouter must not run for a classified payload"))
+
+
 @pytest.fixture(autouse=True)
 def _support_whatsapp_configured(monkeypatch):
     """SUPPORT_WHATSAPP has no in-source default: pin a synthetic bot number."""
@@ -231,7 +236,7 @@ async def test_recovery_diverts_team_bot_payload_when_switch_on(
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
     outcome = await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(TEAM_ID), db_pool=MagicMock()
+        _recovery_payload(TEAM_ID), db_pool=MagicMock(), legacy_route=_no_channel_router()
     )
 
     handle_mock.assert_awaited_once()
@@ -251,7 +256,7 @@ async def test_recovery_drops_team_bot_payload_when_switch_off(
     monkeypatch.setattr(whatsapp_chat, "_handle_team_bot_ingress_payload", handle_mock)
 
     outcome = await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(TEAM_ID), db_pool=MagicMock()
+        _recovery_payload(TEAM_ID), db_pool=MagicMock(), legacy_route=_no_channel_router()
     )
 
     handle_mock.assert_not_awaited()
@@ -268,7 +273,7 @@ async def test_recovery_meta_inbox_payload_is_unaffected(monkeypatch: pytest.Mon
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
     outcome = await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(CLIENT_META_INBOX_ID), db_pool=MagicMock()
+        _recovery_payload(CLIENT_META_INBOX_ID), db_pool=MagicMock(), legacy_route=_no_channel_router()
     )
 
     process_meta_inbox_mock.assert_awaited_once()
@@ -289,7 +294,7 @@ async def test_recovery_unrelated_payload_is_closed_with_the_retired_reason(
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
     outcome = await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(UNRELATED_ID), db_pool=MagicMock()
+        _recovery_payload(UNRELATED_ID), db_pool=MagicMock(), legacy_route=_no_channel_router()
     )
 
     assert outcome == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
@@ -521,7 +526,7 @@ async def test_recovery_mixed_payload_still_delivers_the_client_half(
     process_meta_inbox_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
-    await whatsapp_chat.route_whatsapp_recovery(_mixed_recovery_payload(), db_pool=MagicMock())
+    await whatsapp_chat.route_whatsapp_recovery(_mixed_recovery_payload(), db_pool=MagicMock(), legacy_route=_no_channel_router())
 
     process_meta_inbox_mock.assert_awaited_once()
 
@@ -544,7 +549,7 @@ async def test_recovery_mixed_payload_strips_the_team_change_before_routing(
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", _capture)
 
     await whatsapp_chat.route_whatsapp_recovery(
-        _mixed_recovery_payload(), db_pool=MagicMock()
+        _mixed_recovery_payload(), db_pool=MagicMock(), legacy_route=_no_channel_router()
     )
 
     pnids = [
@@ -572,7 +577,7 @@ async def test_recovery_team_only_payload_still_returns_without_routing(
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
     outcome = await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(TEAM_ID), db_pool=MagicMock()
+        _recovery_payload(TEAM_ID), db_pool=MagicMock(), legacy_route=_no_channel_router()
     )
 
     # The AssertionError side-effects above are the real guard, but state it
@@ -645,7 +650,7 @@ async def test_a_team_change_wearing_the_public_display_number_cannot_drag_the_r
         ],
     }
 
-    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=MagicMock())
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=MagicMock(), legacy_route=_no_channel_router())
 
     assert outcome == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
     process_meta_inbox_mock.assert_not_awaited()
@@ -697,7 +702,7 @@ async def test_a_remainder_that_is_not_a_message_change_is_still_routed(
         ],
     }
 
-    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=MagicMock())
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=MagicMock(), legacy_route=_no_channel_router())
 
     # The remainder is not dropped: the recovery net still reaches the closing
     # verdict for it instead of returning silently as for a team-only payload.
@@ -705,3 +710,112 @@ async def test_a_remainder_that_is_not_a_message_change_is_still_routed(
     routed = whatsapp_chat._payload_without_team_bot_changes(payload)
     fields = [c["field"] for e in routed["entry"] for c in e["changes"]]
     assert fields == ["account_update"]
+
+
+# ---------------------------------------------------------------------------
+# Gate round 1 findings 1 and 2: unclassifiable payloads and mixed payloads.
+# ---------------------------------------------------------------------------
+
+
+def _unrelated_change(wamid: str = "wamid.OTHER") -> dict:
+    return {
+        "field": "messages",
+        "value": {
+            "metadata": {"display_phone_number": "15556151111", "phone_number_id": UNRELATED_ID},
+            "messages": [
+                {
+                    "from": "620000000009",
+                    "id": wamid,
+                    "timestamp": "1712000000",
+                    "type": "text",
+                    "text": {"body": "[QA] unrelated number"},
+                }
+            ],
+        },
+    }
+
+
+def _meta_change(wamid: str = "wamid.META") -> dict:
+    change = _unrelated_change(wamid)
+    change["value"]["metadata"]["phone_number_id"] = CLIENT_META_INBOX_ID
+    return change
+
+
+def _payload_of(*changes: dict) -> dict:
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{"id": "SHARED_WABA_ID", "changes": list(changes)}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_payload_that_cannot_be_classified_still_goes_to_the_channel_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid meta-inbox change plus a second change with malformed metadata
+    validates as a model but raises during classification. The base handed it
+    to ChannelRouter; discarding it with the retired reason would lose a
+    deliverable message. It must go to the router, and not be closed."""
+    meta_mock = AsyncMock(side_effect=AssertionError("must not be classified as meta-inbox"))
+    monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", meta_mock)
+    broken = _unrelated_change("wamid.BROKEN")
+    broken["value"]["metadata"] = "malformed"
+    payload = _payload_of(_meta_change(), broken)
+    legacy_route = AsyncMock(return_value=None)
+
+    outcome = await whatsapp_chat.route_whatsapp_recovery(
+        payload, db_pool=MagicMock(), legacy_route=legacy_route
+    )
+
+    legacy_route.assert_awaited_once_with(payload)
+    meta_mock.assert_not_awaited()
+    assert outcome is None
+
+
+@pytest.mark.asyncio
+async def test_mixed_meta_and_unrelated_payload_handles_meta_once_and_records_the_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every row stores the WHOLE payload, so both rows of a payload with a
+    meta change and an unrelated-number change recover the same payload:
+
+    - the unrelated-number row: the meta part is processed by the (idempotent)
+      meta pipeline exactly as at the base, and the row closes with the
+      retirement reason for the part that has no handler;
+    - the meta row: processed the same way and carries the same reason.
+
+    No double delivery: the meta pipeline claims each wamid in
+    ``wa_reply_claims`` (a same-claimant retry re-affirms its own win) and
+    inserts the ledger row ON CONFLICT DO NOTHING, so the second recovery of
+    the same message is a no-op downstream (see
+    ``test_claim_same_path_retry_reaffirms_its_own_win``).
+    """
+    meta_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", meta_mock)
+    payload = _payload_of(_meta_change("wamid.M"), _unrelated_change("wamid.U"))
+
+    unrelated_row = await whatsapp_chat.route_whatsapp_recovery(
+        payload, db_pool=MagicMock(), legacy_route=_no_channel_router()
+    )
+    meta_row = await whatsapp_chat.route_whatsapp_recovery(
+        payload, db_pool=MagicMock(), legacy_route=_no_channel_router()
+    )
+
+    assert unrelated_row == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
+    assert meta_row == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
+    assert meta_mock.await_count == 2  # one call per recovered row, idempotent downstream
+    for call in meta_mock.await_args_list:
+        assert call.kwargs["mark_row"] is False
+        assert call.kwargs["raw_payload"] == payload
+
+
+@pytest.mark.asyncio
+async def test_meta_only_payload_returns_no_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Innocence: nothing was skipped, so no reason is recorded."""
+    monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", AsyncMock(return_value=True))
+
+    outcome = await whatsapp_chat.route_whatsapp_recovery(
+        _payload_of(_meta_change()), db_pool=MagicMock(), legacy_route=_no_channel_router()
+    )
+
+    assert outcome is None

@@ -50,6 +50,11 @@ from backend.services.integrations import wa_outbox_worker
 LEGACY_CLAIMANT = "legacy"
 
 
+def _no_channel_router() -> AsyncMock:
+    """A ChannelRouter stand-in that must NOT run: the payload is classified."""
+    return AsyncMock(side_effect=AssertionError("ChannelRouter must not run for a classified payload"))
+
+
 @pytest.fixture(autouse=True)
 def _support_whatsapp_configured(monkeypatch):
     """SUPPORT_WHATSAPP has no in-source default: pin a synthetic bot number."""
@@ -423,7 +428,7 @@ async def test_recovery_net_routes_meta_inbox_payload_away_from_channel_router(
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
     payload = _webhook_payload(CANONICAL_ID, wamid="wamid.NET")
-    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool, legacy_route=_no_channel_router())
 
     # mark_row=False is load-bearing (round-2 finding): the WebhookProcessor
     # already holds this row FOR UPDATE SKIP LOCKED and marks it itself —
@@ -448,7 +453,7 @@ async def test_recovery_net_closes_non_meta_inbox_payload_without_raising(
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
     payload = _webhook_payload(UNRELATED_ID, wamid="wamid.LEGACY-NET")
-    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool, legacy_route=_no_channel_router())
 
     assert outcome == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
     process_meta_inbox_mock.assert_not_awaited()
@@ -481,7 +486,7 @@ async def test_recovery_entry_point_never_calls_mark_processed_itself(
     )
 
     payload = _webhook_payload(CANONICAL_ID, wamid="wamid.NO-SELF-MARK")
-    await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
+    await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool, legacy_route=_no_channel_router())
 
     mark_processed_mock.assert_not_awaited()
 
@@ -516,6 +521,6 @@ async def test_recovery_reraises_on_handler_failure_so_processor_retries(
     payload = _webhook_payload(CANONICAL_ID, wamid="wamid.RETRY-ME")
 
     with pytest.raises(RuntimeError, match="process_meta_inbox_payload reported a"):
-        await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
+        await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool, legacy_route=_no_channel_router())
 
     mark_processed_mock.assert_not_awaited()
