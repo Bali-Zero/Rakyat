@@ -444,21 +444,15 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
                 extra=access_context,
             )
 
+            # No metric carries a client reference: a per-client series is a
+            # visitor log in the metrics registry.
             try:
-                from backend.app.metrics import (
-                    public_endpoint_access_by_ip,
-                    public_endpoint_access_total,
-                )
+                from backend.app.metrics import public_endpoint_access_total
 
                 public_endpoint_access_total.labels(
                     endpoint=log_path,
                     method=request.method,
                 ).inc()
-                if not privacy_restricted:
-                    public_endpoint_access_by_ip.labels(
-                        endpoint=log_path,
-                        client_ip=client_reference,
-                    ).inc()
             except (ImportError, AttributeError) as exc:
                 # Metrics subsystem not wired in this deployment (e.g. tests,
                 # minimal CI). Log once per process at debug — a missing

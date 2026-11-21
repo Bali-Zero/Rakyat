@@ -209,6 +209,28 @@ async def test_dispatch_visa_oracle_public_telemetry_is_pii_free(middleware, moc
 
 
 @pytest.mark.asyncio
+async def test_public_endpoint_metrics_carry_no_client_reference(middleware, mock_request):
+    mock_request.url.path = "/api/auth/login"
+    mock_request.method = "POST"
+    mock_request.headers = {"user-agent": "test-agent"}
+    mock_request.client.host = "203.0.113.77"
+    call_next = AsyncMock(return_value=Response("OK"))
+
+    with (
+        patch("backend.app.metrics.public_endpoint_access_total") as total_metric,
+        patch("backend.app.metrics.public_endpoint_access_by_ip") as ip_metric,
+    ):
+        response = await middleware.dispatch(mock_request, call_next)
+
+    assert response.headers["X-Auth-Type"] == "public"
+    total_metric.labels.assert_called_once_with(endpoint="/api/auth/login", method="POST")
+    ip_metric.labels.assert_not_called()
+    recorded = repr(total_metric.mock_calls) + repr(ip_metric.mock_calls)
+    assert "203.0.113.77" not in recorded
+    assert hash_subject("203.0.113.77") not in recorded
+
+
+@pytest.mark.asyncio
 async def test_temporary_endpoints_removed(middleware, mock_request):
     """Test that TEMPORARY/FIX/DEBUG endpoints are no longer public"""
     temporary_endpoints = [
