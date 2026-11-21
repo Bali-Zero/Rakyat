@@ -16,7 +16,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
 }));
 
 const STATEMENT =
-  "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page. Paid in full, a case waiting for payment moves to On Process.";
+  "Confirming records this payment on the practice, the invoice and the cashout. You can undo it today from Done today. Paid in full, a case waiting for payment moves to On Process.";
 
 const full = {
   invoice_number: "INV-000000-00001",

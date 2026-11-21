@@ -650,7 +650,7 @@ describe("Accounting control centre", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("cc-foot")).getByText(
-        "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page. Paid in full, a case waiting for payment moves to On Process.",
+        "Confirming records this payment on the practice, the invoice and the cashout. You can undo it today from Done today. Paid in full, a case waiting for payment moves to On Process.",
       ),
     ).toBeInTheDocument();
   });
