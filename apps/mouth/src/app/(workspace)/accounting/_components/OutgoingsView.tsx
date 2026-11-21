@@ -37,6 +37,18 @@ const dayInWita = (iso: string): string | null => {
     ? null
     : new Intl.DateTimeFormat("en-CA", { timeZone: WITA }).format(d);
 };
+/** [day, HH:MM] of an ISO instant in Bali time, or null when it does not parse. */
+const witaDayAndTime = (iso: string): [string, string, string] | null => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: WITA,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(d);
+  return [iso, dayInWita(iso) ?? "", time];
+};
 /** Undo is offered only for a justification made today, Bali time (the server decides too). */
 const justifiedToday = (iso: string): boolean =>
   dayInWita(iso) === dayInWita(new Date().toISOString());
@@ -44,7 +56,7 @@ const justifiedToday = (iso: string): boolean =>
 function JustificationBlock({ item }: { item: OutgoingItem }) {
   const j = item.justification;
   if (!j) return null;
-  const when = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(j.at);
+  const when = witaDayAndTime(j.at);
   return (
     <div
       data-testid={`justification-${item.id}`}

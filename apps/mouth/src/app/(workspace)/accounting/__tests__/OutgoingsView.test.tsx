@@ -327,6 +327,11 @@ describe("OutgoingsView", () => {
     expect(block).toHaveTextContent("case 321");
     expect(block).toHaveTextContent("Deed for a test company");
     expect(block).toHaveTextContent("staff@example.test");
+    // 03:00 UTC on 2 Nov is 11:00 in Bali: the time is shown in WITA, not as stored
+    expect(screen.getByTestId("justification-5")).toHaveTextContent("11:00");
+    expect(screen.getByTestId("justification-5")).not.toHaveTextContent(
+      "03:00",
+    );
   });
 
   it("offers Justify on a row and none on a fee that follows its transfer", async () => {
