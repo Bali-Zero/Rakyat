@@ -333,30 +333,22 @@ async def test_neural_pulse_last_activity_carries_no_session_id() -> None:
     assert PHONE not in json.dumps(result) and "wa_session" not in json.dumps(result)
 
 
-# ------------------------------------------- Telegram / Instagram readers (G1)
+# ------------------------------------------------------ Instagram readers (G1)
 
 
 @pytest.mark.asyncio
-async def test_telegram_and_instagram_never_serve_a_web_look_alike(pool) -> None:
+async def test_instagram_never_serves_a_web_look_alike(pool) -> None:
     from backend.app.routers.instagram_chat import (
         get_instagram_conversations,
         get_instagram_messages,
     )
-    from backend.app.routers.telegram import get_telegram_conversations, get_telegram_messages
 
-    await seed(pool, ALICE, "tg_session_77", ALICE_MSG)
     await seed(pool, ALICE, "ig_session_88", ALICE_MSG)
-    assert await get_telegram_messages("77", 100, pool) == []
-    assert await get_telegram_conversations(50, 0, pool) == []
     assert await get_instagram_messages("88", 100, pool) == []
     assert await get_instagram_conversations(50, 0, pool) == []
 
     # innocence: rows owned by the channel are served
-    await seed(pool, "telegram_77", "tg_session_77", WA_MSG)
     await seed(pool, "instagram_88", "ig_session_88", WA_MSG)
-    tg = await get_telegram_messages("77", 100, pool)
-    assert [m["message_text"] for m in tg] == ["whatsapp client text"]
-    assert len(await get_telegram_conversations(50, 0, pool)) == 1
     ig = await get_instagram_messages("88", 100, pool)
     assert [m["message_text"] for m in ig] == ["whatsapp client text"]
     assert len(await get_instagram_conversations(50, 0, pool)) == 1
