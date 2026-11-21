@@ -623,7 +623,7 @@ describe("Accounting control centre", () => {
       within(screen.getByTestId("cc-cand-12")).getByRole("radio"),
     );
     expect(
-      screen.getByRole("button", { name: "Link, no money moved" }),
+      screen.getByRole("button", { name: "Link payment" }),
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("cc-foot")).getByText(

@@ -277,7 +277,7 @@ describe("ported reconciliation contract", () => {
       await screen.findByText("Link it instead of confirming it again."),
     ).toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     ).toBeInTheDocument();
     await chooseTable();
     expect(screen.getByText("Already paid")).toBeInTheDocument();
@@ -292,7 +292,7 @@ describe("ported reconciliation contract", () => {
     await openTab("link", "ROW RECORDED");
     expect(api.linkRecorded).not.toHaveBeenCalled();
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
     expect(api.linkRecorded).toHaveBeenCalledTimes(1);
@@ -308,7 +308,7 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
     expect(api.getReconciliationInbox).toHaveBeenCalledTimes(2);
@@ -320,15 +320,13 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("link refused");
     expect(onConfirmed).not.toHaveBeenCalled();
     expect(api.getReconciliationInbox).toHaveBeenCalledTimes(1);
     expect(row(2)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Link, no money moved" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Link payment" })).toBeEnabled();
   });
 
   it("09: a pending link disables its controls and cannot double-send", async () => {
@@ -338,7 +336,7 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     const button = await screen.findByRole("button", {
-      name: "Link, no money moved",
+      name: "Link payment",
     });
     fireEvent.click(button);
     fireEvent.click(button);
@@ -598,9 +596,7 @@ describe("ported reconciliation contract", () => {
     await act(async () => a.resolve(candidatesFor(1)));
     expect(opened()).toHaveTextContent("PT CONTOH DUA");
     expect(opened()).not.toHaveTextContent("PT CONTOH SATU");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Link, no money moved" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Link payment" }));
     await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
     expect(api.linkRecorded).toHaveBeenCalledWith({
       bank_txn_id: 2,
@@ -813,7 +809,7 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
     await waitFor(() =>
@@ -843,7 +839,7 @@ describe("ported reconciliation contract", () => {
     );
     fireEvent.click(tab("link"));
     const link = await screen.findByRole("button", {
-      name: "Link, no money moved",
+      name: "Link payment",
     });
     const ignore = screen.getByRole("button", { name: "Ignore" });
     expect(link).toBeDisabled();
@@ -877,7 +873,7 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     fireEvent.click(tab("done"));
     fireEvent.click(screen.getByRole("button", { name: "Linked and ignored" }));
@@ -908,7 +904,7 @@ describe("ported reconciliation contract", () => {
     );
     fireEvent.click(tab("link"));
     const link = await screen.findByRole("button", {
-      name: "Link, no money moved",
+      name: "Link payment",
     });
     const ignore = screen.getByRole("button", { name: "Ignore" });
     expect(link).toBeDisabled();
@@ -933,7 +929,7 @@ describe("ported reconciliation contract", () => {
       four().filter((item) => item.txn_id !== 2),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
     await waitFor(() =>
@@ -1003,7 +999,7 @@ describe("ported reconciliation contract", () => {
       screen.getByRole("button", { name: "Confirm payment" }),
     );
     fireEvent.click(recordedRadio);
-    const link = screen.getByRole("button", { name: "Link, no money moved" });
+    const link = screen.getByRole("button", { name: "Link payment" });
     act(() => {
       link.click();
       openRadio.click();
@@ -1033,7 +1029,7 @@ describe("ported reconciliation contract", () => {
     );
     fireEvent.click(recordedRadio);
     const linkClick = renderedClick(
-      screen.getByRole("button", { name: "Link, no money moved" }),
+      screen.getByRole("button", { name: "Link payment" }),
     );
     fireEvent.click(openRadio);
     const confirm = screen.getByRole("button", { name: "Confirm payment" });
@@ -1105,7 +1101,7 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(confirmIgnore);
     await openTab("link", "ROW RECORDED");
     const link = await screen.findByRole("button", {
-      name: "Link, no money moved",
+      name: "Link payment",
     });
     const linkIgnore = screen.getByRole("button", { name: "Ignore" });
     expect(link).toBeDisabled();
@@ -1129,7 +1125,7 @@ describe("ported reconciliation contract", () => {
     await waitFor(() => expect(reopen).toBeEnabled());
     fireEvent.click(tab("link"));
     expect(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     ).toBeEnabled();
     fireEvent.click(tab("confirm"));
     expect(
@@ -1152,7 +1148,7 @@ describe("ported reconciliation contract", () => {
     });
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     expect(importButton).toBeDisabled();
     fireEvent.click(importButton);
@@ -1172,7 +1168,7 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     const link = await screen.findByRole("button", {
-      name: "Link, no money moved",
+      name: "Link payment",
     });
     const ignore = screen.getByRole("button", { name: "Ignore" });
     act(() => {
@@ -1520,7 +1516,7 @@ describe("ported reconciliation contract", () => {
     });
     await openTab("link", "ROW RECORDED");
     const link = await screen.findByRole("button", {
-      name: "Link, no money moved",
+      name: "Link payment",
     });
     api.previewBankStatement.mockClear();
     const file = new File(["y"], "second.csv");
@@ -1607,7 +1603,7 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     await waitFor(() =>
       expect(tab("confirm")).toHaveAttribute("aria-selected", "true"),
@@ -1625,7 +1621,7 @@ describe("ported reconciliation contract", () => {
     await ready();
     await openTab("link", "ROW RECORDED");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Link, no money moved" }),
+      await screen.findByRole("button", { name: "Link payment" }),
     );
     expect(
       screen.getByRole("button", { name: "Choose another" }),
@@ -1645,7 +1641,7 @@ describe("ported reconciliation contract", () => {
       within(screen.getByTestId("cc-cand-12")).getByRole("radio"),
     );
     const staleLink = screen.getByRole("button", {
-      name: "Link, no money moved",
+      name: "Link payment",
     });
     const staleClick = renderedClick(staleLink);
     act(() => {
@@ -1790,7 +1786,7 @@ describe("ported reconciliation contract", () => {
     await screen.findByText("ROW LINK A");
     await within(opened()).findByText("INV-000000-00002", { exact: false });
     const staleClick = renderedClick(
-      screen.getByRole("button", { name: "Link, no money moved" }),
+      screen.getByRole("button", { name: "Link payment" }),
     );
 
     fireEvent.click(row(202));
@@ -1838,9 +1834,7 @@ describe("ported reconciliation contract", () => {
     fireEvent.click(
       within(await screen.findByTestId("cc-cand-12")).getByRole("radio"),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Link, no money moved" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Link payment" }));
     await waitFor(() => expect(api.linkRecorded).toHaveBeenCalledTimes(1));
     expect(api.linkRecorded).toHaveBeenCalledWith({
       bank_txn_id: 1,
@@ -2146,7 +2140,7 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
     );
     fireEvent.click(
       within(opened()).getByRole("button", {
-        name: "Link, no money moved",
+        name: "Link payment",
       }),
     );
 
@@ -2230,7 +2224,7 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
     );
     fireEvent.click(
       within(opened()).getByRole("button", {
-        name: "Link, no money moved",
+        name: "Link payment",
       }),
     );
 
@@ -2241,7 +2235,7 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
     await waitFor(() =>
       expect(
         within(opened()).getByRole("button", {
-          name: "Link, no money moved",
+          name: "Link payment",
         }),
       ).toBeEnabled(),
     );

@@ -306,7 +306,7 @@ export function OpenedTransfer({
         ? "Ignoring moves no money. You can reopen this transfer any time from Done today."
         : "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page. Paid in full, a case waiting for payment moves to On Process.";
   const primaryLabel =
-    pick?.group === "recorded" ? "Link, no money moved" : "Confirm payment";
+    pick?.group === "recorded" ? "Link payment" : "Confirm payment";
   const noteGlyph = pick?.group === "recorded" || nothing ? "undo" : "lock";
   return (
     <section
@@ -481,9 +481,7 @@ export function OpenedTransfer({
                     disabled={locked}
                     onClick={situation === "link" ? onLink : onConfirm}
                   >
-                    {situation === "link"
-                      ? "Link, no money moved"
-                      : "Confirm payment"}
+                    {situation === "link" ? "Link payment" : "Confirm payment"}
                   </button>
                 </>
               ) : nothing ? (
