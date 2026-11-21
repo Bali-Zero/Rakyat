@@ -92,9 +92,16 @@ _SUBJECT_HEX_LEN = 32
 # they represent either "no authenticated subject" (anonymous) or a
 # SHARED service/internal identity backing multiple real end-users
 # (wa-mirror-internal, in either bare or email form).
+#
+# ``blog_visitor`` (added 2026-11-21) is the identity `/api/blog/ask` sends
+# for EVERY anonymous reader of the AskZantara widget. Left out, it anchored
+# one shared memory for all of them: measured live on 2026-11-21, an Italian
+# visitor's answer recalled "il rinnovo del KITAS" from an English visitor's
+# question asked minutes earlier, opening with "come ho menzionato prima".
 NON_PERSONAL_MEMORY_IDS: frozenset[str] = frozenset(
     {
         "anonymous",
+        "blog_visitor",
         "wa-mirror-internal",
         "wa-mirror-internal@balizero.com",
     },
