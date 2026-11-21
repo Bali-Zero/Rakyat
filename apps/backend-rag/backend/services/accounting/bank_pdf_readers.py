@@ -110,7 +110,9 @@ _ACCOUNT_LINE_RE = re.compile(
     r"[\s:.]*(\d[\d .\-]*\d)",
     re.IGNORECASE,
 )
-_ACCOUNT_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]*)\s*\)")
+# a currency is a parenthesised 3-letter code or a blank "( )"; the bank prints it last on the
+# line, so an account name with its own parentheses never supplies it
+_ACCOUNT_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]{3}|)\s*\)")
 _MORE_THAN_ONE_ACCOUNT = "file holds more than one account: upload one statement per file"
 
 
@@ -132,8 +134,8 @@ def _account_lines(words: list[Word], left_limit: float) -> list[tuple[str, str 
         digits = re.sub(r"\D", "", m.group(1))
         if len(digits) < 6:
             continue
-        cur = _ACCOUNT_CURRENCY_RE.search(text, m.end())
-        found.append((digits, _currency(cur.group(1)) if cur else None, text))
+        codes = _ACCOUNT_CURRENCY_RE.findall(text, m.end())
+        found.append((digits, _currency(codes[-1]) if codes else None, text))
     return found
 
 
@@ -387,7 +389,7 @@ def parse_mandiri_pages(pages: list[list[Word]]) -> ParsedStatement:
         if header is None:
             header = page_header
         elif page_header != header:
-            raise BankParseError("file holds more than one account: upload one statement per file")
+            raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         foot = min((w.top for w in words if "questions" in w.text), default=float("inf"))
         rows += _mandiri_rows([w for w in words if table + 6 < w.top < foot - 3])
     if header is None:
@@ -506,7 +508,12 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
         if identity is None:
             identity = ident
         elif ident != identity:
-            raise BankParseError("file holds more than one account: upload one statement per file")
+            raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
+        # every account line of the page, not only its first, names the first page's account;
+        # descriptions sit right of 500 pt, the account block and row numbers left of 100 pt
+        for digits, cur, _ in _account_lines(words, 100):
+            if digits != identity[0] or (cur is not None and cur != identity[2]):
+                raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         code_top = next((w.top for w in words if w.text == "Code" and 200 < w.x0 < 270), None)
         if code_top is None:
             raise BankParseError("statement page has no transaction table")
@@ -621,7 +628,7 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
 
 _BNI_DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
 _BNI_TIME_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}")
-_BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*?)\s*\(\s*([A-Za-z]*)\s*\)")
+_BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*)\(\s*([A-Za-z]{3}|)\s*\)")
 _BNI_AMT = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})"
 _BNI_CREDIT, _BNI_DEBIT = ("C", "K"), ("D",)
 _BNI_STATEMENT_REFUSED = (

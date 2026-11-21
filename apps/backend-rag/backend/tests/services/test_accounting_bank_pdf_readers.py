@@ -172,6 +172,26 @@ def test_mandiri_a_block_without_an_amount_line_or_with_stray_text_is_refused() 
         parse_mandiri_pages([lone_text])
 
 
+def test_mandiri_another_account_block_inside_the_table_is_refused() -> None:
+    # the header prints labels on one line and values on the next; a merged export's block
+    # inside the table is a block that is not a transaction row, which the body parse refuses
+    other = [
+        Word("Account", 31, 60, 600),
+        Word("No.", 62, 75, 600),
+        Word("0000000002", 31, 80, 617),
+    ]
+    with pytest.raises(BankParseError, match="row block"):
+        parse_mandiri_pages([_mandiri() + other])
+
+
+def test_mandiri_a_later_page_whose_header_is_spelt_otherwise_is_refused() -> None:
+    upper = [
+        dataclasses.replace(w, text="ACCOUNT") if w.text == "Account" else w for w in _mandiri()
+    ]
+    with pytest.raises(BankParseError):
+        parse_mandiri_pages([_mandiri(), upper])
+
+
 # ── Permata ─────────────────────────────────────────────────────────────────
 
 P_DAYS = [
@@ -270,6 +290,58 @@ def test_permata_a_row_may_continue_on_the_next_page() -> None:
     page2 = head + one[split_at - 1 :]
     stmt = parse_permata_pages([page1, page2])
     assert len(stmt.transactions) == 4
+
+
+def _permata_with_line(*tokens: str) -> list[list[Word]]:
+    """P_DAYS on one page plus one more line under the closing line, at the account label's x."""
+    page = _permata()
+    y = max(w.top for w in page) + 40
+    return [page + [Word(t, 40 + 45 * i, 40 + 45 * i + 40, y) for i, t in enumerate(tokens)]]
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        ("ACCOUNT", ":", "0000000002/PT", "CONTOH", "(", "IDR", ")"),
+        ("Account", "No.", ":", "0000-0000-02"),
+        ("No.", "Rekening", ":", "0000", "0000", "02"),
+        ("Account", ":", "0000000001/PT", "CONTOH", "(", "USD", ")"),
+    ],
+)
+def test_permata_another_account_line_in_any_spelling_is_refused(tokens) -> None:
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_permata_pages(_permata_with_line(*tokens))
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        ("ACCOUNT", ":", "0000-0000-01"),
+        ("account", ":", "0000000001", "(", "idr", ")"),
+        ("Account", "Information"),
+    ],
+)
+def test_permata_the_same_account_in_any_spelling_reads_as_one_statement(tokens) -> None:
+    stmt = parse_permata_pages(_permata_with_line(*tokens))
+    assert stmt.account_number == ACCOUNT and len(stmt.transactions) == 4
+
+
+def test_permata_parentheses_in_the_account_name_are_never_its_currency() -> None:
+    stmt = parse_permata_pages([_permata(name="PT (CONTOH) SATU")])
+    assert stmt.account_name == "PT (CONTOH) SATU" and len(stmt.transactions) == 4
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_permata_pages(
+            _permata_with_line("Account", ":", "0000000001/PT", "(IDR)", "(", "USD", ")")
+        )
+    same = _permata_with_line("Account", ":", "0000000001/PT", "(USD)", "(", "IDR", ")")
+    assert len(parse_permata_pages(same).transactions) == 4
+
+
+def test_permata_a_description_that_mentions_another_account_never_refuses_the_file() -> None:
+    first, *rest = P_DAYS
+    rows = [(*first[2][0][:5], ["PB transfer", "ACCOUNT : 1234567890"]), *first[2][1:]]
+    stmt = parse_permata_pages([_permata([(*first[:2], rows, *first[3:]), *rest])])
+    assert stmt.account_number == ACCOUNT and len(stmt.transactions) == 4
 
 
 # ── detection and the entry point ───────────────────────────────────────────
@@ -608,6 +680,16 @@ def test_bni_a_blank_currency_reads_as_idr_on_every_account_line() -> None:
     ]
     with pytest.raises(BankParseError, match="more than one account"):
         parse_bni_pages([page + usd])
+
+
+def test_bni_parentheses_in_the_account_name_are_never_its_currency() -> None:
+    # the currency is the last parenthesised code of the line, after the name
+    stmt = parse_bni_pages([_bni(B_ROWS, name="PT (ABC) SATU")])
+    assert stmt.account_name == "PT (ABC) SATU" and len(stmt.transactions) == 3
+    with pytest.raises(BankParseError, match="more than one account"):
+        parse_bni_pages(_bni_with_line("Account", ":", "0000000001/PT", "(IDR)", "(", "USD", ")"))
+    same = _bni_with_line("Account", ":", "0000000001/PT", "(USD)", "(", "IDR", ")")
+    assert len(parse_bni_pages(same).transactions) == 3
 
 
 def test_bni_a_description_that_mentions_another_account_never_refuses_the_file() -> None:
