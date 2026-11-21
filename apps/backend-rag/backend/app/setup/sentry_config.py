@@ -174,8 +174,7 @@ _CLIENT_ID_RE = re.compile(r"\bCL-\d{3,}\b")
 #
 # WHAT THIS STILL CANNOT DO — do not read the list above as full cover:
 #   * a personal NAME in free text ("Created client 7: Jane Doe") is not a
-#     regex-recognisable shape at all; it needs NER (see
-#     `backend/middleware/pii_scanner.py`, Presidio) and is out of scope for a
+#     regex-recognisable shape at all; it needs NER and is out of scope for a
 #     hook that must stay fast and dependency-free on the error path;
 #   * an UNLABELLED passport (`"...: X1234567"`) has no anchor to catch.
 # Both are pinned as known-gap tests. The only real fix for them is not logging
