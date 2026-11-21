@@ -78,7 +78,18 @@ def mock_collection_manager():
 
 
 @pytest.fixture
-def hybrid_service(mock_settings, mock_collection_manager, mock_bm25_vectorizer):
+def mock_embedder():
+    """Stub embedder: the default one is a real OpenAI client, and with the
+    conftest's dummy key it opened a real TLS connection to api.openai.com.
+    The client it left behind was closed by its own ``__del__`` on a LATER
+    test's event loop, failing there with "Event loop is closed"."""
+    embedder = MagicMock()
+    embedder.generate_query_embedding = AsyncMock(return_value=[0.1] * 1536)
+    return embedder
+
+
+@pytest.fixture
+def hybrid_service(mock_settings, mock_collection_manager, mock_bm25_vectorizer, mock_embedder):
     """Create hybrid search service with mocked dependencies."""
     with patch(
         "backend.services.rag.hybrid_search.get_bm25_vectorizer",
@@ -87,6 +98,7 @@ def hybrid_service(mock_settings, mock_collection_manager, mock_bm25_vectorizer)
         service = HybridSearchService(
             collection_manager=mock_collection_manager,
             bm25_vectorizer=mock_bm25_vectorizer,
+            embedder=mock_embedder,
         )
         service._bm25_enabled = True
         return service
