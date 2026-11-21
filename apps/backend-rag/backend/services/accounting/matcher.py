@@ -49,6 +49,8 @@ class OpenInvoice:
     invoice_number: str | None = None
     invoice_issued_at: str | None = None
     service_name: str | None = None
+    # The stored issuer; NULL on invoices made before issuer routing (the default company's).
+    issuer_entity_key: str | None = None
 
 
 @dataclass

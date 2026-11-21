@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 import backend.app.routers.accounting as accounting_module
 from backend.services.accounting.reconcile_service import ActionResult, ReconcileError
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 from backend.tests.routers.test_accounting import _build_app  # noqa: F401  (shared app builder)
 
 BASE = "/api/crm/accounting"
@@ -27,6 +28,10 @@ ACTIONS = [
     ("/ignore-transaction", {"bank_txn_id": 1, "reason": "bukan klien"}),
     ("/reopen-transaction", {"bank_txn_id": 1}),
 ]
+
+
+# The account of the default company: its transfers are matched against invoices with no issuer.
+DEFAULT_ACCOUNT = ENTITIES[DEFAULT_ENTITY_KEY].bank_account_number
 
 
 def _client(mock_db_pool, user=ADMIN) -> TestClient:
@@ -45,7 +50,11 @@ def _inv(invoice_id: int, name: str, amount: int = 4_000_000, gen=datetime(2026,
 
 
 def _tx(
-    txn_id: int, amount: int, memo: str | None, day=date(2026, 6, 25), account: str | None = None
+    txn_id: int,
+    amount: int,
+    memo: str | None,
+    day=date(2026, 6, 25),
+    account: str | None = DEFAULT_ACCOUNT,
 ) -> dict:
     return {
         "id": txn_id,
@@ -397,6 +406,7 @@ def test_match_candidates_keeps_its_fields_and_gains_recorded_candidates(mock_db
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -436,6 +446,7 @@ def test_match_candidates_recorded_list_is_empty_when_nothing_is_recorded(mock_d
             "txn_date": date(2026, 6, 25),
             "amount_idr": 5,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "",
         }
     )
@@ -608,6 +619,7 @@ def test_a_non_finite_invoice_amount_is_zero_in_the_inbox_and_in_match_candidate
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -690,6 +702,7 @@ def test_the_cents_of_an_invoice_amount_are_truncated_in_the_classifier_and_in_m
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -717,6 +730,7 @@ def test_identity_keys_are_in_every_candidate_of_both_routes_and_in_the_suggesti
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -745,6 +759,7 @@ def test_null_sources_yield_three_nulls_and_values_pass_through(mock_db_pool) ->
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "",
         }
     )
@@ -773,6 +788,7 @@ def test_a_row_without_the_new_columns_still_yields_nulls(mock_db_pool) -> None:
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "",
         }
     )
@@ -787,6 +803,7 @@ def _txn_row() -> dict:
         "txn_date": date(2026, 6, 25),
         "amount_idr": 4_000_000,
         "direction": "credit",
+        "account_number": DEFAULT_ACCOUNT,
         "description": "",
     }
 
@@ -812,7 +829,7 @@ def test_candidates_of_equal_confidence_keep_the_order_of_the_pool_rows_given(
 _POOL_SQL_HEAD = (
     "SELECT i.id AS invoice_id, i.practice_id, i.amount_idr, i.generated_at, "
     "COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr, c.full_name AS client_name, "
-    "i.invoice_number, pt.name AS service_name "
+    "i.invoice_number, pt.name AS service_name, i.issuer_entity_key "
     "FROM invoices i JOIN practices p ON i.practice_id = p.id "
     "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id "
     "LEFT JOIN clients c ON p.client_id = c.id "

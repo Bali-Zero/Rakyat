@@ -22,6 +22,7 @@ from decimal import Decimal
 
 import asyncpg
 
+from backend.services.accounting.companies import company_key_for_account, company_key_for_issuer
 from backend.services.accounting.matcher import EXACT_TOLERANCE_IDR
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,30 @@ class ConfirmResult:
 
 class ReconcileError(Exception):
     """Raised on an invalid confirm request (bad status, missing practice)."""
+
+
+async def _transfer_company(conn: asyncpg.Connection, bank_txn_id: int) -> str:
+    """The company that owns the account a transfer reached; refuses an account no company owns."""
+    account = await conn.fetchval(
+        "SELECT bs.account_number FROM bank_transactions bt"
+        " JOIN bank_statements bs ON bs.id = bt.statement_id WHERE bt.id = $1",
+        bank_txn_id,
+    )
+    company = company_key_for_account(account)
+    if company is None:
+        raise ReconcileError(
+            f"bank transaction {bank_txn_id} reached an account no issuing company owns"
+        )
+    return company
+
+
+def _require_issuer(company: str, issuer_entity_key: str | None, bank_txn_id: int, invoice_id: int) -> None:
+    """Owner rule d: a transfer into one company's account never settles another company's invoice."""
+    if company_key_for_issuer(issuer_entity_key) != company:
+        raise ReconcileError(
+            f"invoice {invoice_id} was issued by another company than the owner of the account"
+            f" bank transaction {bank_txn_id} reached"
+        )
 
 
 def _iso_week_label(d: date) -> str:
@@ -142,9 +167,11 @@ async def confirm_payment(
 
         # 1b. A given invoice must exist and belong to this practice, before any write.
         invoice_amount = None
+        invoice_issuer = None
         if invoice_id is not None:
             inv = await conn.fetchrow(
-                "SELECT practice_id, amount_idr FROM invoices WHERE id = $1 FOR SHARE", invoice_id
+                "SELECT practice_id, amount_idr, issuer_entity_key FROM invoices WHERE id = $1 FOR SHARE",
+                invoice_id,
             )
             if inv is None:
                 raise ReconcileError(f"invoice {invoice_id} not found")
@@ -153,8 +180,27 @@ async def confirm_payment(
                     f"invoice {invoice_id} does not belong to practice {practice_id}"
                 )
             invoice_amount = inv["amount_idr"]
+            invoice_issuer = inv["issuer_entity_key"]
             if invoice_amount is not None and not Decimal(invoice_amount).is_finite():
                 raise ReconcileError(f"invoice {invoice_id} has no usable amount")
+
+        # 1c. A transfer settles only invoices of the company whose account it reached; with no
+        #     invoice named, every invoice of the practice, and a practice with none is refused.
+        if bank_txn_id is not None:
+            company = await _transfer_company(conn, bank_txn_id)
+            if invoice_id is not None:
+                _require_issuer(company, invoice_issuer, bank_txn_id, invoice_id)
+            else:
+                issued = await conn.fetch(
+                    "SELECT id, issuer_entity_key FROM invoices WHERE practice_id = $1 ORDER BY id FOR SHARE",
+                    practice_id,
+                )
+                if not issued:
+                    raise ReconcileError(
+                        f"practice {practice_id} has no invoice for bank transaction {bank_txn_id} to settle"
+                    )
+                for row in issued:
+                    _require_issuer(company, row["issuer_entity_key"], bank_txn_id, row["id"])
 
         # 2. Update practices — SAME columns/path the CRM PATCH writes (superscar #9).
         #    The invoice amount fills actual_price only while it is still NULL.
@@ -414,7 +460,8 @@ async def link_recorded(
             raise ReconcileError(f"practice {practice_id} has no recorded payment")
 
         inv = await conn.fetchrow(
-            "SELECT practice_id, amount_idr FROM invoices WHERE id = $1 FOR SHARE", invoice_id
+            "SELECT practice_id, amount_idr, issuer_entity_key FROM invoices WHERE id = $1 FOR SHARE",
+            invoice_id,
         )
         if inv is None:
             raise ReconcileError(f"invoice {invoice_id} not found")
@@ -423,6 +470,9 @@ async def link_recorded(
         invoice_amount = inv["amount_idr"]
         if invoice_amount is None or not Decimal(invoice_amount).is_finite():
             raise ReconcileError(f"invoice {invoice_id} has no usable amount")
+        _require_issuer(
+            await _transfer_company(conn, bank_txn_id), inv["issuer_entity_key"], bank_txn_id, invoice_id
+        )
 
         # The ceiling: what is already attached to this invoice plus this transfer may not
         # exceed the invoice's exact amount (cents included) by more than the matcher's

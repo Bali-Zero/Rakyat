@@ -25,6 +25,7 @@ from asyncpg.exceptions import CheckViolationError
 from backend.core.pg_json_codec import init_asyncpg_connection
 from backend.services.accounting.cashout_service import cashbook_summary
 from backend.services.accounting.reconcile_service import ReconcileError, confirm_payment
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 
 MIGRATION_238 = (
     Path(__file__).resolve().parents[2]
@@ -33,6 +34,21 @@ MIGRATION_238 = (
 MIGRATION_239 = (
     Path(__file__).resolve().parents[2]
     / "db" / "migrations_v2" / "239_cashout_worksheet_type.sql"
+)
+MIGRATION_355 = (
+    Path(__file__).resolve().parents[2]
+    / "db" / "migrations_v2" / "355_invoices_issuer_binding.sql"
+)
+MIGRATION_363 = (
+    Path(__file__).resolve().parents[2]
+    / "db" / "migrations_v2" / "363_bank_statement_import.sql"
+)
+
+# A statement of the default company's account. A transfer settles only invoices of the company
+# that owns the account it reached, and an invoice with no issuer is the default company's.
+DEFAULT_COMPANY_STATEMENT_SQL = (
+    "INSERT INTO bank_statements (source_format, account_number)"
+    f" VALUES ('csv', '{ENTITIES[DEFAULT_ENTITY_KEY].bank_account_number}') RETURNING id"
 )
 
 STUBS = """
@@ -112,6 +128,10 @@ async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     await conn.execute(STUBS)
     await conn.execute(_forward_sql_of(MIGRATION_238))
     await conn.execute(_forward_sql_of(MIGRATION_239))
+    await conn.execute(_forward_sql_of(MIGRATION_355))
+    await conn.execute(_forward_sql_of(MIGRATION_363))
+    # 363 sets session timeouts for its own run; the tests here keep the defaults they had.
+    await conn.execute("RESET lock_timeout; RESET statement_timeout")
     return conn, dbname, user
 
 
@@ -138,7 +158,7 @@ async def test_confirm_payment_full_side_effects() -> None:
             pid,
         )
         btid = await conn.fetchval(
-            """INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id"""
+            DEFAULT_COMPANY_STATEMENT_SQL
         )
         txid = await conn.fetchval(
             """INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction)
@@ -225,7 +245,7 @@ async def test_confirm_payment_without_movement_date_uses_db_clock() -> None:
             "INSERT INTO invoices (practice_id, invoice_number, amount_idr) VALUES ($1, 'INV-2', 9000000) RETURNING id",
             pid,
         )
-        btid = await conn.fetchval("INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id")
+        btid = await conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
         txid = await conn.fetchval(
             """INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction)
                VALUES ($1, $2, 9000000, 'credit') RETURNING id""",
@@ -399,7 +419,7 @@ async def _world(conn, *, direction: str = "credit", status: str = "unmatched", 
         )
         pids.append(pid)
         iids.append(iid)
-    sid = await conn.fetchval("INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id")
+    sid = await conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
     txid = await conn.fetchval(
         "INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction, reconciled_status)"
         " VALUES ($1, $2, 4000000, $3, $4) RETURNING id",

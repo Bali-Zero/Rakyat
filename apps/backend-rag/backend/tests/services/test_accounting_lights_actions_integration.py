@@ -27,6 +27,7 @@ from backend.services.accounting.reconcile_service import (
     reopen_transaction,
 )
 from backend.tests.services.test_accounting_reconcile_integration import (
+    DEFAULT_COMPANY_STATEMENT_SQL,
     _connect,
     _drop_db,
     _fresh_db,
@@ -78,9 +79,7 @@ async def _bank(
 ) -> int:
     sid = await conn.fetchval("SELECT id FROM bank_statements ORDER BY id LIMIT 1")
     if sid is None:
-        sid = await conn.fetchval(
-            "INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id"
-        )
+        sid = await conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
     return await conn.fetchval(
         "INSERT INTO bank_transactions (statement_id, txn_date, description, amount_idr, direction,"
         " reconciled_status, matched_practice_id, matched_invoice_id)"
