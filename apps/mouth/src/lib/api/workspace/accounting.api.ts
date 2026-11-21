@@ -417,6 +417,16 @@ export const accountingApi = {
     );
   },
 
+  /** Take back a payment confirmed today (WITA): everything it recorded goes back. Sends no email. */
+  async undoConfirmation(
+    bankTxnId: number,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/undo-confirmation",
+      { bank_txn_id: bankTxnId },
+    );
+  },
+
   /** Cash-basis P&L summary over the cashout log. */
   async getSummary(opts?: {
     periodStart?: string;

@@ -1,6 +1,9 @@
 "use client";
 
-/** What was confirmed, linked or ignored today (WITA): a collapsed, read-only list. */
+/**
+ * What was confirmed, linked or ignored today (WITA). A confirmation of today can be undone
+ * (owner rule b): two steps, the second says what goes back and what does not.
+ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -77,7 +80,89 @@ const timeOf = (doneAt: unknown): string | null => {
 const filled = (v: unknown): v is string =>
   typeof v === "string" && v.trim() !== "";
 
-function DoneTodayEntry({ item }: { item: DoneTodayItem }) {
+/** Undo for one confirmed entry; absent when the page gives no way to undo. */
+export interface DoneTodayUndo {
+  onUndo: (txnId: number) => void;
+  locked: boolean;
+  error: { txnId: number; message: string } | null;
+}
+
+function UndoControl({
+  item,
+  undo,
+}: {
+  item: DoneTodayItem;
+  undo: DoneTodayUndo;
+}) {
+  const [asking, setAsking] = useState(false);
+  const failed = undo.error?.txnId === item.txn_id ? undo.error.message : null;
+  if (!asking) {
+    return (
+      <div className="mt-1">
+        <button
+          type="button"
+          data-testid={`done-today-undo-${item.txn_id}`}
+          disabled={undo.locked}
+          onClick={() => setAsking(true)}
+          className="text-xs font-semibold underline underline-offset-4 disabled:opacity-50"
+        >
+          Undo
+        </button>
+        {failed && (
+          <p role="alert" className="text-xs text-[var(--state-danger)]">
+            {failed}
+          </p>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div
+      role="group"
+      aria-label="Undo this confirmation"
+      className="mt-2 space-y-2 rounded-md border border-[var(--state-danger)] p-2 text-xs"
+    >
+      <p>
+        The transfer goes back to the inbox, and the payment, the cash-out row
+        and the invoice&apos;s paid amount are taken back. A case this payment
+        started goes back to waiting for payment.
+      </p>
+      <p>
+        If this confirmation emailed the client that the payment arrived, that
+        email is not taken back.
+      </p>
+      <div className="flex gap-3">
+        <button
+          type="button"
+          data-testid={`done-today-undo-confirm-${item.txn_id}`}
+          disabled={undo.locked}
+          onClick={() => {
+            setAsking(false);
+            undo.onUndo(item.txn_id);
+          }}
+          className="rounded-md border border-[var(--state-danger)] px-2 py-1 font-semibold disabled:opacity-50"
+        >
+          Undo confirmation
+        </button>
+        <button
+          type="button"
+          onClick={() => setAsking(false)}
+          className="px-2 py-1 underline underline-offset-4"
+        >
+          Keep it
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DoneTodayEntry({
+  item,
+  undo,
+}: {
+  item: DoneTodayItem;
+  undo?: DoneTodayUndo;
+}) {
   const time = timeOf(item.done_at);
   const label = LABELS.get(item.action) ?? FALLBACK_LABEL;
   const shows = item.action === "confirmed" || item.action === "linked";
@@ -108,6 +193,9 @@ function DoneTodayEntry({ item }: { item: DoneTodayItem }) {
           <Money value={item.amount_idr} />
         </span>
       </div>
+      {undo && item.action === "confirmed" && (
+        <UndoControl item={item} undo={undo} />
+      )}
     </li>
   );
 }
@@ -117,10 +205,12 @@ export function DoneTodayList({
   data,
   status,
   onRetry,
+  undo,
 }: {
   data: DoneTodayResponse | null;
   status: DoneTodayStatus;
   onRetry: () => void;
+  undo?: DoneTodayUndo;
 }) {
   if (data === null && status === "failed") {
     return (
@@ -155,7 +245,7 @@ export function DoneTodayList({
       ) : (
         <ul className="space-y-2">
           {data.items.map((item) => (
-            <DoneTodayEntry key={item.txn_id} item={item} />
+            <DoneTodayEntry key={item.txn_id} item={item} undo={undo} />
           ))}
         </ul>
       )}
