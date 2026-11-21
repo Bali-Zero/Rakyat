@@ -88,6 +88,45 @@ async def test_drain_pending_marks_processed_on_success():
 
 
 @pytest.mark.asyncio
+async def test_drain_pending_keeps_a_skip_reason_returned_by_the_handler():
+    """A handler that closes a row on purpose returns its reason: the row is
+    marked processed, the reason lands in error_message, and nothing is retried."""
+    reason = "skipped: route retired"
+    handler = AsyncMock(return_value=reason)
+    pool = _make_pool_returning(
+        [{"id": 43, "channel": "whatsapp", "payload": {"msg": "skip"}, "attempts": 0}]
+    )
+    processor = WebhookProcessor(db_pool=pool, handlers={"whatsapp": handler})
+
+    await processor.drain_pending()
+
+    conn = pool._conn
+    update_calls = [
+        c for c in conn.execute.await_args_list if "processed_at = NOW()" in str(c.args[0])
+    ]
+    assert len(update_calls) == 1
+    assert update_calls[0].args[1:] == (43, reason)
+    conn.fetchval.assert_not_awaited()  # no attempts++ / next_retry_at
+
+
+@pytest.mark.asyncio
+async def test_drain_pending_without_a_returned_reason_leaves_error_message_alone():
+    """A plain success (handler returns None) binds no error text, so COALESCE
+    keeps whatever the row already carries."""
+    pool = _make_pool_returning(
+        [{"id": 44, "channel": "whatsapp", "payload": {"msg": "ok"}, "attempts": 0}]
+    )
+    processor = WebhookProcessor(db_pool=pool, handlers={"whatsapp": AsyncMock(return_value=None)})
+
+    await processor.drain_pending()
+
+    update_calls = [
+        c for c in pool._conn.execute.await_args_list if "processed_at = NOW()" in str(c.args[0])
+    ]
+    assert update_calls[0].args[1:] == (44, None)
+
+
+@pytest.mark.asyncio
 async def test_drain_pending_skips_rows_without_handler():
     """A row with an unknown channel is marked terminal with 'no handler' error."""
     pool = _make_pool_returning(
