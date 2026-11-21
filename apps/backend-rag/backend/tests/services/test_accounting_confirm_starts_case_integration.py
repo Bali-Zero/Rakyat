@@ -201,11 +201,13 @@ async def test_a_case_hidden_from_its_client_or_without_one_gets_no_timeline_ent
     assert timeline == [] and len(activity) == 1
 
 
-async def test_a_null_visibility_counts_as_visible(db) -> None:
+async def test_a_null_visibility_writes_no_timeline_entry_as_the_crm_does(db) -> None:
+    """The CRM's manual move reads bool(client_visible): NULL hides the entry there too."""
     pid, iid, txid = await _case(db, "sending_invoice", visible=None)
     await _confirm(db, pid, iid, txid)
-    timeline, _ = await _side_rows(db)
-    assert len(timeline) == 1
+    assert (await _state(db, pid))["status"] == "on_process"
+    timeline, activity = await _side_rows(db)
+    assert timeline == [] and len(activity) == 1
 
 
 async def test_without_a_timeline_table_the_case_still_starts(db) -> None:

@@ -81,7 +81,8 @@ _UNDEFINED_TABLE = "42P01"
 
 async def _record_start(conn: asyncpg.Connection, prac: asyncpg.Record, by: str) -> None:
     """The client timeline entry and the activity row of a case that starts on confirmation."""
-    if prac["client_id"] is not None and prac["client_visible"] is not False:
+    # As the CRM PATCH: bool(client_visible), so a NULL visibility writes no entry.
+    if prac["client_id"] is not None and bool(prac["client_visible"]):
         event_type, title, color = START_TIMELINE_EVENT
         try:
             async with conn.transaction():
