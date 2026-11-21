@@ -15,7 +15,9 @@ import pytest
 
 from backend.app.agents import graph as graph_module
 from backend.app.agents.graph import (
+    CONTEXT_WINDOW_CHARACTERS,
     MAX_REFLECTION_RETRIES,
+    _build_conversation_history_block,
     _load_conversation_history,
     check_hallucination_node,
     create_rag_graph,
@@ -29,6 +31,32 @@ from backend.app.agents.graph import (
     should_reflect_or_end,
     transform_query_node,
 )
+
+# ============================================================================
+# _build_conversation_history_block
+# ============================================================================
+
+
+class TestBuildConversationHistoryBlock:
+    def test_keeps_newest_messages_within_context_window(self):
+        messages = [f"message-{index:02d}-" + "x" * 139 for index in range(12)]
+
+        block = _build_conversation_history_block(messages)
+
+        assert block.startswith("=== Conversation History ===\n")
+        assert block.endswith(messages[-1])
+        assert len(block) <= CONTEXT_WINDOW_CHARACTERS
+
+    def test_short_history_matches_existing_block(self):
+        messages = ["[inbound] Synthetic question", "[outbound] Synthetic answer"]
+
+        block = _build_conversation_history_block(messages)
+
+        assert block == "=== Conversation History ===\n" + "\n".join(messages)
+
+    def test_empty_history_has_no_block(self):
+        assert _build_conversation_history_block([]) == ""
+
 
 # ============================================================================
 # Fixtures
