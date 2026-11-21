@@ -202,6 +202,7 @@ async def test_a1_link_writes_the_bank_row_the_paid_date_one_cashout_row_and_one
         "bank_fee_delta_idr": 0,
         "reversal_of_id": None,
         "note": LINK_NOTE,
+        "before_state": None,  # only a confirmation records one (373)
     }
     assert LINK_NOTE == "linked to a payment already recorded; added to the cash-out"
     assert log["confirmed_at"] is not None
@@ -447,6 +448,7 @@ async def test_a2_ignore_marks_the_row_and_writes_one_log_row_with_the_reason(
         "bank_fee_delta_idr": 0,
         "reversal_of_id": None,
         "note": "bunga bank, bukan klien",
+        "before_state": None,  # only a confirmation records one (373)
     }
 
 
@@ -525,6 +527,7 @@ async def test_a3_reopen_a_linked_row_reverses_the_link_log_row_and_its_cashout_
         "bank_fee_delta_idr": 0,
         "reversal_of_id": link.reconciliation_log_id,
         "note": REOPEN_REVERSED_NOTE,
+        "before_state": None,  # only a confirmation records one (373)
     }
     assert REOPEN_REVERSED_NOTE == "reopened; the link's cash-out row reversed"
 

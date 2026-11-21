@@ -90,3 +90,29 @@ async def test_an_undone_confirmation_sends_nothing(
         await listener._handle_notification(payload)
     listener._on_payment_received.assert_not_awaited()
     listener._on_status_changed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_undo_that_gives_back_paid_is_recognised_and_sends_nothing(listener):
+    """partial -> paid with the status unchanged would be a payment arriving; recognised as
+    recorded without notifications (an undo's log row), no handler runs."""
+    listener._on_payment_received = AsyncMock()
+    listener._on_status_changed = AsyncMock()
+    recognised = AsyncMock(return_value=True)
+    payload = json.dumps(
+        {
+            "practice_id": 7,
+            "old_status": "on_process",
+            "new_status": "on_process",
+            "old_payment": "partial",
+            "new_payment": "paid",
+            "ts": "1782345600.123456",
+        }
+    )
+    with patch(
+        "backend.services.crm.practice_status_listener.recorded_without_notifications", recognised
+    ):
+        await listener._handle_notification(payload)
+    assert recognised.await_args.args[1:] == (7, "1782345600.123456", "partial", "paid")
+    listener._on_payment_received.assert_not_awaited()
+    listener._on_status_changed.assert_not_awaited()

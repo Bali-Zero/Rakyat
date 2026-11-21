@@ -7,7 +7,7 @@ not undoable is refused with nothing written. All names and amounts are invented
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -18,6 +18,7 @@ from backend.services.accounting.reconcile_service import (
     confirm_payment,
     ignore_transaction,
     link_recorded,
+    recorded_without_notifications,
     undo_confirmation,
 )
 from backend.tests.services.test_accounting_confirm_starts_case_integration import (
@@ -168,6 +169,89 @@ async def test_a_start_date_set_before_the_confirmation_is_kept(db) -> None:
     assert (prac["status"], prac["start_date"]) == ("sending_invoice", earlier)
 
 
+async def test_a_start_date_set_earlier_the_same_day_is_kept(db) -> None:
+    """A case opened today with its start date already set: the confirmation that starts it
+    keeps that date (COALESCE), so the undo must keep it too."""
+    today = await db.fetchval("SELECT now()::date")
+    pid, iid, txid = await _case(db, "sending_invoice", start=today)
+    await _confirm(db, pid, iid, txid)
+    await _undo(db, txid)
+    prac = await db.fetchrow("SELECT status, start_date FROM practices WHERE id = $1", pid)
+    assert (prac["status"], prac["start_date"]) == ("sending_invoice", today)
+
+
+async def test_a_start_date_changed_by_hand_after_the_start_is_kept(db) -> None:
+    pid, iid, txid = await _case(db, "sending_invoice")
+    await _confirm(db, pid, iid, txid)
+    await db.execute("UPDATE practices SET start_date = '2026-06-30' WHERE id = $1", pid)
+    await _undo(db, txid)
+    prac = await db.fetchrow("SELECT status, start_date FROM practices WHERE id = $1", pid)
+    assert (prac["status"], prac["start_date"]) == ("sending_invoice", date(2026, 6, 30))
+
+
+async def test_the_invoice_gets_back_a_paid_date_no_cash_out_row_explains(db) -> None:
+    pid, iid, txid = await _case(db, "on_process")
+    may = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    await db.execute(
+        "UPDATE invoices SET paid_date = $2, paid_amount_idr = 1000000 WHERE id = $1", iid, may
+    )
+    await _confirm(db, pid, iid, txid, status="partial", amount=1_000_000)
+    assert (await db.fetchval("SELECT paid_date FROM invoices WHERE id = $1", iid)) > may
+    await _undo(db, txid)
+    inv = await db.fetchrow("SELECT paid_date, paid_amount_idr FROM invoices WHERE id = $1", iid)
+    assert (inv["paid_date"], inv["paid_amount_idr"]) == (may, 1_000_000)
+
+
+async def test_the_confirmation_records_what_it_overwrites(db) -> None:
+    may = datetime(2026, 5, 1, 7, 30, 15, 123456, tzinfo=timezone.utc)
+    pid, iid, txid = await _case(db, "on_process", start=date(2026, 6, 1))
+    await db.execute("UPDATE invoices SET paid_date = $2 WHERE id = $1", iid, may)
+    confirm = await _confirm(db, pid, iid, txid, status="partial", amount=1_000_000)
+    state = await db.fetchval(
+        "SELECT before_state FROM reconciliation_log WHERE id = $1", confirm.reconciliation_log_id
+    )
+    assert state == {"invoice_paid_date": may.isoformat(), "start_date": "2026-06-01"}
+
+
+async def test_an_undo_that_gives_a_case_back_its_paid_is_recorded_without_notifications(
+    db,
+) -> None:
+    """A case already `paid` (by hand) confirmed as `partial`: the undo moves the payment from
+    `partial` back to `paid`, which the listener would read as a payment arriving. The undo's
+    log row carries the change's instant and transition, so the listener sends nothing."""
+    pid, iid, txid = await _case(db, "on_process")
+    await db.execute(
+        "UPDATE practices SET payment_status = 'paid', paid_amount = 4000000 WHERE id = $1", pid
+    )
+    confirm = await _confirm(db, pid, iid, txid, status="partial", amount=1_000_000)
+    result = await _undo(db, txid)
+    assert (await db.fetchval("SELECT payment_status FROM practices WHERE id = $1", pid)) == "paid"
+
+    def stamp(log_id):
+        return db.fetchval(
+            "SELECT extract(epoch FROM confirmed_at)::text FROM reconciliation_log WHERE id = $1",
+            log_id,
+        )
+
+    undo_ts = await stamp(result.reconciliation_log_id)
+    assert await recorded_without_notifications(db, pid, undo_ts, "partial", "paid") is True
+    # the instant names the undo, the transition must match it too
+    assert await recorded_without_notifications(db, pid, undo_ts, "unpaid", "paid") is False
+    # the live confirmation itself stays an ordinary change
+    confirm_ts = await stamp(confirm.reconciliation_log_id)
+    assert await recorded_without_notifications(db, pid, confirm_ts, "paid", "partial") is False
+
+
+async def test_an_undo_inside_another_transaction_is_refused(db) -> None:
+    pid, iid, txid = await _case(db, "on_process")
+    await _confirm(db, pid, iid, txid, status="partial", amount=1_000_000)
+    before = await _snapshot(db)
+    with pytest.raises(ReconcileError, match="transaction of its own"):
+        async with db.transaction():
+            await _undo(db, txid)
+    assert await _snapshot(db) == before
+
+
 async def test_a_historical_confirmation_can_be_undone(db) -> None:
     pid, iid, txid = await _case(db, "on_process")
     await _confirm(db, pid, iid, txid, historical=True)
@@ -303,6 +387,16 @@ async def _missing(db):
     return 999_999
 
 
+async def _recorded_before_373(db):
+    pid, iid, txid = await _case(db, "on_process")
+    confirm = await _confirm(db, pid, iid, txid, status="partial", amount=1_000_000)
+    await db.execute(
+        "UPDATE reconciliation_log SET before_state = NULL WHERE id = $1",
+        confirm.reconciliation_log_id,
+    )
+    return txid
+
+
 @pytest.mark.parametrize(
     ("make", "message"),
     [
@@ -313,6 +407,7 @@ async def _missing(db):
         (_missing, "not found"),
         (_paid_by_hand_since, "has changed since this confirmation"),
         (_started_then_moved_on, "has moved on since this confirmation started it"),
+        (_recorded_before_373, "before its undo could be recorded"),
     ],
 )
 async def test_what_cannot_be_undone_is_refused_and_writes_nothing(db, make, message) -> None:
