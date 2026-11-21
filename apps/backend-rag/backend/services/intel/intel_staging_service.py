@@ -231,6 +231,7 @@ class IntelStagingService:
         new_status: str,
         updates: dict[str, Any] | None = None,
         expected_values: dict[str, Any] | None = None,
+        expected_editorial_fingerprint: str | None = None,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Atomically transition one staging item across worker processes."""
 
@@ -245,6 +246,17 @@ class IntelStagingService:
                 current = self.load_staging_item(intel_type, item_id)
                 if current is None:
                     return False, None
+                if expected_editorial_fingerprint is not None:
+                    from backend.services.intel.intel_public_editorial import (
+                        editorial_fingerprint,
+                        is_public_editorial,
+                    )
+
+                    if (
+                        not is_public_editorial(current, item_id)
+                        or editorial_fingerprint(current) != expected_editorial_fingerprint
+                    ):
+                        return False, current
                 status = str(current.get("status", "pending"))
                 if status not in expected:
                     return False, current

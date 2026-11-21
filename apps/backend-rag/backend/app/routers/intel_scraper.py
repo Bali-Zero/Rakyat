@@ -668,7 +668,12 @@ async def submit_from_scraper(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-async def ingest_intel_to_qdrant(item_id: str, intel_type: str) -> bool:
+async def ingest_intel_to_qdrant(
+    item_id: str,
+    intel_type: str,
+    *,
+    reviewed_editorial: dict[str, Any] | None = None,
+) -> bool:
     """
     Ingest a staging item into the appropriate Qdrant collection.
 
@@ -680,7 +685,14 @@ async def ingest_intel_to_qdrant(item_id: str, intel_type: str) -> bool:
         True if ingestion succeeded
     """
     try:
-        data = staging_service.load_staging_item(intel_type, item_id)
+        if reviewed_editorial is not None:
+            from backend.services.intel.intel_public_editorial import is_public_editorial
+
+            if intel_type != "visa" or not is_public_editorial(reviewed_editorial, item_id):
+                return False
+            data = reviewed_editorial
+        else:
+            data = staging_service.load_staging_item(intel_type, item_id)
         if not data:
             logger.error(
                 "Qdrant ingestion failed - item not found",
@@ -800,6 +812,7 @@ async def publish_staging_item_internal(
     position: str = "latest",
     *,
     pool: Any | None = None,
+    require_public_editorial: bool = False,
 ) -> dict[str, Any]:
     """Publish path for internal callers that carry their own authorization.
 
@@ -816,6 +829,7 @@ async def publish_staging_item_internal(
         actor=actor,
         allow_generated_cover=allow_generated_cover,
         pool=pool,
+        require_public_editorial=require_public_editorial,
     )
 
 
@@ -903,9 +917,7 @@ def enforce_staging_guards(data: dict[str, Any], item_id: str) -> None:
     try:
         article = _build_enriched_article(data)
     except Exception as exc:
-        logger.warning(
-            "article_guard staging render skipped: %s", exc, extra={"item_id": item_id}
-        )
+        logger.warning("article_guard staging render skipped: %s", exc, extra={"item_id": item_id})
         enforce_public_article(fields)
         return
     slug = data.get("slug") or generate_slug(article.headline)
@@ -924,6 +936,7 @@ async def _publish_staging_item(
     allow_generated_cover: bool = True,
     *,
     pool: Any | None = None,
+    require_public_editorial: bool = False,
 ) -> dict[str, Any]:
     """Publish implementation. Callers are responsible for authorization."""
     # Single funnel-in for both callers (the admin HTTP endpoint and the Telegram
@@ -954,6 +967,11 @@ async def _publish_staging_item(
     intel_user_actions_total.labels(intel_type=type, action="publish").inc()
 
     data = staging_service.load_staging_item(type, item_id)
+    if require_public_editorial:
+        from backend.services.intel.intel_public_editorial import is_public_editorial
+
+        if type != "visa" or not is_public_editorial(data, item_id):
+            raise HTTPException(status_code=409, detail="Public editorial enrollment changed")
     if not data:
         logger.warning(
             "Publish failed - item not found",
@@ -979,7 +997,11 @@ async def _publish_staging_item(
         logger.info("Publishing article", extra={"type": type, "item_id": item_id, "title": title})
 
         # Step 1: Ingest to Qdrant (knowledge base)
-        ingestion_success = await ingest_intel_to_qdrant(item_id, type)
+        ingestion_success = await ingest_intel_to_qdrant(
+            item_id,
+            type,
+            **({"reviewed_editorial": data} if require_public_editorial else {}),
+        )
 
         if not ingestion_success:
             logger.error(
@@ -1097,7 +1119,9 @@ async def _publish_staging_item(
 
                     if cover_image_path.exists():
                         image_bytes = cover_image_path.read_bytes()
-                        cover_image_base64 = base64.b64encode(_cover_as_jpeg(image_bytes)).decode("utf-8")
+                        cover_image_base64 = base64.b64encode(_cover_as_jpeg(image_bytes)).decode(
+                            "utf-8"
+                        )
                         cover_image_filename = f"{cover_slug}.jpg"
                         logger.info(
                             "Cover image found on local filesystem",
@@ -1304,13 +1328,10 @@ async def _publish_staging_item(
                 )
                 ai_tags = data.get("tags") or []
                 if (
-                    (
-                        publish_result is not None
-                        and publish_result.success
-                        and publish_result.image_path
-                    )
-                    or data.get("published_cover_path")
-                ):
+                    publish_result is not None
+                    and publish_result.success
+                    and publish_result.image_path
+                ) or data.get("published_cover_path"):
                     image_url = f"/static/news/{slug}.jpg"
                 else:
                     image_url = data.get("image_url") or data.get("cover_image")
