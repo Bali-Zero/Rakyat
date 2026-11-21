@@ -98,14 +98,6 @@ class TestTheRouterDoesNotKeepItsOwnFraming:
 
         return Path(router_module.__file__).read_text(encoding="utf-8")
 
-    def test_guilt_the_router_delegates_the_framing(self):
-        source = self._router_source()
-
-        assert "build_priming_turns(" in source, (
-            "the router must build the priming pair through the persona module, "
-            "which is where every other language rule lives"
-        )
-
     def test_guilt_the_italian_priming_literals_are_gone_from_the_router(self):
         source = self._router_source()
 

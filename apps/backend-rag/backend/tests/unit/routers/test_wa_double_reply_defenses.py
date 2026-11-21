@@ -22,10 +22,10 @@ Four independent defenses, each tested here:
    fix was a read-only SELECT against ``meta_inbox_messages``, which is racy
    — it can run before the meta-inbox pipeline's own write commits, so both
    paths can win the read and both reply. Replaced with a write-before-send
-   UPSERT into a dedicated ``wa_reply_claims`` table, called from BOTH
-   ``process_whatsapp_message`` (legacy) and ``_handle_meta_inbox_message``
-   (meta-inbox): whichever path's INSERT lands first for a wamid wins and
-   answers; the loser discards.
+   UPSERT into a dedicated ``wa_reply_claims`` table, called from
+   ``_handle_meta_inbox_message`` (and, until it was retired, from the legacy
+   ``process_whatsapp_message`` too): whichever claimant's INSERT lands first
+   for a wamid wins and answers; the loser discards.
 4. ``_claim_wamid_reply`` itself: a genuine two-writer race (simulated with a
    real in-memory dedup dict standing in for the DB's UNIQUE constraint) must
    resolve to exactly one winner, and a same-path retry (Meta re-delivering
@@ -43,6 +43,11 @@ import pytest
 
 from backend.app.routers import whatsapp_chat
 from backend.services.integrations import wa_outbox_worker
+
+# The legacy inline path is gone, but wa_reply_claims keeps historical rows
+# claimed under this name, and the meta-inbox path must still discard a wamid
+# that another claimant owns.
+LEGACY_CLAIMANT = "legacy"
 
 
 @pytest.fixture(autouse=True)
@@ -111,7 +116,7 @@ def test_canonical_id_routes_to_meta_inbox_regression() -> None:
     assert whatsapp_chat._change_belongs_to_meta_inbox(_change(CANONICAL_ID)) is True
 
 
-def test_unrelated_id_and_unrelated_display_number_stays_legacy() -> None:
+def test_unrelated_id_and_unrelated_display_number_is_not_meta_inbox() -> None:
     """Innocence: a genuinely different number must NOT be swept into meta-inbox."""
     assert (
         whatsapp_chat._change_belongs_to_meta_inbox(
@@ -160,8 +165,8 @@ def test_second_subscription_id_added_via_env_also_recognised(
 
 
 # ---------------------------------------------------------------------------
-# Defense 3: cross-path ATOMIC CLAIM at the top of process_whatsapp_message
-# and _handle_meta_inbox_message
+# Defense 3: cross-path ATOMIC CLAIM in _handle_meta_inbox_message (the legacy
+# inline path that raced it is retired; the claim and its tests stay)
 # ---------------------------------------------------------------------------
 
 
@@ -174,167 +179,6 @@ class _AcquireCM:
 
     async def __aexit__(self, *exc: Any) -> bool:
         return False
-
-
-@pytest.mark.asyncio
-async def test_wamid_already_claimed_by_meta_inbox_skips_legacy_generation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Guilt: the exact double-reply shape — meta-inbox already claimed it."""
-    conn = MagicMock()
-    # The claim UPSERT returns the EXISTING owner on conflict: "meta_inbox"
-    # (not "legacy"), so process_whatsapp_message's own claim call loses.
-    conn.fetchval = AsyncMock(return_value=whatsapp_chat.WAMID_CLAIMANT_META_INBOX)
-    pool = MagicMock()
-    pool.acquire = MagicMock(return_value=_AcquireCM(conn))
-
-    request = MagicMock()
-    monkeypatch.setattr(whatsapp_chat, "_get_db_pool", lambda r: pool)
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_service, "mark_message_read", AsyncMock(return_value=None)
-    )
-
-    # The claim gate runs AFTER the allowlist check (self-review finding,
-    # cured in this PR — claiming before the allowlist let a
-    # will-be-ignored number still poison the wamid for a legitimate
-    # later meta-inbox delivery), so is_allowed must return True to reach
-    # it; the guard is on the NEXT stage (triage), which must never run.
-    monkeypatch.setattr(whatsapp_chat.whatsapp_triage_service, "is_allowed", lambda *a, **k: True)
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_triage_service,
-        "should_escalate",
-        AsyncMock(
-            side_effect=AssertionError(
-                "legacy triage must not run — the claim should have returned early"
-            )
-        ),
-    )
-
-    result = await whatsapp_chat.process_whatsapp_message(
-        phone="628111",
-        message_text="Ciaooo",
-        sender_name="Mario",
-        message_id="wamid.DOUBLE",
-        request=request,
-    )
-
-    assert result is None
-    assert conn.fetchval.await_args[0][1] == "wamid.DOUBLE"
-    assert conn.fetchval.await_args[0][2] == whatsapp_chat.WAMID_CLAIMANT_LEGACY
-
-
-@pytest.mark.asyncio
-async def test_wamid_claimed_by_legacy_proceeds_to_legacy_flow(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Innocence: a genuinely new legacy-only wamid must still be processed."""
-    conn = MagicMock()
-    # The UPSERT inserted a fresh row with claimed_by="legacy" — no conflict,
-    # so the returned owner equals the caller's own claimant name.
-    conn.fetchval = AsyncMock(return_value=whatsapp_chat.WAMID_CLAIMANT_LEGACY)
-    pool = MagicMock()
-    pool.acquire = MagicMock(return_value=_AcquireCM(conn))
-
-    request = MagicMock()
-    monkeypatch.setattr(whatsapp_chat, "_get_db_pool", lambda r: pool)
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_service, "mark_message_read", AsyncMock(return_value=None)
-    )
-    is_allowed_calls: list[str] = []
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_triage_service,
-        "is_allowed",
-        # Must return True: the claim gate runs AFTER the allowlist check, so
-        # this test needs to actually reach it, not stop here.
-        lambda phone, *a, **k: is_allowed_calls.append(phone) or True,
-    )
-    # Stop the flow right after the claim gate — should_escalate is real
-    # triage logic this test has no business exercising. The outer
-    # try/except in process_whatsapp_message swallows this and returns
-    # None, which is exactly the assertion below.
-    should_escalate_mock = AsyncMock(
-        side_effect=RuntimeError("stop here — claim gate already proven passed")
-    )
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_triage_service, "should_escalate", should_escalate_mock
-    )
-
-    result = await whatsapp_chat.process_whatsapp_message(
-        phone="628111",
-        message_text="hello",
-        sender_name="Mario",
-        message_id="wamid.LEGACY-ONLY",
-        request=request,
-    )
-
-    # Reached the allowlist stage (which runs BEFORE the claim) and then
-    # won the claim itself — proof neither gate early-returned.
-    assert is_allowed_calls == ["628111"]
-    assert conn.fetchval.await_args[0][1] == "wamid.LEGACY-ONLY"
-    # The outer try/except returns None on ANY unhandled exception past this
-    # point, so `result is None` alone does not prove the flow reached the
-    # claim gate — a mutant that early-returns right after the allowlist
-    # check (never touching should_escalate) also yields None here
-    # (adversarial-review finding: mutation testing survived on this
-    # assertion gap). Assert the sentinel was actually awaited so a mutant
-    # that short-circuits before it goes red.
-    should_escalate_mock.assert_awaited_once()
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_dedup_db_error_is_non_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A DB hiccup on the claim must never block a legitimate legacy reply."""
-    pool = MagicMock()
-    pool.acquire = MagicMock(side_effect=RuntimeError("db down"))
-
-    request = MagicMock()
-    monkeypatch.setattr(whatsapp_chat, "_get_db_pool", lambda r: pool)
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_service, "mark_message_read", AsyncMock(return_value=None)
-    )
-    is_allowed_calls: list[str] = []
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_triage_service,
-        "is_allowed",
-        # Must return True: the claim gate runs AFTER the allowlist check
-        # (self-review finding, cured in this PR), so this test needs to
-        # actually reach the claim's DB call — not stop at the allowlist,
-        # which would make this "DB error is non-blocking" test pass
-        # vacuously without ever touching pool.acquire.
-        lambda phone, *a, **k: is_allowed_calls.append(phone) or True,
-    )
-    # Stop the flow right after the (failed) claim attempt — should_escalate
-    # is real triage logic this test has no business exercising. The outer
-    # try/except in process_whatsapp_message swallows this and returns None,
-    # which is exactly the assertion below.
-    should_escalate_mock = AsyncMock(
-        side_effect=RuntimeError("stop here — claim gate already proven passed")
-    )
-    monkeypatch.setattr(
-        whatsapp_chat.whatsapp_triage_service, "should_escalate", should_escalate_mock
-    )
-
-    # Must not raise despite the claim's DB call failing.
-    result = await whatsapp_chat.process_whatsapp_message(
-        phone="628111",
-        message_text="hello",
-        sender_name="Mario",
-        message_id="wamid.DB-DOWN",
-        request=request,
-    )
-    assert is_allowed_calls == ["628111"]
-    assert pool.acquire.called
-    # `result is None` alone is also produced by the swallowed RuntimeError
-    # from pool.acquire itself (caught by the claim's own try/except) OR by
-    # the outer try/except catching anything else — neither proves the flow
-    # actually continued PAST the failed claim into triage, which is the
-    # whole point of "non-blocking" (adversarial-review finding: mutation
-    # testing survived here too, same gap as the sibling test above).
-    # Assert the sentinel was awaited so a mutant that re-raises inside the
-    # claim's except (muting instead of continuing) goes red.
-    should_escalate_mock.assert_awaited_once()
-    assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +203,7 @@ async def test_meta_inbox_path_skips_when_legacy_already_claimed(
 ) -> None:
     """Guilt (the mirror case): legacy claimed first, meta-inbox must discard."""
     conn = MagicMock()
-    conn.fetchval = AsyncMock(return_value=whatsapp_chat.WAMID_CLAIMANT_LEGACY)
+    conn.fetchval = AsyncMock(return_value=LEGACY_CLAIMANT)
     conn.fetchrow = AsyncMock(
         side_effect=AssertionError(
             "meta-inbox ledger writes must not run once the claim is lost"
@@ -426,7 +270,7 @@ async def test_claim_race_exactly_one_winner() -> None:
         table, "wamid.RACE", whatsapp_chat.WAMID_CLAIMANT_META_INBOX
     )
     legacy_won = await whatsapp_chat._claim_wamid_reply(
-        table, "wamid.RACE", whatsapp_chat.WAMID_CLAIMANT_LEGACY
+        table, "wamid.RACE", LEGACY_CLAIMANT
     )
 
     assert meta_won is True
@@ -577,14 +421,9 @@ async def test_recovery_net_routes_meta_inbox_payload_away_from_channel_router(
     pool = MagicMock()
     process_meta_inbox_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
-    legacy_route_mock = AsyncMock(
-        side_effect=AssertionError("ChannelRouter must not run for a meta-inbox payload")
-    )
 
     payload = _webhook_payload(CANONICAL_ID, wamid="wamid.NET")
-    await whatsapp_chat.route_whatsapp_recovery(
-        payload, db_pool=pool, legacy_route=legacy_route_mock
-    )
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
 
     # mark_row=False is load-bearing (round-2 finding): the WebhookProcessor
     # already holds this row FOR UPDATE SKIP LOCKED and marks it itself —
@@ -592,27 +431,26 @@ async def test_recovery_net_routes_meta_inbox_payload_away_from_channel_router(
     process_meta_inbox_mock.assert_awaited_once_with(
         raw_payload=payload, request=None, db_pool=pool, mark_row=False
     )
-    legacy_route_mock.assert_not_awaited()
+    assert outcome is None
 
 
 @pytest.mark.asyncio
-async def test_recovery_net_still_routes_non_meta_inbox_payload_through_channel_router(
+async def test_recovery_net_closes_non_meta_inbox_payload_without_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Prong 2, innocence (regression guard): unrelated numbers keep the old path."""
+    """A number with no handler is closed with the retired-path reason: the
+    recovery net neither raises (the processor would retry it five times and
+    "GIVE UP") nor sends it to the meta-inbox pipeline."""
     pool = MagicMock()
     process_meta_inbox_mock = AsyncMock(
         side_effect=AssertionError("non-meta-inbox payload must not use process_meta_inbox_payload")
     )
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
-    legacy_route_mock = AsyncMock(return_value=None)
 
     payload = _webhook_payload(UNRELATED_ID, wamid="wamid.LEGACY-NET")
-    await whatsapp_chat.route_whatsapp_recovery(
-        payload, db_pool=pool, legacy_route=legacy_route_mock
-    )
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
 
-    legacy_route_mock.assert_awaited_once_with(payload)
+    assert outcome == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
     process_meta_inbox_mock.assert_not_awaited()
 
 
@@ -641,14 +479,9 @@ async def test_recovery_entry_point_never_calls_mark_processed_itself(
         "backend.services.channels.inbound_webhook_repo.mark_processed",
         mark_processed_mock,
     )
-    legacy_route_mock = AsyncMock(
-        side_effect=AssertionError("ChannelRouter must not run for a meta-inbox payload")
-    )
 
     payload = _webhook_payload(CANONICAL_ID, wamid="wamid.NO-SELF-MARK")
-    await whatsapp_chat.route_whatsapp_recovery(
-        payload, db_pool=pool, legacy_route=legacy_route_mock
-    )
+    await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
 
     mark_processed_mock.assert_not_awaited()
 
@@ -679,16 +512,10 @@ async def test_recovery_reraises_on_handler_failure_so_processor_retries(
         "backend.services.channels.inbound_webhook_repo.mark_processed",
         mark_processed_mock,
     )
-    legacy_route_mock = AsyncMock(
-        side_effect=AssertionError("ChannelRouter must not run for a meta-inbox payload")
-    )
 
     payload = _webhook_payload(CANONICAL_ID, wamid="wamid.RETRY-ME")
 
     with pytest.raises(RuntimeError, match="process_meta_inbox_payload reported a"):
-        await whatsapp_chat.route_whatsapp_recovery(
-            payload, db_pool=pool, legacy_route=legacy_route_mock
-        )
+        await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=pool)
 
     mark_processed_mock.assert_not_awaited()
-    legacy_route_mock.assert_not_awaited()

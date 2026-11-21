@@ -6,8 +6,9 @@ as the public client number: one app, one webhook, two numbers. Before this
 fix, the team-bot pnid matched neither ``META_INBOX_PHONE_NUMBER_IDS`` (an
 unlisted id) nor the public-number ``display_phone_number`` fallback (a
 genuinely different visible number), so it fell all the way through the
-webhook router's classification into the legacy inline client-triage flow —
-a staff message would have been processed as if it came from a client.
+webhook router's classification into the (since retired) legacy inline
+client-triage flow — a staff message would have been processed as if it came
+from a client.
 
 The naive fix (adding the team pnid to ``META_INBOX_PHONE_NUMBER_IDS``)
 would have been equally wrong: it removes the fall-through but routes staff
@@ -219,26 +220,23 @@ async def test_recovery_diverts_team_bot_payload_when_switch_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Guilt: on recovery, a team-bot payload must reach neither
-    legacy_route NOR process_meta_inbox_payload — only the ingress seam.
+    the retired-route close NOR process_meta_inbox_payload — only the ingress seam.
     """
     monkeypatch.setenv("TEAM_BOT_INGRESS_ENABLED", "true")
     handle_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(whatsapp_chat, "_handle_team_bot_ingress_payload", handle_mock)
-    legacy_route = AsyncMock(
-        side_effect=AssertionError("legacy_route must not run for team-bot payload")
-    )
     process_meta_inbox_mock = AsyncMock(
         side_effect=AssertionError("meta-inbox pipeline must not run for team-bot payload")
     )
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
-    await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(TEAM_ID), db_pool=MagicMock(), legacy_route=legacy_route
+    outcome = await whatsapp_chat.route_whatsapp_recovery(
+        _recovery_payload(TEAM_ID), db_pool=MagicMock()
     )
 
     handle_mock.assert_awaited_once()
-    legacy_route.assert_not_awaited()
     process_meta_inbox_mock.assert_not_awaited()
+    assert outcome is None  # handled, not "closed as retired"
 
 
 @pytest.mark.asyncio
@@ -246,21 +244,18 @@ async def test_recovery_drops_team_bot_payload_when_switch_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Fail-closed: switch OFF (the default) means recognised-and-dropped,
-    never fallen through to legacy_route.
+    never closed as a retired-route row.
     """
     monkeypatch.delenv("TEAM_BOT_INGRESS_ENABLED", raising=False)
     handle_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(whatsapp_chat, "_handle_team_bot_ingress_payload", handle_mock)
-    legacy_route = AsyncMock(
-        side_effect=AssertionError("legacy_route must not run for team-bot payload")
-    )
 
-    await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(TEAM_ID), db_pool=MagicMock(), legacy_route=legacy_route
+    outcome = await whatsapp_chat.route_whatsapp_recovery(
+        _recovery_payload(TEAM_ID), db_pool=MagicMock()
     )
 
     handle_mock.assert_not_awaited()
-    legacy_route.assert_not_awaited()
+    assert outcome is None
 
 
 @pytest.mark.asyncio
@@ -271,37 +266,33 @@ async def test_recovery_meta_inbox_payload_is_unaffected(monkeypatch: pytest.Mon
     """
     process_meta_inbox_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
-    legacy_route = AsyncMock(
-        side_effect=AssertionError("legacy_route must not run for meta-inbox payload")
-    )
 
-    await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(CLIENT_META_INBOX_ID), db_pool=MagicMock(), legacy_route=legacy_route
+    outcome = await whatsapp_chat.route_whatsapp_recovery(
+        _recovery_payload(CLIENT_META_INBOX_ID), db_pool=MagicMock()
     )
 
     process_meta_inbox_mock.assert_awaited_once()
-    legacy_route.assert_not_awaited()
+    assert outcome is None
 
 
 @pytest.mark.asyncio
-async def test_recovery_unrelated_payload_still_goes_to_legacy_route(
+async def test_recovery_unrelated_payload_is_closed_with_the_retired_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Innocence regression: genuinely unrelated/public-client traffic is
-    completely untouched by this lane, on the recovery path too.
+    """A payload for a number with no handler does not raise (which would
+    make the WebhookProcessor retry it five times) and is not routed anywhere:
+    it returns the retired-path reason the processor stores on the closed row.
     """
-    legacy_route = AsyncMock(return_value=None)
     process_meta_inbox_mock = AsyncMock(
         side_effect=AssertionError("meta-inbox pipeline must not run for unrelated payload")
     )
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
 
-    payload = _recovery_payload(UNRELATED_ID)
-    await whatsapp_chat.route_whatsapp_recovery(
-        payload, db_pool=MagicMock(), legacy_route=legacy_route
+    outcome = await whatsapp_chat.route_whatsapp_recovery(
+        _recovery_payload(UNRELATED_ID), db_pool=MagicMock()
     )
 
-    legacy_route.assert_awaited_once_with(payload)
+    assert outcome == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
     process_meta_inbox_mock.assert_not_awaited()
 
 
@@ -370,6 +361,7 @@ def _webhook_payload(phone_number_id: str, display_phone_number: str = "15556151
 def _webhook_client():
     app = FastAPI()
     app.include_router(whatsapp_chat.router)
+    app.state.db_pool = MagicMock()
     with patch.object(_real_settings, "meta_webhook_require_signature", False):
         yield TestClient(app)
 
@@ -378,17 +370,17 @@ def _post(client: Any, payload: dict) -> Any:
     """POST the payload with the webhook's side effects neutralised.
 
     The meta-inbox task is stubbed so this test observes ONE thing: whether
-    the legacy inline scheduler was reached. Webhook persistence is NOT
-    stubbed — it resolves ``inbound_webhook_repo`` by local import inside the
-    handler (no module attribute to patch) and already degrades without a
-    pool, exactly as the router's own coverage suite relies on.
+    the retired-route row close was scheduled. Row persistence is stubbed to
+    "inserted", because only a persisted row can be closed.
     """
     with (
         patch.object(whatsapp_chat, "process_meta_inbox_payload", new=AsyncMock(return_value=True)),
-        patch.object(
-            whatsapp_chat, "process_whatsapp_message_and_mark_processed", new=AsyncMock()
-        ) as legacy,
+        patch.object(whatsapp_chat, "_close_retired_legacy_rows", new=AsyncMock()) as legacy,
         patch.object(whatsapp_chat, "_handle_team_bot_ingress_payload", new=AsyncMock()) as seam,
+        patch(
+            "backend.services.channels.inbound_webhook_repo.persist",
+            new=AsyncMock(return_value=(1, True)),
+        ),
     ):
         response = client.post(
             "/webhook/whatsapp",
@@ -398,13 +390,13 @@ def _post(client: Any, payload: dict) -> Any:
     return response, legacy, seam
 
 
-def test_fast_path_team_bot_message_never_reaches_the_legacy_client_flow(
+def test_fast_path_team_bot_message_never_reaches_the_retired_client_flow(
     _webhook_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """THE GUILT TEST. On origin/main before this lane, a message to the
     team-bot number fell through both classification branches and was
-    scheduled onto ``process_whatsapp_message_and_mark_processed`` — the
-    client brain answering on the staff number. It must not.
+    scheduled onto the legacy inline reply path — the client brain answering
+    on the staff number. It must not reach the retired-route close either.
 
     Asserted with the kill switch OFF (its born state), because that is the
     configuration production actually runs: the divert must hold even when
@@ -422,7 +414,7 @@ def test_fast_path_team_bot_message_reaches_the_seam_when_the_switch_is_on(
     _webhook_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Armed, the SAME payload goes to the ingress seam — and still never to
-    the legacy client flow. Both halves matter: an arm that also leaked into
+    the retired-route close. Both halves matter: an arm that also leaked into
     the client path would be a worse defect than the one being cured.
     """
     monkeypatch.setenv("TEAM_BOT_INGRESS_ENABLED", "true")
@@ -433,12 +425,13 @@ def test_fast_path_team_bot_message_reaches_the_seam_when_the_switch_is_on(
     assert seam.call_count == 1
 
 
-def test_fast_path_unrelated_number_still_reaches_the_legacy_flow(
+def test_fast_path_unrelated_number_is_closed_with_a_reason(
     _webhook_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """THE INNOCENCE TEST, and the one that would catch an over-match: a
-    genuinely unrelated business number must be routed exactly as before.
-    Without this, a divert that swallowed everything would look green.
+    genuinely unrelated business number is the only one handed to the
+    retired-route close. Without this, a divert that swallowed everything
+    would look green.
     """
     monkeypatch.delenv("TEAM_BOT_INGRESS_ENABLED", raising=False)
     response, legacy, seam = _post(_webhook_client, _webhook_payload(UNRELATED_ID))
@@ -452,8 +445,8 @@ def test_fast_path_the_public_client_number_still_goes_to_the_meta_inbox(
     _webhook_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Innocence for the paying surface: the client number keeps its own
-    branch — neither diverted to the team seam nor dropped into the legacy
-    inline flow (the 2026-08-25 double-reply scar's own invariant).
+    branch — neither diverted to the team seam nor closed as a retired
+    route (the 2026-08-25 double-reply scar's own invariant).
     """
     monkeypatch.delenv("TEAM_BOT_INGRESS_ENABLED", raising=False)
     response, legacy, seam = _post(
@@ -527,13 +520,8 @@ async def test_recovery_mixed_payload_still_delivers_the_client_half(
     monkeypatch.delenv("TEAM_BOT_INGRESS_ENABLED", raising=False)
     process_meta_inbox_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
-    legacy_route = AsyncMock(
-        side_effect=AssertionError("legacy_route must not run for a meta-inbox remainder")
-    )
 
-    await whatsapp_chat.route_whatsapp_recovery(
-        _mixed_recovery_payload(), db_pool=MagicMock(), legacy_route=legacy_route
-    )
+    await whatsapp_chat.route_whatsapp_recovery(_mixed_recovery_payload(), db_pool=MagicMock())
 
     process_meta_inbox_mock.assert_awaited_once()
 
@@ -556,7 +544,7 @@ async def test_recovery_mixed_payload_strips_the_team_change_before_routing(
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", _capture)
 
     await whatsapp_chat.route_whatsapp_recovery(
-        _mixed_recovery_payload(), db_pool=MagicMock(), legacy_route=AsyncMock()
+        _mixed_recovery_payload(), db_pool=MagicMock()
     )
 
     pnids = [
@@ -582,19 +570,16 @@ async def test_recovery_team_only_payload_still_returns_without_routing(
         side_effect=AssertionError("meta-inbox must not run for a team-only payload")
     )
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
-    legacy_route = AsyncMock(
-        side_effect=AssertionError("legacy_route must not run for a team-only payload")
-    )
 
-    await whatsapp_chat.route_whatsapp_recovery(
-        _recovery_payload(TEAM_ID), db_pool=MagicMock(), legacy_route=legacy_route
+    outcome = await whatsapp_chat.route_whatsapp_recovery(
+        _recovery_payload(TEAM_ID), db_pool=MagicMock()
     )
 
     # The AssertionError side-effects above are the real guard, but state it
     # positively too: a lint that cannot see a side-effect reads this test as
     # asserting nothing, and a reader deserves the same clarity the linter does.
     process_meta_inbox_mock.assert_not_awaited()
-    legacy_route.assert_not_awaited()
+    assert outcome is None  # stopped dead: not even the retired-route reason
 
 
 # ---------------------------------------------------------------------------
@@ -619,15 +604,14 @@ async def test_a_team_change_wearing_the_public_display_number_cannot_drag_the_r
     a reachable one) would make the payload look meta-inbox even though the
     part that survives the strip is not. The verdict is therefore computed with
     team-bot changes excluded, and this pins it: the remainder here is an
-    unrelated number and must go to the legacy route, never to the client
-    pipeline.
+    unrelated number and must be closed as a retired route, never sent to the
+    client pipeline.
     """
     monkeypatch.delenv("TEAM_BOT_INGRESS_ENABLED", raising=False)
     process_meta_inbox_mock = AsyncMock(
         side_effect=AssertionError("the client pipeline must not receive this remainder")
     )
     monkeypatch.setattr(whatsapp_chat, "process_meta_inbox_payload", process_meta_inbox_mock)
-    legacy_route = AsyncMock(return_value=None)
 
     def _msg_change(pnid: str, display: str, wamid: str) -> dict:
         return {
@@ -661,11 +645,9 @@ async def test_a_team_change_wearing_the_public_display_number_cannot_drag_the_r
         ],
     }
 
-    await whatsapp_chat.route_whatsapp_recovery(
-        payload, db_pool=MagicMock(), legacy_route=legacy_route
-    )
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=MagicMock())
 
-    legacy_route.assert_awaited_once()
+    assert outcome == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
     process_meta_inbox_mock.assert_not_awaited()
 
 
@@ -675,7 +657,7 @@ async def test_a_remainder_that_is_not_a_message_change_is_still_routed(
 ) -> None:
     """The stripper's "nothing else was in it" test counts EVERY surviving
     change. A payload whose only remainder is some other change kind must still
-    be routed onward — dropping it would be a silent loss introduced by a cure.
+    be carried onward — dropping it would be a silent loss introduced by a cure.
     """
     monkeypatch.delenv("TEAM_BOT_INGRESS_ENABLED", raising=False)
     monkeypatch.setattr(
@@ -683,7 +665,6 @@ async def test_a_remainder_that_is_not_a_message_change_is_still_routed(
         "process_meta_inbox_payload",
         AsyncMock(side_effect=AssertionError("not meta-inbox traffic")),
     )
-    legacy_route = AsyncMock(return_value=None)
 
     payload = {
         "object": "whatsapp_business_account",
@@ -716,11 +697,11 @@ async def test_a_remainder_that_is_not_a_message_change_is_still_routed(
         ],
     }
 
-    await whatsapp_chat.route_whatsapp_recovery(
-        payload, db_pool=MagicMock(), legacy_route=legacy_route
-    )
+    outcome = await whatsapp_chat.route_whatsapp_recovery(payload, db_pool=MagicMock())
 
-    legacy_route.assert_awaited_once()
-    routed = legacy_route.await_args.args[0]
+    # The remainder is not dropped: the recovery net still reaches the closing
+    # verdict for it instead of returning silently as for a team-only payload.
+    assert outcome == whatsapp_chat.LEGACY_PATH_RETIRED_REASON
+    routed = whatsapp_chat._payload_without_team_bot_changes(payload)
     fields = [c["field"] for e in routed["entry"] for c in e["changes"]]
     assert fields == ["account_update"]

@@ -54,17 +54,6 @@ def test_importing_the_notifier_does_not_drag_in_the_router() -> None:
     )
 
 
-def test_the_router_still_exposes_the_same_function_object() -> None:
-    """The re-export is the SAME object, not a lookalike.
-
-    Two callables with one name is how the drift this fixes began.
-    """
-    from backend.app.routers import whatsapp_chat
-    from backend.services.integrations import human_escalation_notifier
-
-    assert whatsapp_chat.notify_human_telegram is human_escalation_notifier.notify_human_telegram
-
-
 @pytest.mark.asyncio
 async def test_it_sends_and_masks_the_phone_but_not_the_body() -> None:
     """Guilt: it notifies — and the payload is what it was before the move.

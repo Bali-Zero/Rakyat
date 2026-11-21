@@ -45,7 +45,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -139,12 +139,9 @@ def test_wa_knob_true_without_secret_rejects(wa_client):
 def test_wa_knob_true_still_accepts_a_valid_signature(wa_client):
     """INNOCENCE — arming the knob must not take the channel off the air."""
     body = json.dumps(_wa_payload()).encode("utf-8")
-    with (
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
-    ):
+    with patch(
+        "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
+    ) as mock_settings:
         mock_settings.whatsapp_app_secret = _TEST_APP_SECRET
         mock_settings.meta_webhook_require_signature = True
         resp = wa_client.post(
@@ -176,12 +173,9 @@ def test_wa_knob_true_rejects_an_unsigned_post_when_the_secret_is_present(wa_cli
 
 def test_wa_default_posture_without_secret_is_still_fail_open(wa_client):
     """Pins the documented dev-mode default so a change to it has to say so."""
-    with (
-        patch(
-            "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
-        ) as mock_settings,
-        patch("backend.app.routers.whatsapp_chat.process_whatsapp_message", new=AsyncMock()),
-    ):
+    with patch(
+        "backend.app.routers.whatsapp_chat.settings", new_callable=_seeded_settings_mock
+    ) as mock_settings:
         mock_settings.whatsapp_app_secret = None
         mock_settings.meta_webhook_require_signature = False
         resp = wa_client.post("/webhook/whatsapp", json=_wa_payload())

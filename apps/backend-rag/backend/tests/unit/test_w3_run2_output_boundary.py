@@ -110,21 +110,6 @@ async def test_title_provider_result_is_preserved_without_output(provider, fails
 
 
 @pytest.mark.asyncio
-async def test_onboarding_payload_is_returned_without_log_transcription():
-    from backend.services.whatsapp_onboarding_detector import OnboardingIntentDetector
-
-    result = await OnboardingIntentDetector()._trigger_onboarding_chain(
-        name=CONTENT, email=USER, nationality=CONTENT,
-        business_description=CONTENT, phone=CONTENT,
-    )
-    assert result["status"] == "queued"
-    assert result["payload"] == {
-        "name": CONTENT, "email": USER, "nationality": CONTENT,
-        "business_description": CONTENT, "phone": CONTENT,
-    }
-
-
-@pytest.mark.asyncio
 async def test_memory_fact_and_duplicate_preserve_content_without_logging_it():
     from backend.services.memory.memory_service_postgres import MemoryServicePostgres
 
