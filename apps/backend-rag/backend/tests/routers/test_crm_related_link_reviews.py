@@ -1343,6 +1343,39 @@ async def test_t8_the_detail_grows_by_at_most_two_selects(conn):
     counting = _CountingConn(conn)
     await related_registry_read.get_subject(counting, bare)
     assert counting.statements == 6
+    # the populated survivor: a merged-in member, a document seen on Drive and a link, so every
+    # conditional statement runs; 8 before this slice, 10 with its two (reviews, suggestions)
+    survivor = await seed_subject(conn, "person", "ZzFull Survivor", [("passport", "ZZ4444444")])
+    await seed_subject(
+        conn, "person", "ZzFull Member", [("passport", "ZZ5555555")], merged=survivor
+    )
+    sha = f"{7:064x}"
+    async with unmeasured(conn):
+        await conn.execute(
+            "INSERT INTO related_documents (sha256, byte_size, mime_type, first_seen_on, "
+            "first_channel, evidence, created_by) VALUES ($1, 10, 'application/pdf', "
+            "'2026-01-01', 'drive', '{}'::jsonb, 'zz-seed')",
+            sha,
+        )
+        await conn.execute(
+            "INSERT INTO related_document_sightings (kind, ref, sha256, seen_on, created_by) "
+            "VALUES ('drive', 'ZzDriveRef0007', $1, '2026-01-01', 'zz-seed')",
+            sha,
+        )
+        await conn.execute(
+            "INSERT INTO related_subject_documents (subject_id, sha256, doc_type, evidence, "
+            "created_by) VALUES ($1, $2, 'passport', '{}'::jsonb, 'zz-seed')",
+            survivor,
+            sha,
+        )
+    await seed_client(conn, C3, "ZzFull Client")
+    await seed_link(conn, survivor, C3)
+    counting = _CountingConn(conn)
+    full = await related_registry_read.get_subject(counting, survivor)
+    assert len(full["merged_from"]) == 1 and len(full["documents"]) == 1
+    assert full["links_total"] == 1
+    assert counting.statements == 10  # subject, members, identifiers, documents, sightings,
+    # names, links, reviews, suggestions, detachments
 
 
 # ── T9 privacy ────────────────────────────────────────────────────────────────

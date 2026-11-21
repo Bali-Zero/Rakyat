@@ -1480,19 +1480,16 @@ async def test_l12_a_populated_list_page_runs_at_most_four_selects(conn, clients
 
 
 @pytest.mark.asyncio
-async def test_l12_the_detail_runs_at_most_ten_selects(conn, clients):
-    # the populated survivor: a merged-in member, a document and a link, so every conditional
-    # statement runs (members, sightings, reviews, suggestions); 8 before slice 4F, 10 with it
+async def test_l12_the_detail_runs_at_most_nine_selects(conn, clients):
     sid = await seed_subject(conn, "person", "ZzL12 Person", [("passport", P1)])
-    await seed_subject(conn, "person", "ZzL12 Member", [("passport", "ZZL12MEMB9")], merged=sid)
     await _seed_document(conn, sid, 1)
     await seed_link(conn, sid, LIVE1)
     counting = _CountingConn(conn)
     detail = await related_registry_read.get_subject(counting, sid)
     assert detail["links_total"] == 1 and len(detail["documents"]) == 1
-    assert len(detail["merged_from"]) == 1
-    assert counting.statements == 10  # subject, members, identifiers, documents, sightings,
-    # names, links, reviews, suggestions, detachments
+    assert (
+        counting.statements == 9
+    )  # subject, identifiers, documents, sightings, names, links, reviews, suggestions, detachments
     bare = await seed_subject(conn, "person", None, [("passport", P2)])
     counting = _CountingConn(conn)
     await related_registry_read.get_subject(counting, bare)
