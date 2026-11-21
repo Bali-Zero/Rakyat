@@ -1556,11 +1556,17 @@ class OrchestratorCore:
                 )
 
         # 3b.6. R5 Phase 5: KG fast-path — entity/relationship queries bypass Qdrant ReAct loop
-        kg_fast_result = await self._try_kg_fast_path(
-            query=query,
-            user_context=user_context,
-            extracted_entities=extracted_entities,
-            start_time=start_time,
+        # The fast-path answer IS the workflow prose, so a channel that must not
+        # show that prose (the public blog widget) skips it and gets a normal answer.
+        kg_fast_result = (
+            await self._try_kg_fast_path(
+                query=query,
+                user_context=user_context,
+                extracted_entities=extracted_entities,
+                start_time=start_time,
+            )
+            if _workflow_prose_in_answer(channel)
+            else None
         )
         if kg_fast_result:
             logger.info("✅ [R5 KG] Fast-path returned answer (skipping ReAct loop)")
@@ -1774,7 +1780,7 @@ class OrchestratorCore:
             result.answer = result.answer.rstrip() + "\n\n" + workflow_text
             logger.info('KG LangGraph workflow included in response')
         elif langgraph_workflow:
-            logger.info('KG LangGraph workflow prose withheld for abstention; structured workflow still returned')
+            logger.info('KG LangGraph workflow prose withheld (abstention or blog channel); structured workflow still returned')
 
         # 13. R5 Phase 6: NLM Enrichment merge removed — nlm_task/nlm_domain always None
         evidence_score = getattr(state, "evidence_score", None)

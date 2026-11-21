@@ -28,3 +28,12 @@ def test_append_site_is_gated_by_the_helper():
         in site
     )
     assert 'result.answer = result.answer.rstrip() + "\\n\\n" + workflow_text' in site
+
+
+def test_kg_fast_path_is_skipped_where_the_prose_is_withheld():
+    """The fast-path answer is the workflow prose itself, so the blog must skip it."""
+    src = inspect.getsource(module.OrchestratorCore._process_query_core_unfinalized)
+    call = src.index("await self._try_kg_fast_path(")
+    gate = src.index("if _workflow_prose_in_answer(channel)", call)
+    assert gate - call < 400, "the fast-path call must be conditioned on the helper"
+    assert src.count("await self._try_kg_fast_path(") == 1
