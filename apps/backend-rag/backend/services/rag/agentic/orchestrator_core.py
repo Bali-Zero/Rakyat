@@ -212,6 +212,19 @@ _MULTI_AGENT_COORDINATOR_ENABLED = os.getenv(
 _FinalizationAnalyticsClaim = Callable[[], bool]
 
 
+def _workflow_prose_in_answer(channel: str | None) -> bool:
+    """Whether the KG workflow prose may be appended to ``result.answer``.
+
+    Red-team 2026-11-20: 6 of 36 public blog answers ended with the internal
+    "## SUGGESTED WORKFLOW (from <subgraph>, confidence: N%)" scaffold. The
+    AskZantara widget renders the answer as plain text (whitespace-pre-wrap), so
+    visitors saw raw markdown and an internal label. The blog channel therefore
+    never gets the prose; the structured ``workflow`` field is unchanged and every
+    other channel (and ``channel=None``) keeps the append exactly as before.
+    """
+    return channel != "blog"
+
+
 class OrchestratorCore:
     """
     Core orchestrator che coordina il flusso principale di query processing.
@@ -1756,7 +1769,7 @@ class OrchestratorCore:
         # streaming path emits the workflow as metadata unconditionally and
         # before reading any score, and `whatsapp_chat.py` sends `result.answer`
         # without honouring `abstain` at all.
-        if langgraph_workflow and not result.abstain:
+        if langgraph_workflow and not result.abstain and _workflow_prose_in_answer(channel):
             workflow_text = self._format_workflow_for_prompt(langgraph_workflow)
             result.answer = result.answer.rstrip() + "\n\n" + workflow_text
             logger.info('KG LangGraph workflow included in response')
