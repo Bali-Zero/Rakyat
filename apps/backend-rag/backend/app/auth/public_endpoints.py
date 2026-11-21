@@ -178,9 +178,43 @@ _ROOT_EXACT = (
     ),
 )
 
+# The health router's probes are public one by one, never as a prefix: every
+# other `/health/...` route (metrics, db, redis, collections, kg-stats,
+# detailed) takes the same gate as `/metrics` in HybridAuthMiddleware.
 _INFRA = (
-    PublicEndpoint("/health", Category.INFRA, "Load-balancer and monitoring health checks"),
-    PublicEndpoint("/health/", Category.INFRA, "Alternative health check path"),
+    PublicEndpoint(
+        "/health",
+        Category.INFRA,
+        "Load-balancer and monitoring health check (post-deploy check in fly-deploy.yml)",
+        match="exact",
+    ),
+    PublicEndpoint(
+        "/health/",
+        Category.INFRA,
+        "Same health check with a trailing slash",
+        match="exact",
+    ),
+    PublicEndpoint(
+        "/health/ready",
+        Category.INFRA,
+        "Readiness probe: the [[http_service.checks]] path in fly.toml, and the blackbox probe target",
+        match="exact",
+    ),
+    PublicEndpoint(
+        "/health/live",
+        Category.INFRA,
+        "Liveness probe; also the fallback the outbox healer receptor reads on a 404",
+        match="exact",
+    ),
+    # Read without credentials by the healer receptor on the fleet machines
+    # (backstage scripts/healer_receptor_garuda_outbox.py): the handler keeps
+    # it unauthenticated on purpose and returns aggregate counts only.
+    PublicEndpoint(
+        "/health/garuda-outbox",
+        Category.INFRA,
+        "GARUDA outbox undrained counts, aggregate only, read by the healer receptor without credentials",
+        match="exact",
+    ),
     # Removed 2026-04-18: /api/health had no mounted router (health.py mounts
     # under /health, not /api/health). Entry was stale — external probes MUST
     # use /health.
