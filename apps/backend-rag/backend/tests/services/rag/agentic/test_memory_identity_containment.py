@@ -53,6 +53,9 @@ NON_PERSONAL_CASES = [
     "wa-mirror-internal@balizero.com",
     "WA-Mirror-Internal@BaliZero.com",
     "  wa-mirror-internal@balizero.com  ",
+    "blog_visitor",
+    "Blog_Visitor",
+    "  blog_visitor  ",
 ]
 
 PERSONAL_CASES = [
@@ -62,6 +65,7 @@ PERSONAL_CASES = [
     "wa-mirror-internal2",  # near-miss, must NOT match (no bare-substring trap)
     "not-wa-mirror-internal",
     "somewa-mirror-internal@balizero.com",
+    "blog_visitor2",  # near-miss: exact match only, never a prefix
 ]
 
 
@@ -77,8 +81,39 @@ def test_is_non_personal_memory_identity_false_cases(value: str) -> None:
 
 def test_non_personal_memory_ids_contains_expected_identities() -> None:
     assert NON_PERSONAL_MEMORY_IDS == frozenset(
-        {"anonymous", "wa-mirror-internal", "wa-mirror-internal@balizero.com"},
+        {
+            "anonymous",
+            "blog_visitor",
+            "wa-mirror-internal",
+            "wa-mirror-internal@balizero.com",
+        },
     )
+
+
+def test_blog_ask_identity_never_anchors_shared_memory(monkeypatch) -> None:
+    """The id `/api/blog/ask` sends must be non-personal, whatever it is renamed to.
+
+    Every anonymous reader of the AskZantara widget shares it. If it anchors
+    memory, one visitor's question is recalled into another visitor's answer
+    (measured live 2026-11-21). Read the id from the router's real call rather
+    than repeating the literal, so a rename on either side fails here.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from backend.app.routers import blog_ask
+
+    fake_orch = SimpleNamespace(
+        process_query=AsyncMock(
+            return_value=SimpleNamespace(answer="ok", sources=[], evidence_score=0.5)
+        )
+    )
+    monkeypatch.setattr(blog_ask, "get_blog_orchestrator", AsyncMock(return_value=fake_orch))
+    body = blog_ask.BlogAskRequest(question="What did I ask you before?")
+    asyncio.run(blog_ask.ask_zantara(SimpleNamespace(), body))
+
+    sent_user_id = fake_orch.process_query.await_args.kwargs["user_id"]
+    assert is_non_personal_memory_identity(sent_user_id) is True
 
 
 # ============================================================
@@ -187,7 +222,9 @@ EMPTY_CONTEXT: dict[str, Any] = {
 
 
 def _patch_fetchers(monkeypatch: pytest.MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:
-    profile_mock = AsyncMock(return_value={"profile": {"name": "Marco"}, "history": [], "entities": {}})
+    profile_mock = AsyncMock(
+        return_value={"profile": {"name": "Marco"}, "history": [], "entities": {}}
+    )
     memory_mock = AsyncMock(
         return_value={
             "facts": ["some fact"],
