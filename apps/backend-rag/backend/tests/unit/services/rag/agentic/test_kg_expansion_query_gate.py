@@ -1,11 +1,13 @@
 """
-KG auto-expansion must not learn from the raw query of a shared identity.
+A shared identity's turn must never feed KG auto-expansion.
 
-When a turn has no source chunks, ``KGAutoExpansion.expand_from_response``
-extracts entities from the query itself and stages them in the shared
-knowledge graph. For ``blog_visitor`` (every anonymous AskZantara reader),
-``anonymous`` or the WA mirror, that is one person's words becoming staged
-global facts. Found by the cross-family gate on Rakyat #542 (2026-11-21).
+Expansion stages entities in the shared knowledge graph. Two of its inputs
+can carry the asker's own words: the raw query (fallback when a turn has no
+source chunks) and tool output that echoes the query, such as the KG tool's
+"no entity found for <term>", which arrives as a source chunk. For
+``blog_visitor`` (every anonymous AskZantara reader), ``anonymous`` or the WA
+mirror, that is one person's words becoming staged global facts. Found by the
+cross-family gates on Rakyat #542 and #545 (2026-11-21).
 """
 
 import inspect
@@ -14,17 +16,15 @@ import re
 import pytest
 
 from backend.services.rag.agentic import orchestrator_core
-from backend.services.rag.agentic.orchestrator_core import _kg_expansion_query
-
-QUERY = "My company PT Example Alpaca in Kintamani needs a KITAS"
+from backend.services.rag.agentic.orchestrator_core import _kg_expansion_allowed
 
 
 @pytest.mark.parametrize(
     "user_id",
     [None, "", "anonymous", "blog_visitor", "  Blog_Visitor ", "wa-mirror-internal@balizero.com"],
 )
-def test_shared_identities_never_hand_the_query_to_kg_expansion(user_id) -> None:
-    assert _kg_expansion_query(QUERY, user_id) is None
+def test_shared_identities_never_feed_kg_expansion(user_id) -> None:
+    assert _kg_expansion_allowed(user_id) is False
 
 
 @pytest.mark.parametrize(
@@ -32,12 +32,14 @@ def test_shared_identities_never_hand_the_query_to_kg_expansion(user_id) -> None
     ["client@example.com", "3f2b1c9e-0d4a-4b7e-9a51-2c6d8e0f1a23", "blog_visitor2"],
 )
 def test_personal_identities_keep_todays_behaviour(user_id) -> None:
-    assert _kg_expansion_query(QUERY, user_id) == QUERY
+    assert _kg_expansion_allowed(user_id) is True
 
 
-def test_the_only_expansion_call_site_goes_through_the_gate() -> None:
+def test_the_only_expansion_call_is_behind_the_gate() -> None:
     source = inspect.getsource(orchestrator_core)
     calls = [m.start() for m in re.finditer(r"\.expand_from_response\(", source)]
     assert len(calls) == 1, "a second call site must be gated too"
-    call_block = source[calls[0] : calls[0] + 600]
-    assert "query=_kg_expansion_query(query, user_id)" in call_block
+    guard = source.rfind("_kg_expansion_allowed(user_id)", 0, calls[0])
+    assert guard != -1, "the expansion call must sit after the identity gate"
+    between = source[guard : calls[0]]
+    assert between.count("\n") < 20, "the gate must be the condition of this call"

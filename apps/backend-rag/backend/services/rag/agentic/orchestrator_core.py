@@ -115,20 +115,21 @@ _E33_CLAIM_GUARD_ENFORCE = os.getenv("E33_CLAIM_GUARD_ENFORCE", "false").lower()
 )
 
 
-def _kg_expansion_query(query: str | None, user_id: str | None) -> str | None:
-    """Return the query KG auto-expansion may learn from, or None.
+def _kg_expansion_allowed(user_id: str | None) -> bool:
+    """Whether this turn may feed KG auto-expansion at all.
 
-    With no source chunks, ``KGAutoExpansion.expand_from_response`` falls back
-    to extracting entities from the raw query and stages them in the SHARED
-    knowledge graph. For an identity that stands for many people (the
-    anonymous blog visitor, ``anonymous``, the WA mirror) that turns one
-    person's words into staged global facts that can reach everyone else after
-    promotion (cross-family gate notice on Rakyat #542, 2026-11-21). Extraction
-    from source chunks is untouched: those are documents, not anyone's words.
+    Expansion stages entities in the SHARED knowledge graph. Two of its inputs
+    can carry the asker's own words: the raw query (its fallback when a turn
+    has no source chunks) and tool output that echoes the query back, such as
+    the KG tool's "no entity found for <term>", which arrives as a source
+    chunk. For an identity that stands for many people (the anonymous blog
+    visitor, ``anonymous``, the WA mirror) either one turns one person's words
+    into staged global facts that can reach everyone else after promotion.
+    Found by the cross-family gates on Rakyat #542 and #545 (2026-11-21).
+    A shared identity's turn therefore stages nothing; personal identities
+    keep today's behaviour.
     """
-    if is_non_personal_memory_identity(user_id):
-        return None
-    return query
+    return not is_non_personal_memory_identity(user_id)
 
 
 def _apply_e33_claim_guard(result: CoreResult) -> None:
@@ -1786,7 +1787,12 @@ class OrchestratorCore:
         # 14. [GraphRAG v6] KG Auto-Expansion (fire-and-forget)
         # Extract from SOURCE CHUNKS, not from LLM response — avoids feedback loop.
         evidence_score_val = getattr(state, "evidence_score", evidence_score)
-        if self._kg_auto_expansion and evidence_score_val and evidence_score_val > 0.6:
+        if (
+            self._kg_auto_expansion
+            and _kg_expansion_allowed(user_id)
+            and evidence_score_val
+            and evidence_score_val > 0.6
+        ):
             # Collect source chunk texts from tool results
             source_chunks_text = self._extract_source_chunks_text(state)
             source_chunk_ids = [
@@ -1798,7 +1804,7 @@ class OrchestratorCore:
                     evidence_score=evidence_score_val,
                     source_chunks_text=source_chunks_text,
                     source_chunk_ids=source_chunk_ids,
-                    query=_kg_expansion_query(query, user_id),
+                    query=query,
                 ),
             )
 
