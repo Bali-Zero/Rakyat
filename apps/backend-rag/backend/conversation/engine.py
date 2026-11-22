@@ -79,8 +79,10 @@ class ConversationEngine:
         )
 
         try:
-            # 1. Load conversation context
-            context = await self._load_context(message.session_id)
+            # 1. Load conversation context. A turn reads the table, never the
+            # cached snapshot: the router adds this turn's rows to the table,
+            # and a snapshot taken at one turn does not hold the turns after it.
+            context = await self._load_context(message.session_id, from_table=True)
 
             # 2. Build conversation history. The router persists the inbound
             # row BEFORE this point (audit-first), so on a Redis cache miss
@@ -144,9 +146,7 @@ class ConversationEngine:
                 if response:
                     yield response
 
-            # 4. Save updated context
             duration = time.time() - start_time
-            await self._save_context(message.session_id, context)
 
             logger.info(
                 f"✅ Message processed in {duration:.2f}s "
@@ -235,7 +235,7 @@ class ConversationEngine:
             logger.debug("Skipping unknown event type: %s", event_type)
             return None
 
-    async def _load_context(self, session_id: str) -> dict[str, Any]:
+    async def _load_context(self, session_id: str, *, from_table: bool = False) -> dict[str, Any]:
         """Load conversation context from Redis cache, falling back to PostgreSQL.
 
         Lookup order:
@@ -245,6 +245,8 @@ class ConversationEngine:
 
         Args:
             session_id: Session identifier.
+            from_table: Read the table and nothing else: the cache is neither
+                read nor written. A turn loads its history this way.
 
         Returns:
             Context dict with 'history' (list of role/content dicts) and 'user_state'.
@@ -257,16 +259,17 @@ class ConversationEngine:
         cache_key = f"zantara:session_ctx:{session_id}"
 
         # Strategy 1: Redis cache (sub-ms)
-        try:
-            from backend.core.cache import get_cache_service
+        if not from_table:
+            try:
+                from backend.core.cache import get_cache_service
 
-            cache = get_cache_service()
-            cached = await cache.get(cache_key)
-            if cached and isinstance(cached, dict):
-                logger.debug("Session context cache hit for %s", session_id)
-                return cached
-        except Exception as e:
-            logger.debug("Redis context load skipped: %s", e)
+                cache = get_cache_service()
+                cached = await cache.get(cache_key)
+                if cached and isinstance(cached, dict):
+                    logger.debug("Session context cache hit for %s", session_id)
+                    return cached
+            except Exception as e:
+                logger.debug("Redis context load skipped: %s", e)
 
         # Strategy 2: PostgreSQL conversation_messages table
         db_pool = getattr(self, "_db_pool", None)
@@ -292,11 +295,12 @@ class ConversationEngine:
                     context = {"history": history, "user_state": {}}
 
                     # Warm the cache for next time
-                    try:
-                        cache = get_cache_service()
-                        await cache.set(cache_key, context, ttl=_SESSION_CONTEXT_TTL)
-                    except Exception:
-                        pass
+                    if not from_table:
+                        try:
+                            cache = get_cache_service()
+                            await cache.set(cache_key, context, ttl=_SESSION_CONTEXT_TTL)
+                        except Exception:
+                            pass
 
                     logger.debug(
                         f"Loaded {len(history)} messages from DB for session {session_id}",
