@@ -828,17 +828,6 @@ class Settings(BaseSettings):
             "validation for every recipient (default)."
         ),
     )
-    whatsapp_openclaw_bridge_url: str | None = Field(
-        default=None,
-        description=(
-            "HTTPS URL for the local OpenClaw WhatsApp reply bridge. "
-            "Set via WHATSAPP_OPENCLAW_BRIDGE_URL env var."
-        ),
-    )
-    whatsapp_openclaw_agent: str = Field(
-        default="wa",
-        description="OpenClaw agent id for WhatsApp replies. Set via WHATSAPP_OPENCLAW_AGENT env var.",
-    )
     whatsapp_openclaw_model: str = Field(
         default="openai/gpt-5.5",
         description=(
@@ -864,28 +853,6 @@ class Settings(BaseSettings):
         description=(
             "Autonomy mode sent to the OpenClaw WhatsApp bridge. "
             "Set via WHATSAPP_OPENCLAW_AUTONOMY_MODE env var."
-        ),
-    )
-    whatsapp_openclaw_timeout_seconds: float = Field(
-        default=90.0,
-        description=(
-            "Timeout for WhatsApp -> OpenClaw bridge calls. "
-            "Set via WHATSAPP_OPENCLAW_TIMEOUT_SECONDS env var."
-        ),
-    )
-    whatsapp_openclaw_bridge_secret: str | None = Field(
-        default=None,
-        description=(
-            "Shared secret for the WhatsApp OpenClaw bridge. "
-            "Set via WHATSAPP_OPENCLAW_BRIDGE_SECRET env var."
-        ),
-    )
-    whatsapp_openclaw_send_stored_context: bool = Field(
-        default=False,
-        description=(
-            "Send the stored conversation history and client profile to the OpenClaw "
-            "WhatsApp bridge. Off by default: those come from the conversations row. "
-            "Set via WHATSAPP_OPENCLAW_SEND_STORED_CONTEXT env var."
         ),
     )
     openclaw_webhook_secret: str | None = Field(

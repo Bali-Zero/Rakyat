@@ -285,5 +285,5 @@ def test_crm_auto_created_prospect_logs_client_id_not_email(caplog) -> None:
 
 
 def test_stored_context_is_off_and_the_title_flag_is_gone() -> None:
-    assert Settings.model_fields["whatsapp_openclaw_send_stored_context"].default is False
+    assert "whatsapp_openclaw_send_stored_context" not in Settings.model_fields
     assert "conversation_title_generation_enabled" not in Settings.model_fields
