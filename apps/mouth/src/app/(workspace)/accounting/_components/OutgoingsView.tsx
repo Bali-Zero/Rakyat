@@ -56,6 +56,12 @@ const witaDayAndTime = (iso: string): [string, string, string] | null => {
 const justifiedToday = (iso: string): boolean =>
   dayInWita(iso) === dayInWita(new Date().toISOString());
 
+const DAY_MS = 86_400_000;
+const WITA_OFFSET_MS = 8 * 3_600_000; // Asia/Makassar has no daylight saving
+/** Milliseconds until the next midnight in Bali. */
+const msToWitaMidnight = (): number =>
+  DAY_MS - ((Date.now() + WITA_OFFSET_MS) % DAY_MS);
+
 function JustificationBlock({ item }: { item: OutgoingItem }) {
   const j = item.justification;
   if (!j) return null;
@@ -143,6 +149,16 @@ export function OutgoingsView() {
   } | null>(null);
   // Token of the latest load: an older one answering late changes nothing.
   const loadReq = useRef(0);
+  // Re-render just after midnight in Bali, so no Undo of yesterday stays on an open screen
+  // (gate r2 on #616).
+  const [dayTick, setDayTick] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(
+      () => setDayTick((n) => n + 1),
+      msToWitaMidnight() + 1000,
+    );
+    return () => clearTimeout(t);
+  }, [dayTick]);
 
   const load = useCallback(async () => {
     const token = ++loadReq.current;
@@ -191,8 +207,9 @@ export function OutgoingsView() {
     };
   }, [data]);
 
-  // Batches justified today, for «Undo batch» on the Justified tab.
-  const todayBatches = useMemo(() => {
+  // Sets justified together today, for their «Undo» on the Justified tab. Computed on every
+  // render (not memoized) so the midnight re-render drops yesterday's.
+  const todayBatches = (() => {
     const out = new Map<string, { n: number; total: number; by: string }>();
     for (const i of data?.items ?? []) {
       const j = i.justification;
@@ -204,7 +221,7 @@ export function OutgoingsView() {
       out.set(j.batch_id, b);
     }
     return [...out.entries()];
-  }, [data]);
+  })();
 
   const justify = async (item: OutgoingItem, body: JustifyOutgoingRequest) => {
     try {

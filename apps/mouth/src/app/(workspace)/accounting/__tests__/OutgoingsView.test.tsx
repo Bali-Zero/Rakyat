@@ -4,6 +4,7 @@
  */
 
 import {
+  act,
   render,
   screen,
   fireEvent,
@@ -720,6 +721,39 @@ describe("OutgoingsView", () => {
       }
     });
 
+    it("drops every Undo of yesterday at Bali midnight on a screen left open", async () => {
+      // Gate r2 on #616: the screen stayed open from 23:59 to 00:01 WITA and kept the Undo.
+      vi.useFakeTimers({
+        shouldAdvanceTime: true,
+        toFake: ["Date", "setTimeout", "clearTimeout"],
+      });
+      try {
+        vi.setSystemTime(new Date("2026-11-22T15:59:00Z")); // 23:59 WITA
+        api.getOutgoings.mockResolvedValue(LIST);
+        api.justifyPnbpBatch.mockResolvedValue({
+          batch_id: "b-1",
+          n: 2,
+          total_idr: 26000000,
+          state: "justified",
+        });
+        render(<OutgoingsView />);
+        await screen.findByTestId("outgoing-14");
+        fireEvent.click(
+          within(bar()).getByRole("button", { name: /Justify all PNBP/ }),
+        );
+        fireEvent.click(
+          within(bar()).getByRole("button", { name: "Yes, justify all" }),
+        );
+        await within(bar()).findByRole("status");
+        await act(async () => {
+          vi.advanceTimersByTime(2 * 60_000); // 00:01 WITA, nothing clicked
+        });
+        expect(screen.queryByRole("status")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("Cancel sends nothing", async () => {
       api.getOutgoings.mockResolvedValue(LIST);
       render(<OutgoingsView />);
@@ -760,6 +794,45 @@ describe("OutgoingsView", () => {
       render(<OutgoingsView />);
       await screen.findByTestId("outgoing-1");
       expect(screen.queryByTestId("pnbp-batch")).toBeNull();
+    });
+
+    it("drops the Undo of a set on Justified at Bali midnight", async () => {
+      vi.useFakeTimers({
+        shouldAdvanceTime: true,
+        toFake: ["Date", "setTimeout", "clearTimeout"],
+      });
+      try {
+        vi.setSystemTime(new Date("2026-11-22T15:59:00Z")); // 23:59 WITA
+        const at = new Date().toISOString();
+        const set = {
+          ...pnbp(1, 19, "820261119000001", 1),
+          state: "justified" as const,
+          justification: {
+            category: "pnbp_case" as const,
+            practice_id: null,
+            recipient: null,
+            note: null,
+            lines: [],
+            by: "staff@example.test",
+            at,
+            batch_id: "b-late",
+          },
+        };
+        api.getOutgoings.mockImplementation(async (opts) =>
+          opts?.state === "justified" ? { ...JUSTIFIED, items: [set] } : DATA,
+        );
+        render(<OutgoingsView />);
+        await screen.findByTestId("outgoing-1");
+        fireEvent.click(screen.getByRole("button", { name: /^Justified/ }));
+        await screen.findByTestId("batch-b-late");
+        await act(async () => {
+          vi.advanceTimersByTime(2 * 60_000);
+        });
+        expect(screen.queryByTestId("batch-b-late")).toBeNull();
+        expect(screen.queryByTestId("undo-1")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("offers Undo on Justified only for a batch made today", async () => {
