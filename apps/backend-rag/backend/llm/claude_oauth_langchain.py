@@ -1,4 +1,8 @@
-"""LangChain BaseChatModel backed by ``claude -p`` (Max OAuth subprocess).
+"""LangChain BaseChatModel backed by ``claude -p`` through the Console door.
+
+Every call goes through :mod:`backend.llm.claude_oauth_client`, which reaches Claude with a
+linked Console organization key pinned to its workspace, never with plan OAuth; the module
+name is historical.
 
 Lets LangGraph/LangChain code paths use Claude without importing
 ``langchain_anthropic`` (which requires ``ANTHROPIC_API_KEY``).
