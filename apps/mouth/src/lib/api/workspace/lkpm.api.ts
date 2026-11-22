@@ -178,12 +178,18 @@ export const lkpmApi = {
 
   /**
    * Fetch OSS credentials (plaintext) for a company.
-   * Backend: GET /api/v1/lkpm/credentials/{client_id}
+   * Backend: GET /api/v1/lkpm/credentials/{client_id}?company_id=
    * RBAC: admin OR the tax consultant assigned to a LKPM report for this client.
+   * One client can report for several companies, each with its own login: the
+   * company of the row is sent whenever the row has one.
    */
-  async getCredentials(clientId: number): Promise<LKPMOSSCredentials> {
+  async getCredentials(
+    clientId: number,
+    companyId?: number | null,
+  ): Promise<LKPMOSSCredentials> {
+    const query = companyId == null ? "" : `?company_id=${companyId}`;
     const r = await api.get<LKPMOSSCredentials & { success: boolean }>(
-      `/api/v1/lkpm/credentials/${clientId}`,
+      `/api/v1/lkpm/credentials/${clientId}${query}`,
     );
     return {
       client_id: r.client_id,
