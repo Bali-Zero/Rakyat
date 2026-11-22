@@ -1177,7 +1177,8 @@ async def upload_client_avatar(
         )
 
     async with db_pool.acquire() as conn:
-        await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+        # A write: the avatar of the client's card is replaced.
+        await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
 
     # Content-addressed key so re-uploads get a fresh URL (no stale CDN bytes).
     sha8 = _hl.sha256(data).hexdigest()[:8]
@@ -1290,7 +1291,10 @@ async def ensure_drive_folder(
     async with db_pool.acquire() as conn:
         # RBAC: skip if authenticated via internal key (service-to-service call)
         if current_user is not None:
-            await verify_client_access(client_id, current_user, conn, allow_assigned=True)
+            # A write: it creates the client's folder and stores its id on the card.
+            await verify_client_access(
+                client_id, current_user, conn, allow_assigned=True, write=True
+            )
         row = await conn.fetchrow(
             "SELECT id, full_name, client_type, google_drive_folder_id "
             "FROM clients WHERE id = $1 AND deleted_at IS NULL",
