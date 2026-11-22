@@ -93,13 +93,15 @@ def generate_ready_pack_html(pack: LKPMReadyPack) -> str:
                 ValidationSeverity.RED: "&#10006;",
             }.get(alert.severity, "&#8226;")
             validation_html += (
-                f'<div style="color:{color};margin:2px 0;">{icon} {alert.message}</div>\n'
+                f'<div style="color:{color};margin:2px 0;">{icon} '
+                f"{html_escape(alert.message)}</div>\n"
             )
 
     # Escape user-supplied strings to prevent XSS
     company = html_escape(pack.company_name)
     npwp = html_escape(pack.npwp or "—")
     nib = html_escape(pack.nib or "—")
+    kbli = ", ".join(html_escape(str(code)) for code in pack.kbli_codes) or "—"
     obstacles = html_escape(pack.narrative_obstacles or OBSTACLE_TEMPLATES["no_obstacles"])
     plans = html_escape(
         pack.narrative_plans
@@ -137,7 +139,7 @@ def generate_ready_pack_html(pack: LKPMReadyPack) -> str:
         <p><strong>NPWP:</strong> {npwp}</p>
         <p><strong>NIB:</strong> {nib}</p>
         <p><strong>Periode:</strong> {pack.quarter} {pack.year}</p>
-        <p><strong>KBLI:</strong> {", ".join(pack.kbli_codes) or "—"}</p>
+        <p><strong>KBLI:</strong> {kbli}</p>
         <p><strong>Realisasi terhadap Rencana:</strong> {pack.realization_percentage}%</p>
     </div>
 
