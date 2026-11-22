@@ -24,6 +24,9 @@ BALI_TZ = ZoneInfo("Asia/Makassar")
 ADMIN_EMAIL = "zero@balizero.com"
 CHECK_TIME_HOUR = 10  # 10:00 Bali time
 CHECK_TIME_MINUTE = 0
+# The longest one step of the SMTP conversation (connect, greeting, TLS, login,
+# send) may wait on the server before it gives up.
+SMTP_TIMEOUT_SECONDS = 30
 
 
 class DailyCheckinNotifier:
@@ -273,17 +276,27 @@ class DailyCheckinNotifier:
             # Attach HTML
             msg.attach(MIMEText(html_content, "html"))
 
-            # Send via SMTP
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-                if settings.smtp_use_tls:
-                    server.starttls()
-                server.login(settings.smtp_user, settings.smtp_password)
-                server.send_message(msg)
+            # Send via SMTP. smtplib blocks, and this coroutine runs on the API's
+            # own event loop: a server that accepted the connection and then
+            # stayed silent held every request for as long as it liked. The
+            # conversation runs in a worker thread, and each of its steps gives
+            # up after SMTP_TIMEOUT_SECONDS.
+            await asyncio.to_thread(self._deliver, msg)
 
             logger.info("✅ Daily check-in email sent to %s", ADMIN_EMAIL)
 
         except Exception as e:
             logger.error("❌ Failed to send daily email: %s", e)
+
+    def _deliver(self, msg: MIMEMultipart) -> None:
+        """The whole SMTP conversation. It blocks: call it off the event loop."""
+        with smtplib.SMTP(
+            settings.smtp_host, settings.smtp_port, timeout=SMTP_TIMEOUT_SECONDS
+        ) as server:
+            if settings.smtp_use_tls:
+                server.starttls()
+            server.login(settings.smtp_user, settings.smtp_password)
+            server.send_message(msg)
 
     async def send_now(self) -> None:
         """Send the report immediately (for testing)."""
