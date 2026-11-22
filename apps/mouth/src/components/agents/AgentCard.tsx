@@ -9,8 +9,8 @@ export interface AgentCardProps {
     name: string;
     description: string;
     status: "running" | "idle" | "error";
-    success_rate?: number;
-    total_runs?: number;
+    success_rate?: number | null;
+    total_runs?: number | null;
     latest_result?: Record<string, unknown>;
   };
   // Backward-compatible usage: pass fields directly.
@@ -108,12 +108,13 @@ export function AgentCard({
         </div>
       </div>
 
-      {(success_rate !== undefined || total_runs !== undefined) && (
+      {/* The server sends null for an agent that never ran: no figure, not a crash. */}
+      {(success_rate != null || total_runs != null) && (
         <div className="mt-4 flex items-center gap-4 text-xs text-[var(--foreground-muted)]">
-          {success_rate !== undefined && (
+          {success_rate != null && (
             <span>Success: {success_rate.toFixed(1)}%</span>
           )}
-          {total_runs !== undefined && <span>Total runs: {total_runs}</span>}
+          {total_runs != null && <span>Total runs: {total_runs}</span>}
         </div>
       )}
 
