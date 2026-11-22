@@ -137,6 +137,36 @@ export interface PartnerSelfCommission extends PartnerCommissionBase {
   net_amount_idr: number;
 }
 
+/**
+ * A row of `GET /api/partners/{id}/referrals`: the stored referral, nothing
+ * joined. A decimal travels as text ("100.00").
+ */
+export interface PartnerReferralRow {
+  id: string;
+  partner_id: string;
+  practice_id: number;
+  share_percent: string;
+  referred_at: string;
+  referred_by_user_id: string | null;
+  notes: string | null;
+}
+
+/**
+ * A row of `GET /api/partners/{id}/commissions`: the stored ledger entry. A
+ * decimal travels as text ("1250000.00").
+ */
+export interface PartnerCommissionRow {
+  id: string;
+  partner_id: string;
+  entry_type: "accrual" | "clawback" | "manual_adjustment";
+  practice_id: number | null;
+  gross_amount_idr: string;
+  withholding_amount_idr: string;
+  net_amount_idr: string;
+  status: CommissionStatus;
+  created_at: string;
+}
+
 export interface PartnerListResponse {
   partners: Partner[];
   total: number;
@@ -316,21 +346,19 @@ export const bulkReassign = (body: BulkReassignBody) =>
 export const createReferral = (partnerId: string, body: CreateReferralBody) =>
   api.post<PartnerReferral>(`${BASE}/${partnerId}/referrals`, body);
 
-/** List referrals for a specific partner */
+/** List referrals for a specific partner. The server answers a bare array. */
 export const listReferrals = (
   partnerId: string,
   params?: Record<string, string | number | null | undefined>,
 ) =>
-  api.get<{ referrals: PartnerReferral[]; total: number }>(
-    `${BASE}/${partnerId}/referrals${qs(params)}`,
-  );
+  api.get<PartnerReferralRow[]>(`${BASE}/${partnerId}/referrals${qs(params)}`);
 
-/** List commissions for a specific partner */
+/** List commissions for a specific partner. The server answers a bare array. */
 export const listCommissions = (
   partnerId: string,
   params?: Record<string, string | number | null | undefined>,
 ) =>
-  api.get<{ commissions: PartnerCommission[]; total: number }>(
+  api.get<PartnerCommissionRow[]>(
     `${BASE}/${partnerId}/commissions${qs(params)}`,
   );
 
