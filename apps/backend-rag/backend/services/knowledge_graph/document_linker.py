@@ -406,10 +406,11 @@ async def _practice_name(conn: asyncpg.Connection, practice_id: int) -> str | No
     # Practices schema varies; try common columns and fall back to id.
     for col in ("name", "title", "practice_type_code"):
         try:
-            row = await conn.fetchrow(
-                f"SELECT {col} FROM practices WHERE id = $1",
-                practice_id,
-            )
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    f"SELECT {col} FROM practices WHERE id = $1",
+                    practice_id,
+                )
             if row and row[col]:
                 return str(row[col])
         except asyncpg.UndefinedColumnError:
