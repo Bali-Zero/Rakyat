@@ -211,18 +211,21 @@ async def list_recent_episodes(limit: int = 10, agent: str | None = None) -> Lis
         episodes = []
         for item in raw:
             payload = item.get("payload", {})
+            metadata = (
+                payload.get("metadata") if isinstance(payload.get("metadata"), dict) else payload
+            )
             episodes.append(
                 EpisodeResult(
                     id=item.get("id", ""),
-                    content=payload.get("content", ""),
-                    agent=payload.get("agent", ""),
-                    tags=payload.get("tags", []),
-                    outcome=payload.get("outcome", ""),
-                    timestamp=payload.get("timestamp", ""),
+                    content=metadata.get("content", ""),
+                    agent=metadata.get("agent", ""),
+                    tags=metadata.get("tags", []),
+                    outcome=metadata.get("outcome", ""),
+                    timestamp=metadata.get("timestamp", ""),
                     score=1.0,
                     metadata={
                         k: v
-                        for k, v in payload.items()
+                        for k, v in metadata.items()
                         if k not in ("content", "agent", "tags", "outcome", "timestamp")
                     },
                 ),
