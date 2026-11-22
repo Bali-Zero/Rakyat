@@ -27,7 +27,7 @@ async def conn():
             CREATE TEMP TABLE companies (id int, google_drive_folder_id text, tax_dept_folder_id text);
             CREATE TEMP TABLE documents (client_id int, file_id text, google_drive_file_url text,
                 file_url text, client_visible boolean DEFAULT true, deleted_at timestamptz,
-                is_archived boolean DEFAULT false);
+                is_archived boolean DEFAULT false, status text);
             CREATE TEMP TABLE company_documents (company_id int, google_drive_file_id text,
                 google_drive_file_url text);
             CREATE TEMP TABLE invoices (client_id int, drive_file_id text);
@@ -120,7 +120,13 @@ async def test_manual_unregistered_file_under_unique_root_allowed(conn, monkeypa
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "hidden",
-    ["client_visible=false", "client_visible=NULL", "is_archived=true", "deleted_at=now()"],
+    [
+        "client_visible=false",
+        "client_visible=NULL",
+        "is_archived=true",
+        "deleted_at=now()",
+        "status='deleted'",
+    ],
 )
 @pytest.mark.parametrize("handler", [mod.proxy_drive_file, mod.get_drive_thumbnail])
 async def test_portal_hidden_document_denied_before_token(conn, monkeypatch, hidden, handler):

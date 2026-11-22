@@ -21,14 +21,24 @@ Use `document_visibility_clause()` in every new/edited query instead of
 writing the three conditions out by hand, so there is one filter and not a
 second dialect that drifts again the next time this table grows a fourth
 "is this document currently hidden" flag.
+
+The fourth flag: the team's delete route writes `status = 'deleted'` and
+nothing else (`services/crm/admin_document_visibility.py` names the two kinds
+of deletion). A document the team deleted is gone for the team's own readers,
+so it is gone here too; the condition is that module's, not a second copy.
 """
 
 from __future__ import annotations
 
+from backend.services.crm.admin_document_visibility import (
+    admin_document_not_team_deleted_clause,
+)
+
 
 def document_visibility_clause(alias: str = "") -> str:
     """Return the SQL predicate for "this document is currently visible to
-    the client": not team-hidden, not client-hidden, not team-archived.
+    the client": not team-hidden, not client-hidden, not team-archived,
+    not deleted by the team.
 
     Args:
         alias: optional table alias (e.g. "d") used in the query the
@@ -44,6 +54,7 @@ def document_visibility_clause(alias: str = "") -> str:
         f"{prefix}client_visible = true"
         f" AND {prefix}deleted_at IS NULL"
         f" AND COALESCE({prefix}is_archived, FALSE) = FALSE"
+        f" AND {admin_document_not_team_deleted_clause(alias)}"
     )
 
 
