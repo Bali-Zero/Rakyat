@@ -1940,8 +1940,10 @@ class StaffPageDuplicateChargeHandler(_StaffPageHandler):
     `late_case_charge_id = $2` UNCONDITIONALLY and OP-08 passes `None`, so at
     page time the column is always EMPTY — it cannot name the live payment or
     anything else. The instruction stands on the true reason instead: a refund
-    through `resolveLateOrder` has nothing to target, and `honoured` walks into
-    the practice weld. A justification that is false in the safe direction is
+    through `resolveLateOrder` has nothing to target, and `honoured` closes the
+    case without refunding the duplicate (the order's `payment.paid` exists,
+    so the release it enqueues is the one already there). A justification that
+    is false in the safe direction is
     still false, and staff calibrate on reasons, not only on orders.
 
     GUARD: `late_case_open`. `repository.py`'s OP-08 branch sets it TRUE the
@@ -1996,8 +1998,9 @@ class StaffPageDuplicateChargeHandler(_StaffPageHandler):
             "OP-08 case writes that column as NULL when it opens — so the "
             "automated refund has nothing to target and raises instead, which "
             "is the safe direction but leaves the case open. Its `honoured` "
-            "resolution closes the case and then fails on every drain "
-            "(PracticeNotMinted), delivering nothing. Refund the duplicate "
+            "resolution closes the case and refunds nothing: the first "
+            "payment already started the practice, so it starts nothing new "
+            "and the duplicate money stays where it is. Refund the duplicate "
             "through the provider, then leave the case OPEN and escalate: a "
             "correct automated close for OP-08 does not exist yet.\n\n"
             f"Order: {self._tracker_link(facts.order_id)}"
@@ -2071,9 +2074,10 @@ class StaffPageLatePaidAfterRefundHandler(_StaffPageHandler):
     closing move, because both are wrong here — `resolveLateOrder`'s
     `refunded_in_full` calls `provider.refund(late_case_charge_id)`
     (`repository.py`, and by then the ROW holds the replayed charge, i.e. the
-    refunded one), while `honoured` walks into the practice weld described in
-    `StaffPageChargeWithoutWebhookHandler`'s docstring. A page that cannot
-    offer a safe close says so rather than inventing one.
+    refunded one), while `honoured` is refused: an order that came here
+    through a refunded OP-F08 case never recorded a `payment.paid`
+    (`HonouredWithoutPaidPayment`, a 409). A page that cannot offer a safe
+    close says so rather than inventing one.
     """
 
     job_type = "staff_page_late_paid_after_refund"
@@ -2091,11 +2095,11 @@ class StaffPageLatePaidAfterRefundHandler(_StaffPageHandler):
                 "delivered the SAME charge as a late payment. The money is "
                 "already with the customer; there is nothing further to "
                 "return.\n\n"
-                "Neither resolveLateOrder outcome is safe on this case: "
-                "`refunded_in_full` asks the provider to refund this same "
-                "charge a SECOND time, and `honoured` closes the case and "
-                "then fails on every drain (PracticeNotMinted), delivering "
-                "nothing. Leave the case OPEN and escalate."
+                "Neither resolveLateOrder outcome is a way out of this "
+                "case: `refunded_in_full` asks the provider to refund this "
+                "same charge a SECOND time, and `honoured` is refused (409) "
+                "because this order never recorded a payment to honour. "
+                "Leave the case OPEN and escalate."
             )
         else:
             instruction = (
@@ -2159,15 +2163,15 @@ class StaffPageChargeWithoutWebhookHandler(_StaffPageHandler):
     would have staff read a sentence that is false about the case in front of
     them.
 
-    THE COPY DOES NOT OFFER "honour" AS A MANUAL ACTION, and that is a
-    finding, not a style choice. `resolve_late_order`'s `honoured` branch
-    enqueues `practice_release` against the RESOLUTION journal event, while
-    `PracticeReleaseHandler` looks a practice up by
-    `source_paid_journal_event_id` — which only ever holds a `payment.paid`
-    event id. Honouring a case by hand therefore closes it and raises
-    `PracticeNotMinted` on every drain: case shut, service never started.
-    That weld predates OP-F08 (it is reachable from OP-F04/F05 too) and is
-    logged for its own PR; what this page can do is not send staff down it.
+    THE COPY DOES NOT OFFER "honour" AS A MANUAL ACTION, because the code
+    refuses it. `resolve_late_order`'s `honoured` branch enqueues
+    `practice_release` against the order's `payment.paid` event, and an OP-F08
+    order has none until a signed webhook arrives: the call raises
+    `HonouredWithoutPaidPayment` (a 409) and leaves the order, the journal
+    and the outbox unchanged. It used to
+    enqueue against the RESOLUTION event instead, which closed the case and
+    raised `PracticeNotMinted` on every drain; the page said so until the copy
+    was brought in line with the refusal.
     The replayed webhook is the route that both closes the case (OP-02 now
     resolves an open case as honoured in the paying transaction) and mints
     the practice.
@@ -2203,8 +2207,9 @@ class StaffPageChargeWithoutWebhookHandler(_StaffPageHandler):
             "customer who never paid — and replay the signed callback. A "
             "replayed webhook reconciles the order itself and closes this "
             "case as honoured, which is the only route that also starts the "
-            "practice. Resolving it as honoured BY HAND does not: it closes "
-            "the case and the customer is left paid with nothing running. "
+            "practice. Resolving it as honoured BY HAND is refused (409): "
+            "the order has no recorded payment until the webhook arrives, "
+            "and the case stays open. "
             "Use resolveLateOrder here only to refund.\n\n"
             "REPLAY ONLY IF YOU HAVE NOT REFUNDED. The two moves on this page "
             "are alternatives, not a sequence. Once this case is refunded the "
