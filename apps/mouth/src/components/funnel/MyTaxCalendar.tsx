@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 
 type TaxpayerType = "individual" | "company";
 type CompanyType = "PT_PMA" | "PT_PMDN" | "CV" | "KP3A" | "KPPA" | "OTHER";
@@ -33,6 +39,8 @@ type Profile = {
   pmseVatAppointed?: boolean;
   investmentStage?: InvestmentStage;
 };
+
+const REQUEST_TIMEOUT_MS = 10_000;
 
 const backendUrl =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://nuzantara-rag.fly.dev";
@@ -141,57 +149,100 @@ export function MyTaxCalendar() {
     "idle" | "loading" | "rate-limit" | "error"
   >("idle");
 
-  const requestCalendar = useCallback(async (nextProfile: Profile) => {
-    setStatus("loading");
-    setResult(null);
-    const body =
-      nextProfile.taxpayerType === "individual"
-        ? { taxpayer_type: "individual" }
-        : {
-            taxpayer_type: "company",
-            company_type: nextProfile.companyType,
-            has_employees: nextProfile.hasEmployees ?? false,
-            employee_count: nextProfile.hasEmployees
-              ? (nextProfile.employeeCount ?? 0)
-              : 0,
-            has_foreign_employees: nextProfile.hasEmployees
-              ? (nextProfile.hasForeignEmployees ?? false)
-              : false,
-            pkp: nextProfile.pkp ?? false,
-            serves_indonesian_users_online: nextProfile.sellsOnline ?? false,
-            pse_registered: nextProfile.sellsOnline
-              ? (nextProfile.pseRegistered ?? false)
-              : false,
-            pmse_vat_appointed: nextProfile.sellsOnline
-              ? (nextProfile.pmseVatAppointed ?? false)
-              : false,
-            investment_stage: nextProfile.investmentStage ?? null,
-            fiscal_year_end: "12-31",
-            horizon_days: 365,
-          };
+  const currentRequest = useRef<{
+    controller: AbortController;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
 
-    try {
-      const response = await fetch(
-        `${backendUrl}/api/public/tax-calendar/obligations`,
-        {
-          body: JSON.stringify(body),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        },
-      );
-      if (response.status === 429) {
-        setStatus("rate-limit");
-        return;
-      }
-      if (!response.ok) {
-        throw new Error("Unable to load tax calendar");
-      }
-      setResult((await response.json()) as CalendarResponse);
-      setStatus("idle");
-    } catch {
-      setStatus("error");
+  const cancelCurrentRequest = useCallback(() => {
+    const request = currentRequest.current;
+    currentRequest.current = null;
+    if (request) {
+      clearTimeout(request.timer);
+      request.controller.abort();
     }
   }, []);
+
+  useEffect(() => cancelCurrentRequest, [cancelCurrentRequest]);
+
+  const requestCalendar = useCallback(
+    async (nextProfile: Profile) => {
+      cancelCurrentRequest();
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        if (currentRequest.current?.controller !== controller) return;
+        currentRequest.current = null;
+        controller.abort();
+        setStatus("error");
+      }, REQUEST_TIMEOUT_MS);
+      currentRequest.current = { controller, timer };
+      const isCurrent = () => currentRequest.current?.controller === controller;
+      const settle = () => {
+        if (isCurrent()) {
+          clearTimeout(timer);
+          currentRequest.current = null;
+        }
+      };
+      setStatus("loading");
+      setResult(null);
+      const body =
+        nextProfile.taxpayerType === "individual"
+          ? { taxpayer_type: "individual" }
+          : {
+              taxpayer_type: "company",
+              company_type: nextProfile.companyType,
+              has_employees: nextProfile.hasEmployees ?? false,
+              employee_count: nextProfile.hasEmployees
+                ? (nextProfile.employeeCount ?? 0)
+                : 0,
+              has_foreign_employees: nextProfile.hasEmployees
+                ? (nextProfile.hasForeignEmployees ?? false)
+                : false,
+              pkp: nextProfile.pkp ?? false,
+              serves_indonesian_users_online: nextProfile.sellsOnline ?? false,
+              pse_registered: nextProfile.sellsOnline
+                ? (nextProfile.pseRegistered ?? false)
+                : false,
+              pmse_vat_appointed: nextProfile.sellsOnline
+                ? (nextProfile.pmseVatAppointed ?? false)
+                : false,
+              investment_stage: nextProfile.investmentStage ?? null,
+              fiscal_year_end: "12-31",
+              horizon_days: 365,
+            };
+
+      try {
+        const response = await fetch(
+          `${backendUrl}/api/public/tax-calendar/obligations`,
+          {
+            body: JSON.stringify(body),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+            signal: controller.signal,
+          },
+        );
+        if (!isCurrent()) return;
+        if (response.status === 429) {
+          settle();
+          setStatus("rate-limit");
+          return;
+        }
+        if (!response.ok) {
+          throw new Error("Unable to load tax calendar");
+        }
+        const payload = (await response.json()) as CalendarResponse;
+        if (!isCurrent()) return;
+        settle();
+        setResult(payload);
+        setStatus("idle");
+      } catch {
+        if (!isCurrent()) return;
+        settle();
+        setStatus("error");
+      }
+    },
+    [cancelCurrentRequest],
+  );
 
   const updateProfile = <K extends keyof Profile>(
     key: K,
@@ -210,6 +261,7 @@ export function MyTaxCalendar() {
     setStep(1);
   };
   const startOver = () => {
+    cancelCurrentRequest();
     setProfile({});
     setResult(null);
     setStatus("idle");
