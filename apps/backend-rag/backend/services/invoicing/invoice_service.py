@@ -42,9 +42,11 @@ from backend.services.invoicing.invoice_company import fetch_bill_to
 from backend.services.invoicing.invoice_generator import InvoiceGenerator
 from backend.services.invoicing.pph import PphWithholding, pph_from_metadata, pph_on_record
 from backend.services.notifications.email_audit import (
+    EmailNotDelivered,
     format_send_error,
     log_email_attempt,
     notify_email_failure_critical,
+    raise_if_not_delivered,
     record_email_result,
 )
 from backend.services.notifications.email_branding import team_email_html
@@ -397,6 +399,11 @@ class InvoiceAutomationService:
                 )
             except httpx.HTTPError as notify_error:
                 logger.warning("Failed to notify accounting: %s", notify_error)
+            except EmailNotDelivered as notify_error:
+                logger.warning(
+                    "Accounting notification was not delivered: %s",
+                    format_send_error(notify_error),
+                )
             except Exception:
                 logger.exception("Unexpected error sending accounting notification")
 
@@ -585,6 +592,8 @@ class InvoiceAutomationService:
             json=payload,
         )
         response.raise_for_status()
+        # The endpoint answers 200 when every provider failed: its body says so.
+        raise_if_not_delivered(response)
 
         logger.info("Invoice email sent to %s from zantara@ (cc: %s)", client_email, cc_emails)
         return True
@@ -669,6 +678,7 @@ class InvoiceAutomationService:
             json=payload,
         )
         response.raise_for_status()
+        raise_if_not_delivered(response)
 
         logger.info("Accounting notification sent to %s from zantara@", ACCOUNTING_EMAIL)
         return True
