@@ -276,6 +276,8 @@ class KGPipeline:
 
         async with pool.acquire() as conn:
             async with conn.transaction():
+                entities_persisted = 0
+                relations_persisted = 0
                 # Collect all unique entities and relations
                 all_entities: dict[str, tuple[ExtractedEntity, list[str]]] = {}
                 all_relations: list[tuple[ExtractedRelation, str]] = []
@@ -294,8 +296,9 @@ class KGPipeline:
                 # Persist entities
                 for eid, (entity, chunk_ids) in all_entities.items():
                     try:
-                        await conn.execute(
-                            """
+                        async with conn.transaction():
+                            await conn.execute(
+                                """
                         INSERT INTO kg_nodes (
                             entity_id, entity_type, name, description,
                             properties, confidence, source_collection,
@@ -311,17 +314,18 @@ class KGPipeline:
                             ),
                             confidence = GREATEST(kg_nodes.confidence, $6),
                             updated_at = NOW()
-                        """,
-                            entity.id,
-                            entity.type.value,
-                            entity.name,
-                            None,  # description
-                            json.dumps(entity.attributes),
-                            entity.confidence,
-                            source_collection,
-                            chunk_ids[:50],  # Limit chunk IDs
-                        )
+                                """,
+                                entity.id,
+                                entity.type.value,
+                                entity.name,
+                                None,  # description
+                                json.dumps(entity.attributes),
+                                entity.confidence,
+                                source_collection,
+                                chunk_ids[:50],  # Limit chunk IDs
+                            )
                         self.stats.entities_persisted += 1
+                        entities_persisted += 1
                     except Exception as e:
                         logger.error("Failed to persist entity %s: %s", eid, e)
 
@@ -335,7 +339,6 @@ class KGPipeline:
                         continue
 
                     seen_relations.add(rel_id)
-                    self.relation_registry.add(rel_id)
 
                     # Look up entity types for validation
                     src_entity = all_entities.get(relation.source_id)
@@ -356,25 +359,28 @@ class KGPipeline:
                         continue  # Edge quarantined, skip persistence
 
                     try:
-                        await conn.execute(
-                            """
+                        async with conn.transaction():
+                            await conn.execute(
+                                """
                         INSERT INTO kg_edges (
                             relationship_id, source_entity_id, target_entity_id,
                             relationship_type, properties, confidence,
                             source_collection, source_chunk_ids, created_at
                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                         ON CONFLICT DO NOTHING
-                        """,
-                            rel_id,
-                            relation.source_id,
-                            relation.target_id,
-                            relation.type.value,
-                            json.dumps({"evidence": relation.evidence}),
-                            relation.confidence,
-                            source_collection,
-                            [chunk_id],
-                        )
+                                """,
+                                rel_id,
+                                relation.source_id,
+                                relation.target_id,
+                                relation.type.value,
+                                json.dumps({"evidence": relation.evidence}),
+                                relation.confidence,
+                                source_collection,
+                                [chunk_id],
+                            )
                         self.stats.relations_persisted += 1
+                        relations_persisted += 1
+                        self.relation_registry.add(rel_id)
                     except Exception as e:
                         logger.warning("Failed to persist relation %s: %s", rel_id, e)
 
@@ -389,7 +395,7 @@ class KGPipeline:
                     )
 
                 # Bump KG version if any nodes or edges were persisted
-                if self.stats.entities_persisted > 0 or self.stats.relations_persisted > 0:
+                if entities_persisted > 0 or relations_persisted > 0:
                     increment_kg_version()
 
     async def process_batch(
