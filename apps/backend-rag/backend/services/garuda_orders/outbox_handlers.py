@@ -1283,20 +1283,9 @@ class PracticeTransitionEmailHandler:
     NO PAYLOAD ON THE OUTBOX ROW, same privacy property `PracticeReceivedEmailHandler`
     documents above — `apply_transition` enqueues no payload, so this reads
     `garuda_practices` FRESH at send time rather than trusting anything
-    captured when the job was queued. That also means a later transition
-    overtaking a still-queued earlier one (retry backlog drains out of
-    order) sends the mail matching the practice's CURRENT state, never a
-    stale one describing a state the practice has already moved past.
-
-    NO STATE GUARD, unlike `PaymentPaidEmailHandler`'s `_STATES_WORTH_
-    CONFIRMING`: every state this handler can be asked to announce
-    (`In_review`/`Blocked`/`Submitted`/`Approved`/`Rejected`/`Delivered`) is
-    reached only through a staff-driven CAS transition on an already-`paid`
-    order (`garuda_practices` rows only exist for paid orders — `practice.py`'s
-    own module docstring), so there is no "order refunded out from under
-    this practice" race the way `PracticeReceivedEmailHandler` guards
-    against on intake — nothing in this codebase moves a practice's state
-    on refund.
+    captured when the job was queued. A later transition can overtake a
+    still-queued earlier job, so this handler resolves without sending when
+    the current state is no longer one this job announces.
     """
 
     def __init__(
@@ -1307,12 +1296,14 @@ class PracticeTransitionEmailHandler:
         job_type: str,
         subject: str,
         body: Callable[[PracticeTransitionEmailFacts], str],
+        announced_states: frozenset[str] | None = None,
     ) -> None:
         self._pool = pool
         self._sender = sender
         self._job_type = job_type
         self._subject = subject
         self._body = body
+        self._announced_states = announced_states
 
     async def __call__(self, job: OutboxJob) -> None:
         facts = await self._load(job.order_id)
@@ -1320,6 +1311,15 @@ class PracticeTransitionEmailHandler:
             raise EmailSendFailed(
                 f"order {job.order_id} (or its practice) not found for a queued {self._job_type}"
             )
+        if self._announced_states is not None and facts.state not in self._announced_states:
+            logger.warning(
+                "outbox %s resolved WITHOUT sending for order %s: announced states %s, current state %s",
+                self._job_type,
+                facts.order_id,
+                sorted(self._announced_states),
+                facts.state,
+            )
+            return
         await self._sender.send(to=facts.email, subject=self._subject, html_body=self._body(facts))
         # order id only — never the address, the name or the passport number.
         logger.info("outbox %s sent for order %s", self._job_type, facts.order_id)
@@ -1368,45 +1368,52 @@ def _practice_transition_body(message: str) -> Callable[[PracticeTransitionEmail
     return _body
 
 
-#: (job_type, subject, message) — the message completes "...application
+#: (job_type, subject, message, announced_states) — the message completes "...application
 #: (<case_type>) {message}". Order matches `staff_transitions.py::
 #: apply_transition`'s if/elif chain (PR-02, PR-03/05/08, PR-04, PR-06,
 #: PR-07, PR-09/10, PR-11).
-_PRACTICE_TRANSITION_EMAILS: tuple[tuple[str, str, str], ...] = (
+_PRACTICE_TRANSITION_EMAILS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     (
         "practice_in_review_email",
         "Your VOA application is now in review",
         "is now being reviewed by our team.",
+        ("In_review",),
     ),
     (
         "practice_blocked_email",
         "Action needed on your VOA application",
         "needs your attention before we can continue — please check your tracker for details.",
+        ("Blocked",),
     ),
     (
         "practice_submitted_email",
         "Your VOA application has been submitted",
         "has been submitted to immigration.",
+        ("Submitted",),
     ),
     (
         "practice_approved_email",
         "Your VOA application has been approved",
         "has been approved.",
+        ("Approved",),
     ),
     (
         "practice_rejected_email",
         "Update on your VOA application",
         "was not approved — please check your tracker for details.",
+        ("Rejected",),
     ),
     (
         "practice_resumed_email",
         "Your VOA application is moving again",
         "is being processed again.",
+        ("In_review", "Submitted"),
     ),
     (
         "practice_delivered_email",
         "Your VOA document is ready",
         "is complete — your document is ready.",
+        ("Delivered",),
     ),
 )
 
@@ -2396,13 +2403,14 @@ def build_handlers(
             portal_base_url=settings.frontend_portal_url,
         ),
     }
-    for job_type, subject, message in _PRACTICE_TRANSITION_EMAILS:
+    for job_type, subject, message, announced_states in _PRACTICE_TRANSITION_EMAILS:
         handlers[job_type] = PracticeTransitionEmailHandler(
             pool,
             sender,
             job_type=job_type,
             subject=subject,
             body=_practice_transition_body(message),
+            announced_states=frozenset(announced_states),
         )
     if staff_page_sender is not None:
         handlers.update(
