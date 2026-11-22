@@ -21,6 +21,7 @@ import httpx
 from backend.app.core.config import settings
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.integrations.zoho_email_service import ZohoEmailService
+from backend.services.notifications.email_audit import EmailNotDelivered, raise_if_not_delivered
 from backend.services.notifications.email_branding import logo_header_html
 
 logger = logging.getLogger(__name__)
@@ -337,11 +338,26 @@ class BirthdayNotifierService:
                         },
                     )
                     response.raise_for_status()
+                    raise_if_not_delivered(response)
                 sent_via_brevo = True
                 logger.info(
                     "Birthday email sent to %s via Brevo (%s)",
                     redact_identifier_for_log(client["email"]),
                     language,
+                )
+            except EmailNotDelivered as brevo_err:
+                if brevo_err.delivery_uncertain:
+                    # The mail may already be on its way: a second send could reach the
+                    # client twice, so this one counts as failed and is not retried here.
+                    logger.warning(
+                        "Birthday email to %s: delivery uncertain, not sent again",
+                        redact_identifier_for_log(client["email"]),
+                    )
+                    return False
+                logger.warning(
+                    "Brevo failed for birthday %s, trying Zoho: %s",
+                    redact_identifier_for_log(client["email"]),
+                    type(brevo_err).__name__,
                 )
             except Exception as brevo_err:
                 logger.warning(
