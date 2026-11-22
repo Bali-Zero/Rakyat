@@ -268,16 +268,26 @@ export type OutgoingCategory =
   | "other";
 
 /** One line of a cash withdrawal's breakdown; the lines sum to the debit. */
+/** The case a justification points to, as the accountant reads it. */
+export interface OutgoingCase {
+  client: string | null;
+  service: string | null;
+}
+
 export interface OutgoingJustifyLine {
   amount_idr: number;
   category: OutgoingCategory;
   note: string;
   practice_id?: number | null;
+  /** Read only: sent by the list, never in a request. */
+  case?: OutgoingCase | null;
 }
 
 export interface OutgoingJustification {
   category: OutgoingCategory;
   practice_id: number | null;
+  /** Client name and service of practice_id, when the case still exists. */
+  case?: OutgoingCase | null;
   recipient: string | null;
   note: string | null;
   lines: OutgoingJustifyLine[];

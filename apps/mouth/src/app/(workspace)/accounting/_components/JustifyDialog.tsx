@@ -9,6 +9,7 @@ import type {
   OutgoingCategory,
   OutgoingItem,
 } from "@/lib/api/workspace/accounting.api";
+import { CasePicker, type PickedCase } from "./CasePicker";
 
 export const CATEGORY_LABELS: Record<OutgoingCategory, string> = {
   pnbp_case: "PNBP for a case",
@@ -39,7 +40,9 @@ interface DraftLine {
   amount: string;
   category: OutgoingCategory;
   note: string;
-  caseId: string;
+  case: PickedCase | null;
+  /** Something is typed in the line's case box and no case is picked yet. */
+  caseTyping: boolean;
 }
 
 /**
@@ -53,9 +56,6 @@ const parseRupiah = (raw: string): number | null => {
   if (/^\d{1,3}([.,]\d{3})+$/.test(t)) return Number(t.replace(/[.,]/g, ""));
   return null;
 };
-/** Empty is fine (the case is optional); otherwise a positive whole number. */
-const caseOk = (v: string) => v.trim() === "" || /^[1-9]\d*$/.test(v.trim());
-
 const inputCls =
   "w-full rounded-md border border-[var(--bz-border)] bg-transparent px-2 py-1.5 text-sm";
 
@@ -72,7 +72,8 @@ export function JustifyDialog({
   const [category, setCategory] = useState<OutgoingCategory>(
     FROM_KIND[item.kind] ?? "other",
   );
-  const [caseId, setCaseId] = useState("");
+  const [picked, setPicked] = useState<PickedCase | null>(null);
+  const [caseTyping, setCaseTyping] = useState(false);
   const [recipient, setRecipient] = useState("");
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([]);
@@ -86,25 +87,22 @@ export function JustifyDialog({
   const remaining = item.amount_idr - sum;
 
   const problem = useMemo(() => {
-    if (!caseOk(caseId)) return "The case id must be a whole number.";
+    if (caseTyping) return "Pick the case from the list, or clear the box.";
     if (category === "other" && !note.trim()) return "Other needs a note.";
     if (cash) {
       if (!recipient.trim()) return "Who received the cash?";
       if (!note.trim()) return "A cash withdrawal needs a note.";
       if (lines.length === 0) return "Add at least one line.";
       if (
-        lines.some(
-          (l) =>
-            !((parseRupiah(l.amount) ?? 0) > 0) ||
-            !l.note.trim() ||
-            !caseOk(l.caseId),
-        )
+        lines.some((l) => !((parseRupiah(l.amount) ?? 0) > 0) || !l.note.trim())
       )
-        return "Every line needs an amount, a note and a valid case.";
+        return "Every line needs an amount and a note.";
+      if (lines.some((l) => l.caseTyping))
+        return "Pick each line's case from the list, or clear the box.";
       if (remaining !== 0) return "The lines must add up to the withdrawal.";
     }
     return null;
-  }, [caseId, category, note, cash, recipient, lines, remaining]);
+  }, [caseTyping, category, note, cash, recipient, lines, remaining]);
 
   const setLine = (key: number, patch: Partial<DraftLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -115,7 +113,7 @@ export function JustifyDialog({
     setBusy(true);
     setFailure(null);
     const body: JustifyOutgoingRequest = { category };
-    if (caseId.trim()) body.practice_id = Number(caseId.trim());
+    if (picked) body.practice_id = picked.id;
     if (cash) body.recipient = recipient.trim();
     if (note.trim()) body.note = note.trim();
     if (cash) {
@@ -123,7 +121,7 @@ export function JustifyDialog({
         amount_idr: parseRupiah(l.amount) as number,
         category: l.category,
         note: l.note.trim(),
-        ...(l.caseId.trim() ? { practice_id: Number(l.caseId.trim()) } : {}),
+        ...(l.case ? { practice_id: l.case.id } : {}),
       }));
     }
     try {
@@ -192,16 +190,15 @@ export function JustifyDialog({
               ))}
             </select>
           </label>
-          <label className="block">
-            <span className="text-[var(--bz-text-2)]">Case id (optional)</span>
-            <input
-              aria-label="Case id"
-              inputMode="numeric"
-              className={inputCls}
-              value={caseId}
-              onChange={(e) => setCaseId(e.target.value)}
+          <div>
+            <span className="text-[var(--bz-text-2)]">Case (optional)</span>
+            <CasePicker
+              label="Case"
+              value={picked}
+              onChange={setPicked}
+              onTypingChange={setCaseTyping}
             />
-          </label>
+          </div>
           {cash && (
             <label className="block">
               <span className="text-[var(--bz-text-2)]">Received by</span>
@@ -262,21 +259,13 @@ export function JustifyDialog({
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-[1fr_6rem_auto] gap-2">
+                <div className="grid grid-cols-[1fr_auto] gap-2">
                   <input
                     aria-label={`Line ${idx + 1} note`}
                     placeholder="Note"
                     className={inputCls}
                     value={l.note}
                     onChange={(e) => setLine(l.key, { note: e.target.value })}
-                  />
-                  <input
-                    aria-label={`Line ${idx + 1} case id`}
-                    inputMode="numeric"
-                    placeholder="Case"
-                    className={inputCls}
-                    value={l.caseId}
-                    onChange={(e) => setLine(l.key, { caseId: e.target.value })}
                   />
                   <button
                     type="button"
@@ -289,6 +278,12 @@ export function JustifyDialog({
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
+                <CasePicker
+                  label={`Line ${idx + 1} case`}
+                  value={l.case}
+                  onChange={(c) => setLine(l.key, { case: c })}
+                  onTypingChange={(t) => setLine(l.key, { caseTyping: t })}
+                />
               </div>
             ))}
             <div className="flex items-center justify-between">
@@ -303,7 +298,8 @@ export function JustifyDialog({
                       amount: "",
                       category: "other",
                       note: "",
-                      caseId: "",
+                      case: null,
+                      caseTyping: false,
                     },
                   ])
                 }

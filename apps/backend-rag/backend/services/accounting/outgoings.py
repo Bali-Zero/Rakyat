@@ -176,7 +176,10 @@ async def load_outgoings(
 async def _justifications(
     conn: asyncpg.Connection, ids: list[int | None]
 ) -> dict[int, dict[str, Any]]:
-    """The justifications behind the listed debits, with their breakdown lines."""
+    """The justifications behind the listed debits, with their breakdown lines.
+
+    Each case (``practice_id``) also comes as ``case``: client name and service, or None.
+    """
     wanted = sorted({i for i in ids if i is not None})
     if not wanted:
         return {}
@@ -190,10 +193,14 @@ async def _justifications(
         " FROM outgoing_justification_lines WHERE justification_id = ANY($1::bigint[]) ORDER BY id",
         wanted,
     )
+    cases = await _case_labels(
+        conn, [h["practice_id"] for h in heads] + [ln["practice_id"] for ln in line_rows]
+    )
     out = {
         h["id"]: {
             "category": h["category"],
             "practice_id": h["practice_id"],
+            "case": cases.get(h["practice_id"]),
             "recipient": h["recipient"],
             "note": h["note"],
             "lines": [],
@@ -210,6 +217,24 @@ async def _justifications(
                 "category": ln["category"],
                 "note": ln["note"],
                 "practice_id": ln["practice_id"],
+                "case": cases.get(ln["practice_id"]),
             }
         )
     return out
+
+
+async def _case_labels(
+    conn: asyncpg.Connection, ids: list[int | None]
+) -> dict[int, dict[str, str | None]]:
+    """Client name and service of each case, so the accountant reads a case and not a number."""
+    wanted = sorted({i for i in ids if i is not None})
+    if not wanted:
+        return {}
+    rows = await conn.fetch(
+        "SELECT p.id, c.full_name AS client, pt.name AS service FROM practices p"
+        " LEFT JOIN clients c ON c.id = p.client_id"
+        " LEFT JOIN practice_types pt ON pt.id = p.practice_type_id"
+        " WHERE p.id = ANY($1::int[])",
+        wanted,
+    )
+    return {r["id"]: {"client": r["client"], "service": r["service"]} for r in rows}
