@@ -681,8 +681,9 @@ export default function ReviewPage() {
             setNotice(`Approve outcome: ${res.outcome}.`);
           }
         } else {
-          const reason =
-            window.prompt("Reason for rejecting (optional):") ?? "";
+          const reason = window.prompt("Reason for rejecting (optional):");
+          // Cancel backs out: a rejection is final, and the reviewer did not confirm it.
+          if (reason === null) return;
           await api.post(`/api/intake/review/${detail.proposal_id}/reject`, {
             claim_token: claimToken,
             reason,
