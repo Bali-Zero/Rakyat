@@ -9,7 +9,9 @@ instead, because the check itself raised something else:
   raises ``TypeError``; a header byte above 0x7F arrives as such a character);
 - a body that is JSON but not an object, or holds a lone surrogate (Midtrans);
 - a deeply nested body (``RecursionError`` from the parser, in the Midtrans check and in the
-  router's routing step, which runs before any check when two providers are mounted).
+  router's routing step, which runs before any check when two providers are mounted);
+- an order id that the database cannot take as text, a lone surrogate or a NUL: the routing
+  step asks the orders table about it before any check.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.app.routers import garuda_orders_router
+from backend.services.garuda_orders.repository import GarudaOrderRepository
 from backend.services.payments.midtrans import MidtransFeeConfig, MidtransPaymentProvider
 from backend.services.payments.port import WebhookSignatureInvalid
 from backend.services.payments.xendit import XenditFeeConfig, XenditPaymentProvider
@@ -208,17 +211,48 @@ def test_the_expected_signature_of_a_well_formed_body_has_not_moved(
 # ---------------------------------------------------------------- through the route
 
 
-class _NoOrders:
-    """The routing step asks which provider an order belongs to; none is known here."""
+class _TextAsTheDatabaseTakesIt:
+    """Stands in for the driver and the server on the one question the route asks before the
+    signature check. Text goes out as strict UTF-8, which refuses a lone surrogate (the
+    driver), and holds no NUL (the server). Both were measured against the real pair; the
+    database-backed test file beside the orders tests repeats them there."""
 
-    async def provider_name_for_order(self, order_id: str) -> str | None:
+    def __init__(self, provider_of: dict[str, str]) -> None:
+        self.provider_of = provider_of
+        self.asked: list[str] = []
+
+    def acquire(self) -> _TextAsTheDatabaseTakesIt:
+        return self
+
+    async def __aenter__(self) -> _TextAsTheDatabaseTakesIt:
+        return self
+
+    async def __aexit__(self, *raised: object) -> None:
         return None
+
+    async def fetchval(self, query: str, order_id: str) -> str | None:
+        order_id.encode("utf-8")
+        if "\x00" in order_id:
+            raise ValueError('invalid byte sequence for encoding "UTF8": 0x00')
+        self.asked.append(order_id)
+        return self.provider_of.get(order_id)
+
+
+def _repository(database: _TextAsTheDatabaseTakesIt, selected: Any) -> GarudaOrderRepository:
+    """The REAL repository: a stand-in that answers any string would hide what the real
+    one does with the text it is handed."""
+    return GarudaOrderRepository(
+        database,  # type: ignore[arg-type]
+        eligibility_lookup=None,  # type: ignore[arg-type]
+        provider=selected,
+        environment="test",
+    )
 
 
 def _api(default: Any, *, two_providers: bool) -> TestClient:
     app = FastAPI()
     app.include_router(garuda_orders_router.router)
-    app.state.garuda_order_repository = _NoOrders()
+    app.state.garuda_order_repository = _repository(_TextAsTheDatabaseTakesIt({}), default)
     app.state.garuda_payment_provider = default
     if two_providers:
         app.state.garuda_payment_providers = {"xendit": _xendit(), "midtrans": _midtrans()}
@@ -272,3 +306,207 @@ def test_a_wrong_ascii_token_is_answered_401_as_before(two_providers: bool) -> N
     assert _refused(api.post(URL, content=b"{}", headers={"x-callback-token": "wrong"}))
     assert _refused(api.post(URL, content=b"[1, 2]", headers={"x-callback-token": "wrong"}))
     assert _refused(api.post(URL, content=b"{}"))
+
+
+# ---------------------------------------------------------------- the id read before the check
+
+ORDER = "ord_routing_form_0000000001"
+
+# Sixteen characters in the form of an order id; the cases below are built around it.
+STEM = "ord_" + "a" * 12
+
+IDS_THE_DATABASE_CANNOT_TAKE = {
+    "a lone surrogate": "\ud800",
+    "a surrogate inside an id": STEM + "\udfff" + STEM,
+    "a NUL": "\x00",
+    "a NUL inside an id": STEM + "\x00" + STEM,
+}
+IDS_THAT_CANNOT_BE_OURS = {
+    "three letters": "abc",
+    "15 characters": "a" * 15,
+    "129 characters": "a" * 129,
+    "a dot inside": STEM + "." + STEM,
+    "a space inside": STEM + " " + STEM,
+    "a newline at the end": STEM + "\n",
+    "a letter that is not ASCII": STEM + "\xe9",
+    "an emoji": STEM + "\U0001f600",
+}
+IDS_IN_FORM = {
+    "16 characters": STEM,
+    "128 characters": "aZ0_-9bY" * 16,
+    "an id as issued": ORDER,
+}
+
+
+def _api_with_orders(
+    selected: str, provider_of: dict[str, str] | None = None
+) -> tuple[TestClient, _TextAsTheDatabaseTakesIt]:
+    """The real router and the REAL repository, on a database that takes text as the real one
+    does. Both providers are mounted, as production mounts them."""
+    database = _TextAsTheDatabaseTakesIt(provider_of or {})
+    providers = {"xendit": _xendit(), "midtrans": _midtrans()}
+    app = FastAPI()
+    app.include_router(garuda_orders_router.router)
+    app.state.garuda_order_repository = _repository(database, providers[selected])
+    app.state.garuda_payment_provider = providers[selected]
+    app.state.garuda_payment_providers = providers
+    return TestClient(app, raise_server_exceptions=False), database
+
+
+def _unproven(key: str, unverified_id: str) -> bytes:
+    return json.dumps({key: unverified_id, "signature_key": "abc"}).encode()
+
+
+@pytest.mark.parametrize("selected", ["xendit", "midtrans"])
+@pytest.mark.parametrize("key", ["order_id", "external_id"])
+@pytest.mark.parametrize(
+    "unverified_id",
+    IDS_THE_DATABASE_CANNOT_TAKE.values(),
+    ids=IDS_THE_DATABASE_CANNOT_TAKE.keys(),
+)
+def test_an_order_id_the_database_cannot_take_is_answered_401(
+    selected: str, key: str, unverified_id: str
+) -> None:
+    api, database = _api_with_orders(selected)
+
+    answer = api.post(
+        URL, content=_unproven(key, unverified_id), headers={"x-callback-token": "wrong"}
+    )
+
+    assert _refused(answer)
+    assert database.asked == []
+
+
+@pytest.mark.parametrize("key", ["order_id", "external_id"])
+@pytest.mark.parametrize(
+    "unverified_id", IDS_THAT_CANNOT_BE_OURS.values(), ids=IDS_THAT_CANNOT_BE_OURS.keys()
+)
+def test_an_id_that_cannot_be_ours_is_answered_401_as_before(key: str, unverified_id: str) -> None:
+    """These the database could always answer: no such order. The answer does not move."""
+    api, _ = _api_with_orders("xendit")
+
+    answer = api.post(
+        URL, content=_unproven(key, unverified_id), headers={"x-callback-token": "wrong"}
+    )
+
+    assert _refused(answer)
+
+
+@pytest.mark.parametrize("key", ["order_id", "external_id"])
+@pytest.mark.parametrize(
+    "unverified_id", IDS_THAT_CANNOT_BE_OURS.values(), ids=IDS_THAT_CANNOT_BE_OURS.keys()
+)
+def test_an_id_that_cannot_be_ours_is_not_asked_of_the_orders_table(
+    key: str, unverified_id: str
+) -> None:
+    api, database = _api_with_orders("xendit")
+
+    api.post(URL, content=_unproven(key, unverified_id), headers={"x-callback-token": "wrong"})
+
+    assert database.asked == []
+
+
+@pytest.mark.parametrize("key", ["order_id", "external_id"])
+@pytest.mark.parametrize("unverified_id", IDS_IN_FORM.values(), ids=IDS_IN_FORM.keys())
+def test_an_id_in_form_is_still_asked_of_the_orders_table(key: str, unverified_id: str) -> None:
+    api, database = _api_with_orders("xendit")
+
+    answer = api.post(
+        URL, content=_unproven(key, unverified_id), headers={"x-callback-token": "wrong"}
+    )
+
+    assert _refused(answer)
+    assert database.asked == [unverified_id]
+
+
+def test_a_midtrans_order_is_still_verified_by_midtrans_when_xendit_is_selected() -> None:
+    """Per-order dispatch is untouched: Xendit alone would refuse this (it carries no token)."""
+    api, database = _api_with_orders("xendit", {ORDER: "midtrans"})
+    pending = _signed(order_id=ORDER, status_code="201", transaction_status="pending")
+
+    answer = api.post(URL, content=pending)
+
+    assert answer.status_code == 204
+    assert database.asked == [ORDER]
+
+
+def test_a_xendit_order_is_still_verified_by_xendit_when_midtrans_is_selected() -> None:
+    """Midtrans alone would refuse this (no signature). Xendit accepts the token and then
+    finds no invoice id in the body: 422, which only a verified callback can get."""
+    api, database = _api_with_orders("midtrans", {ORDER: "xendit"})
+
+    answer = api.post(
+        URL,
+        content=json.dumps({"external_id": ORDER}).encode(),
+        headers={"x-callback-token": TOKEN},
+    )
+
+    assert answer.status_code == 422
+    assert database.asked == [ORDER]
+
+
+def test_an_order_the_table_does_not_know_stays_with_the_selected_provider() -> None:
+    api, database = _api_with_orders("xendit")
+    pending = _signed(order_id=ORDER, status_code="201", transaction_status="pending")
+
+    assert _refused(api.post(URL, content=pending))
+    assert database.asked == [ORDER]
+
+
+@pytest.mark.parametrize(
+    "unverified_id",
+    IDS_THE_DATABASE_CANNOT_TAKE.values(),
+    ids=IDS_THE_DATABASE_CANNOT_TAKE.keys(),
+)
+def test_a_rightly_signed_callback_is_not_refused_for_an_id_field_out_of_form(
+    unverified_id: str,
+) -> None:
+    """The id is not a credential. With the right token the callback is verified as before
+    and goes on to be parsed; here the body has no invoice id, so the answer is 422."""
+    api, database = _api_with_orders("xendit")
+
+    answer = api.post(
+        URL,
+        content=json.dumps({"external_id": unverified_id}).encode(),
+        headers={"x-callback-token": TOKEN},
+    )
+
+    assert answer.status_code == 422
+    assert database.asked == []
+
+
+ANSWERS_THAT_COME_FIRST = {
+    "the funnel is off": ("flag", 404, "GARUDA_PUBLIC_DISABLED"),
+    "no repository is wired": ("repository", 503, "SERVICE_UNAVAILABLE"),
+    "no provider is wired": ("provider", 503, "SERVICE_UNAVAILABLE"),
+}
+
+
+@pytest.mark.parametrize(
+    ("missing", "status", "code"),
+    ANSWERS_THAT_COME_FIRST.values(),
+    ids=ANSWERS_THAT_COME_FIRST.keys(),
+)
+@pytest.mark.parametrize(
+    "unverified_id",
+    [*IDS_THE_DATABASE_CANNOT_TAKE.values(), "abc", ORDER],
+    ids=[*IDS_THE_DATABASE_CANNOT_TAKE.keys(), "three letters", "an id as issued"],
+)
+def test_every_answer_that_comes_before_the_lookup_keeps_its_place(
+    monkeypatch: pytest.MonkeyPatch, missing: str, status: int, code: str, unverified_id: str
+) -> None:
+    api, database = _api_with_orders("xendit")
+    if missing == "flag":
+        monkeypatch.setenv("GARUDA_PUBLIC_ENABLED", "false")
+    elif missing == "repository":
+        api.app.state.garuda_order_repository = None
+    else:
+        api.app.state.garuda_payment_provider = None
+
+    answer = api.post(
+        URL, content=_unproven("order_id", unverified_id), headers={"x-callback-token": "wrong"}
+    )
+
+    assert answer.status_code == status
+    assert answer.json()["code"] == code
+    assert database.asked == []
