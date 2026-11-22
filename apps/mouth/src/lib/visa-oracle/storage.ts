@@ -12,6 +12,21 @@ function generateSessionId(): string {
   return `vo_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function isSessionData(value: unknown): value is SessionData {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.sessionId === 'string' &&
+    candidate.sessionId.length > 0 &&
+    typeof candidate.questionsUsed === 'number' &&
+    Number.isFinite(candidate.questionsUsed) &&
+    candidate.questionsUsed >= 0 &&
+    typeof candidate.createdAt === 'number' &&
+    Number.isFinite(candidate.createdAt) &&
+    candidate.createdAt >= 0
+  );
+}
+
 function isSessionExpired(session: SessionData): boolean {
   return Date.now() - session.createdAt > SESSION_TTL_MS;
 }
@@ -41,9 +56,9 @@ export function getSession(): SessionData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const session = JSON.parse(raw) as SessionData;
-      if (!isSessionExpired(session)) {
-        return session;
+      const parsed: unknown = JSON.parse(raw);
+      if (isSessionData(parsed) && !isSessionExpired(parsed)) {
+        return parsed;
       }
     }
   } catch {
