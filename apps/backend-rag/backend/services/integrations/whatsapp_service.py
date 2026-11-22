@@ -196,14 +196,32 @@ class WhatsAppService:
                 json=payload,
             )
 
-            result = response.json()
+            # The status decides whether the message was sent; the body only adds
+            # detail. A body that cannot be read is never what makes a send fail.
+            status_code = response.status_code
+            try:
+                result = response.json()
+            except ValueError:
+                result = None
 
-            if response.status_code != 200:
-                error_data = result.get("error", {})
+            if status_code != 200:
+                error_data = result.get("error") if isinstance(result, dict) else None
+                if not isinstance(error_data, dict):
+                    error_data = {}
                 error_msg = error_data.get("message", "Unknown error")
-                error_code = error_data.get("code", response.status_code)
+                error_code = error_data.get("code", status_code)
                 logger.error("WhatsApp API error [%s]: %s", error_code, error_msg)
                 raise ValueError(f"WhatsApp API error [{error_code}]: {error_msg}")
+
+            if not isinstance(result, dict):
+                logger.warning(
+                    "WhatsApp API accepted the message with an unreadable body "
+                    "(status=%s, body_length=%s) for %s",
+                    status_code,
+                    len(response.content),
+                    redact_identifier_for_log(phone),
+                )
+                return {}
 
             logger.info("Message sent to %s", redact_identifier_for_log(phone))
             return result
