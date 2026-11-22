@@ -111,28 +111,6 @@ python scripts/health_check.py
    ```
    Expected: `200 OK` always (if server is running)
 
-### Agent Endpoints
-
-1. **Conversation Trainer**
-
-   ```bash
-   curl -X POST http://localhost:8000/api/autonomous-agents/conversation-trainer/run \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer YOUR_API_KEY" \
-     -d '{"days_back": 7}'
-   ```
-
-   Expected: `200 OK` or `202 Accepted` with execution ID
-
-2. **Knowledge Graph Builder**
-   ```bash
-   curl -X POST http://localhost:8000/api/autonomous-agents/knowledge-graph/run \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer YOUR_API_KEY" \
-     -d '{"days_back": 30, "init_schema": false}'
-   ```
-   Expected: `200 OK` or `202 Accepted` with execution ID
-
 ## Performance Monitoring
 
 ### Key Metrics to Monitor
