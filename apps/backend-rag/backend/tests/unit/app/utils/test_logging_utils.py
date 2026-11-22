@@ -66,6 +66,69 @@ class TestSanitizeLogPath:
             assert sanitized == "/api/auth/verify-magic/[REDACTED]"
             assert raw_token not in sanitized
 
+    @pytest.mark.parametrize(
+        ("path_template", "expected"),
+        [
+            ("/api/portal/invite/validate/{v}", "/api/portal/invite/validate/[REDACTED]"),
+            ("/api/portal/invite/complete/{v}", "/api/portal/invite/complete/[REDACTED]"),
+            ("/api/hr/late-reply/{v}", "/api/hr/late-reply/[REDACTED]"),
+            ("/api/prime/v2/proposal/{v}", "/api/prime/v2/proposal/[REDACTED]"),
+            ("/api/visa/clock/{v}", "/api/visa/clock/[REDACTED]"),
+            ("/api/visa/match/{v}", "/api/visa/match/[REDACTED]"),
+            ("/api/blog/newsletter/confirm/{v}", "/api/blog/newsletter/confirm/[REDACTED]"),
+            (
+                "/api/blog/newsletter/unsubscribe/{v}",
+                "/api/blog/newsletter/unsubscribe/[REDACTED]",
+            ),
+            ("/api/news/unsubscribe/{v}", "/api/news/unsubscribe/[REDACTED]"),
+            ("/api/funnel_email/unsubscribe/{v}", "/api/funnel_email/unsubscribe/[REDACTED]"),
+            (
+                "/api/visa/voa/orders/{v}/checkout-session",
+                "/api/visa/voa/orders/[REDACTED]/checkout-session",
+            ),
+            (
+                "/api/visa/voa/eligibility-checks/{v}",
+                "/api/visa/voa/eligibility-checks/[REDACTED]",
+            ),
+            (
+                "/api/crm/internal/clients/{v}/documents/upload",
+                "/api/crm/internal/clients/[REDACTED]/documents/upload",
+            ),
+            ("/preview/{v}.html", "/preview/[REDACTED].html"),
+        ],
+    )
+    def test_redacts_the_value_of_a_public_route_with_a_path_token(self, path_template, expected):
+        raw_token = "synthetic-route-token-4b9e"
+
+        for path in (
+            path_template.format(v=raw_token),
+            path_template.format(v=raw_token).upper().replace(raw_token.upper(), raw_token),
+            path_template.format(v=raw_token).replace("/", "//") + "/",
+        ):
+            sanitized = sanitize_log_path(path)
+
+            assert raw_token not in sanitized, path
+            assert sanitized == expected, path
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/knowledge/visa/sentinelq7zk/extra",
+            "/preview/sentinelq7zk%2Fextra.html",
+            "/api/news/bulk/sentinelq7zk",
+            "/API/V1/KBLI-NOTEBOOK/sentinelq7zk/x",
+        ],
+    )
+    def test_redacts_a_descendant_of_a_public_base_whatever_its_depth(self, path):
+        sanitized = sanitize_log_path(path)
+
+        assert "sentinelq7zk" not in sanitized.lower()
+        assert sanitized.endswith("/[REDACTED]")
+
+    def test_keeps_fixed_routes_that_share_a_token_route_shape(self):
+        for path in ("/api/visa/clock/email", "/api/news/bulk", "/api/portal/invite/complete"):
+            assert sanitize_log_path(path) == path
+
 
 class TestSanitizeForLog:
     """CWE-117 log injection: a value logged verbatim lets whoever controls

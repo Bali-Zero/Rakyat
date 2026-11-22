@@ -28,7 +28,7 @@ from backend.app.auth.public_endpoints import (
 from backend.app.core.config import settings
 from backend.app.services.api_key_auth import APIKeyAuth
 from backend.app.utils.cookie_auth import get_jwt_from_cookie, is_csrf_exempt, validate_csrf
-from backend.app.utils.logging_utils import sanitize_log_path
+from backend.app.utils.logging_utils import recognized_log_path, sanitize_log_path
 from backend.app.utils.service_accounts import CLIENT_ROLES, EXTERNAL_ROLES, normalize_role
 from backend.services.pii.violation_store import hash_subject
 from backend.services.security.token_revocation import (
@@ -125,6 +125,11 @@ _CONTRACT_401_ENVELOPES: tuple[tuple[tuple[str, ...], dict[str, Any], dict[str, 
         _CONTRACT_401_PRIVACY_HEADERS,
     ),
 )
+
+
+# Metric label for a public path that neither the log sanitizer nor the
+# registry names (docs and metrics paths outside production).
+_UNMATCHED_ENDPOINT_LABEL = "protected-infra"
 
 
 def contract_401_envelope(path: str) -> tuple[dict[str, Any], dict[str, str]] | None:
@@ -321,6 +326,10 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
         },
     )
     _METRICS_PATHS = frozenset({"/metrics", "/metrics/"})
+    # The health router's routes share the /metrics gate. Its probes are
+    # listed one by one in the public registry, so they stay open whatever
+    # this gate answers.
+    _METRICS_PREFIXES = ("/health/",)
 
     def _is_protected_infra_endpoint(self, request: Request) -> bool:
         """
@@ -330,7 +339,7 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
         is_docs = path in self._PROTECTED_INFRA_PATHS or path.startswith("/docs")
-        is_metrics = path in self._METRICS_PATHS
+        is_metrics = path in self._METRICS_PATHS or path.startswith(self._METRICS_PREFIXES)
 
         if not is_docs and not is_metrics:
             return False
@@ -440,21 +449,20 @@ class HybridAuthMiddleware(BaseHTTPMiddleware):
                 extra=access_context,
             )
 
+            # No metric carries a client reference: a per-client series is a
+            # visitor log in the metrics registry. The endpoint label is built
+            # from code only: the recognized shape, else the registry entry
+            # that admitted the path, else a constant.
+            endpoint_label = recognized_log_path(path) or (
+                matched_entry.prefix if matched_entry is not None else _UNMATCHED_ENDPOINT_LABEL
+            )
             try:
-                from backend.app.metrics import (
-                    public_endpoint_access_by_ip,
-                    public_endpoint_access_total,
-                )
+                from backend.app.metrics import public_endpoint_access_total
 
                 public_endpoint_access_total.labels(
-                    endpoint=log_path,
+                    endpoint=endpoint_label,
                     method=request.method,
                 ).inc()
-                if not privacy_restricted:
-                    public_endpoint_access_by_ip.labels(
-                        endpoint=log_path,
-                        client_ip=client_reference,
-                    ).inc()
             except (ImportError, AttributeError) as exc:
                 # Metrics subsystem not wired in this deployment (e.g. tests,
                 # minimal CI). Log once per process at debug — a missing

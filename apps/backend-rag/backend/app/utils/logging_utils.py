@@ -10,7 +10,7 @@ import re
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from functools import wraps
+from functools import cache, wraps
 from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -24,19 +24,182 @@ LOG_LEVELS = {
     "CRITICAL": logging.CRITICAL,
 }
 
+_REDACTED = "[REDACTED]"
 _MAGIC_LINK_VERIFY_PREFIX = "/api/auth/verify-magic/"
 _MAGIC_LINK_VERIFY_PATTERN = re.compile(
     r"^/+api/+auth/+verify-magic(?:/+|%2f)",
     flags=re.IGNORECASE,
 )
 
+# Public routes whose token sits after a fixed base: everything after the base
+# is redacted, whatever its depth.
+_TOKEN_TAIL_BASES = (
+    "/api/portal/invite/validate",
+    "/api/portal/invite/complete",
+    "/api/hr/late-reply",
+    "/api/prime/v2/proposal",
+    "/api/blog/newsletter/confirm",
+    "/api/blog/newsletter/unsubscribe",
+    "/api/news/unsubscribe",
+    "/api/funnel_email/unsubscribe",
+)
+
+# Routes with a parameter between fixed segments (FastAPI syntax), under a
+# public base: each `{param}` is redacted and the fixed segments are kept.
+_PARAM_ROUTE_TEMPLATES = (
+    "/api/visa/clock/{hash}",
+    "/api/visa/match/{hash}",
+    "/api/visa/voa/eligibility-checks/{result_id}",
+    "/api/visa/voa/eligibility-checks/{result_id}/documents",
+    "/api/visa/voa/orders/{order_id}",
+    "/api/visa/voa/orders/{order_id}/browser-return-observations",
+    "/api/visa/voa/orders/{order_id}/checkout-session",
+    "/api/crm/internal/clients/{client_id}/documents/upload",
+    "/api/crm/internal/companies/{company_uuid}/documents/upload",
+    "/api/workspace-marketing/news/{item_id}",
+    "/api/workspace-marketing/news/{item_id}/editorial",
+    "/api/workspace-marketing/news/{item_id}/publish",
+    "/api/workspace-marketing/news/{item_id}/cover",
+    "/api/workspace-marketing/news/{item_id}/publication-status",
+    "/api/workspace-marketing/news/{item_id}/confirm-live",
+    "/api/news/{slug}",
+    "/api/news/{news_id}/image",
+    "/api/news/{news_id}/status",
+    "/api/knowledge/visa/{visa_id}",
+    "/api/knowledge/visa/code/{code}",
+    "/api/v1/kbli-notebook/inspect/{code}",
+    "/api/v1/visa-oracle/visa-types/{code}",
+    "/preview/{article_id}.html",
+)
+
+# Fixed routes under a public base: their segments are names, not values, and
+# stay readable. test_sanitize_log_path_public_routes.py fails on a mounted
+# fixed route missing here, and on a name here that is no longer mounted.
+_LITERAL_SIBLINGS = frozenset(
+    {
+        "/api/bridge/events",
+        "/api/bridge/ingest/article",
+        "/api/bridge/ingest/enrichment",
+        "/api/bridge/intake-gate/doc-counts",
+        "/api/bridge/skills",
+        "/api/bridge/wa-media/ack",
+        "/api/bridge/wa-media/pending",
+        "/api/news/bulk",
+        "/api/news/categories",
+        "/api/news/feed/rss",
+        "/api/news/subscribe",
+        "/api/news/unsubscribe",
+        "/api/v1/kbli-notebook/chat",
+        "/api/v1/kbli-notebook/llm-health",
+        "/api/v1/kbli-notebook/search",
+        "/api/visa/clock/email",
+        "/api/workspace-marketing/news/pending",
+        "/preview/upload",
+        "/webhook/whatsapp/status",
+    }
+)
+
+_PARAM_RE = re.compile(r"\{[^/{}]+\}")
+_ENCODED_SLASH_RE = re.compile(r"%2f", flags=re.IGNORECASE)
+_REPEATED_SLASH_RE = re.compile(r"/{2,}")
+
+
+def _compile_segment(segment: str) -> re.Pattern[str] | None:
+    if not _PARAM_RE.search(segment):
+        return None
+    parts = _PARAM_RE.split(segment)
+    return re.compile("[^/]+".join(re.escape(part) for part in parts), flags=re.IGNORECASE)
+
+
+_COMPILED_TEMPLATES = tuple(
+    (
+        tuple(template.strip("/").split("/")),
+        tuple(_compile_segment(seg) for seg in template.strip("/").split("/")),
+    )
+    for template in _PARAM_ROUTE_TEMPLATES
+)
+
+
+def is_magic_link_path(path: str) -> bool:
+    """True for the magic-link verification route, whose token is the last segment."""
+    return bool(_MAGIC_LINK_VERIFY_PATTERN.match(str(path)))
+
+
+def _redact_template(normalized: str) -> str | None:
+    segments = normalized.strip("/").split("/")
+    lowered = [seg.lower() for seg in segments]
+    for template_segments, patterns in _COMPILED_TEMPLATES:
+        if len(template_segments) != len(segments):
+            continue
+        out: list[str] = []
+        for expected, pattern, actual, actual_lower in zip(
+            template_segments, patterns, segments, lowered, strict=True
+        ):
+            if pattern is None:
+                if actual_lower != expected.lower():
+                    break
+                out.append(expected)
+            elif actual and pattern.fullmatch(actual):
+                out.append(_PARAM_RE.sub(_REDACTED, expected))
+            else:
+                break
+        else:
+            return "/" + "/".join(out)
+    return None
+
+
+@cache
+def _public_bases() -> tuple[str, ...]:
+    """Every registry prefix, and the fixed part before a registry parameter, longest first."""
+    from backend.app.auth.public_endpoints import PUBLIC_ENDPOINTS
+
+    bases: set[str] = set()
+    for entry in PUBLIC_ENDPOINTS:
+        if "{" in entry.prefix:
+            bases.add(entry.prefix[: entry.prefix.index("{")])
+        elif entry.match == "prefix":
+            bases.add(entry.prefix)
+    return tuple(sorted((b for b in bases if b.strip("/")), key=len, reverse=True))
+
+
+def recognized_log_path(path: str) -> str | None:
+    """The recorded form of `path` when it falls under a public base, else None.
+
+    Under a public base the answer is always built from this module or the
+    registry, never from the request: a fixed route, a known shape with its
+    values redacted, or the base followed by a redacted tail. Case, repeated
+    slashes and encoded slashes do not change the outcome.
+    """
+    path_text = str(path)
+    if is_magic_link_path(path_text):
+        return f"{_MAGIC_LINK_VERIFY_PREFIX}{_REDACTED}"
+    normalized = _REPEATED_SLASH_RE.sub("/", _ENCODED_SLASH_RE.sub("/", path_text))
+    lowered = normalized.lower()
+    if lowered.rstrip("/") in _LITERAL_SIBLINGS:
+        return lowered.rstrip("/")
+    for base in _TOKEN_TAIL_BASES:
+        if lowered.startswith(base + "/") and lowered[len(base) + 1 :].strip("/"):
+            return f"{base}/{_REDACTED}"
+    redacted = _redact_template(normalized)
+    if redacted is not None:
+        return redacted
+    for base in _public_bases():
+        if lowered.startswith(base.lower()):
+            if not lowered[len(base) :].strip("/"):
+                return base.rstrip("/") + ("/" if lowered.endswith("/") else "")
+            return f"{base.rstrip('/')}/{_REDACTED}"
+    return None
+
 
 def sanitize_log_path(path: str) -> str:
-    """Redact credentials embedded in route path parameters before logging."""
-    path_text = str(path)
-    if _MAGIC_LINK_VERIFY_PATTERN.match(path_text):
-        return f"{_MAGIC_LINK_VERIFY_PREFIX}[REDACTED]"
-    return path_text
+    """Redact tokens, hashes and record ids carried in public route paths before logging.
+
+    The result also feeds metric labels and rate-limit keys. A path under a
+    public base fails closed (see `recognized_log_path`); any other path is
+    returned as it came.
+    """
+    recognized = recognized_log_path(path)
+    return recognized if recognized is not None else str(path)
 
 
 # CWE-117 log forging: every character str.splitlines() treats as a line

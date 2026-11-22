@@ -9,18 +9,38 @@ Features:
 - Redis-backed for distributed systems
 """
 
+import hashlib
+import hmac
 import logging
+import secrets
 import time
+from functools import cache
 
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.app.utils.logging_utils import sanitize_log_path
+from backend.app.utils.logging_utils import is_magic_link_path, sanitize_log_path
 from backend.middleware.visa_oracle_privacy import is_private_visa_evaluation
 from backend.services.pii.violation_store import hash_subject
 
 logger = logging.getLogger(__name__)
+
+
+@cache
+def _bucket_digest_key() -> bytes:
+    """Key for bucket names, derived from the JWT secret every process of a deployment shares."""
+    from backend.app.core.config import settings
+
+    secret = settings.jwt_secret_key
+    if not secret:
+        return secrets.token_bytes(32)
+    return hmac.new(secret.encode("utf-8"), b"rate-limit-bucket-path", hashlib.sha256).digest()
+
+
+def _bucket_digest(raw_path: str) -> str:
+    return hmac.new(_bucket_digest_key(), raw_path.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
 
 # In-memory rate limit storage (fallback) with eviction
 _rate_limit_storage: dict[str, list[float]] = {}
@@ -311,12 +331,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Find matching rate limit
         limit, window = self._get_rate_limit(request.url.path)
-        log_path = sanitize_log_path(request.url.path)
+        raw_path = request.url.path
+        log_path = sanitize_log_path(raw_path)
+        # A path whose value the sanitizer redacts keeps a bucket of its own,
+        # named by a keyed digest: one shared bucket would rate-limit together
+        # every anonymous caller behind the same proxy address, and an unkeyed
+        # digest of a guessable id can be recomputed by whoever reads the keys.
+        # The magic-link route keeps its single bucket, as before.
+        bucket_path = log_path
+        if log_path != raw_path and not is_magic_link_path(raw_path):
+            bucket_path = f"{log_path}#{_bucket_digest(raw_path)}"
 
         # Fail-open if the limiter malfunctions beyond its internal Redis fallback —
         # a hot-path middleware bug must not take the whole API offline.
         subject_reference = hash_subject(user_id) or "unknown"
-        rate_limit_key = f"ratelimit:{subject_reference}:{log_path}"
+        rate_limit_key = f"ratelimit:{subject_reference}:{bucket_path}"
         try:
             allowed, info = rate_limiter.is_allowed(rate_limit_key, limit, window)
         except Exception as exc:
