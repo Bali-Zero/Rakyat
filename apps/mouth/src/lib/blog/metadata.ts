@@ -4,7 +4,8 @@
  */
 
 import type { Metadata } from "next";
-import type { Article } from "./types";
+import { CATEGORY_SEO } from "./category-seo";
+import type { Article, ArticleCategory } from "./types";
 
 const baseUrl = process.env.NEXT_PUBLIC_PUBLIC_URL || "https://balizero.com";
 
@@ -190,11 +191,18 @@ export function generateArticleMetadata(article: Article): Metadata {
  * Generate metadata for a category page
  */
 export function generateCategoryMetadata(category: string): Metadata {
-  const meta = CATEGORY_META[category] || {
+  const generic = {
     title: `${category.charAt(0).toUpperCase() + category.slice(1)} Insights`,
     description: `Expert guides and insights about ${category} in Indonesia and Bali.`,
     keywords: [category, "indonesia", "bali", "guide"],
   };
+  // A category with no entry above still has its own title and description
+  // in CATEGORY_SEO, the table every real category must be in. They come
+  // before the generic sentence, which is left for a name that is no category.
+  const written = Object.prototype.hasOwnProperty.call(CATEGORY_SEO, category)
+    ? { ...generic, ...CATEGORY_SEO[category as ArticleCategory] }
+    : generic;
+  const meta = CATEGORY_META[category] || written;
 
   const categoryUrl = `${baseUrl}/${category}`;
 
