@@ -184,9 +184,28 @@ class LKPMDeadlineNotifier:
             return {"status": "ok", "emails_sent": 0, "telegram_sent": False}
 
         # Group by assignee
+        from backend.app.routers.lkpm import LKPM_ASSIGNEES
+
+        active_assignees = {email.strip().lower(): email for email in LKPM_ASSIGNEES}
         by_assignee: dict[str | None, list[dict[str, Any]]] = defaultdict(list)
+        inactive_assignee_rows = 0
         for row in in_window:
-            by_assignee[row.get("lkpm_assigned_to")].append(row)
+            assignee = row.get("lkpm_assigned_to")
+            if assignee:
+                active_assignee = active_assignees.get(assignee.strip().lower())
+                if active_assignee:
+                    by_assignee[active_assignee].append(row)
+                else:
+                    by_assignee[None].append(row)
+                    inactive_assignee_rows += 1
+            else:
+                by_assignee[None].append(row)
+
+        if inactive_assignee_rows:
+            logger.warning(
+                "LKPM reminder moved %d rows with inactive assignees to unassigned alert",
+                inactive_assignee_rows,
+            )
 
         emails_sent = 0
         async with self._get_http_client() as client:
