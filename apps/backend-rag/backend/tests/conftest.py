@@ -73,6 +73,12 @@ os.environ.setdefault("INSTAGRAM_VERIFY_TOKEN", "test_instagram_verify_token")
 # those calls hit a non-existent bot (401, swallowed) — never the owner.
 # Tests that genuinely exercise a sender still win via per-test monkeypatch.
 os.environ["TELEGRAM_BOT_TOKEN"] = "123456:test_token"
+# FORCE-assign, same reason: publishing an article pings IndexNow
+# (article_composer.publish_article_internal) with balizero.com as host and the
+# article URL. Left at its default, every run of the article composer tests
+# told api.indexnow.org about 16 invented balizero.com URLs (32 HTTPS connects).
+# Port 9 on loopback refuses at once; the ping is non-blocking and logs a warning.
+os.environ["INDEXNOW_API_URL"] = "http://127.0.0.1:9/indexnow"
 os.environ.setdefault("EMBEDDING_PROVIDER", "openai")
 os.environ.setdefault("EMBEDDING_MODEL", "text-embedding-3-small")
 
