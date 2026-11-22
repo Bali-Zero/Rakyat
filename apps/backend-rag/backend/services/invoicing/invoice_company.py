@@ -240,8 +240,9 @@ async def resolve_invoice_company(
     """Return the company id to store, creating the company and the link as needed.
 
     Runs in the caller's transaction, after the caller has authorised a write on the
-    client. Raises ``InvoiceCompanyError``: 404 unknown id, 422 empty name, 409 when
-    several companies match (by NPWP or by name) with the candidates listed.
+    client. Raises ``InvoiceCompanyError``: 404 unknown id, 422 empty name or a typed NPWP
+    that is not a tax number, 409 when several companies match (by NPWP or by name) with the
+    candidates listed.
 
     An NPWP identifies a company: a typed NPWP that exists wins over the typed name;
     a typed NPWP that exists nowhere never reuses a company that has another NPWP.
@@ -257,6 +258,14 @@ async def resolve_invoice_company(
             raise InvoiceCompanyError(422, "invoice_company_name is empty")
         npwp_typed = (npwp or "").strip() or None
         npwp_digits = normalize_npwp(npwp)
+        if npwp_typed and npwp_digits is None:
+            # "-" or "n/a" is not a tax number: matched or stored, it would be one company's
+            # identity and the next company typed with it would become that company.
+            raise InvoiceCompanyError(
+                422,
+                "invoice_company_npwp is not an NPWP (at least 15 digits); "
+                "leave it empty when the company has none",
+            )
         await _lock(
             conn,
             f"invoice-company:name:{normalized}",
