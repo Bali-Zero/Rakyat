@@ -1054,7 +1054,18 @@ def test_pnbp_batch_passes_the_ids_and_the_lowercased_identity(mock_db_pool) -> 
     assert j.await_args.kwargs == {"txn_ids": [4, 7], "justified_by": "admin@example.test"}
 
 
-@pytest.mark.parametrize("body", [{}, {"txn_ids": []}, {"txn_ids": ["x"]}, {"txn_ids": [1] * 501}])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"txn_ids": []},
+        {"txn_ids": [1] * 501},
+        {"txn_ids": [0]},
+        {"txn_ids": [9_223_372_036_854_775_808]},  # beyond PostgreSQL bigint (gate r1 on #605)
+        *({"txn_ids": [bad]} for bad in _BAD_IDS),  # true is not 1 (gate r1 on #605)
+    ],
+    ids=repr,
+)
 def test_pnbp_batch_refuses_a_malformed_list(mock_db_pool, body) -> None:
     with patch.object(accounting_module, "justify_pnbp_batch", AsyncMock()) as j:
         resp = _client(mock_db_pool).post(f"{BASE}/outgoings/pnbp-batch", json=body)

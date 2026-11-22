@@ -700,7 +700,8 @@ async def undo_outgoing_justification(
 
 
 class PnbpBatchRequest(BaseModel):
-    txn_ids: list[int] = Field(min_length=1, max_length=BATCH_LIMIT)
+    # JSON integers only (A8), as every other id here: a boolean or a string is a 422.
+    txn_ids: list[_StrictBigId] = Field(min_length=1, max_length=BATCH_LIMIT)
 
 
 @router.post("/outgoings/pnbp-batch")

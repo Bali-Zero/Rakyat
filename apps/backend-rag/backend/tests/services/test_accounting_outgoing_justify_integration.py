@@ -308,6 +308,19 @@ async def test_a_code_debited_twice_is_counted_and_left_to_justify_by_hand(db) -
     assert items[first]["reading"]["code_debits"] == 2
 
 
+async def test_the_list_and_the_batch_read_a_code_exactly_as_the_reader_shows_it(db) -> None:
+    # Gate r1 on #605: a SQL btrim() kept a leading tab that the shown reading strips, so the
+    # same code counted 1 and 0 and the batch let a double payment through.
+    sid = await _statement(db)
+    padded = await _row(db, sid, "government_fee", 1_000, "\tEMPN BILLING  907000001", AT)
+    plain = await _row(db, sid, "government_fee", 1_000, "EMPN BILLING\t907000001 ", AT)
+    items = {i["id"]: i["reading"] for i in (await load_outgoings(db))["items"]}
+    assert [items[t]["billing_code"] for t in (padded, plain)] == ["907000001"] * 2
+    assert [items[t]["code_debits"] for t in (padded, plain)] == [2, 2]
+    assert "more than one debit" in await _batch_refused(db, 409, [padded])
+    assert await db.fetchval("SELECT count(*) FROM outgoing_justifications") == 0
+
+
 async def test_undo_batch_takes_back_what_is_active_today_and_deletes_nothing(db) -> None:
     sid = await _statement(db)
     a = await _pnbp(db, sid, "820261121000006")

@@ -6,7 +6,9 @@ debit again. Nothing here writes to `weekly_cashout` or any cash-out table (owne
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections import Counter
 from typing import Any
 
 import asyncpg
@@ -40,21 +42,28 @@ PAIR_LATERAL = """
     ) pair ON true
 """
 
-# The e-billing code of a PNBP debit, as outgoings.read_outgoing reads it ("EMPN BILLING  <code>").
-_CODE_OF = r"substring(btrim({t}.description) from '^EMPN BILLING\s+(\d+)')"
+# "EMPN BILLING  <code>" — 245 of 245 PNBP payments. The ONE reader of the code: the list shows
+# it and counts it, the batch checks it, so the two can never read a description differently.
+BILLING = re.compile(r"^EMPN BILLING\s+(?P<code>\d+)")
 
-# How many PNBP debits carry this debit's e-billing code, whatever their state: two or more is a
-# possible double payment (one code was debited twice on 2026-10-19). 0 for any other debit.
-SAME_CODE_LATERAL = f"""
-    LEFT JOIN LATERAL (
-        SELECT count(*) AS n
-        FROM bank_transactions o
-        WHERE bt.kind = 'government_fee'
-          AND o.direction = 'debit'
-          AND o.kind = 'government_fee'
-          AND {_CODE_OF.format(t="o")} = {_CODE_OF.format(t="bt")}
-    ) same_code ON true
-"""
+
+def billing_code(description: str | None) -> str | None:
+    """The e-billing code of a PNBP debit's bank text, or None."""
+    m = BILLING.match((description or "").strip())
+    return m["code"] if m else None
+
+
+async def code_counts(conn: asyncpg.Connection) -> Counter[str]:
+    """How many PNBP debits carry each e-billing code, whatever their state.
+
+    Two or more is a possible double payment (one code was debited twice on 2026-10-19).
+    """
+    rows = await conn.fetch(
+        "SELECT description FROM bank_transactions"
+        " WHERE direction = 'debit' AND kind = 'government_fee'"
+    )
+    return Counter(c for r in rows if (c := billing_code(r["description"])))
+
 
 # One «Justify all PNBP» click justifies at most this many debits.
 BATCH_LIMIT = 500
@@ -227,12 +236,11 @@ async def justify_pnbp_batch(
     batch_id = uuid.uuid4()
     async with conn.transaction():
         rows = await conn.fetch(
-            f"""
-            SELECT bt.id, bt.amount_idr, bt.direction, bt.kind, bs.account_number,
-                   {_CODE_OF.format(t="bt")} AS code, same_code.n AS code_debits
+            """
+            SELECT bt.id, bt.amount_idr, bt.direction, bt.kind, bt.description,
+                   bs.account_number
             FROM bank_transactions bt
             LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
-            {SAME_CODE_LATERAL}
             WHERE bt.id = ANY($1::bigint[])
             ORDER BY bt.id
             FOR UPDATE OF bt
@@ -243,9 +251,11 @@ async def justify_pnbp_batch(
             raise OutgoingError(404, "no such debit")
         if any(r["direction"] != "debit" or r["kind"] != "government_fee" for r in rows):
             raise OutgoingError(422, "only PNBP debits are justified in one go")
-        if any(r["code"] is None for r in rows):
+        codes = [billing_code(r["description"]) for r in rows]
+        if any(c is None for c in codes):
             raise OutgoingError(422, "a PNBP debit without an e-billing code is justified by hand")
-        if any(r["code_debits"] > 1 for r in rows):
+        counts = await code_counts(conn)
+        if any(counts[c] > 1 for c in codes):
             raise OutgoingError(
                 409, "an e-billing code on more than one debit is justified by hand"
             )
