@@ -210,6 +210,7 @@ export function useDocumentUpload(resultId: string) {
    */
   const retryUpload = useCallback(() => {
     if (!fileRef.current || !idempotencyKeyRef.current) return;
+    pollAttemptRef.current = 0;
     void runUpload();
   }, [runUpload]);
 
@@ -219,6 +220,7 @@ export function useDocumentUpload(resultId: string) {
       pollTimeoutRef.current = null;
     }
     abortRef.current?.abort();
+    abortRef.current = null;
     fileRef.current = null;
     idempotencyKeyRef.current = null;
     pollAttemptRef.current = 0;
