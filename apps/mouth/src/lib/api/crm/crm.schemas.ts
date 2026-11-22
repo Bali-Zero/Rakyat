@@ -127,19 +127,42 @@ export const createClientSchema = z
     avatar_url: z.string().optional(),
   })
   .superRefine((data, ctx) => {
-    // Minor check: block standalone profiles for under-18
+    // Minor check: block standalone profiles for under-18 (calendar dates)
     if (data.date_of_birth) {
-      const dob = new Date(data.date_of_birth);
-      const today = new Date();
-      const age = Math.floor(
-        (today.getTime() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000),
-      );
-      if (age < 18) {
+      const [y, m, d] = data.date_of_birth.split("-").map(Number);
+      const parsed = new Date(Date.UTC(y, m - 1, d));
+      const isRealDate =
+        parsed.getUTCFullYear() === y &&
+        parsed.getUTCMonth() === m - 1 &&
+        parsed.getUTCDate() === d;
+      if (!isRealDate) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `Client is ${age} years old. Minors cannot have a standalone profile — add them as a Family Member instead.`,
+          message: "Invalid date format (YYYY-MM-DD)",
           path: ["date_of_birth"],
         });
+      } else {
+        const now = new Date();
+        const ty = now.getFullYear();
+        const tm = now.getMonth() + 1;
+        const td = now.getDate();
+        if (y * 10000 + m * 100 + d > ty * 10000 + tm * 100 + td) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Date of birth cannot be in the future",
+            path: ["date_of_birth"],
+          });
+        } else {
+          let age = ty - y;
+          if (tm < m || (tm === m && td < d)) age -= 1;
+          if (age < 18) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Client is ${age} years old. Minors cannot have a standalone profile — add them as a Family Member instead.`,
+              path: ["date_of_birth"],
+            });
+          }
+        }
       }
     }
 
