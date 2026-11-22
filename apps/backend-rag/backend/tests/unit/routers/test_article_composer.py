@@ -449,6 +449,46 @@ def test_compose_status_not_configured(test_client):
 
 @pytest.mark.asyncio
 @patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_publish_pings_indexnow_only_at_the_test_address(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    monkeypatch,
+):
+    """The IndexNow ping keeps its payload but never reaches api.indexnow.org from a test."""
+    import httpx
+
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={"success": True, "commit_sha": "abc123", "pull_request_number": 42},
+    )
+    pings: list[tuple[str, dict]] = []
+
+    async def fake_post(self, url, *args, **kwargs):
+        pings.append((str(url), kwargs.get("json")))
+        return httpx.Response(202)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    request = PublishRequest(article=sample_enriched_article, position="normal")
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    assert response.status_code == 200
+    assert pings == [
+        (
+            "http://127.0.0.1:9/indexnow",
+            {
+                "host": "balizero.com",
+                "key": "2633309a0003ec408c59ec48c952604f",
+                "keyLocation": "https://balizero.com/2633309a0003ec408c59ec48c952604f.txt",
+                "urlList": [response.json()["article_url"]],
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
 async def test_publish_article_with_cover_image(
     mock_publisher,
     test_client,
