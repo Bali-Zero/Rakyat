@@ -84,12 +84,23 @@ export default function BonusesPage() {
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({});
   const [openMembers, setOpenMembers] = useState<Record<string, boolean>>({});
 
+  // The ledger itself did not load. Nothing on the page may then be read as "this
+  // month is not in the ledger": an empty ledger and a failed load look the same.
+  const [ledgerFailed, setLedgerFailed] = useState(false);
+
   const loadBonuses = React.useCallback(async () => {
     try {
       const data = await hrApi.listBonuses();
-      setBonuses(data.bonuses || []);
+      // An answer that carries no list is not an empty ledger.
+      if (!Array.isArray(data?.bonuses)) {
+        throw new Error("The bonus ledger answer carries no list of bonuses");
+      }
+      setBonuses(data.bonuses);
+      setLedgerFailed(false);
     } catch {
-      /* keep the page usable — the empty state covers it */
+      // Nothing of an earlier load stays behind the alert.
+      setBonuses([]);
+      setLedgerFailed(true);
     }
   }, []);
 
@@ -323,6 +334,39 @@ export default function BonusesPage() {
           {[...Array(5)].map((_, i) => (
             <div key={i} className="h-16 rounded-lg" style={PANEL} />
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Without the ledger the page shows the alert and nothing else: no month, no
+  // total, no export, and no PDF recap read as "missing from the ledger".
+  if (ledgerFailed) {
+    return (
+      <div className="space-y-4">
+        <h1
+          className="text-2xl font-bold"
+          style={{ color: "var(--bz-text-1)" }}
+        >
+          Bonuses
+        </h1>
+        <div
+          role="alert"
+          className="border rounded-xl p-4 text-sm flex flex-wrap items-center justify-between gap-3"
+          style={{ ...PANEL, color: "var(--bz-text-1)" }}
+        >
+          <span>
+            The bonus ledger could not be loaded. This page is not showing the
+            ledger: do not pay from it until it loads.
+          </span>
+          <button
+            type="button"
+            onClick={() => void loadBonuses()}
+            className="border rounded-lg px-3 py-1.5 text-sm font-medium"
+            style={{ borderColor: "var(--bz-border)" }}
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
