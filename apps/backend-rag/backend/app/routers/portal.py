@@ -54,13 +54,22 @@ router = APIRouter(prefix="/api/portal", tags=["portal"])
 # ================================================
 
 
+# The widths of documents.document_type and portal_messages.subject. A longer value used to
+# fail at the INSERT: for an upload, after the file was already in the client's Drive folder.
+DOCUMENT_TYPE_MAX_LENGTH = 100
+MESSAGE_SUBJECT_MAX_LENGTH = 255
+# Not a product rule: a bound no typed message reaches, so that one request cannot store
+# megabytes that every later read of the thread returns.
+MESSAGE_CONTENT_MAX_LENGTH = 20_000
+
+
 class SendMessageRequest(BaseModel):
     """Request to send a message"""
 
     model_config = ConfigDict(populate_by_name=True)
 
-    content: str
-    subject: str | None = None
+    content: str = Field(max_length=MESSAGE_CONTENT_MAX_LENGTH)
+    subject: str | None = Field(default=None, max_length=MESSAGE_SUBJECT_MAX_LENGTH)
     practice_id: int | None = Field(
         default=None,
         validation_alias=AliasChoices("practice_id", "practiceId"),
@@ -608,7 +617,7 @@ async def get_documents(
 @router.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    document_type: str = Form(...),
+    document_type: str = Form(..., max_length=DOCUMENT_TYPE_MAX_LENGTH),
     practice_id: int | None = Form(None),
     document_purpose: str | None = Form(None),
     client: dict = Depends(get_current_client),
