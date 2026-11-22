@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -39,6 +40,21 @@ _ALLOWED_TRANSITIONS: dict[CommissionStatus, set[CommissionStatus]] = {
     "waived": set(),
     "repaid": set(),
 }
+
+
+def _audit_value(value: Any) -> str:
+    """What json cannot write by itself, as text. A Decimal keeps its exact digits."""
+    if isinstance(value, (Decimal, UUID)):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"{type(value).__name__} cannot be written in an audit row")
+
+
+def _audit_json(snapshot: dict | None) -> str | None:
+    """The before or the after of an audit row, as JSON text."""
+    return json.dumps(snapshot, default=_audit_value) if snapshot else None
+
 
 _PARTNER_UPDATABLE_COLS = {
     "full_name",
@@ -586,8 +602,8 @@ class PartnersRepository:
             partner_id,
             actor_user_id,
             action,
-            json.dumps(before) if before else None,
-            json.dumps(after) if after else None,
+            _audit_json(before),
+            _audit_json(after),
             reason,
         )
 

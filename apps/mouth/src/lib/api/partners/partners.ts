@@ -158,8 +158,6 @@ export interface CreatePartnerBody {
   email: string;
   entity_type: EntityType;
   phone?: string;
-  whatsapp?: string;
-  nationality?: string;
   // CRIT-8: backend field is 'npwp', not 'tax_id'
   npwp?: string;
   company_name?: string;
@@ -176,27 +174,24 @@ export interface CreatePartnerBody {
   // Send pdp_consent_version instead when the user checks the consent box.
   pdp_consent_version?: string;
   assigned_to?: string;
-  notes?: string;
 }
 
 export interface UpdatePartnerBody {
+  // null empties the field; a field left out is not changed.
   full_name?: string;
-  phone?: string;
-  whatsapp?: string;
-  nationality?: string;
+  phone?: string | null;
   // CRIT-8: backend field is 'npwp', not 'tax_id'
-  npwp?: string;
-  company_name?: string;
-  work_role?: string;
+  npwp?: string | null;
+  company_name?: string | null;
+  work_role?: string | null;
   // CRIT-8: backend uses default_commission_type + default_commission_value, not commission_tier
   default_commission_type?: "percentage" | "flat";
   default_commission_value?: number;
-  bank_name?: string;
-  bank_account_number?: string;
+  bank_name?: string | null;
+  bank_account_number?: string | null;
   // CRIT-8: backend field is 'bank_account_holder', not 'bank_account_name'
-  bank_account_holder?: string;
+  bank_account_holder?: string | null;
   tax_withholding_category?: TaxWithholdingCategory;
-  notes?: string;
 }
 
 export interface ReassignBody {

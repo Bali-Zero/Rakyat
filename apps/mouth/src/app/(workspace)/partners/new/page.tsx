@@ -64,13 +64,10 @@ interface FormState {
   email: string;
   entity_type: EntityType;
   phone: string;
-  whatsapp: string;
-  nationality: string;
   company_name: string;
   work_role: string;
   // CRIT-8: was 'tax_id', backend expects 'npwp'
   npwp: string;
-  payment_method: string;
   bank_name: string;
   bank_account_number: string;
   // CRIT-8: was 'bank_account_name', backend expects 'bank_account_holder'
@@ -80,7 +77,6 @@ interface FormState {
   default_commission_type: "percentage" | "flat";
   default_commission_value: string;
   assigned_to: string;
-  notes: string;
   // pdp_consent: UI-only checkbox that gates submit; not sent in payload.
   // On submit, send pdp_consent_version when checked.
   pdp_consent: boolean;
@@ -91,12 +87,9 @@ const INITIAL_FORM: FormState = {
   email: "",
   entity_type: "individual",
   phone: "",
-  whatsapp: "",
-  nationality: "",
   company_name: "",
   work_role: "",
   npwp: "",
-  payment_method: "bank_transfer",
   bank_name: "",
   bank_account_number: "",
   bank_account_holder: "",
@@ -104,7 +97,6 @@ const INITIAL_FORM: FormState = {
   default_commission_type: "percentage",
   default_commission_value: "10",
   assigned_to: "",
-  notes: "",
   pdp_consent: false,
 };
 
@@ -232,8 +224,6 @@ export default function NewPartnerPage() {
         email: form.email.trim(),
         entity_type: form.entity_type,
         phone: form.phone.trim() || undefined,
-        whatsapp: form.whatsapp.trim() || undefined,
-        nationality: form.nationality.trim() || undefined,
         company_name: form.company_name.trim() || undefined,
         work_role: form.work_role.trim() || undefined,
         npwp: form.npwp.trim() || undefined,
@@ -246,7 +236,6 @@ export default function NewPartnerPage() {
           ? parseFloat(form.default_commission_value)
           : undefined,
         assigned_to: form.assigned_to || undefined,
-        notes: form.notes.trim() || undefined,
         pdp_consent_version: form.pdp_consent ? "2026-04-20-v1" : undefined,
       };
 
@@ -379,20 +368,6 @@ export default function NewPartnerPage() {
                     placeholder="+62 8xx xxxx xxxx"
                   />
                 </FieldGroup>
-                <FieldGroup label="WhatsApp">
-                  <Input
-                    value={form.whatsapp}
-                    onChange={(v) => setField("whatsapp", v)}
-                    placeholder="+62 8xx xxxx xxxx"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Nationality">
-                  <Input
-                    value={form.nationality}
-                    onChange={(v) => setField("nationality", v)}
-                    placeholder="e.g. Indonesian"
-                  />
-                </FieldGroup>
                 <FieldGroup label="Company Name">
                   <Input
                     value={form.company_name}
@@ -423,16 +398,6 @@ export default function NewPartnerPage() {
                   </select>
                 </FieldGroup>
               </div>
-              <FieldGroup label="Notes">
-                <textarea
-                  value={form.notes}
-                  onChange={(e) => setField("notes", e.target.value)}
-                  rows={3}
-                  placeholder="Internal notes about this partner..."
-                  className="w-full px-3 py-2 border rounded-lg text-sm placeholder:text-[var(--bz-text-3)] focus:outline-none focus:border-[var(--bz-accent)] resize-none"
-                  style={INPUT_STYLE}
-                />
-              </FieldGroup>
             </>
           )}
 
@@ -494,18 +459,6 @@ export default function NewPartnerPage() {
                 </h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FieldGroup label="Payment Method">
-                  <select
-                    value={form.payment_method}
-                    onChange={(e) => setField("payment_method", e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:border-[var(--bz-accent)]"
-                    style={INPUT_STYLE}
-                  >
-                    <option value="bank_transfer">Bank Transfer</option>
-                    <option value="cash">Cash</option>
-                    <option value="e-wallet">E-Wallet</option>
-                  </select>
-                </FieldGroup>
                 <FieldGroup label="Bank Name">
                   <Input
                     value={form.bank_name}
