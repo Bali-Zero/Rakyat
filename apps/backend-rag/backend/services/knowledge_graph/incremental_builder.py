@@ -330,9 +330,17 @@ async def _persist_kg_verdict(db_pool: asyncpg.Pool, stats: dict[str, Any]) -> N
     """Upsert the last-run verdict so liveness is a DB probe, not a log grep."""
     import json
 
+    status = stats.get("status")
+    if (
+        status is None
+        and stats.get("collections_failed")
+        and not stats.get("collections_processed")
+    ):
+        status = "failed"
+
     payload = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
-        "status": stats.get("status", "ok"),
+        "status": status or "ok",
         "collections_processed": stats.get("collections_processed"),
         "total_chunks": stats.get("total_chunks"),
         "total_entities": stats.get("total_entities"),
@@ -350,6 +358,33 @@ async def _persist_kg_verdict(db_pool: asyncpg.Pool, stats: dict[str, Any]) -> N
     )
 
 
+# A verdict with one of these statuses records a run that did no work: it is
+# stored for whoever reads the row, and it does not count for the cadence.
+_KG_RUN_DID_NOT_WORK = frozenset({"skipped", "error", "failed"})
+
+
+def _verdict_status(raw: Any) -> str | None:
+    """Status of a stored verdict, whatever shape the driver hands the value in.
+
+    The column comes back as text, as a dict when the pool has a JSON codec,
+    or as text encoded twice. A value that cannot be read has no status, and a
+    verdict without a status counts as a run: an unreadable row must never
+    turn the daily build into an hourly one.
+    """
+    import json
+
+    value = raw
+    for _ in range(2):
+        if not isinstance(value, str):
+            break
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    status = value.get("status") if isinstance(value, dict) else None
+    return status if isinstance(status, str) else None
+
+
 async def _get_last_kg_run_ts(db_pool: asyncpg.Pool) -> datetime | None:
     """Read the cadence-driving timestamp: when did a run last persist a verdict?
 
@@ -359,13 +394,22 @@ async def _get_last_kg_run_ts(db_pool: asyncpg.Pool) -> datetime | None:
     Returns None if no verdict has ever been persisted, or if the read
     itself fails (fail-open: treated as "never ran" by the caller, same
     fail-open philosophy as `_acquire_task_lock` on Redis errors).
+    A verdict of a run that did no work (skipped, error, failed) is not a run.
     """
     try:
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT updated_at FROM system_settings WHERE key = 'kg_incremental_last'",
+                "SELECT value, updated_at FROM system_settings WHERE key = 'kg_incremental_last'",
             )
-            return row["updated_at"] if row else None
+            if not row:
+                return None
+            try:
+                raw = row["value"]
+            except KeyError:
+                raw = None
+            if _verdict_status(raw) in _KG_RUN_DID_NOT_WORK:
+                return None
+            return row["updated_at"]
     except Exception as e:
         logger.error("[kg-incremental] failed to read last-run timestamp: %s", e)
         return None
