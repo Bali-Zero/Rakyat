@@ -29,8 +29,10 @@ router = APIRouter(prefix="/api/portal/notifications/prefs", tags=["portal-notif
 _PREFS_UNAVAILABLE_DETAIL = "Notification preferences are temporarily unavailable"
 
 
-# E.164 without the leading '+' (up to 15 digits, first digit 1-9).
-_E164_RE = re.compile(r"^[1-9]\d{6,14}$")
+# E.164 without the leading '+' (up to 15 digits, first digit 1-9). Matched whole and in
+# ASCII digits: "$" also matches before a final newline, and "\d" takes the digits of
+# every script, so the page's own check refused values this one stored.
+_E164_RE = re.compile(r"[1-9][0-9]{6,14}")
 
 
 class NotificationPrefsIn(BaseModel):
@@ -43,7 +45,7 @@ class NotificationPrefsIn(BaseModel):
     def _validate_phone(cls, v: str | None) -> str | None:
         if v is None or v == "":
             return None
-        if not _E164_RE.match(v):
+        if not _E164_RE.fullmatch(v):
             raise ValueError("wa_phone must be E.164 digits only (no +)")
         return v
 
