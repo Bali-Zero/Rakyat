@@ -30,9 +30,11 @@ import httpx
 from backend.app.core.config import settings
 from backend.services.crm.welcome.welcome_templates import WELCOME_EMAIL_SUBJECT
 from backend.services.notifications.email_audit import (
+    EmailNotDelivered,
     format_send_error,
     log_email_attempt,
     notify_email_failure_critical,
+    raise_if_not_delivered,
     record_email_result,
 )
 from backend.services.notifications.email_http import get_email_client
@@ -275,6 +277,11 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
         status_code = resp.status_code
         if status_code != 200:
             send_error = f"status={status_code} body={resp.text[:200]}"
+        else:
+            # The endpoint answers 200 when every provider failed: its body says so.
+            raise_if_not_delivered(resp)
+    except EmailNotDelivered as e:
+        send_error = f"not delivered: {format_send_error(e)}"
     except Exception as e:
         send_error = f"exception: {format_send_error(e)}"
 
