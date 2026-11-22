@@ -12,7 +12,9 @@ the totals show the tax base, the withheld PPh and TOTAL DUE net of it.
 import io
 import os
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any
 
 try:
@@ -112,8 +114,160 @@ def group_npwp(tax_id: str | None) -> str:
     return tax_id or ""
 
 
-def _esc(text: str) -> str:
+class InvoiceTextNotPrintable(ValueError):
+    """A name the invoice must show has letters its fonts cannot print.
+
+    The message gives the field, a count and the script, never the letters: it is logged.
+    """
+
+
+# What the invoice fonts lack and Unicode does not decompose into something they have.
+_FOLDS = {
+    "\u0141": "L",  # L with stroke
+    "\u0142": "l",
+    "\u0110": "D",  # D with stroke
+    "\u0111": "d",
+    "\u0126": "H",  # H with stroke
+    "\u0127": "h",
+    "\u014a": "N",  # eng
+    "\u014b": "n",
+    "\u0166": "T",  # T with stroke
+    "\u0167": "t",
+    "\u0138": "k",  # kra
+    "\u0192": "f",  # f with hook
+    "\u201b": "'",  # single high-reversed-9 quotation mark
+    "\u02b9": "'",  # modifier letter prime
+    "\u02c8": "'",  # modifier letter vertical line
+    "\u201f": '"',  # double high-reversed-9 quotation mark
+    "\u2010": "-",  # hyphen
+    "\u2011": "-",  # non-breaking hyphen
+    "\u2012": "-",  # figure dash
+    "\u2015": "-",  # horizontal bar
+}
+_KEPT_WHITESPACE = frozenset("\n\r\t")
+
+
+@lru_cache(maxsize=1)
+def _glyphs() -> frozenset[int]:
+    """The code points the invoice fonts can print (the eight files share one coverage)."""
+    _ensure_fonts()
+    return frozenset(pdfmetrics.getFont("M500").face.charToGlyph)
+
+
+def _fold_char(char: str, glyphs: frozenset[int]) -> str | None:
+    """What prints in place of one character, or None when nothing can."""
+    if ord(char) in glyphs:
+        return char
+    if char in _FOLDS:
+        return _FOLDS[char]
+    category = unicodedata.category(char)
+    if category == "Nd":
+        return str(unicodedata.decimal(char))
+    if category[0] == "Z":
+        return " "
+    parts = [
+        part for part in unicodedata.normalize("NFKD", char) if not unicodedata.combining(part)
+    ]
+    if parts == [char]:
+        return None
+    folded = [part if ord(part) in glyphs else _FOLDS.get(part) for part in parts]
+    if None in folded:
+        return None
+    return "".join(part for part in folded if part is not None)
+
+
+def _capital(char: str, glyphs: frozenset[int]) -> str | None:
+    """What prints in place of one character in a line of capitals, or None when nothing can.
+
+    Its capital, folded where the fonts lack it; when the capital cannot print at all, the
+    character as written, folded (an f with a hook has a capital the fold does not know, and
+    prints as "F"). Then a small letter the fold brought back is raised where its capital
+    prints. So a letter that prints as written always prints in capitals.
+    """
+    capital = [_fold_char(part, glyphs) for part in char.upper()]
+    shown = None if None in capital else "".join(part for part in capital if part is not None)
+    if shown is None:
+        shown = _fold_char(char, glyphs)
+    if shown is None:
+        return None
+    raised: list[str] = []
+    for small in shown:
+        capital_form = small.upper()
+        raised.append(capital_form if all(ord(c) in glyphs for c in capital_form) else small)
+    return "".join(raised)
+
+
+def _fold(text: str, *, capitals: bool = False) -> tuple[str, list[str]]:
+    """The text as the invoice fonts can print it, and the letters they cannot print.
+
+    The bundled fonts cover Basic Latin, Latin-1 and some punctuation. A character they have
+    is kept as it is. A letter they lack prints as its base letter (an s with a caron as "s",
+    an l with a stroke as "l"): a missing accent on an invoice is better than a hole in a
+    name. A symbol, an emoji or a mark they lack is left out. A letter or digit that still
+    has no glyph (another script) is left out of the first value and returned in the second,
+    for the caller to judge. With ``capitals`` the text comes back as a line of capitals.
+    """
+    glyphs = _glyphs()
+    printed: list[str] = []
+    missing: list[str] = []
+    left_out = False
+    for char in unicodedata.normalize("NFC", text):
+        if char in _KEPT_WHITESPACE:
+            printed.append(char)
+            continue
+        folded = _capital(char, glyphs) if capitals else _fold_char(char, glyphs)
+        if folded is None:
+            left_out = True
+            if unicodedata.category(char)[0] in "LN":
+                missing.append(char)
+        else:
+            printed.append(folded)
+    result = "".join(printed)
+    if left_out:
+        result = re.sub(r" {2,}", " ", result).strip()
+    return result, missing
+
+
+def _why_not_printable(text: str, what: str, *, capitals: bool = False) -> str | None:
+    """Why the invoice fonts cannot show a name whole, or None when they can.
+
+    The name is judged in the form it is shown in: ``capitals`` for the BILL TO line.
+    """
+    printed, missing = _fold(text, capitals=capitals)
+    if missing:
+        scripts = sorted({unicodedata.name(char, "UNKNOWN").split(" ")[0] for char in missing})
+        return (
+            f"the {what} has {len(missing)} letter(s) the invoice fonts cannot print "
+            f"({', '.join(scripts)}); write it in basic Latin letters on the record and generate "
+            "the invoice again"
+        )
+    if text.strip() and not any(char.isalnum() for char in printed):
+        return (
+            f"the {what} has no letter or digit the invoice fonts can print; write it in basic "
+            "Latin letters on the record and generate the invoice again"
+        )
+    return None
+
+
+def _require_printable_name(text: str, what: str, *, capitals: bool = False) -> None:
+    """Refuse a name the invoice would show with letters missing, or with none at all."""
+    reason = _why_not_printable(text, what, capitals=capitals)
+    if reason:
+        raise InvoiceTextNotPrintable(reason)
+
+
+def _xml(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
+def _esc(text: str) -> str:
+    printed, missing = _fold(text)
+    if missing:
+        logger.warning(
+            "Invoice text has %d letter(s) the invoice fonts cannot print; left out",
+            len(missing),
+        )
+    return _xml(printed)
 
 
 class _Anchor(Flowable):
@@ -365,6 +519,14 @@ class InvoiceGenerator:
         # With a billing company the block names it, then NPWP, address and the
         # individual as Attn; otherwise it is the individual's block, unchanged.
         bill_name = bill_to_company or client_name
+        # An invoice never goes out with letters missing from its buyer. The caller runs in
+        # the background and keeps only a warning of a failed PDF, so the refusal is logged
+        # here at ERROR, with the practice and without the name.
+        try:
+            _require_printable_name(bill_name, "buyer name", capitals=True)
+        except InvoiceTextNotPrintable as refusal:
+            logger.error("Invoice for practice %s refused: %s", practice_id, refusal)
+            raise
         name_size = 10.5 if len(bill_name) > 40 else 13
         client_style = ParagraphStyle(
             "client_fit", parent=self.styles["client"], fontSize=name_size, leading=name_size * 1.25
@@ -372,15 +534,24 @@ class InvoiceGenerator:
         bill: list = [
             p("BILL TO", "label"),
             Spacer(1, 4),
-            Paragraph(_esc(bill_name.upper()), client_style),
+            Paragraph(_xml(_fold(bill_name, capitals=True)[0]), client_style),
         ]
         if bill_to_company:
+            # The company is the buyer; a contact whose name cannot be printed whole is
+            # left off rather than shown with letters missing.
+            attn_whole = _why_not_printable(client_name, "contact name") is None
+            if not attn_whole:
+                logger.warning(
+                    "Invoice for practice %s: the contact name cannot be printed whole; "
+                    "the Attn line is left out",
+                    practice_id,
+                )
             contact_lines = [
                 line
                 for line in (
                     f"NPWP: {bill_to_npwp}" if bill_to_npwp else None,
                     bill_to_address,
-                    f"Attn: {client_name}",
+                    f"Attn: {client_name}" if attn_whole else None,
                     client_email,
                 )
                 if line
