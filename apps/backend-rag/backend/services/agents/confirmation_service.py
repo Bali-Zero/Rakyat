@@ -119,6 +119,7 @@ class ConfirmationService:
         Returns True if approved, False if rejected.
         Raises ConfirmationRedisDown or ConfirmationTimeout on failure.
         """
+        await self.start()
         client = self._get_client()
         if client is None:
             raise ConfirmationRedisDown("Redis unavailable; cannot persist confirmation request")
