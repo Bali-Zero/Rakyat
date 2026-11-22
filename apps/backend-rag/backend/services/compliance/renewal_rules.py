@@ -14,6 +14,7 @@ All thresholds are configurable constants — never hardcoded in business logic.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -423,6 +424,18 @@ RULE_PRIORITY_ORDER: tuple[str, ...] = (
 )
 
 
+def _pattern_matches(pattern: str, visa_type: str) -> bool:
+    """Whether a pattern occurs in a visa type; both arrive lower-cased.
+
+    A pattern is a substring, with one exception: a pattern that ends in a digit is a visa
+    index code, and the same letters followed by a longer number are another code ("c1" is
+    not "c10" or "c18"). Such a pattern does not match when a digit follows it.
+    """
+    if pattern and pattern[-1].isdigit():
+        return re.search(re.escape(pattern) + r"(?!\d)", visa_type) is not None
+    return pattern in visa_type
+
+
 def match_rule(
     document_type: str,
     visa_type: str | None,
@@ -433,7 +446,8 @@ def match_rule(
     Checks rules in RULE_PRIORITY_ORDER.
     Returns the first rule where:
       - document_type is in rule.document_types
-      - visa_type matches at least one pattern (case-insensitive substring)
+      - visa_type matches at least one pattern (case-insensitive substring; a pattern
+        that ends in a digit is not matched inside a longer number)
         OR the rule has wildcard pattern ("*")
 
     Falls back to "generic_visa_renewal" if nothing matches.
@@ -459,7 +473,7 @@ def match_rule(
             return rule
 
         # Pattern match (substring, case-insensitive)
-        if any(p.lower() in vt_lower for p in rule.visa_type_patterns):
+        if any(_pattern_matches(p.lower(), vt_lower) for p in rule.visa_type_patterns):
             return rule
 
     return RENEWAL_RULES["generic_visa_renewal"]
