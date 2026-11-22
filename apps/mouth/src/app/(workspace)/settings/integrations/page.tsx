@@ -82,12 +82,20 @@ export default function IntegrationsPage() {
           : CONNECTION_DID_NOT_COMPLETE,
       );
     }
-    if (
-      failure !== null ||
+    const completed =
       success === "google_drive_connected" ||
-      success === "system_drive_connected"
-    ) {
-      window.history.replaceState({}, document.title, "/settings/integrations");
+      success === "system_drive_connected";
+    if (failure !== null || completed) {
+      // Only what this page has read leaves the address: whatever else is in
+      // it, another parameter or a fragment, stays.
+      params.delete("error");
+      if (completed) params.delete("success");
+      const rest = params.toString();
+      window.history.replaceState(
+        {},
+        document.title,
+        `/settings/integrations${rest ? `?${rest}` : ""}${window.location.hash}`,
+      );
     }
     check();
   }, []);

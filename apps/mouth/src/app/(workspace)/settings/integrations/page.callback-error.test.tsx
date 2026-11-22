@@ -117,7 +117,7 @@ describe("what does not change", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("another parameter is left in the address", async () => {
+  it("another parameter alone is left in the address", async () => {
     arriveAt("?from=settings");
 
     render(<IntegrationsPage />);
@@ -133,5 +133,110 @@ describe("what does not change", () => {
 
     expect(await shown()).toContain("Google did not grant access");
     expect(window.location.search).toBe("");
+  });
+});
+
+describe("only what the page has read leaves the address", () => {
+  it.each([
+    ["after it", "?error=oauth_denied&from=settings", "?from=settings"],
+    ["before it", "?from=settings&error=oauth_denied", "?from=settings"],
+    [
+      "on both sides",
+      "?from=settings&error=token_exchange_failed&tab=drive",
+      "?from=settings&tab=drive",
+    ],
+    [
+      "beside an unknown code",
+      "?error=something_new&from=settings",
+      "?from=settings",
+    ],
+    ["beside an empty code", "?error=&from=settings", "?from=settings"],
+    [
+      "beside a code given twice",
+      "?error=oauth_denied&from=settings&error=x",
+      "?from=settings",
+    ],
+  ])(
+    "a failure with another parameter %s keeps that parameter",
+    async (_label, query, left) => {
+      arriveAt(query);
+
+      render(<IntegrationsPage />);
+
+      expect(await shown()).toContain(DID_NOT_COMPLETE);
+      expect(window.location.pathname).toBe("/settings/integrations");
+      expect(window.location.search).toBe(left);
+    },
+  );
+
+  it.each([
+    ["?success=google_drive_connected&from=settings", "?from=settings"],
+    [
+      "?from=settings&success=system_drive_connected&tab=drive",
+      "?from=settings&tab=drive",
+    ],
+  ])(
+    "a completed connection in %s keeps the other parameters",
+    async (query, left) => {
+      arriveAt(query);
+
+      render(<IntegrationsPage />);
+
+      expect(await shown()).toBeNull();
+      expect(window.location.search).toBe(left);
+    },
+  );
+
+  it("the value of another parameter is kept as it was meant", async () => {
+    arriveAt("?note=a%20b%26c&error=oauth_denied");
+
+    render(<IntegrationsPage />);
+
+    expect(await shown()).toContain(DID_NOT_COMPLETE);
+    const left = new URLSearchParams(window.location.search);
+    expect([...left.keys()]).toEqual(["note"]);
+    expect(left.get("note")).toBe("a b&c");
+  });
+
+  it.each([
+    ["a failure", "?error=oauth_denied#drive", ""],
+    [
+      "a failure beside another parameter",
+      "?error=oauth_denied&from=settings#drive",
+      "?from=settings",
+    ],
+    ["a completed connection", "?success=google_drive_connected#drive", ""],
+  ])("the fragment stays after %s", async (_label, address, left) => {
+    arriveAt(address);
+
+    render(<IntegrationsPage />);
+
+    await shown();
+    expect(window.location.search).toBe(left);
+    expect(window.location.hash).toBe("#drive");
+  });
+
+  it("a success value the page does not know is not its to remove", async () => {
+    arriveAt("?error=oauth_denied&success=something_else");
+
+    render(<IntegrationsPage />);
+
+    expect(await shown()).toContain("Google did not grant access");
+    expect(window.location.search).toBe("?success=something_else");
+  });
+
+  it("an address with nothing for this page is not rewritten at all", async () => {
+    arriveAt("?success=something_else&from=settings#drive");
+    const rewrite = vi.spyOn(window.history, "replaceState");
+
+    render(<IntegrationsPage />);
+
+    expect(await shown()).toBeNull();
+    expect(rewrite).not.toHaveBeenCalled();
+    expect(window.location.search).toBe(
+      "?success=something_else&from=settings",
+    );
+    expect(window.location.hash).toBe("#drive");
+    rewrite.mockRestore();
   });
 });
