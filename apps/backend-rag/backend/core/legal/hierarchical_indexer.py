@@ -113,6 +113,7 @@ class HierarchicalIndexer:
         parent_documents: list[dict[str, Any]] = []  # BAB completi per retrieval
 
         # 2. Processa ogni BAB (se presenti)
+        emitted_pasal_numbers: set[str] = set()
         if structure.get("batang_tubuh"):
             for bab in structure.get("batang_tubuh", []):
                 bab_id = f"{document_id}_BAB_{bab['number']}"
@@ -157,13 +158,19 @@ class HierarchicalIndexer:
                         metadata=metadata,
                         chunks_to_index=chunks_to_index,
                     )
+                    emitted_pasal_numbers.add(pasal["number"])
 
-        # 4. Fallback per documenti senza BAB ma con Pasal (es: leggi di modifica)
-        elif structure.get("pasal_list"):
+        # 4. Process root Pasals not emitted from a BAB (es: leggi di modifica)
+        root_pasals = [
+            pasal
+            for pasal in structure.get("pasal_list", [])
+            if pasal["number"] not in emitted_pasal_numbers
+        ]
+        if root_pasals:
             logger.info(
-                f"No BAB found for {document_id}, but found {len(structure['pasal_list'])} Pasals. Processing as root Pasals.",
+                f"Found {len(root_pasals)} root Pasals for {document_id}. Processing as root Pasals.",
             )
-            for pasal in structure.get("pasal_list", []):
+            for pasal in root_pasals:
                 await self._add_pasal_to_chunks(
                     pasal=pasal,
                     document_id=document_id,
