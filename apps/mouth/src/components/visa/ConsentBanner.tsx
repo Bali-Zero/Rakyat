@@ -34,7 +34,12 @@ export function ConsentBanner() {
     // SSR guard: only run in the browser
     if (typeof window === "undefined") return;
 
-    const acknowledged = localStorage.getItem(CONSENT_KEY);
+    let acknowledged: string | null = null;
+    try {
+      acknowledged = localStorage.getItem(CONSENT_KEY);
+    } catch {
+      // Storage blocked (private mode, strict settings): treat as not dismissed.
+    }
     if (!acknowledged) {
       setVisible(true);
     }
@@ -42,7 +47,11 @@ export function ConsentBanner() {
 
   function handleDismiss() {
     if (typeof window !== "undefined") {
-      localStorage.setItem(CONSENT_KEY, "true");
+      try {
+        localStorage.setItem(CONSENT_KEY, "true");
+      } catch {
+        // Storage blocked: still hide the banner for this page view.
+      }
     }
     setVisible(false);
   }
