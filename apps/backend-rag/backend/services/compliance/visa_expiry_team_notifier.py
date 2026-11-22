@@ -75,6 +75,17 @@ WHERE c.{col} IS NOT NULL
 """
 
 
+class _ExpiryRead(list[dict[str, Any]]):
+    """The rows of one read, and the document types that read could not cover.
+
+    It is a list, so everything that takes the rows keeps taking them. The unread
+    types travel with the rows of the read that found them and are never kept on
+    the notifier, where a second run would overwrite them under a first one.
+    """
+
+    unread: tuple[str, ...] = ()
+
+
 class VisaExpiryTeamNotifier:
     """
     Checks the database for clients whose documents expire in 7, 30, or 60 days
@@ -97,9 +108,19 @@ class VisaExpiryTeamNotifier:
         logger.info("VisaExpiryTeamNotifier: starting check")
 
         expiring: list[dict[str, Any]] = await self._get_expiring_documents()
-        if not expiring:
+        # Plain rows, from a caller that supplies its own, name nothing as unread.
+        unread: tuple[str, ...] = expiring.unread if isinstance(expiring, _ExpiryRead) else ()
+        if not expiring and not unread:
             logger.info("VisaExpiryTeamNotifier: no expiring documents found")
             return {"total_alerts": 0, "emails_sent": 0, "emails_failed": 0}
+        if unread:
+            # A run that could not read a document type is not a run that found
+            # nothing of that type: it is said in the result and in every mail,
+            # and the summary goes out even when nothing else is expiring.
+            logger.error(
+                "VisaExpiryTeamNotifier: expiry dates not read for %s — this run is incomplete",
+                ", ".join(unread),
+            )
 
         logger.info(
             "VisaExpiryTeamNotifier: found %d expiring document(s) across %d client(s)",
@@ -119,7 +140,7 @@ class VisaExpiryTeamNotifier:
             self._client = client
             for team_email, clients in by_leader.items():
                 try:
-                    await self._send_team_leader_alert(team_email, clients)
+                    await self._send_team_leader_alert(team_email, clients, unread)
                     emails_sent += 1
                 except Exception:
                     emails_failed += 1
@@ -127,7 +148,7 @@ class VisaExpiryTeamNotifier:
 
             # Send summary to admin
             try:
-                await self._send_zero_summary(expiring)
+                await self._send_zero_summary(expiring, unread)
                 emails_sent += 1
             except Exception:
                 emails_failed += 1
@@ -138,15 +159,18 @@ class VisaExpiryTeamNotifier:
             emails_sent,
             emails_failed,
         )
-        return {
+        result: dict[str, Any] = {
             "total_alerts": len(expiring),
             "emails_sent": emails_sent,
             "emails_failed": emails_failed,
         }
+        if unread:
+            result["failed_queries"] = list(unread)
+        return result
 
     # ── Database query ─────────────────────────────────────────────────────────
 
-    async def _get_expiring_documents(self) -> list[dict[str, Any]]:
+    async def _get_expiring_documents(self) -> _ExpiryRead:
         """
         Returns rows for clients where any of visa_expiry_date, kitas_expiry_date,
         or passport_expiry_date falls within the next 60 days.
@@ -156,10 +180,12 @@ class VisaExpiryTeamNotifier:
             assigned_to, document_type, expiry_date, days_until_expiry
         Sorted by days_until_expiry ASC.
 
-        Wraps missing columns in try/except so the service degrades gracefully
-        if a column has not yet been added to the schema.
+        A document type whose query fails, a missing column included, does not
+        stop the others; it is recorded on the returned read as ``unread``, so that
+        the run can say what its list does not cover.
         """
-        rows: list[dict[str, Any]] = []
+        rows = _ExpiryRead()
+        unread: list[str] = []
 
         async with self._db_pool.acquire() as conn:
             for doc_type, col in _DOC_QUERIES:
@@ -168,13 +194,17 @@ class VisaExpiryTeamNotifier:
                     result = await conn.fetch(sql, doc_type)
                     rows.extend(dict(r) for r in result)
                 except asyncpg.UndefinedColumnError:
+                    unread.append(doc_type)
                     logger.warning(
                         "Column '%s' not found in 'clients' table — skipping %s alerts",
                         col,
                         doc_type,
                     )
                 except Exception:
+                    unread.append(doc_type)
                     logger.exception("Unexpected error querying '%s' expiry dates", doc_type)
+
+        rows.unread = tuple(unread)
 
         # Sort combined results by days_until_expiry ASC
         rows.sort(key=lambda r: r.get("days_until_expiry", 9999))
@@ -186,6 +216,7 @@ class VisaExpiryTeamNotifier:
         self,
         team_email: str,
         clients: list[dict[str, Any]],
+        unread: tuple[str, ...] = (),
     ) -> None:
         """
         Sends an HTML email to the team leader listing their clients whose
@@ -196,6 +227,8 @@ class VisaExpiryTeamNotifier:
         subject = (
             f"[EXPIRY] ⚠️ Documents expiring — {n} client{'s' if n != 1 else ''} to contact"
         )
+        if unread:
+            subject += " (incomplete list)"
 
         rows_html = "\n".join(_build_client_row(c) for c in clients)
 
@@ -203,7 +236,7 @@ class VisaExpiryTeamNotifier:
 <html>
 <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.5;">
 
-<h2 style="color: #c62828;">⚠️ Documents expiring — action required</h2>
+<h2 style="color: #c62828;">⚠️ Documents expiring — action required</h2>{_incomplete_notice(unread)}
 
 <p>Hello,<br>
 The following clients of yours have documents expiring in the next 60 days.
@@ -254,13 +287,19 @@ Please contact them as soon as possible to start the renewal process with Bali Z
         await self._post_email(to=team_email, subject=subject, html_body=body)
         logger.info("Team leader alert sent to %s (%d client(s))", team_email, n)
 
-    async def _send_zero_summary(self, all_clients: list[dict[str, Any]]) -> None:
+    async def _send_zero_summary(
+        self,
+        all_clients: list[dict[str, Any]],
+        unread: tuple[str, ...] = (),
+    ) -> None:
         """
         Summary email to zero@ with all expiring documents grouped by team leader.
         Subject: "⚠️ {n} documenti in scadenza — riepilogo team"
         """
         n = len(all_clients)
         subject = f"[EXPIRY] ⚠️ {n} document{'s' if n != 1 else ''} expiring — team summary"
+        if unread:
+            subject += " (incomplete)"
 
         # Group by leader for the summary table
         by_leader: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -296,7 +335,7 @@ Please contact them as soon as possible to start the renewal process with Bali Z
 <html>
 <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.5;">
 
-<h2 style="color: #c62828;">⚠️ Expiring documents summary — {n} total</h2>
+<h2 style="color: #c62828;">⚠️ Expiring documents summary — {n} total</h2>{_incomplete_notice(unread)}
 
 <p>This summary is sent automatically by Zantara.<br>
 Each team leader has already received their individual notification.</p>
@@ -371,6 +410,24 @@ Each team leader has already received their individual notification.</p>
 
 
 # ── Private rendering helpers ──────────────────────────────────────────────────
+
+
+def _incomplete_notice(unread: tuple[str, ...]) -> str:
+    """The warning a mail carries when its list was built without some document types.
+
+    It brings its own line break: a mail with nothing unread is, byte for byte,
+    the mail it was before the notice existed.
+    """
+    if not unread:
+        return ""
+    names = ", ".join(escape(doc_type.upper()) for doc_type in unread)
+    return (
+        '\n<p style="background:#FFEBEE; border:1px solid #C62828; padding:10px;">'
+        "<strong>This list is incomplete.</strong> "
+        f"The expiry dates of these documents could not be read in this run: {names}. "
+        "A client whose only expiring document is one of them is missing from it."
+        "</p>"
+    )
 
 
 def _build_client_row(client: dict[str, Any]) -> str:
