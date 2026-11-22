@@ -17,6 +17,7 @@ import asyncpg
 import httpx
 
 from backend.app.utils.logging_utils import get_logger
+from backend.services.notifications.email_audit import raise_if_not_delivered
 
 logger = get_logger(__name__)
 
@@ -329,7 +330,8 @@ Each team leader has already received their individual notification.</p>
     ) -> None:
         """
         POSTs an email via the internal Brevo endpoint.
-        Raises httpx.HTTPStatusError on non-2xx responses.
+        Raises httpx.HTTPStatusError on non-2xx responses, and EmailNotDelivered when the
+        endpoint answers 200 and its body says the mail was not sent.
         """
         if self._client is None:
             raise RuntimeError("_post_email called outside of an active HTTP client context")
@@ -350,6 +352,7 @@ Each team leader has already received their individual notification.</p>
             timeout=20.0,
         )
         response.raise_for_status()
+        raise_if_not_delivered(response)
         logger.debug("Email delivered to %s (status %d)", to, response.status_code)
 
     @staticmethod
