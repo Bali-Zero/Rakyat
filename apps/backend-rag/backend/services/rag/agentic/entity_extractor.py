@@ -10,6 +10,35 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Short Latin keywords also occur inside ordinary English words ("visa" in
+# "advisable", "lease" in "please", "vat" in "private"), so they are not matched
+# as substrings. A stem matches at the start of a word, which keeps "taxes",
+# "visas" and "leasehold"; an abbreviation matches as a whole word. Every other
+# keyword stays a substring: an Indonesian root must match inside its prefixed
+# and suffixed forms ("pajak" in "perpajakan").
+_WORD_START_KEYWORDS = frozenset({"visa", "tax", "land", "lease"})
+_WHOLE_WORD_KEYWORDS = frozenset({"vat", "nib"})
+
+# A five-digit number written as an amount is a budget, never an activity code.
+_AMOUNT_BEFORE = re.compile(r"(?:[$€]|\b(?:usd|idr|rp|eur))\s*$", re.IGNORECASE)
+_AMOUNT_AFTER = re.compile(
+    r"(?:[.,]\d)|\s*(?:k|m|million|juta|jt|ribu|rb|usd|idr|eur|dollars?|rupiah|euros?)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_keyword(query_lower: str, keywords: list[str]) -> bool:
+    for keyword in keywords:
+        if keyword in _WORD_START_KEYWORDS:
+            if re.search(rf"\b{re.escape(keyword)}", query_lower):
+                return True
+        elif keyword in _WHOLE_WORD_KEYWORDS:
+            if re.search(rf"\b{re.escape(keyword)}\b", query_lower):
+                return True
+        elif keyword in query_lower:
+            return True
+    return False
+
 
 class EntityExtractionService:
     """
@@ -163,7 +192,11 @@ class EntityExtractionService:
             tax_concept = "PPh"
             tax_code = f"pph_{match.group(1)}" if match and match.group(1) else "pph"
         # PPN - VAT
-        elif "ppn" in query_lower or "vat" in query_lower or "pajak pertambahan" in query_lower:
+        elif (
+            "ppn" in query_lower
+            or re.search(r"\bvat\b", query_lower)
+            or "pajak pertambahan" in query_lower
+        ):
             tax_concept = "PPN"
             tax_code = "ppn"
         # PBB - Land and Building Tax
@@ -209,9 +242,12 @@ class EntityExtractionService:
 
     def _extract_kbli_entities(self, query_upper: str) -> dict[str, Any] | None:
         """Extract KBLI (business classification) codes."""
-        # Match KBLI codes: 5 digits
-        kbli_match = re.search(r"\b(\d{5})\b", query_upper)
-        if kbli_match:
+        # Match KBLI codes: 5 digits that are not written as an amount
+        for kbli_match in re.finditer(r"\b(\d{5})\b", query_upper):
+            if _AMOUNT_BEFORE.search(query_upper[: kbli_match.start()]):
+                continue
+            if _AMOUNT_AFTER.match(query_upper[kbli_match.end() :]):
+                continue
             code = kbli_match.group(1)
             # Validate it's a valid KBLI code range (typically 01000-99999)
             if code.isdigit() and 1000 <= int(code) <= 99999:
@@ -281,7 +317,7 @@ class EntityExtractionService:
         }
 
         for marker, normalized in nationality_map.items():
-            if marker in query_lower:
+            if re.search(rf"\b{re.escape(marker)}\b", query_lower):
                 return normalized
         return None
 
@@ -331,7 +367,7 @@ class EntityExtractionService:
             "deportasi",
             "re-entry ban",
         ]
-        if any(kw in query_lower for kw in visa_keywords):
+        if _has_keyword(query_lower, visa_keywords):
             return self.DOMAIN_VISA
 
         # Check for tax domain
@@ -353,7 +389,7 @@ class EntityExtractionService:
             "tax reporting",
             "laporan pajak",
         ]
-        if any(kw in query_lower for kw in tax_keywords):
+        if _has_keyword(query_lower, tax_keywords):
             return self.DOMAIN_TAX
 
         # Check for property domain
@@ -374,7 +410,7 @@ class EntityExtractionService:
             "hak sewa",
             "bangunan",
         ]
-        if any(kw in query_lower for kw in property_keywords):
+        if _has_keyword(query_lower, property_keywords):
             return self.DOMAIN_PROPERTY
 
         # Check for KBLI domain
@@ -419,7 +455,7 @@ class EntityExtractionService:
             "nib",
             "izin usaha",
         ]
-        if any(kw in query_lower for kw in company_keywords):
+        if _has_keyword(query_lower, company_keywords):
             return self.DOMAIN_COMPANY
 
         # Fall back to entity types if no keywords matched
