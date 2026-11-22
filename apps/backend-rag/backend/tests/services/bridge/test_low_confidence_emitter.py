@@ -155,6 +155,40 @@ async def test_outbox_failure_swallowed(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_outbox_failure_retries_same_query_immediately(monkeypatch):
+    """A failed write does not suppress the next attempt for the same query."""
+    insert_mock = AsyncMock(side_effect=[RuntimeError("synthetic insert failure"), 99])
+    monkeypatch.setattr(
+        "backend.services.bridge.low_confidence_emitter.insert_outbox_event",
+        insert_mock,
+    )
+
+    pool, _ = _build_pool()
+    await maybe_emit_low_confidence(pool, "synthetic retry query", 0.1)
+    await maybe_emit_low_confidence(pool, "synthetic retry query", 0.1)
+
+    assert insert_mock.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_successful_emit_stays_deduplicated_and_ignores_ineligible_calls(monkeypatch):
+    """Successful writes remain deduplicated while ineligible calls are skipped."""
+    insert_mock = AsyncMock(return_value=99)
+    monkeypatch.setattr(
+        "backend.services.bridge.low_confidence_emitter.insert_outbox_event",
+        insert_mock,
+    )
+
+    pool, _ = _build_pool()
+    await maybe_emit_low_confidence(pool, "synthetic success query", 0.1)
+    await maybe_emit_low_confidence(pool, "synthetic success query", 0.1)
+    await maybe_emit_low_confidence(pool, "synthetic high confidence", 0.3)
+    await maybe_emit_low_confidence(None, "synthetic missing pool", 0.1)
+
+    insert_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_pool_none_no_emit(monkeypatch):
     """If pool is None (RAG running without DB), gracefully skip."""
     insert_mock = AsyncMock(return_value=99)
