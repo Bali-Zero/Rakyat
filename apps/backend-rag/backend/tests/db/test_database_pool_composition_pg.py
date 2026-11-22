@@ -28,6 +28,40 @@ pytestmark = [
 ]
 
 
+_OTHER_CONNECTIONS = (
+    "FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()"
+)
+
+
+async def _wait_for_no_other_connections(observer: asyncpg.Connection, budget: float) -> None:
+    """Wait until the observer's is the only connection on its database.
+
+    When the budget runs out the error names what was still connected, so a
+    red run says who held a connection and not only that one was held.
+    """
+    try:
+        async with asyncio.timeout(budget):
+            while await observer.fetchval(f"SELECT count(*) {_OTHER_CONNECTIONS}"):
+                await asyncio.sleep(0.02)
+    except TimeoutError as exc:
+        try:
+            rows = await observer.fetch(
+                "SELECT pid, datname, application_name, state, backend_start, "
+                "left(split_part(query, chr(10), 1), 120) AS query_head "
+                f"{_OTHER_CONNECTIONS} ORDER BY backend_start"
+            )
+            held = "; ".join(
+                f"pid={row['pid']} datname={row['datname']} "
+                f"application_name={row['application_name']!r} state={row['state']} "
+                f"backend_start={row['backend_start']} query={row['query_head']!r}"
+                for row in rows
+            )
+            detail = f"{len(rows)} still connected: {held}" if rows else "none left when read"
+        except Exception as read_error:  # the diagnosis must never hide the timeout
+            detail = f"could not be listed ({type(read_error).__name__})"
+        raise TimeoutError(f"other connections on the database after {budget} s; {detail}") from exc
+
+
 @pytest.fixture
 def isolated_dsn() -> str:
     parsed = urlparse(TEST_DSN)
@@ -204,12 +238,7 @@ async def test_failed_post_create_validation_releases_real_server_connections(
             )
         assert len(created) == 1
         observer = await asyncpg.connect(isolated_dsn)
-        async with asyncio.timeout(3):
-            while await observer.fetchval(
-                "SELECT count(*) FROM pg_stat_activity "
-                "WHERE datname = current_database() AND pid <> pg_backend_pid()"
-            ):
-                await asyncio.sleep(0.02)
+        await _wait_for_no_other_connections(observer, 3)
     finally:
         if observer is not None:
             await observer.close()
@@ -217,3 +246,22 @@ async def test_failed_post_create_validation_releases_real_server_connections(
         # after observing absence, or after a preserved failing assertion/timeout.
         for pool in created:
             pool.terminate()
+
+
+async def test_the_wait_names_the_connection_it_timed_out_on(isolated_dsn: str) -> None:
+    observer = await asyncpg.connect(isolated_dsn)
+    held = None
+    try:
+        held = await asyncpg.connect(
+            isolated_dsn, server_settings={"application_name": "pool_composition_probe"}
+        )
+        with pytest.raises(TimeoutError) as caught:
+            await _wait_for_no_other_connections(observer, 0.2)
+        message = str(caught.value)
+        assert "application_name='pool_composition_probe'" in message
+        assert f"pid={held.get_server_pid()} datname=" in message
+        assert "after 0.2 s" in message
+    finally:
+        if held is not None:
+            await held.close()
+        await observer.close()
