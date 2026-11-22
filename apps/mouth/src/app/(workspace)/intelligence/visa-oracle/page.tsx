@@ -32,6 +32,16 @@ import {
 type FilterType = "all" | "NEW" | "UPDATED";
 type SortType = "date-desc" | "date-asc" | "title-asc" | "title-desc";
 
+// The list also carries rows that are already published (the newest of the
+// archive). They are no longer in the queue: nothing can approve or reject them.
+const isInQueue = (item: StagingItem) => item.status !== "published";
+
+// A source is offered as a link only when it is a web address.
+const webAddress = (value: string | null | undefined): string | null =>
+  typeof value === "string" && /^https?:\/\//i.test(value.trim())
+    ? value.trim()
+    : null;
+
 export default function VisaOraclePage() {
   const [items, setItems] = useState<StagingItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,9 +63,9 @@ export default function VisaOraclePage() {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
         (item) =>
-          item.title.toLowerCase().includes(query) ||
-          item.id.toLowerCase().includes(query) ||
-          item.source.toLowerCase().includes(query),
+          (item.title ?? "").toLowerCase().includes(query) ||
+          (item.id ?? "").toLowerCase().includes(query) ||
+          (item.source ?? "").toLowerCase().includes(query),
       );
     }
 
@@ -106,7 +116,7 @@ export default function VisaOraclePage() {
     setLoading(true);
     try {
       const res = await intelligenceApi.getPendingItems("visa");
-      setItems(res.items);
+      setItems(res.items.filter(isInQueue));
       logger.info(`Loaded ${res.count} visa items`, {
         component: "VisaOraclePage",
         action: "load_items_success",
@@ -806,18 +816,31 @@ export default function VisaOraclePage() {
                     </span>
                   </div>
                 </div>
-                <a
-                  href={item.source}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-medium transition-all hover:bg-white/[0.04]"
-                  style={{
-                    color: "var(--bz-text-2)",
-                    border: "1px solid var(--bz-border)",
-                  }}
-                >
-                  Source <ExternalLink className="w-3 h-3" />
-                </a>
+                {webAddress(item.source) !== null && (
+                  <a
+                    href={webAddress(item.source) ?? undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-medium transition-all hover:bg-white/[0.04]"
+                    style={{
+                      color: "var(--bz-text-2)",
+                      border: "1px solid var(--bz-border)",
+                    }}
+                  >
+                    Source <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+                {webAddress(item.source) === null &&
+                  typeof item.source === "string" &&
+                  item.source.trim() !== "" && (
+                    <span
+                      className="max-w-[16rem] truncate px-2.5 py-1.5 text-[10.5px] font-medium"
+                      style={{ color: "var(--bz-text-2)" }}
+                      title={item.source}
+                    >
+                      Source: {item.source}
+                    </span>
+                  )}
               </div>
             </div>
 
