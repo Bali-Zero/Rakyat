@@ -416,8 +416,11 @@ class KGIncrementalExtractor:
             if next_offset is not None:
                 scroll_data["offset"] = next_offset
 
-            result = self._qdrant_request(
-                "POST", f"/collections/{collection_name}/points/scroll", scroll_data
+            result = await asyncio.to_thread(
+                self._qdrant_request,
+                "POST",
+                f"/collections/{collection_name}/points/scroll",
+                scroll_data,
             )
 
             points = result.get("result", {}).get("points", [])
@@ -781,7 +784,7 @@ class KGIncrementalExtractor:
 
         # Get collections to process
         if not collections:
-            collections = self.get_qdrant_collections()
+            collections = await asyncio.to_thread(self.get_qdrant_collections)
         logger.info(f"Processing collections: {collections}")
 
         total_unprocessed = 0
@@ -793,7 +796,9 @@ class KGIncrementalExtractor:
 
             try:
                 # Get all chunks from collection
-                all_chunks = self.get_collection_chunks(collection, limit=limit)
+                all_chunks = await asyncio.to_thread(
+                    self.get_collection_chunks, collection, limit=limit
+                )
 
                 # Filter unprocessed
                 unprocessed = [c for c in all_chunks if c["id"] not in processed_ids]
