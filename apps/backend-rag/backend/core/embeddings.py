@@ -185,30 +185,34 @@ class EmbeddingCache:
         self._misses = 0
         self._lock = asyncio.Lock()
 
-    def _get_key(self, texts: list[str]) -> str:
+    def _get_key(self, texts: list[str], *, namespace: str = "") -> str:
         """Generate cache key from texts using MD5 hash."""
         content = json.dumps(texts, sort_keys=True)
+        if namespace:
+            content = json.dumps([namespace, texts], sort_keys=True)
         return md5(content.encode()).hexdigest()
 
-    async def get(self, texts: list[str]) -> list[list[float]] | None:
+    async def get(self, texts: list[str], *, namespace: str = "") -> list[list[float]] | None:
         """Get cached embeddings if available."""
-        key = self._get_key(texts)
+        key = self._get_key(texts, namespace=namespace)
         async with self._lock:
             if key in self._cache:
                 self._hits += 1
-                return self._cache[key]
+                return [list(vector) for vector in self._cache[key]]
             self._misses += 1
             return None
 
-    async def set(self, texts: list[str], embeddings: list[list[float]]) -> None:
+    async def set(
+        self, texts: list[str], embeddings: list[list[float]], *, namespace: str = ""
+    ) -> None:
         """Store embeddings in cache."""
         async with self._lock:
             if len(self._cache) >= self._max_size:
                 # Simple LRU: remove oldest item
                 oldest = next(iter(self._cache))
                 del self._cache[oldest]
-            key = self._get_key(texts)
-            self._cache[key] = embeddings
+            key = self._get_key(texts, namespace=namespace)
+            self._cache[key] = [list(vector) for vector in embeddings]
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -383,7 +387,9 @@ class EmbeddingsGenerator:
                 return []
 
             # Check cache first
-            cached = await _global_embedding_cache.get(texts)
+            cached = await _global_embedding_cache.get(
+                texts, namespace=f"{self.provider}:{self.model}:{self.dimensions}"
+            )
             if cached:
                 logger.debug(f"🔥 Embedding cache HIT for {len(texts)} texts")
                 set_span_attribute("cache_hit", True)
@@ -399,7 +405,9 @@ class EmbeddingsGenerator:
                     result = await self._generate_embeddings_sentence_transformers(texts)
 
                 # Store in cache for future use
-                await _global_embedding_cache.set(texts, result)
+                await _global_embedding_cache.set(
+                    texts, result, namespace=f"{self.provider}:{self.model}:{self.dimensions}"
+                )
 
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 set_span_attribute("latency_ms", round(latency_ms, 2))

@@ -165,27 +165,56 @@ class ReRanker:
 
                 # Map results back to documents
                 reranked_docs = []
+                seen_indices = set()
+                validated_results = []
                 for res in results:
+                    if not isinstance(res, dict):
+                        logger.warning("Ze-Rank 2 returned an invalid result")
+                        set_span_status("error", "invalid API response")
+                        return documents[:top_k]
+
                     idx = res.get("index")
                     score = res.get("relevance_score", 0.0)
 
-                    if idx is not None and 0 <= idx < len(valid_docs):
-                        doc = valid_docs[idx]
-                        doc["rerank_score"] = float(score)
+                    if (
+                        isinstance(idx, bool)
+                        or not isinstance(idx, int)
+                        or idx < 0
+                        or idx >= len(valid_docs)
+                        or idx in seen_indices
+                        or isinstance(score, bool)
+                        or not isinstance(score, (int, float))
+                        or score != score
+                    ):
+                        logger.warning("Ze-Rank 2 returned an invalid result")
+                        set_span_status("error", "invalid API response")
+                        return documents[:top_k]
 
-                        # Preserve original score if needed
-                        prior_score = doc.get("score")
-                        if "score" in doc and "vector_score" not in doc:
-                            doc["vector_score"] = doc["score"]
+                    seen_indices.add(idx)
+                    validated_results.append((idx, score))
 
-                        # Update main score
-                        doc["score"] = float(score)
-                        score_provenance.stamp(
-                            doc,
-                            score_provenance.RERANKED,
-                            prior_score if isinstance(prior_score, (int, float)) else None,
-                        )
-                        reranked_docs.append(doc)
+                if not validated_results:
+                    logger.warning("Ze-Rank 2 returned no valid results")
+                    set_span_status("error", "invalid API response")
+                    return documents[:top_k]
+
+                for idx, score in validated_results:
+                    doc = dict(valid_docs[idx])
+                    doc["rerank_score"] = float(score)
+
+                    # Preserve original score if needed
+                    prior_score = doc.get("score")
+                    if "score" in doc and "vector_score" not in doc:
+                        doc["vector_score"] = doc["score"]
+
+                    # Update main score
+                    doc["score"] = float(score)
+                    score_provenance.stamp(
+                        doc,
+                        score_provenance.RERANKED,
+                        prior_score if isinstance(prior_score, (int, float)) else None,
+                    )
+                    reranked_docs.append(doc)
 
                 # Sort explicitly just in case API didn't
                 reranked_docs.sort(key=lambda x: x["score"], reverse=True)
