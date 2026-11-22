@@ -8,7 +8,7 @@
  * - Nuovi clienti
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type {
@@ -73,7 +73,9 @@ export function useCrmNotifications(options: UseCrmNotificationsOptions = {}) {
   } = options;
 
   const queryClient = useQueryClient();
-  const [unreadCount, setUnreadCount] = useState(0);
+  // Ids the user marked read; kept for the life of the hook so a poll that
+  // returns the same items does not bring them back as unread.
+  const [readIds, setReadIds] = useState<ReadonlySet<string>>(() => new Set());
 
   // Use expiry alerts + portal upload alerts as notifications
   const query = useQuery({
@@ -89,7 +91,9 @@ export function useCrmNotifications(options: UseCrmNotificationsOptions = {}) {
       // Map expiry alerts to notifications
       const expiryNotifs: Notification[] = alerts.map(
         (alert: ExpiryAlert): Notification => ({
-          id: `expiry-${alert.entity_id}-${alert.document_type}`,
+          // entity_type is part of the id: clients, family members and
+          // documents each number their rows from their own sequence.
+          id: `expiry-${alert.entity_type}-${alert.entity_id}-${alert.document_type}`,
           type: "expiry",
           title: `${alert.entity_name} - ${alert.document_type}`,
           message:
@@ -142,25 +146,38 @@ export function useCrmNotifications(options: UseCrmNotificationsOptions = {}) {
     staleTime: 60 * 1000, // 1 minute
   });
 
-  // Update unread count
-  useEffect(() => {
-    if (query.data) {
-      setUnreadCount(query.data.filter((n) => !n.read).length);
-    }
+  const notifications = useMemo(
+    () =>
+      (query.data || []).map((n) =>
+        n.read || !readIds.has(n.id) ? n : { ...n, read: true },
+      ),
+    [query.data, readIds],
+  );
+
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications],
+  );
+
+  const markAsRead = useCallback((notificationId: string) => {
+    setReadIds((prev) => {
+      if (prev.has(notificationId)) return prev;
+      const next = new Set(prev);
+      next.add(notificationId);
+      return next;
+    });
+  }, []);
+
+  const markAllAsRead = useCallback(() => {
+    setReadIds((prev) => {
+      const next = new Set(prev);
+      for (const n of query.data || []) next.add(n.id);
+      return next;
+    });
   }, [query.data]);
 
-  // Mark as read (mock - just removes from count)
-  const markAsRead = useCallback((notificationId: string) => {
-    setUnreadCount((prev) => Math.max(0, prev - 1));
-  }, []);
-
-  // Mark all as read
-  const markAllAsRead = useCallback(() => {
-    setUnreadCount(0);
-  }, []);
-
   return {
-    notifications: query.data || [],
+    notifications,
     unreadCount,
     isLoading: query.isLoading,
     isError: query.isError,
