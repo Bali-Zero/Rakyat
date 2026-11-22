@@ -191,6 +191,9 @@ export default function WorkspaceLKPMSubmitPage() {
         realized_total: number;
       }>("/api/v1/lkpm/submit-data", {
         client_id: primaryLink.client_id,
+        // The company the operator chose. Without it the server picks one of the
+        // client's own companies, which need not be this one.
+        company_id: selectedCompany.id,
         quarter,
         year,
         // Flat investment fields matching LKPMClientSubmission
