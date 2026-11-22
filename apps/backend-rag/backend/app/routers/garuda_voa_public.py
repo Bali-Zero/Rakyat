@@ -462,6 +462,13 @@ def get_garuda_check_store(request: Request) -> CheckStore:
 # ============================================================
 
 
+#: The width of `garuda_voa_check_results.travellers` (INT, migration 286).
+#: The contract gives the field a minimum only, and a larger value used to
+#: fail at the INSERT. Checked in a validator, not as a field bound, so the
+#: generated schema stays the contract's.
+_TRAVELLERS_COLUMN_MAX = 2_147_483_647
+
+
 class EligibilityCheckRequest(BaseModel):
     """`#/components/schemas/EligibilityCheckRequest`, verbatim including the
     `allOf` issuance/extension shape guard."""
@@ -489,6 +496,12 @@ class EligibilityCheckRequest(BaseModel):
                 raise ValueError("voa_expiry_date is forbidden for an issuance case")
             if self.extension_already_used is not False:
                 raise ValueError("extension_already_used must be false for an issuance case")
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_what_cannot_be_stored(self) -> EligibilityCheckRequest:
+        if self.travellers > _TRAVELLERS_COLUMN_MAX:
+            raise ValueError("travellers is larger than the column that stores it")
         return self
 
 
@@ -640,6 +653,11 @@ async def create_eligibility_check(
             sanitize_for_log(payload.case_type),
         )
         return _error("PRICE_UNRESOLVABLE")
+    except OverflowError:
+        # The engine adds and subtracts days before any window check, so a date
+        # at the very edge of the calendar cannot be computed with. That is an
+        # invalid request, not a verdict, and it used to escape as a 500.
+        return _error("INVALID_REQUEST")
 
     canonical_request = payload.model_dump(mode="json")
     try:
