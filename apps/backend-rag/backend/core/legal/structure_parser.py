@@ -5,6 +5,7 @@ Recognizes hierarchical structure of Indonesian legal documents
 
 import logging
 import re
+from bisect import bisect_left
 from typing import Any
 
 from backend.core.legal.constants import (
@@ -359,13 +360,17 @@ class LegalStructureParser:
         """
         pasal_list = []
         pasal_matches = list(PASAL_PATTERN.finditer(text))
+        # The chapter headings are found ONCE for the document. Looking them up
+        # again for every Pasal re-read the whole text each time: quadratic, a
+        # minute for a law of four thousand articles.
+        bab_starts, bab_labels = self._bab_index(text)
 
         for pasal_match in pasal_matches:
             pasal_num = pasal_match.group(1)
             pasal_text = pasal_match.group(2).strip()
 
             # Find which BAB this Pasal belongs to
-            bab_context = self._find_bab_context(text, pasal_match.start())
+            bab_context = self._bab_context_at(bab_starts, bab_labels, pasal_match.start())
 
             # Parse Ayat
             ayat_list = self._parse_ayat(pasal_text)
@@ -392,10 +397,23 @@ class LegalStructureParser:
         Returns:
             BAB number/title or None
         """
+        bab_starts, bab_labels = self._bab_index(text)
+        return self._bab_context_at(bab_starts, bab_labels, position)
+
+    @staticmethod
+    def _bab_index(text: str) -> tuple[list[int], list[str]]:
+        """Where each BAB heading starts, in document order, and its label."""
         bab_matches = list(BAB_PATTERN.finditer(text))
+        return (
+            [bab_match.start() for bab_match in bab_matches],
+            [
+                f"BAB {bab_match.group(1)} - {bab_match.group(2).strip()}"
+                for bab_match in bab_matches
+            ],
+        )
 
-        for bab_match in reversed(bab_matches):
-            if bab_match.start() < position:
-                return f"BAB {bab_match.group(1)} - {bab_match.group(2).strip()}"
-
-        return None
+    @staticmethod
+    def _bab_context_at(bab_starts: list[int], bab_labels: list[str], position: int) -> str | None:
+        """The last BAB that starts strictly before ``position``, or None."""
+        before = bisect_left(bab_starts, position)
+        return bab_labels[before - 1] if before else None
