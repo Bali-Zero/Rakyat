@@ -138,6 +138,7 @@ class MessagingIdentityService:
                         user_id = EXCLUDED.user_id,
                         display_name = EXCLUDED.display_name,
                         verified = EXCLUDED.verified,
+                        active = TRUE,
                         updated_at = NOW()
                     """,
                     user_id,
