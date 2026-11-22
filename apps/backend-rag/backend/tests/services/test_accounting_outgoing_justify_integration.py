@@ -214,6 +214,50 @@ async def test_the_list_filters_by_state_and_carries_the_justification(db) -> No
     assert (both["n"], both["total_idr"], both["n_justified"]) == (1, 1_000_000, 1)
 
 
+async def _case(db, client="Contoh Klien", service="Contoh Layanan") -> int:
+    cid = await db.fetchval("INSERT INTO clients (full_name) VALUES ($1) RETURNING id", client)
+    tid = None
+    if service:
+        tid = await db.fetchval(
+            "INSERT INTO practice_types (code, name) VALUES ($1, $2) RETURNING id",
+            uuid.uuid4().hex[:8],
+            service,
+        )
+    return await db.fetchval(
+        "INSERT INTO practices (client_id, practice_type_id) VALUES ($1, $2) RETURNING id", cid, tid
+    )
+
+
+async def test_the_list_names_each_case_by_client_and_service(db) -> None:
+    kitas = await _case(db, "Contoh Klien", "Contoh Layanan")
+    bare = await _case(db, "Klien Kedua", None)
+    sid = await _statement(db)
+    pnbp = await _row(db, sid, "government_fee", 2_000_000, "x", AT)
+    cash = await _row(db, sid, "cash_withdrawal", 1_000_000, "x", AT.replace(hour=14))
+    plain = await _row(db, sid, "tax", 500_000, "x", AT.replace(hour=15))
+    await _justify(db, pnbp, "pnbp_case", practice_id=kitas)
+    await _justify(
+        db,
+        cash,
+        "cash_withdrawal",
+        recipient="CONTOH PENARIK",
+        note="cash",
+        lines=[_line(600_000, practice_id=bare), _line(400_000)],
+    )
+    await _justify(db, plain, "tax")
+    items = {
+        i["id"]: i["justification"] for i in (await load_outgoings(db, state="justified"))["items"]
+    }
+    assert items[pnbp]["practice_id"] == kitas
+    assert items[pnbp]["case"] == {"client": "Contoh Klien", "service": "Contoh Layanan"}
+    assert items[cash]["case"] is None
+    assert [ln["case"] for ln in items[cash]["lines"]] == [
+        {"client": "Klien Kedua", "service": None},
+        None,
+    ]
+    assert items[plain]["case"] is None
+
+
 async def test_the_cash_out_is_never_written(db) -> None:
     count = "SELECT count(*) FROM weekly_cashout"
     before = await db.fetchval(count)

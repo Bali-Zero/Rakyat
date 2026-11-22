@@ -13,6 +13,8 @@ import {
 } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { OutgoingsView } from "../_components/OutgoingsView";
+import { api as appApi } from "@/lib/api";
+import type { Practice } from "@/lib/api/crm/crm.types";
 import {
   accountingApi,
   type OutgoingsResponse,
@@ -23,6 +25,7 @@ vi.mock("@/components/ui/toast", () => ({ useToast: () => toast }));
 vi.mock("@/lib/logger");
 // 2 instead of the server's 500, so one test can show the batch keeps the newest only.
 vi.mock("../_components/pnbpBatch", () => ({ PNBP_BATCH_LIMIT: 2 }));
+vi.mock("@/lib/api", () => ({ api: { crm: { getPractices: vi.fn() } } }));
 vi.mock("@/lib/api/workspace/accounting.api", () => ({
   accountingApi: {
     getOutgoings: vi.fn(),
@@ -34,6 +37,31 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
 }));
 
 const api = vi.mocked(accountingApi);
+const practices = vi.mocked(appApi.crm.getPractices);
+
+/** A case as the CRM search returns it (only the fields the picker reads). */
+const practice = (id: number, client: string, service?: string, more = {}) =>
+  ({
+    id,
+    client_id: id * 10,
+    client_name: client,
+    practice_type_id: 1,
+    practice_type_name: service,
+    status: "in_progress",
+    priority: "normal",
+    payment_status: "unpaid",
+    created_at: "2026-10-05T02:00:00Z",
+    ...more,
+  }) as Practice;
+
+/** Type in a case box and click the case whose client is `client`. */
+const pickCase = async (box: string, typed: string, client: RegExp) => {
+  type(box, typed);
+  const list = await within(dialog()).findByRole("list", {
+    name: `${box}: cases found`,
+  });
+  fireEvent.click(within(list).getByRole("button", { name: client }));
+};
 
 const DATA: OutgoingsResponse = {
   items: [
@@ -118,6 +146,7 @@ const JUSTIFIED: OutgoingsResponse = {
       justification: {
         category: "vendor_case",
         practice_id: 321,
+        case: { client: "Contoh Klien", service: "Contoh Layanan" },
         recipient: null,
         note: "Deed for a test company",
         lines: [],
@@ -329,7 +358,8 @@ describe("OutgoingsView", () => {
     ).toHaveAttribute("aria-pressed", "true");
     const block = screen.getByTestId("justification-6");
     expect(block).toHaveTextContent("Notary / agent / freelancer for a case");
-    expect(block).toHaveTextContent("case 321");
+    expect(block).toHaveTextContent("Contoh Klien — Contoh Layanan");
+    expect(block).not.toHaveTextContent("321");
     expect(block).toHaveTextContent("Deed for a test company");
     expect(block).toHaveTextContent("staff@example.test");
     // 03:00 UTC on 2 Nov is 11:00 in Bali: the time is shown in WITA, not as stored
@@ -363,9 +393,15 @@ describe("OutgoingsView", () => {
     fireEvent.click(screen.getByTestId("justify-1"));
     expect(field("Category")).toHaveValue("pnbp_case");
     expect(save()).toBeEnabled();
-    type("Case id", "4a5b");
-    expect(save()).toBeDisabled(); // never read as 45
-    type("Case id", "45");
+    practices.mockResolvedValue([
+      practice(44, "Klien Lain", "Contoh Layanan"),
+      practice(45, "Contoh Klien", "KITAS Investor"),
+    ]);
+    type("Case", "Contoh");
+    expect(save()).toBeDisabled(); // typed, nothing picked yet: never saved without its case
+    await pickCase("Case", "Contoh", /Contoh Klien/);
+    expect(practices).toHaveBeenLastCalledWith({ search: "Contoh", limit: 8 });
+    expect(dialog()).toHaveTextContent("Contoh Klien — KITAS Investor");
     expect(save()).toBeEnabled();
     fireEvent.click(save());
     await waitFor(() =>
@@ -429,7 +465,10 @@ describe("OutgoingsView", () => {
     type("Line 2 note", "Stamps");
     expect(save()).toBeDisabled(); // 100000 too much
     type("Line 2 amount", "400000");
-    type("Line 2 case id", "77");
+    practices.mockResolvedValue([
+      practice(77, "Contoh Klien", "Contoh Layanan"),
+    ]);
+    await pickCase("Line 2 case", "Contoh", /Contoh Klien/);
     expect(save()).toBeEnabled();
     type("Recipient", "  ");
     expect(save()).toBeDisabled();
@@ -478,9 +517,13 @@ describe("OutgoingsView", () => {
       expect(save()).toBeDisabled();
     }
     type("Line 1 amount", "1.000.000");
-    type("Line 1 case id", "-77");
-    expect(save()).toBeDisabled();
-    type("Line 1 case id", "77");
+    expect(save()).toBeEnabled();
+    practices.mockResolvedValue([
+      practice(77, "Contoh Klien", "Contoh Layanan"),
+    ]);
+    type("Line 1 case", "Contoh");
+    expect(save()).toBeDisabled(); // a line's case typed and not picked holds Save too
+    await pickCase("Line 1 case", "Contoh", /Contoh Klien/);
     expect(save()).toBeEnabled();
     fireEvent.click(save());
     await waitFor(() =>
@@ -567,6 +610,99 @@ describe("OutgoingsView", () => {
       "justified before today: it cannot be undone",
     );
     expect(toast.error).toHaveBeenCalled();
+  });
+
+  describe("Case picker", () => {
+    const open = async () => {
+      api.getOutgoings.mockResolvedValue(DATA);
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-1");
+      fireEvent.click(screen.getByTestId("justify-1"));
+    };
+
+    it("searches from two letters and says when nothing is found or the search fails", async () => {
+      await open();
+      type("Case", "C");
+      await new Promise((r) => setTimeout(r, 400));
+      expect(practices).not.toHaveBeenCalled();
+      practices.mockResolvedValue([]);
+      type("Case", "Zz");
+      expect(
+        await within(dialog()).findByText(/No case found/),
+      ).toBeInTheDocument();
+      practices.mockRejectedValue(new Error("down"));
+      type("Case", "Zzz");
+      expect(
+        await within(dialog()).findByText(/Could not search the cases/),
+      ).toBeInTheDocument();
+      type("Case", "");
+      expect(save()).toBeEnabled(); // an emptied box holds nothing back
+    });
+
+    it("shows the service, the family member and the month the case opened", async () => {
+      await open();
+      practices.mockResolvedValue([
+        practice(45, "Contoh Klien", "KITAS Investor", {
+          family_member_name: "Anak Contoh",
+          start_date: "2026-09-14",
+        }),
+      ]);
+      type("Case", "Contoh");
+      const list = await within(dialog()).findByRole("list", {
+        name: "Case: cases found",
+      });
+      expect(list).toHaveTextContent(
+        "Contoh KlienKITAS Investor · for Anak Contoh · opened Sep 2026",
+      );
+    });
+
+    it("drops an answer that arrives after the text changed", async () => {
+      await open();
+      let first!: (v: Practice[]) => void;
+      practices
+        .mockImplementationOnce(() => new Promise((r) => (first = r)))
+        .mockResolvedValueOnce([practice(46, "Klien Baru", "Contoh Layanan")]);
+      type("Case", "Kl");
+      await waitFor(() => expect(practices).toHaveBeenCalledTimes(1));
+      type("Case", "Klien");
+      await within(dialog()).findByRole("button", { name: /Klien Baru/ });
+      await act(async () => first([practice(45, "Klien Lama", "Lama")]));
+      expect(within(dialog()).queryByText("Klien Lama")).toBeNull();
+    });
+
+    it("Change takes the case back off before saving", async () => {
+      await open();
+      api.justifyOutgoing.mockResolvedValue({
+        txn_id: 1,
+        justification_id: 1,
+        state: "justified",
+      });
+      practices.mockResolvedValue([practice(45, "Contoh Klien", "Contoh")]);
+      await pickCase("Case", "Contoh", /Contoh Klien/);
+      fireEvent.click(
+        within(dialog()).getByRole("button", { name: "Change Case" }),
+      );
+      expect(field("Case")).toHaveValue("");
+      fireEvent.click(save());
+      await waitFor(() =>
+        expect(api.justifyOutgoing).toHaveBeenCalledWith(1, {
+          category: "pnbp_case",
+        }),
+      );
+    });
+
+    it("shows the number of a case only when the case no longer exists", async () => {
+      const gone = structuredClone(JUSTIFIED);
+      gone.items[0].justification!.case = null;
+      api.getOutgoings.mockResolvedValue(gone);
+      render(<OutgoingsView />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: /^Justified/ }),
+      );
+      expect(await screen.findByTestId("justification-6")).toHaveTextContent(
+        "case 321",
+      );
+    });
   });
 
   describe("Justify all PNBP", () => {

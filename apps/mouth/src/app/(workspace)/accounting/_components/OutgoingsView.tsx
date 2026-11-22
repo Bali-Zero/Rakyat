@@ -17,11 +17,13 @@ import { useToast } from "@/components/ui/toast";
 import {
   accountingApi,
   type JustifyOutgoingRequest,
+  type OutgoingCase,
   type OutgoingItem,
   type OutgoingsResponse,
   type OutgoingState,
 } from "@/lib/api/workspace/accounting.api";
 import { logger } from "@/lib/logger";
+import { caseText } from "./CasePicker";
 import { ccShort } from "./ccFormat";
 import { CATEGORY_LABELS, JustifyDialog } from "./JustifyDialog";
 import { PNBP_BATCH_LIMIT } from "./pnbpBatch";
@@ -62,6 +64,17 @@ const WITA_OFFSET_MS = 8 * 3_600_000; // Asia/Makassar has no daylight saving
 const msToWitaMidnight = (): number =>
   DAY_MS - ((Date.now() + WITA_OFFSET_MS) % DAY_MS);
 
+/** « · Client — Service» for a case, its number only when the case is gone. */
+const caseNote = (x: {
+  practice_id?: number | null;
+  case?: OutgoingCase | null;
+}): string =>
+  x.case
+    ? ` · ${caseText(x.case)}`
+    : x.practice_id
+      ? ` · case ${x.practice_id}`
+      : "";
+
 function JustificationBlock({ item }: { item: OutgoingItem }) {
   const j = item.justification;
   if (!j) return null;
@@ -73,7 +86,7 @@ function JustificationBlock({ item }: { item: OutgoingItem }) {
     >
       <p className="font-semibold">
         {CATEGORY_LABELS[j.category] ?? j.category}
-        {j.practice_id ? ` · case ${j.practice_id}` : ""}
+        {caseNote(j)}
         {j.recipient ? ` · to ${j.recipient}` : ""}
       </p>
       {j.note && <p>{j.note}</p>}
@@ -83,7 +96,7 @@ function JustificationBlock({ item }: { item: OutgoingItem }) {
             <li key={i}>
               <Money value={l.amount_idr} /> · {CATEGORY_LABELS[l.category]} ·{" "}
               {l.note}
-              {l.practice_id ? ` · case ${l.practice_id}` : ""}
+              {caseNote(l)}
             </li>
           ))}
         </ul>
