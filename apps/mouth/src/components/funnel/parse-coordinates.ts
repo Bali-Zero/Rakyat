@@ -7,7 +7,10 @@
  *    (quote variants: ° ' " or ° ′ ″ or just spaces)
  *  - Google Maps URL: https://maps.google.com/?q=-8.65,115.13 (query ?q=lat,lng)
  *
- * Returns null if the input cannot be parsed.
+ * Returns null if the input cannot be parsed with certainty: text around a
+ * decimal pair, a comma with digits on both sides that may be a decimal comma
+ * ("-8,65, 115,13") and a latitude outside [-90, 90] or a longitude outside
+ * [-180, 180].
  *
  * Notes on DMS:
  *  - Deg + min/60 + sec/3600
@@ -33,6 +36,16 @@ function dmsToDecimal(match: RegExpMatchArray): number {
   return decimal;
 }
 
+const DECIMAL_PAIR = /^(-?\d+(?:\.\d+)?)(?:\s*,\s*|\s+)(-?\d+(?:\.\d+)?)$/;
+const DOTTED_PAIR = /^-?\d+\.\d+,-?\d+\.\d+$/;
+
+function inRange(point: LatLng): LatLng | null {
+  const { lat, lng } = point;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return point;
+}
+
 export function parseCoordinates(input: string): LatLng | null {
   const raw = input.trim();
   if (!raw) return null;
@@ -44,9 +57,7 @@ export function parseCoordinates(input: string): LatLng | null {
   if (urlMatch) {
     const lat = Number(urlMatch[1]);
     const lng = Number(urlMatch[2]);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      return { lat, lng };
-    }
+    return inRange({ lat, lng });
   }
 
   // Try DMS: two matches (lat + lng with N/S/E/W markers)
@@ -61,22 +72,24 @@ export function parseCoordinates(input: string): LatLng | null {
     const firstIsLat = firstHemi === "N" || firstHemi === "S";
     const secondIsLat = secondHemi === "N" || secondHemi === "S";
     if (firstIsLat && !secondIsLat) {
-      return { lat: first, lng: second };
+      return inRange({ lat: first, lng: second });
     }
     if (!firstIsLat && secondIsLat) {
-      return { lat: second, lng: first };
+      return inRange({ lat: second, lng: first });
     }
     return null;
   }
 
-  // Fallback: decimal lat,lng separated by comma or whitespace
-  const decimalMatch = raw.match(/(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)/);
+  // Fallback: the whole input is one decimal pair. A digit,comma,digit with
+  // no space may be a decimal comma, so it is not guessed, unless both numbers
+  // carry a dot (then the comma can only be the separator).
+  if (/\d,\d/.test(raw) && !DOTTED_PAIR.test(raw)) return null;
+  const decimalMatch = raw.match(DECIMAL_PAIR);
   if (decimalMatch) {
-    const lat = Number(decimalMatch[1]);
-    const lng = Number(decimalMatch[2]);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      return { lat, lng };
-    }
+    return inRange({
+      lat: Number(decimalMatch[1]),
+      lng: Number(decimalMatch[2]),
+    });
   }
 
   return null;
