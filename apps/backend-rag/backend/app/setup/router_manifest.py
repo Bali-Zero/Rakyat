@@ -449,11 +449,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="websocket", process_groups=_API, tags=("channels",)),
     # ── WhatsApp ──
     RouterEntry(
-        name="wa_actions",
-        process_groups=_API,
-        tags=("channels", "crm", "wa-copilot"),
-    ),
-    RouterEntry(
         name="wa_broker",
         process_groups=_API,
         tags=("channels", "wa-broker"),
@@ -557,7 +552,7 @@ portal_notifications portal_notification_prefs portal_process_timeline complianc
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
 wr2_publish workspace_analytics research_control legal_ingest naga
 oracle_universal kbli_notebook kbli_notebook_chat websocket twitter
-twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
+twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages
 wa_broker wa_inbox wa_package instagram_chat instagram_chat:webhook_router intel_lake intel
 intel_scraper intel_analytics intel_observability webhooks messaging_identity zoho_email
 google_drive documents_proxy team_drive sheets admin_crm_kg admin_drive_auth
@@ -587,7 +582,7 @@ portal_dashboard portal_drive portal_family portal_invite portal_matters
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
 wr2_publish workspace_analytics research_control websocket twitter
-twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
+twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages
 wa_broker wa_inbox instagram_chat instagram_chat:webhook_router webhooks messaging_identity
 zoho_email google_drive documents_proxy dynamic_pricing team_drive sheets admin_crm_kg
 admin_drive_auth admin_drive_health admin_email_health admin_pii admin_rate_limit

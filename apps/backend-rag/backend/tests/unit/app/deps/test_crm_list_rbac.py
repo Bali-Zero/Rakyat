@@ -52,7 +52,7 @@ def test_accounting_full_view_gets_no_filter_without_being_crm_admin():
 
 
 # --------------------------------------------------------------------------- #
-# can_view_all_clients stays True — write-guards in wa_actions/omnichannel     #
+# can_view_all_clients stays True — write-guards in omnichannel/channels       #
 # that call it directly must NOT regress.                                      #
 # --------------------------------------------------------------------------- #
 
