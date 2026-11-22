@@ -155,7 +155,7 @@ class TestGetClientConfig:
     @pytest.mark.asyncio
     async def test_returns_config_when_found(self, service, mock_db_pool):
         _, conn = mock_db_pool
-        conn.fetchrow.return_value = _make_config_row()
+        conn.fetch.return_value = [_make_config_row()]
 
         result = await service.get_client_config(1)
 
@@ -167,7 +167,7 @@ class TestGetClientConfig:
     @pytest.mark.asyncio
     async def test_returns_none_when_not_found(self, service, mock_db_pool):
         _, conn = mock_db_pool
-        conn.fetchrow.return_value = None
+        conn.fetch.return_value = []
 
         result = await service.get_client_config(999)
         assert result is None
@@ -295,12 +295,12 @@ class TestGenerateDraft:
             call_count += 1
             if call_count == 1:
                 return None  # _load_draft
-            elif call_count == 2:
-                return _make_config_row()  # get_client_config
             else:
                 return {"id": 99}  # _save_draft
 
         conn.fetchrow = smart_fetchrow
+        # get_client_config reads the client's rows, then _calculate_cumulative its sums
+        conn.fetch.side_effect = [[_make_config_row()], conn.fetch.return_value]
         result = await service.generate_draft(1, "Q1", 2026)
         assert result.id == 99
 
@@ -308,6 +308,7 @@ class TestGenerateDraft:
     async def test_raises_when_no_config(self, service, mock_db_pool):
         _, conn = mock_db_pool
         conn.fetchrow.return_value = None
+        conn.fetch.return_value = []
 
         with pytest.raises(ValueError, match="No LKPM config"):
             await service.generate_draft(999, "Q1", 2026)
@@ -542,7 +543,7 @@ class TestSyncJurnal:
     @pytest.mark.asyncio
     async def test_no_config_raises(self, service, mock_db_pool):
         _, conn = mock_db_pool
-        conn.fetchrow.return_value = None
+        conn.fetch.return_value = []
 
         with pytest.raises(ValueError, match="No LKPM config"):
             await service.sync_jurnal(1, "Q1", 2026)
@@ -550,7 +551,7 @@ class TestSyncJurnal:
     @pytest.mark.asyncio
     async def test_no_api_key_raises(self, service, mock_db_pool):
         _, conn = mock_db_pool
-        conn.fetchrow.return_value = _make_config_row(jurnal_api_key=None)
+        conn.fetch.return_value = [_make_config_row(jurnal_api_key=None)]
 
         with pytest.raises(ValueError, match="No Jurnal API key"):
             await service.sync_jurnal(1, "Q1", 2026)
