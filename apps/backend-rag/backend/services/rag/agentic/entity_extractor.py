@@ -288,7 +288,7 @@ class EntityExtractionService:
     def _extract_budget(self, query_lower: str) -> str | None:
         """Extract budget from query."""
         budget_match = re.search(
-            r"(?P<cur>\\\$|usd|idr|rp)\\s*(?P<num>\\d{1,3}(?:[\\.,]\\d{3})*(?:[\\.,]\\d+)?)\\s*(?P<unit>k|m|million)?",
+            r"(?P<cur>\$|\b(?:usd|idr|rp)\b)\s*(?P<num>\d+(?:[\.,]\d{3})*(?:[\.,]\d+)?)\s*(?P<unit>k|m|million)?",
             query_lower,
         )
         if budget_match:
