@@ -45,6 +45,11 @@ import { CoverImageUploader } from "./components/CoverImageUploader";
 import { getArticlePalette } from "./article-palette";
 
 type FilterType = "all" | "NEW" | "UPDATED" | "critical";
+
+const isQueuedOrPublished = (item: StagingItem) =>
+  item.status === "published" ||
+  item.status === "publication_pending" ||
+  item.status === "publishing";
 type SortType = "date-desc" | "date-asc" | "title-asc" | "title-desc";
 
 const UNIQUE_HOMEPAGE_POSITIONS = new Set<PublishPosition>([
@@ -166,6 +171,17 @@ export default function NewsRoomPage() {
     }
   };
 
+  // What "Publish all" sends: the selected cards that are on screen and not
+  // already queued. A selection outlives a search or a filter, and a card stays
+  // selected after it is queued; neither is something the operator is looking at.
+  const bulkTargets = useMemo(
+    () =>
+      filteredAndSortedItems.filter(
+        (item) => selectedItems.has(item.id) && !isQueuedOrPublished(item),
+      ),
+    [filteredAndSortedItems, selectedItems],
+  );
+
   const toggleSelectItem = (id: string) => {
     setSelectedItems((prev) => {
       const next = new Set(prev);
@@ -192,7 +208,16 @@ export default function NewsRoomPage() {
       return;
     }
 
-    const ids = Array.from(selectedItems);
+    const targets = bulkTargets;
+    if (targets.length === 0) {
+      toast.error(
+        "Nothing to publish",
+        "None of the selected articles is on screen and still waiting to be published.",
+      );
+      return;
+    }
+
+    const ids = targets.map((item) => item.id);
     const missingPositions = ids.filter((id) => !getPosition(id));
     if (missingPositions.length > 0) {
       toast.error(
@@ -219,15 +244,16 @@ export default function NewsRoomPage() {
     logger.info("Starting bulk publish", {
       component: "NewsRoomPage",
       action: "bulk_publish_start",
-      metadata: { count: selectedItems.size },
+      metadata: { count: ids.length },
     });
 
     const results = { success: 0, failed: 0 };
+    const queuedIds: string[] = [];
+    let firstReason = "";
 
-    for (const id of ids) {
+    for (const item of targets) {
+      const id = item.id;
       setPublishingIds((prev) => new Set(prev).add(id));
-      const item = items.find((i) => i.id === id);
-      if (!item) continue;
 
       try {
         const bulkResponse = await intelligenceApi.publishItem(
@@ -239,6 +265,7 @@ export default function NewsRoomPage() {
           throw new Error(bulkResponse.message || "Publication was not queued");
         }
         results.success++;
+        queuedIds.push(id);
         setItems((prev) =>
           prev.map((i) =>
             i.id === id ? { ...i, status: "publication_pending" } : i,
@@ -246,6 +273,9 @@ export default function NewsRoomPage() {
         );
       } catch (error) {
         results.failed++;
+        if (!firstReason) {
+          firstReason = error instanceof Error ? error.message : String(error);
+        }
         logger.error(
           "Bulk publish failed for item",
           {
@@ -264,11 +294,23 @@ export default function NewsRoomPage() {
       }
     }
 
-    setSelectedItems(new Set());
-    toast.success(
-      "Bulk publication requests completed",
-      `${results.success} queued, ${results.failed} failed.`,
-    );
+    // What failed stays selected, so it can be sent again.
+    setSelectedItems((prev) => {
+      const next = new Set(prev);
+      for (const id of queuedIds) next.delete(id);
+      return next;
+    });
+    if (results.failed > 0) {
+      toast.error(
+        "Bulk publication incomplete",
+        `${results.success} queued, ${results.failed} failed${firstReason ? `: ${firstReason}` : "."}`,
+      );
+    } else {
+      toast.success(
+        "Bulk publication requests completed",
+        `${results.success} queued, ${results.failed} failed.`,
+      );
+    }
 
     logger.info("Bulk publish completed", {
       component: "NewsRoomPage",
@@ -341,7 +383,8 @@ export default function NewsRoomPage() {
         });
         toast.error(
           "Not queued",
-          response.message || "The article could not be queued for publication.",
+          response.message ||
+            "The article could not be queued for publication.",
         );
         return;
       }
@@ -904,6 +947,11 @@ export default function NewsRoomPage() {
           >
             {selectedItems.size} selected
           </span>
+          {bulkTargets.length !== selectedItems.size && (
+            <span className="text-[11px]" style={{ color: "var(--bz-text-2)" }}>
+              {bulkTargets.length} to publish
+            </span>
+          )}
           <div
             className="w-px h-4"
             style={{ background: "var(--surface-raised)" }}
