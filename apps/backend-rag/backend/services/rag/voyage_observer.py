@@ -58,7 +58,7 @@ def _reader(cfg):
 
 
 def _provider(cfg):
-    return httpx.AsyncClient(
+    return httpx.AsyncClient(  # golden-rule-10-exempt: every caller enters this factory result with async with
         base_url=BASE_URL,
         headers={"Authorization": "Bearer " + cfg.voyage_api_key.get_secret_value()},
         timeout=1.5,
