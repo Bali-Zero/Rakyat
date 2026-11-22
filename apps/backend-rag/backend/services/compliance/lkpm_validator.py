@@ -77,7 +77,7 @@ class LKPMValidator:
         """Check that client's registered KBLI codes exist in our KBLI database."""
         alerts: list[ValidationAlert] = []
 
-        if not registered_kbli:
+        if not any((code or "").strip() for code in registered_kbli):
             alerts.append(
                 ValidationAlert(
                     field="kbli_codes",
