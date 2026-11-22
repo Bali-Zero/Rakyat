@@ -203,8 +203,16 @@ async def get_all_expiry_alerts(
     async with pool.acquire() as conn:
         # RBAC: non-admin users only see their own assigned alerts
         user_filter = get_practices_user_filter(current_user)
-        owners = user_filter if user_filter and not assigned_to else None
-        if owners is None and assigned_to:
+        owners = user_filter
+        if user_filter is not None and assigned_to:
+            owners = [
+                owner
+                for owner in user_filter
+                if owner.strip().lower() == assigned_to.strip().lower()
+            ]
+            if not owners:
+                return []
+        elif user_filter is None and assigned_to:
             owners = [assigned_to]
 
         query = """
@@ -217,7 +225,7 @@ async def get_all_expiry_alerts(
         params = []
         param_num = 1
 
-        # Optional filter by assigned_to (user choice, not RBAC enforcement)
+        # Owner condition applies the caller's permitted ownership scope.
         if owners:
             query += f" AND assigned_to = ANY(${param_num}::text[])"
             params.append(owners)
