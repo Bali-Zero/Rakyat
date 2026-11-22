@@ -89,6 +89,25 @@ const inputFocusStyle: React.CSSProperties = {
   borderColor: "var(--bz-accent)",
 };
 
+interface SentForPublication {
+  headline: string;
+  url: string;
+}
+
+/**
+ * Publishing opens a pull request; the article is on the site only after the
+ * checks pass and the site is deployed.
+ */
+function sentForPublicationDetail(
+  headline: string,
+  pullRequestNumber: number | null | undefined,
+): string {
+  if (pullRequestNumber) {
+    return `"${headline}": pull request #${pullRequestNumber} opened. Not live yet: the article appears on the site after the checks pass and the site is deployed.`;
+  }
+  return `"${headline}". Not live yet: the article appears on the site after the next deploy.`;
+}
+
 export default function ArticleComposerPage() {
   const toast = useToast();
 
@@ -125,7 +144,11 @@ export default function ArticleComposerPage() {
   // Publish State
   const [position, setPosition] = useState<ArticlePublishPosition>("normal");
   const [customSlug, setCustomSlug] = useState("");
-  const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+  // What the last successful publish request of this visit carried and where
+  // it will be. It is a record of that request, not a mark on the article on
+  // screen: two articles can share a headline and a URL, and a later compose
+  // does not clear it.
+  const [lastSent, setLastSent] = useState<SentForPublication | null>(null);
 
   // Focus tracking for inputs
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
@@ -282,8 +305,13 @@ export default function ArticleComposerPage() {
 
       const res = await articlesApi.publish(req);
       if (res.success) {
-        setPublishedUrl(res.article_url || "#");
-        toast.success("Published!", "Article is live.");
+        // The request's own article, whatever is on screen by now.
+        const headline = articleToPublish.headline;
+        setLastSent({ headline, url: res.article_url || "#" });
+        toast.success(
+          "Sent for publication",
+          sentForPublicationDetail(headline, res.pull_request_number),
+        );
       } else {
         throw new Error(res.error || res.message || "Publish failed");
       }
@@ -1274,18 +1302,19 @@ export default function ArticleComposerPage() {
                       )}
                       {publishing ? "Publishing..." : "Publish Article"}
                     </button>
-                    {publishedUrl && (
+                    {lastSent && (
                       <div className="text-[11px]">
                         <span style={{ color: "var(--bz-text-2)" }}>
-                          Published:{" "}
+                          Last sent for publication: &quot;
+                          {lastSent.headline}&quot;. Live once deployed:{" "}
                         </span>
                         <a
-                          href={publishedUrl}
+                          href={lastSent.url}
                           target="_blank"
                           className="underline break-all"
                           style={{ color: "var(--state-success)" }}
                         >
-                          {publishedUrl}
+                          {lastSent.url}
                         </a>
                       </div>
                     )}
