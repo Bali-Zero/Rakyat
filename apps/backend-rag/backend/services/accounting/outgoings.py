@@ -4,7 +4,8 @@ A reading is the bank's own text taken apart (payee and purpose of a transfer, t
 code of a PNBP payment, the cheque of a cash withdrawal) and the transfer a fee belongs to. It
 is shown and never stored. Each debit also carries its state: `justified` when an active
 justification stands (outgoing_justify.py writes it), or, for a transfer fee, when its paired
-transfer is justified; otherwise `to_justify`.
+transfer is justified; otherwise `to_justify`. A PNBP debit's reading also counts the debits
+that carry its e-billing code (`code_debits`): two or more is a possible double payment.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any
 import asyncpg
 
 from backend.services.accounting.companies import OTHER_KEY, company_key_for_account
-from backend.services.accounting.outgoing_justify import PAIR_LATERAL
+from backend.services.accounting.outgoing_justify import PAIR_LATERAL, SAME_CODE_LATERAL
 
 # "OCTO Biz TO <payee> IBI<reference> <BIC> <purpose>" — 60 of 60 transfers on 2026-11-21.
 _TRANSFER = re.compile(r"^OCTO Biz TO (?P<payee>.+?) IBI\d+\s+[A-Z]{8}(?:\s+(?P<purpose>.*?))?\s*$")
@@ -72,10 +73,12 @@ _BASE = f"""
            CASE WHEN pair.n = 1 THEN pair.description END AS fee_of_description,
            COALESCE(j.id, pj.id) AS justification_id,
            CASE WHEN pj.id IS NOT NULL AND j.id IS NULL THEN pair.id END AS follows_txn_id,
-           (COALESCE(j.id, pj.id) IS NOT NULL) AS is_justified
+           (COALESCE(j.id, pj.id) IS NOT NULL) AS is_justified,
+           same_code.n AS code_debits
     FROM bank_transactions bt
     LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
     {PAIR_LATERAL}
+    {SAME_CODE_LATERAL}
     LEFT JOIN outgoing_justifications j ON j.txn_id = bt.id AND j.undone_at IS NULL
     LEFT JOIN outgoing_justifications pj
            ON pair.n = 1 AND pj.txn_id = pair.id AND pj.undone_at IS NULL
@@ -124,6 +127,9 @@ async def load_outgoings(
     for r in rows:
         kind = r["kind"] or "other"
         reading = read_outgoing(kind, r["description"] or "", r["payment_type"])
+        if "billing_code" in reading:
+            # 2 or more: the same e-billing code was debited again, a possible double payment.
+            reading["code_debits"] = int(r["code_debits"])
         if r["fee_of_txn_id"] is not None:
             payee = read_outgoing("transfer_out", r["fee_of_description"] or "", None).get("payee")
             reading["payee"] = payee
@@ -178,7 +184,7 @@ async def _justifications(
     if not wanted:
         return {}
     heads = await conn.fetch(
-        "SELECT id, category, practice_id, recipient, note, justified_by, justified_at"
+        "SELECT id, category, practice_id, recipient, note, justified_by, justified_at, batch_id"
         " FROM outgoing_justifications WHERE id = ANY($1::bigint[])",
         wanted,
     )
@@ -196,6 +202,7 @@ async def _justifications(
             "lines": [],
             "by": h["justified_by"],
             "at": h["justified_at"],
+            "batch_id": str(h["batch_id"]) if h["batch_id"] else None,
         }
         for h in heads
     }

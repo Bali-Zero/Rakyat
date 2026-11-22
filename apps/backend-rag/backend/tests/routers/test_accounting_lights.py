@@ -12,6 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
+import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -1030,3 +1031,61 @@ def test_justify_maps_the_services_refusal_to_its_status(mock_db_pool) -> None:
         409,
         {"detail": "this debit is already justified: undo it first"},
     )
+
+
+# ── owner 2026-11-22: justify all PNBP in one go ─────────────────────────────────────────
+
+BATCH = "3f2b6c1e-0000-4000-8000-000000000001"
+
+
+def test_pnbp_batch_and_its_undo_are_admin_only(mock_db_pool) -> None:
+    client = _client(mock_db_pool, OUTSIDER)
+    with patch.object(accounting_module, "justify_pnbp_batch", AsyncMock()) as j:
+        assert client.post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [1]}).status_code == 403
+        assert client.post(f"{BASE}/outgoings/batches/{BATCH}/undo").status_code == 403
+    assert not j.called
+
+
+def test_pnbp_batch_passes_the_ids_and_the_lowercased_identity(mock_db_pool) -> None:
+    done = {"batch_id": BATCH, "n": 2, "total_idr": 6_000_000, "state": "justified"}
+    with patch.object(accounting_module, "justify_pnbp_batch", AsyncMock(return_value=done)) as j:
+        resp = _client(mock_db_pool).post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [4, 7]})
+    assert (resp.status_code, resp.json()) == (200, done)
+    assert j.await_args.kwargs == {"txn_ids": [4, 7], "justified_by": "admin@example.test"}
+
+
+@pytest.mark.parametrize("body", [{}, {"txn_ids": []}, {"txn_ids": ["x"]}, {"txn_ids": [1] * 501}])
+def test_pnbp_batch_refuses_a_malformed_list(mock_db_pool, body) -> None:
+    with patch.object(accounting_module, "justify_pnbp_batch", AsyncMock()) as j:
+        resp = _client(mock_db_pool).post(f"{BASE}/outgoings/pnbp-batch", json=body)
+    assert resp.status_code == 422
+    assert not j.called
+
+
+def test_pnbp_batch_maps_the_refusal_and_the_race_to_409(mock_db_pool) -> None:
+    from backend.services.accounting.outgoing_justify import OutgoingError
+
+    text = "an e-billing code on more than one debit is justified by hand"
+    refused = AsyncMock(side_effect=OutgoingError(409, text))
+    raced = AsyncMock(side_effect=asyncpg.UniqueViolationError("dup"))
+    client = _client(mock_db_pool)
+    with patch.object(accounting_module, "justify_pnbp_batch", refused):
+        resp = client.post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [1]})
+    assert (resp.status_code, resp.json()) == (409, {"detail": text})
+    with patch.object(accounting_module, "justify_pnbp_batch", raced):
+        resp = client.post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [1]})
+    assert (resp.status_code, resp.json()) == (
+        409,
+        {"detail": "a debit is already justified: reload the list"},
+    )
+
+
+def test_batch_undo_passes_the_uuid_and_refuses_one_that_is_not(mock_db_pool) -> None:
+    done = {"batch_id": BATCH, "n": 2, "state": "to_justify"}
+    with patch.object(accounting_module, "undo_batch", AsyncMock(return_value=done)) as u:
+        ok = _client(mock_db_pool).post(f"{BASE}/outgoings/batches/{BATCH}/undo")
+        bad = _client(mock_db_pool).post(f"{BASE}/outgoings/batches/not-a-uuid/undo")
+    assert (ok.status_code, ok.json()) == (200, done)
+    assert str(u.await_args.kwargs["batch_id"]) == BATCH
+    assert u.await_args.kwargs["undone_by"] == "admin@example.test"
+    assert bad.status_code == 422 and u.await_count == 1

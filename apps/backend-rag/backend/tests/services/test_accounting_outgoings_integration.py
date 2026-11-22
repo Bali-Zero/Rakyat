@@ -14,6 +14,7 @@ from backend.services.accounting.outgoings import load_outgoings, read_outgoing
 from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 from backend.tests.services.test_accounting_reconcile_integration import (
     MIGRATION_375,
+    MIGRATION_376,
     _drop_db,
     _forward_sql_of,
     _fresh_db,
@@ -28,6 +29,7 @@ async def db():
     conn, dbname, user = await _fresh_db()
     try:
         await conn.execute(_forward_sql_of(MIGRATION_375))
+        await conn.execute(_forward_sql_of(MIGRATION_376))
         yield conn
     finally:
         await _drop_db(conn, dbname, user)
@@ -175,6 +177,7 @@ async def test_only_unjustified_debits_newest_first_with_totals(db) -> None:
             "label": "PNBP",
             "billing_code": "820261121000001",
             "detail": "e-billing 820261121000001",
+            "code_debits": 1,
         },
         "fee_of_txn_id": None,
         "state": "to_justify",

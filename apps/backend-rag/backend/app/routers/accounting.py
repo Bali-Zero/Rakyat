@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import tempfile
+import uuid
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -53,8 +54,11 @@ from backend.services.accounting.matcher import (
     rank_candidates,
 )
 from backend.services.accounting.outgoing_justify import (
+    BATCH_LIMIT,
     OutgoingError,
     justify_outgoing,
+    justify_pnbp_batch,
+    undo_batch,
     undo_justification,
 )
 from backend.services.accounting.outgoings import load_outgoings
@@ -688,6 +692,56 @@ async def undo_outgoing_justification(
         async with db_pool.acquire() as conn:
             return await undo_justification(
                 conn, txn_id=txn_id, undone_by=(current_user.get("email") or "unknown").lower()
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+
+
+class PnbpBatchRequest(BaseModel):
+    txn_ids: list[int] = Field(min_length=1, max_length=BATCH_LIMIT)
+
+
+@router.post("/outgoings/pnbp-batch")
+async def justify_pnbp_batch_route(
+    payload: PnbpBatchRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Justify the listed PNBP debits in one go (no case), all or nothing. No cash-out write."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await justify_pnbp_batch(
+                conn,
+                txn_ids=payload.txn_ids,
+                justified_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except asyncpg.UniqueViolationError as exc:  # a parallel justify won the race
+        raise HTTPException(
+            status_code=409, detail="a debit is already justified: reload the list"
+        ) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+
+
+@router.post("/outgoings/batches/{batch_id}/undo")
+async def undo_outgoing_batch(
+    batch_id: uuid.UUID,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Take back what is still active of a batch made today (WITA). Deletes nothing."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await undo_batch(
+                conn,
+                batch_id=batch_id,
+                undone_by=(current_user.get("email") or "unknown").lower(),
             )
     except OutgoingError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
