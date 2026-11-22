@@ -291,8 +291,10 @@ async def send_email(
     to: str,
     subject: str,
     body: str,
+    client_id: int | None = None,
 ) -> bool:
     """Invia email via API interna."""
+    recipient = f"client {client_id}" if client_id is not None else to
     try:
         resp = await http_client.post(
             f"{BACKEND_URL}/api/notifications/send-email",
@@ -307,11 +309,15 @@ async def send_email(
             timeout=30,
         )
         if resp.status_code == 200:
-            return True
-        logger.warning(f"  Email API error {resp.status_code} for {to}: {resp.text[:100]}")
+            try:
+                if resp.json().get("success") is True:
+                    return True
+            except (AttributeError, TypeError, ValueError):
+                pass
+        logger.warning(f"  Email API error {resp.status_code} for {recipient}: {resp.text[:100]}")
         return False
     except httpx.HTTPError as e:
-        logger.error(f"  HTTP error sending to {to}: {e}")
+        logger.error(f"  HTTP error sending to {recipient}: {e}")
         return False
 
 
@@ -324,7 +330,12 @@ async def run_segment(
     dry_run: bool,
     limit: int | None,
     confirm: bool,
+    mailed_client_ids: set[int] | None = None,
 ) -> dict[str, int]:
+    if limit == 0:
+        logger.info(f"[{segment}] sent=0, errors=0")
+        return {"segment": 0, "sent": 0, "errors": 0}
+
     fn = SEGMENT_FNS[segment]
     clients = await fn(conn, limit=limit)
 
@@ -361,23 +372,40 @@ async def run_segment(
 
     sent = 0
     errors = 0
+    skipped = 0
+    if mailed_client_ids is None:
+        mailed_client_ids = set()
     async with httpx.AsyncClient() as http_client:
         for client in clients:
+            if client["id"] in mailed_client_ids:
+                skipped += 1
+                logger.info(f"  skipped: already mailed in this run ({client['id']})")
+                continue
             if not client.get("email"):
                 errors += 1
                 continue
             email = build_email(segment, client)
-            ok = await send_email(http_client, email["to"], email["subject"], email["body"])
+            mailed_client_ids.add(client["id"])
+            ok = await send_email(
+                http_client,
+                email["to"],
+                email["subject"],
+                email["body"],
+                client["id"],
+            )
             if ok:
                 sent += 1
                 logger.info(f"  ✅ email inviata → {email['to']} ({client.get('full_name')})")
             else:
                 errors += 1
-                logger.warning(f"  ❌ errore → {email['to']}")
+                logger.warning(f"  ❌ errore → client {client['id']}")
             # Rate limit: max 10/min → 6s delay
             await asyncio.sleep(6)
 
-    logger.info(f"[{segment}] sent={sent}, errors={errors}")
+    logger.info(
+        f"[{segment}] sent={sent}, errors={errors}, "
+        f"skipped: already mailed in this run={skipped}"
+    )
     return {"segment": len(clients), "sent": sent, "errors": errors}
 
 
@@ -397,8 +425,9 @@ async def main(
     conn = await asyncpg.connect(DATABASE_URL)
     try:
         total_results: dict[str, dict[str, int]] = {}
+        mailed_client_ids: set[int] = set()
         for seg in segments_to_run:
-            result = await run_segment(conn, seg, dry_run, limit, confirm)
+            result = await run_segment(conn, seg, dry_run, limit, confirm, mailed_client_ids)
             total_results[seg] = result
 
         print("\n" + "=" * 60)
