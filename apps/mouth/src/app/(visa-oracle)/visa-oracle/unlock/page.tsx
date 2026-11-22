@@ -11,7 +11,14 @@
  */
 import { useState, type FormEvent } from "react";
 
-type Status = "idle" | "checking" | "error" | "unconfigured" | "done";
+type Status =
+  | "idle"
+  | "checking"
+  | "error"
+  | "unconfigured"
+  | "done"
+  | "locking"
+  | "lockError";
 
 const UNLOCK_URL = "/api/visa-oracle-unlock";
 
@@ -44,14 +51,21 @@ export default function VisaOracleUnlockPage() {
   }
 
   async function lock() {
+    if (status === "locking") return;
+    setStatus("locking");
     try {
-      await fetch(UNLOCK_URL, {
+      const response = await fetch(UNLOCK_URL, {
         method: "DELETE",
         cache: "no-store",
         credentials: "same-origin",
       });
-    } finally {
-      window.location.assign("/visa-oracle");
+      if (response.ok) {
+        window.location.assign("/visa-oracle");
+        return;
+      }
+      setStatus("lockError");
+    } catch {
+      setStatus("lockError");
     }
   }
 
@@ -104,11 +118,14 @@ export default function VisaOracleUnlockPage() {
             {status === "unconfigured" &&
               "Internal access is not configured on this deployment."}
             {status === "done" && "Unlocked — opening the Oracle…"}
+            {status === "lockError" &&
+              "This browser could not be locked. Please try again."}
           </p>
           <button
             type="button"
             className="oracle-question__back"
             onClick={lock}
+            disabled={status === "locking"}
             style={{ marginTop: "1.5rem" }}
           >
             Lock this browser again
