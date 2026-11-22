@@ -108,9 +108,16 @@ async def build_mediated_edges(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
 
 async def _emit_contemporaneous(conn: asyncpg.Connection) -> int:
-    """Two crm_document nodes for the same Client, uploaded within
-    _CONTEMPORANEOUS_WINDOW_DAYS, get a CONTEMPORANEOUS edge (undirected,
-    represented as two symmetric directed edges to keep the schema simple).
+    """Two crm_document nodes for the same Client get a CONTEMPORANEOUS edge
+    when their documents were recorded within _CONTEMPORANEOUS_WINDOW_DAYS of
+    each other (undirected, represented by one canonically directed edge to
+    keep the schema simple).
+
+    The date is documents.created_at, the moment the CRM recorded the
+    document, never the node's own created_at, which is only the moment the
+    graph wrote the node. A node whose file has no documents row takes part
+    in no pair. For files discovered in bulk by a Drive scan that moment is
+    the scan, not the upload: the Drive creation time is not stored.
 
     Heuristic confidence: 0.85 (time-window match, not property equality).
 
@@ -135,10 +142,20 @@ async def _emit_contemporaneous(conn: asyncpg.Connection) -> int:
             ON d2.entity_id = e2.source_entity_id
             AND d2.entity_type = 'crm_document'
             AND d2.deleted_at IS NULL
+        JOIN documents doc1 ON doc1.file_id = d1.file_id
+        JOIN documents doc2 ON doc2.file_id = d2.file_id
         WHERE
             d1.entity_id < d2.entity_id  -- canonical ordering, no dup pairs
-            AND ABS(EXTRACT(EPOCH FROM (d1.created_at - d2.created_at))) <
+            AND ABS(EXTRACT(EPOCH FROM (doc1.created_at - doc2.created_at))) <
                 ($1::int * 86400)
+            AND NOT EXISTS (
+                SELECT 1
+                FROM crm_kg_edges existing
+                WHERE existing.source_entity_id = d1.entity_id
+                    AND existing.target_entity_id = d2.entity_id
+                    AND existing.relationship_type = 'CONTEMPORANEOUS'
+            )
+        ORDER BY d1.entity_id, d2.entity_id
         LIMIT $2
     )
     INSERT INTO crm_kg_edges (
