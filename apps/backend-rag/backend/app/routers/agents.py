@@ -146,7 +146,8 @@ async def create_client_journey(
             client_id=request.client_id,
             custom_steps=request.custom_steps,
         )
-        await invalidate_cache("zantara:agents:*")
+        await invalidate_cache("zantara:agents_status:*")
+        await invalidate_cache("zantara:agents_analytics:*")
         return {
             "success": True,
             "journey_id": journey.journey_id,
@@ -185,7 +186,8 @@ async def complete_journey_step(
     """Mark a journey step as completed"""
     try:
         journey_orchestrator.complete_step(journey_id, step_id, notes)
-        await invalidate_cache("zantara:agents:*")
+        await invalidate_cache("zantara:agents_status:*")
+        await invalidate_cache("zantara:agents_analytics:*")
         return {
             "success": True,
             "message": f"Step {step_id} marked as complete",
@@ -255,7 +257,8 @@ async def add_compliance_tracking(
             estimated_cost=request.estimated_cost,
             required_documents=request.required_documents,
         )
-        await invalidate_cache("zantara:agents:*")
+        await invalidate_cache("zantara:agents_status:*")
+        await invalidate_cache("zantara:agents_analytics:*")
         return {
             "success": True,
             "item_id": item.item_id,
