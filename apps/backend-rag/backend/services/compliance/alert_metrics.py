@@ -9,9 +9,22 @@ Conventions:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
+
+
+def _setting_int(value: str | None, *, key: str, default: int | None) -> int | None:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("system setting %s is not a whole number", key)
+        return default
 
 
 @dataclass
@@ -72,7 +85,11 @@ async def compute_metrics(
         "SELECT value FROM system_settings WHERE key = $1",
         f"compliance_alert_threshold_urgent_{category}",
     )
-    threshold_current: int | None = int(threshold_val) if threshold_val is not None else None
+    threshold_current = _setting_int(
+        threshold_val,
+        key=f"compliance_alert_threshold_urgent_{category}",
+        default=None,
+    )
 
     return CategoryMetrics(
         category=category,

@@ -37,6 +37,16 @@ _WINDOW_KEY = "compliance_alert_autotune_window_days"
 _ENABLED_KEY = "compliance_alert_autotune_enabled"
 
 
+def _setting_int(value: str | None, *, key: str, default: int) -> int:
+    if not value:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("system setting %s is not a whole number", key)
+        return default
+
+
 @dataclass
 class ThresholdChange:
     category: str
@@ -114,7 +124,7 @@ class AlertFeedback:
             "SELECT value FROM system_settings WHERE key = $1",
             _WINDOW_KEY,
         )
-        window_days: int = int(window_val) if window_val else 90
+        window_days = _setting_int(window_val, key=_WINDOW_KEY, default=90)
 
         # compute_metrics_all / compute_metrics need a Connection object
         if self._conn is not None:
