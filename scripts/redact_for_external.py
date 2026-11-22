@@ -52,14 +52,36 @@ _SECRET_LITERALS: list[re.Pattern[str]] = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
 ]
 
-# A name ENDING in a credential word, whether assigned or used as a mapping
-# key: the name itself says it is a credential, so the value goes regardless
-# of its shape. The two shapes are matched by the pattern below rather than
-# quoted here — see test_named_assignment_* for each as a real line.
+# A name says its value is a credential when it ENDS in a credential word, or
+# when that word is a whole underscore-separated segment followed only by
+# suffixes that leave it the same kind of thing: an environment, a role among
+# several copies, a version or an ordinal. Any other suffix describes something
+# ABOUT a credential (its id, type, path, hash, usage count), and redacting
+# those values blinds the reader of the code without protecting anything: a
+# measurement over this repository found about fifty such lines for each real
+# one. The vocabulary is extended here, in one place.
+_CREDENTIAL_WORD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN)"
+_CREDENTIAL_SUFFIX = (
+    r"(?:PROD|PRODUCTION|STAGING|STAGE|STG|DEV|DEVELOPMENT|TEST|TESTING|LIVE|SANDBOX"
+    r"|LOCAL|PREVIEW|BASE|MAIN|PRIMARY|SECONDARY|BACKUP|OLD|NEW|CURRENT|PREVIOUS|NEXT"
+    r"|V?\d+|[A-Z])"
+)
+_CREDENTIAL_NAME = (
+    r"(?:[A-Za-z_]?[A-Za-z0-9_]*" + _CREDENTIAL_WORD + r"\b"
+    r"|(?:[A-Za-z_][A-Za-z0-9_]*_)?"
+    + _CREDENTIAL_WORD
+    + r"(?:_"
+    + _CREDENTIAL_SUFFIX
+    + r")+\b)"
+)
+
+# The shapes are matched by the patterns below rather than quoted here — see
+# test_named_assignment_* for each as a real line.
 _NAMED_ASSIGNMENT = re.compile(
     r"""(?ix)
-    (?P<name>\b[A-Za-z_]?[A-Za-z0-9_]*
-        (?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN)\b)
+    (?P<name>\b"""
+    + _CREDENTIAL_NAME
+    + r""")
     (?P<sep>\s*[:=]\s*)
     (?P<quote>['"])
     (?P<value>[^'"\n]{4,})
@@ -75,8 +97,9 @@ _NAMED_ASSIGNMENT = re.compile(
 # class of bug this module can have, because the module IS the §4 boundary.
 _NAMED_ASSIGNMENT_BARE = re.compile(
     r"""(?ix)
-    (?P<name>\b[A-Za-z_]?[A-Za-z0-9_]*
-        (?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN)\b)
+    (?P<name>\b"""
+    + _CREDENTIAL_NAME
+    + r""")
     (?P<sep>\s*[:=]\s*)
     (?P<value>[^\s'"#][^\s]{3,})
     """
@@ -93,8 +116,9 @@ _NAMED_ASSIGNMENT_BARE = re.compile(
 _QUOTED_KEY_ASSIGNMENT = re.compile(
     r"""(?ix)
     (?P<open>['"])
-    (?P<name>[A-Za-z_]?[A-Za-z0-9_]*
-        (?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN))
+    (?P<name>"""
+    + _CREDENTIAL_NAME
+    + r""")
     (?P=open)
     (?P<sep>\s*:\s*)
     (?P<quote>['"])
