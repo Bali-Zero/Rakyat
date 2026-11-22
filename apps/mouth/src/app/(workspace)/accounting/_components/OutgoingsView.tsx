@@ -136,9 +136,11 @@ export function OutgoingsView() {
   const [confirmBatch, setConfirmBatch] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
-  const [lastBatch, setLastBatch] = useState<{ id: string; n: number } | null>(
-    null,
-  );
+  const [lastBatch, setLastBatch] = useState<{
+    id: string;
+    n: number;
+    at: string;
+  } | null>(null);
   // Token of the latest load: an older one answering late changes nothing.
   const loadReq = useRef(0);
 
@@ -170,6 +172,11 @@ export function OutgoingsView() {
   );
 
   // «Justify all PNBP»: the PNBP still to justify whose code no other debit carries, newest first.
+  // Offered only where those rows are on screen: the All and PNBP filters (gate r1 on #616).
+  const pnbpShown =
+    tab === "to_justify" && (kind === ALL || kind === "government_fee");
+  // The Undo of the set just justified, only on the Bali day it was made (the server decides too).
+  const undoable = lastBatch && justifiedToday(lastBatch.at) ? lastBatch : null;
   const pnbp = useMemo(() => {
     const open = (data?.items ?? []).filter(
       (i) => i.kind === "government_fee" && i.state === "to_justify",
@@ -247,7 +254,11 @@ export function OutgoingsView() {
         pnbp.ready.map((i) => i.id),
       );
       success(`${res.n} PNBP justified`);
-      setLastBatch({ id: res.batch_id, n: res.n });
+      setLastBatch({
+        id: res.batch_id,
+        n: res.n,
+        at: new Date().toISOString(),
+      });
       setConfirmBatch(false);
       void load();
     } catch (err) {
@@ -325,19 +336,19 @@ export function OutgoingsView() {
       </div>
 
       {status === "ok" &&
-        tab === "to_justify" &&
-        (lastBatch || pnbp.ready.length > 0 || pnbp.twice > 0) && (
+        pnbpShown &&
+        (undoable || pnbp.ready.length > 0 || pnbp.twice > 0) && (
           <div
             data-testid="pnbp-batch"
             className="space-y-2 rounded-lg border border-[var(--bz-border)] p-3 text-sm"
           >
-            {lastBatch && (
+            {undoable && (
               <p role="status">
-                {lastBatch.n} PNBP justified.{" "}
+                {undoable.n} PNBP justified.{" "}
                 <button
                   type="button"
                   disabled={batchBusy}
-                  onClick={() => void undoBatch(lastBatch.id)}
+                  onClick={() => void undoBatch(undoable.id)}
                   className="font-semibold underline underline-offset-4 disabled:opacity-50"
                 >
                   Undo

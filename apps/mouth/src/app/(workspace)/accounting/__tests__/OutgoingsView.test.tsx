@@ -662,6 +662,64 @@ describe("OutgoingsView", () => {
       await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
     });
 
+    it("offers the button only where the PNBP are on screen", async () => {
+      // Gate r1 on #616: with the Transfer filter the button sent PNBP the accountant could not see.
+      api.getOutgoings.mockResolvedValue({
+        ...LIST,
+        by_kind: [
+          { kind: "government_fee", label: "PNBP", n: 4, total_idr: 50000000 },
+          {
+            kind: "transfer_out",
+            label: "Transfer",
+            n: 1,
+            total_idr: 12000000,
+          },
+        ],
+      });
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-14");
+      const filter = screen.getByRole("group", { name: "Filter by kind" });
+      fireEvent.click(
+        within(filter).getByRole("button", { name: /^Transfer/ }),
+      );
+      expect(screen.queryByTestId("pnbp-batch")).toBeNull();
+      fireEvent.click(within(filter).getByRole("button", { name: /^PNBP/ }));
+      expect(
+        within(bar()).getByRole("button", { name: "Justify all PNBP (2)" }),
+      ).toBeTruthy();
+    });
+
+    it("drops the Undo of a set once the Bali day is over", async () => {
+      // Gate r1 on #616: a set made at 23:59 WITA still offered Undo at 00:01.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(new Date("2026-11-22T15:59:00Z")); // 23:59 WITA
+        api.getOutgoings.mockResolvedValue(LIST);
+        api.justifyPnbpBatch.mockResolvedValue({
+          batch_id: "b-1",
+          n: 2,
+          total_idr: 26000000,
+          state: "justified",
+        });
+        render(<OutgoingsView />);
+        await screen.findByTestId("outgoing-14");
+        fireEvent.click(
+          within(bar()).getByRole("button", { name: /Justify all PNBP/ }),
+        );
+        fireEvent.click(
+          within(bar()).getByRole("button", { name: "Yes, justify all" }),
+        );
+        await within(bar()).findByRole("status");
+        vi.setSystemTime(new Date("2026-11-22T16:01:00Z")); // 00:01 WITA, next day
+        fireEvent.click(screen.getByRole("button", { name: /^Justified/ }));
+        fireEvent.click(screen.getByRole("button", { name: /^To justify/ }));
+        await screen.findByTestId("outgoing-14");
+        expect(screen.queryByRole("status")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("Cancel sends nothing", async () => {
       api.getOutgoings.mockResolvedValue(LIST);
       render(<OutgoingsView />);
