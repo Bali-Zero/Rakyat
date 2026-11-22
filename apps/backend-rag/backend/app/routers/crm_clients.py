@@ -1363,6 +1363,21 @@ def _name_is_better(new: str | None, current: str | None) -> bool:
     return _name_is_junk(current)
 
 
+# A recap note opens with a dated header ("WhatsApp conversation update, 2026-11-21: ").
+_NOTE_DATED_HEADER_RE = re.compile(r"^[^\n:]{0,80}?\b\d{4}-\d{2}-\d{2}:\s*")
+
+
+def _note_repeats_last(notes: str | None, addendum: str) -> bool:
+    """True when `addendum` says what the last paragraph of `notes` already says,
+    the dated header aside: a daily recap with no new message adds nothing."""
+    last = (notes or "").rstrip().rsplit("\n\n", 1)[-1].strip()
+    if not last:
+        return False
+    return _NOTE_DATED_HEADER_RE.sub("", last, count=1) == _NOTE_DATED_HEADER_RE.sub(
+        "", addendum.strip(), count=1
+    )
+
+
 class ClientUpsertByPhone(BaseModel):
     """Sanitized payload for service-side lead promotion. Raw WhatsApp content NEVER
     crosses this boundary — only derived fields (name, note recap, strategic summary)."""
@@ -1490,6 +1505,8 @@ async def upsert_client_by_phone(
                 # Append notes at most once per `notes_append_min_age_hours` window
                 # (the cron fires every ~5min; without this gate enrich would bloat
                 # notes on every run). Gate on the authoritative Fly `updated_at`.
+                # A recap that repeats the last paragraph (only its date moved) is
+                # not appended: with no new message the daily recap is the same text.
                 _ua = row["updated_at"]
                 if _ua is not None and _ua.tzinfo is None:
                     _ua = _ua.replace(tzinfo=timezone.utc)
@@ -1497,7 +1514,11 @@ async def upsert_client_by_phone(
                     datetime.now(timezone.utc) - _ua
                     >= timedelta(hours=payload.notes_append_min_age_hours)
                 )
-                if payload.notes_append and _notes_stale:
+                if (
+                    payload.notes_append
+                    and _notes_stale
+                    and not _note_repeats_last(row["notes"], payload.notes_append)
+                ):
                     sep = "\n\n" if (row["notes"] or "").strip() else ""
                     set_parts.append(f"notes = COALESCE(NULLIF(notes, ''), '') || ${pi}")
                     params.append(sep + payload.notes_append)

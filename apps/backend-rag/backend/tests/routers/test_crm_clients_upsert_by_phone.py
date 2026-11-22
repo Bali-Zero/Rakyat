@@ -505,3 +505,89 @@ def test_sole_match_writes_no_advisory_at_all(
     assert resp.status_code == 200, resp.text
     assert resp.json()["action"] == "skipped_no_change"
     assert _advisory_lines(caplog) == []
+
+
+# --------------------------------------------------------------------------- #
+# Notes: a daily recap that repeats the last paragraph is not appended
+# --------------------------------------------------------------------------- #
+
+_RECAP_BODY = (
+    "12 client messages were received between 2026-01-05 and 2026-02-03. "
+    "The conversation is about payment or bank transfer coordination."
+)
+
+
+def _enrich_with_notes(client: TestClient, conn, notes: str, addendum: str):
+    conn.fetch.return_value = [
+        {
+            "id": 4243,
+            "full_name": "Datid Xovezam",
+            "notes": notes,
+            "deleted_at": None,
+            "strategic_recap_source": None,
+            "updated_at": None,
+        }
+    ]
+    return client.post(
+        "/api/crm/clients/upsert-by-phone",
+        json={"phone_normalized": "6284000221", "notes_append": addendum},
+        headers=HEADERS,
+    )
+
+
+def test_recap_repeating_last_paragraph_is_not_appended(
+    client: TestClient, write_enabled: None, mock_db_pool
+) -> None:
+    _pool, conn = mock_db_pool
+    resp = _enrich_with_notes(
+        client,
+        conn,
+        f"old note\n\nWhatsApp conversation update, 2026-02-04: {_RECAP_BODY}",
+        f"WhatsApp conversation update, 2026-02-05: {_RECAP_BODY}",
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["action"] == "skipped_no_change"
+    assert not any("UPDATE clients" in str(c.args[0]) for c in conn.execute.await_args_list)
+
+
+def test_recap_with_new_content_is_appended(
+    client: TestClient, write_enabled: None, mock_db_pool
+) -> None:
+    _pool, conn = mock_db_pool
+    resp = _enrich_with_notes(
+        client,
+        conn,
+        f"WhatsApp conversation update, 2026-02-04: {_RECAP_BODY}",
+        "WhatsApp conversation update, 2026-02-05: 13 client messages were received "
+        "between 2026-01-05 and 2026-02-05. The conversation is about payment or bank "
+        "transfer coordination.",
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["action"] == "enriched"
+    updates = [c for c in conn.execute.await_args_list if "UPDATE clients" in str(c.args[0])]
+    assert len(updates) == 1 and "notes = " in updates[0].args[0]
+
+
+@pytest.mark.parametrize(
+    ("notes", "addendum", "repeats"),
+    [
+        (None, "x", False),
+        ("", "x", False),
+        (
+            f"WhatsApp conversation update, 2026-02-04: {_RECAP_BODY}",
+            f"WhatsApp conversation update, 2026-02-05: {_RECAP_BODY}",
+            True,
+        ),
+        # A staff note written after the recap is the last paragraph: append again.
+        (
+            f"WhatsApp conversation update, 2026-02-04: {_RECAP_BODY}\n\nCalled, waiting docs.",
+            f"WhatsApp conversation update, 2026-02-05: {_RECAP_BODY}",
+            False,
+        ),
+        # Only the header date is ignored, not a date inside the body.
+        ("Update, 2026-02-04: seen 2026-01-05", "Update, 2026-02-05: seen 2026-01-06", False),
+        ("same text", "same text  ", True),
+    ],
+)
+def test_note_repeats_last(notes: str | None, addendum: str, repeats: bool) -> None:
+    assert crm_clients_module._note_repeats_last(notes, addendum) is repeats
