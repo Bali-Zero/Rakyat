@@ -119,9 +119,10 @@ class PostgresCheckStore:
         self._pool = pool
         self._environment = environment
 
-    async def _policy_available(self, *, created_at: datetime) -> bool:
-        return await retention.active_garuda_check_policy_available(
-            self._pool, environment=self._environment, created_at=created_at
+    async def _policy_available(self, conn: asyncpg.Connection, *, created_at: datetime) -> bool:
+        # On the connection `create` already holds, never a second one from the pool.
+        return await retention.active_garuda_check_policy_available_on(
+            conn, environment=self._environment, created_at=created_at
         )
 
     async def create(
@@ -168,7 +169,7 @@ class PostgresCheckStore:
                 )
 
             now = datetime.now(UTC)
-            if not await self._policy_available(created_at=now):
+            if not await self._policy_available(conn, created_at=now):
                 raise PersistencePolicyUnavailable("no active GARUDA_CHECK retention policy")
 
             result_id = secrets.token_urlsafe(_RESULT_ID_BYTES)
