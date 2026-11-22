@@ -13,7 +13,7 @@ class TestRateLimiterFailSafe:
         limiter = RateLimiter()
         limiter.redis_available = True
         limiter.redis_client = MagicMock()
-        limiter.redis_client.pipeline.side_effect = Exception("Redis down")
+        limiter.redis_client.register_script.return_value.side_effect = Exception("Redis down")
         allowed, info = limiter.is_allowed("test:key", limit=100, window=60)
         assert allowed is True
         assert info["limit"] == 50
@@ -22,7 +22,7 @@ class TestRateLimiterFailSafe:
         limiter = RateLimiter()
         limiter.redis_available = True
         limiter.redis_client = MagicMock()
-        limiter.redis_client.pipeline.side_effect = Exception("Redis down")
+        limiter.redis_client.register_script.return_value.side_effect = Exception("Redis down")
         for _ in range(5):
             limiter.is_allowed("test:flood", limit=10, window=60)
         allowed, _ = limiter.is_allowed("test:flood", limit=10, window=60)
@@ -31,10 +31,9 @@ class TestRateLimiterFailSafe:
     def test_normal_redis_uses_full_limit(self):
         limiter = RateLimiter()
         limiter.redis_available = True
-        mock_pipe = MagicMock()
-        mock_pipe.execute.return_value = [None, 3, True, True]
         limiter.redis_client = MagicMock()
-        limiter.redis_client.pipeline.return_value = mock_pipe
+        # The counting script answers [admitted, count, oldest score].
+        limiter.redis_client.register_script.return_value.return_value = [1, 4, b"1000.5"]
         allowed, info = limiter.is_allowed("test:ok", limit=100, window=60)
         assert allowed is True
         assert info["limit"] == 100

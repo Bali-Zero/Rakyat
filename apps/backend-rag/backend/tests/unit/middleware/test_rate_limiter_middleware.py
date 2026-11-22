@@ -196,7 +196,9 @@ async def test_dispatch_allowed_sets_rate_limit_headers(
     )
     monkeypatch.setattr("backend.middleware.rate_limiter.rate_limiter", limiter_mock)
 
-    request = _make_request("/api/crm/clients", user={"email": "u@bali.com"})
+    request = _make_request(
+        "/api/crm/clients", user={"email": "u@bali.com", "auth_method": "jwt_header"}
+    )
     response = MagicMock(headers={})
     call_next = AsyncMock(return_value=response)
 
@@ -209,7 +211,7 @@ async def test_dispatch_allowed_sets_rate_limit_headers(
     # The key stays user-scoped without persisting the raw email.
     kwargs_key = limiter_mock.is_allowed.call_args.args[0]
     assert "u@bali.com" not in kwargs_key
-    assert hash_subject("u@bali.com") in kwargs_key
+    assert hash_subject("user:u@bali.com") in kwargs_key
 
 
 @pytest.mark.asyncio
@@ -308,7 +310,7 @@ async def test_dispatch_uses_ip_when_no_authenticated_user(
 
     kwargs_key = limiter_mock.is_allowed.call_args.args[0]
     assert "203.0.113.5" not in kwargs_key
-    assert hash_subject("203.0.113.5") in kwargs_key
+    assert hash_subject("addr:203.0.113.5") in kwargs_key
 
 
 @pytest.mark.asyncio
