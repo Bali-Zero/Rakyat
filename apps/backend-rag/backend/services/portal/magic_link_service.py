@@ -71,15 +71,19 @@ class MagicLinkService:
 
         async with self.pool.acquire() as conn:
             # Only registered, active portal clients may receive a magic link.
+            # The client record is read too, as the PIN login reads it: an
+            # archived client keeps an active portal account row.
             user = await conn.fetchrow(
                 """
-                SELECT id, email, full_name, role, portal_access, active
-                FROM team_members
-                WHERE LOWER(email) = $1
-                  AND role = 'client'
-                  AND active = true
-                  AND portal_access = true
-                  AND linked_client_id IS NOT NULL
+                SELECT tm.id, tm.email, tm.full_name, tm.role, tm.portal_access, tm.active
+                FROM team_members tm
+                JOIN clients c ON c.id = tm.linked_client_id
+                WHERE LOWER(tm.email) = $1
+                  AND tm.role = 'client'
+                  AND tm.active = true
+                  AND tm.portal_access = true
+                  AND tm.linked_client_id IS NOT NULL
+                  AND c.deleted_at IS NULL
                 """,
                 normalized,
             )
@@ -173,18 +177,21 @@ class MagicLinkService:
                     row["id"],
                 )
 
-                # Resolve the live portal user (re-check active/portal_access at
-                # verify time — access may have been revoked since the request).
+                # Resolve the live portal user (re-check active/portal_access and
+                # the client record at verify time — access may have been revoked,
+                # or the client archived, since the request).
                 user = await conn.fetchrow(
                     """
-                    SELECT id, email, COALESCE(full_name, name) AS name, role,
-                           linked_client_id, portal_access
-                    FROM team_members
-                    WHERE LOWER(email) = LOWER($1)
-                      AND role = 'client'
-                      AND active = true
-                      AND portal_access = true
-                      AND linked_client_id IS NOT NULL
+                    SELECT tm.id, tm.email, COALESCE(tm.full_name, tm.name) AS name, tm.role,
+                           tm.linked_client_id, tm.portal_access
+                    FROM team_members tm
+                    JOIN clients c ON c.id = tm.linked_client_id
+                    WHERE LOWER(tm.email) = LOWER($1)
+                      AND tm.role = 'client'
+                      AND tm.active = true
+                      AND tm.portal_access = true
+                      AND tm.linked_client_id IS NOT NULL
+                      AND c.deleted_at IS NULL
                     """,
                     row["email"],
                 )
