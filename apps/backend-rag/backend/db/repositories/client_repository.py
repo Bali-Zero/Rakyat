@@ -1,4 +1,5 @@
 import logging
+import traceback
 from datetime import date, datetime
 from typing import Any
 
@@ -144,12 +145,17 @@ def _parse_date(value: str | date | None) -> date | None:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
     except (ValueError, TypeError) as exc:
-        # UU PDP audit: malformed date from upstream client payload. Returning
-        # None is safe (column accepts NULL) but the original value must be
-        # traceable for data-quality investigation.
+        # A malformed date from the upstream payload is stored as NULL (the column
+        # accepts it). The value is a birth date or a passport expiry: the line
+        # records that it happened, what kind of value arrived and how long it
+        # was, never the value, in the message or in a structured field.
         logger.debug(
             "client_repository.parse_date_failed",
-            extra={"error_type": type(exc).__name__, "raw": str(value)[:32]},
+            extra={
+                "error_type": type(exc).__name__,
+                "value_type": type(value).__name__,
+                "value_length": len(str(value)),
+            },
         )
         return None
 
@@ -379,23 +385,29 @@ class ClientRepository(BaseRepository):
                 return client_record
 
             # 3) LOGGING STRUTTURATO PER ECCEZIONI SPECIFICHE
+            # The text of a database error ends with the DETAIL line, which quotes the
+            # stored value, and a traceback ends with that same text: a line names the
+            # kind of failure, the constraint and the place in the code, never a value.
+            except DuplicatePhoneError:
+                # An expected refusal: the router answers it and logs it.
+                raise
             except asyncpg.UniqueViolationError as e:
                 logger.error(
-                    f"Violazione constraint di unicità (es. email duplicata) per {client_data.get('email')}: {e}",
-                    exc_info=True,
+                    "Violazione constraint di unicità nella creazione cliente (vincolo %s)",
+                    getattr(e, "constraint_name", None) or "non indicato",
                 )
                 raise
             except asyncpg.ForeignKeyViolationError as e:
                 logger.error(
-                    "Violazione Foreign Key durante la creazione cliente/compagnia: %s",
-                    e,
-                    exc_info=True,
+                    "Violazione Foreign Key durante la creazione cliente/compagnia (vincolo %s)",
+                    getattr(e, "constraint_name", None) or "non indicato",
                 )
                 raise
             except Exception as e:
                 logger.error(
-                    "Fallimento critico e rollback nella transazione create_client_with_details: %s",
-                    e,
-                    exc_info=True,
+                    "Fallimento critico e rollback nella transazione "
+                    "create_client_with_details (%s)\n%s",
+                    type(e).__name__,
+                    "".join(traceback.format_tb(e.__traceback__)),
                 )
                 raise
