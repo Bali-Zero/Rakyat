@@ -6,6 +6,9 @@ debit again. Nothing here writes to `weekly_cashout` or any cash-out table (owne
 
 from __future__ import annotations
 
+import re
+import uuid
+from collections import Counter
 from typing import Any
 
 import asyncpg
@@ -38,6 +41,32 @@ PAIR_LATERAL = """
               = NULLIF(btrim(bt.raw_row->>'Other Reference'), '')
     ) pair ON true
 """
+
+# "EMPN BILLING  <code>" — 245 of 245 PNBP payments. The ONE reader of the code: the list shows
+# it and counts it, the batch checks it, so the two can never read a description differently.
+BILLING = re.compile(r"^EMPN BILLING\s+(?P<code>\d+)")
+
+
+def billing_code(description: str | None) -> str | None:
+    """The e-billing code of a PNBP debit's bank text, or None."""
+    m = BILLING.match((description or "").strip())
+    return m["code"] if m else None
+
+
+async def code_counts(conn: asyncpg.Connection) -> Counter[str]:
+    """How many PNBP debits carry each e-billing code, whatever their state.
+
+    Two or more is a possible double payment (one code was debited twice on 2026-10-19).
+    """
+    rows = await conn.fetch(
+        "SELECT description FROM bank_transactions"
+        " WHERE direction = 'debit' AND kind = 'government_fee'"
+    )
+    return Counter(c for r in rows if (c := billing_code(r["description"])))
+
+
+# One «Justify all PNBP» click justifies at most this many debits.
+BATCH_LIMIT = 500
 
 
 class OutgoingError(Exception):
@@ -185,3 +214,112 @@ async def undo_justification(
             undone_by,
         )
     return {"txn_id": txn_id, "justification_id": row["id"], "state": "to_justify"}
+
+
+async def justify_pnbp_batch(
+    conn: asyncpg.Connection, *, txn_ids: list[int], justified_by: str
+) -> dict[str, Any]:
+    """Justify the listed PNBP debits in one go as `pnbp_case`, with no case, as one batch.
+
+    All or nothing: every id must be a PNBP debit not justified yet whose e-billing code no other
+    debit carries; one that is not refuses the whole batch and the accountant reloads the list.
+    A code on two debits is a possible double payment: it is justified by hand, with a note.
+    """
+    if not txn_ids:
+        raise OutgoingError(422, "no debit to justify")
+    if len(set(txn_ids)) != len(txn_ids):
+        raise OutgoingError(422, "a debit is listed twice")
+    if len(txn_ids) > BATCH_LIMIT:
+        raise OutgoingError(422, f"at most {BATCH_LIMIT} debits in one go")
+    if conn.is_in_transaction():
+        raise OutgoingError(500, "justify runs in a transaction of its own")
+    batch_id = uuid.uuid4()
+    async with conn.transaction():
+        rows = await conn.fetch(
+            """
+            SELECT bt.id, bt.amount_idr, bt.direction, bt.kind, bt.description,
+                   bs.account_number
+            FROM bank_transactions bt
+            LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
+            WHERE bt.id = ANY($1::bigint[])
+            ORDER BY bt.id
+            FOR UPDATE OF bt
+            """,
+            txn_ids,
+        )
+        if len(rows) != len(txn_ids):
+            raise OutgoingError(404, "no such debit")
+        if any(r["direction"] != "debit" or r["kind"] != "government_fee" for r in rows):
+            raise OutgoingError(422, "only PNBP debits are justified in one go")
+        codes = [billing_code(r["description"]) for r in rows]
+        if any(c is None for c in codes):
+            raise OutgoingError(422, "a PNBP debit without an e-billing code is justified by hand")
+        counts = await code_counts(conn)
+        if any(counts[c] > 1 for c in codes):
+            raise OutgoingError(
+                409, "an e-billing code on more than one debit is justified by hand"
+            )
+        if await conn.fetchval(
+            "SELECT 1 FROM outgoing_justifications"
+            " WHERE txn_id = ANY($1::bigint[]) AND undone_at IS NULL LIMIT 1",
+            txn_ids,
+        ):
+            raise OutgoingError(409, "a debit is already justified: reload the list")
+        await conn.executemany(
+            """
+            INSERT INTO outgoing_justifications
+                (txn_id, company_key, category, justified_by, batch_id)
+            VALUES ($1, $2, 'pnbp_case', $3, $4)
+            """,
+            [
+                (
+                    r["id"],
+                    company_key_for_account(r["account_number"]) or OTHER_KEY,
+                    justified_by,
+                    batch_id,
+                )
+                for r in rows
+            ],
+        )
+    return {
+        "batch_id": str(batch_id),
+        "n": len(rows),
+        "total_idr": sum(int(r["amount_idr"]) for r in rows),
+        "state": "justified",
+    }
+
+
+async def undo_batch(
+    conn: asyncpg.Connection, *, batch_id: uuid.UUID, undone_by: str
+) -> dict[str, Any]:
+    """Take back what is still active of a batch, only on the day (WITA) it was made."""
+    if conn.is_in_transaction():
+        raise OutgoingError(500, "undo runs in a transaction of its own")
+    async with conn.transaction():
+        # The debits first, in id order, as justify and the single undo lock them.
+        txn_ids = await conn.fetch(
+            "SELECT id FROM bank_transactions WHERE id IN"
+            " (SELECT txn_id FROM outgoing_justifications"
+            "  WHERE batch_id = $1 AND undone_at IS NULL)"
+            " ORDER BY id FOR UPDATE",
+            batch_id,
+        )
+        rows = await conn.fetch(
+            "SELECT id, (justified_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date"
+            " AS today FROM outgoing_justifications"
+            " WHERE batch_id = $1 AND undone_at IS NULL AND txn_id = ANY($3::bigint[])",
+            batch_id,
+            _UNDO_TZ,
+            [r["id"] for r in txn_ids],
+        )
+        if not rows:
+            raise OutgoingError(409, "this batch has nothing to undo")
+        if not all(r["today"] for r in rows):
+            raise OutgoingError(409, "justified before today: it cannot be undone")
+        await conn.execute(
+            "UPDATE outgoing_justifications SET undone_by = $2, undone_at = now()"
+            " WHERE id = ANY($1::bigint[])",
+            [r["id"] for r in rows],
+            undone_by,
+        )
+    return {"batch_id": str(batch_id), "n": len(rows), "state": "to_justify"}
