@@ -309,6 +309,11 @@ async def run_compliance_forecast(request: Request) -> dict[str, Any]:
         # see AlertsEngine.generate_alerts docstring for the exact contract.
         "alerts_generated": alerts_generated,
     }
+    failed_queries = getattr(result, "failed_queries", ())
+    if failed_queries:
+        response["status"] = "error"
+        response["reason"] = "query_failed"
+        response["failed_queries"] = list(failed_queries)
     if alerts_error is not None:
         response["alerts_error"] = alerts_error
     return response

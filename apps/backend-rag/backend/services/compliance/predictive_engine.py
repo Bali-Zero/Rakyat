@@ -98,6 +98,7 @@ class ScanResult:
     summary: ForecastSummary
     scan_window_days: int
     generated_at: str
+    failed_queries: tuple[str, ...] = ()
 
 
 # ── SQL ────────────────────────────────────────────────────────────────────────
@@ -237,6 +238,7 @@ class PredictiveComplianceEngine:
 
         today = date.today()
         forecasts: list[ComplianceForecast] = []
+        failed_queries: list[str] = []
         active_practice_skipped = 0
 
         async with self._db_pool.acquire() as conn:
@@ -246,6 +248,7 @@ class PredictiveComplianceEngine:
             except Exception:
                 logger.exception("Error querying client documents")
                 client_rows = []
+                failed_queries.append("client_documents")
 
             # ── 2. Practice expiries (license / permits) ──────────────────────
             try:
@@ -253,6 +256,7 @@ class PredictiveComplianceEngine:
             except Exception:
                 logger.exception("Error querying practice expiries")
                 practice_rows = []
+                failed_queries.append("practice_expiries")
 
         all_rows = list(client_rows) + list(practice_rows)
         logger.info(
@@ -305,6 +309,7 @@ class PredictiveComplianceEngine:
             summary=summary,
             scan_window_days=self._scan_window_days,
             generated_at=datetime.now(timezone.utc).isoformat(),
+            failed_queries=tuple(failed_queries),
         )
 
     # ── Internal helpers ───────────────────────────────────────────────────────
