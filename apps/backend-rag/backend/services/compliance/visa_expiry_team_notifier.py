@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
+from html import escape
 from typing import Any
 
 import asyncpg
@@ -90,14 +91,14 @@ class VisaExpiryTeamNotifier:
         Find clients with visa/kitas/passport expiring in 7, 30, or 60 days.
         Group by team leader (assigned_to).
         Send one email per team leader + a summary to zero@.
-        Returns a dict with ``total_alerts`` count.
+        Returns a dict with ``total_alerts``, ``emails_sent``, and ``emails_failed`` counts.
         """
         logger.info("VisaExpiryTeamNotifier: starting check")
 
         expiring: list[dict[str, Any]] = await self._get_expiring_documents()
         if not expiring:
             logger.info("VisaExpiryTeamNotifier: no expiring documents found")
-            return {"total_alerts": 0}
+            return {"total_alerts": 0, "emails_sent": 0, "emails_failed": 0}
 
         logger.info(
             "VisaExpiryTeamNotifier: found %d expiring document(s) across %d client(s)",
@@ -111,26 +112,36 @@ class VisaExpiryTeamNotifier:
             by_leader[row["assigned_to"]].append(row)
 
         # Send per-leader alerts
+        emails_sent = 0
+        emails_failed = 0
         async with self._get_http_client() as client:
             self._client = client
             for team_email, clients in by_leader.items():
                 try:
                     await self._send_team_leader_alert(team_email, clients)
+                    emails_sent += 1
                 except Exception:
+                    emails_failed += 1
                     logger.exception("Failed to send alert to team leader %s", team_email)
 
             # Send summary to admin
             try:
                 await self._send_zero_summary(expiring)
+                emails_sent += 1
             except Exception:
+                emails_failed += 1
                 logger.exception("Failed to send summary email to %s", ADMIN_EMAIL)
 
         logger.info(
-            "VisaExpiryTeamNotifier: done — %d alerts sent to %d team leader(s)",
-            len(expiring),
-            len(by_leader),
+            "VisaExpiryTeamNotifier: done — %d emails sent, %d failed",
+            emails_sent,
+            emails_failed,
         )
-        return {"total_alerts": len(expiring)}
+        return {
+            "total_alerts": len(expiring),
+            "emails_sent": emails_sent,
+            "emails_failed": emails_failed,
+        }
 
     # ── Database query ─────────────────────────────────────────────────────────
 
@@ -260,7 +271,7 @@ Please contact them as soon as possible to start the renewal process with Bali Z
             rows_html = "\n".join(_build_client_row(c) for c in clients)
             section = f"""
 <h3 style="color:#1a237e; margin-top:24px;">
-  👤 {leader_email} — {len(clients)} client{"s" if len(clients) != 1 else ""}
+  👤 {escape(leader_email)} — {len(clients)} client{"s" if len(clients) != 1 else ""}
 </h3>
 <table border="1" cellpadding="7" cellspacing="0"
        style="border-collapse:collapse; width:100%; font-size:13px;">
@@ -362,10 +373,11 @@ Each team leader has already received their individual notification.</p>
 def _build_client_row(client: dict[str, Any]) -> str:
     """Returns an HTML <tr> for one expiring document, colour-coded by urgency."""
     days: int = int(client.get("days_until_expiry") or 0)
-    expiry_date: str = _fmt_date(client.get("expiry_date"))
-    doc_type: str = str(client.get("document_type", "")).upper()
-    name: str = str(client.get("client_name") or "—")
-    phone: str = str(client.get("client_phone") or "—")
+    days_html = escape(str(days))
+    expiry_date: str = escape(_fmt_date(client.get("expiry_date")))
+    doc_type: str = escape(str(client.get("document_type", "")).upper())
+    name: str = escape(str(client.get("client_name") or "—"))
+    phone: str = escape(str(client.get("client_phone") or "—"))
 
     # Pick the closest threshold colour (7 ≤ 30 ≤ 60)
     if days <= 7:
@@ -381,10 +393,12 @@ def _build_client_row(client: dict[str, Any]) -> str:
     # Enhanced: show visa type if available
     visa_type = client.get("current_visa_type")
     if visa_type and doc_type in ("VISA", "KITAS"):
-        doc_type = f"{doc_type} ({visa_type})"
+        doc_type = f"{doc_type} ({escape(str(visa_type))})"
 
     sponsor = client.get("current_visa_sponsor", "")
-    sponsor_html = f"<br><small style='color:#666;'>Sponsor: {sponsor}</small>" if sponsor else ""
+    sponsor_html = (
+        f"<br><small style='color:#666;'>Sponsor: {escape(str(sponsor))}</small>" if sponsor else ""
+    )
 
     # Passport cross-check warning
     passport_warning = ""
@@ -393,7 +407,7 @@ def _build_client_row(client: dict[str, Any]) -> str:
     if passport_expiry and expiry and passport_expiry < expiry:
         passport_warning = (
             f"<br><small style='color:#C62828;'>⚠️ Passaporto scade PRIMA "
-            f"({passport_expiry.strftime('%d/%m/%Y')})</small>"
+            f"({escape(passport_expiry.strftime('%d/%m/%Y'))})</small>"
         )
 
     return (
@@ -401,7 +415,7 @@ def _build_client_row(client: dict[str, Any]) -> str:
         f"<td style='padding:8px;'>{name}</td>"
         f"<td style='padding:8px;'>{doc_type}{sponsor_html}</td>"
         f"<td style='padding:8px;'>{expiry_date}{passport_warning}</td>"
-        f"<td style='padding:8px; font-weight:bold; color:{label_color};'>{days} giorni</td>"
+        f"<td style='padding:8px; font-weight:bold; color:{label_color};'>{days_html} giorni</td>"
         f"<td style='padding:8px;'>{phone}</td>"
         f"</tr>"
     )
