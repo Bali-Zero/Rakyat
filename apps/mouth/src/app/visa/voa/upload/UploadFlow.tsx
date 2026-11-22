@@ -25,6 +25,10 @@ const DOCUMENT_STORE_DOWN_CODES = new Set([
   "SERVICE_UNAVAILABLE",
 ]);
 
+/** Non-retryable error codes that no other photo can cure: the customer's check or
+ * session is gone, so the way forward is back to where a VOA check starts. */
+const RESTART_CHECK_CODES = new Set(["SESSION_REQUIRED", "RESULT_NOT_FOUND"]);
+
 /**
  * GARUDA VOA DELIBERA (b): error tone is neither copper (ownership) nor red text
  * (M1 — text-red-600 measured 4.40:1 on paper, an AA fail). The cure is the ink
@@ -330,6 +334,18 @@ function StateView({
               Try again
             </button>
           )}
+          {!state.retryable &&
+          state.code &&
+          RESTART_CHECK_CODES.has(state.code) ? (
+            <a href="/visa/voa" className="text-sm font-medium underline">
+              Start again →
+            </a>
+          ) : null}
+          {!state.retryable &&
+          !(state.code && RESTART_CHECK_CODES.has(state.code)) &&
+          !(state.code && DOCUMENT_STORE_DOWN_CODES.has(state.code)) ? (
+            <PickButton label="Choose another photo" onClick={onRetake} />
+          ) : null}
         </div>
       );
 
