@@ -1363,6 +1363,21 @@ def _name_is_better(new: str | None, current: str | None) -> bool:
     return _name_is_junk(current)
 
 
+# The WhatsApp auto-promote recap opens "WhatsApp conversation update, 2026-11-21: ".
+_WA_RECAP_HEADER_RE = re.compile(r"^WhatsApp conversation update, \d{4}-\d{2}-\d{2}: ")
+
+
+def _note_repeats_last(notes: str | None, addendum: str) -> bool:
+    """True when `addendum` is a WhatsApp recap that says what the card's last
+    paragraph, itself such a recap, already says: only the header date moved.
+    Any other last paragraph (a staff note, dated or not) never suppresses."""
+    last = (notes or "").replace("\r\n", "\n").rstrip().rsplit("\n\n", 1)[-1].strip()
+    new = addendum.replace("\r\n", "\n").strip()
+    if not (_WA_RECAP_HEADER_RE.match(last) and _WA_RECAP_HEADER_RE.match(new)):
+        return False
+    return _WA_RECAP_HEADER_RE.sub("", last, count=1) == _WA_RECAP_HEADER_RE.sub("", new, count=1)
+
+
 class ClientUpsertByPhone(BaseModel):
     """Sanitized payload for service-side lead promotion. Raw WhatsApp content NEVER
     crosses this boundary — only derived fields (name, note recap, strategic summary)."""
@@ -1490,6 +1505,8 @@ async def upsert_client_by_phone(
                 # Append notes at most once per `notes_append_min_age_hours` window
                 # (the cron fires every ~5min; without this gate enrich would bloat
                 # notes on every run). Gate on the authoritative Fly `updated_at`.
+                # A recap that repeats the last paragraph (only its date moved) is
+                # not appended: with no new message the daily recap is the same text.
                 _ua = row["updated_at"]
                 if _ua is not None and _ua.tzinfo is None:
                     _ua = _ua.replace(tzinfo=timezone.utc)
@@ -1497,7 +1514,11 @@ async def upsert_client_by_phone(
                     datetime.now(timezone.utc) - _ua
                     >= timedelta(hours=payload.notes_append_min_age_hours)
                 )
-                if payload.notes_append and _notes_stale:
+                if (
+                    payload.notes_append
+                    and _notes_stale
+                    and not _note_repeats_last(row["notes"], payload.notes_append)
+                ):
                     sep = "\n\n" if (row["notes"] or "").strip() else ""
                     set_parts.append(f"notes = COALESCE(NULLIF(notes, ''), '') || ${pi}")
                     params.append(sep + payload.notes_append)
