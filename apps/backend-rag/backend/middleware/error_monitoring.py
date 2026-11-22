@@ -223,13 +223,10 @@ class ErrorMonitoringMiddleware(BaseHTTPMiddleware):
         if alert_service is not None:
             # Only alert for:
             # - All 5xx errors (except 503 transient)
-            # - 429 (Too Many Requests) - potential DoS
             # - 403 (Forbidden) - potential security issue
-            should_alert = (
-                (status_code >= 500 and status_code != 503)
-                or status_code == 429
-                or status_code == 403
-            )
+            # A 429 is the rate limiter doing its job: it is counted there, by
+            # threshold (`get_rate_limit_stats`), and never paged.
+            should_alert = (status_code >= 500 and status_code != 503) or status_code == 403
 
             if should_alert:
                 try:

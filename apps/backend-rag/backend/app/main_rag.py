@@ -57,7 +57,9 @@ def create_rag_app() -> FastAPI:
     rag.add_exception_handler(StarletteHTTPException, starlette_http_exception_handler)
     rag.add_exception_handler(Exception, general_exception_handler)
 
-    register_middleware(rag)
+    # This process is reached through the API process's proxy route, which has already
+    # charged the request to its caller: counting it again here would halve every limit.
+    register_middleware(rag, rate_limit=False)
     include_heavy_routers(rag)
 
     return rag
