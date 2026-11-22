@@ -342,9 +342,7 @@ class InviteService:
                             existing_user["id"],
                         )
                         if conflict:
-                            raise ValueError(
-                                "Another account already uses this email address"
-                            )
+                            raise ValueError("Another account already uses this email address")
 
                     # Update existing (never-registered or deactivated) user
                     await conn.execute(
@@ -362,6 +360,25 @@ class InviteService:
                     )
                     user_id = existing_user["id"]
                 else:
+                    # No row is linked to this client yet, but the address can
+                    # still belong to another row: a staff member, or the account
+                    # of another client. `team_members.email` is unique by exact
+                    # text while login and every other lookup lower it, so an
+                    # address that differs only in letter case would be stored as
+                    # a second login for one mailbox, and the same text would
+                    # fail on the unique index as an opaque server error on every
+                    # retry. Refuse it as the branch above does.
+                    conflict = await conn.fetchval(
+                        """
+                        SELECT id FROM team_members
+                        WHERE LOWER(email) = LOWER($1)
+                        LIMIT 1
+                        """,
+                        invitation["email"],
+                    )
+                    if conflict:
+                        raise ValueError("Another account already uses this email address")
+
                     # Create new team_member with role='client'
                     # Note: team_members has both 'name' (required) and 'full_name' columns
                     user = await conn.fetchrow(
