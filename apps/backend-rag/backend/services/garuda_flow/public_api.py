@@ -42,6 +42,7 @@ from backend.services.garuda_flow.pricing import price_for_case
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CheckNotStorable",
     "CheckStore",
     "EligibilityCheckOutcome",
     "IdempotencyConflict",
@@ -51,6 +52,15 @@ __all__ = [
     "UnconfiguredCheckStore",
     "evaluate_public_check",
 ]
+
+
+class CheckNotStorable(RuntimeError):
+    """A value of the request is outside what its column can hold.
+
+    Maps to the contract's ``INVALID_REQUEST`` (422). Raised by the store at
+    the point where it would write the row, so every answer that comes before
+    that write keeps its place.
+    """
 
 
 class PersistencePolicyUnavailable(RuntimeError):

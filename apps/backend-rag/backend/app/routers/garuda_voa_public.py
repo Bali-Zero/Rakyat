@@ -53,6 +53,7 @@ from backend.services.garuda_flow.civil_clock import garuda_today
 from backend.services.garuda_flow.eligibility import DeclineCode
 from backend.services.garuda_flow.intake import CaseType, Purpose
 from backend.services.garuda_flow.public_api import (
+    CheckNotStorable,
     CheckStore,
     EligibilityCheckOutcome,
     IdempotencyConflict,
@@ -462,13 +463,6 @@ def get_garuda_check_store(request: Request) -> CheckStore:
 # ============================================================
 
 
-#: The width of `garuda_voa_check_results.travellers` (INT, migration 286).
-#: The contract gives the field a minimum only, and a larger value used to
-#: fail at the INSERT. Checked in a validator, not as a field bound, so the
-#: generated schema stays the contract's.
-_TRAVELLERS_COLUMN_MAX = 2_147_483_647
-
-
 class EligibilityCheckRequest(BaseModel):
     """`#/components/schemas/EligibilityCheckRequest`, verbatim including the
     `allOf` issuance/extension shape guard."""
@@ -496,12 +490,6 @@ class EligibilityCheckRequest(BaseModel):
                 raise ValueError("voa_expiry_date is forbidden for an issuance case")
             if self.extension_already_used is not False:
                 raise ValueError("extension_already_used must be false for an issuance case")
-        return self
-
-    @model_validator(mode="after")
-    def _refuse_what_cannot_be_stored(self) -> EligibilityCheckRequest:
-        if self.travellers > _TRAVELLERS_COLUMN_MAX:
-            raise ValueError("travellers is larger than the column that stores it")
         return self
 
 
@@ -671,6 +659,10 @@ async def create_eligibility_check(
     except PersistencePolicyUnavailable:
         logger.warning("garuda_voa_public: persistence policy unavailable at create")
         return _error("PERSISTENCE_POLICY_UNAVAILABLE")
+    except CheckNotStorable:
+        # The contract bounds `travellers` from below only; the store refuses a
+        # count its column cannot hold, where the INSERT used to fail as a 500.
+        return _error("INVALID_REQUEST")
 
     body = _result_body(stored.outcome)
     result = JSONResponse(status_code=201, content=body)

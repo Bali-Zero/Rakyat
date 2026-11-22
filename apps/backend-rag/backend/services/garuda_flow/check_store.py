@@ -35,6 +35,7 @@ from backend.services.garuda_flow import retention
 from backend.services.garuda_flow.eligibility import DeclineCode
 from backend.services.garuda_flow.intake import CaseType, Purpose
 from backend.services.garuda_flow.public_api import (
+    CheckNotStorable,
     EligibilityCheckOutcome,
     IdempotencyConflict,
     PersistencePolicyUnavailable,
@@ -66,6 +67,9 @@ _REQUESTED_BY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
 # {22,128} bound and comfortably >=128 bits (contract: "an identifier,
 # never a credential"). The session secret uses more entropy (32 bytes)
 # because it IS a bearer credential.
+#: The width of `garuda_voa_check_results.travellers` (INT, migration 286). The
+#: contract bounds the field from below only.
+_TRAVELLERS_COLUMN_MAX = 2_147_483_647
 _RESULT_ID_BYTES = 24
 _SESSION_SECRET_BYTES = 32
 
@@ -171,6 +175,12 @@ class PostgresCheckStore:
             now = datetime.now(UTC)
             if not await self._policy_available(conn, created_at=now):
                 raise PersistencePolicyUnavailable("no active GARUDA_CHECK retention policy")
+
+            # Refused HERE, where the INSERT below used to fail on it: after the
+            # conflict, the replay and the policy answers above, which keep their
+            # place, and inside the transaction, so nothing of the request is kept.
+            if int(canonical_request["travellers"]) > _TRAVELLERS_COLUMN_MAX:
+                raise CheckNotStorable("travellers is larger than the column that stores it")
 
             result_id = secrets.token_urlsafe(_RESULT_ID_BYTES)
             raw_secret = secrets.token_urlsafe(_SESSION_SECRET_BYTES)

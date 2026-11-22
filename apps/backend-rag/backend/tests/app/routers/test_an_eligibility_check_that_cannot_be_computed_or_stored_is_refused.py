@@ -8,7 +8,10 @@ at the INSERT. Both escaped as a 500.
 
 Nothing else changes: every request the route answers today gets the same answer, however
 far its dates are. That is why the refusal is tied to what the engine cannot compute and to
-the column's width, and not to a window of plausible years.
+the column's width, and not to a window of plausible years. And each refusal is made where
+the 500 used to arise, so every answer that came before it still comes before it: the funnel
+switched off, a missing key, a missing acknowledgement, and for the traveller count also the
+store's own conflict and missing-policy answers.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from backend.app.routers import garuda_voa_public as router_mod
+from backend.services.garuda_flow import check_store
 from backend.services.garuda_flow.check_store import PostgresCheckStore
 from backend.services.garuda_flow.civil_clock import garuda_today
 from backend.services.garuda_flow.constants import EXTENSION_WINDOW_OPENS_DAYS
@@ -245,18 +249,7 @@ def test_a_far_date_the_engine_can_compute_is_still_declined_with_its_reason(
 
 
 def test_the_bound_on_travellers_is_the_width_of_an_int_column() -> None:
-    assert router_mod._TRAVELLERS_COLUMN_MAX == INT_COLUMN_MAX
-
-
-@pytest.mark.parametrize("travellers", [2**31, 3_000_000_000, 2**63, 10**30])
-def test_more_travellers_than_the_column_holds_is_refused(
-    api: TestClient, store: _Store, travellers: int
-) -> None:
-    answer = _post(api, _issuance(travellers=travellers))
-
-    assert answer.status_code == 422
-    assert answer.json() == INVALID
-    assert store.stored == []
+    assert getattr(check_store, "_TRAVELLERS_COLUMN_MAX", None) == INT_COLUMN_MAX
 
 
 @pytest.mark.parametrize("travellers", [2, 1000, INT_COLUMN_MAX])
@@ -271,11 +264,16 @@ def test_a_group_the_column_can_hold_is_still_declined_as_a_group(
     assert [request["travellers"] for request in store.stored] == [travellers]
 
 
-@pytest.mark.parametrize(
-    "body",
-    [_issuance(travellers=2**31), _issuance(entry_date=date.max.isoformat())],
-    ids=["too many travellers", "an uncomputable arrival"],
-)
+# ---------------------------------------------------------------- the answers that come first
+
+CANNOT_BE_SERVED = {
+    "too many travellers": _issuance(travellers=2**31),
+    "an uncomputable arrival": _issuance(entry_date=date.max.isoformat()),
+    "an uncomputable expiry": _extension(voa_expiry_date=date.min.isoformat()),
+}
+
+
+@pytest.mark.parametrize("body", CANNOT_BE_SERVED.values(), ids=CANNOT_BE_SERVED.keys())
 def test_with_the_funnel_switched_off_the_answer_is_still_that_it_is_off(
     monkeypatch: pytest.MonkeyPatch, api: TestClient, store: _Store, body: dict[str, Any]
 ) -> None:
@@ -284,6 +282,28 @@ def test_with_the_funnel_switched_off_the_answer_is_still_that_it_is_off(
     answer = _post(api, body)
 
     assert (answer.status_code, answer.json()["code"]) == (404, "GARUDA_PUBLIC_DISABLED")
+    assert store.stored == []
+
+
+@pytest.mark.parametrize("body", CANNOT_BE_SERVED.values(), ids=CANNOT_BE_SERVED.keys())
+@pytest.mark.parametrize("headers", [{}, {"Idempotency-Key": "x"}], ids=["no key", "a bad key"])
+def test_without_a_usable_key_the_answer_is_still_that_a_key_is_required(
+    api: TestClient, store: _Store, body: dict[str, Any], headers: dict[str, str]
+) -> None:
+    answer = api.post(URL, json=body, headers=headers)
+
+    assert (answer.status_code, answer.json()["code"]) == (400, "IDEMPOTENCY_KEY_REQUIRED")
+    assert store.stored == []
+
+
+@pytest.mark.parametrize("body", CANNOT_BE_SERVED.values(), ids=CANNOT_BE_SERVED.keys())
+def test_without_the_acknowledgement_the_answer_is_still_that_it_is_required(
+    api: TestClient, store: _Store, body: dict[str, Any]
+) -> None:
+    answer = _post(api, {**body, "retention_notice_acknowledged": False})
+
+    assert answer.status_code == 422
+    assert answer.json()["code"] == "NOTICE_ACKNOWLEDGEMENT_REQUIRED"
     assert store.stored == []
 
 
@@ -348,6 +368,11 @@ def _fresh_key() -> str:
     return f"travellers-width-{uuid.uuid4().hex}"
 
 
+async def _results(pool: asyncpg.Pool) -> int:
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT count(*) FROM garuda_voa_check_results")
+
+
 @pytest.mark.asyncio
 async def test_the_real_store_keeps_the_largest_group_the_route_admits(real_store: Any) -> None:
     client, pool = real_store
@@ -366,20 +391,53 @@ async def test_the_real_store_keeps_the_largest_group_the_route_admits(real_stor
 
 
 @pytest.mark.asyncio
-async def test_one_traveller_more_is_refused_by_the_route_over_the_real_store(
+@pytest.mark.parametrize("travellers", [2**31, 3_000_000_000, 2**63, 10**30])
+async def test_more_travellers_than_the_column_holds_is_refused_and_nothing_is_kept(
+    real_store: Any, travellers: int
+) -> None:
+    client, pool = real_store
+    before = await _results(pool)
+    key = _fresh_key()
+
+    refused = await client.post(
+        URL, json=_issuance(travellers=travellers), headers={"Idempotency-Key": key}
+    )
+
+    assert refused.status_code == 422
+    assert refused.json() == INVALID
+    assert await _results(pool) == before
+    # The key is not kept either: the same key serves a request that can be stored, as new.
+    served = await client.post(URL, json=_issuance(), headers={"Idempotency-Key": key})
+    assert (served.status_code, served.headers["Idempotency-Replayed"]) == (201, "false")
+
+
+@pytest.mark.asyncio
+async def test_under_a_key_bound_to_another_request_the_answer_is_still_a_conflict(
+    real_store: Any,
+) -> None:
+    client, _pool = real_store
+    key = _fresh_key()
+    first = await client.post(URL, json=_issuance(), headers={"Idempotency-Key": key})
+    assert first.status_code == 201
+
+    answer = await client.post(
+        URL, json=_issuance(travellers=2**31), headers={"Idempotency-Key": key}
+    )
+
+    assert (answer.status_code, answer.json()["code"]) == (409, "IDEMPOTENCY_CONFLICT")
+
+
+@pytest.mark.asyncio
+async def test_with_no_policy_in_force_the_answer_is_still_that_storing_is_unavailable(
     real_store: Any,
 ) -> None:
     client, pool = real_store
     async with pool.acquire() as conn:
-        before = await conn.fetchval("SELECT count(*) FROM garuda_voa_check_results")
+        await _close_open_policies(conn)
 
     answer = await client.post(
-        URL,
-        json=_issuance(travellers=INT_COLUMN_MAX + 1),
-        headers={"Idempotency-Key": _fresh_key()},
+        URL, json=_issuance(travellers=2**31), headers={"Idempotency-Key": _fresh_key()}
     )
 
-    assert answer.status_code == 422
-    assert answer.json() == INVALID
-    async with pool.acquire() as conn:
-        assert await conn.fetchval("SELECT count(*) FROM garuda_voa_check_results") == before
+    assert answer.status_code == 503
+    assert answer.json()["code"] == "PERSISTENCE_POLICY_UNAVAILABLE"
