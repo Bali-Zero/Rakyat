@@ -253,7 +253,13 @@ class XenditPaymentProvider:
             if key.lower() == "x-callback-token":
                 received = value
                 break
-        if not received or not hmac.compare_digest(received, self._callback_verification_token):
+        # Compared as bytes. On two strings `compare_digest` raises TypeError when
+        # either holds a non-ASCII character, and a header byte above 0x7F arrives
+        # as one: the check then escaped as a 500 instead of a refusal.
+        if not received or not hmac.compare_digest(
+            received.encode("utf-8", "surrogatepass"),
+            self._callback_verification_token.encode("utf-8", "surrogatepass"),
+        ):
             raise WebhookSignatureInvalid("x-callback-token missing or mismatched")
 
     def parse_event(

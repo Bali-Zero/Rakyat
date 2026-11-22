@@ -238,17 +238,28 @@ class MidtransPaymentProvider:
             + str(body.get("gross_amount", ""))
             + self._server_key
         )
-        return hashlib.sha512(raw.encode()).hexdigest()
+        # "surrogatepass": the same bytes for every well-formed string, and no
+        # UnicodeEncodeError for a lone surrogate, which JSON can carry.
+        return hashlib.sha512(raw.encode("utf-8", "surrogatepass")).hexdigest()
 
     def verify_signature(self, *, raw_body: bytes, headers: dict[str, str]) -> None:
+        # Everything here runs on an UNAUTHENTICATED body: whatever it holds, the
+        # answer is a refusal, never another exception (that would be a 500).
         try:
             body: dict[str, Any] = json.loads(raw_body)
-        except (ValueError, UnicodeDecodeError) as exc:
+        except (ValueError, UnicodeDecodeError, RecursionError) as exc:
             raise WebhookSignatureInvalid("notification body is not valid JSON") from exc
+        if not isinstance(body, dict):
+            raise WebhookSignatureInvalid("notification body is not a JSON object")
         received = body.get("signature_key")
         if not isinstance(received, str) or not received:
             raise WebhookSignatureInvalid("notification missing signature_key")
-        if not hmac.compare_digest(received, self._expected_signature(body)):
+        # Compared as bytes: on two strings `compare_digest` raises TypeError when
+        # either holds a non-ASCII character.
+        if not hmac.compare_digest(
+            received.encode("utf-8", "surrogatepass"),
+            self._expected_signature(body).encode("ascii"),
+        ):
             raise WebhookSignatureInvalid("notification signature mismatch")
 
     @staticmethod

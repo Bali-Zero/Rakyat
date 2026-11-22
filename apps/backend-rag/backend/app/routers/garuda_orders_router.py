@@ -624,7 +624,9 @@ async def receive_payment_webhook(
             routing_order_id = _routing_body.get("order_id") or _routing_body.get(
                 "external_id"
             )
-        except (ValueError, UnicodeDecodeError, AttributeError):
+        except (ValueError, UnicodeDecodeError, AttributeError, RecursionError):
+            # RecursionError: a deeply nested body. This parse runs BEFORE the
+            # signature check, so it must not be able to raise.
             routing_order_id = None
         if isinstance(routing_order_id, str) and routing_order_id:
             order_provider = await repository.provider_name_for_order(routing_order_id)
