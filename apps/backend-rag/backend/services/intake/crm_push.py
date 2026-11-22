@@ -49,6 +49,34 @@ _REQUEST_TIMEOUT_SECONDS = 60.0
 # carries only document_id + file_url, not the bare Drive file id).
 _DRIVE_FILE_ID_RE = re.compile(r"/d/([A-Za-z0-9_-]{10,})")
 
+# A 429 is the server asking for a pause, not a verdict on the request: it gets ONE retry
+# after a short wait, out of the same single retry a transport error or a 5xx gets. The
+# wait is the response's Retry-After kept within 1..5 seconds; a missing or unreadable
+# value waits the default. Bounded on purpose: a delivery never sleeps through a whole
+# rate-limit window, and a retry that is refused again ends as a refused request always
+# ended here.
+_RATE_LIMIT_WAIT_DEFAULT_SECONDS = 2.0
+_RATE_LIMIT_WAIT_MAX_SECONDS = 5.0
+
+
+# The longest run of digits that is ever converted to a number. The cap is far below
+# a thousand, so a longer number is over it whatever it is; and int() refuses a run of
+# more than 4,300 digits, which a header is free to carry.
+_RATE_LIMIT_WAIT_MAX_DIGITS = 3
+
+
+def _rate_limit_wait_seconds(resp: httpx.Response) -> float:
+    """Seconds to wait before the one retry a 429 gets. Never raises."""
+    raw = (resp.headers.get("Retry-After") or "").strip()
+    if not (raw.isascii() and raw.isdigit()):
+        return _RATE_LIMIT_WAIT_DEFAULT_SECONDS
+    digits = raw.lstrip("0")
+    if not digits:
+        return _RATE_LIMIT_WAIT_DEFAULT_SECONDS
+    if len(digits) > _RATE_LIMIT_WAIT_MAX_DIGITS:
+        return _RATE_LIMIT_WAIT_MAX_SECONDS
+    return float(min(int(digits), _RATE_LIMIT_WAIT_MAX_SECONDS))
+
 
 def push_enabled() -> bool:
     """Kill-switch — ``INTAKE_CRM_PUSH_ENABLED`` (default ON)."""
@@ -176,15 +204,21 @@ async def _ensure_client_on_fly(
     url = f"{base_url}/api/crm/clients/upsert-by-phone"
     headers = {"X-CRM-Write-Key": crm_write_key}
     client = _get_client()
-    try:
-        resp = await client.post(url, json=body, headers=headers)
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
-        logger.warning(
-            "intake.crm_push.upsert_unreachable phone=%s err=%s",
-            redact_identifier_for_log(digits),
-            type(exc).__name__,
-        )
-        return None
+    for attempt in (0, 1):
+        try:
+            resp = await client.post(url, json=body, headers=headers)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            logger.warning(
+                "intake.crm_push.upsert_unreachable phone=%s err=%s",
+                redact_identifier_for_log(digits),
+                type(exc).__name__,
+            )
+            return None
+        if resp.status_code != 429 or attempt == 1:
+            break
+        wait = _rate_limit_wait_seconds(resp)
+        logger.warning("intake.crm_push.upsert_rate_limited — retrying once in %.0fs", wait)
+        await asyncio.sleep(wait)
     if resp.status_code >= 400:
         logger.warning(
             "intake.crm_push.upsert_failed status=%s detail=%s",
@@ -422,6 +456,15 @@ async def push_committed_document(
                     status="denied_rbac",
                     detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
                 )
+            if resp.status_code == 429 and attempt == 0:
+                wait = _rate_limit_wait_seconds(resp)
+                logger.warning(
+                    "intake.crm_push.rate_limited client=%s — retrying once in %.0fs",
+                    client_id,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                continue
             if resp.status_code >= 500:
                 last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
                 if attempt == 0:
@@ -602,6 +645,16 @@ async def push_committed_company_document(
                     status="denied_rbac",
                     detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
                 )
+            if resp.status_code == 429 and attempt == 0:
+                wait = _rate_limit_wait_seconds(resp)
+                logger.warning(
+                    "intake.crm_push.company_rate_limited company=%s — retrying once in %.0fs",
+                    company_id,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                attempt += 1
+                continue
             if resp.status_code >= 500:
                 last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
                 if attempt == 0:
