@@ -348,6 +348,7 @@ class LKPMService:
                 FROM lkpm_receipts re
                 JOIN lkpm_reports r ON r.id = re.lkpm_report_id
                 LEFT JOIN lkpm_client_config cfg ON cfg.client_id = r.client_id
+                    AND COALESCE(r.company_id, 0) = COALESCE(cfg.company_id, 0)
                 LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.company_id IN (
                     SELECT DISTINCT ccl.company_id
@@ -825,6 +826,7 @@ class LKPMService:
                 FROM lkpm_receipts re
                 JOIN lkpm_reports r ON r.id = re.lkpm_report_id
                 LEFT JOIN lkpm_client_config cfg ON cfg.client_id = r.client_id
+                    AND COALESCE(r.company_id, 0) = COALESCE(cfg.company_id, 0)
                 LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.company_id IN (
                     SELECT DISTINCT ccl.company_id
