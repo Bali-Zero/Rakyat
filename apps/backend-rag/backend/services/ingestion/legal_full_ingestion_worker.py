@@ -10,6 +10,8 @@ import io
 import json
 import logging
 import os
+import re
+import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -101,8 +103,13 @@ async def _download_pdf(url: str, tipo: str, nomor: str, anno: str) -> Path:
     params) and never bare `str(e)`, which is empty for some httpx timeout
     exceptions and left prior failures undiagnosable from the job row.
     """
-    dest = Path(tempfile.mkdtemp()) / f"{tipo}_{nomor}_{anno}.pdf"
+    temp_dir = Path(tempfile.mkdtemp())
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", f"{tipo}_{nomor}_{anno}")
+    if safe_name in {"", ".", ".."}:
+        safe_name = "document"
+    dest = temp_dir / f"{safe_name}.pdf"
     host = httpx.URL(str(url)).host
+    downloaded = False
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(180.0, connect=30.0),
@@ -112,16 +119,23 @@ async def _download_pdf(url: str, tipo: str, nomor: str, anno: str) -> Path:
             resp = await client.get(str(url))
             resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
         raise RuntimeError(
             f"PDF download failed: HTTP {exc.response.status_code} from host={host}"
         ) from exc
     except (httpx.TimeoutException, httpx.TransportError) as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
         raise RuntimeError(
             f"PDF download failed: {type(exc).__name__} from host={host}"
         ) from exc
-    dest.write_bytes(resp.content)
-    logger.info(f"📥 Downloaded PDF: {dest} ({len(resp.content)} bytes)")
-    return dest
+    try:
+        dest.write_bytes(resp.content)
+        downloaded = True
+        logger.info(f"📥 Downloaded PDF: {dest} ({len(resp.content)} bytes)")
+        return dest
+    finally:
+        if not downloaded:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _build_drive_service() -> Any:
@@ -202,10 +216,13 @@ def _drive_get_or_create_folder(
     parent_id: str,
 ) -> str:
     """Get or create a folder inside parent_id. Returns folder ID."""
+    def escape(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
     # Search for existing
     q = (
-        f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' "
-        f"and '{parent_id}' in parents and trashed = false"
+        f"name = '{escape(folder_name)}' and mimeType = 'application/vnd.google-apps.folder' "
+        f"and '{escape(parent_id)}' in parents and trashed = false"
     )
     result = (
         drive_service.files()
@@ -235,7 +252,10 @@ def _drive_find_file(
     folder_id: str,
 ) -> dict[str, str] | None:
     """Find a file by exact name in a folder. Returns {file_id, web_view_link} or None."""
-    q = f"name = '{file_name}' and '{folder_id}' in parents and trashed = false"
+    def escape(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
+    q = f"name = '{escape(file_name)}' and '{escape(folder_id)}' in parents and trashed = false"
     result = (
         drive_service.files()
         .list(
@@ -464,8 +484,5 @@ async def _process_one_job(db_pool: asyncpg.Pool, app_state: Any) -> None:
         async with db_pool.acquire() as conn:
             await _update_job(conn, job_id, status="failed", error=error_msg)
     finally:
-        if pdf_path and pdf_path.exists():
-            try:
-                pdf_path.unlink()
-            except Exception:
-                pass
+        if pdf_path:
+            shutil.rmtree(pdf_path.parent, ignore_errors=True)
