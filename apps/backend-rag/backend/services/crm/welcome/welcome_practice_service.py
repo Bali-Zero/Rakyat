@@ -29,6 +29,13 @@ import asyncpg
 import httpx
 
 from backend.app.core.config import settings
+from backend.services.crm.welcome.log_facts import (
+    LANGUAGES,
+    choice_fact,
+    error_word,
+    id_fact,
+    status_fact,
+)
 from backend.services.crm.welcome.welcome_templates import (
     ADVISOR_FALLBACK,
     PRACTICE_DOCUMENT_CHECKLISTS,
@@ -83,12 +90,12 @@ async def send_practice_kickoff(
     """
     try:
         await _send_practice_kickoff_impl(practice_id, client_id, practice_type_code, db_pool)
-    except Exception:
+    except Exception as exc:
         logger.error(
-            "PracticeKickoff: unhandled error for practice %d (client %d)",
-            practice_id,
-            client_id,
-            exc_info=True,
+            "PracticeKickoff: unhandled error for practice %s (client %s): %s error",
+            id_fact(practice_id),
+            id_fact(client_id),
+            error_word(exc),
         )
 
 
@@ -110,7 +117,7 @@ async def _send_practice_kickoff_impl(
             client_id,
         )
         if not client:
-            logger.warning("PracticeKickoff: client %d not found", client_id)
+            logger.warning("PracticeKickoff: client %s not found", id_fact(client_id))
             return
 
     # Shared variable resolution
@@ -238,19 +245,20 @@ async def _record_welcome_run(
                 metadata,
             )
         logger.info(
-            "PracticeKickoff: crm_welcome_runs UPSERT for client=%d practice=%d "
-            "success=%s channels=%s",
-            client_id,
-            practice_id,
-            success,
-            channels_sent,
+            "PracticeKickoff: crm_welcome_runs UPSERT for client=%s practice=%s "
+            "success=%s whatsapp=%s email=%s",
+            id_fact(client_id),
+            id_fact(practice_id),
+            bool(success),
+            bool("whatsapp" in channels_sent),
+            bool("email" in channels_sent),
         )
-    except Exception:
+    except Exception as exc:
         logger.error(
-            "PracticeKickoff: crm_welcome_runs UPSERT failed for client=%d practice=%d",
-            client_id,
-            practice_id,
-            exc_info=True,
+            "PracticeKickoff: crm_welcome_runs UPSERT failed for client=%s practice=%s: %s error",
+            id_fact(client_id),
+            id_fact(practice_id),
+            error_word(exc),
         )
 
 
@@ -273,7 +281,7 @@ async def _send_whatsapp(
     False if any guard prevented delivery (gate inactive / missing creds /
     no phone / API failure)."""
     if not _WHATSAPP_PRACTICE_ACTIVE:
-        logger.debug("PracticeKickoff WA: inactive, skipping practice %d", practice_id)
+        logger.debug("PracticeKickoff WA: inactive, skipping practice %s", id_fact(practice_id))
         return False
 
     phone_number_id = settings.whatsapp_phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
@@ -284,7 +292,7 @@ async def _send_whatsapp(
 
     phone = (client["phone"] or "").strip()
     if not phone:
-        logger.info("PracticeKickoff WA: client %d has no phone, skipping", client_id)
+        logger.info("PracticeKickoff WA: client %s has no phone, skipping", id_fact(client_id))
         return False
 
     async with db_pool.acquire() as conn:
@@ -295,7 +303,9 @@ async def _send_whatsapp(
             f"%practice_id={practice_id}%",
         )
     if already_sent:
-        logger.info("PracticeKickoff WA: already sent for practice %d, skipping", practice_id)
+        logger.info(
+            "PracticeKickoff WA: already sent for practice %s, skipping", id_fact(practice_id)
+        )
         # Idempotent retry: count as delivered (the message reached the
         # client on a previous run).
         return True
@@ -336,17 +346,16 @@ async def _send_whatsapp(
                 f"lang={lang} phone={clean_phone} practice_id={practice_id}",
             )
         logger.info(
-            "PracticeKickoff WA: sent to client %d practice %d (lang=%s)",
-            client_id,
-            practice_id,
-            lang,
+            "PracticeKickoff WA: sent to client %s practice %s (lang=%s)",
+            id_fact(client_id),
+            id_fact(practice_id),
+            choice_fact(lang, LANGUAGES),
         )
         return True
     logger.error(
-        "PracticeKickoff WA: Meta API error for practice %d: %d %s",
-        practice_id,
-        resp.status_code,
-        resp.text[:200],
+        "PracticeKickoff WA: Meta API error for practice %s: status=%s",
+        id_fact(practice_id),
+        status_fact(resp.status_code),
     )
     return False
 
@@ -371,12 +380,12 @@ async def _send_email(
     """Returns True if the email was sent (or already-sent, idempotent),
     False if any guard prevented delivery."""
     if not _EMAIL_PRACTICE_ACTIVE:
-        logger.debug("PracticeKickoff Email: inactive, skipping practice %d", practice_id)
+        logger.debug("PracticeKickoff Email: inactive, skipping practice %s", id_fact(practice_id))
         return False
 
     email = (client["email"] or "").strip()
     if not email:
-        logger.info("PracticeKickoff Email: client %d has no email, skipping", client_id)
+        logger.info("PracticeKickoff Email: client %s has no email, skipping", id_fact(client_id))
         return False
 
     async with db_pool.acquire() as conn:
@@ -387,7 +396,9 @@ async def _send_email(
             f"%practice_id={practice_id}%",
         )
     if already_sent:
-        logger.info("PracticeKickoff Email: already sent for practice %d, skipping", practice_id)
+        logger.info(
+            "PracticeKickoff Email: already sent for practice %s, skipping", id_fact(practice_id)
+        )
         # Idempotent retry — count as delivered.
         return True
 
@@ -425,11 +436,11 @@ async def _send_email(
                     "contentType": "application/pdf",
                 },
             ]
-        except Exception:
+        except Exception as exc:
             logger.warning(
-                "PracticeKickoff Email: could not read brochure for practice %d",
-                practice_id,
-                exc_info=True,
+                "PracticeKickoff Email: could not read brochure for practice %s: %s error",
+                id_fact(practice_id),
+                error_word(exc),
             )
 
     async with httpx.AsyncClient(timeout=30.0) as http:
@@ -452,17 +463,16 @@ async def _send_email(
                 f"lang={lang} email={email} practice_id={practice_id}",
             )
         logger.info(
-            "PracticeKickoff Email: sent to client %d practice %d (lang=%s)",
-            client_id,
-            practice_id,
-            lang,
+            "PracticeKickoff Email: sent to client %s practice %s (lang=%s)",
+            id_fact(client_id),
+            id_fact(practice_id),
+            choice_fact(lang, LANGUAGES),
         )
         return True
     logger.error(
-        "PracticeKickoff Email: send failed for practice %d: %d %s",
-        practice_id,
-        resp.status_code,
-        resp.text[:200],
+        "PracticeKickoff Email: send failed for practice %s: status=%s",
+        id_fact(practice_id),
+        status_fact(resp.status_code),
     )
     return False
 

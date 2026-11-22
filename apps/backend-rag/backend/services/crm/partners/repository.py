@@ -25,6 +25,12 @@ from backend.services.crm.partners.models import (
     RuleSource,
     WithholdingCategory,
 )
+from backend.services.crm.welcome.log_facts import (
+    COMMISSION_ENTRY_TYPES,
+    COMMISSION_STATUSES,
+    choice_fact,
+    uuid_fact,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +124,7 @@ class PartnersRepository:
         placeholders = ", ".join(f"${i + 1}" for i in range(len(vals)))
         sql = f"INSERT INTO partners ({', '.join(cols)}) VALUES ({placeholders}) RETURNING id"
         row = await self.conn.fetchrow(sql, *vals)
-        logger.debug("insert_partner id=%s email=%s", row["id"], email)
+        logger.debug("insert_partner id=%s", uuid_fact(row["id"]))
         return row["id"]
 
     async def _assert_email_is_not_internal(self, email: str) -> None:
@@ -351,10 +357,10 @@ class PartnersRepository:
         )
         logger.debug(
             "insert_commission id=%s partner=%s type=%s status=%s",
-            row["id"],
-            partner_id,
-            entry_type,
-            status,
+            uuid_fact(row["id"]),
+            uuid_fact(partner_id),
+            choice_fact(entry_type, COMMISSION_ENTRY_TYPES),
+            choice_fact(status, COMMISSION_STATUSES),
         )
         return row["id"]
 
@@ -408,7 +414,10 @@ class PartnersRepository:
         if new_status not in _ALLOWED_TRANSITIONS.get(current.status, set()):
             raise ValueError(f"Disallowed transition: {current.status!r} -> {new_status!r}")
         logger.debug(
-            "update_commission_status id=%s %s->%s", commission_id, current.status, new_status
+            "update_commission_status id=%s %s->%s",
+            uuid_fact(commission_id),
+            choice_fact(current.status, COMMISSION_STATUSES),
+            choice_fact(new_status, COMMISSION_STATUSES),
         )
         fragments, args = ["status = $2"], [commission_id, new_status]
         if new_status == "approved":
