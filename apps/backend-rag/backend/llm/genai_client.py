@@ -941,6 +941,9 @@ class GenAIClient:
 
         t0 = time.perf_counter()
         chunk_count = 0
+        usage_metadata = None
+        failed = False
+        error_class: str | None = None
         try:
             # google-genai's AsyncModels.generate_content_stream is a COROUTINE
             # FUNCTION -- it must be awaited to obtain the AsyncIterator, even
@@ -957,6 +960,9 @@ class GenAIClient:
                 config=config,
             )
             async for chunk in stream:
+                chunk_usage = getattr(chunk, "usage_metadata", None)
+                if chunk_usage:
+                    usage_metadata = chunk_usage
                 if chunk.text:
                     chunk_count += 1
                     yield chunk.text
@@ -977,6 +983,8 @@ class GenAIClient:
                 extra={"chunks": str(chunk_count)},
             )
         except Exception as e:
+            failed = True
+            error_class = _gemini_error_label(e)
             latency_ms = round((time.perf_counter() - t0) * 1000)
             logger.error(
                 "LLM stream failed",
@@ -994,6 +1002,41 @@ class GenAIClient:
                 status="error",
             )
             raise
+        finally:
+            # One ledger row per streamed call, whether it was read to the end,
+            # failed, or was abandoned by the consumer (generator closed).
+            try:
+                from backend.services.llm_clients.pricing import (
+                    calculate_cost,
+                    extract_gemini_usage,
+                )
+                from backend.services.observability import record_llm_call
+
+                prompt_tokens, completion_tokens, cached_tokens, thinking_tokens = (
+                    extract_gemini_usage(usage_metadata)
+                )
+                cost_usd = calculate_cost(
+                    prompt_tokens,
+                    completion_tokens,
+                    model,
+                    cached_tokens=cached_tokens,
+                    thinking_tokens=thinking_tokens,
+                )
+                await record_llm_call(
+                    provider="gemini",
+                    model=model,
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens + thinking_tokens,
+                    cost_usd=cost_usd,
+                    success=not failed,
+                    latency_ms=round((time.perf_counter() - t0) * 1000),
+                    endpoint=None,
+                    request_id=None,
+                    error_class=error_class,
+                    cache_hit_tokens=cached_tokens,
+                )
+            except Exception as rec_exc:
+                logger.warning("llm_cost recorder failed for gemini stream: %s", rec_exc)
 
     def create_chat_session(
         self,
