@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { beginPortalAction } from "@/lib/portal-analytics";
 import { sanitizeFilename } from "@/lib/vault/sanitizeFilename";
+import { shrinkImage } from "@/lib/vault/shrinkImage";
 import {
   MAX_SIZE_BYTES,
   MAX_SIZE_MB_LABEL,
@@ -96,6 +97,18 @@ function serverRejectionMessage(responseText: string, status: number): string {
   }
 }
 
+/**
+ * The server takes one picture per JPEG, with nothing after it, and answers
+ * 415 for anything else. A camera can write more than that into a `.jpg`: a
+ * second picture after the first (a gain map, a depth map) or a trailer of
+ * its own. The browser reads such a file as the photo it is, so a refused
+ * JPEG is sent once more as the picture alone, re-encoded the way a photo
+ * above the size cap already is. One more attempt, never a loop.
+ */
+function isRefusedPhoto(status: number, file: File): boolean {
+  return status === 415 && file.type === "image/jpeg";
+}
+
 function tooLargeMessage(): string {
   return `This file is too large to upload (max ${MAX_SIZE_MB_LABEL}). Try a smaller photo, a screenshot, or a scanned PDF.`;
 }
@@ -103,13 +116,22 @@ function tooLargeMessage(): string {
 export function useVaultUpload() {
   const [state, setState] = useState<UploadState>({ status: "idle" });
   const retryableUploadRef = useRef<RetryableUpload | null>(null);
+  // Counts the uploads the caller started and its resets, so that a picture
+  // re-encoded late is not sent for an upload the caller has already left.
+  const runRef = useRef(0);
 
   const reset = useCallback(() => {
+    runRef.current += 1;
     retryableUploadRef.current = null;
     setState({ status: "idle" });
   }, []);
 
-  const upload = useCallback((file: File, opts: UploadOptions = {}) => {
+  const send = useCallback(function sendFile(
+    file: File,
+    opts: UploadOptions,
+    pictureAlone: boolean,
+  ) {
+    const run = runRef.current;
     const attempt = beginPortalAction("document_upload", () => ({
       role: api.getUserProfile?.()?.role,
       impersonating: api.getPortalImpersonation?.() !== null,
@@ -196,11 +218,27 @@ export function useVaultUpload() {
         if (!isRetryableHttpStatus(xhr.status)) {
           retryableUploadRef.current = null;
         }
-        setState({
+        const refusal: UploadState = {
           status: "error",
           message: serverRejectionMessage(xhr.responseText, xhr.status),
           httpStatus: xhr.status,
-        });
+        };
+        if (
+          !pictureAlone &&
+          runRef.current === run &&
+          isRefusedPhoto(xhr.status, file)
+        ) {
+          setState({ status: "validating" });
+          void shrinkImage(file, MAX_SIZE_BYTES)
+            .catch(() => null)
+            .then((picture) => {
+              if (runRef.current !== run) return;
+              if (picture) sendFile(picture, opts, true);
+              else setState(refusal);
+            });
+          return;
+        }
+        setState(refusal);
       }
     };
 
@@ -211,6 +249,14 @@ export function useVaultUpload() {
 
     xhr.send(fd);
   }, []);
+
+  const upload = useCallback(
+    (file: File, opts: UploadOptions = {}) => {
+      runRef.current += 1;
+      send(file, opts, false);
+    },
+    [send],
+  );
 
   const retry = useCallback(() => {
     const retryableUpload = retryableUploadRef.current;
