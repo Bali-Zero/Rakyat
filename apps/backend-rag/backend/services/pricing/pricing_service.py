@@ -502,6 +502,12 @@ def _omit_internal_rows(node: Any, svc: Any = None) -> Any:
 _KEY_QUALIFIER_SEP = "::"
 
 
+def _qualified_key(service_name: str, entry: dict[str, Any]) -> str:
+    """``<sub_block>::<service_name>`` for a row that carries its sub-block, else the name."""
+    sub_block = entry.get("_sub_block")
+    return f"{sub_block}{_KEY_QUALIFIER_SEP}{service_name}" if sub_block else service_name
+
+
 def _iter_service_entries_with_subblock(
     services: dict[str, Any],
 ) -> list[tuple[str, str | None, str, dict[str, Any]]]:
@@ -836,6 +842,7 @@ class PricingService:
         # then score every row with it.
         vocabulary = _Vocabulary(w for *_head, profile, _kw in candidates for w in profile.word_set)
         prepared = _PreparedQuery(clean_keywords, query_tokens, whole_query, vocabulary)
+        matched: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         for category_name, is_list_row, service_name, payload, profile, keywords in candidates:
             match_count = _score_row(prepared, profile, keywords)
             if match_count <= 0:
@@ -843,7 +850,18 @@ class PricingService:
             if is_list_row:
                 results.setdefault(category_name, []).append((match_count, payload))
             else:
-                results.setdefault(category_name, {})[service_name] = payload
+                matched.setdefault(category_name, []).append((service_name, payload))
+
+        # Two sub-blocks can hold a row under one name: the monthly tax tiers exist as basic
+        # and as bundled. Keyed by the bare name, the second replaced the first and only one
+        # price came back. Rows that share a name are returned under the qualified key that
+        # get_service_by_key reads; every other row keeps its bare name.
+        for category_name, rows in matched.items():
+            names = [name for name, _payload in rows]
+            results[category_name] = {
+                (_qualified_key(name, payload) if names.count(name) > 1 else name): payload
+                for name, payload in rows
+            }
 
         # For list results, sort by match_count descending, keep top results
         filtered_results: dict[str, Any] = {}
