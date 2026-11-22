@@ -22,13 +22,6 @@ def test_main_rag_imports_cleanly():
     assert app.title == "Zantara RAG Worker"
 
 
-def test_main_backward_compat():
-    """main.py (original) must still work."""
-    from backend.app.main import app
-
-    assert app is not None
-
-
 def test_api_has_health_route():
     """API worker must expose /health for Fly.io checks."""
     from backend.app.main_api import app

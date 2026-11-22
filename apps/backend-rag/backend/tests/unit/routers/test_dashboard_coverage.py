@@ -33,7 +33,9 @@ def app_with_overrides():
     route on this router now requires a credential. Tests that exercise handler
     branches must present one — see `auth_headers`.
     """
-    from backend.app.main_cloud import app
+    from backend.app.setup.app_factory import create_app
+
+    app = create_app()
 
     yield app
     app.dependency_overrides.clear()

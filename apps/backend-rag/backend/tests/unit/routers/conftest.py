@@ -92,7 +92,7 @@ def mock_db_conn(mock_db_pool: AsyncMock) -> AsyncMock:
 @pytest.fixture
 def disable_auth_middleware():
     """
-    Disable HybridAuthMiddleware for tests that use main_cloud.app.
+    Disable HybridAuthMiddleware for tests that use main_api.app.
 
     The real settings model is used so test order cannot replace production
     config with a reduced fake module. This fixture:
@@ -100,7 +100,7 @@ def disable_auth_middleware():
     2. Resets app.middleware_stack = None so the middleware is re-instantiated
        with auth disabled on the next request
 
-    Use this fixture in every fixture that uses `from backend.app.main_cloud import app`.
+    Use this fixture in every fixture that uses `from backend.app.main_api import app`.
     """
     import sys
 
@@ -119,9 +119,9 @@ def disable_auth_middleware():
         original_auth = None
 
     # Force middleware stack to rebuild so the new api_auth_enabled=False takes effect
-    main_cloud_module = sys.modules.get("backend.app.main_cloud")
-    if main_cloud_module is not None:
-        app_obj = getattr(main_cloud_module, "app", None)
+    main_api_module = sys.modules.get("backend.app.main_api")
+    if main_api_module is not None:
+        app_obj = getattr(main_api_module, "app", None)
         if app_obj is not None:
             app_obj.middleware_stack = None
 
@@ -135,7 +135,7 @@ def disable_auth_middleware():
             pass
 
     # Reset middleware stack so other tests don't inherit our disabled auth
-    if main_cloud_module is not None:
-        app_obj = getattr(main_cloud_module, "app", None)
+    if main_api_module is not None:
+        app_obj = getattr(main_api_module, "app", None)
         if app_obj is not None:
             app_obj.middleware_stack = None

@@ -686,7 +686,7 @@ async def _run_visa_oracle_sessions_purge_scheduler(app: FastAPI) -> None:
     `lifespan_light` do: no new credential, no external installer, nothing
     to forget to `launchctl load`.
 
-    WHY THE `api` PROCESS GROUP AND NOT `rag`/`main_cloud`. `visa_oracle` is
+    WHY THE `api` PROCESS GROUP AND NOT `rag`/the union app. `visa_oracle` is
     registered `process_groups=_API` in `router_manifest.py` — it is the
     `api` process (this file, `main_api.py`) that actually serves
     `/api/visa-oracle`, and `api` is the always-on group in `fly.toml`
@@ -696,7 +696,7 @@ async def _run_visa_oracle_sessions_purge_scheduler(app: FastAPI) -> None:
     a week — 2026-06-21 incident, see that function's own comment). The
     monolithic `initialize_services` / `_database_health_check_loop`
     (`service_initializer.py` ~L573/~L706) that a first read of "follow the
-    existing db-health-check pattern" points at belongs to `main_cloud.py`,
+    existing db-health-check pattern" points at belongs to the union app,
     which is not one of `fly.toml`'s three processes (`api`/`rag`/`drive`) —
     code that lives there would never run in production at all. The SHAPE
     (one `asyncio.create_task`, stored on `app.state`, cancelled in the same

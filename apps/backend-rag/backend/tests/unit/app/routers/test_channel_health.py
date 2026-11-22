@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 def _build_app_with_db_pool(db_pool=None):
     """Build minimal FastAPI app with channel_health router only.
 
-    Avoids importing backend.app.main (heavy startup deps).
+    Avoids importing a process entrypoint (heavy startup deps).
     """
     from fastapi import FastAPI
 

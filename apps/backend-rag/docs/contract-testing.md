@@ -14,7 +14,7 @@ body shape, response headers). It also runs a configurable set of
 `--checks=all` (e.g. `status_code_conformance`,
 `response_schema_conformance`, `not_a_server_error`, `content_type_conformance`).
 
-The check runs in **ASGI-direct mode** (`--app=backend.app.main:app`),
+The check runs in **ASGI-direct mode** (`--app=backend.app.main_api:app`),
 i.e. the FastAPI app is loaded as a Python object and called via the
 ASGI protocol — no live HTTP server, no external services required. The
 app boots in degraded mode (`app.state.startup_failed=True`); endpoints
@@ -47,7 +47,7 @@ pip install 'schemathesis>=3.36.0,<4.0'
 
 # ASGI mode — no live server needed
 PYTHONPATH=. schemathesis run \
-  --app=backend.app.main:app \
+  --app=backend.app.main_api:app \
   --checks=all \
   --hypothesis-max-examples=10 \
   --stateful=none \
@@ -62,7 +62,7 @@ To debug a single failing operation:
 
 ```bash
 PYTHONPATH=. schemathesis run \
-  --app=backend.app.main:app \
+  --app=backend.app.main_api:app \
   --include-path "/api/channels/{name}/health" \
   --hypothesis-max-examples=50 \
   /
