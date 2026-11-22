@@ -23,6 +23,7 @@ from typing import Any
 
 from backend.app.metrics import metrics_collector
 from backend.services.agents.confirmation_service import (
+    ConfirmationError,
     ConfirmationRedisDown,
     ConfirmationService,
     ConfirmationTimeout,
@@ -426,6 +427,16 @@ async def execute_tool(
                 _denial_observation(
                     agent_role,
                     f"user did not confirm '{tool_name}' within the allowed time",
+                ),
+                time.time() - start_time,
+            )
+        except ConfirmationError:
+            metrics_collector.record_tool_call(tool_name, "denied")
+            logger.warning("tool_authz: confirmation interrupted for %s", tool_name)
+            return (
+                _denial_observation(
+                    agent_role,
+                    f"confirmation was interrupted for '{tool_name}'",
                 ),
                 time.time() - start_time,
             )
