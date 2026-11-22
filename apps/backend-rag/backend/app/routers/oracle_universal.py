@@ -154,6 +154,19 @@ class FeedbackRequest(BaseModel):
 router = APIRouter(prefix="/api/oracle", tags=["Oracle v5.3 - Ultra Hybrid"])
 
 
+def _personalisation_email(requested: str | None, current_user: dict) -> str | None:
+    """The address the service may personalise for: the authenticated caller's own, or none.
+
+    An empty or whitespace-only field is no field: it is never passed on as an identity.
+    """
+    if requested is None or not requested.strip():
+        return None
+    caller = current_user.get("email")
+    if not isinstance(caller, str) or requested.strip().lower() != caller.strip().lower():
+        raise HTTPException(status_code=403, detail="user_email must be the authenticated user")
+    return caller
+
+
 @router.post("/query", response_model=OracleQueryResponse)
 async def hybrid_oracle_query(
     request: OracleQueryRequest,
@@ -184,10 +197,12 @@ async def hybrid_oracle_query(
         # so it is safe to call unconditionally.
         sentry_sdk.set_tag("oracle.dropped_fields", ",".join(_unwired))
 
+    user_email = _personalisation_email(request.user_email, current_user)
+
     try:
         result = await oracle_service.process_query(
             request_query=request.query,
-            request_user_email=request.user_email,
+            request_user_email=user_email,
             request_limit=request.limit,
             request_session_id=request.session_id,
             request_include_sources=request.include_sources,
