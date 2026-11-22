@@ -6,7 +6,7 @@ import {
   GarudaUploadUnexpectedError,
   uploadIntakeDocument,
 } from "./api-client";
-import { messageFor, messageForUnknownCode } from "./messages";
+import { isCatalogCode, messageFor, messageForUnknownCode } from "./messages";
 import {
   ALLOWED_UPLOAD_MEDIA_TYPES,
   MAX_UPLOAD_BYTES_CLIENT_HINT,
@@ -153,8 +153,11 @@ export function useDocumentUpload(resultId: string) {
         setState({
           step: "error",
           message: messageFor(err.code),
-          retryable: err.retryable,
-          code: err.code,
+          retryable:
+            typeof err.retryable === "boolean"
+              ? err.retryable
+              : err.httpStatus === 429 || err.httpStatus >= 500,
+          code: isCatalogCode(err.code) ? err.code : null,
         });
         return;
       }
