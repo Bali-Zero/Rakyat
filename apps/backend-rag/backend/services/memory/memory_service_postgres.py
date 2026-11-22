@@ -57,6 +57,9 @@ class MemoryServicePostgres:
 
     MAX_FACTS = MemoryConstants.MAX_FACTS
     MAX_SUMMARY_LENGTH = MemoryConstants.MAX_SUMMARY_LENGTH
+    # Users whose last read from PostgreSQL failed. Immutable and replaced on change, so an
+    # instance built without __init__ still has the (empty) default.
+    _failed_memory_loads: frozenset[str] = frozenset()
 
     def __init__(self, database_url: str | None = None) -> None:
         """
@@ -115,8 +118,13 @@ class MemoryServicePostgres:
         Returns:
             UserMemory with facts, summary, counters
         """
-        # 1. Check cache (skip if force_refresh)
-        if not force_refresh and user_id in self.memory_cache:
+        # 1. Check cache (skip if force_refresh, or if the last read of this user failed:
+        #    the store is then asked again, so the failed mark heals on any path)
+        if (
+            not force_refresh
+            and user_id in self.memory_cache
+            and user_id not in self._failed_memory_loads
+        ):
             logger.debug('💾 Memory cache hit for %s', redact_identifier_for_log(user_id))
             return self.memory_cache[user_id]
 
@@ -169,6 +177,7 @@ class MemoryServicePostgres:
                         updated_at=updated_at,
                     )
 
+                    self._failed_memory_loads = self._failed_memory_loads - {user_id}
                     self.memory_cache[user_id] = memory
                     logger.info('✅ Loaded memory from PostgreSQL for %s', redact_identifier_for_log(user_id))
                     return memory
@@ -180,6 +189,16 @@ class MemoryServicePostgres:
                 KeyError,
             ) as e:
                 logger.error('❌ PostgreSQL load failed for %s: %s', redact_identifier_for_log(user_id), type(e).__name__)
+                self._failed_memory_loads = self._failed_memory_loads | {user_id}
+                if user_id in self.memory_cache:
+                    return self.memory_cache[user_id]
+                return UserMemory(
+                    user_id=user_id,
+                    profile_facts=[],
+                    summary="",
+                    counters={"conversations": 0, "searches": 0, "tasks": 0},
+                    updated_at=datetime.now(tz=timezone.utc),
+                )
 
         # 3. Create new memory
         memory = UserMemory(
@@ -203,6 +222,10 @@ class MemoryServicePostgres:
         Returns:
             True if saved successfully
         """
+        if memory.user_id in self._failed_memory_loads:
+            logger.warning('Skipping memory save after failed load for %s', redact_identifier_for_log(memory.user_id))
+            return False
+
         memory.updated_at = datetime.now(tz=timezone.utc)
 
         # Save to cache
@@ -296,7 +319,8 @@ class MemoryServicePostgres:
             logger.info(f'⚠️ Trimmed facts to {self.MAX_FACTS} for {redact_identifier_for_log(user_id)}')
 
         # Update cache
-        self.memory_cache[user_id] = memory
+        if user_id not in self._failed_memory_loads:
+            self.memory_cache[user_id] = memory
 
         logger.info('Added fact for %s', redact_identifier_for_log(user_id))
         return True
