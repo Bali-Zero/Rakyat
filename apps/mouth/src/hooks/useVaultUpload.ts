@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { beginPortalAction } from "@/lib/portal-analytics";
 import { sanitizeFilename } from "@/lib/vault/sanitizeFilename";
@@ -38,6 +38,8 @@ export interface UploadOptions {
 interface RetryableUpload {
   readonly file: File;
   readonly options: UploadOptions;
+  /** The file is already the re-encoded picture: a retry must not redo it. */
+  readonly pictureAlone: boolean;
 }
 
 function isRetryableHttpStatus(status: number): boolean {
@@ -116,9 +118,16 @@ function tooLargeMessage(): string {
 export function useVaultUpload() {
   const [state, setState] = useState<UploadState>({ status: "idle" });
   const retryableUploadRef = useRef<RetryableUpload | null>(null);
-  // Counts the uploads the caller started and its resets, so that a picture
-  // re-encoded late is not sent for an upload the caller has already left.
+  // One run per upload, retry or reset the caller makes, and one when the
+  // page goes away. Whatever belongs to an earlier run is late: see `current`.
   const runRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      runRef.current += 1;
+    },
+    [],
+  );
 
   const reset = useCallback(() => {
     runRef.current += 1;
@@ -131,7 +140,18 @@ export function useVaultUpload() {
     opts: UploadOptions,
     pictureAlone: boolean,
   ) {
+    // Every answer of this request is for this run only. Once the caller has
+    // reset, started another upload, retried or left the page, a late answer
+    // still closes its usage attempt, and changes neither what is shown nor
+    // what a retry would send.
     const run = runRef.current;
+    const current = () => runRef.current === run;
+    const show = (next: UploadState) => {
+      if (current()) setState(next);
+    };
+    const forgetRetry = () => {
+      if (current()) retryableUploadRef.current = null;
+    };
     const attempt = beginPortalAction("document_upload", () => ({
       role: api.getUserProfile?.()?.role,
       impersonating: api.getPortalImpersonation?.() !== null,
@@ -159,6 +179,7 @@ export function useVaultUpload() {
     retryableUploadRef.current = {
       file,
       options: { ...opts },
+      pictureAlone,
     };
     const fd = new FormData();
     fd.append("file", file, sanitizeFilename(file.name));
@@ -176,7 +197,7 @@ export function useVaultUpload() {
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
-        setState({
+        show({
           status: "uploading",
           progress: (e.loaded / e.total) * 100,
         });
@@ -190,24 +211,24 @@ export function useVaultUpload() {
           const parsed = VaultUploadResponse.parse(json);
           if (!parsed.success) {
             attempt.fail("response");
-            retryableUploadRef.current = null;
-            setState({
+            forgetRetry();
+            show({
               status: "error",
               message: parsed.message ?? "Upload rejected",
               httpStatus: xhr.status,
             });
             return;
           }
-          retryableUploadRef.current = null;
+          forgetRetry();
           attempt.complete();
-          setState({
+          show({
             status: "done",
             file: parsed.data,
           });
         } catch {
           attempt.fail("response");
-          retryableUploadRef.current = null;
-          setState({
+          forgetRetry();
+          show({
             status: "error",
             message: "Invalid server response",
             httpStatus: xhr.status,
@@ -216,35 +237,31 @@ export function useVaultUpload() {
       } else {
         attempt.fail(xhr.status >= 500 ? "server" : "request");
         if (!isRetryableHttpStatus(xhr.status)) {
-          retryableUploadRef.current = null;
+          forgetRetry();
         }
         const refusal: UploadState = {
           status: "error",
           message: serverRejectionMessage(xhr.responseText, xhr.status),
           httpStatus: xhr.status,
         };
-        if (
-          !pictureAlone &&
-          runRef.current === run &&
-          isRefusedPhoto(xhr.status, file)
-        ) {
-          setState({ status: "validating" });
+        if (!pictureAlone && current() && isRefusedPhoto(xhr.status, file)) {
+          show({ status: "validating" });
           void shrinkImage(file, MAX_SIZE_BYTES)
             .catch(() => null)
             .then((picture) => {
-              if (runRef.current !== run) return;
+              if (!current()) return;
               if (picture) sendFile(picture, opts, true);
-              else setState(refusal);
+              else show(refusal);
             });
           return;
         }
-        setState(refusal);
+        show(refusal);
       }
     };
 
     xhr.onerror = () => {
       attempt.fail("network");
-      setState({ status: "error", message: "Network error" });
+      show({ status: "error", message: "Network error" });
     };
 
     xhr.send(fd);
@@ -261,8 +278,13 @@ export function useVaultUpload() {
   const retry = useCallback(() => {
     const retryableUpload = retryableUploadRef.current;
     if (!retryableUpload) return;
-    upload(retryableUpload.file, retryableUpload.options);
-  }, [upload]);
+    runRef.current += 1;
+    send(
+      retryableUpload.file,
+      retryableUpload.options,
+      retryableUpload.pictureAlone,
+    );
+  }, [send]);
 
   return {
     state,

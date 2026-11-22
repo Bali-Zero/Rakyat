@@ -47,6 +47,16 @@ class FakeRequest {
     this.responseText = responseText;
     this.onload?.();
   }
+  fail() {
+    this.onerror?.();
+  }
+  progress(loaded: number, total: number) {
+    this.upload.onprogress?.({
+      lengthComputable: true,
+      loaded,
+      total,
+    } as unknown as ProgressEvent);
+  }
 }
 
 const REFUSAL = "File content does not match its extension";
@@ -83,8 +93,19 @@ function mount() {
     seen.push(hook.state.status);
     return hook;
   });
-  return { result: view.result, seen };
+  return { result: view.result, unmount: view.unmount, seen };
 }
+
+/** The answers a request can still get after the client has moved on. */
+const LATE_ANSWERS: [string, (request: FakeRequest) => void][] = [
+  ["a refusal", (r) => r.answer(415, JSON.stringify({ detail: REFUSAL }))],
+  ["a conflict", (r) => r.answer(409, JSON.stringify({ detail: "Taken" }))],
+  ["a success", (r) => r.answer(200, ACCEPTED)],
+  ["an answer that is not the agreed one", (r) => r.answer(200, "{}")],
+  ["a server error", (r) => r.answer(500, "")],
+  ["a network error", (r) => r.fail()],
+  ["a progress event", (r) => r.progress(1, 2)],
+];
 
 function sentFile(request: FakeRequest): File {
   return request.body!.get("file") as File;
@@ -180,22 +201,71 @@ describe("a JPEG the server refuses as not what its extension says", () => {
     },
   );
 
-  it("keeps the retry of a transport failure on the picture alone, without reading the photo again", async () => {
+  async function thePictureAloneMetATransportFailure() {
     browser.shrinkImage.mockResolvedValue(thePictureAlone());
-    const { result } = mount();
-
-    act(() => result.current.upload(aPhoto(), { documentType: "passport" }));
+    const mounted = mount();
+    act(() =>
+      mounted.result.current.upload(aPhoto(), { documentType: "passport" }),
+    );
     refuse(FakeRequest.all[0]);
     await waitFor(() => expect(FakeRequest.all).toHaveLength(2));
     act(() => FakeRequest.all[1].answer(503, ""));
-    await waitFor(() => expect(result.current.state.status).toBe("error"));
-    expect(result.current.canRetry).toBe(true);
+    await waitFor(() =>
+      expect(mounted.result.current.state.status).toBe("error"),
+    );
+    expect(mounted.result.current.canRetry).toBe(true);
+    return mounted;
+  }
+
+  it("a retry after a transport failure sends the picture alone again, and a refusal of it is final", async () => {
+    const { result } = await thePictureAloneMetATransportFailure();
 
     act(() => result.current.retry());
-
     expect(FakeRequest.all).toHaveLength(3);
     expect(sentFile(FakeRequest.all[2]).size).toBe(512);
     expect(FakeRequest.all[2].body!.get("document_type")).toBe("passport");
+    refuse(FakeRequest.all[2]);
+
+    await waitFor(() => expect(result.current.state.status).toBe("error"));
+    expect(result.current.state).toEqual({
+      status: "error",
+      message: REFUSAL,
+      httpStatus: 415,
+    });
+    expect(result.current.canRetry).toBe(false);
+    expect(browser.shrinkImage).toHaveBeenCalledTimes(1);
+    expect(FakeRequest.all).toHaveLength(3);
+  });
+
+  it("stays the picture alone through a second transport failure and its retry", async () => {
+    const { result } = await thePictureAloneMetATransportFailure();
+
+    act(() => result.current.retry());
+    act(() => FakeRequest.all[2].answer(503, ""));
+    await waitFor(() => expect(result.current.canRetry).toBe(true));
+    act(() => result.current.retry());
+    expect(sentFile(FakeRequest.all[3]).size).toBe(512);
+    refuse(FakeRequest.all[3]);
+
+    await waitFor(() => expect(result.current.state.status).toBe("error"));
+    expect(result.current.state).toMatchObject({ httpStatus: 415 });
+    expect(browser.shrinkImage).toHaveBeenCalledTimes(1);
+    expect(FakeRequest.all).toHaveLength(4);
+  });
+
+  it("a photo that first met a transport failure is still re-encoded once when its retry is refused", async () => {
+    browser.shrinkImage.mockResolvedValue(thePictureAlone());
+    const { result } = mount();
+
+    act(() => result.current.upload(aPhoto()));
+    act(() => FakeRequest.all[0].answer(503, ""));
+    await waitFor(() => expect(result.current.canRetry).toBe(true));
+    act(() => result.current.retry());
+    expect(sentFile(FakeRequest.all[1]).size).toBe(2048);
+    refuse(FakeRequest.all[1]);
+    await waitFor(() => expect(FakeRequest.all).toHaveLength(3));
+
+    expect(sentFile(FakeRequest.all[2]).size).toBe(512);
     expect(browser.shrinkImage).toHaveBeenCalledTimes(1);
   });
 });
@@ -277,13 +347,130 @@ describe("a picture that is ready after the client has moved on", () => {
     expect(sentFile(FakeRequest.all[1]).name).toBe("scan.pdf");
   });
 
-  it("is not even asked for when the refusal arrives after a reset", () => {
-    const { result } = mount();
+  it("is not sent after the page has gone", async () => {
+    const finish = aPictureThatIsNotReadyYet();
+    const { result, unmount } = mount();
 
     act(() => result.current.upload(aPhoto()));
-    act(() => result.current.reset());
+    refuse(FakeRequest.all[0]);
+    unmount();
+    await finish(thePictureAlone());
+
+    expect(FakeRequest.all).toHaveLength(1);
+  });
+});
+
+describe("an answer that arrives after the client has moved on", () => {
+  it.each(LATE_ANSWERS)(
+    "%s after a reset leaves the upload idle and asks for no picture",
+    (_label, late) => {
+      const { result } = mount();
+
+      act(() => result.current.upload(aPhoto()));
+      act(() => result.current.reset());
+      act(() => late(FakeRequest.all[0]));
+
+      expect(result.current.state).toEqual({ status: "idle" });
+      expect(result.current.canRetry).toBe(false);
+      expect(browser.shrinkImage).not.toHaveBeenCalled();
+      expect(FakeRequest.all).toHaveLength(1);
+    },
+  );
+
+  it.each(LATE_ANSWERS)(
+    "%s for the picture alone after a reset leaves the upload idle",
+    async (_label, late) => {
+      browser.shrinkImage.mockResolvedValue(thePictureAlone());
+      const { result } = mount();
+
+      act(() => result.current.upload(aPhoto()));
+      refuse(FakeRequest.all[0]);
+      await waitFor(() => expect(FakeRequest.all).toHaveLength(2));
+      act(() => result.current.reset());
+      act(() => late(FakeRequest.all[1]));
+
+      expect(result.current.state).toEqual({ status: "idle" });
+      expect(result.current.canRetry).toBe(false);
+      expect(FakeRequest.all).toHaveLength(2);
+    },
+  );
+
+  it.each(LATE_ANSWERS)(
+    "%s for an earlier upload leaves a newer one in progress as it is",
+    (_label, late) => {
+      const { result } = mount();
+
+      act(() => result.current.upload(aPhoto()));
+      act(() => result.current.upload(fileOf("scan.pdf", "application/pdf")));
+      act(() => FakeRequest.all[1].progress(1, 4));
+      act(() => late(FakeRequest.all[0]));
+
+      expect(result.current.state).toEqual({
+        status: "uploading",
+        progress: 25,
+      });
+      expect(browser.shrinkImage).not.toHaveBeenCalled();
+      expect(FakeRequest.all).toHaveLength(2);
+    },
+  );
+
+  it.each(LATE_ANSWERS)(
+    "%s for an earlier upload does not take the retry of a newer one that failed",
+    (_label, late) => {
+      const { result } = mount();
+
+      act(() => result.current.upload(aPhoto()));
+      act(() =>
+        result.current.upload(fileOf("scan.pdf", "application/pdf"), {
+          documentType: "passport",
+        }),
+      );
+      act(() => FakeRequest.all[1].fail());
+      act(() => late(FakeRequest.all[0]));
+
+      expect(result.current.state).toEqual({
+        status: "error",
+        message: "Network error",
+      });
+      expect(result.current.canRetry).toBe(true);
+      act(() => result.current.retry());
+      expect(FakeRequest.all).toHaveLength(3);
+      expect(sentFile(FakeRequest.all[2]).name).toBe("scan.pdf");
+      expect(FakeRequest.all[2].body!.get("document_type")).toBe("passport");
+      expect(browser.shrinkImage).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(LATE_ANSWERS)(
+    "%s for the request a retry replaced leaves the retry as it is",
+    (_label, late) => {
+      const { result } = mount();
+
+      act(() => result.current.upload(aPhoto()));
+      act(() => FakeRequest.all[0].fail());
+      act(() => result.current.retry());
+      act(() => FakeRequest.all[1].progress(3, 4));
+      act(() => late(FakeRequest.all[0]));
+
+      expect(result.current.state).toEqual({
+        status: "uploading",
+        progress: 75,
+      });
+      act(() => FakeRequest.all[1].fail());
+      expect(result.current.canRetry).toBe(true);
+      expect(browser.shrinkImage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("nothing is shown for an answer that arrives after the page has gone", () => {
+    const { result, unmount, seen } = mount();
+
+    act(() => result.current.upload(aPhoto()));
+    const before = seen.length;
+    unmount();
     refuse(FakeRequest.all[0]);
 
+    expect(seen).toHaveLength(before);
     expect(browser.shrinkImage).not.toHaveBeenCalled();
     expect(FakeRequest.all).toHaveLength(1);
   });
@@ -319,4 +506,24 @@ describe("what the usage events say of a photo sent twice", () => {
     expect(gtag.mock.calls[1][2].failure_class).toBe("request");
     expect(JSON.stringify(gtag.mock.calls)).not.toContain("IMG_0001");
   });
+
+  it.each([
+    ["a server error", 500, "", "portal_action_failed"],
+    ["a success", 200, ACCEPTED, "portal_action_completed"],
+  ])(
+    "a late answer still closes its attempt: %s after a reset",
+    (_label, status, body, event) => {
+      const { result } = mount();
+
+      act(() => result.current.upload(aPhoto()));
+      act(() => result.current.reset());
+      act(() => FakeRequest.all[0].answer(status, body));
+
+      expect(gtag.mock.calls.map((call) => call[1])).toEqual([
+        "portal_action_started",
+        event,
+      ]);
+      expect(result.current.state).toEqual({ status: "idle" });
+    },
+  );
 });
