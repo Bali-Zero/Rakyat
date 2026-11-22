@@ -241,6 +241,7 @@ class GeminiJakselService:
             # Try Gemini first (if available)
             client = self._get_genai_client()
             if client and client.is_available:
+                has_yielded = False
                 try:
                     chat_history = self.few_shot_history.copy()
                     for msg in history:
@@ -264,6 +265,7 @@ class GeminiJakselService:
                     )
 
                     async for chunk in chat.send_message_stream(final_message):
+                        has_yielded = True
                         yield chunk
 
                     self._gemini_circuit.record_success()
@@ -271,11 +273,15 @@ class GeminiJakselService:
 
                 except (ResourceExhausted, ServiceUnavailable) as e:
                     self._gemini_circuit.record_failure()
+                    if has_yielded:
+                        raise
                     logger.warning(f"Gemini quota exceeded, falling back to OpenRouter: {e}")
 
                 except GoogleAPIError as e:
                     if _is_rate_limit_error(str(e)):
                         self._gemini_circuit.record_failure()
+                        if has_yielded:
+                            raise
                         logger.warning(f"Gemini rate limited, falling back to OpenRouter: {e}")
                     else:
                         logger.exception("Unexpected Gemini API error")
@@ -284,6 +290,8 @@ class GeminiJakselService:
                 except Exception as e:
                     if _is_rate_limit_error(str(e)):
                         self._gemini_circuit.record_failure()
+                        if has_yielded:
+                            raise
                         logger.warning(f"Gemini rate limited, falling back to OpenRouter: {e}")
                     else:
                         logger.exception("Unexpected Gemini error")
