@@ -92,6 +92,19 @@ export function useCrmClients(options: UseCrmClientsOptions = {}) {
     gcTime: 10 * 60 * 1000,
   });
 
+  // Reset when a filter changes — every filter that is part of the query key,
+  // or the pages of one filter are laid on the list of another. Bump generation
+  // so stale accumulations are discarded.
+  // Declared BEFORE the copy effect below: effects run in declaration order, and
+  // when the query data comes from the cache both run in the same commit, so the
+  // reset must not empty the list after it has been filled.
+  useEffect(() => {
+    generationRef.current += 1;
+    setOffset(0);
+    setAllClients([]);
+    setHasMore(true);
+  }, [status, assigned_to, search, nationality, passport_expiring_days]);
+
   // Accumulate results when new data arrives.
   // Use a captured generation snapshot to discard data from a previous filter
   // set that arrived after the filter changed (stale flash fix).
@@ -104,6 +117,10 @@ export function useCrmClients(options: UseCrmClientsOptions = {}) {
         setAllClients((prev) => {
           // If filters changed since this fetch started, don't accumulate
           if (generationRef.current !== currentGeneration) return prev;
+          // A later page is only ever added after the pages before it. On a
+          // filter change the offset is still the old one for this commit:
+          // a cached later page of the new filter must not become the list.
+          if (prev.length === 0) return prev;
           const existingIds = new Set(prev.map((c) => c.id));
           const newClients = data.filter((c) => !existingIds.has(c.id));
           return [...prev, ...newClients];
@@ -122,14 +139,6 @@ export function useCrmClients(options: UseCrmClientsOptions = {}) {
       setIsLoadingMore(false);
     }
   }, [isError]);
-
-  // Reset when filters change — bump generation so stale accumulations are discarded
-  useEffect(() => {
-    generationRef.current += 1;
-    setOffset(0);
-    setAllClients([]);
-    setHasMore(true);
-  }, [status, assigned_to, search, nationality]);
 
   const loadMore = useCallback(() => {
     if (hasMore && !isLoading && !loadingRef.current) {
