@@ -375,6 +375,9 @@ _MAX_ECHOED_VALUE_LEN = 40
 # response as a declared, truthful limitation — not a bug marker. The v2
 # engine (later PRs) is what actually cures nationality-aware matching.
 NATIONALITY_NOT_EVALUATED_REASON = "nationality_not_evaluated"
+# The nationality was given but could not be read as a country (in full): the two
+# nationality gates below cannot be said to have passed, so no candidate is offered.
+NATIONALITY_NOT_RECOGNIZED_REASON = "nationality_not_recognized"
 
 
 def _sanitize_echoed_value(value: str) -> str:
@@ -461,6 +464,8 @@ def _determine_recommend_state(
         known vocabulary (FIX-1)               -> NEEDS_INPUT, invalid_* reasons
       - Indonesian citizen (ID / IDN / WNI)    -> NO_SUPPORTED_PATH
       - Calling Visa nationality               -> HUMAN_REVIEW_REQUIRED
+      - nationality given but not read as a
+        country, in whole or in part           -> NEEDS_INPUT, nationality_not_recognized
       - raw candidates existed but ALL were
         incomplete (FIX-3)                     -> TEMPORARILY_UNAVAILABLE, catalog_degraded
       - scorer returned zero rows              -> TEMPORARILY_UNAVAILABLE, catalog_no_candidates
@@ -484,6 +489,8 @@ def _determine_recommend_state(
             return "NO_SUPPORTED_PATH", ["indonesian_citizen_no_visa_required"]
         if nat_info.is_calling_visa:
             return "HUMAN_REVIEW_REQUIRED", ["calling_visa_advisor_referral"]
+        if nat_info.has_unread_part or not nat_info.iso3_codes:
+            return "NEEDS_INPUT", [NATIONALITY_NOT_RECOGNIZED_REASON]
 
     if catalog_degraded:
         return "TEMPORARILY_UNAVAILABLE", ["catalog_degraded"]
