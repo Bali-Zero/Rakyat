@@ -34,6 +34,7 @@ export function CompanyDocUpload({
 }) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<string | null>(null);
+  const [replacedFileId, setReplacedFileId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // NOTE: callOnDoneOnError=false / awaitOnDone=false reproduce this copy's
@@ -67,6 +68,7 @@ export function CompanyDocUpload({
       });
       return;
     }
+    const fileIdBeforeUpload = existingDoc?.google_drive_file_id ?? null;
     setIsUploading(true);
     try {
       const base64 = await fileToBase64(file);
@@ -83,7 +85,9 @@ export function CompanyDocUpload({
       )) as { success: boolean; message?: string };
       if (response.success) {
         setUploadedFile(file.name);
+        setReplacedFileId(fileIdBeforeUpload);
         toast.success(`${label} uploaded for ${companyName} — OCR in corso...`);
+        onUploaded?.();
         pollOcrStatus();
       } else {
         toast.error("Upload failed", { description: response.message });
@@ -97,6 +101,9 @@ export function CompanyDocUpload({
   };
 
   const hasDoc = existingDoc?.google_drive_file_id || uploadedFile;
+  const currentFileId = existingDoc?.google_drive_file_id ?? null;
+  const showFileActions =
+    !!currentFileId && (!uploadedFile || currentFileId !== replacedFileId);
 
   const docIcon: Record<string, string> = {
     akta_pendirian: "\u{1F4DC}",
@@ -157,7 +164,7 @@ export function CompanyDocUpload({
         </div>
 
         <div className="flex gap-1.5 mt-3">
-          {existingDoc?.google_drive_file_id && !uploadedFile && (
+          {showFileActions && (
             <>
               <Button
                 variant="ghost"
@@ -165,7 +172,7 @@ export function CompanyDocUpload({
                 className="gap-1.5 text-xs h-7 px-2.5 flex-1 hover:bg-[var(--kbli-accent)]/10 hover:text-[var(--kbli-accent)]"
                 onClick={() => {
                   window.open(
-                    `/api/documents/proxy/${existingDoc.google_drive_file_id}`,
+                    `/api/documents/proxy/${currentFileId}`,
                     "_blank",
                   );
                 }}
@@ -179,7 +186,7 @@ export function CompanyDocUpload({
                 className="gap-1.5 text-xs h-7 px-2.5 flex-1 hover:bg-blue-500/10 hover:text-blue-400"
                 onClick={() => {
                   window.open(
-                    `/api/documents/proxy/${existingDoc.google_drive_file_id}`,
+                    `/api/documents/proxy/${currentFileId}`,
                     "_blank",
                   );
                 }}
