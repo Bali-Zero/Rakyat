@@ -328,6 +328,11 @@ class PredictiveComplianceEngine:
         client_id: int = row["client_id"]
         document_type: str = row["document_type"]
         visa_type: str | None = row.get("current_visa_type") or row.get("practice_type_code")
+        rule_visa_type = (
+            row.get("practice_type_code") or row.get("current_visa_type")
+            if document_type == "license"
+            else visa_type
+        )
         expiry_date: date = row["expiry_date"]
 
         # Skip documents with no expiry (should not happen — filtered in SQL)
@@ -335,7 +340,7 @@ class PredictiveComplianceEngine:
             return None
 
         # Match rule
-        rule: RenewalRule = match_rule(document_type, visa_type)
+        rule: RenewalRule = match_rule(document_type, rule_visa_type)
 
         # Check for active renewal practice
         has_active = await self._has_active_renewal(client_id, rule)
