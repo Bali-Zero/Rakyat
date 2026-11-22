@@ -1147,8 +1147,16 @@ async def get_active_practices(
     try:
         # RBAC: non-admin users can only see their own practices
         practices_filter = get_practices_user_filter(current_user)
-        owners = practices_filter if practices_filter and not assigned_to else None
-        if owners is None and assigned_to:
+        owners = practices_filter
+        if practices_filter is not None and assigned_to:
+            owners = [
+                owner
+                for owner in practices_filter
+                if owner.strip().lower() == assigned_to.strip().lower()
+            ]
+            if not owners:
+                return []
+        elif practices_filter is None and assigned_to:
             owners = [assigned_to]
 
         async with db_pool.acquire() as conn:
@@ -2304,7 +2312,6 @@ async def add_document_to_practice(
         raise handle_database_error(e)
 
 
-@router.get("/stats/overview")
 @cached(ttl=CACHE_TTL_STATS_SECONDS, prefix="crm_practices_stats")
 async def get_practices_stats(
     request: Any = None,
@@ -2414,6 +2421,15 @@ async def get_practices_stats(
 
     except Exception as e:
         raise handle_database_error(e)
+
+
+@router.get("/stats/overview")
+async def get_practices_stats_route(
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """HTTP entry: the caller's identity comes from the session, never from the query string."""
+    return await get_practices_stats(db_pool=db_pool, current_user=current_user)
 
 
 @router.get("/stats/revenue-growth")
