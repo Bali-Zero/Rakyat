@@ -36,6 +36,8 @@ from backend.utils.tier_classifier import TierClassifier
 
 logger = logging.getLogger(__name__)
 
+METADATA_FALLBACK_TIMEOUT_SECONDS = 30
+
 
 def _failure_stage(error: Exception) -> IngestionStage:
     """Which stage does this failure belong to?
@@ -590,7 +592,7 @@ class LegalIngestionService:
             ocr_used = False
             # Try normal extraction first, fallback to OCR if needed
             try:
-                raw_text = auto_detect_and_parse(file_path, use_ocr=False)
+                raw_text = await asyncio.to_thread(auto_detect_and_parse, file_path, use_ocr=False)
             except DocumentParseError as e:
                 from backend.services.multimodal.pdf_vision_service import (
                     IncompleteTranscriptionError,
@@ -635,7 +637,7 @@ class LegalIngestionService:
                         )
                     except RuntimeError:
                         # No running loop, use sync version
-                        raw_text = auto_detect_and_parse(file_path, use_ocr=True)
+                        raw_text = await asyncio.to_thread(auto_detect_and_parse, file_path, use_ocr=True)
                         ocr_used = True
                         logger.info(
                             f"[STAGE 1] OCR extraction successful (sync): {len(raw_text)} characters",
@@ -879,9 +881,13 @@ Document text (first 3000 chars):
 
 Return ONLY valid JSON, no markdown."""
 
-                    response = client.models.generate_content(
-                        model="gemini-2.0-flash",
-                        contents=prompt,
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            client.models.generate_content,
+                            model="gemini-2.0-flash",
+                            contents=prompt,
+                        ),
+                        timeout=METADATA_FALLBACK_TIMEOUT_SECONDS,
                     )
                     response_text = response.text.strip()
                     # Clean markdown if present
