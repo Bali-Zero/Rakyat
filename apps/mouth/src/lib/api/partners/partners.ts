@@ -292,11 +292,19 @@ const BASE = "/api/partners";
 
 // ─── API Functions ──────────────────────────────────────────────────────────
 
-/** List partners with optional filters */
-export const listPartners = (filters?: PartnerFilters) =>
-  api.get<PartnerListResponse>(
-    `${BASE}${qs(filters as Record<string, string | number | boolean | null | undefined>)}`,
+/**
+ * List partners with optional filters.
+ *
+ * The page calls its filter `status`; the server's list route reads
+ * `onboarding_status` and ignores a query key it does not know, so the
+ * filter goes out under the server's name.
+ */
+export const listPartners = (filters?: PartnerFilters) => {
+  const { status, ...rest } = filters ?? {};
+  return api.get<PartnerListResponse>(
+    `${BASE}${qs({ ...rest, onboarding_status: status || undefined })}`,
   );
+};
 
 /** Create a new partner */
 export const createPartner = (body: CreatePartnerBody) =>
@@ -405,7 +413,9 @@ export const exportFinanceCsv = (from?: string, to?: string): string => {
 
 /** Get active partners list for dropdown (scoped by caller role) */
 export const listActivePartnersDropdown = () =>
-  api.get<PartnerListResponse>(`${BASE}?status=active&page_size=200`);
+  api.get<PartnerListResponse>(
+    `${BASE}?onboarding_status=active&page_size=200`,
+  );
 
 /** List audit log entries for a partner */
 export const listAuditLog = (partnerId: string) =>
