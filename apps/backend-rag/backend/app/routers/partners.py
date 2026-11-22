@@ -35,7 +35,7 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.services.crm.partners.commission_engine import CommissionEngine
@@ -88,6 +88,22 @@ class PartnerCreate(BaseModel):
     terms_version: str | None = None
 
 
+# Every partner has a value in these: the columns that hold one for every row, the
+# language its mails are written in, and the versions of what it consented to.
+_PARTNER_FIELDS_NEVER_EMPTIED = (
+    "full_name",
+    "email",
+    "entity_type",
+    "preferred_language",
+    "tax_withholding_category",
+    "payment_currency",
+    "default_commission_type",
+    "default_commission_value",
+    "pdp_consent_version",
+    "terms_version",
+)
+
+
 class PartnerUpdate(BaseModel):
     full_name: str | None = None
     email: EmailStr | None = None
@@ -113,6 +129,18 @@ class PartnerUpdate(BaseModel):
     default_commission_value: Decimal | None = None
     pdp_consent_version: str | None = None
     terms_version: str | None = None
+
+    @model_validator(mode="after")
+    def _a_field_every_partner_has_is_not_emptied(self) -> PartnerUpdate:
+        """A field sent as null is emptied; these may be changed, never emptied."""
+        emptied = [
+            name
+            for name in _PARTNER_FIELDS_NEVER_EMPTIED
+            if name in self.model_fields_set and getattr(self, name) is None
+        ]
+        if emptied:
+            raise ValueError(f"cannot be empty: {', '.join(emptied)}")
+        return self
 
 
 class ReassignRequest(BaseModel):
@@ -574,14 +602,17 @@ async def update_partner(
     try:
         async with pool.acquire() as conn:
             svc = PartnersService(conn)
-            fields = body.model_dump(exclude_none=True, exclude_unset=True)
-            # CATA-5: actor_user is team_members.id string — no UUID wrapping
-            await svc.update_partner(
-                partner_id,
-                actor_user=str(user["user_id"]),
-                actor_role=user.get("role", "team"),
-                **fields,
-            )
+            # A field that was not sent is left as it is; one sent as null is emptied.
+            fields = body.model_dump(exclude_unset=True)
+            # The change and its audit row are written together or not at all.
+            async with conn.transaction():
+                # CATA-5: actor_user is team_members.id string — no UUID wrapping
+                await svc.update_partner(
+                    partner_id,
+                    actor_user=str(user["user_id"]),
+                    actor_role=user.get("role", "team"),
+                    **fields,
+                )
             partner = await svc.repo.get_partner(partner_id)
             return _partner_to_dict(partner)
     except HTTPException:

@@ -271,3 +271,79 @@ async def test_create_partner_blocks_entity_type_foreign(db_conn, user_factory):
         )
     assert exc.value.status_code == 409
     assert "foreign" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_update_partner_empties_every_field_that_can_be_empty(svc, user_factory):
+    """None reaches the row as NULL, on the real table, and the audit keeps what was there."""
+    can_be_emptied = {
+        "work_role": "Agent",
+        "company_name": "Zz Agency",
+        "office_address": "Jl. Contoh 1",
+        "phone": "+62 811 000 000",
+        "npwp": "00.000.000.0-000.000",
+        "nik": "0000000000000000",
+        "fiscal_address": "Jl. Contoh 2",
+        "bank_name": "Bank Lama",
+        "bank_account_holder": "Zz Holder",
+        "bank_account_number": "1234567890",
+        "ewallet_type": "ovo",
+        "ewallet_number": "0811000000",
+        "iban": "ZZ00 0000 0000",
+        "payment_notes": "old rail",
+    }
+    admin = await user_factory(role="admin")
+    pid = await svc.create_partner(
+        full_name="EmptyTest",
+        email="empty@d.io",
+        entity_type="individual",
+        created_by=admin,
+        **can_be_emptied,
+    )
+
+    await svc.update_partner(
+        pid, actor_user=admin, actor_role="admin", **dict.fromkeys(can_be_emptied)
+    )
+
+    after = await svc.get_partner(pid, actor_user=admin)
+    assert {name: getattr(after, name) for name in can_be_emptied} == dict.fromkeys(can_be_emptied)
+    assert after.full_name == "EmptyTest"
+    updated = [entry for entry in await svc.list_audit(pid) if entry.action == "updated"]
+    assert updated and updated[-1].before_json["bank_account_number"] == "1234567890"
+    assert updated[-1].after_json["bank_account_number"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_partner_with_a_commission_value_writes_its_audit_row(svc, user_factory):
+    """The edit page always sends the commission value, a Decimal after validation: the
+    audit row is written with it, as its exact digits."""
+    from decimal import Decimal
+
+    admin = await user_factory(role="admin")
+    pid = await svc.create_partner(
+        full_name="AuditTest",
+        email="audit@d.io",
+        entity_type="individual",
+        created_by=admin,
+        bank_account_number="1234567890",
+    )
+
+    await svc.update_partner(
+        pid,
+        actor_user=admin,
+        actor_role="admin",
+        full_name="AuditTest",
+        bank_account_number=None,
+        default_commission_type="percentage",
+        default_commission_value=Decimal("12.5"),
+    )
+
+    after = await svc.get_partner(pid, actor_user=admin)
+    assert after.default_commission_value == Decimal("12.5")
+    assert after.bank_account_number is None
+    updated = [entry for entry in await svc.list_audit(pid) if entry.action == "updated"]
+    assert len(updated) == 1
+    assert Decimal(updated[0].before_json["default_commission_value"]) == Decimal("10")
+    assert updated[0].after_json["default_commission_value"] == "12.5"
+    assert updated[0].before_json["bank_account_number"] == "1234567890"
+    assert updated[0].after_json["bank_account_number"] is None

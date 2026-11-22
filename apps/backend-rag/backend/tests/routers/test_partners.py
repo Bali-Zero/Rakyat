@@ -1324,3 +1324,171 @@ class TestRequireFinance:
         with pytest.raises(HTTPException) as exc_info:
             partners_module._require_finance(user)
         assert exc_info.value.status_code == 403
+
+
+# ── A field sent as null is emptied ──────────────────────────────────────────
+
+# Written by hand, not read from the router: a field added to the update must be put
+# in one of the two lists before these tests pass.
+_NEVER_EMPTIED = [
+    "full_name",
+    "email",
+    "entity_type",
+    "preferred_language",
+    "tax_withholding_category",
+    "payment_currency",
+    "default_commission_type",
+    "default_commission_value",
+    "pdp_consent_version",
+    "terms_version",
+]
+_CAN_BE_EMPTIED = [
+    "work_role",
+    "company_name",
+    "office_address",
+    "phone",
+    "npwp",
+    "nik",
+    "fiscal_address",
+    "bank_name",
+    "bank_account_holder",
+    "bank_account_number",
+    "ewallet_type",
+    "ewallet_number",
+    "iban",
+    "payment_notes",
+]
+
+
+class TestUpdatePartnerEmptiesAField:
+    """A field sent as null is emptied; one that is not sent is left as it is."""
+
+    @staticmethod
+    def _update(client: TestClient, body: dict[str, Any]) -> tuple[Any, AsyncMock]:
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.update_partner = AsyncMock()
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=_make_partner())
+            resp = client.patch(f"/api/partners/{_PARTNER_ID}", json=body)
+        return resp, svc_instance.update_partner
+
+    @staticmethod
+    def _fields(update: AsyncMock) -> dict[str, Any]:
+        sent = dict(update.await_args.kwargs)
+        sent.pop("actor_user")
+        sent.pop("actor_role")
+        return sent
+
+    def test_a_field_sent_as_null_is_emptied(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, {"bank_account_number": None, "phone": None})
+
+        assert resp.status_code == 200
+        assert self._fields(update) == {"bank_account_number": None, "phone": None}
+
+    def test_a_field_that_is_not_sent_is_left_as_it_is(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, {"full_name": "Updated Name"})
+
+        assert resp.status_code == 200
+        assert self._fields(update) == {"full_name": "Updated Name"}
+
+    def test_a_new_value_and_an_emptied_field_travel_together(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(
+            client, {"bank_name": "Bank Baru", "bank_account_number": None, "iban": None}
+        )
+
+        assert resp.status_code == 200
+        assert self._fields(update) == {
+            "bank_name": "Bank Baru",
+            "bank_account_number": None,
+            "iban": None,
+        }
+
+    def test_every_field_that_can_be_empty_is_emptied_when_sent_as_null(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, dict.fromkeys(_CAN_BE_EMPTIED))
+
+        assert resp.status_code == 200
+        assert self._fields(update) == dict.fromkeys(_CAN_BE_EMPTIED)
+
+    @pytest.mark.parametrize("name", _NEVER_EMPTIED)
+    def test_a_field_every_partner_has_is_never_emptied(self, team_app, name: str) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, {name: None, "phone": None})
+
+        assert resp.status_code == 422
+        update.assert_not_awaited()
+
+    def test_the_edit_pages_whole_request_is_saved_and_audited(self, team_app) -> None:
+        """The real service and repository under the handler: only the connection is a
+        stand-in. The page always sends the commission value, a number, with the rest."""
+        import json
+
+        _, client, _, conn = team_app
+        stored = _make_partner(
+            phone="+62 811 000 000",
+            company_name="Zz Agency",
+            bank_name="Bank Lama",
+            bank_account_number="1234567890",
+            bank_account_holder="Zz Holder",
+        )
+        body = {
+            "full_name": "Test Partner",
+            "phone": "+62 811 000 000",
+            "company_name": "Zz Agency",
+            "work_role": None,
+            "npwp": None,
+            "bank_name": "Bank Lama",
+            "bank_account_number": None,
+            "bank_account_holder": "Zz Holder",
+            "tax_withholding_category": "tbd",
+            "default_commission_type": "percentage",
+            "default_commission_value": 12.5,
+        }
+        with (
+            patch(
+                "backend.services.crm.partners.service.verify_partner_access_with_role",
+                AsyncMock(return_value=stored),
+            ),
+            patch(
+                "backend.services.crm.partners.repository.PartnersRepository.get_partner",
+                AsyncMock(return_value=stored),
+            ),
+        ):
+            resp = client.patch(f"/api/partners/{_PARTNER_ID}", json=body)
+
+        assert resp.status_code == 200, resp.text
+        statements = [call.args for call in conn.execute.await_args_list]
+        update = next(args for args in statements if args[0].startswith("UPDATE partners SET"))
+        audit = next(args for args in statements if "INSERT INTO partner_audit_log" in args[0])
+        assert "bank_account_number = $" in update[0]
+        assert Decimal("12.5") in update[1:]
+        assert audit[3] == "updated"
+        assert json.loads(audit[4]) == {
+            "full_name": "Test Partner",
+            "phone": "+62 811 000 000",
+            "company_name": "Zz Agency",
+            "work_role": None,
+            "npwp": None,
+            "bank_name": "Bank Lama",
+            "bank_account_number": "1234567890",
+            "bank_account_holder": "Zz Holder",
+            "tax_withholding_category": "tbd",
+            "default_commission_type": "percentage",
+            "default_commission_value": "10.0",
+        }
+        assert json.loads(audit[5]) == {**body, "default_commission_value": "12.5"}
+
+    def test_every_field_of_the_update_is_in_one_of_the_two_lists(self) -> None:
+        fields = set(partners_module.PartnerUpdate.model_fields)
+
+        assert fields == set(_NEVER_EMPTIED) | set(_CAN_BE_EMPTIED)
+        assert not set(_NEVER_EMPTIED) & set(_CAN_BE_EMPTIED)
