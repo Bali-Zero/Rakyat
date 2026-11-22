@@ -61,6 +61,10 @@ export interface EvaluateVisaOracleOptions {
   waitBeforeRetry?: (attempt: number) => Promise<void>;
 }
 
+class StreamReadFailure {
+  constructor(readonly cause: unknown) {}
+}
+
 async function readResponseText(response: Response): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
@@ -88,7 +92,15 @@ async function readResponseText(response: Response): Promise<string> {
   let text = "";
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      // A rejected read is a dropped connection, not a malformed body: let it
+      // propagate untouched so the attempt is classed as a retryable network failure.
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (readError) {
+        throw new StreamReadFailure(readError);
+      }
+      const { done, value } = chunk;
       if (done) break;
       received += value.byteLength;
       if (received > VISA_ORACLE_MAX_RESPONSE_BYTES) {
@@ -101,6 +113,7 @@ async function readResponseText(response: Response): Promise<string> {
     return text;
   } catch (error) {
     if (error instanceof VisaOracleClientError) throw error;
+    if (error instanceof StreamReadFailure) throw error.cause;
     throw new VisaOracleClientError("MALFORMED_RESPONSE");
   } finally {
     reader.releaseLock();
