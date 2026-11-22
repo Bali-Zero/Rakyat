@@ -834,6 +834,55 @@ _SCHEMA = {
 }
 
 
+def test_json_schema_probe_exception_retries_on_next_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A transient probe failure must not disable structured output forever."""
+    import subprocess
+
+    from backend.llm import claude_oauth_client as mod
+
+    monkeypatch.setattr(mod, "_JSON_SCHEMA_SUPPORTED", None)
+    calls = 0
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise subprocess.TimeoutExpired(argv, 0.01)
+        return subprocess.CompletedProcess(argv, 0, "--json-schema", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert mod._cli_supports_json_schema("synthetic-claude") is False
+    assert mod._cli_supports_json_schema("synthetic-claude") is True
+    assert calls == 2
+
+
+@pytest.mark.parametrize(("help_text", "expected"), [("--json-schema", True), ("", False)])
+def test_json_schema_completed_probe_is_memoized(
+    monkeypatch: pytest.MonkeyPatch,
+    help_text: str,
+    expected: bool,
+) -> None:
+    """A completed capability probe, positive or negative, stays memoized."""
+    import subprocess
+
+    from backend.llm import claude_oauth_client as mod
+
+    monkeypatch.setattr(mod, "_JSON_SCHEMA_SUPPORTED", None)
+    calls = 0
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(argv, 0, help_text, "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert mod._cli_supports_json_schema("synthetic-claude") is expected
+    assert mod._cli_supports_json_schema("synthetic-claude") is expected
+    assert calls == 1
+
+
 @pytest.mark.asyncio
 async def test_json_schema_none_adds_no_schema_flag(
     monkeypatch: pytest.MonkeyPatch,
