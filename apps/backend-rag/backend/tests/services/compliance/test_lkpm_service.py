@@ -494,7 +494,7 @@ class TestLKPMServiceWithMockedDB:
     async def test_get_client_config_not_found(self, mock_pool: MagicMock) -> None:
         from backend.services.compliance.lkpm_service import LKPMService
 
-        mock_pool._conn.fetchrow.return_value = None
+        mock_pool._conn.fetch.return_value = []
 
         service = LKPMService(db_pool=mock_pool)
         result = await service.get_client_config(999)
