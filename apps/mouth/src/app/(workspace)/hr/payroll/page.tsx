@@ -44,6 +44,18 @@ function payrollMonthNow(): { month: number; year: number } {
 // that month is refused, so the page does not offer one.
 const CLOSED_STATUSES: ReadonlySet<string> = new Set(["approved", "paid"]);
 
+/** What closes that month in the list, "approved" or "paid"; null when it is open or not there. */
+function closedStatusOf(
+  periods: PayrollPeriod[],
+  month: number,
+  year: number,
+): string | null {
+  const period = periods.find(
+    (p) => p.payroll_month === month && p.payroll_year === year,
+  );
+  return period && CLOSED_STATUSES.has(period.status) ? period.status : null;
+}
+
 export default function PayrollPage() {
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [payslips, setPayslips] = useState<Payslip[]>([]);
@@ -56,6 +68,7 @@ export default function PayrollPage() {
   // invites a calculation, and nothing is known of the month it would be for.
   const [loadFailed, setLoadFailed] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  const [, renderAgain] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,7 +94,15 @@ export default function PayrollPage() {
   }, [loaded, load]);
 
   const handleCalculate = async () => {
+    // The month is read again at the click, and so is its lock: a page left
+    // open across the turn of the month in Bali still shows the button of
+    // the month it was rendered in. A locked month is not sent; the page
+    // renders again, so the button carries the lock of this month.
     const { month, year } = payrollMonthNow();
+    if (closedStatusOf(periods, month, year) !== null) {
+      renderAgain((n) => n + 1);
+      return;
+    }
     setCalculating(true);
     try {
       await hrApi.calculatePayroll(month, year);
@@ -173,13 +194,7 @@ export default function PayrollPage() {
 
   if (isAdmin) {
     const { month, year } = payrollMonthNow();
-    const thisMonth = periods.find(
-      (p) => p.payroll_month === month && p.payroll_year === year,
-    );
-    const closedAs =
-      thisMonth && CLOSED_STATUSES.has(thisMonth.status)
-        ? thisMonth.status
-        : null;
+    const closedAs = closedStatusOf(periods, month, year);
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">

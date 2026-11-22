@@ -50,6 +50,11 @@ const period = (month: number, year: number, status: string, id = month) => ({
  */
 function theBrowserIsAt(instant: string, zone: string) {
   vi.useFakeTimers({ toFake: ["Date"] });
+  theClockMovesTo(instant, zone);
+}
+
+/** Time passes on a page that is already open: nothing renders because of it. */
+function theClockMovesTo(instant: string, zone: string) {
   vi.setSystemTime(new Date(instant));
   const local = new Intl.DateTimeFormat("en-CA", {
     timeZone: zone,
@@ -286,5 +291,92 @@ describe("after a calculation", () => {
 
     expect(await screen.findByText("11/2026")).toBeInTheDocument();
     expect(toast.success).toHaveBeenCalledWith("Payroll calculated");
+  });
+});
+
+describe("a page left open across the turn of the month in Bali", () => {
+  // 23:59 on the last day in Bali, then 00:01 on the first.
+  const BEFORE = "2026-11-30T15:59:00Z";
+  const AFTER = "2026-11-30T16:01:00Z";
+
+  it.each(["approved", "paid"])(
+    "does not send the new month when the list holds it %s, and then says so",
+    async (status) => {
+      theBrowserIsAt(BEFORE, "Asia/Makassar");
+      hrApi.listPayrollPeriods.mockResolvedValue({
+        periods: [period(11, 2026, "calculated"), period(12, 2026, status)],
+      });
+      render(<PayrollPage />);
+      const button = await calculate();
+      expect(button).toBeEnabled();
+
+      theClockMovesTo(AFTER, "Asia/Makassar");
+      await userEvent.click(button);
+
+      await waitFor(() => expect(button).toBeDisabled());
+      expect(button).toHaveAccessibleDescription(
+        `12/2026 is already ${status}.`,
+      );
+      expect(hrApi.calculatePayroll).not.toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(hrApi.listPayrollPeriods).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not send a new year's first month the list holds paid", async () => {
+    theBrowserIsAt("2026-12-31T15:59:00Z", "Asia/Makassar");
+    hrApi.listPayrollPeriods.mockResolvedValue({
+      periods: [period(12, 2026, "calculated"), period(1, 2027, "paid")],
+    });
+    render(<PayrollPage />);
+    const button = await calculate();
+    expect(button).toBeEnabled();
+
+    theClockMovesTo("2026-12-31T16:01:00Z", "Asia/Makassar");
+    await userEvent.click(button);
+
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(button).toHaveAccessibleDescription("01/2027 is already paid.");
+    expect(hrApi.calculatePayroll).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["not in the list", [period(11, 2026, "calculated")]],
+    [
+      "in the list and open",
+      [period(11, 2026, "calculated"), period(12, 2026, "calculated", 13)],
+    ],
+  ])("sends the new month when it is %s", async (_label, periods) => {
+    theBrowserIsAt(BEFORE, "Asia/Makassar");
+    hrApi.listPayrollPeriods.mockResolvedValue({ periods });
+    render(<PayrollPage />);
+    const button = await calculate();
+    expect(button).toBeEnabled();
+
+    theClockMovesTo(AFTER, "Asia/Makassar");
+    await userEvent.click(button);
+
+    await waitFor(() =>
+      expect(hrApi.calculatePayroll).toHaveBeenCalledTimes(1),
+    );
+    expect(hrApi.calculatePayroll).toHaveBeenCalledWith(12, 2026);
+  });
+
+  it("the same holds on a machine set to another zone", async () => {
+    // Rome, 16:59 on 30 November: 23:59 in Bali. Two minutes later Bali is in December.
+    theBrowserIsAt(BEFORE, "Europe/Rome");
+    hrApi.listPayrollPeriods.mockResolvedValue({
+      periods: [period(11, 2026, "calculated"), period(12, 2026, "approved")],
+    });
+    render(<PayrollPage />);
+    const button = await calculate();
+    expect(button).toBeEnabled();
+
+    theClockMovesTo(AFTER, "Europe/Rome");
+    await userEvent.click(button);
+
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(hrApi.calculatePayroll).not.toHaveBeenCalled();
   });
 });
