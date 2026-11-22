@@ -445,14 +445,19 @@ def _canonical_value(amount: str, multiplier: str | None) -> int | None:
         # A decimal form is allowed before a multiplier ("3,5 juta"); a grouped
         # form ("3.500 juta") canonicalizes by stripping separators.
         normalized = s.replace(",", ".")
-        try:
-            if normalized.count(".") == 1 and len(normalized.split(".")[1]) <= 2:
-                base = float(normalized)
-            else:
-                base = float(re.sub(r"[.,]", "", s))
-        except ValueError:
+        multiplier_value = int(_AMOUNT_MULTIPLIERS[multiplier.lower()])
+        if normalized.count(".") == 1 and len(normalized.split(".")[1]) <= 2:
+            whole, fraction = normalized.split(".")
+            if not whole.isdigit() or not fraction.isdigit():
+                return None
+            return (
+                int(whole) * multiplier_value
+                + int(fraction) * multiplier_value // 10 ** len(fraction)
+            )
+        digits = re.sub(r"[.,]", "", s)
+        if not digits.isdigit():
             return None
-        return int(round(base * _AMOUNT_MULTIPLIERS[multiplier.lower()]))
+        return int(digits) * multiplier_value
     digits = re.sub(r"[.,]", "", s)
     if not digits.isdigit():
         return None
@@ -687,6 +692,15 @@ _SECRET_EGRESS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "bearer_token",
         re.compile(r"(?i)\b(?:bearer|basic)\s+(?=[A-Za-z0-9_./+\-=]*\d)[A-Za-z0-9_./+\-=]{16,}"),
     ),
+    ("aws_access_key_id", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
+    (
+        "github_token",
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})\b"),
+    ),
+    ("slack_token", re.compile(r"\bxox[aboprst]-[A-Za-z0-9-]{20,}\b")),
+    # A lookahead and not `\b` at the end: the last character of this key can
+    # be a hyphen, and `\b` after a hyphen that precedes a space never holds.
+    ("google_api_key", re.compile(r"\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])")),
 )
 
 
