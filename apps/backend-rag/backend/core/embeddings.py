@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import md5
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 from backend.services.observability import llm_cost_tracked, set_usage
 
 if TYPE_CHECKING:
@@ -21,6 +23,8 @@ if TYPE_CHECKING:
     from backend.app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+_OPENAI_EMBEDDINGS_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
 # Token-aware sub-batching (cicatrix scar 2026-05-10):
 # OpenAI text-embedding-3-small has TWO hard limits:
@@ -303,7 +307,7 @@ class EmbeddingsGenerator:
 
             raise ValueError("OpenAI API key is required for OpenAI provider")
 
-        self.client = AsyncOpenAI(api_key=self.api_key)
+        self.client = AsyncOpenAI(api_key=self.api_key, timeout=_OPENAI_EMBEDDINGS_TIMEOUT)
         logger.info(
             f"🔌 [EmbeddingsGenerator] Initialized with OpenAI (Async): {self.model} ({self.dimensions} dims)",
         )
