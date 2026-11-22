@@ -630,7 +630,9 @@ class GenAIClient:
                     "provider": "gemini",
                     "model": model,
                     "latency_ms": latency_ms,
-                    "error": str(e),
+                    # The label, never the text: the provider's message can
+                    # quote what was sent to it (see `_gemini_error_label`).
+                    "error": error_class,
                 },
             )
             await emit_llm_metric(
@@ -868,7 +870,9 @@ class GenAIClient:
                     "provider": "gemini",
                     "model": model,
                     "schema": response_schema.__name__,
-                    "error": str(e),
+                    # The label, never the text: the provider's message can
+                    # quote what was sent to it (see `_gemini_error_label`).
+                    "error": error_class,
                 },
             )
             raise
@@ -992,7 +996,9 @@ class GenAIClient:
                     "provider": "gemini",
                     "model": model,
                     "latency_ms": latency_ms,
-                    "error": str(e),
+                    # The label, never the text: the provider's message can
+                    # quote what was sent to it (see `_gemini_error_label`).
+                    "error": error_class,
                 },
             )
             await emit_llm_metric(
