@@ -440,6 +440,23 @@ class ZohoOAuthService:
                     "this host. The stored token was left untouched."
                 )
 
+            # Zoho's throttle on this endpoint (ten access tokens per refresh token
+            # in ten minutes) is also an HTTP 200 with the error in the body:
+            # "Access Denied" with "too many requests" in the description. It says
+            # nothing about the grant, so the stored token is left untouched, and
+            # the message must not name the consent endpoint (see the non-200
+            # branch above: callers read the wording).
+            normalized_error = " ".join(zoho_error.lower().replace("_", " ").split())
+            error_description = str(token_data.get("error_description") or "")
+            if (
+                normalized_error == "access denied"
+                and "too many requests" in error_description.lower()
+            ):
+                raise ValueError(
+                    "Token refresh temporarily unavailable (throttled by Zoho) — "
+                    "retryable, not a consent problem"
+                )
+
             # Invalidate stored token so we stop retrying on every request
             async with self.db_pool.acquire() as conn:
                 await conn.execute(
