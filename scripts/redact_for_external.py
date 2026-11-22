@@ -127,10 +127,56 @@ _QUOTED_KEY_ASSIGNMENT = re.compile(
     """
 )
 
-_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+# An address is `\b<local>@<domain>`: a local part that starts at a word boundary
+# and runs up to the "@", then a domain ending in a dot and letters. Written as
+# one pattern, the search started at every word boundary of a long dotted line
+# and scanned to its end each time, with no "@" in sight: quadratic. The same
+# addresses are found here from the "@" signs instead, each local part walked
+# once, so a line is read a fixed number of times whatever it holds.
+_EMAIL_LOCAL_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
+)
+_EMAIL_LOCAL_START = re.compile(r"\b[A-Za-z0-9._%+\-]")
+_EMAIL_DOMAIN = re.compile(r"[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+
+
+def _redact_emails(text: str) -> str:
+    done = 0  # end of the previous address: the next one cannot start before it
+    at = text.find("@")
+    if at == -1:
+        return text
+    out: list[str] = []
+    while at != -1:
+        start = at
+        while start > done and text[start - 1] in _EMAIL_LOCAL_CHARS:
+            start -= 1
+        first = _EMAIL_LOCAL_START.search(text, start, at) if start < at else None
+        domain = _EMAIL_DOMAIN.match(text, at + 1) if first else None
+        if first and domain:
+            out.append(text[done : first.start()])
+            out.append("<REDACTED:email>")
+            done = domain.end()
+            at = text.find("@", done)
+        else:
+            at = text.find("@", at + 1)
+    out.append(text[done:])
+    return "".join(out)
+
 
 # A DSN carries user:password@host. Keep the scheme and the host; drop the middle.
-_DSN_CREDENTIALS = re.compile(r"\b(?P<scheme>[a-z][a-z0-9+.\-]*://)[^\s/@:]+:[^\s/@]+@")
+#
+# The scheme is read once per run of scheme characters, from the start of the
+# run. The rule it replaces, a scheme starting at any word boundary before a
+# lowercase letter, tried every such letter of a long dotted run and scanned to
+# the end of the run each time. Every start inside one run leads to the same
+# "://" and the same credentials, so one attempt decides the same thing: the two
+# conditions below say that the run holds at least one of those starts (its
+# first character, or a letter after one of its "+", "." or "-").
+_DSN_CREDENTIALS = re.compile(
+    r"(?<![a-z0-9+.\-])"
+    r"(?:\b(?=[a-z])|(?=[a-z0-9+.\-]*?[+.\-][a-z]))"
+    r"(?P<scheme>[a-z0-9+.\-]*://)[^\s/@:]+:[^\s/@]+@"
+)
 
 
 def redact(text: str) -> str:
@@ -152,7 +198,7 @@ def redact(text: str) -> str:
     out = _NAMED_ASSIGNMENT_BARE.sub(
         lambda m: f"{m['name']}{m['sep']}<REDACTED:secret>", out
     )
-    out = _EMAIL.sub("<REDACTED:email>", out)
+    out = _redact_emails(out)
     return out
 
 
