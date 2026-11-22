@@ -1363,19 +1363,19 @@ def _name_is_better(new: str | None, current: str | None) -> bool:
     return _name_is_junk(current)
 
 
-# A recap note opens with a dated header ("WhatsApp conversation update, 2026-11-21: ").
-_NOTE_DATED_HEADER_RE = re.compile(r"^[^\n:]{0,80}?\b\d{4}-\d{2}-\d{2}:\s*")
+# The WhatsApp auto-promote recap opens "WhatsApp conversation update, 2026-11-21: ".
+_WA_RECAP_HEADER_RE = re.compile(r"^WhatsApp conversation update, \d{4}-\d{2}-\d{2}: ")
 
 
 def _note_repeats_last(notes: str | None, addendum: str) -> bool:
-    """True when `addendum` says what the last paragraph of `notes` already says,
-    the dated header aside: a daily recap with no new message adds nothing."""
-    last = (notes or "").rstrip().rsplit("\n\n", 1)[-1].strip()
-    if not last:
+    """True when `addendum` is a WhatsApp recap that says what the card's last
+    paragraph, itself such a recap, already says: only the header date moved.
+    Any other last paragraph (a staff note, dated or not) never suppresses."""
+    last = (notes or "").replace("\r\n", "\n").rstrip().rsplit("\n\n", 1)[-1].strip()
+    new = addendum.replace("\r\n", "\n").strip()
+    if not (_WA_RECAP_HEADER_RE.match(last) and _WA_RECAP_HEADER_RE.match(new)):
         return False
-    return _NOTE_DATED_HEADER_RE.sub("", last, count=1) == _NOTE_DATED_HEADER_RE.sub(
-        "", addendum.strip(), count=1
-    )
+    return _WA_RECAP_HEADER_RE.sub("", last, count=1) == _WA_RECAP_HEADER_RE.sub("", new, count=1)
 
 
 class ClientUpsertByPhone(BaseModel):

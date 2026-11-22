@@ -568,25 +568,53 @@ def test_recap_with_new_content_is_appended(
     assert len(updates) == 1 and "notes = " in updates[0].args[0]
 
 
+_HEADER = "WhatsApp conversation update, "
+
+
 @pytest.mark.parametrize(
     ("notes", "addendum", "repeats"),
     [
-        (None, "x", False),
-        ("", "x", False),
+        (None, f"{_HEADER}2026-02-05: {_RECAP_BODY}", False),
+        ("", f"{_HEADER}2026-02-05: {_RECAP_BODY}", False),
+        # Same recap, only the header date moved: suppressed.
+        (f"{_HEADER}2026-02-04: {_RECAP_BODY}", f"{_HEADER}2026-02-05: {_RECAP_BODY}", True),
+        # Trailing whitespace and CRLF separators do not hide a repeat.
         (
-            f"WhatsApp conversation update, 2026-02-04: {_RECAP_BODY}",
-            f"WhatsApp conversation update, 2026-02-05: {_RECAP_BODY}",
+            f"old note\r\n\r\n{_HEADER}2026-02-04: {_RECAP_BODY}  \r\n",
+            f"{_HEADER}2026-02-05: {_RECAP_BODY}\n",
             True,
+        ),
+        # Count only changed.
+        (
+            f"{_HEADER}2026-02-04: {_RECAP_BODY}",
+            f"{_HEADER}2026-02-05: {_RECAP_BODY.replace('12 client', '13 client')}",
+            False,
+        ),
+        # Date range only changed.
+        (
+            f"{_HEADER}2026-02-04: {_RECAP_BODY}",
+            f"{_HEADER}2026-02-05: {_RECAP_BODY.replace('2026-02-03', '2026-02-05')}",
+            False,
+        ),
+        # Topic only changed.
+        (
+            f"{_HEADER}2026-02-04: {_RECAP_BODY}",
+            f"{_HEADER}2026-02-05: "
+            + _RECAP_BODY.replace("payment or bank transfer", "documents to review"),
+            False,
         ),
         # A staff note written after the recap is the last paragraph: append again.
         (
-            f"WhatsApp conversation update, 2026-02-04: {_RECAP_BODY}\n\nCalled, waiting docs.",
-            f"WhatsApp conversation update, 2026-02-05: {_RECAP_BODY}",
+            f"{_HEADER}2026-02-04: {_RECAP_BODY}\n\nCalled, waiting docs.",
+            f"{_HEADER}2026-02-05: {_RECAP_BODY}",
             False,
         ),
-        # Only the header date is ignored, not a date inside the body.
-        ("Update, 2026-02-04: seen 2026-01-05", "Update, 2026-02-05: seen 2026-01-06", False),
-        ("same text", "same text  ", True),
+        # A dated staff note with the recap's body is not a recap.
+        (f"Staff reviewed, 2026-02-04: {_RECAP_BODY}", f"{_HEADER}2026-02-05: {_RECAP_BODY}", False),
+        # An undated staff paragraph that quotes the body is not a recap.
+        (_RECAP_BODY, f"{_HEADER}2026-02-05: {_RECAP_BODY}", False),
+        # Two dated notes that are not recaps are never compared.
+        ("Deadline 2026-02-04: submit documents", "Deadline 2026-02-05: submit documents", False),
     ],
 )
 def test_note_repeats_last(notes: str | None, addendum: str, repeats: bool) -> None:
