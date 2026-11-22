@@ -276,6 +276,13 @@ async def post_outcome(
             )
             if locked is None:
                 raise HTTPException(status_code=404, detail="alert not found")
+            alert_status = await conn.fetchval(
+                "SELECT status FROM compliance_alerts WHERE alert_id = $1", alert_id
+            )
+            if alert_status in ("resolved", "expired"):
+                raise HTTPException(
+                    status_code=409, detail=f"alert is already closed: {alert_status}"
+                )
             completed = await conn.fetchval(
                 "SELECT EXISTS (SELECT 1 FROM client_obligations "
                 "WHERE alert_id = $1 AND status = 'done')",
