@@ -20,9 +20,9 @@ import {
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("@/components/ui/toast", () => ({ useToast: () => toast }));
 vi.mock("@/lib/logger");
+// 2 instead of the server's 500, so one test can show the batch keeps the newest only.
+vi.mock("../_components/pnbpBatch", () => ({ PNBP_BATCH_LIMIT: 2 }));
 vi.mock("@/lib/api/workspace/accounting.api", () => ({
-  // 2 instead of the server's 500, so one test can show the batch keeps the newest only.
-  PNBP_BATCH_LIMIT: 2,
   accountingApi: {
     getOutgoings: vi.fn(),
     justifyOutgoing: vi.fn(),

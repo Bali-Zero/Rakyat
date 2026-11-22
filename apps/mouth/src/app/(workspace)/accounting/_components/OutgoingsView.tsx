@@ -16,7 +16,6 @@ import { Money } from "@balizero/core";
 import { useToast } from "@/components/ui/toast";
 import {
   accountingApi,
-  PNBP_BATCH_LIMIT,
   type JustifyOutgoingRequest,
   type OutgoingItem,
   type OutgoingsResponse,
@@ -25,6 +24,7 @@ import {
 import { logger } from "@/lib/logger";
 import { ccShort } from "./ccFormat";
 import { CATEGORY_LABELS, JustifyDialog } from "./JustifyDialog";
+import { PNBP_BATCH_LIMIT } from "./pnbpBatch";
 
 const ALL = "all";
 

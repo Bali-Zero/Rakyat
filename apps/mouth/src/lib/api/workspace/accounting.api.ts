@@ -409,9 +409,6 @@ const qs = (params: Record<string, string | number | undefined>): string => {
   return parts.length ? `?${parts.join("&")}` : "";
 };
 
-/** The server's limit on one «Justify all PNBP» call. */
-export const PNBP_BATCH_LIMIT = 500;
-
 export const accountingApi = {
   /** Weekly cashout rows (Asya's sheet), newest first. */
   async getCashout(opts?: {
@@ -474,7 +471,7 @@ export const accountingApi = {
 
   /**
    * Justify the listed PNBP debits in one go (no case), all or nothing; at most
-   * PNBP_BATCH_LIMIT ids. 404/409/422 carry a `detail` message.
+   * 500 ids. 404/409/422 carry a `detail` message.
    */
   async justifyPnbpBatch(txnIds: number[]): Promise<PnbpBatchResponse> {
     return api.post<PnbpBatchResponse>(
