@@ -39,13 +39,18 @@ PORTAL_UPLOAD_MIME_TYPES: Final[dict[str, frozenset[str]]] = {
     ".docx": frozenset({DOCX_MIME_TYPE}),
 }
 
+# Looked for as raw bytes anywhere in the file, before any parsing. Only names long
+# enough that compressed data does not hold them by chance: the two short ones,
+# /JS and /AA, are three bytes, so image and font streams held them at random (about
+# one 2 MB file in five) and a font subset tag such as /AAXYZQ+Helvetica begins with
+# one. Both stay forbidden as names of the document: `_PDF_FORBIDDEN_NAMES` below
+# refuses them as a key or a value of any object the parser reaches, in whatever
+# spelling (/J#53 is /JS there, and is not these bytes).
 _PDF_ACTIVE_TOKENS: Final = (
     b"/JavaScript",
-    b"/JS",
     b"/Launch",
     b"/EmbeddedFile",
     b"/OpenAction",
-    b"/AA",
 )
 _PDF_FORBIDDEN_NAMES: Final = frozenset(
     {
