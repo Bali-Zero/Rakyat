@@ -643,6 +643,19 @@ export function isArticleHidden(category: string, slug: string): boolean {
   return !parsed || !isPublishedFrontmatter(parsed.data);
 }
 
+/**
+ * Whether the English file of this article asks to stay out of search. The
+ * English file governs its translations: when it is hidden they are hidden,
+ * and when it is kept out of search so are they. A translation is written
+ * once and the English flag can be set later, so the flag is read here and
+ * not expected in every translation file.
+ */
+function isEnglishArticleNoIndex(category: string, slug: string): boolean {
+  const filePath = findMdxFile(category, slug);
+  if (!filePath) return false;
+  return Boolean(readMdxFile(filePath)?.data.noIndex);
+}
+
 const PIN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
@@ -936,7 +949,9 @@ export async function getArticleByLocale(
         locale:
           (frontmatter.locale as "en" | "id" | "it" | "ru" | "fr") ||
           (locale as "en" | "id" | "it" | "ru" | "fr"),
-        noIndex: frontmatter.noIndex || false,
+        noIndex:
+          Boolean(frontmatter.noIndex) ||
+          isEnglishArticleNoIndex(category, slug),
       };
     }
   }
