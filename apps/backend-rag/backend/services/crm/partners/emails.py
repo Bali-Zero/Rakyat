@@ -24,6 +24,7 @@ import jinja2
 
 from backend.services.crm.partners.repository import PartnersRepository
 from backend.services.crm.partners.sterilize import sterilize_service_type_for_partner
+from backend.services.notifications.email_audit import raise_if_not_delivered
 from backend.services.pricing.pricing_service import get_pricing_service
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,8 @@ async def _post_email(*, to: str, cc: list[str] | None, subject: str, body: str)
             headers={"X-API-Key": _get_api_key()},
         )
         r.raise_for_status()
+        # The endpoint answers 200 when every provider failed: its body says so.
+        raise_if_not_delivered(r)
 
 
 def _sterilize(name: str) -> str:
