@@ -114,7 +114,7 @@ def verify_meta_hmac(
         raise WebhookVerificationError("missing_header", provider)
 
     received_digest = _strip_sha256_prefix(signature_header)
-    if received_digest is None:
+    if received_digest is None or not received_digest.isascii():
         raise WebhookVerificationError("malformed_header", provider)
 
     expected_digest = hmac.new(
@@ -160,7 +160,7 @@ def verify_twitter_hmac(
         raise WebhookVerificationError("missing_header", provider)
 
     received_b64 = _strip_sha256_prefix(signature_header)
-    if received_b64 is None:
+    if received_b64 is None or not received_b64.isascii():
         raise WebhookVerificationError("malformed_header", provider)
 
     expected_digest = hmac.new(
