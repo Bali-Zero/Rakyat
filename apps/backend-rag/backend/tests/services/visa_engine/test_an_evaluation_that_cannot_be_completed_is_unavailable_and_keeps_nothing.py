@@ -12,15 +12,19 @@ Each test runs the real orchestration over the gold TEST pack and breaks exactly
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import uuid
+from base64 import urlsafe_b64encode
 from typing import Any
 
 import asyncpg
 import pytest
 
 from backend.services.visa_engine import evaluate_path, shadow
-from backend.services.visa_engine.bundle import VerifiedRulePack
+from backend.services.visa_engine.bundle import ALLOW_UNSIGNED_ENV_VAR, VerifiedRulePack
+from backend.services.visa_engine.crypto import FACTS_FINGERPRINT_KEYS_ENV_VAR
 from backend.services.visa_engine.errors import (
     FactsFingerprintKeyError,
     FactsFingerprintKeyUnavailableError,
@@ -36,12 +40,27 @@ MARKER = "FACT-VALUE-THAT-MUST-NOT-BE-LOGGED"
 MODES = ["SHADOW", "ENFORCE"]
 
 
+# Every environment variable the engine reads carries one of these two prefixes.
+ENGINE_VARIABLES = ("VISA_ENGINE_", "VISA_ORACLE_")
+
+
 class _Stage:
-    """The real orchestration over the gold TEST pack, with a recording decision writer."""
+    """The real orchestration over the gold TEST pack, with a recording decision writer.
+
+    Nothing of the machine's own configuration takes part. Every variable the engine reads
+    is removed first: the facts-fingerprint keys that the identity provider and the sealing
+    keyring read, the evaluate environment, the law overlay, the holding flags, the trust
+    store and the unsigned-pack switch. With no key material the identity and the seal are
+    the TEST-only placeholder, so no real secret is ever used here and the run is the same
+    on every machine. The stage then sets the two variables it needs.
+    """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.monkeypatch = monkeypatch
         self.saved: list[dict[str, Any]] = []
+        for name in list(os.environ):
+            if name.startswith(ENGINE_VARIABLES):
+                monkeypatch.delenv(name, raising=False)
         compiled = gold_loader.load_and_compile_rule_pack()
         raw = gold_loader.load_rule_pack_raw()
         pack = RulePack.model_validate(raw)
@@ -173,6 +192,87 @@ async def test_a_failed_price_projection_is_not_an_outage(
     assert MARKER not in _everything_logged(records)
 
 
+def _a_key_for(environment: str) -> str:
+    """A well-formed key configuration. Its secret is thirty-two letters k, built here."""
+    secret = urlsafe_b64encode(b"k" * 32).rstrip(b"=").decode()
+    return json.dumps(
+        [
+            {
+                "kid": "a-key-of-the-machine",
+                "environment": environment,
+                "secret": secret,
+                "valid_from": "2020-01-01T00:00:00+00:00",
+            }
+        ]
+    )
+
+
+CONFIGURATIONS_OF_THE_MACHINE = {
+    "a malformed key configuration": {FACTS_FINGERPRINT_KEYS_ENV_VAR: "not json"},
+    "an empty key array": {FACTS_FINGERPRINT_KEYS_ENV_VAR: "[]"},
+    "a key for PRODUCTION only": {FACTS_FINGERPRINT_KEYS_ENV_VAR: _a_key_for("PRODUCTION")},
+    "a key for TEST": {FACTS_FINGERPRINT_KEYS_ENV_VAR: _a_key_for("TEST")},
+    "everything else the engine reads": {
+        evaluate_path.EVALUATE_ENVIRONMENT_ENV: "STAGING",
+        evaluate_path.LAW_OVERLAY_ENV: "on",
+        evaluate_path._HOLDING_FLAGS_ENV_VAR: "not a list of flags",
+        ALLOW_UNSIGNED_ENV_VAR: "1",
+    },
+}
+
+
+async def _what_a_clean_machine_saves(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    with monkeypatch.context() as clean:
+        stage = _Stage(clean)
+        body = await stage.run("SHADOW")
+    assert _outage(body) is None
+    assert len(stage.saved) == 1
+    return stage.saved[0]
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    CONFIGURATIONS_OF_THE_MACHINE.values(),
+    ids=CONFIGURATIONS_OF_THE_MACHINE.keys(),
+)
+async def test_the_stage_takes_nothing_from_the_configuration_of_the_machine(
+    monkeypatch: pytest.MonkeyPatch, configuration: dict[str, str]
+) -> None:
+    """Whatever the machine has configured, the control answers the same decision with the
+    same identity: no key of the machine is used, and none can stop the run."""
+    expected = await _what_a_clean_machine_saves(monkeypatch)
+    for name, value in configuration.items():
+        monkeypatch.setenv(name, value)
+    stage = _Stage(monkeypatch)
+
+    body = await stage.run("SHADOW")
+
+    assert _outage(body) is None
+    assert len(stage.saved) == 1
+    assert stage.saved[0]["request_fingerprint"] == expected["request_fingerprint"]
+    assert stage.saved[0]["decision"] == expected["decision"]
+    assert stage.saved[0]["environment"] == expected["environment"]
+
+
+def test_every_variable_the_stage_removes_is_one_the_engine_names() -> None:
+    """The two prefixes cover each name the engine's modules define today."""
+    named = [
+        FACTS_FINGERPRINT_KEYS_ENV_VAR,
+        ALLOW_UNSIGNED_ENV_VAR,
+        evaluate_path.EVALUATE_MODE_ENV,
+        evaluate_path.EVALUATE_ENVIRONMENT_ENV,
+        evaluate_path.LAW_OVERLAY_ENV,
+        evaluate_path.ALLOW_SYNTHETIC_SOURCES_ENV,
+        evaluate_path.DRIVER_TOKEN_ENV,
+        evaluate_path.CANARY_TOKEN_ENV,
+        evaluate_path._HOLDING_FLAGS_ENV_VAR,
+        shadow.MATCH_MODE_ENV,
+        shadow.MATCH_ENVIRONMENT_ENV,
+    ]
+
+    assert [name for name in named if not name.startswith(ENGINE_VARIABLES)] == []
+
+
 # ---------------------------------------------------------------- the rule pack
 
 PACK_FAILURES = {
@@ -277,6 +377,7 @@ async def test_any_other_failure_of_the_evaluation_is_answered_as_unavailable(
 
     assert _outage(body) == {"code": "EVALUATION_UNAVAILABLE", "retryable": True}
     assert stage.saved == []
+    assert [record.levelno for record in records] == [logging.WARNING]
     assert MARKER not in _everything_logged(records)
     assert kind.__name__ in _everything_logged(records)
     assert all(record.exc_info is None for record in records)
