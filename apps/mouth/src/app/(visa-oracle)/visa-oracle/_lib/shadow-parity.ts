@@ -118,6 +118,29 @@ function semanticProjection(outcome: OutcomeViewModel) {
   };
 }
 
+export type ShadowParityVerdict = "match" | "mismatch" | "no_baseline";
+
+/**
+ * A visitor who matches no pinned persona gets the fixture-only placeholder
+ * from the preview adapter: there is nothing to compare against, which is not
+ * the engine disagreeing.
+ */
+function hasNoShadowBaseline(visibleBaseline: OutcomeViewModel): boolean {
+  return (
+    visibleBaseline.state === "TEMPORARILY_UNAVAILABLE" &&
+    visibleBaseline.provenance === "PREVIEW" &&
+    visibleBaseline.outage?.code === "PREVIEW_FIXTURE_ONLY"
+  );
+}
+
+export function shadowParityVerdict(
+  response: VisaOracleEvaluateResponse,
+  visibleBaseline: OutcomeViewModel,
+): ShadowParityVerdict {
+  if (hasNoShadowBaseline(visibleBaseline)) return "no_baseline";
+  return shadowParityMatches(response, visibleBaseline) ? "match" : "mismatch";
+}
+
 /** A match is emitted only when the complete public decision semantics agree. */
 export function shadowParityMatches(
   response: VisaOracleEvaluateResponse,

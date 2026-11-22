@@ -67,7 +67,7 @@ import {
   resolveVisaOracleMode,
   type VisaOracleMode,
 } from "../_lib/runtime-mode";
-import { shadowParityMatches } from "../_lib/shadow-parity";
+import { shadowParityVerdict } from "../_lib/shadow-parity";
 import type { OutcomeViewModel } from "../_lib/outcome-view-model";
 import type { VisaOracleEvaluateResponse } from "../_lib/visa-oracle-contract";
 import {
@@ -765,15 +765,19 @@ function OracleShellRuntime({
 
               if (mode === "SHADOW") {
                 const preview = buildPreviewOutcome(state.facts, frozenToday);
-                emitVisaOracleTelemetry({
-                  event: shadowParityMatches(response, preview)
-                    ? "visa_oracle_v2_parity_match"
-                    : "visa_oracle_v2_parity_mismatch",
-                  state: response.decision.state,
-                  correlationHash: telemetryCorrelationHash,
-                  packHash: GOLD_ORACLE_PACK_HASH,
-                  frontendVersion: resolveFrontendVersion(),
-                });
+                const parity = shadowParityVerdict(response, preview);
+                if (parity !== "no_baseline") {
+                  emitVisaOracleTelemetry({
+                    event:
+                      parity === "match"
+                        ? "visa_oracle_v2_parity_match"
+                        : "visa_oracle_v2_parity_mismatch",
+                    state: response.decision.state,
+                    correlationHash: telemetryCorrelationHash,
+                    packHash: GOLD_ORACLE_PACK_HASH,
+                    frontendVersion: resolveFrontendVersion(),
+                  });
+                }
                 return buildShadowOutcome({
                   code: "SHADOW_VERIFICATION_ONLY",
                   assumptions,
