@@ -242,6 +242,90 @@ class _RawReactCore:
         return ("gemini-parent", False, state, "system prompt")
 
 
+class _ToolCallReactReasoningEngine:
+    def __init__(self, raw_event: dict) -> None:
+        self.raw_event = raw_event
+        self.tool_map: dict = {}
+
+    async def execute_react_loop_stream(self, **_kwargs):
+        yield self.raw_event
+
+
+class _ToolCallReactCore(_RawReactCore):
+    def __init__(self, raw_event: dict) -> None:
+        super().__init__("complete")
+        self.reasoning_engine = _ToolCallReactReasoningEngine(raw_event)
+
+
+@pytest.mark.asyncio
+async def test_stream_query_core_names_tool_from_producer_tool_event() -> None:
+    streaming_core = OrchestratorStreamingCore(
+        core=_ToolCallReactCore(
+            {"type": "tool_call", "data": {"tool": "vector_search", "args": {}}}
+        ),
+        streaming_manager=FakeStreamingManager(),
+    )
+
+    events = [
+        event
+        async for event in streaming_core.stream_query_core(
+            query="raw stream contract",
+            user_id="contract-user",
+            conversation_history=None,
+            session_id=None,
+            images=None,
+            tool_execution_counter={"count": 0},
+            correlation_id="contract-correlation",
+        )
+    ]
+
+    tool_thinking_event = next(
+        event
+        for event in events
+        if event["type"] == "thinking" and event["phase"] == "tool_calling"
+    )
+    assert "vector_search" in tool_thinking_event["data"]
+    assert "unknown tool" not in tool_thinking_event["data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("data", "expected_tool_name"),
+    [
+        ({"tool_name": "legacy_vector_search", "args": {}}, "legacy_vector_search"),
+        ({"args": {}}, "unknown tool"),
+    ],
+)
+async def test_stream_query_core_keeps_tool_name_fallbacks(
+    data: dict,
+    expected_tool_name: str,
+) -> None:
+    streaming_core = OrchestratorStreamingCore(
+        core=_ToolCallReactCore({"type": "tool_call", "data": data}),
+        streaming_manager=FakeStreamingManager(),
+    )
+
+    events = [
+        event
+        async for event in streaming_core.stream_query_core(
+            query="raw stream contract",
+            user_id="contract-user",
+            conversation_history=None,
+            session_id=None,
+            images=None,
+            tool_execution_counter={"count": 0},
+            correlation_id="contract-correlation",
+        )
+    ]
+
+    assert any(
+        event["type"] == "thinking"
+        and event["phase"] == "tool_calling"
+        and expected_tool_name in event["data"]
+        for event in events
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("outcome", "expect_error_event", "expect_cancel"),
