@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -99,6 +99,11 @@ class Settings(BaseSettings):
         None  # Set via TAVILY_API_KEY env var (for Tavily AI Search - preferred)
     )
     embedding_model: str = "text-embedding-3-small"
+    voyage_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    voyage_public_index_sha256: str | None = None
+    voyage_shadow_observe: bool = False
+    voyage_public_manifest: str | None = None
+    voyage_public_manifest_sha256: str | None = None
     embedding_dimensions: int = 1536  # Matches migrated collections
 
     @field_validator("openai_api_key", mode="before")

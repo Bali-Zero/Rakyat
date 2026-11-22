@@ -246,6 +246,18 @@ class VectorSearchTool(BaseTool):
             )
             chunks = all_chunks[:top_k]
 
+            if _settings.voyage_shadow_observe:
+                from backend.services.rag.agentic.voyage_scope import (
+                    accepts_query,
+                    record_observation,
+                )
+
+                if accepts_query(query):
+                    from backend.services.rag.voyage_observer import observe_legal_search
+
+                    summary = await observe_legal_search(query, target_collections, chunks, top_k, _settings)
+                    record_observation(query, summary)
+
             if not chunks:
                 set_span_status("ok")
                 return json.dumps({"content": "No relevant documents found.", "sources": []})
