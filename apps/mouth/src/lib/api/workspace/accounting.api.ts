@@ -233,6 +233,8 @@ export interface OutgoingReading {
   payee?: string | null;
   purpose?: string;
   billing_code?: string;
+  /** PNBP only: debits carrying the same e-billing code; 2 or more is a possible double payment. */
+  code_debits?: number;
   cheque?: string;
 }
 
@@ -283,6 +285,23 @@ export interface OutgoingJustification {
   at: string;
   /** Set on a fee: the transfer whose justification covers it. */
   follows_txn_id?: number;
+  /** Set when justified with «Justify all PNBP»: the rows of one click share it. */
+  batch_id?: string | null;
+}
+
+/** POST /outgoings/pnbp-batch: the PNBP debits justified in one go. */
+export interface PnbpBatchResponse {
+  batch_id: string;
+  n: number;
+  total_idr: number;
+  state: OutgoingState;
+}
+
+/** POST /outgoings/batches/{id}/undo: how many rows of the batch were taken back. */
+export interface OutgoingBatchUndoResponse {
+  batch_id: string;
+  n: number;
+  state: OutgoingState;
 }
 
 /** Body of POST /outgoings/{id}/justify; absent optional keys are left out. */
@@ -390,6 +409,9 @@ const qs = (params: Record<string, string | number | undefined>): string => {
   return parts.length ? `?${parts.join("&")}` : "";
 };
 
+/** The server's limit on one «Justify all PNBP» call. */
+export const PNBP_BATCH_LIMIT = 500;
+
 export const accountingApi = {
   /** Weekly cashout rows (Asya's sheet), newest first. */
   async getCashout(opts?: {
@@ -447,6 +469,24 @@ export const accountingApi = {
     return api.post<OutgoingActionResponse>(
       `/api/crm/accounting/outgoings/${txnId}/justify`,
       body,
+    );
+  },
+
+  /**
+   * Justify the listed PNBP debits in one go (no case), all or nothing; at most
+   * PNBP_BATCH_LIMIT ids. 404/409/422 carry a `detail` message.
+   */
+  async justifyPnbpBatch(txnIds: number[]): Promise<PnbpBatchResponse> {
+    return api.post<PnbpBatchResponse>(
+      `/api/crm/accounting/outgoings/pnbp-batch`,
+      { txn_ids: txnIds },
+    );
+  },
+
+  /** Take back what is still active of a batch made today (WITA). */
+  async undoOutgoingBatch(batchId: string): Promise<OutgoingBatchUndoResponse> {
+    return api.post<OutgoingBatchUndoResponse>(
+      `/api/crm/accounting/outgoings/batches/${encodeURIComponent(batchId)}/undo`,
     );
   },
 

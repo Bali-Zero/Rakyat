@@ -21,10 +21,14 @@ const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("@/components/ui/toast", () => ({ useToast: () => toast }));
 vi.mock("@/lib/logger");
 vi.mock("@/lib/api/workspace/accounting.api", () => ({
+  // 2 instead of the server's 500, so one test can show the batch keeps the newest only.
+  PNBP_BATCH_LIMIT: 2,
   accountingApi: {
     getOutgoings: vi.fn(),
     justifyOutgoing: vi.fn(),
     undoOutgoingJustification: vi.fn(),
+    justifyPnbpBatch: vi.fn(),
+    undoOutgoingBatch: vi.fn(),
   },
 }));
 
@@ -562,5 +566,189 @@ describe("OutgoingsView", () => {
       "justified before today: it cannot be undone",
     );
     expect(toast.error).toHaveBeenCalled();
+  });
+
+  describe("Justify all PNBP", () => {
+    const pnbp = (id: number, day: number, code: string, n: number) => ({
+      id,
+      txn_date: `2026-11-${day}`,
+      posted_at: `2026-11-${day}T10:00:00`,
+      amount_idr: 1000000 * id,
+      kind: "government_fee",
+      description: `EMPN BILLING  ${code}`,
+      company_key: "bayu",
+      reading: {
+        label: "PNBP",
+        billing_code: code,
+        detail: `e-billing ${code}`,
+        code_debits: n,
+      },
+      fee_of_txn_id: null,
+      state: "to_justify" as const,
+      justification: null,
+    });
+    const LIST: OutgoingsResponse = {
+      items: [
+        pnbp(14, 21, "820261121000004", 1),
+        pnbp(13, 20, "820261019000001", 2),
+        pnbp(12, 19, "820261119000002", 1),
+        pnbp(11, 18, "820261118000001", 1),
+        DATA.items[1],
+      ],
+      by_kind: [],
+      n: 5,
+      total_idr: 0,
+      n_justified: 0,
+      justified_total_idr: 0,
+    };
+    const bar = () => screen.getByTestId("pnbp-batch");
+
+    it("flags a code debited twice and leaves it out of the batch", async () => {
+      api.getOutgoings.mockResolvedValue(LIST);
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-13");
+      expect(screen.getByTestId("code-twice-13").textContent).toBe(
+        "Paid twice?",
+      );
+      expect(screen.queryByTestId("code-twice-14")).toBeNull();
+      expect(
+        within(bar()).getByText(
+          "1 PNBP looks paid twice: check it and justify it by hand.",
+        ),
+      ).toBeTruthy();
+      // the newest single-code ones, up to the limit: 14 and 12, never 13
+      expect(
+        within(bar()).getByRole("button", { name: "Justify all PNBP (2)" }),
+      ).toBeTruthy();
+    });
+
+    it("asks first, sends the ids, then offers Undo of that batch", async () => {
+      api.getOutgoings.mockResolvedValue(LIST);
+      api.justifyPnbpBatch.mockResolvedValue({
+        batch_id: "b-1",
+        n: 2,
+        total_idr: 26000000,
+        state: "justified",
+      });
+      api.undoOutgoingBatch.mockResolvedValue({
+        batch_id: "b-1",
+        n: 2,
+        state: "to_justify",
+      });
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-14");
+      fireEvent.click(
+        within(bar()).getByRole("button", { name: /Justify all PNBP/ }),
+      );
+      expect(
+        within(bar()).getByText(/Mark the 2 PNBP payments as justified\?/),
+      ).toBeTruthy();
+      expect(api.justifyPnbpBatch).not.toHaveBeenCalled();
+      fireEvent.click(
+        within(bar()).getByRole("button", { name: "Yes, justify all" }),
+      );
+      await waitFor(() =>
+        expect(api.justifyPnbpBatch).toHaveBeenCalledWith([14, 12]),
+      );
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith("2 PNBP justified"),
+      );
+      const status = await within(bar()).findByRole("status");
+      expect(status.textContent).toBe("2 PNBP justified. Undo");
+      fireEvent.click(within(status).getByRole("button", { name: "Undo" }));
+      await waitFor(() =>
+        expect(api.undoOutgoingBatch).toHaveBeenCalledWith("b-1"),
+      );
+      await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    });
+
+    it("Cancel sends nothing", async () => {
+      api.getOutgoings.mockResolvedValue(LIST);
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-14");
+      fireEvent.click(
+        within(bar()).getByRole("button", { name: /Justify all PNBP/ }),
+      );
+      fireEvent.click(within(bar()).getByRole("button", { name: "Cancel" }));
+      expect(
+        within(bar()).getByRole("button", { name: /Justify all PNBP/ }),
+      ).toBeTruthy();
+      expect(api.justifyPnbpBatch).not.toHaveBeenCalled();
+    });
+
+    it("shows the server's refusal as is and keeps the question open", async () => {
+      api.getOutgoings.mockResolvedValue(LIST);
+      api.justifyPnbpBatch.mockRejectedValue(
+        new Error("a debit is already justified: reload the list"),
+      );
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-14");
+      fireEvent.click(
+        within(bar()).getByRole("button", { name: /Justify all PNBP/ }),
+      );
+      fireEvent.click(
+        within(bar()).getByRole("button", { name: "Yes, justify all" }),
+      );
+      expect((await within(bar()).findByRole("alert")).textContent).toBe(
+        "a debit is already justified: reload the list",
+      );
+      expect(
+        within(bar()).getByRole("button", { name: "Yes, justify all" }),
+      ).toBeTruthy();
+    });
+
+    it("offers no batch when no PNBP has a single code", async () => {
+      api.getOutgoings.mockResolvedValue(DATA); // a reading without code_debits
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-1");
+      expect(screen.queryByTestId("pnbp-batch")).toBeNull();
+    });
+
+    it("offers Undo on Justified only for a batch made today", async () => {
+      const done = (id: number, batch: string, at: string) => ({
+        ...pnbp(id, 19, `82026111900000${id}`, 1),
+        state: "justified" as const,
+        justification: {
+          category: "pnbp_case" as const,
+          practice_id: null,
+          recipient: null,
+          note: null,
+          lines: [],
+          by: "staff@example.test",
+          at,
+          batch_id: batch,
+        },
+      });
+      api.getOutgoings.mockImplementation(async (opts) =>
+        opts?.state === "justified"
+          ? {
+              ...JUSTIFIED,
+              items: [
+                done(1, "b-today", todayIso()),
+                done(2, "b-today", todayIso()),
+                done(3, "b-old", "2026-11-02T03:00:00+00:00"),
+              ],
+            }
+          : DATA,
+      );
+      api.undoOutgoingBatch.mockResolvedValue({
+        batch_id: "b-today",
+        n: 2,
+        state: "to_justify",
+      });
+      render(<OutgoingsView />);
+      await screen.findByTestId("outgoing-1");
+      fireEvent.click(screen.getByRole("button", { name: /^Justified/ }));
+      const today = await screen.findByTestId("batch-b-today");
+      expect(today.textContent).toMatch(/^2 PNBP justified together today ·/);
+      expect(screen.queryByTestId("batch-b-old")).toBeNull();
+      expect(screen.getByTestId("justification-1").textContent).toMatch(
+        /Justified together/,
+      );
+      fireEvent.click(within(today).getByRole("button", { name: "Undo" }));
+      await waitFor(() =>
+        expect(api.undoOutgoingBatch).toHaveBeenCalledWith("b-today"),
+      );
+    });
   });
 });
