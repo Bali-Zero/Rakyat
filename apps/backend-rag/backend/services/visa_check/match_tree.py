@@ -24,6 +24,8 @@ Scoring rubric (all additive, clamped to [0.0, 1.0]):
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -130,7 +132,16 @@ _ISO2_TO_ISO3: dict[str, str] = {
 }
 
 _NAME_OR_DEMONYM_TO_ISO3: dict[str, str] = {
-    "INDONESIA": "IDN", "INDONESIAN": "IDN", "WNI": "IDN",
+    "INDONESIA": "IDN", "INDONESIAN": "IDN", "WNI": "IDN", "WARGA NEGARA INDONESIA": "IDN",
+    "DEMOCRATIC PEOPLE'S REPUBLIC OF KOREA": "PRK", "DEMOCRATIC PEOPLES REPUBLIC OF KOREA": "PRK",
+    "REPUBLIC OF KOREA": "KOR",
+    # Names whose country depends on the words in front: read only as written here.
+    "PEOPLE'S REPUBLIC OF CHINA": "CHN", "PEOPLES REPUBLIC OF CHINA": "CHN", "PRC": "CHN",
+    "REPUBLIC OF CHINA": "TWN", "ROC": "TWN",
+    "REPUBLIC OF THE CONGO": "COG", "REPUBLIC OF CONGO": "COG",
+    "DEMOCRATIC REPUBLIC OF THE CONGO": "COD", "DEMOCRATIC REPUBLIC OF CONGO": "COD",
+    "DR CONGO": "COD", "DRC": "COD",
+    "UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND": "GBR",
     "AFGHANISTAN": "AFG", "AFGHAN": "AFG",
     "ISRAEL": "ISR", "ISRAELI": "ISR",
     "NORTH KOREA": "PRK", "NORTH KOREAN": "PRK", "DPRK": "PRK",
@@ -148,7 +159,7 @@ _NAME_OR_DEMONYM_TO_ISO3: dict[str, str] = {
     "NETHERLANDS": "NLD", "DUTCH": "NLD",
     "CANADA": "CAN", "CANADIAN": "CAN",
     "JAPAN": "JPN", "JAPANESE": "JPN",
-    "SOUTH KOREA": "KOR", "SOUTH KOREAN": "KOR", "KOREAN": "KOR",
+    "SOUTH KOREA": "KOR", "SOUTH KOREAN": "KOR",
     "CHINA": "CHN", "CHINESE": "CHN",
     "INDIA": "IND", "INDIAN": "IND",
     "RUSSIA": "RUS", "RUSSIAN": "RUS",
@@ -193,6 +204,87 @@ _NAME_OR_DEMONYM_TO_ISO3: dict[str, str] = {
     "IRAQ": "IRQ", "IRAQI": "IRQ",
     "CAMEROON": "CMR", "CAMEROONIAN": "CMR",
     "GUINEA": "GIN", "GUINEAN": "GIN",
+    # Reviewed names and aliases. A name is read only when it is a row here:
+    # nothing is derived from a text, so a formal name needs its own row.
+    "REPUBLIC OF INDONESIA": "IDN",
+    "REPUBLIK INDONESIA": "IDN",
+    "NEGARA KESATUAN REPUBLIK INDONESIA": "IDN",
+    "INA": "IDN",
+    "ISLAMIC REPUBLIC OF AFGHANISTAN": "AFG",
+    "ISLAMIC EMIRATE OF AFGHANISTAN": "AFG",
+    "AFGANISTAN": "AFG",
+    "STATE OF ISRAEL": "ISR",
+    "REPUBLIC OF LIBERIA": "LBR",
+    "FEDERAL REPUBLIC OF NIGERIA": "NGA",
+    "FEDERAL REPUBLIC OF SOMALIA": "SOM",
+    "DPR KOREA": "PRK",
+    "KOREA DPR": "PRK",
+    "KOREA UTARA": "PRK",
+    "ARGENTINE REPUBLIC": "ARG",
+    "REPUBLIC OF ARGENTINA": "ARG",
+    "COMMONWEALTH OF AUSTRALIA": "AUS",
+    "REPUBLIC OF AUSTRIA": "AUT",
+    "KINGDOM OF BELGIUM": "BEL",
+    "PEOPLE'S REPUBLIC OF BANGLADESH": "BGD",
+    "PEOPLES REPUBLIC OF BANGLADESH": "BGD",
+    "REPUBLIC OF BELARUS": "BLR",
+    "FEDERATIVE REPUBLIC OF BRAZIL": "BRA",
+    "BRUNEI DARUSSALAM": "BRN",
+    "SWISS CONFEDERATION": "CHE",
+    "REPUBLIC OF CHILE": "CHL",
+    "REPUBLIC OF CAMEROON": "CMR",
+    "REPUBLIC OF COLOMBIA": "COL",
+    "FEDERAL REPUBLIC OF GERMANY": "DEU",
+    "KINGDOM OF DENMARK": "DNK",
+    "KINGDOM OF SPAIN": "ESP",
+    "REPUBLIC OF FINLAND": "FIN",
+    "FRENCH REPUBLIC": "FRA",
+    "REPUBLIC OF FRANCE": "FRA",
+    "REPUBLIC OF GUINEA": "GIN",
+    "HONG KONG SPECIAL ADMINISTRATIVE REGION": "HKG",
+    "HONG KONG SAR": "HKG",
+    "REPUBLIC OF INDIA": "IND",
+    "REPUBLIC OF IRELAND": "IRL",
+    "ISLAMIC REPUBLIC OF IRAN": "IRN",
+    "REPUBLIC OF IRAQ": "IRQ",
+    "ITALIAN REPUBLIC": "ITA",
+    "REPUBLIC OF ITALY": "ITA",
+    "REPUBLIC OF KAZAKHSTAN": "KAZ",
+    "KINGDOM OF CAMBODIA": "KHM",
+    "LAO PEOPLE'S DEMOCRATIC REPUBLIC": "LAO",
+    "LAO PEOPLES DEMOCRATIC REPUBLIC": "LAO",
+    "LAO PDR": "LAO",
+    "DEMOCRATIC SOCIALIST REPUBLIC OF SRI LANKA": "LKA",
+    "MACAO SPECIAL ADMINISTRATIVE REGION": "MAC",
+    "MACAU SPECIAL ADMINISTRATIVE REGION": "MAC",
+    "MACAO SAR": "MAC",
+    "MACAU SAR": "MAC",
+    "UNITED MEXICAN STATES": "MEX",
+    "REPUBLIC OF THE UNION OF MYANMAR": "MMR",
+    "KINGDOM OF THE NETHERLANDS": "NLD",
+    "KINGDOM OF NORWAY": "NOR",
+    "FEDERAL DEMOCRATIC REPUBLIC OF NEPAL": "NPL",
+    "ISLAMIC REPUBLIC OF PAKISTAN": "PAK",
+    "REPUBLIC OF PERU": "PER",
+    "REPUBLIC OF THE PHILIPPINES": "PHL",
+    "REPUBLIC OF POLAND": "POL",
+    "PORTUGUESE REPUBLIC": "PRT",
+    "REPUBLIC OF PORTUGAL": "PRT",
+    "STATE OF QATAR": "QAT",
+    "RUSSIAN FEDERATION": "RUS",
+    "KINGDOM OF SAUDI ARABIA": "SAU",
+    "REPUBLIC OF SINGAPORE": "SGP",
+    "KINGDOM OF SWEDEN": "SWE",
+    "KINGDOM OF THAILAND": "THA",
+    "DEMOCRATIC REPUBLIC OF TIMOR-LESTE": "TLS",
+    "DEMOCRATIC REPUBLIC OF TIMOR LESTE": "TLS",
+    "REPUBLIC OF TURKIYE": "TUR",
+    "REPUBLIC OF TURKEY": "TUR",
+    "TURKIYE": "TUR",
+    "SOCIALIST REPUBLIC OF VIET NAM": "VNM",
+    "SOCIALIST REPUBLIC OF VIETNAM": "VNM",
+    "VIET NAM": "VNM",
+    "REPUBLIC OF SOUTH AFRICA": "ZAF",
 }
 
 
@@ -204,30 +296,129 @@ class NationalityClassification:
     calling_visa_code: str | None
     is_voa_eligible: bool
     is_bvk_eligible: bool
+    # Some part of the text was not read as a country. The flags above then say
+    # what was read, not that the rest is clear of the gates: a caller that offers
+    # candidates must not offer them on a nationality it could not read in full.
+    has_unread_part: bool = False
 
 
-def _token_to_iso3(token: str) -> str | None:
-    cleaned = " ".join(token.strip().upper().split())
-    if not cleaned:
-        return None
-    if cleaned in _NAME_OR_DEMONYM_TO_ISO3:
-        return _NAME_OR_DEMONYM_TO_ISO3[cleaned]
+# What joins two nationalities in one answer. A comma is not in the list: "Guinea,
+# French" names one place, and reading it as two nationalities would invent the second.
+_NATIONALITY_JOINERS = re.compile(r"[/;&+]")
+_NATIONALITY_AND = re.compile(r"\s+AND\s+")
+# The three-letter codes this module has a row for. It is the module's coverage, not
+# the whole ISO register: a code outside it is not read.
+_KNOWN_ISO3: frozenset[str] = frozenset(_ISO2_TO_ISO3.values())
+
+
+def _fold(text: str) -> str:
+    """Upper case, compatibility forms and accents folded, apostrophes straightened.
+
+    NFKD: a fullwidth letter or separator and a no-break space become the plain ones.
+    Nothing is removed beyond combining marks, so a look-alike letter of another
+    script or a zero-width character stays in the text and the text is not read.
+    """
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    plain = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return " ".join(plain.replace("\u2019", "'").replace("`", "'").upper().split())
+
+
+def _code_to_iso3(cleaned: str) -> str | None:
+    """Two letters of the ISO-2 table, or three letters of a code this module knows."""
     if len(cleaned) == 2 and cleaned.isalpha():
         return _ISO2_TO_ISO3.get(cleaned)
-    if len(cleaned) == 3 and cleaned.isalpha():
+    if len(cleaned) == 3 and cleaned in _KNOWN_ISO3:
         return cleaned
     return None
 
 
+def _entry_to_iso3(cleaned: str) -> str | None:
+    """A reviewed name or alias of the table, or a code, exactly as written.
+
+    One leading "THE" is dropped. Nothing else is taken off or put on a text: a
+    name the table does not hold is not read.
+    """
+    candidates = [cleaned, cleaned[4:]] if cleaned.startswith("THE ") else [cleaned]
+    for candidate in candidates:
+        if candidate in _NAME_OR_DEMONYM_TO_ISO3:
+            return _NAME_OR_DEMONYM_TO_ISO3[candidate]
+        code = _code_to_iso3(candidate)
+        if code is not None:
+            return code
+    return None
+
+
+def _token_to_iso3(token: str) -> str | None:
+    cleaned = _fold(token)
+    return _entry_to_iso3(cleaned) if cleaned else None
+
+
+def _read_piece(piece: str) -> tuple[list[str], bool]:
+    """One answer with no joiner in it: the codes read, and whether it was not read.
+
+    A comma is read in two shapes only: one name written with its own comma ("Korea,
+    North"), when the name put back in order is a name of the table; and a list of
+    codes or short aliases ("IT, US"). Any other text with a comma is not read, and
+    then none of its parts is.
+    """
+    code = _entry_to_iso3(piece)
+    if code is not None:
+        return [code], False
+    parts = [part for part in (raw.strip() for raw in piece.split(",")) if part]
+    if not parts:
+        return [], False
+    if len(parts) == 1:
+        code = _entry_to_iso3(parts[0])
+        return ([code], False) if code is not None else ([], True)
+    if len(parts) == 2:
+        in_order = f"{parts[1]} {parts[0]}"
+        candidates = [in_order, in_order[4:]] if in_order.startswith("THE ") else [in_order]
+        for candidate in candidates:
+            if candidate in _NAME_OR_DEMONYM_TO_ISO3:
+                return [_NAME_OR_DEMONYM_TO_ISO3[candidate]], False
+    codes = [_entry_to_iso3(part) if len(part) <= 3 else None for part in parts]
+    if all(code is not None for code in codes):
+        return [code for code in codes if code is not None], False
+    return [], True
+
+
+def _read_nationality(nationality: str) -> tuple[tuple[str, ...], bool]:
+    """The ISO-3 codes read from the text, and whether some part of it was not read."""
+    text = _fold(nationality)
+    if not text:
+        return (), False
+    whole = _entry_to_iso3(text)
+    if whole is not None:
+        return (whole,), False
+    codes: list[str] = []
+    unread = False
+    for chunk in _NATIONALITY_JOINERS.split(text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        read, missed = _read_piece(chunk)
+        if missed and _NATIONALITY_AND.search(chunk):
+            # "Nigeria and USA": two answers joined by a word. Tried only when the
+            # chunk is not read as it stands, so a name that holds an "and" of its
+            # own is read whole when it is alone.
+            read, missed = [], False
+            for part in _NATIONALITY_AND.split(chunk):
+                part_read, part_missed = _read_piece(part.strip())
+                read += part_read
+                missed = missed or part_missed
+        codes += read
+        unread = unread or missed
+    return tuple(codes), unread
+
+
 def classify_nationality(nationality: str) -> NationalityClassification:
-    """Resolve ISO-2, ISO-3, country name/demonym, or comma-separated dual codes."""
-    raw_tokens = [
-        part
-        for chunk in (nationality or "").replace("/", ",").split(",")
-        for part in (chunk.strip(),)
-        if part
-    ]
-    resolved = tuple(code for tok in raw_tokens if (code := _token_to_iso3(tok)) is not None)
+    """Resolve codes and the reviewed names of the table, one or several.
+
+    Several nationalities are joined by ``/`` ``;`` ``&`` ``+`` or "and"; codes may also
+    be listed with commas. A part that is not read is reported in ``has_unread_part``,
+    never dropped in silence.
+    """
+    resolved, has_unread_part = _read_nationality(nationality)
     is_wni = "IDN" in resolved
     calling_code = next((c for c in resolved if c in CALLING_VISA_ISO3), None)
     is_calling = (not is_wni) and (calling_code is not None)
@@ -249,6 +440,7 @@ def classify_nationality(nationality: str) -> NationalityClassification:
         calling_visa_code=calling_code,
         is_voa_eligible=is_voa,
         is_bvk_eligible=is_bvk,
+        has_unread_part=has_unread_part,
     )
 
 
