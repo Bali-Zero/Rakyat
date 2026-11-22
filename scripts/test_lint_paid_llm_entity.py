@@ -1242,3 +1242,70 @@ def test_pardon_growth_file_absent_at_base_means_everything_is_growth(tmp_path, 
         "the registry absent at a resolvable base ref means the base line was "
         "empty, so every currently-pardoned path is growth"
     )
+
+
+# ─────────────────────────────────────────── a hash inside an unquoted value
+# In a shell line and in YAML a hash starts a comment only after whitespace, so
+# a hash inside an unquoted value is part of the value. The bare rule used to
+# stop at it and send the tail of the credential as it was. These live in this
+# file because it is the corpus the gating workflow names; the values are joined
+# at run time so that no credential-looking literal is committed.
+
+
+def _bare_assignment(separator: str, value: str) -> str:
+    return "UPSTREAM_" + "TOKEN" + separator + value
+
+
+def test_redaction_bare_assignment_with_hash_in_value_redacts_the_entire_value():
+    value = "aaaa" + "#" + "bbbb"
+    out = redact(_bare_assignment("=", value))
+
+    assert value not in out
+    assert "aaaa" not in out
+    assert "bbbb" not in out
+
+
+def test_redaction_bare_assignment_with_short_prefix_before_hash_redacts_the_entire_value():
+    value = "aa" + "#" + "bbbb"
+    out = redact(_bare_assignment("=", value))
+
+    assert value not in out
+    assert "aa" not in out
+    assert "bbbb" not in out
+
+
+def test_redaction_bare_yaml_assignment_with_hash_in_value_redacts_the_entire_value():
+    value = "aaaa" + "#" + "bbbb"
+    out = redact(_bare_assignment(": ", value))
+
+    assert value not in out
+    assert "aaaa" not in out
+    assert "bbbb" not in out
+
+
+def test_redaction_bare_assignment_keeps_comment_after_whitespace():
+    value = "aaaa" + "#" + "bbbb"
+    comment = "# synthetic explanation"
+    out = redact(_bare_assignment("=", value) + " " + comment)
+
+    assert value not in out
+    assert out.endswith(comment)
+
+
+def test_redaction_empty_bare_assignment_with_comment_is_unchanged():
+    line = _bare_assignment("=", "") + " # synthetic explanation"
+
+    assert redact(line) == line
+
+
+def test_redaction_quoted_value_with_a_hash_is_redacted_as_before():
+    value = "aaaa" + "#" + "bbbb"
+    out = redact(_bare_assignment("=", '"' + value + '"'))
+
+    assert out == _bare_assignment("=", '"<REDACTED:secret>"')
+
+
+def test_redaction_leaves_an_ordinary_name_with_a_hash_untouched():
+    line = "UPSTREAM_LABEL=" + "aaaa" + "#" + "bbbb"
+
+    assert redact(line) == line

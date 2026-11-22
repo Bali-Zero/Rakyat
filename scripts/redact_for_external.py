@@ -68,7 +68,8 @@ _NAMED_ASSIGNMENT = re.compile(
 )
 
 # The unquoted form — `AWS_SECRET_ACCESS_KEY: wJalr...` in YAML, `TOKEN=abc` in
-# a shell line. The quoted rule above silently did not cover it, so a live
+# a shell line. A hash remains part of the value until whitespace starts a
+# comment. The quoted rule above silently did not cover it, so a live
 # credential went to a third-party endpoint byte-for-byte. Found by an
 # adversarial reviewer on 2026-09-20 with a real AWS key shape; it is the worst
 # class of bug this module can have, because the module IS the §4 boundary.
@@ -77,7 +78,7 @@ _NAMED_ASSIGNMENT_BARE = re.compile(
     (?P<name>\b[A-Za-z_]?[A-Za-z0-9_]*
         (?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN)\b)
     (?P<sep>\s*[:=]\s*)
-    (?P<value>[^\s'"#][^\s#]{3,})
+    (?P<value>[^\s'"#][^\s]{3,})
     """
 )
 
