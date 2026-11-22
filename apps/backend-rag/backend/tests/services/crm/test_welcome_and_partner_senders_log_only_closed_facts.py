@@ -706,6 +706,46 @@ async def test_an_id_that_prints_the_address_is_printed_as_unknown_or_in_canonic
     )
 
 
+class _Abort(BaseException):
+    """Not an ``Exception``: what a guard written for ordinary errors lets through."""
+
+
+def _unreadable_partner_id() -> uuid.UUID:
+    """A UUID whose integer cannot be read: asking for it aborts, in words that quote."""
+
+    class Unreadable(uuid.UUID):
+        def __init__(self) -> None:  # the real initialiser would store an integer
+            pass
+
+        @property
+        def int(self) -> Any:  # type: ignore[override]
+            raise _Abort(OUTSIDE)
+
+    return Unreadable()
+
+
+@pytest.mark.asyncio
+async def test_a_partner_id_that_cannot_be_read_is_printed_as_unknown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG):
+        await partner_mails.send_welcome(_Db(), _unreadable_partner_id())
+
+    _line(_read(caplog), "send_welcome: partner ? not found — skip")
+
+
+@pytest.mark.asyncio
+async def test_a_partner_id_that_cannot_be_read_does_not_stop_a_sender_whose_logs_are_off() -> None:
+    """With logging off the line was never formatted, so the sender returned. It still does."""
+    logging.disable(logging.CRITICAL)
+    try:
+        answer = await partner_mails.send_welcome(_Db(), _unreadable_partner_id())
+    finally:
+        logging.disable(logging.NOTSET)
+
+    assert answer is None
+
+
 # ── the brochure handlers ────────────────────────────────────────────────────
 
 

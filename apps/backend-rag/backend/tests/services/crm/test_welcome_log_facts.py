@@ -10,6 +10,7 @@ answers one value to a check and another to a conversion, the phone's digits as 
 
 from __future__ import annotations
 
+import asyncio
 import http
 import os
 import re
@@ -24,6 +25,7 @@ from asyncpg.pgproto.pgproto import UUID as DriverUUID
 
 from backend.services.crm.birthday_notifier_service import NATIONALITY_LANGUAGE_MAP
 from backend.services.crm.partners.models import CommissionEntryType, CommissionStatus
+from backend.services.crm.welcome import log_facts
 from backend.services.crm.welcome.log_facts import (
     COMMISSION_ENTRY_TYPES,
     COMMISSION_STATUSES,
@@ -39,6 +41,18 @@ ADDRESS = "zz.client.probe@example.test"
 DIGITS = 6281200004242
 CANONICAL = "123e4567-e89b-12d3-a456-426614174000"
 TOP_ID = 2_147_483_647
+
+
+class _Abort(BaseException):
+    """Not an ``Exception``: what a guard written for ordinary errors lets through."""
+
+
+class _CannotSayWhatItIs:
+    """An object whose ``__class__``, which ``isinstance`` may ask for, aborts."""
+
+    @property
+    def __class__(self) -> type:  # type: ignore[override]
+        raise _Abort(ADDRESS)
 
 
 class _LyingInt(int):
@@ -260,6 +274,11 @@ def test_a_uuid_is_its_canonical_text_whatever_the_object_prints() -> None:
     "answer",
     [
         RuntimeError(ADDRESS),
+        _Abort(ADDRESS),
+        KeyboardInterrupt(),
+        SystemExit(1),
+        GeneratorExit(),
+        asyncio.CancelledError(),
         ADDRESS,
         CANONICAL,
         None,
@@ -272,6 +291,11 @@ def test_a_uuid_is_its_canonical_text_whatever_the_object_prints() -> None:
     ],
     ids=[
         "raises",
+        "raises what is not an Exception",
+        "raises KeyboardInterrupt",
+        "raises SystemExit",
+        "raises GeneratorExit",
+        "raises CancelledError",
         "a string",
         "the canonical text",
         "none",
@@ -373,12 +397,80 @@ def test_what_is_not_an_exact_member_is_unknown(value: object) -> None:
     assert choice_fact(value, LANGUAGES) == "?"
 
 
-def test_a_set_that_cannot_be_asked_gives_unknown() -> None:
-    class Refuses:
-        def __contains__(self, item: object) -> bool:
-            raise RuntimeError(ADDRESS)
+def test_a_value_that_aborts_when_asked_what_it_is_is_unknown_to_every_function() -> None:
+    value = _CannotSayWhatItIs()
 
-    assert choice_fact("en", Refuses()) == "?"  # type: ignore[arg-type]
+    assert uuid_fact(value) == "?"
+    assert (error_word(value), status_fact(value), id_fact(value)) == ("other", "?", "?")
+    assert choice_fact(value, LANGUAGES) == "?"
+
+
+def test_a_set_that_is_not_one_of_the_three_is_never_asked() -> None:
+    """Only the three sets written in the module are asked, and by identity.
+
+    So a caller's set cannot answer yes to an address, cannot raise, and no code of a set,
+    of its members or of the value runs inside the function.
+    """
+    asked: list[object] = []
+
+    class SaysYes(frozenset):  # type: ignore[type-arg]
+        def __contains__(self, item: object) -> bool:
+            asked.append(item)
+            return True
+
+    class Aborts(frozenset):  # type: ignore[type-arg]
+        def __contains__(self, item: object) -> bool:
+            asked.append(item)
+            raise _Abort(ADDRESS)
+
+    class EqualsAnything:
+        def __hash__(self) -> int:
+            return hash(ADDRESS)
+
+        def __eq__(self, other: object) -> bool:
+            asked.append(other)
+            return True
+
+    class AbortingStr(str):
+        def __hash__(self) -> int:
+            asked.append(self)
+            raise _Abort(ADDRESS)
+
+        def __eq__(self, other: object) -> bool:
+            asked.append(self)
+            raise _Abort(ADDRESS)
+
+    assert choice_fact(ADDRESS, SaysYes({"en"})) == "?"
+    assert choice_fact("en", SaysYes({"en"})) == "?"
+    assert choice_fact("en", Aborts({"en"})) == "?"
+    assert choice_fact(ADDRESS, frozenset({EqualsAnything()})) == "?"  # type: ignore[arg-type]
+    assert choice_fact("en", frozenset(LANGUAGES)) == "en"  # frozenset() of one returns it
+    assert choice_fact("en", frozenset({"en", "id", "it", "ru", "uk"})) == "?"  # equal, another
+    assert choice_fact("en", {"en"}) == "?"  # type: ignore[arg-type]
+    assert choice_fact("en", None) == "?"  # type: ignore[arg-type]
+    assert choice_fact(AbortingStr("en"), LANGUAGES) == "?"
+    assert asked == []
+
+
+def test_rebinding_a_public_set_does_not_change_what_is_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SaysYes(frozenset):  # type: ignore[type-arg]
+        def __contains__(self, item: object) -> bool:
+            return True
+
+    original = LANGUAGES
+    monkeypatch.setattr(log_facts, "LANGUAGES", SaysYes({"en"}))
+
+    assert choice_fact(ADDRESS, log_facts.LANGUAGES) == "?"
+    assert choice_fact("en", log_facts.LANGUAGES) == "?"
+    assert choice_fact("en", original) == "en"
+
+
+def test_the_three_sets_are_exact_frozensets_of_exact_strings() -> None:
+    for choices in (LANGUAGES, COMMISSION_STATUSES, COMMISSION_ENTRY_TYPES):
+        assert type(choices) is frozenset
+        assert [member for member in choices if type(member) is not str] == []
 
 
 def test_the_sets_hold_what_the_senders_can_print() -> None:
@@ -436,6 +528,8 @@ _ANYTHING: list[Any] = [
     uuid.UUID(CANONICAL),
     DriverUUID(CANONICAL),
     _uuid_answering(RuntimeError(ADDRESS))[0],
+    _uuid_answering(_Abort(ADDRESS))[0],
+    _uuid_answering(KeyboardInterrupt())[0],
     _uuid_answering(ADDRESS)[0],
 ]
 
