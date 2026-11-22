@@ -78,8 +78,14 @@ def tracks_cost(path: Path) -> bool:
     return bool(_TRACKING_RE.search(src))
 
 
-def _is_whitelisted(path: Path) -> bool:
-    p = str(path)
+def _is_whitelisted(path: Path, repo_root: Path) -> bool:
+    # The path INSIDE the repository, with its leading slash: a fragment such as
+    # "/tests/" still exempts a top-level directory, and nothing above the
+    # checkout (the name of a parent directory) can exempt a file.
+    try:
+        p = "/" + path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        p = path.resolve().as_posix()
     return any(s in p for s in WHITELIST_SUBSTRINGS)
 
 
@@ -89,7 +95,7 @@ def scan_files(roots: list[Path]) -> list[str]:
         if not root.exists():
             continue
         for path in root.rglob("*.py"):
-            if _is_whitelisted(path):
+            if _is_whitelisted(path, Path(__file__).resolve().parent.parent):
                 continue
             if is_paid_client(path) and not tracks_cost(path):
                 violations.append(str(path))
