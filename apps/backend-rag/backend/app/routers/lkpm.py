@@ -844,6 +844,7 @@ async def assign_lkpm_report(
 @router.get("/credentials/{client_id}", response_model=dict)
 async def get_oss_credentials(
     client_id: int,
+    company_id: int | None = Query(None, description="The company whose OSS login is asked for"),
     current_user: dict = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict:
@@ -875,23 +876,50 @@ async def get_oss_credentials(
             detail="Not authorized to view OSS credentials",
         )
 
+    # One client can report for several companies, each with its own OSS login
+    # (the config is unique per client AND company): the row is chosen by company,
+    # never left to the order the database returns rows in.
     async with db_pool.acquire() as conn:
-        cfg = await conn.fetchrow(
+        configs = await conn.fetch(
             """
-            SELECT oss_username, oss_password, oss_creds_updated_at, oss_creds_updated_by, company_name
+            SELECT company_id, oss_username, oss_password, oss_creds_updated_at,
+                   oss_creds_updated_by, company_name
             FROM lkpm_client_config
             WHERE client_id = $1
+            ORDER BY company_id NULLS FIRST
             """,
             client_id,
         )
-        if not cfg:
+    if not configs:
+        raise HTTPException(
+            status_code=404, detail=f"LKPM config for client_id={client_id} not found"
+        )
+    unnamed = [row for row in configs if row["company_id"] is None]
+    if company_id is not None:
+        cfg = next((row for row in configs if row["company_id"] == company_id), None)
+        if cfg is None and len(configs) == 1 and unnamed:
+            # The client's only config names no company: it is that client's one login.
+            cfg = configs[0]
+        if cfg is None:
             raise HTTPException(
-                status_code=404, detail=f"LKPM config for client_id={client_id} not found"
+                status_code=404,
+                detail=f"LKPM config for client_id={client_id} and company_id={company_id} not found",
             )
+    elif len(configs) == 1:
+        cfg = configs[0]
+    elif len(unnamed) == 1:
+        # A report with no company is paired with the config that names none.
+        cfg = unnamed[0]
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail="This client has LKPM configurations for several companies: name the company",
+        )
 
     return {
         "success": True,
         "client_id": client_id,
+        "company_id": cfg["company_id"],
         "company_name": cfg["company_name"],
         "oss_username": cfg["oss_username"],
         "oss_password": cfg["oss_password"],

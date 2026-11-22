@@ -162,7 +162,12 @@ export default function LkpmBatchClient({
     }
     setCredsLoadingId(item.id);
     try {
-      const creds = await lkpmApi.getCredentials(item.client_id);
+      // The batch API sends the company of every row; the shared item type does
+      // not declare it.
+      const companyId =
+        (item as LKPMBatchItem & { company_id?: number | null }).company_id ??
+        null;
+      const creds = await lkpmApi.getCredentials(item.client_id, companyId);
       setOpenCreds((prev) => ({ ...prev, [item.id]: creds }));
     } catch (err) {
       error(
