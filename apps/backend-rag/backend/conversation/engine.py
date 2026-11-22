@@ -89,6 +89,11 @@ class ConversationEngine:
             # the DB fallback includes the CURRENT message — trim it or the
             # LLM sees it twice (history + query).
             conversation_history = trim_self_echo(context.get("history", []), message.text)
+            # The table-only load asks for one row more than the cap, because
+            # the newest row is normally this turn's own message. Cap after the
+            # trim, so that a turn is given the cap of EARLIER entries, and
+            # never more when its own message was not stored or not trimmed.
+            conversation_history = conversation_history[-_MAX_HISTORY_ENTRIES:]
 
             # 2.3. Cross-channel memory: inject thread history from other channels
             thread_id = message.metadata.get("thread_id")
@@ -246,7 +251,9 @@ class ConversationEngine:
         Args:
             session_id: Session identifier.
             from_table: Read the table and nothing else: the cache is neither
-                read nor written. A turn loads its history this way.
+                read nor written. A turn loads its history this way. One row
+                more than the cap is returned at most: the caller trims the
+                turn's own message and then caps.
 
         Returns:
             Context dict with 'history' (list of role/content dicts) and 'user_state'.
@@ -284,7 +291,7 @@ class ConversationEngine:
                     LIMIT $2
                     """,
                     session_id,
-                    _MAX_HISTORY_ENTRIES,
+                    _MAX_HISTORY_ENTRIES + 1 if from_table else _MAX_HISTORY_ENTRIES,
                 )
                 if rows:
                     history = []

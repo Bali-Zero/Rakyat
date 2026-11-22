@@ -110,10 +110,12 @@ class _Table:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
         self.statements: list[str] = []
+        self.arguments: list[tuple[Any, ...]] = []
         self.broken = False
 
     async def fetch(self, query: str, *args: Any) -> list[asyncpg.Record]:
         self.statements.append(query)
+        self.arguments.append(args)
         if self.broken:
             raise asyncpg.PostgresConnectionError("the table cannot be read")
         return await self._pool.fetch(query, *args)
@@ -162,9 +164,16 @@ class _Chat:
             float(self._clock),
         )
 
-    async def turn(self, text: str, session: str = _SESSION) -> list[str]:
-        """Inbound row, then the engine, then the reply row. Returns what the engine answered."""
-        await self.stores("inbound", text, session)
+    async def turn(
+        self, text: str, session: str = _SESSION, *, inbound_stored: bool = True
+    ) -> list[str]:
+        """Inbound row, then the engine, then the reply row. Returns what the engine answered.
+
+        ``inbound_stored=False`` is the turn whose inbound row the router could not store: the
+        router logs that failure and goes on to the engine all the same.
+        """
+        if inbound_stored:
+            await self.stores("inbound", text, session)
         message = ChannelMessage(
             user_id="synthetic-user", session_id=session, text=text, channel="instagram"
         )
@@ -243,23 +252,76 @@ async def test_a_chat_is_given_its_own_turns_and_no_other_chat_s(pool: asyncpg.P
     assert chat.was_given() == _said(("user", "theirs, one"), ("assistant", "a reply"))
 
 
-async def test_a_long_chat_is_given_its_newest_turns_in_the_order_they_were_said(
-    pool: asyncpg.Pool,
+def _earlier(count: int) -> list[tuple[str, str]]:
+    """``count`` earlier entries of one chat, alternating question and answer."""
+    return [
+        ("user", f"question {n // 2}") if n % 2 == 0 else ("assistant", f"answer {n // 2}")
+        for n in range(count)
+    ]
+
+
+async def _store_earlier(chat: _Chat, count: int) -> None:
+    for role, text in _earlier(count):
+        await chat.stores("inbound" if role == "user" else "outbound", text)
+
+
+_CAP = engine_module._MAX_HISTORY_ENTRIES
+
+
+@pytest.mark.parametrize("earlier", [0, 1, _CAP - 1, _CAP, _CAP + 1, _CAP + 2, 2 * _CAP + 5])
+async def test_a_turn_is_given_up_to_the_cap_of_earlier_entries_newest_last(
+    pool: asyncpg.Pool, earlier: int
 ) -> None:
     chat = _Chat(pool)
-    limit = engine_module._MAX_HISTORY_ENTRIES
-    for number in range(limit):
-        await chat.stores("inbound", f"question {number}")
-        await chat.stores("outbound", f"answer {number}")
+    await _store_earlier(chat, earlier)
 
     await chat.turn("the last question")
 
-    # The newest rows, the current message among them and trimmed away.
-    expected: list[tuple[str, str]] = []
-    for number in range(limit):
-        expected += [("user", f"question {number}"), ("assistant", f"answer {number}")]
-    assert chat.was_given() == _said(*expected[-(limit - 1) :])
-    assert len(chat.was_given()) == limit - 1
+    # The turn's own message is the newest row and is not counted against the cap.
+    assert chat.was_given() == _said(*_earlier(earlier)[-_CAP:])
+    assert len(chat.was_given()) == min(earlier, _CAP)
+
+
+@pytest.mark.parametrize("earlier", [_CAP - 1, _CAP, _CAP + 1, 2 * _CAP + 5])
+async def test_a_turn_whose_own_message_was_not_stored_is_never_given_more_than_the_cap(
+    pool: asyncpg.Pool, earlier: int
+) -> None:
+    chat = _Chat(pool)
+    await _store_earlier(chat, earlier)
+
+    await chat.turn("a question the router could not store", inbound_stored=False)
+
+    assert chat.was_given() == _said(*_earlier(earlier)[-_CAP:])
+    assert len(chat.was_given()) == min(earlier, _CAP)
+
+
+async def test_a_newest_row_that_is_not_this_turn_s_message_is_kept_and_counted(
+    pool: asyncpg.Pool,
+) -> None:
+    chat = _Chat(pool)
+    await _store_earlier(chat, _CAP + 4)
+    await chat.stores("inbound", "another message of the same chat, stored a moment ago")
+
+    await chat.turn("a question the router could not store", inbound_stored=False)
+
+    expected = [
+        *_earlier(_CAP + 4),
+        ("user", "another message of the same chat, stored a moment ago"),
+    ]
+    assert chat.was_given() == _said(*expected[-_CAP:])
+
+
+async def test_the_cached_way_of_loading_still_asks_for_the_cap_and_no_more(
+    pool: asyncpg.Pool,
+) -> None:
+    # No turn loads this way any more; the helper and its tests are kept as they were.
+    chat = _Chat(pool)
+    await _store_earlier(chat, _CAP + 6)
+
+    with patch("backend.core.cache.get_cache_service", return_value=chat.cache):
+        context = await chat.engine._load_context(_SESSION)
+
+    assert context["history"] == _said(*_earlier(_CAP + 6)[-_CAP:])
 
 
 async def test_a_repeated_question_is_trimmed_once_not_twice(pool: asyncpg.Pool) -> None:
@@ -322,6 +384,8 @@ async def test_every_turn_asks_the_table_once(pool: asyncpg.Pool) -> None:
 
     assert len(chat.table.statements) == 2
     assert all("metadata->>'session_id' = $1" in sent for sent in chat.table.statements)
+    # Its own session, and the cap plus the one row that is the turn's own message: no more.
+    assert chat.table.arguments == [(_SESSION, _CAP + 1), (_SESSION, _CAP + 1)]
 
 
 async def test_an_engine_with_no_table_is_given_no_history(pool: asyncpg.Pool) -> None:
