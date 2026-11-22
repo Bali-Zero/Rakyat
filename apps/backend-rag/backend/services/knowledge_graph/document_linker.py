@@ -329,7 +329,7 @@ async def _upsert_node(
 
     existing = await conn.fetchrow(
         f"SELECT entity_id, properties FROM crm_kg_nodes "
-        f"WHERE {lookup_col} = $1 AND deleted_at IS NULL",
+        f"WHERE {lookup_col} = $1",
         lookup_val,
     )
     if existing:
@@ -337,7 +337,7 @@ async def _upsert_node(
         merged = {**existing["properties"], **clean_props}
         await conn.execute(
             "UPDATE crm_kg_nodes "
-            "SET name = $1, properties = $2, updated_at = NOW() "
+            "SET name = $1, properties = $2, deleted_at = NULL, updated_at = NOW() "
             "WHERE entity_id = $3",
             name,
             merged,
