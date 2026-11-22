@@ -1,12 +1,10 @@
-"""Case OS Fase 0 — admin gates on R3 (world-visible) and agent-trigger actions.
+"""Case OS Fase 0 — admin gates on R3 (world-visible) and scheduler control.
 
 Two surfaces were reachable by ANY authenticated team member:
 
 * ``POST /api/intel/staging/publish/{type}/{item_id}`` — opens a PR against the
   public website repo (balizero.com).
-* ``POST /api/autonomous-agents/*/run`` + the scheduler enable/disable pair —
-  fire autonomous agents that write to the client book; the value predictor can
-  message clients.
+* Scheduler enable/disable controls — change autonomous task availability.
 
 Each gate gets BOTH a guilt test (a legitimate non-admin team member is blocked)
 and an innocence test (an admin still gets through) — cicatrix family #3: a guard
@@ -14,13 +12,12 @@ merged with only one of the two is how over/under-match ships.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+from backend.app.dependencies import get_current_user
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-
-from backend.app.dependencies import get_current_user
 
 ADMIN_USER: dict[str, Any] = {"id": "u-1", "email": "zero@balizero.com", "role": "admin"}
 TEAM_USER: dict[str, Any] = {"id": "u-2", "email": "ari@balizero.com", "role": "consultant"}
@@ -202,22 +199,19 @@ def test_staging_publish_calls_the_internal_article_path() -> None:
 
 
 # ---------------------------------------------------------------------------
-# autonomous_agents: agent triggers + scheduler
+# autonomous_agents: scheduler control
 # ---------------------------------------------------------------------------
 
-AGENT_TRIGGERS = [
-    "/api/autonomous-agents/conversation-trainer/run",
-    "/api/autonomous-agents/client-value-predictor/run",
-    "/api/autonomous-agents/knowledge-graph-builder/run",
+SCHEDULER_CONTROLS = [
     "/api/autonomous-agents/scheduler/task/some_task/enable",
     "/api/autonomous-agents/scheduler/task/some_task/disable",
 ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", AGENT_TRIGGERS)
-async def test_agent_trigger_blocked_for_non_admin(path: str) -> None:
-    """GUILT: a normal team member cannot fire an autonomous agent."""
+@pytest.mark.parametrize("path", SCHEDULER_CONTROLS)
+async def test_scheduler_control_blocked_for_non_admin(path: str) -> None:
+    """GUILT: a normal team member cannot control the scheduler."""
     from backend.app.routers.autonomous_agents import router
 
     async with _client(router, TEAM_USER) as client:
@@ -227,74 +221,11 @@ async def test_agent_trigger_blocked_for_non_admin(path: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_trigger_allowed_for_admin() -> None:
-    """INNOCENCE: an admin still fires the agent (background task scheduled)."""
-    from backend.app.routers.autonomous_agents import router
-
-    async with _client(router, ADMIN_USER) as client:
-        resp = await client.post("/api/autonomous-agents/client-value-predictor/run")
-
-    assert resp.status_code == 200
-    assert resp.json()["agent_name"] == "client_value_predictor"
-
-
-@pytest.mark.asyncio
 async def test_agent_status_stays_open_to_team() -> None:
-    """INNOCENCE (scope): read-only status is NOT gated — only the triggers are."""
+    """INNOCENCE (scope): read-only status is not gated."""
     from backend.app.routers.autonomous_agents import router
 
     async with _client(router, TEAM_USER) as client:
         resp = await client.get("/api/autonomous-agents/executions")
 
     assert resp.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# client_value_predictor: outbound-to-client is fail-closed
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_nurturing_outbound_disabled_by_default() -> None:
-    """GUILT: with the flag off, no WhatsApp leaves — even if Twilio is armed."""
-    from backend.agents.agents.client_value_predictor import ClientValuePredictor
-    from backend.app.core import config
-
-    with (
-        patch("backend.agents.agents.client_value_predictor.ClientScoringService"),
-        patch("backend.agents.agents.client_value_predictor.ClientSegmentationService"),
-        patch("backend.agents.agents.client_value_predictor.NurturingMessageService"),
-        patch("backend.agents.agents.client_value_predictor.WhatsAppNotificationService"),
-    ):
-        predictor = ClientValuePredictor(db_pool=MagicMock())
-
-    predictor.whatsapp_service.send_message = AsyncMock(return_value="SM-should-not-happen")
-
-    with patch.object(config.settings, "client_nurturing_outbound_enabled", False):
-        result = await predictor.send_whatsapp_message("+6284000220000", "hello")
-
-    assert result is None
-    predictor.whatsapp_service.send_message.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_nurturing_outbound_sends_when_armed() -> None:
-    """INNOCENCE: flipping the flag restores the send path (no dead code)."""
-    from backend.agents.agents.client_value_predictor import ClientValuePredictor
-    from backend.app.core import config
-
-    with (
-        patch("backend.agents.agents.client_value_predictor.ClientScoringService"),
-        patch("backend.agents.agents.client_value_predictor.ClientSegmentationService"),
-        patch("backend.agents.agents.client_value_predictor.NurturingMessageService"),
-        patch("backend.agents.agents.client_value_predictor.WhatsAppNotificationService"),
-    ):
-        predictor = ClientValuePredictor(db_pool=MagicMock())
-
-    predictor.whatsapp_service.send_message = AsyncMock(return_value="SM-123")
-
-    with patch.object(config.settings, "client_nurturing_outbound_enabled", True):
-        result = await predictor.send_whatsapp_message("+6284000220000", "hello")
-
-    assert result == "SM-123"
-    predictor.whatsapp_service.send_message.assert_awaited_once()

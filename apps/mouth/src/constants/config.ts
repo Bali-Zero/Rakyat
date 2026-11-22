@@ -16,9 +16,6 @@ export const TIMEOUTS = {
   /** Copy button feedback display */
   COPY_FEEDBACK: 2000,
 
-  /** Reload delay after agent execution */
-  AGENT_RELOAD_DELAY: 2000,
-
   /** Default API request timeout */
   API_REQUEST_DEFAULT: 30000,
 
@@ -90,12 +87,6 @@ export const PAGINATION = {
 
   /** Last N alerts to display */
   ALERTS_DISPLAY_COUNT: 10,
-
-  /** Conversation trainer days back */
-  TRAINER_DAYS_BACK: 7,
-
-  /** Knowledge graph builder days back */
-  KG_BUILDER_DAYS_BACK: 30,
 } as const;
 
 // ============================================================================

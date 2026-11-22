@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { AgentCard } from "@/components/agents/AgentCard";
 import { SchedulerStatus } from "@/components/agents/SchedulerStatus";
-import { INTERVALS, TIMEOUTS, PAGINATION } from "@/constants";
+import { INTERVALS } from "@/constants";
 
 interface AgentStatus {
   name: string;
@@ -124,46 +124,6 @@ export default function AgentsPage() {
     setIsLoading(true);
     await Promise.all([loadAgentsStatus(), loadSchedulerStatus()]);
   };
-
-  const handleRunAgent = useCallback(
-    async (agentName: string) => {
-      try {
-        setError(null);
-        // Map agent names to API endpoints (using direct API calls)
-        const agentEndpoints: Record<string, () => Promise<unknown>> = {
-          "Conversation Quality Trainer": () =>
-            api.post(
-              `/api/autonomous-agents/conversation-trainer/run?days_back=${PAGINATION.TRAINER_DAYS_BACK}`,
-            ),
-          "Client LTV Predictor": () =>
-            api.post("/api/autonomous-agents/client-value-predictor/run"),
-          "Knowledge Graph Builder": () =>
-            api.post(
-              `/api/autonomous-agents/knowledge-graph-builder/run?days_back=${PAGINATION.KG_BUILDER_DAYS_BACK}&rebuild=false`,
-            ),
-        };
-
-        const endpoint = agentEndpoints[agentName];
-        if (endpoint) {
-          await endpoint();
-          // Refresh status after run
-          setTimeout(() => loadAgentsStatus(), TIMEOUTS.AGENT_RELOAD_DELAY);
-        }
-      } catch (err) {
-        logger.error(
-          `Failed to run ${agentName}`,
-          {
-            component: "AgentsPage",
-            action: "handleRunAgent",
-            metadata: { agentName },
-          },
-          err as Error,
-        );
-        setError(`Failed to run ${agentName}. Please try again.`);
-      }
-    },
-    [loadAgentsStatus],
-  );
 
   return (
     <div className="min-h-screen bg-[var(--background)] p-6">
@@ -276,7 +236,6 @@ export default function AgentsPage() {
             <AgentCard
               key={agent.name}
               agent={agent}
-              onRun={() => handleRunAgent(agent.name)}
             />
           ))
         )}

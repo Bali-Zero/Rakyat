@@ -99,7 +99,9 @@ vi.mock("@/components/admin/ServiceHealthCard", () => ({
   ServiceHealthCard: () => <div data-testid="service-health-card" />,
 }));
 vi.mock("@/components/agents/AgentCard", () => ({
-  AgentCard: () => <div data-testid="agent-card" />,
+  AgentCard: ({ onRun }: { onRun?: () => unknown }) => (
+    <div data-testid="agent-card" data-has-run={String(Boolean(onRun))} />
+  ),
 }));
 vi.mock("@/components/agents/SchedulerStatus", () => ({
   SchedulerStatus: () => <div data-testid="scheduler-status" />,
@@ -310,6 +312,25 @@ describe("agents/page.tsx (gate #8)", () => {
       expect(mocks.api.get).toHaveBeenCalled();
     });
     expect(mocks.routerPush).not.toHaveBeenCalled();
+  });
+
+  it("renders status cards without run controls", async () => {
+    mocks.api.get.mockResolvedValue({
+      agents: [
+        {
+          name: "Conversation Quality Trainer",
+          description: "Status only",
+          status: "idle",
+        },
+      ],
+    });
+
+    render(<AgentsPage />);
+
+    expect(await screen.findByTestId("agent-card")).toHaveAttribute(
+      "data-has-run",
+      "false",
+    );
   });
 
   it("anonymous: redirects to /login, never loads", async () => {

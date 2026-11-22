@@ -378,9 +378,9 @@ async def create_and_start_scheduler(
     # 3. CONVERSATION TRAINER — RETIRED 2026-07-14 (necropsy follow-up, decision
     # delegated by Zero "agisci con saggezza"): total_runs=0 in its whole life,
     # registered-but-disabled since the 2026-03-16 audit (git subprocess cannot
-    # work on a Fly ephemeral container). The on-demand surface survives intact:
-    # POST /api/autonomous-agents/conversation-trainer/run + MCP
-    # run_conversation_trainer. Re-arming autonomously would be a NEW build
+    # work on a Fly ephemeral container). The retired on-demand surface was
+    # removed with its unusable app-state wiring. Re-arming autonomously would
+    # be a NEW build
     # (artifact store instead of git), not a resurrection.
 
     # 5. GOLDEN ROUTES SEEDER — RETIRED 2026-07-14 (scheduler-necropsy): it
