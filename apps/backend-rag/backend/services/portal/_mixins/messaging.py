@@ -84,7 +84,7 @@ class PortalMessagingMixin:
                     LIMIT 1
                 ) tm ON TRUE
                 WHERE m.client_id = $1
-                ORDER BY m.created_at DESC
+                ORDER BY m.created_at DESC, m.id DESC
                 LIMIT $2 OFFSET $3
                 """,
                 client_id,

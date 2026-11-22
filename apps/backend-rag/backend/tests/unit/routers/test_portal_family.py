@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.app.dependencies import get_database_pool
+from backend.app.routers import portal_family
 from backend.app.routers.portal import get_current_client
 from backend.app.routers.portal_family import _is_adult, _shape_member, router
 
@@ -23,6 +24,43 @@ def test_is_adult_with_minor_dob() -> None:
 
 
 def test_is_adult_none_dob_defaults_true() -> None:
+    assert _is_adult(None) is True
+
+
+def test_is_adult_uses_wita_date_on_eighteenth_birthday(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _ServerDate:
+        @staticmethod
+        def today() -> date:
+            return date(2026, 11, 22)
+
+    class _WitaBirthdayClock:
+        @staticmethod
+        def now(tz):
+            return datetime(2026, 11, 22, 17, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(portal_family, "date", _ServerDate)
+    monkeypatch.setattr(portal_family, "datetime", _WitaBirthdayClock)
+
+    assert _is_adult(date(2008, 11, 23)) is True
+
+
+def test_is_adult_keeps_minor_and_unknown_rules_before_wita_birthday(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _ServerDate:
+        @staticmethod
+        def today() -> date:
+            return date(2026, 11, 22)
+
+    class _WitaBeforeBirthdayClock:
+        @staticmethod
+        def now(tz):
+            return datetime(2026, 11, 22, 15, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(portal_family, "date", _ServerDate)
+    monkeypatch.setattr(portal_family, "datetime", _WitaBeforeBirthdayClock)
+
+    assert _is_adult(date(2008, 11, 23)) is False
     assert _is_adult(None) is True
 
 

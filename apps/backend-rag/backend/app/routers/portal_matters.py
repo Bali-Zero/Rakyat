@@ -123,7 +123,7 @@ def _shape_matter(row: asyncpg.Record) -> dict[str, Any]:
         "progress": _STATUS_TO_PROGRESS.get(status, 50),
         "pending_docs": pending,
         "next_deadline": row["expiry_date"].isoformat() if row["expiry_date"] else None,
-        "next_step": status,
+        "next_step": _NEXT_STEP_COPY.get(status, "Wait for the next update"),
     }
 
 

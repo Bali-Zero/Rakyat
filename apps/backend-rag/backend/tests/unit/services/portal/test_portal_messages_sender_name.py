@@ -97,3 +97,24 @@ async def test_reader_sql_looks_up_team_members_once_per_message() -> None:
     # never duplicate a message in the thread.
     assert "LATERAL" in sql
     assert "LIMIT 1" in sql
+
+
+@pytest.mark.asyncio
+async def test_guilt_reader_sql_orders_messages_by_created_at_then_id() -> None:
+    svc, conn = _service([])
+
+    await svc.get_messages(client_id=1, current_user=_CTX)
+
+    sql = conn.fetch.await_args.args[0]
+    assert "ORDER BY m.created_at DESC, m.id DESC" in sql
+
+
+@pytest.mark.asyncio
+async def test_innocence_reader_sql_keeps_client_filter_and_paging_parameters() -> None:
+    svc, conn = _service([])
+
+    await svc.get_messages(client_id=1, limit=7, offset=13, current_user=_CTX)
+
+    sql, client_id, limit, offset = conn.fetch.await_args.args
+    assert "WHERE m.client_id = $1" in sql
+    assert (client_id, limit, offset) == (1, 7, 13)
