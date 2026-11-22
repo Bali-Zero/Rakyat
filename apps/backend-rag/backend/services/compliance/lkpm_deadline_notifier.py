@@ -18,6 +18,7 @@ import httpx
 from backend.app.utils.logging_utils import get_logger
 from backend.core.env_lists import owner_telegram_chat_id
 from backend.services.compliance.lkpm_service import QUARTER_DEADLINES
+from backend.services.notifications.email_audit import raise_if_not_delivered
 
 logger = get_logger(__name__)
 
@@ -208,6 +209,7 @@ class LKPMDeadlineNotifier:
             )
 
         emails_sent = 0
+        emails_failed = 0
         async with self._get_http_client() as client:
             self._client = client
 
@@ -219,6 +221,7 @@ class LKPMDeadlineNotifier:
                         await self._send_unassigned_alert(rows)
                     emails_sent += 1
                 except Exception:
+                    emails_failed += 1
                     logger.exception("Failed to send LKPM reminder for assignee=%s", assignee)
 
         # Telegram alert for urgent drafts
@@ -227,6 +230,7 @@ class LKPMDeadlineNotifier:
         return {
             "status": "ok",
             "emails_sent": emails_sent,
+            "emails_failed": emails_failed,
             "telegram_sent": telegram_sent,
         }
 
@@ -405,6 +409,8 @@ Yuk dicek biar nggak kelewat deadline!</p>
             timeout=20.0,
         )
         response.raise_for_status()
+        # The endpoint answers 200 when every provider failed: its body says so.
+        raise_if_not_delivered(response)
 
     @staticmethod
     def _get_http_client() -> httpx.AsyncClient:
