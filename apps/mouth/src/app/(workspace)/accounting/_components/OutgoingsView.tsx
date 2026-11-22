@@ -5,7 +5,9 @@
  * says (payee and purpose of a transfer, the e-billing code of a PNBP payment, the transfer a
  * fee belongs to). The accountant justifies a debit (category, optional case, note, and for a
  * cash withdrawal the recipient and a breakdown that sums to the debit) and can undo it the
- * same day (WITA). Nothing here enters the cash-out.
+ * same day (WITA). The PNBP debits can be justified in one go and that batch undone the same day;
+ * a PNBP whose e-billing code was debited more than once is flagged and left to justify by hand.
+ * Nothing here enters the cash-out.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,6 +24,7 @@ import {
 import { logger } from "@/lib/logger";
 import { ccShort } from "./ccFormat";
 import { CATEGORY_LABELS, JustifyDialog } from "./JustifyDialog";
+import { PNBP_BATCH_LIMIT } from "./pnbpBatch";
 
 const ALL = "all";
 
@@ -53,6 +56,12 @@ const witaDayAndTime = (iso: string): [string, string, string] | null => {
 const justifiedToday = (iso: string): boolean =>
   dayInWita(iso) === dayInWita(new Date().toISOString());
 
+const DAY_MS = 86_400_000;
+const WITA_OFFSET_MS = 8 * 3_600_000; // Asia/Makassar has no daylight saving
+/** Milliseconds until the next midnight in Bali. */
+const msToWitaMidnight = (): number =>
+  DAY_MS - ((Date.now() + WITA_OFFSET_MS) % DAY_MS);
+
 function JustificationBlock({ item }: { item: OutgoingItem }) {
   const j = item.justification;
   if (!j) return null;
@@ -81,6 +90,7 @@ function JustificationBlock({ item }: { item: OutgoingItem }) {
       )}
       <p className="text-[var(--bz-text-2)]">
         {j.follows_txn_id ? "With its transfer · " : ""}
+        {j.batch_id ? "Justified together · " : ""}
         {j.by}
         {when ? ` · ${ccShort(when[1])} ${when[2]}` : ""}
       </p>
@@ -129,8 +139,26 @@ export function OutgoingsView() {
     message: string;
   } | null>(null);
   const [undoing, setUndoing] = useState(false);
+  const [confirmBatch, setConfirmBatch] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [lastBatch, setLastBatch] = useState<{
+    id: string;
+    n: number;
+    at: string;
+  } | null>(null);
   // Token of the latest load: an older one answering late changes nothing.
   const loadReq = useRef(0);
+  // Re-render just after midnight in Bali, so no Undo of yesterday stays on an open screen
+  // (gate r2 on #616).
+  const [dayTick, setDayTick] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(
+      () => setDayTick((n) => n + 1),
+      msToWitaMidnight() + 1000,
+    );
+    return () => clearTimeout(t);
+  }, [dayTick]);
 
   const load = useCallback(async () => {
     const token = ++loadReq.current;
@@ -158,6 +186,42 @@ export function OutgoingsView() {
       ),
     [data, kind, tab],
   );
+
+  // «Justify all PNBP»: the PNBP still to justify whose code no other debit carries, newest first.
+  // Offered only where those rows are on screen: the All and PNBP filters (gate r1 on #616).
+  const pnbpShown =
+    tab === "to_justify" && (kind === ALL || kind === "government_fee");
+  // The Undo of the set just justified, only on the Bali day it was made (the server decides too).
+  const undoable = lastBatch && justifiedToday(lastBatch.at) ? lastBatch : null;
+  const pnbp = useMemo(() => {
+    const open = (data?.items ?? []).filter(
+      (i) => i.kind === "government_fee" && i.state === "to_justify",
+    );
+    const ready = open
+      .filter((i) => i.reading.billing_code && i.reading.code_debits === 1)
+      .slice(0, PNBP_BATCH_LIMIT);
+    return {
+      ready,
+      total: ready.reduce((sum, i) => sum + i.amount_idr, 0),
+      twice: open.filter((i) => (i.reading.code_debits ?? 0) > 1).length,
+    };
+  }, [data]);
+
+  // Sets justified together today, for their «Undo» on the Justified tab. Computed on every
+  // render (not memoized) so the midnight re-render drops yesterday's.
+  const todayBatches = (() => {
+    const out = new Map<string, { n: number; total: number; by: string }>();
+    for (const i of data?.items ?? []) {
+      const j = i.justification;
+      if (i.state !== "justified" || !j?.batch_id || j.follows_txn_id) continue;
+      if (!justifiedToday(j.at)) continue;
+      const b = out.get(j.batch_id) ?? { n: 0, total: 0, by: j.by };
+      b.n += 1;
+      b.total += i.amount_idr;
+      out.set(j.batch_id, b);
+    }
+    return [...out.entries()];
+  })();
 
   const justify = async (item: OutgoingItem, body: JustifyOutgoingRequest) => {
     try {
@@ -198,6 +262,52 @@ export function OutgoingsView() {
     }
   };
 
+  const justifyAllPnbp = async () => {
+    if (batchBusy || pnbp.ready.length === 0) return;
+    setBatchBusy(true);
+    setBatchError(null);
+    try {
+      const res = await accountingApi.justifyPnbpBatch(
+        pnbp.ready.map((i) => i.id),
+      );
+      success(`${res.n} PNBP justified`);
+      setLastBatch({
+        id: res.batch_id,
+        n: res.n,
+        at: new Date().toISOString(),
+      });
+      setConfirmBatch(false);
+      void load();
+    } catch (err) {
+      const detail =
+        (err instanceof Error && err.message) || "Please try again";
+      setBatchError(detail);
+      logger.error("accounting pnbp batch failed", {}, err as Error);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const undoBatch = async (batchId: string) => {
+    if (batchBusy) return;
+    setBatchBusy(true);
+    setBatchError(null);
+    try {
+      const res = await accountingApi.undoOutgoingBatch(batchId);
+      success(`${res.n} PNBP back to justify`);
+      setLastBatch(null);
+      void load();
+    } catch (err) {
+      const detail =
+        (err instanceof Error && err.message) || "Please try again";
+      setBatchError(detail);
+      error("Undo failed", detail);
+      logger.error("accounting pnbp batch undo failed", {}, err as Error);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
   const tabButton = (
     value: OutgoingState,
     label: string,
@@ -209,6 +319,8 @@ export function OutgoingsView() {
       onClick={() => {
         setTab(value);
         setKind(ALL);
+        setConfirmBatch(false);
+        setBatchError(null);
       }}
       className={`rounded-full border px-3 py-1.5 text-sm ${
         tab === value
@@ -239,6 +351,74 @@ export function OutgoingsView() {
         {tabButton("to_justify", "To justify", data?.n)}
         {tabButton("justified", "Justified", data?.n_justified)}
       </div>
+
+      {status === "ok" &&
+        pnbpShown &&
+        (undoable || pnbp.ready.length > 0 || pnbp.twice > 0) && (
+          <div
+            data-testid="pnbp-batch"
+            className="space-y-2 rounded-lg border border-[var(--bz-border)] p-3 text-sm"
+          >
+            {undoable && (
+              <p role="status">
+                {undoable.n} PNBP justified.{" "}
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  onClick={() => void undoBatch(undoable.id)}
+                  className="font-semibold underline underline-offset-4 disabled:opacity-50"
+                >
+                  Undo
+                </button>
+              </p>
+            )}
+            {pnbp.ready.length > 0 && !confirmBatch && (
+              <button
+                type="button"
+                onClick={() => setConfirmBatch(true)}
+                className="rounded-full border border-[var(--bz-text-1)] px-3 py-1.5 font-semibold"
+              >
+                Justify all PNBP ({pnbp.ready.length})
+              </button>
+            )}
+            {pnbp.ready.length > 0 && confirmBatch && (
+              <div className="flex flex-wrap items-center gap-3">
+                <span>
+                  Mark the {pnbp.ready.length} PNBP payments as justified?{" "}
+                  <Money value={pnbp.total} /> · You can undo it today.
+                </span>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  onClick={() => void justifyAllPnbp()}
+                  className="rounded-full border border-[var(--bz-text-1)] px-3 py-1.5 font-semibold disabled:opacity-50"
+                >
+                  {batchBusy ? "Justifying…" : "Yes, justify all"}
+                </button>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  onClick={() => setConfirmBatch(false)}
+                  className="underline underline-offset-4 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {pnbp.twice > 0 && (
+              <p className="text-xs text-[var(--state-danger)]">
+                {pnbp.twice === 1
+                  ? "1 PNBP looks paid twice: check it and justify it by hand."
+                  : `${pnbp.twice} PNBP look paid twice: check them and justify them by hand.`}
+              </p>
+            )}
+            {batchError && (
+              <p role="alert" className="text-xs text-[var(--state-danger)]">
+                {batchError}
+              </p>
+            )}
+          </div>
+        )}
 
       {status === "loading" && (
         <div className="flex items-center p-10 text-[var(--bz-text-2)]">
@@ -296,6 +476,32 @@ export function OutgoingsView() {
               <Money compact value={data.justified_total_idr} />
             </p>
           )}
+          {tab === "justified" &&
+            todayBatches.map(([id, b]) => (
+              <div
+                key={id}
+                data-testid={`batch-${id}`}
+                className="flex flex-wrap items-center gap-3 text-sm"
+              >
+                <span>
+                  {b.n} PNBP justified together today ·{" "}
+                  <Money compact value={b.total} />
+                </span>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  onClick={() => void undoBatch(id)}
+                  className="text-xs font-semibold underline underline-offset-4 disabled:opacity-50"
+                >
+                  Undo
+                </button>
+              </div>
+            ))}
+          {tab === "justified" && batchError && (
+            <p role="alert" className="text-xs text-[var(--state-danger)]">
+              {batchError}
+            </p>
+          )}
           {shownCount !== undefined && data.items.length < shownCount && (
             <p className="text-xs text-[var(--state-warning)]">
               Showing the newest {data.items.length} of {shownCount}.
@@ -335,6 +541,14 @@ export function OutgoingsView() {
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 font-medium">
                         {i.reading.label}
+                        {(i.reading.code_debits ?? 0) > 1 && (
+                          <span
+                            data-testid={`code-twice-${i.id}`}
+                            className="ml-2 rounded bg-[var(--state-danger)] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                          >
+                            Paid twice?
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2">{i.reading.payee || "—"}</td>
                       <td className="px-3 py-2 text-[var(--bz-text-2)]">
