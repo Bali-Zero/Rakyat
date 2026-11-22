@@ -61,6 +61,33 @@ const INITIAL_FORM: EmployeeCreatePayload = {
   notes: "",
 };
 
+const OPTIONAL_TEXT_FIELDS = [
+  "bank_name",
+  "bank_account",
+  "bank_account_holder",
+  "npwp",
+  "bpjs_kesehatan_number",
+  "bpjs_ketenagakerjaan_number",
+  "notes",
+] as const;
+
+/** The form filled with what is stored for a person who already has a record. */
+function formFromRecord(record: HREmployee): EmployeeCreatePayload {
+  return {
+    team_member_id: record.team_member_id,
+    hire_date: (record.hire_date ?? "").slice(0, 10),
+    base_salary_idr: record.base_salary_idr ?? 0,
+    bank_name: record.bank_name ?? "",
+    bank_account: record.bank_account ?? "",
+    bank_account_holder: record.bank_account_holder ?? "",
+    npwp: record.npwp ?? "",
+    ptkp_status: record.ptkp_status ?? "TK/0",
+    bpjs_kesehatan_number: record.bpjs_kesehatan_number ?? "",
+    bpjs_ketenagakerjaan_number: record.bpjs_ketenagakerjaan_number ?? "",
+    notes: record.notes ?? "",
+  };
+}
+
 export default function EmployeesPage() {
   // Same rule as the People card edit (STAFF_CARD.md C11): only `hr_card_write` creates or
   // changes a record here; the server refuses everyone else with a 403 anyway.
@@ -99,6 +126,29 @@ export default function EmployeesPage() {
     fetchEmployees();
   }, [fetchEmployees]);
 
+  // The save sends every field of the form and the server stores what it receives.
+  // For a person who already has a record the form therefore starts from what is
+  // stored: saved untouched it changes nothing, where the blanks of an empty form
+  // would replace their bank, tax and BPJS data.
+  const existingRecord = useMemo(
+    () => employees.find((e) => e.team_member_id === form.team_member_id),
+    [employees, form.team_member_id],
+  );
+
+  const handleMemberChange = (teamMemberId: string) => {
+    const record = employees.find((e) => e.team_member_id === teamMemberId);
+    setForm((prev) => {
+      if (record) return formFromRecord(record);
+      // Leaving a person whose stored data filled the form: none of it follows.
+      const leavingRecord = employees.some(
+        (e) => e.team_member_id === prev.team_member_id,
+      );
+      return leavingRecord
+        ? { ...INITIAL_FORM, team_member_id: teamMemberId }
+        : { ...prev, team_member_id: teamMemberId };
+    });
+  };
+
   const handleFieldChange = (
     field: keyof EmployeeCreatePayload,
     value: string | number,
@@ -123,6 +173,14 @@ export default function EmployeesPage() {
         ...form,
         base_salary_idr: Number(form.base_salary_idr),
       };
+      if (existingRecord) {
+        // A value stored as empty stays empty: the blank the form shows for it is not sent.
+        for (const field of OPTIONAL_TEXT_FIELDS) {
+          if (payload[field] === "" && existingRecord[field] == null) {
+            delete payload[field];
+          }
+        }
+      }
       const result = await hrApi.upsertEmployee(payload);
       if (result.employee) {
         setEmployees((prev) => {
@@ -220,8 +278,14 @@ export default function EmployeesPage() {
             className="text-sm font-semibold uppercase tracking-wider"
             style={{ color: "var(--bz-text-1)" }}
           >
-            New Employee
+            {existingRecord ? "Edit Employee Record" : "New Employee"}
           </h2>
+          {existingRecord && (
+            <p className="text-xs" style={{ color: "var(--bz-text-2)" }}>
+              This person already has a record. The form shows what is stored;
+              saving replaces it with what the form shows.
+            </p>
+          )}
 
           {formError && (
             <div
@@ -245,9 +309,7 @@ export default function EmployeesPage() {
                 <select
                   id="hr-employee-team-member"
                   value={form.team_member_id}
-                  onChange={(e) =>
-                    handleFieldChange("team_member_id", e.target.value)
-                  }
+                  onChange={(e) => handleMemberChange(e.target.value)}
                   disabled={loadingTeam}
                   className="w-full appearance-none border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[var(--bz-border-accent)]"
                   style={INPUT_STYLE}
