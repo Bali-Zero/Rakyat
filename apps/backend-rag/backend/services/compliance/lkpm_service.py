@@ -898,24 +898,21 @@ class LKPMService:
         deadlines: list[LKPMDeadline] = []
 
         for quarter, (month, day) in QUARTER_DEADLINES.items():
-            # Current year deadline
-            year = today.year
-            if quarter == "Q4":
-                year += 1  # Q4 deadline is in January next year
+            for report_year in (today.year - 1, today.year):
+                deadline_year = report_year + 1 if quarter == "Q4" else report_year
+                deadline_dt = datetime(deadline_year, month, day, tzinfo=timezone.utc)
+                days_remaining = (deadline_dt.date() - today).days
 
-            deadline_dt = datetime(year, month, day, tzinfo=timezone.utc)
-            days_remaining = (deadline_dt.date() - today).days
-
-            if -30 <= days_remaining <= days_ahead:
-                deadlines.append(
-                    LKPMDeadline(
-                        quarter=quarter,
-                        year=year if quarter != "Q4" else year - 1,
-                        deadline=deadline_dt,
-                        days_remaining=days_remaining,
-                        is_overdue=days_remaining < 0,
-                    ),
-                )
+                if -30 <= days_remaining <= days_ahead:
+                    deadlines.append(
+                        LKPMDeadline(
+                            quarter=quarter,
+                            year=report_year,
+                            deadline=deadline_dt,
+                            days_remaining=days_remaining,
+                            is_overdue=days_remaining < 0,
+                        ),
+                    )
 
         return sorted(deadlines, key=lambda d: d.days_remaining)
 
