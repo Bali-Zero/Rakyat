@@ -26,6 +26,18 @@ interface DriveConnectionStatus {
 
 const GOOGLE_BLUE = "#4285F4"; // token-lint-ok: third-party brand identity color (Google), not theme chrome
 
+// What the OAuth callback says when a connection did not complete: it comes
+// back here with ?error=<code>. The sentence is chosen by the code and never
+// made from it: the address is text anyone can write.
+const CONNECTION_DID_NOT_COMPLETE =
+  "The Google Drive connection did not complete.";
+const CALLBACK_ERRORS: Record<string, string> = {
+  oauth_denied: `${CONNECTION_DID_NOT_COMPLETE} Google did not grant access. You can try again.`,
+  token_exchange_failed: `${CONNECTION_DID_NOT_COMPLETE} The last step with Google failed. You can try again.`,
+  system_token_failed:
+    "The shared Google Drive connection did not complete. The last step with Google failed.",
+};
+
 // Google Drive is the one integration with a real backend behind it
 // (/api/integrations/google-drive/*). The other cards this page used to show
 // were constants flipped in local state, so they are gone. Disconnect is
@@ -58,14 +70,32 @@ export default function IntegrationsPage() {
       }
     };
 
-    // OAuth callback lands here with ?success=…_drive_connected.
+    // OAuth callback lands here with ?success=…_drive_connected, or with
+    // ?error=<code> when the connection did not complete.
     const params = new URLSearchParams(window.location.search);
     const success = params.get("success");
-    if (
+    const failure = params.get("error");
+    if (failure !== null) {
+      setAuthError(
+        Object.prototype.hasOwnProperty.call(CALLBACK_ERRORS, failure)
+          ? CALLBACK_ERRORS[failure]
+          : CONNECTION_DID_NOT_COMPLETE,
+      );
+    }
+    const completed =
       success === "google_drive_connected" ||
-      success === "system_drive_connected"
-    ) {
-      window.history.replaceState({}, document.title, "/settings/integrations");
+      success === "system_drive_connected";
+    if (failure !== null || completed) {
+      // Only what this page has read leaves the address: whatever else is in
+      // it, another parameter or a fragment, stays.
+      params.delete("error");
+      if (completed) params.delete("success");
+      const rest = params.toString();
+      window.history.replaceState(
+        {},
+        document.title,
+        `/settings/integrations${rest ? `?${rest}` : ""}${window.location.hash}`,
+      );
     }
     check();
   }, []);
@@ -182,7 +212,9 @@ export default function IntegrationsPage() {
           </p>
         )}
         {authError && (
-          <p className="mt-3 text-xs text-[var(--state-danger)]">{authError}</p>
+          <p role="alert" className="mt-3 text-xs text-[var(--state-danger)]">
+            {authError}
+          </p>
         )}
       </div>
     </div>
