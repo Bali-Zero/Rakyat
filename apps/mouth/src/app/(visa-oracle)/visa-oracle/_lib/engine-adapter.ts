@@ -1100,8 +1100,21 @@ export const UNMAPPED_REASON_COPY: LocalizedText = text(
   "Dipastikan oleh aturan untuk visa ini.",
 );
 
+/**
+ * A server-supplied code selects copy only when it is an OWN key of the table:
+ * a name such as `constructor` must not resolve to an inherited function.
+ */
+function ownCopy(
+  table: Readonly<Record<string, LocalizedText>>,
+  code: string,
+): LocalizedText | undefined {
+  return Object.prototype.hasOwnProperty.call(table, code)
+    ? table[code]
+    : undefined;
+}
+
 function reasonMessage(code: string): LocalizedText {
-  return SUPPORT_REASON_COPY[code] ?? UNMAPPED_REASON_COPY;
+  return ownCopy(SUPPORT_REASON_COPY, code) ?? UNMAPPED_REASON_COPY;
 }
 
 // D3-3 gate finding, owner escalation 2026-09-13: `el.e33.property-basis` /
@@ -2056,7 +2069,7 @@ function reviewReason(
     code === SECOND_HOME_STUDIO_REVIEW_REASON_CODE && facts
       ? secondHomeStudioReviewReason(facts)
       : undefined;
-  const message = factDerived ?? REVIEW_REASON_COPY[code];
+  const message = factDerived ?? ownCopy(REVIEW_REASON_COPY, code);
   if (message === undefined) {
     if (process.env.NODE_ENV !== "production") {
       throw new VisaOracleResponseError("RESPONSE_INVARIANT");
@@ -2348,7 +2361,7 @@ function condition(
   sourceIds: readonly string[],
   trustedIds: ReadonlySet<string>,
 ): OutcomeReason {
-  const message = NOTICE_CONDITION_COPY[code];
+  const message = ownCopy(NOTICE_CONDITION_COPY, code);
   if (message === undefined) {
     if (process.env.NODE_ENV !== "production") {
       throw new VisaOracleResponseError("RESPONSE_INVARIANT");
