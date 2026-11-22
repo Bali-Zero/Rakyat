@@ -692,6 +692,15 @@ _SECRET_EGRESS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "bearer_token",
         re.compile(r"(?i)\b(?:bearer|basic)\s+(?=[A-Za-z0-9_./+\-=]*\d)[A-Za-z0-9_./+\-=]{16,}"),
     ),
+    ("aws_access_key_id", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
+    (
+        "github_token",
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})\b"),
+    ),
+    ("slack_token", re.compile(r"\bxox[aboprst]-[A-Za-z0-9-]{20,}\b")),
+    # A lookahead and not `\b` at the end: the last character of this key can
+    # be a hyphen, and `\b` after a hyphen that precedes a space never holds.
+    ("google_api_key", re.compile(r"\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])")),
 )
 
 
