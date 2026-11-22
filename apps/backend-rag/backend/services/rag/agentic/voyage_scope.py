@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -24,7 +26,9 @@ def digest(text: str) -> str:
 
 
 @contextmanager
-def canary_request(query: str, *, enabled: bool, current_user: object, session_id: str | None):
+def canary_request(
+    query: str, *, enabled: bool, current_user: object, session_id: str | None
+) -> Iterator[dict[str, Any] | None]:
     authorized = (
         enabled
         and re.fullmatch(r"voyage-canary-[a-f0-9]{32}", session_id or "") is not None

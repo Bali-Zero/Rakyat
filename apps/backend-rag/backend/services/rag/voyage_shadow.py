@@ -10,6 +10,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 from qdrant_client import QdrantClient, models
@@ -67,7 +68,7 @@ class PublicSnapshot:
     queries: dict
 
     @classmethod
-    def read_manifest(cls, manifest: Path, manifest_digest: str, index_digest: str):
+    def read_manifest(cls, manifest: Path, manifest_digest: str, index_digest: str) -> PublicSnapshot:
         if re.fullmatch(r"[a-f0-9]{64}", index_digest) is None:
             raise ValueError("invalid pinned vector index digest")
         with manifest.open("rb") as f:
@@ -88,12 +89,12 @@ class PublicSnapshot:
         return PublicSnapshot(manifest_digest, index_digest, passages, queries)
 
     @property
-    def collection(self):
+    def collection(self) -> str:
         return "newrag_shadow_" + digest_text(
             f"{CONTRACT}/{self.manifest_digest}/{self.index_digest}"
         )
 
-    def marker(self, kind):
+    def marker(self, kind: str) -> dict[str, Any]:
         return {
             "kind": kind,
             "contract": CONTRACT,
@@ -109,7 +110,7 @@ class PublicRelease(PublicSnapshot):
     vectors: dict
 
     @classmethod
-    def load(cls, manifest: Path, manifest_digest: str, index: Path, index_digest: str):
+    def load(cls, manifest: Path, manifest_digest: str, index: Path, index_digest: str) -> PublicRelease:
         snapshot = PublicSnapshot.read_manifest(manifest, manifest_digest, index_digest)
         queries, vectors = load_index(str(index), index_digest)
         if snapshot.queries != queries or set(snapshot.passages) != set(vectors):
@@ -117,7 +118,7 @@ class PublicRelease(PublicSnapshot):
         return cls(manifest_digest, index_digest, snapshot.passages, queries, vectors)
 
 
-def check_collection(db: QdrantClient, release: PublicSnapshot, *, create: bool):
+def check_collection(db: QdrantClient, release: PublicSnapshot, *, create: bool) -> None:
     name = release.collection
     if any(alias.alias_name == name for alias in db.get_aliases().aliases):
         raise ValueError("shadow name is an alias")
@@ -154,14 +155,14 @@ def check_collection(db: QdrantClient, release: PublicSnapshot, *, create: bool)
         raise ValueError("incompatible shadow vector configuration")
 
 
-def marker(db, release, number, kind):
+def marker(db: QdrantClient, release: PublicSnapshot, number: int, kind: str) -> bool:
     rows = db.retrieve(release.collection, [number], with_payload=True, with_vectors=False)
     if rows and rows[0].payload != release.marker(kind):
         raise ValueError("foreign release marker")
     return bool(rows)
 
 
-def passage_point(release, tokenizer, sha):
+def passage_point(release: PublicRelease, tokenizer: LegalSparseV1, sha: str) -> models.PointStruct:
     text = release.passages[sha]
     sparse = tokenizer.generate_sparse_vector(text)
     vectors = {DENSE: list(release.vectors[sha])}
@@ -174,7 +175,7 @@ def passage_point(release, tokenizer, sha):
     )
 
 
-def same_point(saved, expected) -> bool:
+def same_point(saved: models.Record, expected: models.PointStruct) -> bool:
     if (
         saved.payload != expected.payload
         or not isinstance(saved.vector, dict)
@@ -243,7 +244,7 @@ def write_release(db: QdrantClient, release: PublicRelease) -> int:
     return added
 
 
-def ensure_ready(db: QdrantClient, release: PublicSnapshot):
+def ensure_ready(db: QdrantClient, release: PublicSnapshot) -> None:
     check_collection(db, release, create=False)
     if (
         not marker(db, release, 0, "ready")
