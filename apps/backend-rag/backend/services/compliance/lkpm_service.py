@@ -242,11 +242,12 @@ class LKPMService:
             )
 
             if row:
-                kbli = row["kbli_code"] or ""
+                kbli_code = row["kbli_code"]
+                kbli_codes = [kbli_code] if kbli_code and kbli_code.strip() else []
                 await conn.execute(
                     """
                     INSERT INTO lkpm_client_config (client_id, company_id, company_name, npwp, nib, kbli_codes)
-                    VALUES ($1, $2, $3, $4, $5, ARRAY[$6])
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     ON CONFLICT (client_id, company_id) DO NOTHING
                 """,
                     client_id,
@@ -254,7 +255,7 @@ class LKPMService:
                     row["company_name"],
                     row["npwp_company"],
                     row["nib"],
-                    kbli,
+                    kbli_codes,
                 )
                 logger.info(
                     f"Auto-created lkpm_client_config for client {client_id}: {row['company_name']}",
@@ -347,6 +348,7 @@ class LKPMService:
                 FROM lkpm_receipts re
                 JOIN lkpm_reports r ON r.id = re.lkpm_report_id
                 LEFT JOIN lkpm_client_config cfg ON cfg.client_id = r.client_id
+                    AND COALESCE(r.company_id, 0) = COALESCE(cfg.company_id, 0)
                 LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.company_id IN (
                     SELECT DISTINCT ccl.company_id
@@ -824,6 +826,7 @@ class LKPMService:
                 FROM lkpm_receipts re
                 JOIN lkpm_reports r ON r.id = re.lkpm_report_id
                 LEFT JOIN lkpm_client_config cfg ON cfg.client_id = r.client_id
+                    AND COALESCE(r.company_id, 0) = COALESCE(cfg.company_id, 0)
                 LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.company_id IN (
                     SELECT DISTINCT ccl.company_id
