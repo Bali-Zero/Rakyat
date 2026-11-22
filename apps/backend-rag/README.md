@@ -104,8 +104,8 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Run development server
-uvicorn backend.app.main:app --reload
+# Run the local API and RAG workers
+./start_backend.sh
 
 # Run tests
 pytest -v
@@ -220,8 +220,7 @@ def method_name(self, param: str, limit: int = 10) -> Result:
 ## Sentry Error Tracking
 
 Sentry is initialized in `backend/app/setup/sentry_config.py` and wired from
-all three entrypoints (`main_cloud`, `main_api`, `main_rag`). Configuration
-is entirely env-driven.
+the API and RAG process entrypoints. Configuration is entirely env-driven.
 
 ### Env vars
 

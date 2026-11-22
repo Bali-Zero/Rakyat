@@ -291,4 +291,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \
 # Bind to 0.0.0.0 (all IPv4 interfaces, Fly.io compatible). Use PORT env var.
 # CRITICAL: 1 worker only — each worker loads ~2GB of ML models.
 # fly.toml [processes] overrides CMD at runtime (main_api:app for api, main_rag:app for rag).
-CMD sh -c "uvicorn backend.app.main_cloud:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"
+CMD sh -c "uvicorn backend.app.main_api:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"

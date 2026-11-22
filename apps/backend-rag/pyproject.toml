@@ -413,7 +413,6 @@ exclude = [
 "backend/services/rag/reranker.py" = ["ARG001"]  # __getattr__ pattern
 "backend/services/memory/memory_fallback.py" = ["ARG004"]  # Static method pattern
 "backend/services/oracle/oracle_service.py" = ["E402"]  # Optional dependency imports
-"backend/app/main_cloud.py" = ["E402"]  # App initialization order matters
 "backend/core/chunker.py" = ["E402"]  # Optional dependency imports
 "backend/services/memory/models.py" = ["E402"]  # Optional dependency imports
 "backend/services/misc/proactive_compliance_monitor.py" = ["E402"]  # Optional dependency imports

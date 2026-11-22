@@ -19,7 +19,7 @@ This guide documents the testing procedures for verifying that all endpoints and
    ```bash
    npm run dev
    # OR
-   cd backend && uvicorn app.main_cloud:app --reload
+   ./start_backend.sh
    ```
 
 3. **Verify Environment Variables**

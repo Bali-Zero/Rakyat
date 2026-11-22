@@ -488,7 +488,7 @@ async def run_auto_ingestion(
     """
     🤖 AGENT 4: Auto Ingestion Orchestrator
 
-    ⚠️ PLACEHOLDER ENDPOINT: Service exists but not wired into main_cloud.py
+    ⚠️ PLACEHOLDER ENDPOINT: Service exists but is not wired into app startup
     The AutoIngestionOrchestrator service is implemented but not initialized.
 
     Automatically monitor and ingest updates from government sources
@@ -501,7 +501,7 @@ async def run_auto_ingestion(
     """
     return {
         "success": True,
-        "warning": "PLACEHOLDER: Service not wired into main_cloud.py initialization",
+        "warning": "PLACEHOLDER: Service not wired into app startup",
         "message": "Auto ingestion orchestrator triggered",
         "sources": sources or ["kemenkeu", "bpk", "kemendag", "ortax"],
         "force": force,

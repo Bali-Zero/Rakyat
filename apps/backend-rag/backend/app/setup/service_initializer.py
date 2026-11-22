@@ -1157,7 +1157,7 @@ async def initialize_garuda_services(app: FastAPI, db_pool) -> None:
             # FastAPI's TEST mechanism, one unscoped process-wide dict, and
             # `backend/tests/unit/routers/test_dashboard_coverage.py`
             # already calls `app.dependency_overrides.clear()`
-            # unconditionally in teardown against this SAME `main_cloud.app`
+            # unconditionally in teardown against this SAME API-process app
             # object. That call is harmless today only because that test
             # file never triggers `initialize_services`, so it never has
             # anything of this module's to clear — but a production wiring
