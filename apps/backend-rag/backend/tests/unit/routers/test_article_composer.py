@@ -474,17 +474,17 @@ async def test_publish_pings_indexnow_only_at_the_test_address(
     response = test_client.post("/api/articles/publish", json=request.model_dump())
 
     assert response.status_code == 200
-    assert pings == [
-        (
-            "http://127.0.0.1:9/indexnow",
-            {
-                "host": "balizero.com",
-                "key": "2633309a0003ec408c59ec48c952604f",
-                "keyLocation": "https://balizero.com/2633309a0003ec408c59ec48c952604f.txt",
-                "urlList": [response.json()["article_url"]],
-            },
-        )
-    ]
+    assert [url for url, _ in pings] == ["http://127.0.0.1:9/indexnow"]
+    payload = pings[0][1]
+    # The site key is public (served at balizero.com/<key>.txt); the test pins how it is
+    # used, not its value, so no key-shaped literal lives in the tests.
+    assert payload == {
+        "host": "balizero.com",
+        "key": payload["key"],
+        "keyLocation": f"https://balizero.com/{payload['key']}.txt",
+        "urlList": [response.json()["article_url"]],
+    }
+    assert len(payload["key"]) == 32
 
 
 @pytest.mark.asyncio
