@@ -73,14 +73,14 @@ export function useDocumentUpload(resultId: string) {
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       abortRef.current?.abort();
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const runUpload = useCallback(async () => {
     const file = fileRef.current;
