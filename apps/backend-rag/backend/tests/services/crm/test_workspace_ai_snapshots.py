@@ -478,3 +478,56 @@ async def test_auto_approve_workspace_ai_snapshots_apply_reuses_approve_path() -
     assert result.decisions[0].approved is True
     assert pool.conn.approved_ids == ["safe-snapshot"]
     assert pool.conn.approve_args == ("safe-snapshot", expected_actor)
+
+
+def _amount_blocked(detail: str, category: str = "compliance") -> bool:
+    snapshot = _snapshot_response(
+        facts=[
+            TaxCompanyPilotWorkspaceAiFact(
+                category=category,
+                label="Amount check",
+                detail=detail,
+                source_file_ids=["drive-file-1"],
+                confidence="confirmed",
+            )
+        ]
+    )
+    decision = evaluate_workspace_ai_auto_approve_snapshot(snapshot)
+    return "sensitive_financial_amount" in decision.blocked_reasons
+
+
+@pytest.mark.parametrize(
+    "amount",
+    [
+        "Rp 5.000.000",
+        "Rp. 5.000.000",
+        "rp.5.000.000",
+        "IDR. 12.500.000",
+        "IDR.12500000",
+        "5.000.000 rupiah",
+        "5 juta rupiah",
+        "2,5 miliar rupiah",
+    ],
+)
+@pytest.mark.parametrize("category", ["compliance", "next_action"])
+def test_auto_approve_policy_blocks_every_written_form_of_a_rupiah_amount(
+    amount: str, category: str
+) -> None:
+    assert _amount_blocked(f"PPh owed {amount} outstanding", category)
+    assert _amount_blocked(f"{amount} of tax outstanding", category)
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "RPTKA renewal due",
+        "IDR currency risk noted",
+        "the rupiah weakened against the tax base",
+        "PPh step 2 of 5 is done",
+        "PPh owed Rp. soon",
+        "Rp. ",
+        "IDR. tax reminder",
+    ],
+)
+def test_auto_approve_policy_does_not_flag_text_without_an_amount(detail: str) -> None:
+    assert not _amount_blocked(detail)

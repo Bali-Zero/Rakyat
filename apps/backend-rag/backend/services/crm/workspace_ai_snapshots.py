@@ -63,13 +63,19 @@ _ABSOLUTE_COMPLIANCE_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-_SENSITIVE_FINANCIAL_AMOUNT_PATTERN = re.compile(
-    r"\b(?:pph|ppn|vat|tax|pajak|omzet|withholding|salary|salaries|"
+# An amount in rupiah, however it is written: "Rp 5.000", "Rp. 5.000", "IDR.5000",
+# or a number followed by "rupiah" ("5.000.000 rupiah", "5 juta rupiah").
+_RUPIAH_AMOUNT = (
+    r"(?:(?:rp|idr)\.?\s*\d|"
+    r"\d[\d.,]*\s*(?:(?:juta|miliar|ribu|million|billion|thousand)\s*)?rupiah\b)"
+)
+_SENSITIVE_FINANCIAL_TERMS = (
+    r"(?:pph|ppn|vat|tax|pajak|omzet|withholding|salary|salaries|"
     r"revenue|income|profit|loss|debt|balance|invoice|fee|royalty)"
-    r"\b.{0,80}\b(?:rp|idr)\s*\d|"
-    r"\b(?:rp|idr)\s*\d.{0,80}\b(?:pph|ppn|vat|tax|pajak|omzet|"
-    r"withholding|salary|salaries|revenue|income|profit|loss|debt|"
-    r"balance|invoice|fee|royalty)\b",
+)
+_SENSITIVE_FINANCIAL_AMOUNT_PATTERN = re.compile(
+    rf"\b{_SENSITIVE_FINANCIAL_TERMS}\b.{{0,80}}\b{_RUPIAH_AMOUNT}|"
+    rf"\b{_RUPIAH_AMOUNT}.{{0,80}}\b{_SENSITIVE_FINANCIAL_TERMS}\b",
     re.IGNORECASE | re.DOTALL,
 )
 _UNSAFE_ADVICE_PATTERN = re.compile(
