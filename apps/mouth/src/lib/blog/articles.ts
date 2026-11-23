@@ -854,11 +854,17 @@ export async function getArticleBySlug(
   if (mdxArticle) {
     return mdxArticle;
   }
-  if (isArticleHidden(category, slug)) return null;
+  // A slug with a reviewed file in any category folder is never served from its
+  // backend row: not under another category, and not when the file is hidden.
+  if (hasArticleFile(slug)) return null;
 
-  // Fallback to backend API (news_items) when no local MDX exists.
+  // Fallback to backend API (news_items) when no local MDX exists, and only
+  // under the row's own category: the page of another category is not this one.
   const backendItem = await fetchBackendArticleBySlug(slug);
-  if (backendItem) {
+  if (
+    backendItem &&
+    normalizeCategory(backendItem.category) === normalizeCategory(category)
+  ) {
     return backendToArticle(backendItem);
   }
 
