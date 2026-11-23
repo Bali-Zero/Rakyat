@@ -19,6 +19,25 @@ type Earned = {
   status: string;
   amount_idr: number | null;
 };
+type Hold = {
+  practice_id: number;
+  service: string;
+  slot_key: string;
+  due_on: string;
+  payout_from_month: string;
+  next_action:
+    | "upload_permit"
+    | "send_escalation_email"
+    | "verify_escalation_email"
+    | "await_owner";
+  email_state: string;
+};
+const holdActions: Record<Hold["next_action"], string> = {
+  upload_permit: "Upload the missing permit or review postponement",
+  send_escalation_email: "Review official email to Zero",
+  verify_escalation_email: "Check the email delivery record",
+  await_owner: "Awaiting Zero’s decision",
+};
 type Desk = {
   team_member_id: string;
   month: string;
@@ -33,6 +52,7 @@ type Desk = {
     payroll_locked: number;
   };
   recent: Earned[];
+  holds: Hold[];
   next_case: {
     practice_id: number;
     service: string;
@@ -40,7 +60,12 @@ type Desk = {
     already_earned: boolean;
   } | null;
 };
-type BoundDesk = { identity: SessionIdentity; data: Desk; nextFile?: string };
+type BoundDesk = {
+  identity: SessionIdentity;
+  data: Desk;
+  nextFile?: string;
+  nextDue?: string;
+};
 const money = (amount: number) => `Rp ${amount.toLocaleString("id-ID")}`;
 const baliDate = (value: string, opts: Intl.DateTimeFormatOptions) =>
   new Intl.DateTimeFormat("en-GB", {
@@ -96,7 +121,14 @@ export function DeliveryBonusDesk() {
         // Reuse the practice's effective slots, including waived and expired documents.
         const pack = await api.requestWithCredential<{
           needs_titles?: boolean;
+          visa_followup?: {
+            slot_key: string;
+            due_on: string;
+            fulfilled_at: string | null;
+            owner_release_at: string | null;
+          } | null;
           slots: {
+            key: string;
             label: string;
             document_id: number | null;
             company_document_id?: number | null;
@@ -104,15 +136,23 @@ export function DeliveryBonusDesk() {
           }[];
         }>(`/api/crm/practices/${next.practice_id}/delivery`);
         if (!live || !acceptResponse(pack, owner)) return;
-        const needed = pack.data.slots.find(
+        const followup = pack.data.visa_followup;
+        const openFollowup =
+          followup && !followup.fulfilled_at && !followup.owner_release_at;
+        const missing = pack.data.slots.filter(
           (slot) =>
             !slot.document_id &&
             !slot.company_document_id &&
             !slot.waiver_reason,
         );
+        const needed =
+          (openFollowup &&
+            missing.find((slot) => slot.key === followup.slot_key)) ||
+          missing[0];
         setBound({
           identity: owner,
           data: res.data,
+          nextDue: openFollowup ? followup.due_on : undefined,
           nextFile: pack.data.needs_titles
             ? "Define the agreed documents"
             : (needed?.label ?? "Confirm delivery"),
@@ -251,25 +291,60 @@ export function DeliveryBonusDesk() {
           )}
         </div>
       </div>
-      {data.next_case && (
-        <div className="mt-4 border-t border-[var(--bz-border)] pt-3">
-          <h3 className="text-sm font-semibold">Next paid practice</h3>
-          <Link
-            className="text-[var(--bz-accent)] underline"
-            href={`/process/${data.next_case.practice_id}`}
-          >
-            {data.next_case.service}
-            {value?.nextFile && ` · ${value.nextFile}`}
-          </Link>
-          <p className="text-sm text-[var(--bz-text-2)]">
-            {data.next_case.already_earned
-              ? "Bonus milestone already recorded"
-              : data.next_case.amount_idr === null
-                ? "Bonus rate to confirm"
-                : `Potential bonus · ${money(data.next_case.amount_idr)}`}
-          </p>
-        </div>
+      {!!data.holds?.length && (
+        <section
+          className="mt-4 border-t border-[var(--bz-border)] pt-3"
+          aria-label="Visa bonus payout holds"
+        >
+          <h3 className="text-sm font-semibold">Visa bonus payout holds</h3>
+          <ul className="mt-1 space-y-2 text-sm">
+            {data.holds.map((row) => (
+              <li key={row.practice_id}>
+                <Link
+                  href={`/process/${row.practice_id}#final-delivery`}
+                  className="font-semibold underline"
+                >
+                  Case #{row.practice_id} · {row.service}
+                </Link>
+                <p>
+                  {holdActions[row.next_action]} · Due{" "}
+                  <time dateTime={row.due_on}>{row.due_on}</time>
+                </p>
+                <p className="text-[var(--bz-text-2)]">
+                  Earliest payroll month · {row.payout_from_month.slice(0, 7)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
+      {data.next_case &&
+        !data.holds?.some(
+          (row) => row.practice_id === data.next_case?.practice_id,
+        ) && (
+          <div className="mt-4 border-t border-[var(--bz-border)] pt-3">
+            <h3 className="text-sm font-semibold">Next paid practice</h3>
+            <Link
+              className="text-[var(--bz-accent)] underline"
+              href={`/process/${data.next_case.practice_id}#final-delivery`}
+            >
+              {data.next_case.service}
+              {value?.nextFile && ` · ${value.nextFile}`}
+            </Link>
+            {value?.nextDue && (
+              <p className="text-sm">
+                Permit due <time dateTime={value.nextDue}>{value.nextDue}</time>
+              </p>
+            )}
+            <p className="text-sm text-[var(--bz-text-2)]">
+              {data.next_case.already_earned
+                ? "Bonus milestone already recorded"
+                : data.next_case.amount_idr === null
+                  ? "Bonus rate to confirm"
+                  : `Potential bonus · ${money(data.next_case.amount_idr)}`}
+            </p>
+          </div>
+        )}
       {data.recent.length > 0 && (
         <div className="mt-4 border-t border-[var(--bz-border)] pt-3">
           <h3 className="text-sm font-semibold">Recent qualifying work</h3>
@@ -281,8 +356,10 @@ export function DeliveryBonusDesk() {
                 </Link>{" "}
                 ·{" "}
                 {r.event_kind === "electronic_visa_issued"
-                  ? "Visa issued"
-                  : "Delivered"}{" "}
+                  ? "Electronic Visa uploaded"
+                  : r.event_kind === "kitas_imk_uploaded"
+                    ? "Renewed IMK uploaded"
+                    : "Delivered"}{" "}
                 {baliDate(r.earned_at, { day: "numeric", month: "short" })} ·{" "}
                 {r.amount_idr !== null && `${money(r.amount_idr)} · `}
                 {statusNames[r.status]} ·{" "}

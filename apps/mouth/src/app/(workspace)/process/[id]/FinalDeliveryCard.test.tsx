@@ -6,8 +6,35 @@ import type { Practice } from "@/lib/api/crm/crm.types";
 import { FinalDeliveryCard } from "./FinalDeliveryCard";
 import { workDayOf } from "@/lib/format/work-day";
 
-const requests = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock("@/lib/api", () => ({ api: requests }));
+const requests = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+  sentSub: "staff-a",
+  identity: { sub: "staff-a", epoch: 1 },
+}));
+vi.mock("@/lib/auth/session-identity", () => ({
+  useSessionIdentity: () => requests.identity,
+  readSessionIdentity: () => requests.identity,
+  isSameIdentity: (a: { sub: string }, b: { sub: string }) => a.sub === b.sub,
+  acceptResponse: (res: { sentSub: string }, who: { sub: string }) =>
+    res.sentSub === who.sub,
+}));
+vi.mock("@/lib/api", () => ({
+  api: {
+    requestWithCredential: async (
+      path: string,
+      opts?: { method?: string; body?: string },
+    ) => {
+      const data =
+        opts?.method === "POST"
+          ? await (opts.body
+              ? requests.post(path, JSON.parse(opts.body))
+              : requests.post(path))
+          : await requests.get(path);
+      return { data, sentSub: requests.sentSub };
+    },
+  },
+}));
 
 const base = "/api/crm/practices/12/delivery";
 const slot = (
@@ -53,6 +80,7 @@ function setup(payment = "paid") {
 describe("Final delivery", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    requests.sentSub = "staff-a";
     requests.get.mockResolvedValue(initial);
   });
   it("records issuance on upload and keeps completion unavailable until the post-entry permit is saved", async () => {
@@ -101,7 +129,7 @@ describe("Final delivery", () => {
       new File(["issued"], "visa.pdf", { type: "application/pdf" }),
     );
     await screen.findByText(
-      "Electronic Visa issuance recorded. Remaining documents do not earn another bonus.",
+      "Bonus recorded on the Electronic Visa upload. Remaining documents do not earn another bonus.",
     );
     expect(requests.post).toHaveBeenCalledWith(
       base + "/slots/electronic_visa",
@@ -254,5 +282,167 @@ describe("Final delivery", () => {
         screen.getByRole("button", { name: "Deliver and complete" }),
       ).toBeEnabled(),
     );
+  });
+  const followup = {
+    slot_key: "itk",
+    started_on: "2026-08-01",
+    due_on: "2026-08-31",
+    final_due_on: "2026-09-30",
+    days_remaining: 0,
+    status: "overdue",
+    postponed_at: null,
+    postponement_note: null,
+    escalation_note: null,
+    email_sent_at: null,
+    fulfilled_at: null,
+    owner_release_at: null,
+    can_postpone: true,
+    can_escalate: false,
+    can_release: false,
+  };
+  it("records a private not-entered note once against the original 60-day deadline", async () => {
+    requests.get.mockResolvedValue({ ...initial, visa_followup: followup });
+    const note = "Client confirmed entry is still pending.";
+    requests.post.mockResolvedValue({
+      ...followup,
+      status: "awaiting_permit",
+      postponed_at: "2026-08-31T05:00:00Z",
+      postponement_note: note,
+      due_on: followup.final_due_on,
+      days_remaining: 30,
+      can_postpone: false,
+    });
+    const { user } = setup();
+    expect(await screen.findByText(/0 days remaining/)).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: /Client has not entered/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: /Confirm postponement/ }),
+    ).toBeDisabled();
+    await user.type(
+      screen.getByLabelText("Private staff note about the client’s entry"),
+      note,
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /Confirm postponement to 2026-09-30/,
+      }),
+    );
+    expect(requests.post).toHaveBeenCalledWith(
+      base + "/visa-followup/postpone",
+      { note },
+    );
+    expect(await screen.findByText(/30 days remaining/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Client has not entered/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /email to Zero/i })).toBeNull();
+  });
+  it("submits an escalation only on deliberate confirmation, retries an explicit failure and shows the server receipt", async () => {
+    const due = {
+      ...followup,
+      due_on: followup.final_due_on,
+      can_postpone: false,
+      can_escalate: true,
+      status: "escalation_due",
+    };
+    const failed = { ...due, status: "email_failed" };
+    requests.get
+      .mockResolvedValueOnce({ ...initial, visa_followup: due })
+      .mockResolvedValue({ ...initial, visa_followup: failed });
+    requests.post
+      .mockRejectedValueOnce(new Error("Mail not accepted"))
+      .mockResolvedValueOnce({
+        ...due,
+        status: "awaiting_owner",
+        email_sent_at: "2026-09-30T05:04:00Z",
+        can_escalate: false,
+      });
+    const { user } = setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Prepare official email to Zero",
+      }),
+    );
+    expect(screen.getByText(/Official email to Zero · case #12/)).toBeVisible();
+    expect(requests.post).not.toHaveBeenCalled();
+    await user.type(
+      screen.getByLabelText("Note to Zero about the missing permit"),
+      "Arrival evidence is outstanding.",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Confirm and send email to Zero" }),
+    );
+    expect(await screen.findByText(/Email delivery failed/)).toBeVisible();
+    expect(requests.post).toHaveBeenCalledTimes(1);
+    await user.click(
+      screen.getByRole("button", { name: "Confirm and send email to Zero" }),
+    );
+    expect(
+      await screen.findByText(/Official email to Zero sent/),
+    ).toBeVisible();
+    expect(
+      requests.post.mock.calls.filter(
+        (c) => c[0] === base + "/visa-followup/escalate",
+      ),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: /send email to Zero/i }),
+    ).toBeNull();
+  });
+  it("never offers email retry where the provider outcome is uncertain", async () => {
+    requests.get.mockResolvedValue({
+      ...initial,
+      visa_followup: {
+        ...followup,
+        status: "email_uncertain",
+        can_postpone: false,
+        can_escalate: false,
+      },
+    });
+    setup();
+    expect(await screen.findByText(/Email outcome unconfirmed/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /email to Zero/i })).toBeNull();
+    expect(requests.post).not.toHaveBeenCalled();
+  });
+  it("withholds staff notes and actions if the response belongs to another credential", async () => {
+    requests.sentSub = "staff-b";
+    requests.get.mockResolvedValue({
+      ...initial,
+      visa_followup: {
+        ...followup,
+        postponement_note: "Internal example note",
+      },
+    });
+    setup();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to load delivery requirements",
+    );
+    expect(screen.queryByText(/Internal example note/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Client has not entered/ }),
+    ).toBeNull();
+  });
+  it("earns on the renewal IMK upload without requesting a visa issue date", async () => {
+    const imk = slot("renewed_imk", "New IMK");
+    const pack = { ...initial, bonus_slot: "renewed_imk", slots: [imk] };
+    requests.get.mockResolvedValue(pack);
+    requests.post.mockResolvedValueOnce({
+      ...pack,
+      bonus_event: "kitas_imk_uploaded",
+      slots: [{ ...imk, document_id: 17, file_name: "imk.pdf" }],
+    });
+    const { user } = setup();
+    const file = await screen.findByLabelText("Upload New IMK");
+    expect(screen.queryByLabelText("Electronic Visa issue date")).toBeNull();
+    await user.upload(
+      file,
+      new File(["permit"], "imk.pdf", { type: "application/pdf" }),
+    );
+    expect(
+      await screen.findByText(/Bonus recorded on the renewed IMK upload/),
+    ).toBeVisible();
+    expect(requests.post.mock.calls[0][1]).not.toHaveProperty("issued_on");
   });
 });

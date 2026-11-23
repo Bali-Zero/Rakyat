@@ -5,6 +5,18 @@ import useSWR from "swr";
 import { api } from "@/lib/api";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import { fileToBase64 } from "@/lib/utils";
+import {
+  VisaPermitFollowup,
+  type VisaFollowup,
+  type FollowupAction,
+} from "./VisaPermitFollowup";
+import {
+  acceptResponse,
+  isSameIdentity,
+  readSessionIdentity,
+  useSessionIdentity,
+  type SessionIdentity,
+} from "@/lib/auth/session-identity";
 import { workDayOf } from "@/lib/format/work-day";
 import {
   BASE64_UPLOAD_MAX_BYTES,
@@ -26,7 +38,12 @@ interface Slot {
 interface Delivery {
   status: string;
   bonus_slot: string | null;
-  bonus_event: "electronic_visa_issued" | "service_delivered" | null;
+  bonus_event:
+    | "electronic_visa_issued"
+    | "kitas_imk_uploaded"
+    | "service_delivered"
+    | null;
+  visa_followup?: VisaFollowup | null;
   needs_titles: boolean;
   slots: Slot[];
 }
@@ -36,17 +53,51 @@ const cardStyle =
 const actionStyle =
   "text-sm font-semibold text-[var(--bz-accent)] underline disabled:opacity-50";
 
-export function FinalDeliveryCard({
+type DeliveryCardProps = { practice: Practice; onComplete: () => void };
+
+export function FinalDeliveryCard(props: DeliveryCardProps) {
+  const identity = useSessionIdentity();
+  if (!identity) return null;
+  return (
+    <StaffDeliveryCard
+      key={JSON.stringify([props.practice.id, identity.sub, identity.epoch])}
+      {...props}
+      identity={identity}
+    />
+  );
+}
+
+function StaffDeliveryCard({
   practice,
   onComplete,
-}: {
-  practice: Practice;
-  onComplete: () => void;
-}) {
+  identity,
+}: DeliveryCardProps & { identity: SessionIdentity }) {
   const url = `/api/crm/practices/${practice.id}/delivery`;
+  async function boundRequest<T>(
+    path: string,
+    body?: unknown,
+    post = false,
+  ): Promise<T> {
+    if (!isSameIdentity(readSessionIdentity(), identity))
+      throw new Error("Session changed. Reload the practice.");
+    const response = await api.requestWithCredential<T>(
+      path,
+      post
+        ? {
+            method: "POST",
+            body: body === undefined ? undefined : JSON.stringify(body),
+          }
+        : undefined,
+    );
+    if (!acceptResponse(response, identity))
+      throw new Error("Session changed. Reload the practice.");
+    return response.data;
+  }
+  const post = <T,>(path: string, body?: unknown) =>
+    boundRequest<T>(path, body, true);
   const { data, error, mutate } = useSWR<Delivery>(
-    url,
-    (path: string) => api.get<Delivery>(path),
+    [url, identity.sub, identity.epoch],
+    () => boundRequest<Delivery>(url),
     { shouldRetryOnError: false },
   );
   const [working, setWorking] = useState(false);
@@ -63,11 +114,15 @@ export function FinalDeliveryCard({
   const [chooseCompany, setChooseCompany] = useState(false);
   const [companyId, setCompanyId] = useState("");
   const { data: companies, error: companyError } = useSWR(
-    chooseCompany ? ["delivery-companies", practice.client_id] : null,
+    chooseCompany
+      ? ["delivery-companies", identity.sub, identity.epoch, practice.client_id]
+      : null,
     () => api.crm.getClientCompanies(practice.client_id),
   );
   const writable =
     data?.status === "on_process" && practice.payment_status === "paid";
+  const visaDateSlot = data?.bonus_slot === "electronic_visa";
+  const bonusLabel = visaDateSlot ? "Electronic Visa" : "renewed IMK";
   const canDeliver =
     writable &&
     !data.needs_titles &&
@@ -115,6 +170,7 @@ export function FinalDeliveryCard({
 
   function needsIssueDate(slot: Slot): boolean {
     return (
+      visaDateSlot &&
       slot.key === data?.bonus_slot &&
       data.bonus_event !== "electronic_visa_issued"
     );
@@ -139,7 +195,7 @@ export function FinalDeliveryCard({
     }
     void change(
       async () =>
-        api.post<Delivery>(`${url}/slots/${encodeURIComponent(slot.key)}`, {
+        post<Delivery>(`${url}/slots/${encodeURIComponent(slot.key)}`, {
           file_name: file.name,
           ...(needsIssueDate(slot) ? { issued_on: issueDate } : {}),
           file_content: await fileToBase64(file),
@@ -149,13 +205,33 @@ export function FinalDeliveryCard({
             : {}),
         }),
       slot.key === data?.bonus_slot
-        ? "Electronic Visa issuance recorded."
+        ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
         : "Document saved.",
     );
   }
 
+  async function followupAction(action: FollowupAction, note: string) {
+    if (!data) return;
+    await change(
+      async () => {
+        const next = await post<VisaFollowup>(
+          `${url}/visa-followup/${action}`,
+          { note },
+        );
+        return { ...data, visa_followup: next };
+      },
+      action === "postpone"
+        ? "Postponement recorded."
+        : "Escalation status updated.",
+    );
+  }
+
   return (
-    <section className={cardStyle} aria-label="Final delivery">
+    <section
+      id="final-delivery"
+      className={cardStyle}
+      aria-label="Final delivery"
+    >
       <h2 className="text-xl font-semibold mb-3">Final delivery</h2>
       {error && (
         <p role="alert">
@@ -166,13 +242,13 @@ export function FinalDeliveryCard({
         </p>
       )}
       {!data && !error && <p>Loading delivery requirements…</p>}
-      {data && (
+      {data && !error && (
         <>
           {data.bonus_slot && (
             <p className="mb-3 text-sm" role="status">
-              {data.bonus_event === "electronic_visa_issued"
-                ? "Electronic Visa issuance recorded. Remaining documents do not earn another bonus."
-                : "Upload the official Electronic Visa and enter its printed issue date. The bonus accrues on that date."}
+              {data.bonus_event
+                ? `Bonus recorded on the ${bonusLabel} upload. Remaining documents do not earn another bonus.`
+                : `The bonus accrues when you upload the ${bonusLabel}.${visaDateSlot ? " Enter the printed issue date for the document record." : ""}`}
             </p>
           )}
           {writable && !practice.family_member_id && (
@@ -223,8 +299,7 @@ export function FinalDeliveryCard({
                   .filter(Boolean);
                 if (values.length)
                   void change(
-                    () =>
-                      api.post<Delivery>(`${url}/titles`, { titles: values }),
+                    () => post<Delivery>(`${url}/titles`, { titles: values }),
                     "Document titles saved.",
                   );
               }}
@@ -266,12 +341,23 @@ export function FinalDeliveryCard({
                         ? `Not applicable — ${slot.waiver_reason}`
                         : "Awaiting file")}
                   </p>
-                  {slot.key === data.bonus_slot && slot.issued_on && (
-                    <p className="text-sm">
-                      Electronic Visa issue date ·{" "}
-                      <time dateTime={slot.issued_on}>{slot.issued_on}</time>
-                    </p>
+                  {data.visa_followup?.slot_key === slot.key && (
+                    <VisaPermitFollowup
+                      practiceId={practice.id}
+                      value={data.visa_followup}
+                      busy={working}
+                      writable={Boolean(writable)}
+                      act={followupAction}
+                    />
                   )}
+                  {visaDateSlot &&
+                    slot.key === data.bonus_slot &&
+                    slot.issued_on && (
+                      <p className="text-sm">
+                        Electronic Visa issue date ·{" "}
+                        <time dateTime={slot.issued_on}>{slot.issued_on}</time>
+                      </p>
+                    )}
                   {writable && needsIssueDate(slot) && (
                     <label className="block my-1 text-sm">
                       Electronic Visa issue date
@@ -316,7 +402,7 @@ export function FinalDeliveryCard({
                             onClick={() =>
                               void change(
                                 () =>
-                                  api.post<Delivery>(
+                                  post<Delivery>(
                                     `${url}/slots/${encodeURIComponent(slot.key)}/reuse`,
                                     { document_id: slot.reusable_document_id },
                                   ),
@@ -336,7 +422,7 @@ export function FinalDeliveryCard({
                               e.preventDefault();
                               void change(
                                 () =>
-                                  api.post<Delivery>(
+                                  post<Delivery>(
                                     `${url}/slots/${encodeURIComponent(slot.key)}/waive`,
                                     { reason: waiver.trim() },
                                   ),
@@ -385,7 +471,7 @@ export function FinalDeliveryCard({
               disabled={working || !canDeliver}
               onClick={() =>
                 void change(
-                  () => api.post<Delivery>(`${url}/complete`),
+                  () => post<Delivery>(`${url}/complete`),
                   "Final documents delivered. Practice completed.",
                 )
               }

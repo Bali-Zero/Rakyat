@@ -75,9 +75,11 @@ describe("DeliveryBonusDesk", () => {
     render(<DeliveryBonusDesk />);
     expect(
       await screen.findByRole("link", { name: "C1 Tourism · ITK" }),
-    ).toHaveAttribute("href", "/process/47");
+    ).toHaveAttribute("href", "/process/47#final-delivery");
     expect(screen.getByText("Bonus milestone already recorded")).toBeVisible();
-    expect(screen.getByText(/Visa issued.*Dec 2026 payroll/)).toBeVisible();
+    expect(
+      screen.getByText(/Electronic Visa uploaded.*Dec 2026 payroll/),
+    ).toBeVisible();
     expect(screen.getByText("1 awaiting a rate")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Edit personal goal" }));
     fireEvent.change(screen.getByRole("spinbutton"), {
@@ -93,5 +95,41 @@ describe("DeliveryBonusDesk", () => {
     expect(
       screen.queryByRole("heading", { name: "My delivery bonuses" }),
     ).toBeNull();
+  });
+  it("shows the employee’s overdue permit, payout period and review action", async () => {
+    const old = desk();
+    const value = {
+      ...old,
+      holds: [
+        {
+          practice_id: 47,
+          service: "C1 Tourism",
+          slot_key: "itk",
+          due_on: "2026-11-28",
+          payout_from_month: "2026-12-01",
+          next_action: "send_escalation_email",
+          email_state: "not_sent",
+        },
+      ],
+      recent: [
+        {
+          ...old.recent[0],
+          event_kind: "kitas_imk_uploaded",
+          service: "KITAS Renewal",
+        },
+      ],
+      next_case: null,
+    };
+    mocks.request.mockResolvedValue({ sentSub: "employee-a", data: value });
+    render(<DeliveryBonusDesk />);
+    expect(
+      await screen.findByRole("link", { name: "Case #47 · C1 Tourism" }),
+    ).toHaveAttribute("href", "/process/47#final-delivery");
+    expect(screen.getByText(/Review official email to Zero/)).toHaveTextContent(
+      "2026-11-28",
+    );
+    expect(screen.getByText("Earliest payroll month · 2026-12")).toBeVisible();
+    expect(screen.getByText(/Renewed IMK uploaded/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /send/i })).toBeNull();
   });
 });
