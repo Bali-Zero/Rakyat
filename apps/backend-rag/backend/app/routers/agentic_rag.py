@@ -16,6 +16,7 @@ import re
 import time
 import traceback
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -1424,6 +1425,9 @@ async def stream_workspace_agent(
             status_code=403,
             detail="User is not registered as a team agent",
         )
+    # The role of this desk session rides on a copy of the principal made for this
+    # request: the registry's object is shared by every request and is never changed.
+    agent_role = replace(agent_role, desk_role=str(current_user.get("role") or ""))
 
     # 3) Build agent context server-side (no client metadata trusted)
     agent_context = build_agent_context(email=user_email, full_name=user_email)

@@ -21,6 +21,7 @@ from typing import Any
 
 from backend.app.utils.tracing import add_span_event
 from backend.security.pii_log_identifier import redact_identifier_for_log
+from backend.services.rag.agentic._crm_precall import DATA, SCOPED_ZERO, judge_crm_precall
 from backend.services.rag.agentic.orchestrator_core import OrchestratorCore
 from backend.services.rag.agentic.orchestrator_streaming import OrchestratorStreamingManager
 from backend.services.rag.agentic.query_helpers import wrap_query_with_language_instruction
@@ -256,6 +257,7 @@ class OrchestratorStreamingCore:
         # directly and inject results into context. This avoids Gemini wasting
         # 2-3 ReAct steps trying vector_search before discovering crm_query.
         crm_precall_context = ""
+        crm_scope_note = ""
         _crm_keywords = {
             "clienti",
             "clients",
@@ -295,34 +297,50 @@ class OrchestratorStreamingCore:
             # crashing the whole streaming path → the channel bot replied with a
             # generic error. Non-streaming path was unaffected (never read tool_map).
             crm_tool = self.core.reasoning_engine.tool_map.get("crm_query")
-            if crm_tool:
+            # The tool answers within the desk scope of a signed-in person. A principal
+            # that carries no desk role (no desk session produced it) has no such scope
+            # here, and the pre-call asks nothing for it.
+            desk_role = getattr(agent_role, "desk_role", None)
+            desk_user = (
+                {"email": user_id, "role": desk_role} if user_id and desk_role is not None else None
+            )
+            if crm_tool and desk_user is not None:
                 try:
                     # Determine best query_type
+                    crm_args: dict[str, Any] = {}
                     if any(
                         w in query_lower
                         for w in ("quanti", "how many", "berapa", "attivi", "active", "leads")
                     ):
-                        crm_result = await crm_tool.execute(query_type="client_stats")
+                        crm_query_type = "client_stats"
                     elif any(
                         w in query_lower
                         for w in ("pratiche", "practices", "in corso", "in progress", "breakdown")
                     ):
-                        crm_result = await crm_tool.execute(query_type="practice_stats")
+                        crm_query_type = "practice_stats"
                     elif any(w in query_lower for w in ("scadenza", "expiring")):
-                        crm_result = await crm_tool.execute(query_type="expiring_documents")
+                        crm_query_type = "expiring_documents"
                     elif any(w in query_lower for w in ("cerca", "find", "search")):
                         # Extract search term (naive: everything after the keyword)
-                        crm_result = await crm_tool.execute(
-                            query_type="search_clients", search_term=query
-                        )
+                        crm_query_type = "search_clients"
+                        crm_args["search_term"] = query
                     else:
-                        crm_result = await crm_tool.execute(query_type="client_stats")
+                        crm_query_type = "client_stats"
+                    crm_result = await crm_tool.execute(
+                        query_type=crm_query_type, **crm_args, _desk_user=desk_user
+                    )
 
-                    if crm_result and len(crm_result) > 10:
+                    # Only rows or counts of the shape that query returns are data. A
+                    # valid empty list becomes a note and nothing more; a refusal, an
+                    # error object or anything malformed tells the model nothing.
+                    crm_outcome, crm_note = judge_crm_precall(crm_query_type, crm_result)
+                    if crm_outcome == DATA:
                         crm_precall_context = f"\n\n[CRM DATABASE RESULTS — USE THESE NUMBERS IN YOUR ANSWER]\n{crm_result}\n"
                         logger.info(
                             f"🚀 [CRM Pre-call] Injected {len(crm_result)} bytes of CRM data into context"
                         )
+                    elif crm_outcome == SCOPED_ZERO:
+                        crm_scope_note = crm_note
                 except Exception as e:
                     logger.warning("[CRM Pre-call] Failed: %s", type(e).__name__)
 
@@ -352,6 +370,9 @@ class OrchestratorStreamingCore:
             state.trusted_tools_used = True
             state.skip_rag = True
             state.context_gathered.append(crm_precall_context)
+        elif crm_scope_note:
+            # Not data, not evidence: the note only rides on the messages of this turn.
+            state.crm_scope_note = crm_scope_note
 
         # 4. Create chat session
         chat = self.core.llm_gateway.create_chat_with_history(

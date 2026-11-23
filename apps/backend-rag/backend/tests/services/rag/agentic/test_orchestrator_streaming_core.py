@@ -509,7 +509,9 @@ async def test_crm_prefetch_skipped_for_no_principal_streaming_caller() -> None:
 @pytest.mark.asyncio
 async def test_crm_prefetch_fires_for_authenticated_staff_caller() -> None:
     """INNOCENCE: staff callers (agent_role set, /workspace-stream) keep the
-    existing CRM pre-call UX — no regression from the tourniquet."""
+    existing CRM pre-call UX — no regression from the tourniquet. The pre-call
+    asks as the signed-in desk user: the e-mail of the request and the desk role
+    stamped on its principal."""
     crm_tool = SimpleNamespace(execute=AsyncMock(return_value="42 active clients online"))
     fake_core = FakeCoreForCrmPrefetch(tool_map={"crm_query": crm_tool})
     streaming_core = OrchestratorStreamingCore(
@@ -519,13 +521,16 @@ async def test_crm_prefetch_fires_for_authenticated_staff_caller() -> None:
     await _drain_until_crm_prefetch(
         streaming_core,
         query="quanti clienti attivi abbiamo",
-        user_id="damar@balizero.com",
+        user_id="member.one@example.test",
         conversation_history=None,
         session_id=None,
         images=None,
         tool_execution_counter={"count": 0},
         correlation_id="cid-staff",
-        agent_role=SimpleNamespace(role_id="visa_specialist"),
+        agent_role=SimpleNamespace(role_id="visa_specialist", desk_role="consultant"),
     )
 
-    crm_tool.execute.assert_called_once_with(query_type="client_stats")
+    crm_tool.execute.assert_called_once_with(
+        query_type="client_stats",
+        _desk_user={"email": "member.one@example.test", "role": "consultant"},
+    )

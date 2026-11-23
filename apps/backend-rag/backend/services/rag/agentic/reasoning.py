@@ -39,6 +39,7 @@ from backend.app.utils.tracing import (
     trace_span,
 )
 from backend.services.llm_clients.pricing import TokenUsage
+from backend.services.rag.agentic._crm_precall import with_crm_scope_note
 from backend.services.rag.agentic._reasoning_evidence import (
     compute_evidence_score,
     detect_quotable_relevance_veto,
@@ -1236,7 +1237,7 @@ Make it feel natural and helpful, not forced.
                 step_images = images if state.current_step == 1 else None
                 text_response, _model_used_name, response_obj, _ = await llm_gateway.send_message(
                     chat,
-                    message,
+                    with_crm_scope_note(state, message),
                     system_prompt,
                     tier=model_tier,
                     enable_function_calling=True,
@@ -1469,7 +1470,7 @@ Make it feel natural and helpful, not forced.
                 try:
                     state.final_answer, _, _, _ = await llm_gateway.send_message(
                         chat,
-                        final_prompt,
+                        with_crm_scope_note(state, final_prompt),
                         system_prompt,
                         tier=model_tier,
                         enable_function_calling=False,
@@ -1553,7 +1554,7 @@ Make it feel natural and helpful, not forced.
                     try:
                         state.final_answer, _, _, _ = await llm_gateway.send_message(
                             chat,
-                            final_prompt,
+                            with_crm_scope_note(state, final_prompt),
                             system_prompt,
                             tier=model_tier,
                             enable_function_calling=False,
@@ -1608,7 +1609,7 @@ Make it feel natural and helpful, not forced.
                 try:
                     state.final_answer, _, _, _ = await llm_gateway.send_message(
                         chat,
-                        final_prompt,
+                        with_crm_scope_note(state, final_prompt),
                         system_prompt,
                         tier=model_tier,
                         enable_function_calling=False,
@@ -1631,7 +1632,7 @@ Make it feel natural and helpful, not forced.
                 try:
                     state.final_answer, _, _, _ = await llm_gateway.send_message(
                         chat,
-                        f"Please answer this request: {query}",
+                        with_crm_scope_note(state, f"Please answer this request: {query}"),
                         system_prompt,
                         tier=model_tier,
                         enable_function_calling=False,
@@ -1679,7 +1680,7 @@ Make it feel natural and helpful, not forced.
                     try:
                         state.final_answer, _, _, _ = await llm_gateway.send_message(
                             chat,
-                            final_prompt,
+                            with_crm_scope_note(state, final_prompt),
                             system_prompt,
                             tier=model_tier,
                             enable_function_calling=False,
