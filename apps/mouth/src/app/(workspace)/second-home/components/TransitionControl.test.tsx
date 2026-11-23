@@ -146,11 +146,26 @@ describe("TransitionControl", () => {
     expect(mockMutateAsync.mock.calls[0][0].occurred_on).toBeUndefined();
   });
 
-  // BUG (not fixed here, tests-only): toStage is local state never reconciled with
-  // offeredStages. After a rerender that removes the chosen stage the select shows
-  // blank but Advance stays enabled and POSTs the removed stage (-> 409).
-  // Un-skip once the component resets toStage when it leaves offeredStages.
-  it.skip("does not submit a previously chosen stage that is no longer allowed", async () => {
+  it("does not send an occurred_on typed for entry after switching to a non-date stage", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TransitionControl
+        {...props({ allowedNextStages: ["entry", "visa_issued"] })}
+      />,
+    );
+    await user.selectOptions(select(), "entry");
+    await user.type(
+      container.querySelector('input[type="date"]') as HTMLInputElement,
+      "2026-03-04",
+    );
+    await user.selectOptions(select(), "visa_issued");
+    await user.click(advanceBtn());
+    expect(mockMutateAsync).toHaveBeenCalledTimes(1);
+    expect(mockMutateAsync.mock.calls[0][0].to_stage).toBe("visa_issued");
+    expect(mockMutateAsync.mock.calls[0][0].occurred_on).toBeUndefined();
+  });
+
+  it("does not submit a previously chosen stage that is no longer allowed", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
       <TransitionControl
