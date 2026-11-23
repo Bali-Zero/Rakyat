@@ -966,4 +966,58 @@ describe("InvoiceCompanyField live company search", () => {
     expect(screen.queryByRole("button", { name: "PT Bayu Lain" })).toBeNull();
     expect(screen.queryByTestId("invoice-company-search")).toBeNull();
   });
+
+  const UNAVAILABLE = "Company search unavailable — ask an admin";
+
+  it("a failed search says it is unavailable", async () => {
+    mockSearch.mockRejectedValue(new Error("boom"));
+    render(<Harness onValue={vi.fn()} />);
+    await typeName("bayu");
+    expect(await screen.findByText(UNAVAILABLE)).toBeInTheDocument();
+    expect(screen.queryByTestId("invoice-company-search")).toBeNull();
+  });
+
+  it("a successful search says nothing about being unavailable", async () => {
+    mockSearch.mockResolvedValue({ companies: [match(21, "PT Bayu Lain")] });
+    render(<Harness onValue={vi.fn()} />);
+    await typeName("bayu");
+    await screen.findByRole("button", { name: "PT Bayu Lain" });
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+  });
+
+  it("the notice leaves as soon as the name changes and a retry succeeds", async () => {
+    mockSearch.mockRejectedValueOnce(new Error("boom"));
+    let resolveRetry: (v: unknown) => void = () => {};
+    mockSearch.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRetry = resolve)),
+    );
+    render(<Harness onValue={vi.fn()} />);
+    const user = await typeName("bayu");
+    await screen.findByText(UNAVAILABLE);
+    await user.type(screen.getByLabelText("Company name"), "x");
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+    await waitFor(() => expect(mockSearch).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveRetry({ companies: [match(21, "PT Bayu Lain")] });
+    });
+    await screen.findByRole("button", { name: "PT Bayu Lain" });
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+  });
+
+  it("a cancelled search that fails late shows no notice", async () => {
+    let rejectOld: (e: Error) => void = () => {};
+    mockSearch.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => (rejectOld = reject)),
+    );
+    mockSearch.mockImplementationOnce(() => new Promise(() => {}));
+    render(<Harness onValue={vi.fn()} />);
+    const user = await typeName("bayu");
+    await waitFor(() => expect(mockSearch).toHaveBeenCalledTimes(1));
+    await user.type(screen.getByLabelText("Company name"), "x");
+    await act(async () => {
+      rejectOld(new Error("boom"));
+    });
+    await settle(50);
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+  });
 });
