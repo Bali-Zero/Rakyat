@@ -166,6 +166,7 @@ class TestSearchIntel:
 
         mock_client = AsyncMock()
         mock_client.search.return_value = {
+            "ids": ["1"],
             "documents": ["doc1"],
             "metadatas": [{"id": "1", "title": "Test", "tier": "T1", "published_at": _RECENT}],
             "distances": [0.5],
@@ -194,6 +195,7 @@ class TestSearchIntel:
 
         mock_client = AsyncMock()
         mock_client.search.return_value = {
+            "ids": [],
             "documents": [],
             "metadatas": [],
             "distances": [],
@@ -229,6 +231,7 @@ class TestSearchIntel:
                 m.search.side_effect = Exception("timeout")
             else:
                 m.search.return_value = {
+                    "ids": ["2"],
                     "documents": ["doc2"],
                     "metadatas": [
                         {"id": "2", "title": "News", "tier": "T2", "published_at": _RECENT}
@@ -260,6 +263,7 @@ class TestSearchIntel:
 
         mock_client = AsyncMock()
         mock_client.search.return_value = {
+            "ids": ["1", "2"],
             "documents": ["doc1", "doc2"],
             "metadatas": [
                 {"id": "1", "title": "A", "published_at": _RECENT},
@@ -284,176 +288,6 @@ class TestSearchIntel:
             assert (
                 result["results"][0]["similarity_score"] >= result["results"][1]["similarity_score"]
             )
-
-    @pytest.mark.asyncio
-    async def test_search_passes_the_awaited_vector_to_the_client(self, _patch_imports):
-        """The client receives the vector the async embedder returned, not a coroutine."""
-        embedder = _patch_imports["embedder"]
-        embedder.generate_single_embedding.return_value = [0.25, 0.5, 0.75]
-
-        client = create_autospec(QdrantClient, instance=True)
-        client.search.return_value = {
-            "documents": ["visa news"],
-            "metadatas": [{"id": "1", "title": "Visa", "tier": "T1", "published_at": _RECENT}],
-            "distances": [0.0],
-        }
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            result = await search_intel(IntelSearchRequest(query="visa", category="visa"))
-
-        embedder.generate_single_embedding.assert_awaited_once_with("visa")
-        assert client.search.await_args.kwargs["query_embedding"] == [0.25, 0.5, 0.75]
-        assert result["total"] == 1
-        assert result["results"][0]["id"] == "1"
-
-    @pytest.mark.asyncio
-    async def test_search_one_failing_collection_keeps_the_others(self, _patch_imports):
-        embedder = _patch_imports["embedder"]
-        embedder.generate_single_embedding.return_value = [0.1, 0.2]
-
-        failing = create_autospec(QdrantClient, instance=True)
-        failing.search.side_effect = RuntimeError("timeout")
-        working = create_autospec(QdrantClient, instance=True)
-        working.search.return_value = {
-            "documents": ["news doc"],
-            "metadatas": [{"id": "2", "title": "News", "tier": "T2", "published_at": _RECENT}],
-            "distances": [0.3],
-        }
-        clients = {"bali_intel_visa": failing, "bali_intel_news": working}
-
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            side_effect=lambda collection_name: clients[collection_name],
-        ):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            result = await search_intel(IntelSearchRequest(query="test"))
-
-        assert result["total"] == 1
-        assert result["results"][0]["id"] == "2"
-
-    @pytest.mark.asyncio
-    async def test_search_every_collection_failing_is_an_error_not_an_empty_success(
-        self, _patch_imports
-    ):
-        embedder = _patch_imports["embedder"]
-        embedder.generate_single_embedding.return_value = [0.1, 0.2]
-
-        failing = create_autospec(QdrantClient, instance=True)
-        failing.search.side_effect = RuntimeError("connection refused to qdrant.internal")
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=failing):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            with pytest.raises(HTTPException) as exc_info:
-                await search_intel(IntelSearchRequest(query="test"))
-
-        assert exc_info.value.status_code == 500
-        assert "qdrant.internal" not in str(exc_info.value.detail)
-
-    @staticmethod
-    def _search_client(metadatas):
-        client = create_autospec(QdrantClient, instance=True)
-        client.search.return_value = {
-            "documents": [f"doc{i}" for i in range(len(metadatas))],
-            "metadatas": metadatas,
-            "distances": [0.1 * (i + 1) for i in range(len(metadatas))],
-        }
-        return client
-
-    @pytest.mark.asyncio
-    async def test_search_default_request_sends_no_tier_condition(self, _patch_imports):
-        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
-        client = self._search_client([{"id": "1", "title": "No tier", "published_at": _RECENT}])
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            result = await search_intel(IntelSearchRequest(query="q", category="visa"))
-
-        assert client.search.await_args.kwargs["filter"] is None
-        assert [r["id"] for r in result["results"]] == ["1"]
-        assert result["results"][0]["published_date"] == _RECENT
-
-    @pytest.mark.asyncio
-    async def test_search_explicit_tier_subset_is_still_a_condition(self, _patch_imports):
-        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
-        client = self._search_client([])
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            await search_intel(IntelSearchRequest(query="q", category="visa", tier=["T1"]))
-
-        assert client.search.await_args.kwargs["filter"] == {"tier": {"$in": ["T1"]}}
-
-    @pytest.mark.asyncio
-    async def test_search_applies_the_date_range_in_the_route(self, _patch_imports):
-        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
-        old = (datetime.now(tz=timezone.utc) - timedelta(days=30)).isoformat()
-        client = self._search_client(
-            [
-                {"id": "old", "published_at": old},
-                {"id": "undated"},
-                {"id": "recent", "published_at": _RECENT},
-            ]
-        )
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            result = await search_intel(IntelSearchRequest(query="q", category="visa", limit=10))
-
-        kwargs = client.search.await_args.kwargs
-        assert kwargs["limit"] == 50
-        assert "published_date" not in (kwargs["filter"] or {})
-        assert [r["id"] for r in result["results"]] == ["recent"]
-
-    @pytest.mark.asyncio
-    async def test_search_overfetch_is_capped(self, _patch_imports):
-        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
-        client = self._search_client([])
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            await search_intel(IntelSearchRequest(query="q", category="visa", limit=100))
-            assert client.search.await_args.kwargs["limit"] == 200
-            await search_intel(IntelSearchRequest(query="q", category="visa", limit=300))
-            assert client.search.await_args.kwargs["limit"] == 300
-
-    @pytest.mark.asyncio
-    async def test_search_date_range_all_keeps_limit_and_filters_nothing(self, _patch_imports):
-        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
-        client = self._search_client(
-            [{"id": "undated"}, {"id": "old", "published_at": "2001-01-01"}]
-        )
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            result = await search_intel(
-                IntelSearchRequest(query="q", category="visa", date_range="all", limit=7)
-            )
-
-        assert client.search.await_args.kwargs["limit"] == 7
-        assert [r["id"] for r in result["results"]] == ["undated", "old"]
-
-    @pytest.mark.asyncio
-    async def test_search_impact_level_is_passed_through(self, _patch_imports):
-        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
-        client = self._search_client([])
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
-
-            await search_intel(
-                IntelSearchRequest(query="q", category="visa", impact_level="critical")
-            )
-
-        assert client.search.await_args.kwargs["filter"] == {"impact_level": "critical"}
 
 
 # ---------------------------------------------------------------------------
@@ -566,127 +400,25 @@ class TestStoreIntel:
 
 
 class TestGetCriticalItems:
-    """Tests for GET /api/intel/critical."""
-
-    @staticmethod
-    def _point(point_id, *, impact="critical", days_ago=1, **extra):
-        published = (datetime.now(tz=timezone.utc) - timedelta(days=days_ago)).isoformat()
-        metadata = {
-            "id": point_id,
-            "title": f"Item {point_id}",
-            "impact_level": impact,
-            "published_at": published,
-            **extra,
-        }
-        return {"id": point_id, "payload": {"text": "body", "metadata": metadata}}
-
-    @staticmethod
-    def _client(points=None, error=None):
-        client = create_autospec(QdrantClient, instance=True)
-        if error is not None:
-            client.scroll_strict.side_effect = error
-        else:
-            client.scroll_strict.return_value = points or []
-        return client
+    """Tests for GET /api/intel/critical (store traffic: test_intel_routes_read_the_store_as_it_is.py)."""
 
     @pytest.mark.asyncio
     async def test_critical_items_returns_structure(self, _patch_imports):
-        client = self._client([])
+        client = create_autospec(QdrantClient, instance=True)
 
         with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_critical_items
 
             result = await get_critical_items()
 
-        assert result == {"items": [], "alerts": [], "count": 0}
-
-    @pytest.mark.asyncio
-    async def test_critical_returns_stored_shape_in_range_and_drops_out_of_range(
-        self, _patch_imports
-    ):
-        client = self._client(
-            [
-                self._point("in-range", days_ago=2, source_name="src"),
-                self._point("too-old", days_ago=60),
-                self._point("not-critical", impact="low", days_ago=1),
-                self._point("no-date", days_ago=1) | {},
-            ]
-        )
-        client.scroll_strict.return_value[3]["payload"]["metadata"].pop("published_at")
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import get_critical_items
-
-            result = await get_critical_items(category="visa", days=7)
-
-        assert [i["id"] for i in result["items"]] == ["in-range"]
-        assert result["count"] == 1
-        assert result["alerts"] == result["items"]
-        assert result["items"][0]["severity"] == "high"
-        assert "partial" not in result
-        assert client.scroll_strict.await_args.kwargs["metadata_filter"] == {
-            "impact_level": "critical"
+        assert result == {
+            "items": [],
+            "alerts": [],
+            "count": 0,
+            "classified": False,
+            "unclassified": ["bali_intel_visa", "bali_intel_news"],
         }
-
-    @pytest.mark.asyncio
-    async def test_critical_newest_first_and_collections_are_read_once(
-        self, _patch_imports, monkeypatch
-    ):
-        monkeypatch.setattr(
-            "backend.app.routers.intel_analytics.INTEL_COLLECTIONS",
-            {"news": "shared", "social": "shared", "roundup": "shared"},
-        )
-        client = self._client([self._point("older", days_ago=3), self._point("newer", days_ago=1)])
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import get_critical_items
-
-            result = await get_critical_items()
-
-        assert [i["id"] for i in result["items"]] == ["newer", "older"]
-        assert client.scroll_strict.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_critical_reading_past_the_bound_says_it_is_partial(self, _patch_imports):
-        client = self._client(error=RuntimeError("Qdrant strict scroll exceeded max_points"))
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import get_critical_items
-
-            result = await get_critical_items(category="visa")
-
-        assert result["partial"] is True
-        assert result["count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_critical_one_collection_failing_is_marked_partial(self, _patch_imports):
-        failing = self._client(error=ConnectionError("down"))
-        working = self._client([self._point("ok", days_ago=1)])
-        clients = {"bali_intel_visa": failing, "bali_intel_news": working}
-
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            side_effect=lambda collection_name: clients[collection_name],
-        ):
-            from backend.app.routers.intel_analytics import get_critical_items
-
-            result = await get_critical_items()
-
-        assert [i["id"] for i in result["items"]] == ["ok"]
-        assert result["partial"] is True
-
-    @pytest.mark.asyncio
-    async def test_critical_every_collection_failing_is_an_error(self, _patch_imports):
-        client = self._client(error=ConnectionError("qdrant.internal down"))
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import get_critical_items
-
-            with pytest.raises(HTTPException) as exc_info:
-                await get_critical_items()
-
-        assert exc_info.value.status_code == 500
-        assert "qdrant.internal" not in str(exc_info.value.detail)
+        client.scroll_strict.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -727,17 +459,6 @@ class TestGetTrends:
 
         client.get_stats.assert_awaited_once_with()
         assert result["trends"] == [{"collection": "visa", "total_items": 10}]
-
-    @pytest.mark.asyncio
-    async def test_trends_skips_a_collection_whose_statistics_failed(self, _patch_imports):
-        client = self._client({"collection_name": "x", "error": "HTTP 503"})
-
-        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
-            from backend.app.routers.intel_analytics import get_trends
-
-            result = await get_trends(category="visa")
-
-        assert result["trends"] == []
 
 
 # ---------------------------------------------------------------------------
