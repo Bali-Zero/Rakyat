@@ -57,6 +57,7 @@ _DRIVE_FILE_ID_RE = re.compile(r"/d/([A-Za-z0-9_-]{10,})")
 # ended here.
 _RATE_LIMIT_WAIT_DEFAULT_SECONDS = 2.0
 _RATE_LIMIT_WAIT_MAX_SECONDS = 5.0
+_TRANSIENT_RETRY_WAIT_SECONDS = 2.0
 
 
 # The longest run of digits that is ever converted to a number. The cap is far below
@@ -190,6 +191,7 @@ async def _ensure_client_on_fly(
     sender_phone: str,
     full_name: str | None,
     base_url: str,
+    failure: list[CrmPushResult] | None = None,
 ) -> int | None:
     """Resolve/create the Fly client for a WA sender phone, returning its FLY id.
 
@@ -230,11 +232,31 @@ async def _ensure_client_on_fly(
         try:
             resp = await client.post(url, json=body, headers=headers)
         except (httpx.TimeoutException, httpx.TransportError) as exc:
+            detail = _transport_failure_detail(exc)
             logger.warning(
                 "intake.crm_push.upsert_unreachable phone=%s err=%s",
                 redact_identifier_for_log(digits),
                 type(exc).__name__,
             )
+            if attempt == 0:
+                await asyncio.sleep(_TRANSIENT_RETRY_WAIT_SECONDS)
+                continue
+            if failure is not None:
+                failure.append(CrmPushResult(ok=False, status="unreachable", detail=detail))
+            return None
+        if resp.status_code >= 500:
+            if attempt == 0:
+                await asyncio.sleep(_TRANSIENT_RETRY_WAIT_SECONDS)
+                continue
+            logger.warning("intake.crm_push.upsert_failed status=%s", resp.status_code)
+            if failure is not None:
+                failure.append(
+                    CrmPushResult(
+                        ok=False,
+                        status="server_error",
+                        detail=_http_failure_detail(resp.status_code),
+                    )
+                )
             return None
         if resp.status_code != 429 or attempt == 1:
             break
@@ -433,13 +455,17 @@ async def push_committed_document(
                 "refusing to address Fly by the LOCAL pk"
             ),
         )
+    resolution_failure: list[CrmPushResult] = []
     fly_cid = await _ensure_client_on_fly(
         crm_write_key=resolution_key,
         sender_phone=sender_phone,
         full_name=client_full_name,
         base_url=base,
+        failure=resolution_failure,
     )
     if fly_cid is None:
+        if resolution_failure:
+            return resolution_failure[0]
         return CrmPushResult(
             ok=False,
             status="identity_unresolved",
@@ -467,6 +493,7 @@ async def push_committed_document(
                         client_id,
                         last_detail,
                     )
+                    await asyncio.sleep(_TRANSIENT_RETRY_WAIT_SECONDS)
                     continue
                 return CrmPushResult(ok=False, status="unreachable", detail=last_detail)
 
@@ -493,6 +520,7 @@ async def push_committed_document(
                         client_id,
                         last_detail,
                     )
+                    await asyncio.sleep(_TRANSIENT_RETRY_WAIT_SECONDS)
                     continue
                 return CrmPushResult(ok=False, status="server_error", detail=last_detail)
             if resp.status_code == 409:
@@ -654,6 +682,7 @@ async def push_committed_company_document(
                         company_id,
                         last_detail,
                     )
+                    await asyncio.sleep(_TRANSIENT_RETRY_WAIT_SECONDS)
                     attempt += 1
                     continue
                 return CrmPushResult(ok=False, status="unreachable", detail=last_detail)
@@ -688,6 +717,7 @@ async def push_committed_company_document(
                         company_id,
                         last_detail,
                     )
+                    await asyncio.sleep(_TRANSIENT_RETRY_WAIT_SECONDS)
                     attempt += 1
                     continue
                 return CrmPushResult(ok=False, status="server_error", detail=last_detail)

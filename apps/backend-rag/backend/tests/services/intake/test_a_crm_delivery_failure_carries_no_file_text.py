@@ -128,8 +128,11 @@ async def test_a_rate_limited_answer_is_named_by_its_status(answer, blob, caplog
     _no_planted_text(caplog, result)
 
 
-async def test_a_failed_client_lookup_is_logged_by_its_status_alone(answer, blob, caplog):
+async def test_a_failed_client_lookup_is_logged_by_its_status_alone(
+    answer, blob, caplog, monkeypatch
+):
     caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(crm_push.asyncio, "sleep", AsyncMock())
     saved = crm_push._client
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -142,7 +145,7 @@ async def test_a_failed_client_lookup_is_logged_by_its_status_alone(answer, blob
         await crm_push._client.aclose()
         crm_push._client = saved
 
-    assert result.status == "identity_unresolved"
+    assert result.status == "server_error"
     _no_planted_text(caplog, result)
 
 
