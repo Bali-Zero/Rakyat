@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from backend.services.visa_check.catalogue import VisaType
+from backend.services.visa_check.clock import clock_timeline
+
 logger = logging.getLogger(__name__)
 
 _CONTEXT_TTL = timedelta(days=30)
@@ -122,14 +125,22 @@ async def get_funnel_context(check_hash: str, pool: Any) -> FunnelContext | None
 def _clock_preamble(context: FunnelContext) -> str:
     """Ground-truth preamble for a visitor who ran the Visa Clock (no identifiers)."""
     today = datetime.now(timezone.utc).date()
+    expiry_date = context.expiry_date
+    if context.visa_type and context.entry_date:
+        try:
+            expiry_date = clock_timeline(
+                visa_type=VisaType(context.visa_type), entry_date=context.entry_date
+            ).expiry_date
+        except ValueError:
+            pass
     facts: list[str] = []
     if context.visa_type:
         facts.append(f"visa type {context.visa_type}")
     if context.entry_date:
         facts.append(f"entry date {context.entry_date.isoformat()}")
     ended = False
-    if context.expiry_date:
-        days = (context.expiry_date - today).days
+    if expiry_date:
+        days = (expiry_date - today).days
         ended = days < 0
         if ended:
             remaining = f"already ended {-days} day{'s' if days != -1 else ''} ago"
@@ -137,7 +148,7 @@ def _clock_preamble(context: FunnelContext) -> str:
             remaining = "ends today"
         else:
             remaining = f"{days} day{'s' if days != 1 else ''} remaining"
-        facts.append(f"permitted stay ends {context.expiry_date.isoformat()} ({remaining})")
+        facts.append(f"permitted stay ends {expiry_date.isoformat()} ({remaining})")
     if context.extensions_possible is not None:
         if context.extensions_possible and context.extension_days:
             facts.append(
