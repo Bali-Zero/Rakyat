@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 import backend.app.routers.partners as partners_module
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.setup.route_walk import iter_leaf_routes
-from backend.services.crm.partners.models import Partner
+from backend.services.crm.partners.models import Partner, PartnerCommission
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1065,6 +1065,75 @@ class TestPartnerStaffRolesAreTheTeamRoster:
             resp = client.get("/api/partners")
         assert resp.status_code == 200
         assert svc_instance.list_partners.await_args.kwargs["scope_to"] == staff["user_id"]
+
+
+class TestClawbackAmountThroughTheRoute:
+    """The real engine behind the route: a refused amount is a 400 and nothing is written.
+
+    The repository is a stub because the route runs on the TestClient's own event loop, which
+    cannot share an asyncpg connection with the test; the setting read finds no row.
+    """
+
+    @staticmethod
+    def _paid() -> PartnerCommission:
+        now = datetime.now(timezone.utc)
+        return PartnerCommission(
+            id=_COMMISSION_ID,
+            partner_id=_PARTNER_ID,
+            entry_type="accrual",
+            base_amount_idr=Decimal("10000000"),
+            commission_type_snapshot="percentage",
+            commission_value_snapshot=Decimal("10.0"),
+            rule_source="partner_default",
+            gross_amount_idr=Decimal("1000000"),
+            withholding_category="pph23",
+            withholding_rate=Decimal("2.0"),
+            withholding_amount_idr=Decimal("20000"),
+            net_amount_idr=Decimal("980000.00"),
+            status="paid",
+            accrued_at=now,
+            eligible_for_approval_at=now,
+            created_at=now,
+        )
+
+    def _post(self, admin_app, amount: str) -> tuple[Any, list[dict[str, Any]]]:
+        _, client, _, _ = admin_app
+        inserted: list[dict[str, Any]] = []
+        paid = self._paid()
+
+        class _StubRepo:
+            def __init__(self, conn: Any) -> None:
+                pass
+
+            async def get_commission(self, commission_id: Any) -> PartnerCommission:
+                return paid
+
+            async def insert_commission(self, **kwargs: Any) -> uuid.UUID:
+                inserted.append(kwargs)
+                return uuid.UUID("ffffffff-0000-0000-0000-000000000001")
+
+        with patch("backend.services.crm.partners.commission_engine.PartnersRepository", _StubRepo):
+            resp = client.post(
+                f"/api/partners/commissions/{_COMMISSION_ID}/clawback",
+                json={"reason": "refund", "amount_idr": amount},
+            )
+        return resp, inserted
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("amount", ["0.001", "1E+30"])
+    def test_a_refused_amount_is_a_400_and_nothing_is_written(self, admin_app, amount) -> None:
+        resp, inserted = self._post(admin_app, amount)
+        assert resp.status_code == 400
+        assert "at most the commission net amount" in resp.json()["detail"]
+        assert inserted == []
+
+    @pytest.mark.integration
+    def test_a_half_cent_is_stored_as_the_ledger_rounds_it(self, admin_app) -> None:
+        resp, inserted = self._post(admin_app, "0.005")
+        assert resp.status_code == 201
+        assert len(inserted) == 1
+        assert inserted[0]["gross_amount_idr"] == Decimal("-0.01")
+        assert inserted[0]["net_amount_idr"] == Decimal("-0.01")
 
 
 class TestCommissions:
