@@ -78,11 +78,58 @@ def test_the_text_of_these_errors_does_carry_the_values() -> None:
     assert COMPANY in str(FOREIGN_KEY)
 
 
+# Logging stamps every record with the clock, the process and the thread. Those values come
+# from the machine running the test, never from the code under test, and a short digit string
+# such as a KBLI code can turn up inside one of them by chance, so the sweep leaves them out.
+_STAMPED_BY_LOGGING = frozenset(
+    {
+        "created",
+        "msecs",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "process",
+        "processName",
+        "taskName",
+    }
+)
+
+
 def _everything(caplog: pytest.LogCaptureFixture) -> str:
-    """All that the captured records hold: text, arguments and every attribute, extras included."""
+    """All that the captured records hold: text, arguments and every attribute, extras included,
+    except what logging stamps from the machine."""
     return caplog.text + "".join(
-        f"\n{record.getMessage()} {vars(record)!r}" for record in caplog.records
+        f"\n{record.getMessage()} "
+        f"{ {key: value for key, value in vars(record).items() if key not in _STAMPED_BY_LOGGING}!r}"
+        for record in caplog.records
     )
+
+
+def test_the_sweep_reads_what_the_code_wrote_and_not_what_logging_stamped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    needle = THE_COMPANY["kbli_code"]
+    logger = logging.getLogger(SERVICE_LOG)
+
+    logger.info("a line that holds no value")
+    stamped = caplog.records[-1]
+    stamped.created = float(f"17{needle}.{needle}")
+    stamped.msecs = float(needle)
+    stamped.relativeCreated = float(needle)
+    stamped.thread = int(f"14{needle}3")
+    stamped.threadName = f"Thread-{needle}"
+    stamped.process = int(needle)
+    stamped.processName = f"Process-{needle}"
+    stamped.taskName = f"Task-{needle}"
+    assert needle not in _everything(caplog)
+
+    logger.info("a line with a field", extra={"kbli_code": needle})
+    assert needle in _everything(caplog)
+    caplog.clear()
+
+    logger.info("a line with an argument %s", needle)
+    assert needle in _everything(caplog)
 
 
 def _messages(caplog: pytest.LogCaptureFixture, logger: str) -> list[tuple[str, str]]:
