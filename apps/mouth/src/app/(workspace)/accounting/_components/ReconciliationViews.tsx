@@ -180,7 +180,7 @@ export function ReconciliationMore({
           <CcGlyph name="out" className="h-[18px] w-[18px]" />
         </span>
         <p className="text-sm font-semibold text-[var(--cc-tx-2)]">
-          Cash-out this week
+          Cash-out register
         </p>
         <button
           type="button"

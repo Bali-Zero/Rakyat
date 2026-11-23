@@ -1079,7 +1079,7 @@ describe("Accounting control centre", () => {
     renderCentre(onOpenCashout);
     await ready();
     const card = screen.getByTestId("cc-cashout-card");
-    expect(card).toHaveTextContent("Cash-out this week");
+    expect(card).toHaveTextContent("Cash-out register");
     expect(card).not.toHaveTextContent("Rp");
     fireEvent.click(within(card).getByRole("button", { name: "Open" }));
     expect(onOpenCashout).toHaveBeenCalledTimes(1);

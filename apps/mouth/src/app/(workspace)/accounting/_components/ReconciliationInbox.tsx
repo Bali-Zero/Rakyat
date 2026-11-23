@@ -1,5 +1,6 @@
 "use client";
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
@@ -71,6 +72,7 @@ export function ReconciliationInbox({
   onOpenCashout: () => void;
   onOpenOutgoings: () => void;
 }) {
+  const month = useAccountingMonth();
   const { error, success } = useToast();
   const [items, setItems] = useState<ReconciliationInboxItem[]>([]);
   const [loadStatus, setLoadStatus] = useState<"loading" | "ok" | "failed">(
@@ -135,7 +137,10 @@ export function ReconciliationInbox({
     const token = ++loadReq.current;
     setLoadStatus("loading");
     try {
-      const rows = await accountingApi.getReconciliationInbox(INBOX_LIMIT);
+      const rows = await accountingApi.getReconciliationInbox(
+        INBOX_LIMIT,
+        month,
+      );
       if (loadReq.current !== token) return;
       setItems(rows);
       setLoadStatus("ok");
@@ -145,7 +150,7 @@ export function ReconciliationInbox({
       error("Failed to load reconciliation inbox", "Please try again");
       logger.error("accounting inbox load failed", {}, err as Error);
     }
-  }, [error]);
+  }, [error, month]);
 
   useEffect(() => {
     void load();

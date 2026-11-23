@@ -128,7 +128,7 @@ describe("the companies strip", () => {
   it("asks for the whole waiting list, not the newest page", async () => {
     renderInbox();
     await screen.findByTestId("cc-companies");
-    expect(api.getReconciliationInbox).toHaveBeenCalledWith(1000);
+    expect(api.getReconciliationInbox).toHaveBeenCalledWith(1000, undefined);
   });
 
   it("lists every company with bank, account and how far its data reaches", async () => {

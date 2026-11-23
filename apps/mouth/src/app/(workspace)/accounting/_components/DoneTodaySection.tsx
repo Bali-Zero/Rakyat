@@ -5,6 +5,7 @@
  * (owner rule b): two steps, the second says what goes back and what does not.
  */
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { logger } from "@/lib/logger";
@@ -30,6 +31,7 @@ const isUnavailable = (err: unknown): boolean =>
 
 /** Owns the load, the data, the status, "older backend" and the retry. */
 export function useDoneToday(version: number) {
+  const month = useAccountingMonth();
   const [data, setData] = useState<DoneTodayResponse | null>(null);
   const [status, setStatus] = useState<DoneTodayStatus>("loading");
   const [unavailable, setUnavailable] = useState(false);
@@ -41,7 +43,7 @@ export function useDoneToday(version: number) {
     const token = ++loadReq.current;
     setStatus("loading");
     try {
-      const res = await accountingApi.getDoneToday();
+      const res = await accountingApi.getDoneToday(month);
       if (!isDoneToday(res)) throw new Error("done-today body malformed");
       if (loadReq.current !== token) return;
       setData(res);
@@ -56,7 +58,7 @@ export function useDoneToday(version: number) {
         setStatus("failed");
       }
     }
-  }, []);
+  }, [month]);
 
   useEffect(() => {
     if (!unavailableRef.current) void load();

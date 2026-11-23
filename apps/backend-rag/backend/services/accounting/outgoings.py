@@ -11,12 +11,14 @@ that carry its e-billing code (`code_debits`): two or more is a possible double 
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
 import asyncpg
 
 from backend.services.accounting.companies import OTHER_KEY, company_key_for_account
 from backend.services.accounting.outgoing_justify import BILLING, PAIR_LATERAL, code_counts
+from backend.services.accounting.period import month_condition
 
 # "OCTO Biz TO <payee> IBI<reference> <BIC> <purpose>" — 60 of 60 transfers on 2026-11-21.
 _TRANSFER = re.compile(r"^OCTO Biz TO (?P<payee>.+?) IBI\d+\s+[A-Z]{8}(?:\s+(?P<purpose>.*?))?\s*$")
@@ -83,7 +85,11 @@ _BASE = f"""
 
 
 async def load_outgoings(
-    conn: asyncpg.Connection, *, limit: int = 1000, state: str = "to_justify"
+    conn: asyncpg.Connection,
+    *,
+    limit: int = 1000,
+    state: str = "to_justify",
+    month: date | None = None,
 ) -> dict[str, Any]:
     """Debits newest first, each with its reading and state, and the totals per kind.
 
@@ -100,23 +106,28 @@ async def load_outgoings(
     """
     if state not in _STATES:
         raise ValueError(f"state must be one of {_STATES}")
+    row_params = [limit, None if state == "all" else state]
+    row_period = month_condition("txn_date", month, row_params)
+    total_params = []
+    total_period = month_condition("txn_date", month, total_params)
     rows = await conn.fetch(
         f"""
         SELECT * FROM ({_BASE}) b
-        WHERE $2::text IS NULL OR is_justified = ($2::text = 'justified')
+        WHERE ($2::text IS NULL OR is_justified = ($2::text = 'justified')){row_period}
         ORDER BY txn_date DESC, posted_at DESC NULLS LAST, id DESC
         LIMIT $1
         """,
-        limit,
-        None if state == "all" else state,
+        *row_params,
     )
     totals = await conn.fetch(
         f"""
         SELECT COALESCE(kind, 'other') AS kind, is_justified, count(*) AS n,
                COALESCE(sum(amount_idr), 0) AS total
         FROM ({_BASE}) b
+        WHERE TRUE{total_period}
         GROUP BY 1, 2
-        """
+        """,
+        *total_params,
     )
     justified = await _justifications(conn, [r["justification_id"] for r in rows])
     counts = await code_counts(conn)
@@ -158,7 +169,12 @@ async def load_outgoings(
         else:
             slot = open_totals.setdefault(
                 t["kind"],
-                {"kind": t["kind"], "label": READING.get(t["kind"], "Other"), "n": 0, "total_idr": 0},
+                {
+                    "kind": t["kind"],
+                    "label": READING.get(t["kind"], "Other"),
+                    "n": 0,
+                    "total_idr": 0,
+                },
             )
             slot["n"] += t["n"]
             slot["total_idr"] += int(t["total"])
@@ -184,8 +200,17 @@ async def _justifications(
     if not wanted:
         return {}
     heads = await conn.fetch(
-        "SELECT id, category, practice_id, recipient, note, justified_by, justified_at, batch_id"
-        " FROM outgoing_justifications WHERE id = ANY($1::bigint[])",
+        """
+        WITH heads AS (
+            SELECT id, category, practice_id, recipient, note, justified_by, justified_at, batch_id
+            FROM outgoing_justifications WHERE id = ANY($1::bigint[])
+        ), sizes AS (
+            SELECT batch_id, count(*) AS active_count FROM outgoing_justifications
+            WHERE undone_at IS NULL AND batch_id IN (SELECT batch_id FROM heads)
+            GROUP BY batch_id
+        )
+        SELECT heads.*, sizes.active_count FROM heads LEFT JOIN sizes USING (batch_id)
+        """,
         wanted,
     )
     line_rows = await conn.fetch(
@@ -207,6 +232,7 @@ async def _justifications(
             "by": h["justified_by"],
             "at": h["justified_at"],
             "batch_id": str(h["batch_id"]) if h["batch_id"] else None,
+            **({"batch_active_count": h["active_count"]} if h["batch_id"] else {}),
         }
         for h in heads
     }

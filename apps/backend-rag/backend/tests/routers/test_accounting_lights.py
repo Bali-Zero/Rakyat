@@ -939,7 +939,7 @@ def test_outgoings_returns_the_service_reading_with_the_limit(mock_db_pool) -> N
         resp = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"limit": 50})
     assert resp.status_code == 200
     assert resp.json() == reading
-    assert load.await_args.kwargs == {"limit": 50, "state": "to_justify"}
+    assert load.await_args.kwargs == {"limit": 50, "state": "to_justify", "month": None}
 
 
 @pytest.mark.parametrize("limit", [0, 5001])
@@ -1011,7 +1011,7 @@ def test_outgoings_passes_the_state_filter_and_refuses_an_unknown_one(mock_db_po
     with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
         ok = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "justified"})
         bad = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "nope"})
-    assert ok.status_code == 200 and load.await_args.kwargs == {"limit": 1000, "state": "justified"}
+    assert ok.status_code == 200 and load.await_args.kwargs == {"limit": 1000, "state": "justified", "month": None}
     assert bad.status_code == 422
 
 

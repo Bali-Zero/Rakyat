@@ -285,3 +285,19 @@ async def test_nothing_to_justify(db) -> None:
         "n_justified": 0,
         "justified_total_idr": 0,
     }
+
+
+async def test_month_bounds_filter_before_limit_and_totals(db) -> None:
+    sid = await _statement(db)
+    for when, amount in [
+        (datetime(2026, 10, 31), 100),
+        (datetime(2026, 11, 1), 200),
+        (datetime(2026, 11, 30), 300),
+        (datetime(2026, 12, 1), 400),
+    ]:
+        await _row(db, sid, "bank_fee", amount, "MONTH BOUNDARY", when)
+    scoped = await load_outgoings(db, month=date(2026, 11, 1), limit=1)
+    assert [i["txn_date"] for i in scoped["items"]] == [date(2026, 11, 30)]
+    assert (scoped["n"], scoped["total_idr"]) == (2, 500)
+    history = await load_outgoings(db)
+    assert (history["n"], history["total_idr"]) == (4, 1000)

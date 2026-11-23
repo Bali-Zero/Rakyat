@@ -302,6 +302,7 @@ async def test_justify_all_pnbp_writes_one_row_per_debit_sharing_one_batch(db) -
     assert {str(r["batch_id"]) for r in rows} == {done["batch_id"]}
     listed = (await load_outgoings(db, state="justified"))["items"]
     assert {i["justification"]["batch_id"] for i in listed} == {done["batch_id"]}
+    assert {i["justification"]["batch_active_count"] for i in listed} == {len(listed)}
     assert await db.fetchval("SELECT count(*) FROM weekly_cashout") == cash_out
 
 
