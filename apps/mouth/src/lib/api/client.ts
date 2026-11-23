@@ -16,6 +16,7 @@ import {
   notifySessionChanged,
 } from "@/lib/auth/session-signal";
 import { logger } from "@/lib/logger";
+import { isWorkspaceAdminRole } from "@/lib/auth/workspace-admin";
 import { ApiError } from "./error-handler";
 
 /** FastAPI validation error structure */
@@ -329,13 +330,7 @@ export class ApiClientBase implements IApiClient {
   }
 
   isAdmin(): boolean {
-    const role = this.userProfile?.role?.toLowerCase();
-    return (
-      role === "admin" ||
-      role === "founder" ||
-      role === "owner" ||
-      role === "board"
-    );
+    return isWorkspaceAdminRole(this.userProfile?.role);
   }
 
   /**

@@ -10,6 +10,7 @@ import type { GateStatus } from "@/lib/api";
 import GateScreen from "./GateScreen";
 // useTeamStatus removed — PANOPTICON auto-clock-in from login (2026-04-14)
 import { logger } from "@/lib/logger";
+import { isWorkspaceAdminRole } from "@/lib/auth/workspace-admin";
 import { ErrorBoundary } from "@/components/optimization";
 import { ZantaraWidget } from "@/components/workspace/ZantaraWidget";
 import { KitaCommandPalette } from "@/components/workspace/KitaCommandPalette";
@@ -432,10 +433,8 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
 
   // Admin override visibility (F6). The backend lock is the real gate; the
   // frontend only needs to know whether to SHOW the override button — mirror
-  // the role set used by ApiClientBase.isAdmin().
-  const isAdmin = ["admin", "founder", "owner", "board"].includes(
-    (user.role || "").toLowerCase(),
-  );
+  // the shared isWorkspaceAdminRole helper.
+  const isAdmin = isWorkspaceAdminRole(user.role);
 
   // INTAKE gate interception (spec §3.2/§5): render the gate INSTEAD of the
   // workspace while blocked and not bypassed. ToastProvider wraps it because
