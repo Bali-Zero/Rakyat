@@ -107,7 +107,6 @@ ROLE_VISA_SPECIALIST = AgentRole(
         "team_knowledge",
         "knowledge_graph_search",
         "calculator",
-        "vision_analysis",
         "web_search",
         "crm_query",
     ],
@@ -194,7 +193,6 @@ ROLE_EXECUTIVE_CONSULTANT = AgentRole(
         "team_knowledge",
         "knowledge_graph_search",
         "calculator",
-        "vision_analysis",
         "web_search",
         "crm_query",
     ],
@@ -273,7 +271,6 @@ ROLE_HR_MANAGER = AgentRole(
         "team_knowledge",
         "knowledge_graph_search",
         "calculator",
-        "vision_analysis",
         "web_search",
     ],
     allowed_write_tools=[
@@ -353,7 +350,6 @@ ROLE_CRM_FULL = AgentRole(
         "team_knowledge",
         "knowledge_graph_search",
         "calculator",
-        "vision_analysis",
         "web_search",
     ],
     allowed_write_tools=[
@@ -437,7 +433,6 @@ ROLE_TAX_SPECIALIST = AgentRole(
         "team_knowledge",
         "knowledge_graph_search",
         "calculator",
-        "vision_analysis",
         "web_search",
     ],
     allowed_write_tools=[

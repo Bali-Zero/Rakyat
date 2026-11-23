@@ -185,7 +185,6 @@ class TestAuthorizeDecisions:
             "team_knowledge",
             "knowledge_graph_search",
             "calculator",
-            "vision_analysis",
             "web_search",
         ):
             r = await authorizer.authorize(
