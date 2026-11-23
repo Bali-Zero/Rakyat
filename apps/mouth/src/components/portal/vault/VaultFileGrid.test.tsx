@@ -61,6 +61,15 @@ describe("VaultFileGrid", () => {
     expect(screen.getByText(/Passport for KITAS renewal/)).toBeInTheDocument();
   });
 
+  it("keeps final evidence downloadable without offering client removal", () => {
+    const file = makeFile({ can_remove: false, downloadable: true });
+    render(
+      <VaultFileGrid files={[file]} onDelete={vi.fn()} onDownload={vi.fn()} />,
+    );
+    expect(screen.queryByRole("button", { name: /Remove/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Download/i })).toBeVisible();
+  });
+
   it("omits Remove button when onDelete is not provided", () => {
     render(<VaultFileGrid files={[makeFile()]} />);
     expect(

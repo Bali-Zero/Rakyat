@@ -211,6 +211,18 @@ describe("Final delivery", () => {
     await user.click(
       screen.getByRole("button", { name: "Mark as not applicable" }),
     );
+    const waiver = screen.getByLabelText(
+      "Reason this requirement does not apply",
+    );
+    for (const invalid of ["ab", "x".repeat(501)]) {
+      fireEvent.change(waiver, { target: { value: invalid } });
+      expect(
+        screen.getByRole("button", { name: "Save reason" }),
+      ).toBeDisabled();
+    }
+    fireEvent.change(waiver, { target: { value: "x".repeat(500) } });
+    expect(screen.getByRole("button", { name: "Save reason" })).toBeEnabled();
+    await user.clear(waiver);
     await user.type(
       screen.getByLabelText("Reason this requirement does not apply"),
       "No filing due",
@@ -298,6 +310,41 @@ describe("Final delivery", () => {
     can_postpone: true,
     can_escalate: false,
   };
+  it("restores only a server-authorised missing permit on a completed practice", async () => {
+    const closed = {
+      ...initial,
+      status: "completed",
+      bonus_event: "electronic_visa_issued",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+        slot("itk", "ITK", { can_repair: true }),
+      ],
+    };
+    requests.get.mockResolvedValue(closed);
+    requests.post.mockResolvedValueOnce({
+      ...closed,
+      slots: [closed.slots[0], slot("itk", "ITK", { document_id: 72 })],
+    });
+    const { user, complete } = setup();
+    const input = await screen.findByLabelText("Restore ITK");
+    expect(
+      screen.queryByRole("button", { name: "Deliver and complete" }),
+    ).toBeNull();
+    expect(screen.queryByLabelText("Replace Electronic Visa")).toBeNull();
+    await user.upload(
+      input,
+      new File(["%PDF-1.7"], "ITK.pdf", { type: "application/pdf" }),
+    );
+    await waitFor(() =>
+      expect(requests.post).toHaveBeenCalledWith(
+        base + "/slots/itk/repair",
+        expect.objectContaining({ file_name: "ITK.pdf" }),
+      ),
+    );
+    expect(await screen.findByText("Missing permit restored.")).toBeVisible();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it("records a private not-entered note once against the original 60-day deadline", async () => {
     requests.get.mockResolvedValue({ ...initial, visa_followup: followup });
     const note = "Client confirmed entry is still pending.";
@@ -345,7 +392,11 @@ describe("Final delivery", () => {
       can_escalate: true,
       status: "escalation_due",
     };
-    const failed = { ...due, status: "email_failed" };
+    const failed = {
+      ...due,
+      status: "email_failed",
+      escalation_note: "Arrival evidence is outstanding.",
+    };
     requests.get
       .mockResolvedValueOnce({ ...initial, visa_followup: due })
       .mockResolvedValue({ ...initial, visa_followup: failed });
@@ -365,6 +416,19 @@ describe("Final delivery", () => {
     );
     expect(screen.getByText(/Official email to Zero · case #12/)).toBeVisible();
     expect(requests.post).not.toHaveBeenCalled();
+    const reason = screen.getByLabelText(
+      "Note to Zero about the missing permit",
+    );
+    const send = screen.getByRole("button", {
+      name: "Confirm and send email to Zero",
+    });
+    for (const invalid of ["ab", "x".repeat(2001)]) {
+      fireEvent.change(reason, { target: { value: invalid } });
+      expect(send).toBeDisabled();
+    }
+    fireEvent.change(reason, { target: { value: "x".repeat(2000) } });
+    expect(send).toBeEnabled();
+    await user.clear(reason);
     await user.type(
       screen.getByLabelText("Note to Zero about the missing permit"),
       "Arrival evidence is outstanding.",
@@ -373,6 +437,18 @@ describe("Final delivery", () => {
       screen.getByRole("button", { name: "Confirm and send email to Zero" }),
     );
     expect(await screen.findByText(/Email delivery failed/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(
+      screen.getByRole("button", { name: "Review and retry email to Zero" }),
+    );
+    const original = screen.getByLabelText(
+      "Note to Zero about the missing permit",
+    );
+    expect(original).toHaveValue("Arrival evidence is outstanding.");
+    expect(original).toHaveAttribute("readonly");
+    expect(screen.getByText(/Recorded reason to Zero/)).toHaveTextContent(
+      "Arrival evidence is outstanding.",
+    );
     expect(requests.post).toHaveBeenCalledTimes(1);
     await user.click(
       screen.getByRole("button", { name: "Confirm and send email to Zero" }),

@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import { fileToBase64 } from "@/lib/utils";
 import {
+  validStaffText,
   VisaPermitFollowup,
   type VisaFollowup,
   type FollowupAction,
@@ -31,6 +32,7 @@ interface Slot {
   document_id: number | null;
   file_name: string | null;
   waiver_reason: string | null;
+  can_repair?: boolean;
   reusable_document_id: number | null;
   issued_on: string | null;
 }
@@ -38,6 +40,7 @@ interface Slot {
 interface Delivery {
   status: string;
   bonus_slot: string | null;
+  bonus_status?: string | null;
   bonus_event:
     | "electronic_visa_issued"
     | "kitas_imk_uploaded"
@@ -134,8 +137,16 @@ function StaffDeliveryCard({
     !chooseCompany ||
     companies?.some((company) => String(company.company_id) === companyId);
 
-  async function change(request: () => Promise<Delivery>, message: string) {
-    if (pending.current || !writable) return;
+  function repairable(slot?: Slot): boolean {
+    return data?.status === "completed" && slot?.can_repair === true;
+  }
+
+  async function change(
+    request: () => Promise<Delivery>,
+    message: string,
+    repairSlot?: Slot,
+  ) {
+    if (pending.current || !(writable || repairable(repairSlot))) return;
     pending.current = true;
     setWorking(true);
     setFailure("");
@@ -147,7 +158,7 @@ function StaffDeliveryCard({
       window.dispatchEvent(new Event("kita:delivery-changed"));
       setWaiveKey("");
       setWaiver("");
-      if (result.status === "completed") onComplete();
+      if (writable && result.status === "completed") onComplete();
     } catch (e) {
       setFailure(
         e instanceof Error
@@ -156,7 +167,7 @@ function StaffDeliveryCard({
       );
       // A response can be lost after the server commits. Recover its actual state.
       const refreshed = await mutate().catch(() => undefined);
-      if (refreshed?.status === "completed") {
+      if (writable && refreshed?.status === "completed") {
         setFailure("");
         setFeedback("Final documents delivered. Practice completed.");
         window.dispatchEvent(new Event("kita:delivery-changed"));
@@ -195,18 +206,24 @@ function StaffDeliveryCard({
     }
     void change(
       async () =>
-        post<Delivery>(`${url}/slots/${encodeURIComponent(slot.key)}`, {
-          file_name: file.name,
-          ...(needsIssueDate(slot) ? { issued_on: issueDate } : {}),
-          file_content: await fileToBase64(file),
-          mime_type: file.type,
-          ...(chooseCompany && companyId
-            ? { company_id: Number(companyId) }
-            : {}),
-        }),
-      slot.key === data?.bonus_slot
-        ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
-        : "Document saved.",
+        post<Delivery>(
+          `${url}/slots/${encodeURIComponent(slot.key)}${repairable(slot) ? "/repair" : ""}`,
+          {
+            file_name: file.name,
+            ...(needsIssueDate(slot) ? { issued_on: issueDate } : {}),
+            file_content: await fileToBase64(file),
+            mime_type: file.type,
+            ...(writable && chooseCompany && companyId
+              ? { company_id: Number(companyId) }
+              : {}),
+          },
+        ),
+      repairable(slot)
+        ? "Missing permit restored."
+        : slot.key === data?.bonus_slot
+          ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
+          : "Document saved.",
+      slot,
     );
   }
 
@@ -225,6 +242,7 @@ function StaffDeliveryCard({
         : action === "confirm-receipt"
           ? "Existing email receipt recorded."
           : "Escalation status updated.",
+      data.slots.find((s) => s.key === data.visa_followup?.slot_key),
     );
   }
 
@@ -248,9 +266,11 @@ function StaffDeliveryCard({
         <>
           {data.bonus_slot && (
             <p className="mb-3 text-sm" role="status">
-              {data.bonus_event
-                ? `Bonus recorded on the ${bonusLabel} upload. Remaining documents do not earn another bonus.`
-                : `The bonus accrues when you upload the ${bonusLabel}.${visaDateSlot ? " Enter the printed issue date for the document record." : ""}`}
+              {data.bonus_status === "ineligible"
+                ? "The qualifying upload is recorded. The assignee is ineligible for a payroll bonus."
+                : data.bonus_event
+                  ? `Bonus recorded on the ${bonusLabel} upload. Remaining documents do not earn another bonus.`
+                  : `The bonus accrues when you upload the ${bonusLabel}.${visaDateSlot ? " Enter the printed issue date for the document record." : ""}`}
             </p>
           )}
           {writable && !practice.family_member_id && (
@@ -374,10 +394,14 @@ function StaffDeliveryCard({
                       />
                     </label>
                   )}
-                  {writable && (
+                  {(writable || repairable(slot)) && (
                     <>
                       <label className="block text-sm my-1">
-                        {slot.document_id == null ? "Upload" : "Replace"}{" "}
+                        {repairable(slot)
+                          ? "Restore"
+                          : slot.document_id == null
+                            ? "Upload"
+                            : "Replace"}{" "}
                         {slot.label}
                         <input
                           className="block max-w-full text-sm"
@@ -409,19 +433,22 @@ function StaffDeliveryCard({
                                     { document_id: slot.reusable_document_id },
                                   ),
                                 "Combined permit linked to both requirements.",
+                                slot,
                               )
                             }
                           >
                             Confirm the existing permit covers both documents
                           </button>
                         )}
-                      {slot.condition &&
+                      {writable &&
+                        slot.condition &&
                         !slot.document_id &&
                         !slot.waiver_reason &&
                         (waiveKey === slot.key ? (
                           <form
                             onSubmit={(e) => {
                               e.preventDefault();
+                              if (!validStaffText(waiver, 500)) return;
                               void change(
                                 () =>
                                   post<Delivery>(
@@ -444,7 +471,7 @@ function StaffDeliveryCard({
                             </label>
                             <button
                               className={actionStyle}
-                              disabled={working || !waiver.trim()}
+                              disabled={working || !validStaffText(waiver, 500)}
                             >
                               Save reason
                             </button>

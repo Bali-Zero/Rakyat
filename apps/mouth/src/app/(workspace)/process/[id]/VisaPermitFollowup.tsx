@@ -32,6 +32,11 @@ export type FollowupAction = "postpone" | "escalate" | "confirm-receipt";
 const buttonStyle =
   "mt-2 text-sm font-semibold text-[var(--bz-accent)] underline disabled:opacity-50";
 
+export function validStaffText(value: string, max: number): boolean {
+  const length = Array.from(value.trim()).length;
+  return length >= 3 && length <= max;
+}
+
 export function VisaPermitFollowup({
   practiceId,
   value,
@@ -55,10 +60,13 @@ export function VisaPermitFollowup({
       "confirm-receipt":
         value.status === "email_uncertain" && value.can_confirm_receipt,
     }[action];
-  const validNote =
-    draft === "confirm-receipt"
-      ? note.trim().length >= 3 && note.trim().length <= 250
-      : Boolean(note.trim());
+  // The server keeps the payload and key of the first send on every retry.
+  const recordedReason = draft === "escalate" ? value.escalation_note : null;
+  const submission = recordedReason ?? note.trim();
+  const validNote = validStaffText(
+    submission,
+    draft === "confirm-receipt" ? 250 : 2000,
+  );
   function prepare(action: FollowupAction) {
     setNote("");
     setDraft(action);
@@ -85,6 +93,11 @@ export function VisaPermitFollowup({
       )}
       {value.postponement_note && (
         <p className="break-words">Staff note · {value.postponement_note}</p>
+      )}
+      {value.escalation_note && (
+        <p className="break-words whitespace-pre-wrap">
+          Recorded reason to Zero · {value.escalation_note}
+        </p>
       )}
       {value.status === "fulfilled" && <p>Required permit received.</p>}
       {value.status === "overdue" && (
@@ -169,7 +182,7 @@ export function VisaPermitFollowup({
           onSubmit={async (e) => {
             e.preventDefault();
             if (!validNote || busy || !allowed(draft)) return;
-            await act(draft, note.trim());
+            await act(draft, submission);
           }}
         >
           {draft === "escalate" && (
@@ -184,8 +197,8 @@ export function VisaPermitFollowup({
             <textarea
               className="mt-1 block w-full rounded border p-2"
               required
-              maxLength={draft === "confirm-receipt" ? 250 : 1000}
-              value={note}
+              readOnly={Boolean(recordedReason)}
+              value={recordedReason ?? note}
               disabled={busy}
               onChange={(e) => setNote(e.target.value)}
             />
