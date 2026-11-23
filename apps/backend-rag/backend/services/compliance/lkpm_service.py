@@ -496,6 +496,7 @@ class LKPMService:
             submission.client_id,
             submission.quarter,
             submission.year,
+            draft.company_id,
         )
         draft.cumulative = InvestmentRealization(
             equipment_domestic=cumulative.equipment_domestic + draft.realized.equipment_domestic,
@@ -595,7 +596,7 @@ class LKPMService:
         )
 
         # Calculate cumulative
-        cumulative = await self._calculate_cumulative(client_id, quarter, year)
+        cumulative = await self._calculate_cumulative(client_id, quarter, year, draft.company_id)
         draft.cumulative = InvestmentRealization(
             equipment_domestic=cumulative.equipment_domestic + draft.realized.equipment_domestic,
             equipment_import=cumulative.equipment_import + draft.realized.equipment_import,
@@ -817,6 +818,44 @@ class LKPMService:
     async def get_draft(self, client_id: int, quarter: str, year: int) -> LKPMDraft | None:
         """Get a specific draft."""
         return await self._load_draft(client_id, quarter, year)
+
+    async def get_draft_for_portal_client(
+        self, client_id: int, quarter: str, year: int
+    ) -> LKPMDraft | None:
+        """Get the draft of a portal client: a report of one of its active linked
+        companies, or a draft generated for the client itself.
+
+        A report with a company is scoped by `r.company_id` (the authoritative FK),
+        never by `r.client_id`, which holds a company id for imported rows (see
+        `get_history_for_portal_client`). A draft generated for a client carries no
+        company, and only then does `r.client_id` identify the caller. One draft is
+        returned: the lowest linked company id first, the client's own generated
+        draft after them.
+        """
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT r.* FROM lkpm_reports r
+                WHERE r.quarter = $2 AND r.year = $3
+                  AND (
+                    r.company_id IN (
+                        SELECT DISTINCT ccl.company_id
+                        FROM client_company_links ccl
+                        WHERE ccl.client_id = $1
+                          AND ccl.status = 'active'
+                    )
+                    OR (r.company_id IS NULL AND r.client_id = $1)
+                  )
+                ORDER BY r.company_id ASC NULLS LAST, r.id ASC
+                LIMIT 1
+                """,
+                client_id,
+                quarter,
+                year,
+            )
+        if not row:
+            return None
+        return self._row_to_draft(row)
 
     async def get_history(self, client_id: int) -> list[LKPMBatchItem]:
         """
@@ -1129,10 +1168,15 @@ class LKPMService:
         client_id: int,
         quarter: str,
         year: int,
+        company_id: int | None = None,
     ) -> InvestmentRealization:
-        """Sum all previous quarters' realization for cumulative total."""
-        # Quarter ordering for comparison
+        """Sum the realization of the earlier quarters of one report series.
 
+        A series is the key a draft is saved under: the client and the company, or
+        the client alone for a draft that names no company. `client_id` holds a
+        company id on imported rows, so a sum keyed by the client alone could add
+        the figures of a company the client is not linked to.
+        """
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -1148,11 +1192,13 @@ class LKPMService:
                     COALESCE(SUM(realized_other), 0) as other
                 FROM lkpm_reports
                 WHERE client_id = $1
+                  AND company_id IS NOT DISTINCT FROM $4
                   AND (year < $2 OR (year = $2 AND quarter < $3))
                 """,
                 client_id,
                 year,
                 quarter,
+                company_id,
             )
 
         if not rows or not rows[0]:

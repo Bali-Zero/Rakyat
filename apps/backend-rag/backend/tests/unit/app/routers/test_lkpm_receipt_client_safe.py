@@ -503,7 +503,8 @@ async def test_portal_draft_scope_comes_from_principal_and_is_non_enumerating(
     draft.model_dump.return_value = {"id": 501, "client_id": 101}
     service = SimpleNamespace(
         resolve_portal_client_id=AsyncMock(return_value=101),
-        get_draft=AsyncMock(return_value=draft),
+        get_draft=AsyncMock(),
+        get_draft_for_portal_client=AsyncMock(return_value=draft),
     )
     monkeypatch.setattr(lkpm_router, "_get_service", lambda _pool: service)
     user = _client_user()
@@ -522,6 +523,7 @@ async def test_portal_draft_scope_comes_from_principal_and_is_non_enumerating(
     assert cross_tenant.value.status_code == 404
     assert cross_tenant.value.detail == "Draft not found"
     service.get_draft.assert_not_awaited()
+    service.get_draft_for_portal_client.assert_not_awaited()
 
     response = await lkpm_router.get_draft(
         client_id=0,
@@ -534,7 +536,10 @@ async def test_portal_draft_scope_comes_from_principal_and_is_non_enumerating(
 
     assert response == {"success": True, "draft": {"id": 501, "client_id": 101}}
     assert service.resolve_portal_client_id.await_count == 2
-    service.get_draft.assert_awaited_once_with(101, "Q1", 2026)
+    # A portal caller's draft is read through the caller's linked companies,
+    # never by the staff lookup that selects a row by its own key.
+    service.get_draft_for_portal_client.assert_awaited_once_with(101, "Q1", 2026)
+    service.get_draft.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -544,6 +549,7 @@ async def test_missing_portal_link_and_missing_draft_share_the_same_response(
     service = SimpleNamespace(
         resolve_portal_client_id=AsyncMock(return_value=None),
         get_draft=AsyncMock(),
+        get_draft_for_portal_client=AsyncMock(),
     )
     monkeypatch.setattr(lkpm_router, "_get_service", lambda _pool: service)
 
@@ -560,6 +566,7 @@ async def test_missing_portal_link_and_missing_draft_share_the_same_response(
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Draft not found"
     service.get_draft.assert_not_awaited()
+    service.get_draft_for_portal_client.assert_not_awaited()
 
 
 @pytest.mark.asyncio
