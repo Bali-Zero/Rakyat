@@ -5,10 +5,11 @@ Endpoints for managing practices (KITAS, PT PMA, Visas, etc.)
 Refactored: Migrated to asyncpg with connection pooling (2025-12-07)
 """
 
+import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path, Query, Request
@@ -590,9 +591,163 @@ class PracticeResponse(BaseModel):
     invoice_company_id: int | None = None
 
 
+class HistoricalTaxCompletionCreate(BaseModel):
+    """Evidence-backed historical filing; deliberately separate from normal sales flow."""
+
+    client_id: int
+    company_id: int
+    assigned_to: str
+    service: Literal["lkpm_quarterly", "spt_annual_company"]
+    fiscal_year: int
+    fiscal_period: str
+    issuer: str
+    completed_at: datetime
+    evidence_references: list[str]
+    source: str
+
+    @field_validator("fiscal_year")
+    @classmethod
+    def _year_is_finite(cls, value: int) -> int:
+        if not 2000 <= value <= 2100:
+            raise ValueError("fiscal_year must be between 2000 and 2100")
+        return value
+
+    @field_validator("issuer", "source")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value is required")
+        return value
+
+    @field_validator("evidence_references")
+    @classmethod
+    def _evidence_is_explicit(cls, value: list[str]) -> list[str]:
+        value = [reference.strip() for reference in value if reference.strip()]
+        if not value:
+            raise ValueError("at least one evidence reference is required")
+        return value
+
+    @model_validator(mode="after")
+    def _scope_is_supported(self) -> "HistoricalTaxCompletionCreate":
+        if self.service == "lkpm_quarterly" and self.fiscal_period not in {"Q1", "Q2", "Q3", "Q4"}:
+            raise ValueError("LKPM fiscal_period must be Q1, Q2, Q3, or Q4")
+        if self.service == "spt_annual_company" and self.fiscal_period != "ANNUAL":
+            raise ValueError("annual SPT fiscal_period must be ANNUAL")
+        if self.completed_at.tzinfo is None or self.completed_at.utcoffset() is None:
+            raise ValueError("completed_at must include an offset (WITA is +08:00)")
+        return self
+
+
+def _can_import_historical_tax_completion(user: dict) -> bool:
+    role = (user.get("role") or "").lower().strip()
+    return is_crm_admin(user) or role in {"accounting", "tax supervisor", "tax lead", "tax responsible"}
+
+
 # ================================================
 # ENDPOINTS
 # ================================================
+
+
+@router.post("/historical-tax-completions", response_model=PracticeResponse, status_code=201)
+async def create_historical_tax_completion(
+    completion: HistoricalTaxCompletionCreate,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> PracticeResponse:
+    """Register a proved historical tax filing without any sales or completion automation."""
+    if not _can_import_historical_tax_completion(current_user):
+        raise HTTPException(status_code=403, detail="Tax supervisor or CRM/accounting admin required")
+
+    service_code = {
+        "lkpm_quarterly": "tax_lkpm_quarterly_historical",
+        "spt_annual_company": "tax_annual_company",
+    }[completion.service]
+    identity_material = "|".join(
+        (completion.issuer.casefold(), str(completion.company_id), service_code,
+         str(completion.fiscal_year), completion.fiscal_period)
+    )
+    identity = "historical-tax:" + hashlib.sha256(identity_material.encode()).hexdigest()
+    operator = (current_user.get("email") or "").lower().strip()
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            assignee = await conn.fetchval(
+                "SELECT 1 FROM team_members WHERE LOWER(email) = $1 AND active = TRUE",
+                completion.assigned_to.lower(),
+            )
+            if not assignee:
+                raise HTTPException(status_code=422, detail="assigned_to must be an active team member")
+            linked = await conn.fetchval(
+                "SELECT 1 FROM client_company_links WHERE client_id = $1 AND company_id = $2",
+                completion.client_id,
+                completion.company_id,
+            )
+            if not linked:
+                raise HTTPException(status_code=422, detail="company must be linked to client")
+            type_id = await conn.fetchval(
+                "SELECT id FROM practice_types WHERE code = $1",
+                service_code,
+            )
+            if type_id is None:
+                raise HTTPException(status_code=503, detail="historical tax catalog is not seeded")
+
+            # A legacy record for this company/service without an explicit period
+            # cannot safely be distinguished from this import: leave it for review.
+            ambiguous = await conn.fetchval(
+                """
+                SELECT 1 FROM practices
+                WHERE invoice_company_id = $1 AND practice_type_id = $2
+                  AND historical_completion_identity IS NULL
+                LIMIT 1
+                """,
+                completion.company_id,
+                type_id,
+            )
+            if ambiguous:
+                raise HTTPException(
+                    status_code=409,
+                    detail="existing tax practice has no historical scope; review before import",
+                )
+
+            existing = await conn.fetchrow(
+                "SELECT * FROM practices WHERE historical_completion_identity = $1",
+                identity,
+            )
+            if existing:
+                return PracticeResponse.model_validate(dict(existing))
+
+            metadata = {
+                "historical_tax_completion": {
+                    "issuer": completion.issuer,
+                    "fiscal_year": completion.fiscal_year,
+                    "fiscal_period": completion.fiscal_period,
+                    "evidence_references": completion.evidence_references,
+                    "source": completion.source,
+                    "completed_at_wita": completion.completed_at.isoformat(),
+                    "operator": operator,
+                }
+            }
+            row = await conn.fetchrow(
+                """
+                INSERT INTO practices (
+                    client_id, practice_type_id, status, priority, assigned_to,
+                    completion_date, invoice_company_id, metadata, created_by,
+                    historical_completion_identity
+                ) VALUES ($1, $2, 'completed', 'normal', $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (historical_completion_identity) WHERE historical_completion_identity IS NOT NULL
+                DO NOTHING RETURNING *
+                """,
+                completion.client_id, type_id, completion.assigned_to.lower(),
+                completion.completed_at, completion.company_id, to_jsonb(metadata), operator, identity,
+            )
+            if row is None:
+                row = await conn.fetchrow(
+                    "SELECT * FROM practices WHERE historical_completion_identity = $1", identity
+                )
+            if row is None:
+                raise HTTPException(status_code=500, detail="historical completion was not recorded")
+            return PracticeResponse.model_validate(dict(row))
 
 
 @router.post("/", response_model=PracticeResponse)
