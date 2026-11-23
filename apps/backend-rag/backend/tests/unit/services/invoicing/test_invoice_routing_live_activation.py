@@ -46,7 +46,7 @@ def test_all_four_issuers_are_complete_in_production() -> None:
 @pytest.mark.parametrize("instant", [ACTIVATION_UTC, LATER], ids=["at_activation", "later"])
 def test_every_golden_code_routes_to_its_golden_issuer(instant: datetime) -> None:
     golden = _golden()
-    assert len(golden) == 121
+    assert len(golden) == 122
     for code, key in golden.items():
         assert resolve_invoice_entity(code, instant).key == key, code
 

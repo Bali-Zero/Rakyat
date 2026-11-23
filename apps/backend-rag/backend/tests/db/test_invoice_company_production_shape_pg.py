@@ -176,7 +176,7 @@ async def test_historical_filing_keeps_one_internal_process_in_its_wita_month(po
         CREATE TABLE client_family_members (id bigint, full_name text, relationship text);
         ALTER TABLE practice_types ADD COLUMN description text, ADD COLUMN typical_duration_days integer;
     """)
-    migration = MIGRATION.with_name("378_historical_tax_completion_identity.sql")
+    migration = MIGRATION.with_name("381_historical_tax_completion_identity.sql")
     up, _ = split_migration_sql(migration.read_text())
     schema = await pool.fetchval("SELECT current_schema()")
     await pool.execute(up.replace("public.", f'"{schema}".'))
