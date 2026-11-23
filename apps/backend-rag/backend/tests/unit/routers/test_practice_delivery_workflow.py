@@ -253,7 +253,7 @@ async def test_portal_list_requires_recipient_and_published_live_document(db):
 )
 def test_reject_invalid_final_file(encoded, mime):
     with pytest.raises(HTTPException):
-        service.upload_marker(7, None, encoded, "file.pdf", mime)
+        service.upload_digest(encoded, "file.pdf", mime)
 
 
 @pytest.mark.asyncio
@@ -406,3 +406,52 @@ async def test_same_service_reopened_practice_keeps_original_delivery_receipt(db
         for c in conn.execute.await_args_list
     )
     writes["record_delivery_bonus"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_conflict", [True, False])
+async def test_other_slot_content_conflict_cannot_publish_or_qualify(
+    db, writes, monkeypatch, first_conflict
+):
+    pool, conn = db
+    checks = []
+
+    async def lookup(sql, *args):
+        if "practice_delivery_fingerprints" in sql:
+            checks.append(args)
+            return first_conflict or len(checks) == 2
+        return None
+
+    conn.fetchval.side_effect = lookup
+    monkeypatch.setattr(
+        service,
+        "staged_file",
+        AsyncMock(return_value={"document_id": 9, "company_document_id": None}),
+    )
+    with pytest.raises(HTTPException) as refused:
+        await service.upload(
+            pool, 7, "electronic_visa", STAFF, request(date(2026, 1, 15)), BackgroundTasks()
+        )
+    assert refused.value.status_code == 409
+    assert len(checks) == (1 if first_conflict else 2)
+    assert checks[0][0] == 7 and checks[0][2:] == ("visa_c1_tourism", "electronic_visa")
+    writes["record_delivery_bonus"].assert_not_awaited()
+    writes["publish"].assert_not_awaited()
+    if first_conflict:
+        writes["stage"].assert_not_awaited()
+    else:
+        assert "electronic_visa:" in writes["stage"].await_args.args[-2]
+
+
+@pytest.mark.asyncio
+async def test_staged_document_lookup_matches_kind_and_practice_subject(db):
+    await service.staged_file(
+        db[1], PRACTICE, None, "case-delivery:7:0:document_2:test", "itk", lock=True
+    )
+    sql, *args = db[1].fetchrow.await_args.args
+    assert "d.document_type=$4" in sql and "d.practice_id = p.id" in sql
+    assert (
+        "d.client_id = p.client_id" in sql
+        and "d.family_member_id IS NOT DISTINCT FROM p.family_member_id" in sql
+    )
+    assert args[-1] == "itk"

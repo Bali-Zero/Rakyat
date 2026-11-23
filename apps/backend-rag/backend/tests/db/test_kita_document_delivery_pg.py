@@ -83,14 +83,15 @@ async def pool(monkeypatch):
             async with db.acquire() as conn:
                 await conn.execute(
                     """INSERT INTO documents(practice_id,client_id,family_member_id,
-                    intake_idempotency_key,file_id,file_name,uploaded_source,status,client_visible)
-                    VALUES($1,$2,$3,$4,$4,$5,'team','active',false)
+                    intake_idempotency_key,file_id,file_name,uploaded_source,status,client_visible,document_type)
+                    VALUES($1,$2,$3,$4,$4,$5,'team','active',false,$6)
                     ON CONFLICT(intake_idempotency_key) DO NOTHING""",
                     data.practice_id,
                     client_id,
                     data.family_member_id,
                     data.intake_idempotency_key,
                     data.file_name,
+                    data.document_type,
                 )
 
         monkeypatch.setattr(service, "upload_document_base64", sink)
@@ -170,3 +171,70 @@ async def test_combined_renewal_earns_only_at_completion_and_keeps_rate_gap(pool
             == 1
         )
         assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger") == 0
+
+
+@pytest.mark.asyncio
+async def test_replaced_archived_and_deleted_evisa_never_counts_as_itk(pool):
+    visa = final_file("electronic-visa")
+    original = await service.upload(pool, 7, "electronic_visa", STAFF, visa, BackgroundTasks())
+    first_id = original["slots"][0]["document_id"]
+    disguised = visa.model_copy(update={"issued_on": None, "file_name": "visit-stay-permit.pdf"})
+    with pytest.raises(HTTPException, match="another output"):
+        await service.upload(pool, 7, "document_2", STAFF, disguised, BackgroundTasks())
+    # An old upload might have left all current slot pointers after a correction.
+    await service.upload(
+        pool,
+        7,
+        "electronic_visa",
+        STAFF,
+        final_file("corrected-electronic-visa"),
+        BackgroundTasks(),
+    )
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE documents SET is_archived=true WHERE id=$1", first_id)
+    with pytest.raises(HTTPException, match="another output"):
+        await service.upload(pool, 7, "document_2", STAFF, disguised, BackgroundTasks())
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM documents WHERE id=$1", first_id)
+    with pytest.raises(HTTPException, match="another output"):
+        await service.upload(pool, 7, "document_2", STAFF, disguised, BackgroundTasks())
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=7") == 1
+        assert (
+            await conn.fetchval("SELECT count(*) FROM practice_delivery_slots WHERE practice_id=7")
+            == 1
+        )
+    with pytest.raises(HTTPException, match="Upload every required"):
+        await service.complete(pool, 7, STAFF, BackgroundTasks())
+
+
+@pytest.mark.asyncio
+async def test_concurrent_different_slots_cannot_claim_same_content(pool):
+    visa = final_file("electronic-visa")
+    results = await asyncio.gather(
+        service.upload(pool, 7, "electronic_visa", STAFF, visa, BackgroundTasks()),
+        service.upload(
+            pool,
+            7,
+            "document_2",
+            STAFF,
+            visa.model_copy(update={"issued_on": None}),
+            BackgroundTasks(),
+        ),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(r, dict) for r in results) == 1
+    assert sum(isinstance(r, HTTPException) and r.status_code == 409 for r in results) == 1
+    async with pool.acquire() as conn:
+        assert (
+            await conn.fetchval("SELECT count(*) FROM practice_delivery_slots WHERE practice_id=7")
+            == 1
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM practice_delivery_fingerprints WHERE practice_id=7"
+            )
+            == 1
+        )
+    with pytest.raises(HTTPException, match="Upload every required"):
+        await service.complete(pool, 7, STAFF, BackgroundTasks())

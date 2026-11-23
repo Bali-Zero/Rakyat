@@ -204,9 +204,7 @@ async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) 
         return await state(conn, p)
 
 
-def upload_marker(
-    practice_id: int, company_id: int | None, encoded: str, file_name: str, mime_type: str
-) -> str:
+def upload_digest(encoded: str, file_name: str, mime_type: str) -> str:
     try:
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
@@ -218,17 +216,46 @@ def upload_marker(
         or not VirusScanner.scan(data, file_name)["clean"]
     ):
         raise HTTPException(422, "Unsupported file for final delivery")
-    return f"case-delivery:{practice_id}:{company_id or 0}:{hashlib.sha256(data).hexdigest()}"
+    return hashlib.sha256(data).hexdigest()
+
+
+async def check_fingerprint(
+    conn: Any, p: dict, slot_key: str, digest: str, *, record: bool
+) -> None:
+    # Mutating callers hold the practice row lock and roll this insert back
+    # with the delivery if any subsequent handler fails.
+    if record:
+        await conn.execute(
+            """INSERT INTO practice_delivery_fingerprints(practice_id,sha256,service_code,slot_key)
+               VALUES($1,$2,$3,$4) ON CONFLICT(practice_id,sha256) DO NOTHING""",
+            p["id"],
+            digest,
+            p["code"],
+            slot_key,
+        )
+    other_kind = await conn.fetchval(
+        """SELECT EXISTS(SELECT 1 FROM practice_delivery_fingerprints
+                         WHERE practice_id=$1 AND sha256=$2 AND (service_code<>$3 OR slot_key<>$4))""",
+        p["id"],
+        digest,
+        p["code"],
+        slot_key,
+    )
+    if other_kind:
+        raise HTTPException(
+            409,
+            "This file belongs to another output. For a combined permit, use the confirmed reuse action.",
+        )
 
 
 async def staged_file(
-    conn: Any, p: dict, company_id: int | None, marker: str, *, lock: bool = False
+    conn: Any, p: dict, company_id: int | None, marker: str, kind: str, *, lock: bool = False
 ) -> Any:
     return await conn.fetchrow(
         f"""SELECT d.id AS document_id, cd.id AS company_document_id
             FROM documents d JOIN practices p ON p.id=$1
             LEFT JOIN company_documents cd ON cd.company_id=$2 AND cd.google_drive_file_id=d.file_id
-            WHERE d.intake_idempotency_key=$3 AND {_SCOPED} AND {_LIVE}
+            WHERE d.intake_idempotency_key=$3 AND d.document_type=$4 AND {_SCOPED} AND {_LIVE}
               AND d.uploaded_source='team' AND d.file_id IS NOT NULL
               AND ($2::int IS NULL OR cd.id IS NOT NULL)
             LIMIT 1"""
@@ -236,6 +263,7 @@ async def staged_file(
         p["id"],
         company_id,
         marker,
+        kind,
     )
 
 
@@ -342,8 +370,9 @@ async def stage(
 ) -> None:
     # A private draft remains recoverable by its deterministic storage key if
     # the operation is interrupted between Drive and the delivery transaction.
+    kind = document_type(slot["key"], slot["label"])
     async with pool.acquire() as conn:
-        if await staged_file(conn, p, request.company_id, marker):
+        if await staged_file(conn, p, request.company_id, marker, kind):
             return
     category = (
         "tax"
@@ -360,7 +389,7 @@ async def stage(
         file=request.file_content,
         file_name=request.file_name,
         mime_type=request.mime_type,
-        document_type=document_type(slot["key"], slot["label"]),
+        document_type=kind,
         document_category=category,
         client_visible=False,
         practice_id=p["id"],
@@ -384,7 +413,7 @@ async def stage(
         # The canonical writer refuses duplicate bytes. A competing retry is
         # safe to reuse only when its server-generated storage identity matches.
         async with pool.acquire() as conn:
-            if not await staged_file(conn, p, request.company_id, marker) and not (
+            if not await staged_file(conn, p, request.company_id, marker, kind) and not (
                 str(exc.detail).startswith("Duplicate file:")
                 and await existing_output(conn, p, slot, request)
             ):
@@ -415,11 +444,11 @@ async def upload(
         initial_view = await state(conn, snapshot)
         initial_slot = slot_for(initial_view, key)
         issue_date(initial_view, initial_slot, request.issued_on)
-    marker = upload_marker(
-        practice_id, request.company_id, request.file_content, request.file_name, request.mime_type
-    )
+    digest = upload_digest(request.file_content, request.file_name, request.mime_type)
+    base = f"case-delivery:{practice_id}:{request.company_id or 0}:{key}:{digest}"
     async with pool.acquire() as conn:
-        marker = await recoverable_marker(conn, snapshot, marker)
+        await check_fingerprint(conn, snapshot, key, digest, record=False)
+        marker = await recoverable_marker(conn, snapshot, base)
     await stage(pool, snapshot, initial_slot, user, request, marker, tasks)
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
@@ -441,7 +470,9 @@ async def upload(
         ):
             raise HTTPException(409, "Company is not linked to this client")
         issued_on = issue_date(view, slot, request.issued_on)
-        row = await staged_file(conn, p, request.company_id, marker, lock=True)
+        row = await staged_file(
+            conn, p, request.company_id, marker, document_type(key, slot["label"]), lock=True
+        )
         if not row:
             row = await existing_output(conn, p, slot, request)
         if not row:
@@ -452,24 +483,16 @@ async def upload(
             request.company_id,
         ):
             raise HTTPException(409, "Practice documents already name a different company")
-        if p["category"] in {
-            "kitas",
-            "kitap",
-            "single_entry_visa",
-            "multiple_entry_visa",
-            "visa_extension",
-        }:
-            for other in view["slots"]:
-                if (
-                    other["key"] != key
-                    and other["document_id"] == row["document_id"]
-                    and not combined_permit(slot, other)
-                ):
-                    raise HTTPException(
-                        409, "This output requires its own issued immigration document"
-                    )
+        await check_fingerprint(conn, p, key, digest, record=True)
+        # Replaying an upload into the slot that already owns the file is safe,
+        # even if the separate combined-permit action also referenced it.
         if row["document_id"] == slot["document_id"]:
             return view
+        if any(
+            other["key"] != key and other["document_id"] == row["document_id"]
+            for other in view["slots"]
+        ):
+            raise HTTPException(409, "This document already fills another slot")
         if slot["document_id"] != initial_slot["document_id"]:
             raise HTTPException(409, "Another operator changed this slot. Refresh and review.")
         await conn.execute(
