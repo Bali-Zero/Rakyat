@@ -136,11 +136,16 @@ class PortalDocumentsMixin:
         ):
             return "personal"
 
+        # Family
+        if any(k in combined for k in ("akte lahir", "akta lahir", "birth", "nikah", "marriage")):
+            return "family"
+
         # Company / PMA
         if any(
             k in combined
             for k in (
                 "akta",
+                "deed",
                 "pendirian",
                 "perubahan",
                 "nib",
@@ -160,10 +165,6 @@ class PortalDocumentsMixin:
         # Tax
         if any(k in combined for k in ("tax", "pajak", "spt", "efin", "pph", "ppn")):
             return "tax"
-
-        # Family
-        if any(k in combined for k in ("akte lahir", "akta lahir", "birth", "nikah", "marriage")):
-            return "family"
 
         return "other"
 
