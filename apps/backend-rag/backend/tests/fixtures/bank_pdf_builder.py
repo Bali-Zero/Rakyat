@@ -212,8 +212,8 @@ def words_to_pdf(pages: list[list[Word]]) -> bytes:
 
     buf = io.BytesIO()
     pdf = canvas.Canvas(buf, pagesize=(900, _PAGE_H))
-    pdf.setFont("Helvetica", 7)
     for words in pages:
+        pdf.setFont("Helvetica", 7)
         for w in words:
             y = _PAGE_H - w.top - 7
             if _AMOUNT.fullmatch(w.text):

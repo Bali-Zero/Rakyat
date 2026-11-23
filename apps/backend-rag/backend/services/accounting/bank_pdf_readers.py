@@ -1,10 +1,11 @@
-"""Readers for the two PDF bank statements the agency's other companies download.
+"""Readers for bank statement PDFs supported by the Accounting page.
 
-One upload on the Accounting page, three formats, detected from the file content:
+One upload accepts several formats, detected from the file content:
 
   * CIMB Niaga OCTO Biz "Account Statement Summary" CSV   (bank_parser.py)
+  * BNI Direct account statement and transaction inquiry PDFs
   * Bank Mandiri Kopra "Account Statement" PDF (JasperReports)
-  * Bank Permata "Transaction Inquiry" PDF (JasperReports)
+  * Bank Permata "Transaction Inquiry" PDF (JasperReports) and eBusiness "Transaction History" PDF
 
 Every reader returns the same `ParsedStatement` the CIMB reader returns (oldest row first,
 exact Decimal debit/credit/balance, the account number as printed), so the preview report and
@@ -185,10 +186,21 @@ def _txn(
 
 
 def detect_pdf_format(pages: list[list[Word]]) -> str | None:
-    """'mandiri' | 'permata' | None, from the labels printed on the first page."""
+    """Recognize a supported bank layout from the labels on its first page."""
     text = " ".join(w.text for w in pages[0]) if pages else ""
     if "Account Statement Summary" in text and "Posting Date" in text:
         return "mandiri"
+    if all(
+        label in text
+        for label in (
+            "TRANSACTION HISTORY",
+            "Opening Balance",
+            "Total Debit",
+            "Total Credit",
+            "Closing Balance",
+        )
+    ):
+        return "permata_history"
     if "Transaction Inquiry" in text and "Ledger Balance" in text:
         return "permata"
     if "Account Information" in text and (
@@ -624,6 +636,183 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
     )
 
 
+# ── Bank Permata eBusiness (Transaction History) ───────────────────────────
+
+_HISTORY_DATE = r"\d{1,2} [A-Za-z]{3} \d{4}"
+_HISTORY_BAD = "Permata transaction history is incomplete or has an unexpected layout"
+
+
+def _history_date(text: str) -> date:
+    if not re.fullmatch(_HISTORY_DATE, text):
+        raise BankParseError(_HISTORY_BAD)
+    day, month, year = text.split()
+    return _month_date(day, month, year)
+
+
+def _history_amount(words: list[Word]) -> Decimal:
+    # A minus in the narrative or reference column is not an amount sign.
+    value = "".join(w.text for w in words)
+    if not _AMOUNT_RE.fullmatch(value):
+        raise BankParseError(_HISTORY_BAD)
+    return _amount(value)
+
+
+def _history_header(lines: list[list[Word]]) -> tuple[str, str, date, date, list[Decimal]]:
+    labels = (
+        ("Account Name", "Opening Balance"),
+        ("Account No.", "Total Debit"),
+        ("Currency", "Total Credit"),
+        ("Period", "Closing Balance"),
+    )
+    values, controls = [], []
+    if len(lines) != len(labels):
+        raise BankParseError(_HISTORY_BAD)
+    for line, (label, control) in zip(lines, labels, strict=True):
+        if (_text(_column(line, 0, 120)), _text(_column(line, 300, 480))) != (label, control):
+            raise BankParseError(_HISTORY_BAD)
+        values.append(_text(_column(line, 120, 300)))
+        controls.append(_history_amount(_column(line, 480, float("inf"))))
+    name, printed, currency, period = values
+    number = re.sub(r"[ .-]", "", printed)
+    if not name or not re.fullmatch(r"\d{6,}", number):
+        raise BankParseError("statement header has no account")
+    if currency != "IDR":
+        raise BankParseError(_NOT_IDR)
+    parts = period.split(" - ")
+    if len(parts) != 2:
+        raise BankParseError(_HISTORY_BAD)
+    return number, name, _history_date(parts[0]), _history_date(parts[1]), controls
+
+
+@dataclass
+class _HistoryRow:
+    post: date
+    effective: str
+    amount: Decimal
+    description: list[str]
+    references: list[str]
+
+
+def _history_rows(lines: list[list[Word]]) -> list[_HistoryRow]:
+    rows: list[_HistoryRow] = []
+    for line in lines:
+        posted = _text(_column(line, 0, 75))
+        effective = _text(_column(line, 75, 130))
+        amount = _column(line, 490, float("inf"))
+        if posted or effective or amount:
+            post = _history_date(posted)
+            _history_date(effective)
+            rows.append(_HistoryRow(post, effective, _history_amount(amount), [], []))
+        if not rows:
+            raise BankParseError(_HISTORY_BAD)
+        reference = _text(_column(line, 130, 246))
+        description = _text(_column(line, 246, 490))
+        if posted or reference:
+            rows[-1].references.append(reference)
+        if description:
+            rows[-1].description.append(description)
+    if not rows:
+        raise BankParseError(_NO_ROWS)
+    return rows
+
+
+def parse_permata_history_pages(pages: list[list[Word]]) -> ParsedStatement:
+    """The first page prints the account and four controls; the table is newest first."""
+    header = None
+    stamp = None
+    entries: list[_HistoryRow] = []
+    for page_number, words in enumerate(pages, 1):
+        lines = _lines(words)
+        if len(lines) < 7 or _text(lines[0]) != "TRANSACTION HISTORY":
+            raise BankParseError(_HISTORY_BAD)
+        export = _text(lines[1])
+        if not re.fullmatch(rf"{_HISTORY_DATE} \| \d{{2}}:\d{{2}}:\d{{2}}", export):
+            raise BankParseError(_HISTORY_BAD)
+        if (stamp is not None and export != stamp) or _text(
+            lines[-1]
+        ) != f"Page {page_number} of {len(pages)}":
+            raise BankParseError(
+                "Permata transaction history pages do not belong to one complete report"
+            )
+        stamp = export
+        table = next(
+            (
+                i
+                for i, line in enumerate(lines)
+                if _text(_column(line, 246, 490)) == "Description"
+                and _text(_column(line, 490, float("inf"))) == "Amount"
+            ),
+            None,
+        )
+        if table is None or table + 3 >= len(lines):
+            raise BankParseError(_HISTORY_BAD)
+        headings = (
+            "Transaction Value Transaction Reference No./ Description Amount",
+            "Date Date Customer Reference Detail/",
+            "Cheque No.",
+        )
+        if tuple(_text(line) for line in lines[table : table + 3]) != headings:
+            raise BankParseError(_HISTORY_BAD)
+        if page_number == 1:
+            header = _history_header(lines[2:table])
+        elif table != 2:
+            raise BankParseError(
+                "Permata transaction history has an unexpected second account header"
+            )
+        entries.extend(_history_rows(lines[table + 3 : -1]))
+
+    if header is None or not entries:
+        raise BankParseError(_NO_ROWS)
+    number, name, start, end, controls = header
+    opening, total_debit, total_credit, closing = controls
+    balance = opening
+    txns: list[ParsedTxn] = []
+    for entry in reversed(entries):
+        if not start <= entry.post <= end or (txns and entry.post < txns[-1].txn_date):
+            raise BankParseError(
+                "Permata transaction history dates do not match the printed period or order"
+            )
+        if not entry.description or len(entry.references) > 3:
+            raise BankParseError(_HISTORY_BAD)
+        refs = (entry.references + [""] * 3)[:3]
+        debit, credit = max(-entry.amount, Decimal(0)), max(entry.amount, Decimal(0))
+        balance += entry.amount
+        txns.append(
+            _txn(
+                datetime.combine(entry.post, datetime.min.time()),
+                " ".join(entry.description),
+                debit,
+                credit,
+                balance,
+                {
+                    "Eff Date": entry.effective,
+                    "Ref No": refs[0],
+                    "Customer Ref No": refs[1],
+                    "Cheque Number": refs[2],
+                },
+            )
+        )
+    if (sum(t.debit for t in txns), sum(t.credit for t in txns), balance) != (
+        total_debit,
+        total_credit,
+        closing,
+    ):
+        raise BankParseError(
+            "Permata transaction history does not agree with its printed totals or closing balance"
+        )
+    return ParsedStatement(
+        account_number=number,
+        account_name=name,
+        metadata={"Account No.": number, "Account Name": name, "Currency": "IDR"},
+        transactions=txns,
+        order_decided_by="balance_chain",
+        bank_code="bank_permata",
+        source_format="pdf",
+        balances_derived=True,
+        kept_columns=_PERMATA_KEPT,
+    )
+
+
 # ── BNI (BNIdirect "Transaction Inquiry") ───────────────────────────────────
 
 _BNI_DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
@@ -918,6 +1107,8 @@ def _parse(data: bytes) -> ParsedStatement:
         kind = detect_pdf_format(pages)
         if kind == "mandiri":
             return parse_mandiri_pages(pages)
+        if kind == "permata_history":
+            return parse_permata_history_pages(pages)
         if kind == "permata":
             return parse_permata_pages(pages)
         if kind == "bni":
