@@ -288,7 +288,7 @@ async def test_loops_that_have_closed_are_forgotten(
     await recorder.record(_call(9))
 
     # Not an interface: the one place the recorder could grow with every such call.
-    assert len(recorder._pg_pools) == 1
+    assert len(recorder._loops) == 1
 
 
 async def test_a_failed_opening_is_shared_by_the_calls_waiting_on_it_and_tried_again_later(
@@ -338,7 +338,9 @@ async def test_a_call_cancelled_while_the_pool_opens_does_not_cancel_the_opening
 
     assert (await recorder.record(_call(2)))["postgres"] is True
     assert db.asked == 1
-    assert [row["request_id"] for row in await db.rows()] == ["request-2"]
+    # The cancelled call's write is not cancelled with it: it waited on the same opening
+    # and lands too.
+    assert sorted(row["request_id"] for row in await db.rows()) == ["request-1", "request-2"]
 
 
 async def test_an_opening_that_fails_after_its_only_caller_left_is_not_reported_as_lost(

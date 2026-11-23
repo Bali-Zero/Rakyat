@@ -30,9 +30,13 @@ Project policy:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
+import functools
 import json
 import logging
 import os
+import secrets
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -65,6 +69,23 @@ DEFAULT_RETENTION_DAYS: Final[int] = int(
 # no connection frees up in this time the Postgres row is given up for that call,
 # and its JSONL line remains.
 PG_ACQUIRE_TIMEOUT_S: float = 2.0
+
+# How long ``record()`` waits for its Postgres and JSONL writes, together, once they have
+# started. A write still running then goes on, owned by the recorder, and its outcome is
+# logged when it ends; the caller is told False for it.
+SINK_WAIT_BUDGET_S: float = 2.0
+
+# How many writes of one sink may be outstanding on one event loop. Past it the next event
+# skips that sink (no task, no queue) until a write ends; an admitted write is never cancelled.
+# The pool has five connections and a stuck opening is shared, so this many waiting writes
+# means the sink is down; production records some tens to a few hundred calls a day.
+MAX_OUTSTANDING_WRITES: int = 32
+
+_SINKS: Final[tuple[str, str]] = ("postgres", "jsonl")
+
+# The key of the event being recorded, carried by every log line about it. Tasks and threads
+# started while it is set inherit it.
+_EVENT_KEY: contextvars.ContextVar[str] = contextvars.ContextVar("llm_cost_event", default="-")
 
 
 # ---------------------------------------------------------------------------
@@ -106,15 +127,42 @@ class LLMCallEvent:
 # ---------------------------------------------------------------------------
 
 
-class _LoopPool:
-    """The ledger's Postgres pool on one event loop, and the one attempt to open it."""
+class _LoopState:
+    """The ledger on one event loop: its Postgres pool, the one attempt to open it, and the
+    writes still running there, per sink, each held until it ends."""
 
-    __slots__ = ("loop", "opening", "pool")
+    __slots__ = ("loop", "opening", "pool", "skipped", "writes")
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
         self.pool: Any = None
         self.opening: asyncio.Future[Any] | None = None
+        self.writes: dict[str, set[asyncio.Task[None]]] = {sink: set() for sink in _SINKS}
+        self.skipped: dict[str, int] = dict.fromkeys(_SINKS, 0)
+
+
+class _Outcome:
+    """What is known about one recorded event. It only moves forward: a sink that is
+    still running keeps the CRITICAL line back, one that succeeded rules it out for good."""
+
+    __slots__ = ("alarm_settled", "event", "key", "late", "prometheus", "started", "states")
+
+    def __init__(self, event: LLMCallEvent, key: str, prometheus: bool, started: float) -> None:
+        self.event = event
+        self.key = key
+        self.prometheus = prometheus
+        self.started = started
+        self.states: dict[str, str] = {}  # sink -> running | ok | failed | skipped
+        self.late: set[str] = set()
+        self.alarm_settled = False
+
+
+def _error_of(task: asyncio.Task[None]) -> BaseException | None:
+    """The error a finished write ended with, or None. Cancellation is read first: asking a
+    cancelled task for its exception raises."""
+    if task.cancelled():
+        return asyncio.CancelledError()
+    return task.exception()
 
 
 def _retrieve(opening: asyncio.Future[Any]) -> None:
@@ -146,10 +194,11 @@ class LLMCostRecorder:
         )
 
         # One Postgres pool per event loop, opened at that loop's first write
-        # and kept. A pool works only on the loop that opened it, and the
-        # synchronous client entry runs every call on a loop of its own.
-        self._pg_pools: dict[int, _LoopPool] = {}
-        self._pg_pools_guard = threading.Lock()
+        # and kept, with the writes still running on that loop. A pool works
+        # only on the loop that opened it, and the synchronous client entry
+        # runs every call on a loop of its own.
+        self._loops: dict[int, _LoopState] = {}
+        self._loops_guard = threading.Lock()
 
         # Lazy refs so import-time cycles stay impossible.
         self._pg_pool_getter = None
@@ -157,11 +206,12 @@ class LLMCostRecorder:
 
     # -------- setup -------------------------------------------------------
 
-    async def _ensure_jsonl_dir(self) -> bool:
+    def _prepare_jsonl_dir(self) -> bool:
         """Ensure the JSONL output directory exists and is writable.
 
-        Returns True on success. On failure, caches False to avoid spamming
-        filesystem errors on every call; a process restart re-probes.
+        Runs in a thread, never on the event loop. Returns True on success. On
+        failure, caches False to avoid spamming filesystem errors on every call;
+        a process restart re-probes.
         """
         if self._jsonl_ready is not None:
             return self._jsonl_ready
@@ -173,9 +223,10 @@ class LLMCostRecorder:
             self._jsonl_ready = True
         except OSError as exc:
             logger.error(
-                "⚠️ LLM cost JSONL root %s is not writable: %s — "
+                "⚠️ LLM cost JSONL root %s is not writable (event=%s): %s — "
                 "JSONL persistence disabled for this process",
                 self.jsonl_root,
+                _EVENT_KEY.get(),
                 exc,
             )
             self._jsonl_ready = False
@@ -188,16 +239,20 @@ class LLMCostRecorder:
         return self.jsonl_root / JSONL_FILENAME_TEMPLATE.format(date=date_str)
 
     async def _write_jsonl(self, event: LLMCallEvent) -> None:
-        if not await self._ensure_jsonl_dir():
-            raise OSError(
-                f"JSONL root {self.jsonl_root} is not writable",
-            )
         line = json.dumps(event.to_json_dict(), ensure_ascii=False) + "\n"
         path = self._current_jsonl_path(event)
         # O_APPEND + fsync is the POSIX-atomic recipe for a single line
         # under PIPE_BUF. We serialise with a lock so the per-line fsync
         # stays cheap even under high concurrency.
         async with self._jsonl_lock:
+            # The directory is prepared once, in a thread: a slow filesystem holds
+            # this write, never the event loop.
+            if self._jsonl_ready is None:
+                await asyncio.to_thread(self._prepare_jsonl_dir)
+            if not self._jsonl_ready:
+                raise OSError(
+                    f"JSONL root {self.jsonl_root} is not writable",
+                )
             try:
                 fd = await asyncio.to_thread(
                     os.open,
@@ -211,21 +266,23 @@ class LLMCostRecorder:
                 finally:
                     await asyncio.to_thread(os.close, fd)
             except OSError as exc:
-                logger.error("⚠️ JSONL write failed for %s: %s", path, exc)
+                logger.error(
+                    "⚠️ JSONL write failed for %s (event=%s): %s", path, _EVENT_KEY.get(), exc
+                )
                 raise
 
-    def _loop_pool(self) -> _LoopPool:
-        """The pool holder of the running event loop; loops that have closed are forgotten."""
+    def _loop_state(self) -> _LoopState:
+        """The ledger state of the running event loop; loops that have closed are forgotten."""
         loop = asyncio.get_running_loop()
-        with self._pg_pools_guard:
-            for key in [k for k, known in self._pg_pools.items() if known.loop.is_closed()]:
-                del self._pg_pools[key]
-            holder = self._pg_pools.get(id(loop))
+        with self._loops_guard:
+            for key in [k for k, known in self._loops.items() if known.loop.is_closed()]:
+                del self._loops[key]
+            holder = self._loops.get(id(loop))
             if holder is None or holder.loop is not loop:
-                holder = self._pg_pools[id(loop)] = _LoopPool(loop)
+                holder = self._loops[id(loop)] = _LoopState(loop)
             return holder
 
-    async def _open_pg_pool(self, holder: _LoopPool) -> Any:
+    async def _open_pg_pool(self, holder: _LoopState) -> Any:
         try:
             # Lazy import to avoid pulling in asyncpg at module load (tests).
             from backend.app.core.database import get_db_pool
@@ -244,7 +301,7 @@ class LLMCostRecorder:
         nothing, so the next write tries again. A writer that is cancelled
         while it waits does not cancel the attempt.
         """
-        holder = self._loop_pool()
+        holder = self._loop_state()
         if holder.pool is not None:
             return holder.pool
         if holder.opening is None:
@@ -325,10 +382,27 @@ class LLMCostRecorder:
     async def record(self, event: LLMCallEvent) -> dict[str, bool]:
         """Record an LLM call to all three sinks.
 
-        Returns a dict ``{"prometheus": bool, "postgres": bool, "jsonl": bool}``
-        indicating which sinks succeeded. Never raises. If all three fail,
-        logs a CRITICAL warning so the ops pipeline can alert.
+        Returns a dict ``{"prometheus": bool, "postgres": bool, "jsonl": bool}``. True
+        means the write succeeded before this call returned. False means it failed, was
+        skipped because too many writes of that sink are outstanding, or was still running
+        after ``SINK_WAIT_BUDGET_S``: the logs tell the three apart, every line carrying
+        ``event=<key>``, and a write still running goes on, owned by the recorder, with its
+        outcome logged when it ends. The budget times one asynchronous wait over both
+        writes and holds while the event loop makes progress; the synchronous work around
+        it (Prometheus, admission, logging, the first call's lazy import) is outside it.
+
+        Never raises: a caller cancelled during the wait gets the dict of that moment, and
+        no write is cancelled with it. Logs a CRITICAL warning when all three sinks failed,
+        once, as soon as that is known.
         """
+        key = secrets.token_hex(6)
+        token = _EVENT_KEY.set(key)
+        try:
+            return await self._record(event, key)
+        finally:
+            _EVENT_KEY.reset(token)
+
+    async def _record(self, event: LLMCallEvent, key: str) -> dict[str, bool]:
         results: dict[str, bool] = {"prometheus": False, "postgres": False, "jsonl": False}
 
         # Prometheus is sync and extremely fast; do it inline.
@@ -336,52 +410,158 @@ class LLMCostRecorder:
             self._write_prometheus(event)
             results["prometheus"] = True
         except Exception as exc:
-            logger.warning("prometheus write failed for llm_cost event: %s", exc)
+            logger.warning("prometheus write failed for llm_cost event=%s: %s", key, exc)
 
-        # Postgres + JSONL run in parallel.
-        pg_task = asyncio.create_task(self._write_postgres(event))
-        jsonl_task = asyncio.create_task(self._write_jsonl(event))
+        loop = asyncio.get_running_loop()
+        state = self._loop_state()
+        outcome = _Outcome(event, key, results["prometheus"], loop.time())
+        tasks: dict[asyncio.Task[None], str] = {}
+        writers = {"postgres": self._write_postgres, "jsonl": self._write_jsonl}
+        for sink in _SINKS:
+            if not self._admit(state, sink, key):
+                outcome.states[sink] = "skipped"
+                continue
+            coroutine = writers[sink](event)
+            try:
+                task = loop.create_task(coroutine)
+            except Exception as exc:
+                coroutine.close()
+                outcome.states[sink] = "failed"
+                logger.warning(
+                    "%s write for llm_cost event=%s could not be started: %s", sink, key, exc
+                )
+                continue
+            # Owned from creation, before the first await: whatever happens to this
+            # call, the callback reads the write's outcome and drops the reference.
+            outcome.states[sink] = "running"
+            state.writes[sink].add(task)
+            task.add_done_callback(functools.partial(self._settle, state, sink, outcome))
+            tasks[task] = sink
 
-        pg_err: BaseException | None = None
-        jsonl_err: BaseException | None = None
-        try:
-            await pg_task
-            results["postgres"] = True
-        except BaseException as exc:
-            pg_err = exc
-        try:
-            await jsonl_task
-            results["jsonl"] = True
-        except BaseException as exc:
-            jsonl_err = exc
+        if tasks:
+            try:
+                await asyncio.wait(tasks, timeout=SINK_WAIT_BUDGET_S)
+            except asyncio.CancelledError:
+                # As before, a cancelled caller is answered with what is known now.
+                pass
 
-        if pg_err is not None:
+        # What counts is what has ended when the wait resumes; nothing awaits from here.
+        for task, sink in tasks.items():
+            if not task.done():
+                outcome.late.add(sink)
+                continue
+            error = _error_of(task)
+            if error is None:
+                outcome.states[sink] = "ok"
+                results[sink] = True
+            else:
+                outcome.states[sink] = "failed"
+                logger.warning(
+                    "%s write failed for llm_cost event=%s (model=%s endpoint=%s): %s",
+                    sink,
+                    key,
+                    event.model,
+                    event.endpoint,
+                    error,
+                )
+        if outcome.late:
             logger.warning(
-                "postgres write failed for llm_cost event (model=%s endpoint=%s): %s",
-                event.model,
-                event.endpoint,
-                pg_err,
+                "llm_cost event=%s: %s write not confirmed within %gs, it goes on",
+                key,
+                " and ".join(sorted(outcome.late)),
+                SINK_WAIT_BUDGET_S,
             )
-        if jsonl_err is not None:
-            logger.warning(
-                "jsonl write failed for llm_cost event (model=%s endpoint=%s): %s",
-                event.model,
-                event.endpoint,
-                jsonl_err,
-            )
-
-        if not any(results.values()):
-            logger.critical(
-                "🚨 ALL THREE llm_cost sinks failed for event "
-                "(provider=%s model=%s endpoint=%s cost=$%.6f) — "
-                "COST TRACKING GAP, check Prometheus/Postgres/JSONL health",
-                event.provider,
-                event.model,
-                event.endpoint,
-                event.cost_usd,
-            )
-
+        self._alarm_if_all_failed(outcome)
         return results
+
+    def _admit(self, state: _LoopState, sink: str, key: str) -> bool:
+        """Admit a write of ``sink``, or skip it while too many are outstanding on this loop."""
+        outstanding = len(state.writes[sink])
+        if outstanding >= MAX_OUTSTANDING_WRITES:
+            if not state.skipped[sink]:
+                logger.warning(
+                    "%s write skipped for llm_cost event=%s: admission is saturated, "
+                    "%d writes outstanding",
+                    sink,
+                    key,
+                    outstanding,
+                )
+            state.skipped[sink] += 1
+            return False
+        if state.skipped[sink]:
+            logger.warning(
+                "%s write admitted for llm_cost event=%s after %d skipped "
+                "while admission was saturated",
+                sink,
+                key,
+                state.skipped[sink],
+            )
+            state.skipped[sink] = 0
+        return True
+
+    def _settle(
+        self, state: _LoopState, sink: str, outcome: _Outcome, task: asyncio.Task[None]
+    ) -> None:
+        """Done callback of a write: drop its reference, read its outcome, and log the
+        outcome of a write that ended after ``record()`` returned. Never raises."""
+        state.writes[sink].discard(task)
+        try:
+            error = _error_of(task)
+            if sink not in outcome.late:
+                return  # ended within the budget: record() reports it
+            elapsed = state.loop.time() - outcome.started
+            if error is None:
+                outcome.states[sink] = "ok"
+                logger.info(
+                    "%s write for llm_cost event=%s landed late, %.2fs after it started",
+                    sink,
+                    outcome.key,
+                    elapsed,
+                )
+            else:
+                outcome.states[sink] = "failed"
+                logger.warning(
+                    "%s write failed late for llm_cost event=%s (model=%s endpoint=%s), "
+                    "%.2fs after it started: %s",
+                    sink,
+                    outcome.key,
+                    outcome.event.model,
+                    outcome.event.endpoint,
+                    elapsed,
+                    error,
+                )
+            self._alarm_if_all_failed(outcome)
+        except Exception:
+            with contextlib.suppress(Exception):
+                logger.exception(
+                    "the %s write outcome of llm_cost event=%s could not be logged",
+                    sink,
+                    outcome.key,
+                )
+
+    @staticmethod
+    def _alarm_if_all_failed(outcome: _Outcome) -> None:
+        """Log the CRITICAL line once, when all three sinks are known to have failed."""
+        if outcome.alarm_settled:
+            return
+        states = outcome.states.values()
+        if outcome.prometheus or "ok" in states:
+            outcome.alarm_settled = True
+            return
+        if "running" in states:
+            return
+        outcome.alarm_settled = True
+        event = outcome.event
+        logger.critical(
+            "🚨 ALL THREE llm_cost sinks failed for event=%s "
+            "(provider=%s model=%s endpoint=%s cost=$%.6f) — "
+            "COST TRACKING GAP, check Prometheus/Postgres/JSONL health",
+            outcome.key,
+            event.provider,
+            event.model,
+            event.endpoint,
+            event.cost_usd,
+        )
 
 
 # ---------------------------------------------------------------------------
