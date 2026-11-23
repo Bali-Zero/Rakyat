@@ -49,6 +49,96 @@ class FakeStreamingManager:
             yield event
 
 
+def test_streaming_finalization_enums_include_fast_answer() -> None:
+    assert set(ProducerOrigin) == {
+        ProducerOrigin.QUERY_GATE,
+        ProducerOrigin.FAQ_CACHE,
+        ProducerOrigin.SEMANTIC_CACHE,
+        ProducerOrigin.MULTI_AGENT_COORDINATOR,
+        ProducerOrigin.SPECIALIZED_SERVICE_ROUTER,
+        ProducerOrigin.KNOWLEDGE_GRAPH,
+        ProducerOrigin.FAST_ANSWER,
+        ProducerOrigin.REACT_PIPELINE,
+        ProducerOrigin.UNKNOWN,
+    }
+    assert set(EvidenceProvenance) == {
+        EvidenceProvenance.FAQ_CACHE,
+        EvidenceProvenance.SEMANTIC_CACHE,
+        EvidenceProvenance.MULTI_AGENT_COORDINATOR,
+        EvidenceProvenance.SPECIALIZED_SERVICE_ROUTER,
+        EvidenceProvenance.KNOWLEDGE_GRAPH,
+        EvidenceProvenance.FAST_ANSWER,
+        EvidenceProvenance.REACT_PIPELINE,
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_query_core_fast_answer_streams_and_logs_once(monkeypatch) -> None:
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(orchestrator_streaming_core.asyncio, "sleep", no_sleep)
+    real_core = OrchestratorCore.__new__(OrchestratorCore)
+    real_core.reasoning_engine = SimpleNamespace(tool_map={"vector_search": object()})
+    real_core.db_pool = object()
+    real_core.prepare_query_context = AsyncMock(return_value=({"profile": None}, [], {}, "", None))
+    real_core.check_gates_and_cache = AsyncMock(return_value=None)
+    result = CoreResult(
+        answer="Synthetic fast answer",
+        sources=[{"collection": "legal_test", "title": "Synthetic source"}],
+        model_used="claude-sonnet-5-5",
+        route_used="fast_answer",
+        timings={"total": 0.25},
+    )
+    repository = SimpleNamespace(log_query=AsyncMock(return_value="synthetic-receipt"))
+    streaming_core = OrchestratorStreamingCore(
+        core=real_core,
+        streaming_manager=FakeStreamingManager(),
+    )
+
+    with (
+        patch.object(
+            orchestrator_streaming_core, "try_fast_answer", AsyncMock(return_value=result)
+        ),
+        patch(
+            "backend.db.repositories.query_analytics_repository.QueryAnalyticsRepository",
+            return_value=repository,
+        ),
+    ):
+        events = [
+            event
+            async for event in streaming_core.stream_query_core(
+                query="Synthetic streaming question",
+                user_id="synthetic-user",
+                conversation_history=None,
+                session_id=None,
+                images=None,
+                tool_execution_counter={"count": 0},
+                correlation_id="synthetic-correlation",
+            )
+        ]
+
+    fast_events = events[
+        next(
+            index
+            for index, event in enumerate(events)
+            if event["type"] == "metadata" and event["data"].get("route") == "fast_answer"
+        ) :
+    ]
+    assert [event["type"] for event in fast_events] == [
+        "metadata",
+        "token",
+        "token",
+        "token",
+        "sources",
+        "done",
+    ]
+    repository.log_query.assert_awaited_once()
+    analytics = repository.log_query.await_args.kwargs
+    assert analytics["model_used"] == "claude-sonnet-5-5"
+    assert analytics["stage_timings"] == {"total": 0.25}
+
+
 @pytest.mark.asyncio
 async def test_stream_core_result_yields_metadata_tokens_sources_and_done(monkeypatch) -> None:
     async def no_sleep(_seconds: float) -> None:
@@ -255,6 +345,33 @@ class _ToolCallReactCore(_RawReactCore):
     def __init__(self, raw_event: dict) -> None:
         super().__init__("complete")
         self.reasoning_engine = _ToolCallReactReasoningEngine(raw_event)
+
+
+@pytest.mark.asyncio
+async def test_stream_query_core_fast_answer_none_continues_existing_flow() -> None:
+    streaming_core = OrchestratorStreamingCore(
+        core=_RawReactCore("complete"),
+        streaming_manager=FakeStreamingManager(),
+    )
+
+    with (
+        patch.object(orchestrator_streaming_core, "try_fast_answer", AsyncMock(return_value=None)),
+        patch.object(streaming_core, "_mark_react_stream_unfinalized"),
+    ):
+        events = [
+            event
+            async for event in streaming_core.stream_query_core(
+                query="Synthetic fallback question",
+                user_id="synthetic-user",
+                conversation_history=None,
+                session_id=None,
+                images=None,
+                tool_execution_counter={"count": 0},
+                correlation_id="synthetic-correlation",
+            )
+        ]
+
+    assert any(event.get("data") == "raw-token" for event in events)
 
 
 @pytest.mark.asyncio

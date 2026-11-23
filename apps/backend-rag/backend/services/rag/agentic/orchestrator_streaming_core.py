@@ -22,6 +22,7 @@ from typing import Any
 from backend.app.utils.tracing import add_span_event
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.rag.agentic._crm_precall import DATA, SCOPED_ZERO, judge_crm_precall
+from backend.services.rag.agentic.fast_answer import try_fast_answer
 from backend.services.rag.agentic.orchestrator_core import OrchestratorCore
 from backend.services.rag.agentic.orchestrator_streaming import OrchestratorStreamingManager
 from backend.services.rag.agentic.query_helpers import wrap_query_with_language_instruction
@@ -253,6 +254,58 @@ class OrchestratorStreamingCore:
                 yield event
             return
 
+        vector_tool = (
+            getattr(getattr(self.core, "reasoning_engine", None), "tool_map", None) or {}
+        ).get("vector_search")
+        fast_result = await try_fast_answer(
+            query=query,
+            conversation_history=optimized_history,
+            vector_tool=vector_tool,
+            start_time=start_time,
+            channel=channel,
+            agent_role=agent_role,
+            profile=(user_context or {}).get("profile"),
+            images=images,
+        )
+        if fast_result:
+            from backend.db.repositories.query_analytics_repository import (
+                QueryAnalyticsRepository,
+            )
+            from backend.services.rag.agentic.orchestrator_core import _apply_e33_claim_guard
+
+            _apply_e33_claim_guard(fast_result)
+            fast_result = await self.core.finalize_result(fast_result)
+            try:
+                if self.core.db_pool:
+                    repo = QueryAnalyticsRepository(self.core.db_pool)
+                    await repo.log_query(
+                        query_text=query,
+                        user_id=user_id,
+                        session_id=session_id,
+                        collections_queried=[
+                            str(source["collection"])
+                            for source in fast_result.sources
+                            if isinstance(source, dict) and source.get("collection")
+                        ],
+                        chunks_retrieved_count=len(fast_result.sources),
+                        response_generated=True,
+                        model_used=fast_result.model_used,
+                        execution_time_ms=int(fast_result.timings.get("total", 0) * 1000),
+                        response_text=fast_result.answer,
+                        stage_timings=fast_result.timings,
+                    )
+            except Exception as analytics_err:
+                logger.warning(
+                    "Failed to log fast answer streaming analytics (non-critical): %s",
+                    type(analytics_err).__name__,
+                )
+            async for event in self._stream_core_result(
+                result=fast_result,
+                route_used="fast_answer",
+            ):
+                yield event
+            return
+
         # 2b. CRM Pre-call: if query is about clients/practices, call CRM tool
         # directly and inject results into context. This avoids Gemini wasting
         # 2-3 ReAct steps trying vector_search before discovering crm_query.
@@ -422,7 +475,11 @@ class OrchestratorStreamingCore:
 
                 # Check if this is a tool call event
                 if raw_event and raw_event.get("type") == "tool_call":
-                    tool_name = raw_event.get("data", {}).get("tool") or raw_event.get("data", {}).get("tool_name") or "unknown tool"
+                    tool_name = (
+                        raw_event.get("data", {}).get("tool")
+                        or raw_event.get("data", {}).get("tool_name")
+                        or "unknown tool"
+                    )
                     # M2 (operand rule): bind the yield operand FIRST, so building it is
                     # producer time; the pause read sits between it and the yield.
                     pending_event = thinking_service.create_thinking_event(
