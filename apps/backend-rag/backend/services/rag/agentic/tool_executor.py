@@ -468,6 +468,10 @@ async def execute_tool(
             arguments["_user_id"] = user_id
         if caller_profile:
             arguments["_caller_profile"] = caller_profile
+        desk_role = getattr(agent_role, "desk_role", None)
+        if user_id and desk_role is not None:
+            # The signed-in desk identity of this request, as its session carries it.
+            arguments["_desk_user"] = {"email": user_id, "role": desk_role}
         result = await tool.execute(**arguments)
         duration = time.time() - start_time
 

@@ -30,6 +30,10 @@ import pytest
 
 from backend.services.rag.agentic.tools import CRMTool
 
+# The tool reads nothing for a call that names nobody, so every call here is made as a
+# signed-in desk user. Who it is does not matter to the clamp.
+_CALLER = {"email": "admin.one@example.test", "role": "admin"}
+
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -62,7 +66,9 @@ class TestCRMToolLimitClampGuilt:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="search_clients", search_term="x", limit=1_000_000)
+        await tool.execute(
+            _desk_user=_CALLER, query_type="search_clients", search_term="x", limit=1_000_000
+        )
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit <= 50
@@ -72,7 +78,7 @@ class TestCRMToolLimitClampGuilt:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="recent_clients", limit=-5)
+        await tool.execute(_desk_user=_CALLER, query_type="recent_clients", limit=-5)
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit >= 1
@@ -82,7 +88,7 @@ class TestCRMToolLimitClampGuilt:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="expiring_documents", limit=0)
+        await tool.execute(_desk_user=_CALLER, query_type="expiring_documents", limit=0)
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit >= 1
@@ -95,7 +101,7 @@ class TestCRMToolLimitClampGuilt:
         # An LLM can pass a garbage string instead of an int — must never
         # raise, must degrade to the documented default (20), never crash
         # the tool call.
-        await tool.execute(query_type="practice_stats", limit="not-a-number")
+        await tool.execute(_desk_user=_CALLER, query_type="practice_stats", limit="not-a-number")
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit == 20
@@ -105,7 +111,9 @@ class TestCRMToolLimitClampGuilt:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="search_clients", search_term="x", limit=None)
+        await tool.execute(
+            _desk_user=_CALLER, query_type="search_clients", search_term="x", limit=None
+        )
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit == 20
@@ -116,7 +124,9 @@ class TestCRMToolLimitClampGuilt:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="search_clients", search_term="x", limit=[1, 2, 3])
+        await tool.execute(
+            _desk_user=_CALLER, query_type="search_clients", search_term="x", limit=[1, 2, 3]
+        )
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit == 20
@@ -133,7 +143,9 @@ class TestCRMToolLimitClampInnocence:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="search_clients", search_term="x", limit=10)
+        await tool.execute(
+            _desk_user=_CALLER, query_type="search_clients", search_term="x", limit=10
+        )
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit == 10
@@ -144,7 +156,7 @@ class TestCRMToolLimitClampInnocence:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="recent_clients", limit=50)
+        await tool.execute(_desk_user=_CALLER, query_type="recent_clients", limit=50)
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit == 50
@@ -154,7 +166,7 @@ class TestCRMToolLimitClampInnocence:
         pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        await tool.execute(query_type="practice_stats")
+        await tool.execute(_desk_user=_CALLER, query_type="practice_stats")
 
         called_limit = conn.fetch.call_args.args[-1]
         assert called_limit == 20
@@ -176,7 +188,9 @@ class TestCRMToolDaysAheadClamp:
         pool, _conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
-        result = await tool.execute(query_type="expiring_documents", days_ahead=days_ahead)
+        result = await tool.execute(
+            _desk_user=_CALLER, query_type="expiring_documents", days_ahead=days_ahead
+        )
 
         parsed = json.loads(result)
         assert "error" not in parsed

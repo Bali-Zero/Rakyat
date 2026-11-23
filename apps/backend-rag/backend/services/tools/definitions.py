@@ -107,6 +107,9 @@ class AgentState:
     intent_type: str = "simple"  # Intent category from classifier (business_complex, etc.)
     evidence_score: float | None = None  # Confidence score from evidence evaluation (0.0–1.0)
     trusted_tools_used: bool = False  # Whether trusted tools (PricingTool, DB) were invoked
+    # Set when the CRM pre-call found nothing within the signed-in user's scope. Appended
+    # to every message of the turn sent to the model; not evidence, not context.
+    crm_scope_note: str = ""
     # VASSAL Phase 2: AgentRole carried as request-scoped state for the
     # tool_authorizer. Set by the workspace endpoint via the orchestrator
     # chain (stream_query → stream_query_core → _prepare_react_loop), read
