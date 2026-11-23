@@ -4,6 +4,8 @@
 CREATE TABLE hr_delivery_bonus_events (
     practice_id INTEGER PRIMARY KEY REFERENCES practices(id) ON DELETE RESTRICT,
     employee_id INTEGER REFERENCES hr_employees(id) ON DELETE RESTRICT,
+    original_team_member_id VARCHAR(36) REFERENCES team_members(id) ON DELETE RESTRICT,
+    payroll_ineligible BOOLEAN NOT NULL DEFAULT FALSE,
     service_code TEXT NOT NULL,
     event_kind TEXT NOT NULL CHECK (event_kind IN ('electronic_visa_issued', 'service_delivered')),
     earned_at TIMESTAMPTZ NOT NULL,
@@ -13,7 +15,8 @@ CREATE TABLE hr_delivery_bonus_events (
     amount_idr BIGINT CHECK (amount_idr >= 0),
     ledger_id BIGINT UNIQUE REFERENCES hr_bonus_ledger(id) ON DELETE RESTRICT,
     resolved_by TEXT,
-    CHECK (ledger_id IS NULL OR (employee_id IS NOT NULL AND amount_idr IS NOT NULL))
+    CHECK (ledger_id IS NULL OR (employee_id IS NOT NULL AND amount_idr IS NOT NULL)),
+    CHECK (NOT payroll_ineligible OR (employee_id IS NULL AND ledger_id IS NULL AND amount_idr IS NULL))
 );
 CREATE TABLE hr_delivery_goals (
     employee_id INTEGER NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
@@ -22,6 +25,24 @@ CREATE TABLE hr_delivery_goals (
     PRIMARY KEY (employee_id, month)
 );
 CREATE INDEX idx_hr_delivery_events_employee ON hr_delivery_bonus_events (employee_id, earned_at DESC);
+
+-- Completion also admits legacy award writers. An explicitly excluded receipt
+-- stays terminal for all practice-linked ledger writes, including later reassignment.
+CREATE FUNCTION hr_refuse_ineligible_delivery_bonus() RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM hr_delivery_bonus_events
+        WHERE practice_id = NEW.practice_id AND payroll_ineligible
+    ) THEN
+        RAISE EXCEPTION 'Original assignee was outside payroll at delivery';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_hr_bonus_delivery_eligibility
+    BEFORE INSERT OR UPDATE OF practice_id, employee_id ON hr_bonus_ledger
+    FOR EACH ROW WHEN (NEW.practice_id IS NOT NULL)
+    EXECUTE FUNCTION hr_refuse_ineligible_delivery_bonus();
 
 CREATE OR REPLACE FUNCTION hr_validate_completed_practice()
 RETURNS TRIGGER AS $$
@@ -68,5 +89,7 @@ BEGIN
     RAISE EXCEPTION 'Practice must be completed before bonus entry';
 END;
 $$ LANGUAGE plpgsql;
+DROP TRIGGER trg_hr_bonus_delivery_eligibility ON hr_bonus_ledger;
+DROP FUNCTION hr_refuse_ineligible_delivery_bonus();
 DROP TABLE hr_delivery_goals;
 DROP TABLE hr_delivery_bonus_events;

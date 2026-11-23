@@ -84,7 +84,7 @@ async def test_hr_replay_is_idempotent_and_preserves_fixed_rate():
     conn.fetchrow.side_effect = [{"ledger_id": 12}, {"status": "pending"}]
     assert (await bonus.resolve_delivery_bonus(conn, 5, 10, "reviewer"))["status"] == "pending"
     conn = AsyncMock()
-    conn.fetchrow.return_value = {"ledger_id": None, "amount_idr": 123}
+    conn.fetchrow.return_value = {"ledger_id": None, "amount_idr": 123, "payroll_ineligible": False}
     with pytest.raises(ValueError, match="recorded rate"):
         await bonus.resolve_delivery_bonus(conn, 5, 456, "reviewer")
 
@@ -101,7 +101,13 @@ async def test_desk_does_not_query_payroll_for_ineligible_account():
 @pytest.mark.asyncio
 async def test_resolving_missing_rate_requires_current_payroll_eligibility():
     conn = AsyncMock()
-    conn.fetchrow.return_value = {"ledger_id": None, "amount_idr": None, "employee_id": 1}
+    conn.fetchrow.return_value = {
+        "ledger_id": None,
+        "amount_idr": None,
+        "employee_id": 1,
+        "payroll_ineligible": False,
+        "original_team_member_id": "member-a",
+    }
     conn.fetchval.return_value = False
     with pytest.raises(ValueError, match="no longer on payroll"):
         await bonus.resolve_delivery_bonus(conn, 2, 175000, "hr-reviewer")
@@ -129,3 +135,13 @@ async def test_first_visa_needs_real_issue_date_but_a_replacement_preserves_its_
             conn, 8, "visa", "replacement@example.invalid", "electronic_visa_issued"
         )
     )["status"] == "awaiting_employee"
+
+
+@pytest.mark.asyncio
+async def test_known_off_payroll_claim_cannot_be_assigned_even_to_an_eligible_replacement():
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"ledger_id": None, "payroll_ineligible": True}
+    with pytest.raises(ValueError, match="outside payroll at delivery"):
+        await bonus.resolve_delivery_bonus(conn, 2, 175000, "hr-reviewer", employee_id=2)
+    conn.fetchval.assert_not_awaited()
+    conn.execute.assert_not_awaited()

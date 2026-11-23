@@ -29,7 +29,8 @@ async def get_delivery_bonus(conn: asyncpg.Connection, practice_id: int) -> dict
     row = await conn.fetchrow(
         """
         SELECT e.event_kind, e.earned_at, e.recorded_at, e.evidence_issued_on, e.awarded_at, e.amount_idr,
-               COALESCE(b.status, CASE WHEN e.employee_id IS NULL THEN 'awaiting_employee'
+               COALESCE(b.status, CASE WHEN e.payroll_ineligible THEN 'ineligible'
+                                      WHEN e.employee_id IS NULL THEN 'awaiting_employee'
                                       WHEN e.amount_idr IS NULL THEN 'awaiting_rate'
                                       ELSE 'payroll_locked' END) AS status
         FROM hr_delivery_bonus_events e LEFT JOIN hr_bonus_ledger b ON b.id = e.ledger_id
@@ -87,24 +88,34 @@ async def record_delivery_bonus(
                 "An issued Electronic Visa needs its actual issue date, up to today in Bali"
             )
     # Existing payroll records win across upgrades, including already paid/reversed bonuses.
-    # An ineligible assignee still claims the event to prevent awards after reassignment.
+    # Resolve the email against all identities before evaluating the payroll set.
+    # A missing HR card may leave the predicate NULL; an explicit exclusion is FALSE.
+    # Zero matches or an ambiguous mix stays open for HR, never auto-credited.
     event = await conn.fetchrow(
         f"""
         INSERT INTO hr_delivery_bonus_events
             (practice_id, employee_id, service_code, event_kind, earned_at, awarded_at,
-             bonus_rate_id, amount_idr, ledger_id, recorded_at, evidence_issued_on)
+             bonus_rate_id, amount_idr, ledger_id, recorded_at, evidence_issued_on,
+             original_team_member_id, payroll_ineligible)
         SELECT $1, COALESCE(old.employee_id, employee.id), $2, $4, $5, COALESCE(old.awarded_at, $6),
-               CASE WHEN old.id IS NOT NULL THEN old.bonus_rate_id ELSE rate.id END,
-               CASE WHEN old.id IS NOT NULL THEN old.amount_idr ELSE rate.amount_idr END, old.id, $5, $8
+               CASE WHEN old.id IS NOT NULL THEN old.bonus_rate_id WHEN NOT employee.ineligible THEN rate.id END,
+               CASE WHEN old.id IS NOT NULL THEN old.amount_idr WHEN NOT employee.ineligible THEN rate.amount_idr END,
+               old.id, $5, $8, CASE WHEN old.id IS NULL THEN employee.member_id END,
+               old.id IS NULL AND employee.ineligible
         FROM (SELECT 1) seed
         LEFT JOIN LATERAL (
             SELECT id, employee_id, awarded_at, bonus_rate_id, amount_idr FROM hr_bonus_ledger
              WHERE practice_id = $1 ORDER BY id LIMIT 1
         ) old ON TRUE
         LEFT JOIN LATERAL (
-            SELECT CASE WHEN COUNT(*) = 1 THEN MIN(e.id) END AS id
-              FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id
-             WHERE lower(trim(tm.email)) = lower(trim($3::text)) AND {payroll_set_sql()}
+            SELECT CASE WHEN COUNT(*) = 1 AND bool_and(m.eligible) THEN MIN(m.employee_id) END AS id,
+                   CASE WHEN COUNT(DISTINCT m.member_id) = 1 THEN MIN(m.member_id) END AS member_id,
+                   COALESCE(bool_and(m.eligible IS FALSE), FALSE) AS ineligible
+            FROM (
+                SELECT tm.id AS member_id, e.id AS employee_id, {payroll_set_sql()} AS eligible
+                FROM team_members tm LEFT JOIN hr_employees e ON e.team_member_id = tm.id
+                WHERE lower(trim(tm.email)) = NULLIF(lower(trim($3::text)), '')
+            ) m
         ) employee ON TRUE
         LEFT JOIN hr_bonus_rates rate ON rate.practice_type_code = $2 AND rate.is_active
             AND rate.effective_from <= $7 AND (rate.effective_to IS NULL OR rate.effective_to >= $7)
@@ -152,6 +163,8 @@ async def resolve_delivery_bonus(
         raise LookupError("Delivery bonus not found")
     if event["ledger_id"] is not None:
         return await get_delivery_bonus(conn, practice_id)
+    if event["payroll_ineligible"]:
+        raise ValueError("The original assignee was outside payroll at delivery")
     if event["amount_idr"] is not None and amount_idr != event["amount_idr"]:
         raise ValueError("The recorded rate must be preserved")
     frozen_beneficiary = event["employee_id"]
@@ -162,11 +175,14 @@ async def resolve_delivery_bonus(
         raise ValueError("Select the employee who earned this bonus")
     eligible = await conn.fetchval(
         f"""SELECT {payroll_set_sql()} FROM hr_employees e JOIN team_members tm ON tm.id=e.team_member_id
-            WHERE e.id=$1 FOR SHARE OF e, tm""",
+            WHERE e.id=$1 AND ($2::text IS NULL OR tm.id=$2) FOR SHARE OF e, tm""",
         beneficiary,
+        event["original_team_member_id"],
     )
     if not eligible:
-        raise ValueError("This employee is no longer on payroll")
+        raise ValueError(
+            "The selected employee is not the original beneficiary or is no longer on payroll"
+        )
     award_date = event["awarded_at"]
     if use_current_period:
         original = award_date.astimezone(WITA)
