@@ -57,12 +57,12 @@ CREATE FUNCTION hr_visa_holds_for_period(target_month DATE, target_period INTEGE
 RETURNS TABLE (practice_id INTEGER,employee_id INTEGER)
 LANGUAGE SQL STABLE AS $$
     SELECT o.practice_id,o.employee_id FROM hr_visa_bonus_obligations o
-    WHERE o.due_on <= as_of AND o.payout_from_month <= target_month AND (
-        o.bound_period_id=target_period OR (o.bound_period_id IS NULL AND NOT EXISTS (
-             SELECT 1 FROM hr_payroll_periods earlier WHERE earlier.status IN ('draft','calculated')
-               AND earlier.period_start >= o.payout_from_month AND earlier.period_start < target_month
-        ))
-    )
+    WHERE o.bound_period_id=target_period
+       OR (o.bound_period_id IS NULL AND o.due_on <= as_of AND o.payout_from_month <= target_month
+           AND NOT EXISTS (
+               SELECT 1 FROM hr_payroll_periods earlier WHERE earlier.status IN ('draft','calculated')
+                 AND earlier.period_start >= o.payout_from_month AND earlier.period_start < target_month
+           ))
 $$;
 
 -- Calculation and approval use the same inputs. Only deliberately deferred bonuses can
@@ -75,7 +75,9 @@ LANGUAGE SQL STABLE AS $$
                    WHERE h.employee_id=b.employee_id)
            OR EXISTS (
                SELECT 1 FROM hr_bonus_deferral_causes c JOIN hr_visa_bonus_obligations o USING(practice_id)
-                WHERE c.bonus_id=b.id AND o.due_on <= as_of
+                -- The deadline governs first binding. Once bound, only verified permit
+                -- evidence clears this specific cause, including after a valid postponement.
+                WHERE c.bonus_id=b.id
            )
     FROM hr_bonus_ledger b
     WHERE b.status IN ('pending','approved')

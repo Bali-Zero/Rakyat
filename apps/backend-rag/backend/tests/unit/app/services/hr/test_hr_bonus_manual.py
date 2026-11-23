@@ -109,8 +109,11 @@ class TestCreateManualBonus:
         lock_sql, month, year = conn.fetchval.await_args.args
         assert "payroll_month" in lock_sql and (month, year) == (11, 2026)
         # the shared month lock was taken before the status read
-        assert "pg_advisory_xact_lock_shared" in conn.execute.await_args_list[0].args[0]
-        assert conn.execute.await_args_list[0].args[1] == "hr_payroll_month:2026-11"
+        allocation_lock, month_lock = conn.execute.await_args_list
+        assert "pg_advisory_xact_lock_shared" in allocation_lock.args[0]
+        assert "hr_bonus_payout_allocation" in allocation_lock.args[0]
+        assert "pg_advisory_xact_lock_shared" in month_lock.args[0]
+        assert month_lock.args[1] == "hr_payroll_month:2026-11"
 
 
 class TestRejectAndDelete:

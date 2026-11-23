@@ -257,7 +257,7 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
                        WHEN o.email_state='sent' THEN 'upload_after_email'
                        ELSE 'send_escalation_email' END AS next_action
            FROM hr_visa_bonus_obligations o LEFT JOIN practice_types pt ON pt.code=o.service_code
-           WHERE o.employee_id=$1 AND o.due_on <= $2
+           WHERE o.employee_id=$1 AND (o.bound_period_id IS NOT NULL OR o.due_on <= $2)
            ORDER BY o.due_on, o.practice_id""",
         emp_id,
         today,
