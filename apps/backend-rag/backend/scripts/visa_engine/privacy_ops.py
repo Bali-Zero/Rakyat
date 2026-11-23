@@ -103,6 +103,15 @@ async def run(args: argparse.Namespace) -> int:
             review_due_at=args.review_due_at if args.action == "hold" else None,
         )
         logger.info("privacy_operation_result action=%s changed=%s", args.action, changed)
+        if changed is not True:
+            # The capability answers false for an unknown decision and for one already in the
+            # requested state alike. Neither is "this run put the hold in place".
+            logger.error(
+                "privacy_operation_result action=%s no_change=true: the decision is absent or "
+                "already in that state; verify it before relying on this run",
+                args.action,
+            )
+            return 2
         return 0
     finally:
         await db_pool.close()
