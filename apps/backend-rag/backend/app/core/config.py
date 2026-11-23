@@ -1305,10 +1305,6 @@ class Settings(BaseSettings):
     # ========================================
     # EXTERNAL SERVICE URLS
     # ========================================
-    indexnow_api_url: str = Field(
-        default="https://api.indexnow.org/indexnow",
-        description="IndexNow API URL for search engine indexing. Set via INDEXNOW_API_URL env var",
-    )
     google_indexing_api_url: str = Field(
         default="https://indexing.googleapis.com/v3/urlNotifications:publish",
         description="Google Indexing API URL for search console notifications. Set via GOOGLE_INDEXING_API_URL env var",

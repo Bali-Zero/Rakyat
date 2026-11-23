@@ -1142,23 +1142,9 @@ async def publish_article_internal(request: PublishRequest) -> PublishResponse:
             logger.info("✅ Article published: %s", article_url)
         logger.info(f"   Commit: {result.get('commit_sha', 'N/A')[:7]}")
 
-        # Trigger IndexNow for faster search engine indexing
-        try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=10.0) as http_client:
-                indexnow_resp = await http_client.post(
-                    settings.indexnow_api_url,
-                    json={
-                        "host": "balizero.com",
-                        "key": "2633309a0003ec408c59ec48c952604f",
-                        "keyLocation": "https://balizero.com/2633309a0003ec408c59ec48c952604f.txt",
-                        "urlList": [article_url],
-                    },
-                )
-                logger.info(f"   IndexNow: {indexnow_resp.status_code}")
-        except Exception as e:
-            logger.warning("   IndexNow failed (non-blocking): %s", e)
+        # Search engines hear about the article once it is live, not now: the page exists only
+        # after this PR is merged and deployed (minutes to a day). IndexNow is pinged by
+        # .github/workflows/indexnow-after-deploy.yml on the Production deployment.
 
         # Trigger Google Indexing API for faster Google indexing
         try:
