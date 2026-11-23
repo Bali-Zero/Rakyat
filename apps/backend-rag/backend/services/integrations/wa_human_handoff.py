@@ -389,12 +389,13 @@ async def notify_human_handoff(
     caller. Default is the original "client asked for a human" wording, so
     the existing human-handoff-turn call site is unchanged.
 
-    Dedup: per-thread 30-minute window, reusing
+    Dedup: per-thread-and-reason 30-minute window, reusing
     ``human_escalation_notifier``'s TTL map under a namespaced key (this
     channel is email, not Telegram — only the mechanism is shared). The key
-    is per-THREAD, not per-reason: a colleague already alerted about this
-    thread in the last 30 minutes does not need a second alert for a
-    different reason on the same thread.
+    carries the REASON: a caption-less attachment alert must not silence a
+    later alert where the client asked for a human, because that one says
+    something the first did not. The default reason keeps the bare
+    ``human_handoff:<thread>`` key it always had.
 
     True means a colleague HAS BEEN REACHED for this thread inside the
     dedup window — either by THIS call (email OR in-app delivered), or by
@@ -426,6 +427,8 @@ async def notify_human_handoff(
     send, same as any other email failure.
     """
     dedup_key = f"human_handoff:{thread_id}"
+    if reason != _DEFAULT_REASON:
+        dedup_key = f"{dedup_key}:{reason}"
     if _already_escalated(dedup_key):
         # A colleague WAS reached — by an earlier call, still inside the
         # dedup window — so this is True, not False (S1, round 3: the
