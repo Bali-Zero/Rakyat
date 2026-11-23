@@ -656,6 +656,18 @@ function isEnglishArticleNoIndex(category: string, slug: string): boolean {
   return Boolean(readMdxFile(filePath)?.data.noIndex);
 }
 
+/**
+ * True when any category folder holds <slug>.mdx. The reviewed file is the
+ * artifact: a backend row for such a slug is never listed, whatever its own
+ * category says, and the file loop decides (its category, draft, noIndex).
+ */
+function hasArticleFile(slug: string): boolean {
+  if (!isArticleFileSlug(slug)) return false;
+  return ARTICLE_FOLDER_NAMES.some((folder) =>
+    fs.existsSync(articleMdxPath(folder, slug)),
+  );
+}
+
 const PIN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
@@ -842,11 +854,17 @@ export async function getArticleBySlug(
   if (mdxArticle) {
     return mdxArticle;
   }
-  if (isArticleHidden(category, slug)) return null;
+  // A slug with a reviewed file in any category folder is never served from its
+  // backend row: not under another category, and not when the file is hidden.
+  if (hasArticleFile(slug)) return null;
 
-  // Fallback to backend API (news_items) when no local MDX exists.
+  // Fallback to backend API (news_items) when no local MDX exists, and only
+  // under the row's own category: the page of another category is not this one.
   const backendItem = await fetchBackendArticleBySlug(slug);
-  if (backendItem) {
+  if (
+    backendItem &&
+    normalizeCategory(backendItem.category) === normalizeCategory(category)
+  ) {
     return backendToArticle(backendItem);
   }
 
@@ -1027,7 +1045,7 @@ export const getAllArticles = unstable_cache(
     if (backendResult) {
       for (const item of backendResult.items) {
         const listItem = backendToArticleListItem(item);
-        if (isArticleHidden(listItem.category, item.slug)) continue;
+        if (hasArticleFile(item.slug)) continue;
         if (
           options?.featured !== undefined &&
           listItem.featured !== options.featured
@@ -1048,7 +1066,19 @@ export const getAllArticles = unstable_cache(
     for (const { folderCategory, slug } of filteredSlugs) {
       if (seenSlugs.has(slug)) continue;
 
-      const article = await getMdxArticleBySlug(folderCategory, slug);
+      // One file that cannot be built is skipped alone; the listing, the feed
+      // and the sitemap keep the others. Its content is never logged.
+      let article: Article | null;
+      try {
+        article = await getMdxArticleBySlug(folderCategory, slug);
+      } catch (error) {
+        console.error(
+          `[articles] skipped unbuildable article file ${folderCategory}/${slug}.mdx: ${
+            error instanceof Error ? error.name : typeof error
+          }`,
+        );
+        continue;
+      }
       if (!article) continue;
 
       // noIndex articles leave every listing/feed surface (sitemap/robots
@@ -1192,7 +1222,7 @@ export async function searchArticles(
   if (backendResult && backendResult.items.length > 0) {
     return backendResult.items
       .map(backendToArticleListItem)
-      .filter((article) => !isArticleHidden(article.category, article.slug));
+      .filter((article) => !hasArticleFile(article.slug));
   }
 
   // Fallback to in-memory MDX search
