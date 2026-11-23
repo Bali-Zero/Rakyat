@@ -1258,7 +1258,9 @@ async def list_practices(
                 query_parts.append(
                     f" AND p.status != 'cancelled'"
                     f" AND ((p.created_at >= ${param_index} AND p.created_at < ${param_index + 1})"
-                    f" OR (al.performed_at >= ${param_index} AND al.performed_at < ${param_index + 1}))",
+                    f" OR (al.performed_at >= ${param_index} AND al.performed_at < ${param_index + 1})"
+                    f" OR (p.metadata ? 'historical_tax_completion'"
+                    f" AND p.completion_date >= ${param_index} AND p.completion_date < ${param_index + 1}))",
                 )
                 params.extend([month_start, month_end])
                 param_index += 2
