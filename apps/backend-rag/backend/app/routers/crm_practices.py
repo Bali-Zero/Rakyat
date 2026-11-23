@@ -105,6 +105,14 @@ async def _attach_invoice_company_name(conn: asyncpg.Connection, practice: dict)
     )
 
 
+def _may_name_invoice_company(current_user: dict) -> bool:
+    """CRM admins and the tax team, who may name the company on a new process (DAI-156)."""
+    return (
+        is_crm_admin(current_user)
+        or (current_user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
+    )
+
+
 async def _resolve_invoice_company_http(
     conn: asyncpg.Connection,
     client_id: int,
@@ -122,10 +130,7 @@ async def _resolve_invoice_company_http(
     # invoice company for a client it does not own; the client must still exist.
     # PATCH keeps the owner/admin rule. Deliberately a role check, not
     # ``can_create_company``: that helper may grow beyond the tax team (pools).
-    tax_create = allow_tax_create and (
-        is_crm_admin(current_user)
-        or (current_user.get("role") or "").lower().strip() in COMPANY_CREATE_ROLES
-    )
+    tax_create = allow_tax_create and _may_name_invoice_company(current_user)
     await verify_client_access(
         client_id, current_user, conn, allow_assigned=True, write=not tax_create
     )
@@ -1302,7 +1307,14 @@ async def get_practice_types_catalog(
 async def _require_visible_client(
     conn: asyncpg.Connection, current_user: dict, client_id: int
 ) -> None:
-    filter_email = get_practices_user_filter(current_user)
+    """Gate of the invoice-company lookups, which follows the create rule (DAI-178).
+
+    Whoever may name the company on a new process passes for any client that exists.
+    Every other role keeps the ownership filter.
+    """
+    filter_email = (
+        None if _may_name_invoice_company(current_user) else get_practices_user_filter(current_user)
+    )
     if filter_email:
         visible = await conn.fetchval(
             "SELECT 1 FROM clients WHERE id = $1 AND (assigned_to = ANY($2::text[])"
@@ -1311,8 +1323,12 @@ async def _require_visible_client(
             client_id,
             filter_email,
         )
-        if not visible:
-            raise HTTPException(status_code=404, detail="Client not found")
+    else:
+        visible = await conn.fetchval(
+            "SELECT 1 FROM clients WHERE id = $1 AND deleted_at IS NULL", client_id
+        )
+    if not visible:
+        raise HTTPException(status_code=404, detail="Client not found")
 
 
 @router.get("/invoice-company/suggestion")

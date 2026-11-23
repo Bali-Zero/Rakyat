@@ -21,7 +21,8 @@ pytestmark = pytest.mark.integration
 
 _SCHEMA_SQL = """
 CREATE TABLE clients (
-    id SERIAL PRIMARY KEY, full_name VARCHAR NOT NULL, assigned_to VARCHAR
+    id SERIAL PRIMARY KEY, full_name VARCHAR NOT NULL, assigned_to VARCHAR,
+    deleted_at TIMESTAMPTZ
 );
 CREATE TABLE practices (
     id SERIAL PRIMARY KEY, client_id INTEGER, created_by VARCHAR, assigned_to VARCHAR

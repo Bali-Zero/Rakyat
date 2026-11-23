@@ -133,6 +133,7 @@ export function InvoiceCompanyField({
     q: string;
     rows: InvoiceCompanyMatch[];
   } | null>(null);
+  const [searchFailedFor, setSearchFailedFor] = useState<string | null>(null);
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
   const [picked, setPicked] = useState<InvoiceCompanyChoice | null>(null);
   const touched = useRef(false);
@@ -233,12 +234,14 @@ export function InvoiceCompanyField({
 
   const typedQuery = value.name.trim();
   const searchCtx = `${clientId ?? ""}|${practiceTypeCode ?? ""}`;
+  const searchKey = `${searchCtx}|${typedQuery}`;
   const searchActive =
     clientId !== undefined &&
     value.companyId === null &&
     typedQuery.length >= SEARCH_MIN_CHARS &&
     !disabled;
   useEffect(() => {
+    setSearchFailedFor(null);
     if (!searchActive || clientId === undefined) {
       setSearch(null);
       return;
@@ -261,13 +264,14 @@ export function InvoiceCompanyField({
             { component: "InvoiceCompanyField", action: "search" },
             toError(err),
           );
+          setSearchFailedFor(searchKey);
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [searchActive, clientId, typedQuery, searchCtx]);
+  }, [searchActive, clientId, typedQuery, searchCtx, searchKey]);
 
   // Editing the name (also back to an earlier text) reopens a list the user had closed.
   useEffect(() => {
@@ -391,6 +395,15 @@ export function InvoiceCompanyField({
             placeholder="NPWP (optional)"
           />
         </div>
+      )}
+      {searchActive && searchFailedFor === searchKey && (
+        <p
+          role="status"
+          className="text-xs text-[var(--foreground-muted)]"
+          data-testid="invoice-company-search-unavailable"
+        >
+          Company search unavailable — ask an admin
+        </p>
       )}
       {searchActive &&
         search?.q === typedQuery &&
