@@ -431,11 +431,20 @@ class PostgresCrmWriter:
                             f"{practice_type_code} started",
                             CREATED_BY_GARUDA,
                         )
-                except asyncpg.UndefinedTableError:
-                    logger.warning(
-                        "timeline_events table missing; milestone skipped for practice %s",
-                        int(practice_id),
-                    )
+                except Exception as exc:
+                    # The milestone is cosmetic and the paid practice is not: no failure
+                    # of the insert may undo the handoff. CancelledError is not an
+                    # Exception and still propagates.
+                    if getattr(exc, "sqlstate", None) == "42P01":
+                        logger.warning(
+                            "timeline_events table missing; milestone skipped for practice %s",
+                            int(practice_id),
+                        )
+                    else:
+                        logger.warning(
+                            "milestone insert failed (%s); the practice is kept",
+                            type(exc).__name__,
+                        )
                 return int(practice_id)
 
             # Lost the race — the database, not this code, decided who won.
