@@ -86,7 +86,7 @@ def test_all_golden_codes_route_to_golden_entity_key(
 ) -> None:
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", EFFECTIVE)
     golden = _golden()
-    assert len(golden) == 121
+    assert len(golden) == 122
     for code, expected_key in golden.items():
         resolved = resolve_invoice_entity(code, instant)
         assert resolved.key == expected_key, code

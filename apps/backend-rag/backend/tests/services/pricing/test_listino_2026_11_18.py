@@ -65,6 +65,9 @@ def _digest(doc: dict) -> str:
     onshore.pop("price", None)
     onshore.pop("verified_on", None)
     doc["services"]["company_services"].pop(_DISSOLVING, None)
+    # Added after this base on 2026-11-23; pinned whole by
+    # test_practice_type_ext_d12.py.
+    doc["services"]["multiple_entry_visas"].pop("D12 Business Investigation Extension", None)
     blob = json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
