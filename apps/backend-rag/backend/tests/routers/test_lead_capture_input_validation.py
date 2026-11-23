@@ -45,6 +45,13 @@ def client(repository: SimpleNamespace) -> TestClient:
         '{"source":"garuda_voa","context":{"x":Infinity}}',
         '{"source":"garuda_voa","utm":{"campaign":"a\\u0000b"}}',
         '{"source":"garuda_voa","client_fingerprint":"a\\u0000b"}',
+        '{"source":"garuda_voa","context":{"note":"a\\ud800b"}}',
+        '{"source":"garuda_voa","context":{"note":"a\\udc00b"}}',
+        '{"source":"garuda_voa","context":{"\\ud800":1}}',
+        '{"source":"garuda_voa","context":{"n":[{"k":"x\\udfff"}]}}',
+        '{"source":"garuda_voa","context":{"note":"\\ude00\\ud83d"}}',
+        '{"source":"garuda_voa","utm":{"k":"\\ud800"}}',
+        '{"source":"garuda_voa","utm":{"\\udbff":"v"}}',
     ],
     ids=(
         "context-value-nul",
@@ -53,6 +60,13 @@ def client(repository: SimpleNamespace) -> TestClient:
         "context-infinity",
         "utm-nul",
         "fingerprint-nul",
+        "context-value-lone-high-surrogate",
+        "context-value-lone-low-surrogate",
+        "context-key-lone-surrogate",
+        "context-nested-list-lone-surrogate",
+        "context-reversed-pair",
+        "utm-value-lone-surrogate",
+        "utm-key-lone-surrogate",
     ),
 )
 def test_rejects_values_postgres_cannot_persist(
@@ -76,6 +90,19 @@ def test_accepts_unicode_and_nested_context(
     assert response.status_code == 201, response.text
     repository.insert.assert_awaited_once()
     assert repository.insert.await_args.kwargs["context"] == context
+
+
+def test_a_surrogate_pair_is_one_character_and_is_accepted(
+    client: TestClient, repository: SimpleNamespace
+) -> None:
+    body = '{"source":"garuda_voa","context":{"note":"ok \\ud83d\\ude00"},"utm":{"k":"\\ud83d\\ude00"}}'
+
+    response = client.post(
+        "/api/lead/capture", content=body, headers={"content-type": "application/json"}
+    )
+
+    assert response.status_code == 201, response.text
+    assert repository.insert.await_args.kwargs["context"] == {"note": "ok \U0001f600"}
 
 
 def test_a_refusal_never_echoes_the_submitted_value(client: TestClient) -> None:

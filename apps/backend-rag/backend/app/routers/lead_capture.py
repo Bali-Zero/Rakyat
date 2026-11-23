@@ -66,10 +66,19 @@ router = APIRouter(prefix="/api/lead", tags=["lead-capture"], route_class=_LeadR
 # ============================================================
 
 
+def _unstorable_text(text: str) -> bool:
+    """NUL, or a UTF-16 surrogate standing alone: PostgreSQL text and jsonb refuse both.
+
+    The JSON decoder joins a surrogate PAIR into one character, so any surrogate
+    left in a decoded string is unpaired (`"\\ud800"` decodes to one).
+    """
+    return "\x00" in text or any("\ud800" <= c <= "\udfff" for c in text)
+
+
 def _contains_nul(value: Any) -> bool:
-    """Return whether a JSON-compatible value contains a PostgreSQL-invalid NUL."""
+    """Return whether a JSON-compatible value holds text PostgreSQL cannot store."""
     if isinstance(value, str):
-        return "\x00" in value
+        return _unstorable_text(value)
     if isinstance(value, dict):
         return any(
             _contains_nul(key) or _contains_nul(nested_value) for key, nested_value in value.items()
@@ -107,7 +116,7 @@ class LeadCaptureRequest(BaseModel):
         if len(json.dumps(v, allow_nan=False)) > 8192:
             raise ValueError("context/utm too large (>8KB)")
         if _contains_nul(v):
-            raise ValueError("context/utm must not contain NUL characters")
+            raise ValueError("context/utm must not contain NUL or unpaired surrogate characters")
         return v
 
     @field_validator("client_fingerprint")
