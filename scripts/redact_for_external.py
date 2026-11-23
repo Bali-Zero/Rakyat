@@ -33,6 +33,7 @@ Stdlib only — this runs in CI.
 
 from __future__ import annotations
 
+import bisect
 import re
 
 # Value shapes that are credentials wherever they appear. Ordered longest-first
@@ -50,6 +51,22 @@ _SECRET_LITERALS: list[re.Pattern[str]] = [
     # AWS access key id. Its absence was noted as ironic by a council seat,
     # since the unquoted-assignment scar that preceded it used an AWS key.
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+]
+
+# The other GitHub token kinds (oauth, user-to-server, server-to-server,
+# refresh), Stripe live secret keys, Google OAuth access tokens and Meta access
+# tokens. Each is a prefix plus a minimum run of token characters, so a word that
+# merely starts with the same letters is left alone. They run on the OUTPUT of
+# every rule above (_redact_late_token_families), so they can only hide more:
+# whatever those rules hid is already gone when these read the text. Placed among
+# the shapes above they changed what those shapes read: a key that starts like a
+# token lost the name its value is found by, and a token cut out of a longer
+# credential (a JWT, an address) left the rest of it behind.
+_LATE_TOKEN_FAMILIES: list[re.Pattern[str]] = [
+    re.compile(r"\bgh[ousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bsk_live_[A-Za-z0-9]{16,}"),
+    re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bEAA[A-Za-z0-9]{20,}"),
 ]
 
 # A name says its value is a credential when it ENDS in a credential word, or
@@ -127,6 +144,22 @@ _QUOTED_KEY_ASSIGNMENT = re.compile(
     """
 )
 
+# The NAME of a credential assignment, as the assignment rules above read it: a
+# credential name before `:` or `=`, or a quoted credential key before `:`. The
+# late token families leave such a name whole: its value is already redacted by
+# then, and a key that merely starts like a token (a test fixture, a token-shaped
+# prefix) keeps the name a reader needs.
+_CREDENTIAL_NAME_SITE = re.compile(
+    r"""(?ix)
+    \b(?P<name>"""
+    + _CREDENTIAL_NAME
+    + r""")(?=\s*[:=])
+    | (?P<open>['"])(?P<qname>"""
+    + _CREDENTIAL_NAME
+    + r""")(?P=open)(?=\s*:)
+    """
+)
+
 # An address is `\b<local>@<domain>`: a local part that starts at a word boundary
 # and runs up to the "@", then a domain ending in a dot and letters. Written as
 # one pattern, the search started at every word boundary of a long dotted line
@@ -179,6 +212,39 @@ _DSN_CREDENTIALS = re.compile(
 )
 
 
+def _redact_late_token_families(text: str) -> str:
+    """Apply _LATE_TOKEN_FAMILIES in order, never inside a credential name.
+
+    A token that starts inside a name is left as it is; one that runs into a
+    name is redacted up to where the name starts, when that part is still a
+    token of its family.
+    """
+    for pattern in _LATE_TOKEN_FAMILIES:
+        if pattern.search(text) is None:
+            continue
+        names = [
+            m.span("name") if m["name"] is not None else m.span("qname")
+            for m in _CREDENTIAL_NAME_SITE.finditer(text)
+        ]
+        starts = [start for start, _ in names]
+
+        def outside_names(
+            m: re.Match[str], pattern=pattern, names=names, starts=starts
+        ) -> str:
+            i = bisect.bisect_right(starts, m.start()) - 1
+            if i >= 0 and m.start() < names[i][1]:
+                return m.group(0)
+            if i + 1 < len(names) and names[i + 1][0] < m.end():
+                cut = pattern.match(m.string, m.start(), names[i + 1][0])
+                if cut is None:
+                    return m.group(0)
+                return "<REDACTED:secret>" + m.string[cut.end() : m.end()]
+            return "<REDACTED:secret>"
+
+        text = pattern.sub(outside_names, text)
+    return text
+
+
 def redact(text: str) -> str:
     """Return `text` with credential VALUES replaced and structure intact."""
     out = text
@@ -199,6 +265,8 @@ def redact(text: str) -> str:
         lambda m: f"{m['name']}{m['sep']}<REDACTED:secret>", out
     )
     out = _redact_emails(out)
+    # Last, on the output of every rule above: these can only hide more.
+    out = _redact_late_token_families(out)
     return out
 
 
