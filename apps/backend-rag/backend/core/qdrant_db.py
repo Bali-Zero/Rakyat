@@ -251,6 +251,10 @@ async def _retry_with_backoff(
     ) from last_exception
 
 
+class QdrantScrollBoundExceeded(RuntimeError):
+    """A strict scroll matched more points than its `max_points` bound allows."""
+
+
 class QdrantClient:
     """
     Async Qdrant vector database client with connection pooling.
@@ -485,6 +489,8 @@ class QdrantClient:
         filter: dict[str, Any] | None = None,
         limit: int = 5,
         vector_name: str | None = None,
+        *,
+        raise_on_error: bool = False,
     ) -> dict[str, Any]:
         """
         Search for similar documents.
@@ -494,6 +500,9 @@ class QdrantClient:
             filter: Metadata filter (simplified format, converted to Qdrant format)
             limit: Maximum number of results
             vector_name: Named vector to use (e.g., "dense" for hybrid collections)
+            raise_on_error: When True, a request the store refuses (4xx) and a search
+                that still fails after its retries raise instead of returning an
+                empty result, so the caller can tell "no hit" from "no answer".
 
         Returns:
             Dictionary with search results (compatible with Qdrant format)
@@ -503,6 +512,10 @@ class QdrantClient:
             raise ValueError("query_embedding cannot be empty")
         if not isinstance(query_embedding[0], (int, float)):
             raise TypeError("query_embedding must be list of numbers")
+
+        # A refusal the store answered (4xx) is not retried; with raise_on_error it is
+        # kept here and raised once the retry helper returns.
+        refused: list[Exception] = []
 
         async def _do_search() -> dict[str, Any]:
             client = await self._get_client()
@@ -623,8 +636,12 @@ class QdrantClient:
                         }
                     except Exception as retry_err:
                         logger.error("Retry with named vector failed: %s", retry_err)
+                        if raise_on_error:
+                            refused.append(retry_err)
                 # For 4xx errors (client errors), return empty results
                 logger.error(f"Qdrant search failed: {e.response.status_code} - {error_text}")
+                if raise_on_error and not refused:
+                    refused.append(e)
                 return {
                     "ids": [],
                     "documents": [],
@@ -650,6 +667,8 @@ class QdrantClient:
         ):
             try:
                 result = await _retry_with_backoff(_do_search)
+                if raise_on_error and refused:
+                    raise refused[-1]
                 # Track metrics
                 elapsed = time.time() - start_time
                 _qdrant_metrics["search_calls"] += 1
@@ -664,6 +683,8 @@ class QdrantClient:
                 _qdrant_metrics["errors"] += 1
                 set_span_status("error", str(e))
                 logger.error("Qdrant search error after retries: %s", e, exc_info=True)
+                if raise_on_error:
+                    raise
                 return {
                     "ids": [],
                     "documents": [],
@@ -1219,7 +1240,7 @@ class QdrantClient:
         while True:
             remaining = max_points - len(points)
             if remaining <= 0:
-                raise RuntimeError("Qdrant strict scroll exceeded max_points")
+                raise QdrantScrollBoundExceeded("Qdrant strict scroll exceeded max_points")
             payload: dict[str, Any] = {
                 "limit": min(page_size, remaining),
                 "with_payload": True,
@@ -1234,8 +1255,7 @@ class QdrantClient:
             result = response.json().get("result", {})
             batch = result.get("points", [])
             points.extend(
-                {"id": str(point["id"]), "payload": point.get("payload", {})}
-                for point in batch
+                {"id": str(point["id"]), "payload": point.get("payload", {})} for point in batch
             )
             offset = result.get("next_page_offset")
             if offset is None:
