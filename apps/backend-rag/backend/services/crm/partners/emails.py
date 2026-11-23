@@ -26,7 +26,11 @@ from backend.services.crm.partners.repository import PartnersRepository
 from backend.services.crm.partners.sterilize import sterilize_service_type_for_partner
 from backend.services.crm.welcome.log_facts import uuid_fact
 from backend.services.notifications.email_audit import raise_if_not_delivered
-from backend.services.pricing.pricing_service import get_pricing_service
+from backend.services.pricing.pricing_service import (
+    _entry_display_price,
+    _iter_service_entries,
+    get_pricing_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,14 +133,17 @@ def _sterilize(name: str) -> str:
 
 
 def _build_pricing_services() -> list[dict[str, str]]:
-    """Return list of {name, price_display} pairs from PricingService.
+    """Return list of {name, price_display} pairs for the partner welcome e-mail.
 
-    The pricing JSON has 3 levels:
-      services (top) -> sub_category (dict) -> service_name (dict key) -> {price, duration, ...}
+    The list is exactly what a client may see, at the price a client sees:
+    the client-safe catalogue view (``get_pricing_for_clients``, which omits
+    ``internal: true`` rows at every depth), walked with the pricing service's
+    own iterator (so ``tax_accounting``'s nested sub-blocks yield their real
+    tier/package rows, never the sub-block names), each price rendered by the
+    same display helper the client surfaces use.
 
-    We flatten to a list of {name, price_display}. Returns empty list if
-    PricingService is not loaded (graceful degradation for the welcome
-    email — terms still communicate; services list is absent).
+    Returns empty list if PricingService is not loaded (graceful degradation for
+    the welcome email — terms still communicate; services list is absent).
 
     Golden Rule #12: prices ONLY from PricingTool/PricingService, never hardcoded.
     """
@@ -144,26 +151,24 @@ def _build_pricing_services() -> list[dict[str, str]]:
     if not getattr(svc, "loaded", False):
         logger.warning("PricingService not loaded — welcome email services list will be empty")
         return []
-    all_prices = svc.get_all_prices() or {}
+    all_prices = svc.get_pricing_for_clients("all") or {}
     top = all_prices.get("services", all_prices)
     result: list[dict[str, str]] = []
     if not isinstance(top, dict):
         return result
+    for _category, service_name, entry in _iter_service_entries(top):
+        # The catalogue's own client-facing display name; the dict key is only a fallback
+        # (keys such as "Tier 0-50" repeat across tax_accounting sub-blocks).
+        row_name = entry.get("name")
+        name = row_name if isinstance(row_name, str) and row_name.strip() else str(service_name)
+        result.append(
+            {
+                "name": name,
+                "price_display": _entry_display_price(entry),
+            }
+        )
     for entries in top.values():
-        if isinstance(entries, dict):
-            for service_name, entry in entries.items():
-                if not isinstance(entry, dict):
-                    continue
-                price_str = entry.get("price") or entry.get("final_price") or "On request"
-                if not isinstance(price_str, str):
-                    price_str = str(price_str)
-                result.append(
-                    {
-                        "name": str(service_name),
-                        "price_display": price_str,
-                    }
-                )
-        elif isinstance(entries, list):
+        if isinstance(entries, list):
             # Legacy flat-list shape, keep for safety
             for item in entries:
                 if isinstance(item, dict) and "name" in item:
