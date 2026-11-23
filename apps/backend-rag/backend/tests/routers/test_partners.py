@@ -269,10 +269,9 @@ class TestListPartners:
             svc_instance.list_partners = AsyncMock(return_value=[])
             resp = client.get("/api/partners")
         assert resp.status_code == 200
-        # Verify actor_role was passed as team
+        # The team user is scoped to their own partners
         call_kwargs = svc_instance.list_partners.await_args.kwargs
-        assert call_kwargs["actor_role"] == "team"
-        assert str(call_kwargs["actor_user"]) == fake_team["user_id"]
+        assert call_kwargs["scope_to"] == fake_team["user_id"]
 
     @pytest.mark.integration
     def test_list_partners_returns_envelope_shape(self, admin_app) -> None:
@@ -969,7 +968,7 @@ class TestJobTitleStaffListAndCreate:
             svc_instance.list_partners = AsyncMock(return_value=[])
             resp = client.get(f"/api/partners{query}")
         assert resp.status_code == 200
-        assert svc_instance.list_partners.await_args.kwargs["assigned_to"] == staff["user_id"]
+        assert svc_instance.list_partners.await_args.kwargs["scope_to"] == staff["user_id"]
 
     @pytest.mark.integration
     def test_admin_list_keeps_the_owner_filter_it_names(self, admin_app) -> None:
@@ -983,6 +982,8 @@ class TestJobTitleStaffListAndCreate:
         calls = svc_instance.list_partners.await_args_list
         assert calls[0].kwargs["assigned_to"] == str(_TEAM_ID)
         assert calls[1].kwargs["assigned_to"] is None
+        assert calls[0].kwargs["scope_to"] is None
+        assert calls[1].kwargs["scope_to"] is None
 
     @pytest.mark.integration
     @pytest.mark.parametrize("named_owner", [None, str(_USER_ID)])
@@ -1061,7 +1062,7 @@ class TestPartnerStaffRolesAreTheTeamRoster:
             svc_instance.list_partners = AsyncMock(return_value=[])
             resp = client.get("/api/partners")
         assert resp.status_code == 200
-        assert svc_instance.list_partners.await_args.kwargs["assigned_to"] == staff["user_id"]
+        assert svc_instance.list_partners.await_args.kwargs["scope_to"] == staff["user_id"]
 
 
 class TestCommissions:
