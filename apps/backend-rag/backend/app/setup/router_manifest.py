@@ -166,6 +166,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="crm_notifications", process_groups=_API, tags=("crm",)),
     RouterEntry(name="team_invites_messaging", process_groups=_API, tags=("crm", "portal")),
     RouterEntry(name="crm_practice_delivery", process_groups=_BOTH, tags=("crm", "portal")),
+    RouterEntry(name="crm_visa_followup", process_groups=_BOTH, tags=("crm",)),
     RouterEntry(name="crm_practices", process_groups=_RAG, tags=("crm", "rag")),
     RouterEntry(name="crm_related_subjects", process_groups=_API, tags=("crm",)),
     RouterEntry(
@@ -544,7 +545,7 @@ garuda_voa_public garuda_orders_router garuda_portal_auth garuda_documents_route
 garuda_staff_router garuda_assignment_targets crm_clients intake_review
 crm_clients_documents crm_company crm_enhanced crm_enhanced_documents crm_guardian_drive
 crm_enhanced_alerts crm_intelligence accounting crm_interactions crm_notifications
-crm_practice_delivery crm_practices crm_related_subjects crm_related_registry_read crm_related_link_reviews
+crm_practice_delivery crm_visa_followup crm_practices crm_related_subjects crm_related_registry_read crm_related_link_reviews
 crm_shared_memory crm_tax_pilot crm_analytics team_invites_messaging partners channel_health channels omnichannel
 workspace_inbox observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout
 hr_people intake_gate notifications notifications_admin cron_notifiers portal portal_admin
@@ -580,7 +581,7 @@ team_invites_messaging partners channel_health channels omnichannel workspace_in
 observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout hr_people intake_gate
 notifications notifications_admin cron_notifiers portal portal_admin portal_billing
 portal_dashboard portal_drive portal_family portal_invite portal_matters
-portal_notifications portal_notification_prefs portal_process_timeline crm_practice_delivery compliance_alerts
+portal_notifications portal_notification_prefs portal_process_timeline crm_practice_delivery crm_visa_followup compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
 wr2_publish workspace_analytics research_control websocket twitter
 twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages
@@ -598,7 +599,7 @@ guardian knowledge_activity visa_oracle visa_oracle_evaluate visa_oracle_testing
 _ORDER_RAG = """
 health handlers admin_rate_limit admin_self_healing agent lam_memory agents
 autonomous_agents autonomous_execution agentic_rag kg_agentic conversations
-crm_clients intake_review crm_enhanced crm_practice_delivery crm_practices
+crm_clients intake_review crm_enhanced crm_practice_delivery crm_visa_followup crm_practices
 legal_ingest naga oracle_universal intel intel_scraper intel_analytics
 intel_lake intel_observability kbli_notebook kbli_notebook_chat blog_ask news
 dynamic_pricing dream identity knowledge knowledge_visa voice whatsapp_chat wa_package
