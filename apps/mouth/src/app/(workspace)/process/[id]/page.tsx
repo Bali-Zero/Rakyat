@@ -35,6 +35,7 @@ import {
   STATUS_LABELS as STATUS_DROPDOWN_LABELS,
   getAllowedNextStatuses,
   isQuotedPriceRefusal,
+  managedStageReason,
   needsQuotedPriceBefore,
   needsServiceBefore,
   type PracticeStatus,
@@ -48,6 +49,7 @@ import {
   getStatusColumn,
 } from "@/components/process/kanban-colors";
 import { RequiredDocumentsCard } from "./RequiredDocumentsCard";
+import { FinalDeliveryCard } from "./FinalDeliveryCard";
 import { SelectServiceCard } from "./SelectServiceCard";
 import { InvoiceCompanyCard } from "./InvoiceCompanyCard";
 import { mergePracticeUpdate } from "./mergePracticeUpdate";
@@ -116,7 +118,7 @@ export default function CaseDetailPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   // Reduced to status + assignee + start date (kita-prune lot 6): priority,
-  // payment status and price already have their own inline editors on this
+  // payment status is maintained by Accounting and price has its own editor on this
   // page, so the modal no longer duplicates them.
   const [editForm, setEditForm] = useState({
     status: "",
@@ -132,9 +134,6 @@ export default function CaseDetailPage() {
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState("");
   const [isSavingNotes, setIsSavingNotes] = useState(false);
-
-  // Inline payment status update
-  const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
 
   // Inline priority cycle
   const [isUpdatingPriority, setIsUpdatingPriority] = useState(false);
@@ -307,28 +306,6 @@ export default function CaseDetailPage() {
     }
   };
 
-  const cyclePaymentStatus = async () => {
-    if (!practice || !caseId || isUpdatingPayment) return;
-    const cycle: string[] = ["unpaid", "partial", "paid"];
-    const current = practice.payment_status || "unpaid";
-    const nextIndex = (cycle.indexOf(current) + 1) % cycle.length;
-    const nextStatus = cycle[nextIndex];
-    setIsUpdatingPayment(true);
-    try {
-      const user = await api.getProfile();
-      const updatedPractice = await api.crm.updatePractice(caseId, {
-        payment_status: nextStatus,
-      });
-      applyPracticeUpdate(updatedPractice);
-      await invalidateClient();
-      toast.success("Payment status updated", `→ ${nextStatus}`);
-    } catch (err) {
-      toast.error("Failed to update payment status", (err as Error).message);
-    } finally {
-      setIsUpdatingPayment(false);
-    }
-  };
-
   const cyclePriority = async () => {
     if (!practice || !caseId || isUpdatingPriority) return;
     const cycle: string[] = ["normal", "high", "urgent"];
@@ -382,6 +359,7 @@ export default function CaseDetailPage() {
       !practice ||
       !caseId ||
       practice.status === newStatus ||
+      managedStageReason(newStatus) ||
       isJumpingStatus
     )
       return;
@@ -467,7 +445,11 @@ export default function CaseDetailPage() {
       const user = await api.getProfile();
       const updates: Parameters<typeof api.crm.updatePractice>[1] = {};
 
-      if (editForm.status && editForm.status !== practice.status)
+      if (
+        editForm.status &&
+        editForm.status !== practice.status &&
+        !managedStageReason(editForm.status)
+      )
         updates.status = editForm.status;
       if (editForm.assigned_to !== (practice.assigned_to || ""))
         updates.assigned_to = editForm.assigned_to || null;
@@ -783,9 +765,6 @@ export default function CaseDetailPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Payment status is edited from the Process Details card below
-                (kita-prune lot 6: this header duplicated the same cycle
-                button/state, `cyclePaymentStatus`, with no distinct role). */}
             {(practice.actual_price || practice.quoted_price) && (
               <div
                 className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg tabular-nums"
@@ -942,13 +921,19 @@ export default function CaseDetailPage() {
                   <button
                     className="flex flex-col items-center gap-1 flex-shrink-0 group/step"
                     onClick={() => jumpToStatus(step.key)}
-                    disabled={isCurrent || !!isJumpingStatus || stepNeedsPrice}
+                    disabled={
+                      isCurrent ||
+                      !!isJumpingStatus ||
+                      stepNeedsPrice ||
+                      Boolean(managedStageReason(step.key))
+                    }
                     title={
                       isCurrent
                         ? `Current: ${step.label}`
                         : stepNeedsPrice
                           ? `${step.label} — ${QUOTED_PRICE_REQUIRED_TEXT_ID}`
-                          : `Jump to: ${step.label}`
+                          : (managedStageReason(step.key) ??
+                            `Jump to: ${step.label}`)
                     }
                   >
                     <div
@@ -1030,6 +1015,37 @@ export default function CaseDetailPage() {
           onSaved={(saved) => applyPracticeUpdate(saved, { service: true })}
         />
       )}
+
+      {caseId &&
+        (practice.status === "completed" ||
+          (getStatusColumn(practice.status) === "on_process" &&
+            practice.payment_status === "paid")) && (
+          <FinalDeliveryCard
+            key={caseId}
+            practice={practice}
+            onComplete={() => {
+              setPractice((previous) =>
+                previous ? { ...previous, status: "completed" } : previous,
+              );
+              void api.crm
+                .getPractice(caseId)
+                .then((updated) => {
+                  setPractice((previous) =>
+                    previous?.id === updated.id
+                      ? mergePracticeUpdate(previous, updated)
+                      : previous,
+                  );
+                })
+                .catch(() =>
+                  toast.error(
+                    "Refresh needed",
+                    "Reload the practice to see its latest completion details.",
+                  ),
+                );
+              void invalidateClient();
+            }}
+          />
+        )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
@@ -1292,28 +1308,12 @@ export default function CaseDetailPage() {
                 >
                   Payment Status
                 </label>
-                <button
-                  onClick={cyclePaymentStatus}
-                  disabled={isUpdatingPayment}
-                  title="Click to cycle: unpaid → partial → paid"
-                  aria-label="Cycle payment status"
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium transition-colors cursor-pointer ${
-                    practice.payment_status === "paid"
-                      ? "bg-[color-mix(in_srgb,var(--state-success)_15%,transparent)] text-[var(--state-success)] hover:bg-[color-mix(in_srgb,var(--state-success)_25%,transparent)]"
-                      : practice.payment_status === "partial"
-                        ? "bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] hover:bg-[color-mix(in_srgb,var(--state-warning)_25%,transparent)]"
-                        : "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_25%,transparent)]"
-                  }`}
+                <span
+                  className="inline-flex items-center rounded-full bg-[var(--bz-base)] px-3 py-1 text-sm capitalize"
+                  title="Updated by Accounting"
                 >
-                  {isUpdatingPayment ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                  )}
-                  <span className="capitalize">
-                    {practice.payment_status || "unpaid"}
-                  </span>
-                </button>
+                  {practice.payment_status || "unpaid"}
+                </span>
               </div>
 
               <div>
@@ -1884,21 +1884,27 @@ export default function CaseDetailPage() {
                   }}
                 >
                   {getAllowedNextStatuses(
-                    editForm.status as PracticeStatus,
+                    practice.status as PracticeStatus,
                     isAdmin,
-                  ).map((status) => {
-                    const blocked = needsQuotedPriceBefore(
-                      status,
-                      practice?.quoted_price,
-                      practice?.status,
-                    );
-                    return (
-                      <option key={status} value={status} disabled={blocked}>
-                        {STATUS_DROPDOWN_LABELS[status] ?? status}
-                        {blocked ? ` — ${QUOTED_PRICE_REQUIRED_TEXT_ID}` : ""}
-                      </option>
-                    );
-                  })}
+                  )
+                    .filter(
+                      (status) =>
+                        status === practice.status ||
+                        !managedStageReason(status),
+                    )
+                    .map((status) => {
+                      const blocked = needsQuotedPriceBefore(
+                        status,
+                        practice?.quoted_price,
+                        practice?.status,
+                      );
+                      return (
+                        <option key={status} value={status} disabled={blocked}>
+                          {STATUS_DROPDOWN_LABELS[status] ?? status}
+                          {blocked ? ` — ${QUOTED_PRICE_REQUIRED_TEXT_ID}` : ""}
+                        </option>
+                      );
+                    })}
                 </select>
               </div>
 

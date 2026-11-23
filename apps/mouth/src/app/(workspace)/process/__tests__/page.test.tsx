@@ -546,12 +546,12 @@ describe("Cases Page", () => {
         fireEvent.contextMenu(screen.getByText("Müller Anna"));
         await screen.findByText("Update Status");
         // the menu is rendered last, after the board columns
-        const onProcess = screen.getAllByText("On Process");
-        await user.click(onProcess[onProcess.length - 1]);
+        const nextStage = screen.getAllByText("Waiting Documents");
+        await user.click(nextStage[nextStage.length - 1]);
 
         await waitFor(() => {
           expect(api.crm.updatePractice).toHaveBeenCalledWith(9, {
-            status: "on_process",
+            status: "waiting_documents",
           });
         });
         await waitFor(() => {
@@ -559,7 +559,7 @@ describe("Cases Page", () => {
           expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
             9,
             "inquiry",
-            "on_process",
+            "waiting_documents",
           );
         });
       });

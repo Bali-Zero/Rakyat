@@ -44,6 +44,7 @@ import { useToast } from "@/components/ui/toast";
 import {
   QUOTED_PRICE_REQUIRED_TEXT_ID,
   isQuotedPriceRefusal,
+  managedStageReason,
   needsQuotedPriceBefore,
 } from "@/lib/api/crm/state-machine";
 import { api } from "@/lib/api";
@@ -441,6 +442,7 @@ export default function PratichePage() {
   }, [menuPosition]);
 
   const handleStatusChange = async (practiceId: number, newStatus: string) => {
+    if (managedStageReason(newStatus)) return;
     setUpdatingId(practiceId);
     try {
       const user = await api.getProfile();
@@ -526,41 +528,6 @@ export default function PratichePage() {
         toError(error),
       );
       toast.error("Error", "Failed to update priority");
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  const handlePaymentChange = async (
-    practiceId: number,
-    newPaymentStatus: string,
-  ) => {
-    setUpdatingId(practiceId);
-    try {
-      const user = await api.getProfile();
-      await api.crm.updatePractice(practiceId, {
-        payment_status: newPaymentStatus,
-      });
-      setPractices((prev) =>
-        prev.map((p) =>
-          p.id === practiceId ? { ...p, payment_status: newPaymentStatus } : p,
-        ),
-      );
-      setSelectedPractice((prev) =>
-        prev?.id === practiceId
-          ? { ...prev, payment_status: newPaymentStatus }
-          : prev,
-      );
-      toast.success("Payment Updated", `→ ${newPaymentStatus}`);
-      setSelectedPractice(null);
-      setMenuPosition(null);
-    } catch (error) {
-      logger.error(
-        "Failed to update payment",
-        { component: "Process", action: "updatePayment" },
-        toError(error),
-      );
-      toast.error("Error", "Failed to update payment status");
     } finally {
       setUpdatingId(null);
     }
@@ -2044,7 +2011,9 @@ export default function PratichePage() {
             </div>
           </div>
           <div className="max-h-[300px] overflow-y-auto p-1 space-y-0.5">
-            {STATUS_OPTIONS.map((option) => {
+            {STATUS_OPTIONS.filter(
+              (option) => !managedStageReason(option.value),
+            ).map((option) => {
               const needsPrice = needsQuotedPriceBefore(
                 option.value,
                 selectedPractice.quoted_price,
@@ -2089,52 +2058,11 @@ export default function PratichePage() {
               );
             })}
           </div>
-          {/* Payment Status Section */}
-          <div className="border-t border-[var(--bz-border)] px-3 py-2">
-            <p className="text-[11px] text-[var(--bz-text-2)] mb-1.5 font-medium uppercase tracking-wide">
-              Payment
-            </p>
-            <div className="flex gap-1">
-              {(["unpaid", "partial", "paid"] as const).map((ps) => (
-                <button
-                  key={ps}
-                  onClick={() => handlePaymentChange(selectedPractice.id, ps)}
-                  disabled={
-                    selectedPractice.payment_status === ps ||
-                    updatingId !== null
-                  }
-                  className="flex-1 text-[11px] py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-default capitalize"
-                  style={{
-                    background:
-                      selectedPractice.payment_status === ps
-                        ? ps === "paid"
-                          ? "color-mix(in srgb, var(--state-success) 25%, transparent)"
-                          : ps === "partial"
-                            ? "color-mix(in srgb, var(--state-warning) 25%, transparent)"
-                            : "color-mix(in srgb, var(--state-danger) 25%, transparent)"
-                        : "var(--bz-surface)",
-                    color:
-                      selectedPractice.payment_status === ps
-                        ? ps === "paid"
-                          ? "var(--state-success)"
-                          : ps === "partial"
-                            ? "var(--state-warning)"
-                            : "var(--state-danger)"
-                        : "var(--bz-text-2)",
-                    border:
-                      selectedPractice.payment_status === ps
-                        ? ps === "paid"
-                          ? "1px solid color-mix(in srgb, var(--state-success) 40%, transparent)"
-                          : ps === "partial"
-                            ? "1px solid color-mix(in srgb, var(--state-warning) 40%, transparent)"
-                            : "1px solid color-mix(in srgb, var(--state-danger) 40%, transparent)"
-                        : "1px solid var(--bz-border)",
-                  }}
-                >
-                  {ps}
-                </button>
-              ))}
-            </div>
+          <div className="border-t border-[var(--bz-border)] px-3 py-2 text-sm">
+            Payment ·{" "}
+            <span className="capitalize">
+              {selectedPractice.payment_status || "unpaid"}
+            </span>
           </div>
           {/* Priority Section */}
           <div className="border-t border-[var(--bz-border)] px-3 py-2">
