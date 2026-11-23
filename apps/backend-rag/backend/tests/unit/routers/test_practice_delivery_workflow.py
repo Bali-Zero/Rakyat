@@ -344,3 +344,48 @@ def test_replacement_keeps_first_issuance_date():
         )
         == actual
     )
+
+
+@pytest.mark.asyncio
+async def test_retired_stage_recovers_under_a_fresh_key(db):
+    _, conn = db
+    conn.fetchval.return_value = 45
+    assert (
+        await service.recoverable_marker(conn, PRACTICE, "case-delivery:original")
+        == "case-delivery:original:45"
+    )
+    sql, *args = conn.fetchval.await_args.args
+    assert "deleted_at IS NULL" in sql and "is_archived" in sql
+    assert args == [PRACTICE["client_id"], "case-delivery:original", None]
+
+
+@pytest.mark.asyncio
+async def test_ordinary_staff_output_adoption_requires_same_visible_subject_and_document_type(db):
+    _, conn = db
+    await service.existing_output(
+        conn, PRACTICE, {"key": "electronic_visa", "label": "Electronic Visa"}, request()
+    )
+    sql, *args = conn.fetchrow.await_args.args
+    assert (
+        "d.practice_id = p.id" in sql
+        and "d.family_member_id IS NOT DISTINCT FROM p.family_member_id" in sql
+    )
+    assert (
+        "d.uploaded_source='team'" in sql
+        and "d.client_visible = true" in sql
+        and "d.content_hash=$3" in sql
+    )
+    assert args[-1] == "evisa"
+
+
+@pytest.mark.parametrize(
+    "label,kind",
+    [
+        ("Akta Pendirian", "akta_pendirian"),
+        ("SK Pengesahan AHU", "sk_decree"),
+        ("NIB", "nib"),
+        ("Company NPWP", "npwp"),
+    ],
+)
+def test_company_outputs_populate_the_existing_company_vault_cards(label, kind):
+    assert service.document_type("document_2", label) == kind

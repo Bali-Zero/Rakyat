@@ -5,6 +5,7 @@ import binascii
 import hashlib
 from datetime import date
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, HTTPException
 
@@ -17,6 +18,7 @@ from backend.app.utils.service_accounts import is_human_team_member, normalize_r
 from backend.core.cache import invalidate_cache
 from backend.services.crm.admin_document_visibility import admin_document_not_deleted_clause
 from backend.services.crm.delivery_catalog import delivery_policy
+from backend.services.crm.documents import auto_categorize_document
 from backend.services.crm.practice_state_machine import normalize_state
 from backend.services.portal._document_visibility import document_visibility_clause
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
@@ -111,6 +113,13 @@ async def state(conn: Any, p: dict) -> dict:
         for slot in slots
     ]
     for slot in resolved:
+        if (
+            slot["key"] == policy["bonus_slot"]
+            and slot["issued_on"] is None
+            and bonus
+            and bonus["event_kind"] == "electronic_visa_issued"
+        ):
+            slot["issued_on"] = bonus["earned_at"].astimezone(ZoneInfo("Asia/Makassar")).date()
         slot["reusable_document_id"] = next(
             (
                 other["document_id"]
@@ -230,6 +239,40 @@ async def staged_file(
     )
 
 
+async def recoverable_marker(conn: Any, p: dict, base: str) -> str:
+    # The generic store's idempotency probe also matches deleted rows. A fresh
+    # key after an archive/delete keeps the old row hidden and retries stable.
+    retired = await conn.fetchval(
+        f"""SELECT max(d.id) FROM documents d WHERE d.client_id=$1
+            AND (d.intake_idempotency_key=$2 OR d.intake_idempotency_key LIKE $2 || ':%')
+            AND (NOT ({_LIVE}) OR d.family_member_id IS DISTINCT FROM $3)""",
+        p["client_id"],
+        base,
+        p["family_member_id"],
+    )
+    return f"{base}:{retired}" if retired else base
+
+
+async def existing_output(conn: Any, p: dict, slot: dict, request: Any) -> Any:
+    # The generic uploader refuses an exact copy even if the original arrived
+    # in another CRM workflow. Adopt only an already client-visible staff
+    # output of the same type and subject. Never promote a private intake row.
+    digest = hashlib.md5(base64.b64decode(request.file_content), usedforsecurity=False).hexdigest()
+    return await conn.fetchrow(
+        f"""SELECT d.id AS document_id, cd.id AS company_document_id
+            FROM documents d JOIN practices p ON p.id=$1
+            LEFT JOIN company_documents cd ON cd.company_id=$2 AND cd.google_drive_file_id=d.file_id
+            WHERE {_SCOPED} AND {document_visibility_clause("d")} AND d.uploaded_source='team'
+              AND d.file_id IS NOT NULL AND d.content_hash=$3 AND d.document_type=$4
+              AND ($2::int IS NULL OR cd.id IS NOT NULL AND cd.client_visible IS TRUE)
+            ORDER BY d.id LIMIT 1 FOR UPDATE OF d""",
+        p["id"],
+        request.company_id,
+        digest,
+        document_type(slot["key"], slot["label"]),
+    )
+
+
 def document_type(key: str, label: str) -> str:
     # CRM recap and expiry cards classify immigration documents by this field.
     # Slot keys are stable across label changes and intentionally generic.
@@ -237,7 +280,22 @@ def document_type(key: str, label: str) -> str:
     for token, kind in (("ITK", "itk"), ("E-ITAS", "itas"), ("E-ITAP", "itap"), ("IMK", "imk")):
         if token in words:
             return kind
-    return "evisa" if key == "electronic_visa" else key
+    if key == "electronic_visa":
+        return "evisa"
+    # These identifiers are also the company profile vault's named output cards.
+    company_types = {
+        "Akta Pendirian": "akta_pendirian",
+        "SK Pengesahan AHU": "sk_decree",
+        "NIB": "nib",
+        "Company NPWP": "npwp",
+        "Akta Perubahan": "akta_perubahan",
+    }
+    if label in company_types:
+        return company_types[label]
+    category = auto_categorize_document(label)
+    if category["matched_keyword"]:
+        return category["document_type"].lower().replace(" ", "_")
+    return key
 
 
 def combined_permit(first: dict, second: dict) -> bool:
@@ -287,14 +345,23 @@ async def stage(
     async with pool.acquire() as conn:
         if await staged_file(conn, p, request.company_id, marker):
             return
+    category = (
+        "tax"
+        if p["category"].startswith("tax")
+        else (
+            "pma"
+            if p["category"] == "company"
+            else PortalDocumentsMixin._classify_document_category(
+                p["category"] + " " + slot["label"], request.file_name
+            )
+        )
+    )
     data = DocumentUploadBase64(
         file=request.file_content,
         file_name=request.file_name,
         mime_type=request.mime_type,
         document_type=document_type(slot["key"], slot["label"]),
-        document_category=PortalDocumentsMixin._classify_document_category(
-            p["category"] + " " + slot["label"], request.file_name
-        ),
+        document_category=category,
         client_visible=False,
         practice_id=p["id"],
         family_member_id=p["family_member_id"],
@@ -317,7 +384,10 @@ async def stage(
         # The canonical writer refuses duplicate bytes. A competing retry is
         # safe to reuse only when its server-generated storage identity matches.
         async with pool.acquire() as conn:
-            if not await staged_file(conn, p, request.company_id, marker):
+            if not await staged_file(conn, p, request.company_id, marker) and not (
+                str(exc.detail).startswith("Duplicate file:")
+                and await existing_output(conn, p, slot, request)
+            ):
                 raise
 
 
@@ -348,6 +418,8 @@ async def upload(
     marker = upload_marker(
         practice_id, request.company_id, request.file_content, request.file_name, request.mime_type
     )
+    async with pool.acquire() as conn:
+        marker = await recoverable_marker(conn, snapshot, marker)
     await stage(pool, snapshot, initial_slot, user, request, marker, tasks)
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
@@ -370,6 +442,8 @@ async def upload(
             raise HTTPException(409, "Company is not linked to this client")
         issued_on = issue_date(view, slot, request.issued_on)
         row = await staged_file(conn, p, request.company_id, marker, lock=True)
+        if not row:
+            row = await existing_output(conn, p, slot, request)
         if not row:
             raise HTTPException(409, "Uploaded file does not match the practice subject")
         if request.company_id is not None and await conn.fetchval(
@@ -428,7 +502,8 @@ async def upload(
             # Keep the previous version for staff. A shared PDF might still
             # satisfy another box; in that case it keeps its current visibility.
             await conn.execute(
-                """UPDATE documents d SET client_visible=false WHERE d.id=$1 AND NOT EXISTS
+                """UPDATE documents d SET client_visible=false WHERE d.id=$1
+                   AND d.intake_idempotency_key LIKE 'case-delivery:%' AND NOT EXISTS
                    (SELECT 1 FROM practice_delivery_slots WHERE document_id=d.id)""",
                 slot["document_id"],
             )

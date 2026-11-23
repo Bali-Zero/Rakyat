@@ -28,7 +28,7 @@ CREATE TABLE practices(id int primary key,client_id int,family_member_id int,ass
     completion_date timestamptz,updated_at timestamptz);
 CREATE TABLE client_family_members(id int primary key,client_id int);
 CREATE TABLE documents(id serial primary key,practice_id int,client_id int,family_member_id int,
-    intake_idempotency_key text UNIQUE,file_id text,file_name text,uploaded_source text,status text,
+    intake_idempotency_key text UNIQUE,file_id text,file_name text,content_hash text,document_type text,uploaded_source text,status text,
     deleted_at timestamptz,is_archived boolean,client_visible boolean,updated_at timestamptz);
 CREATE TABLE companies(id int primary key);
 CREATE TABLE company_documents(id int primary key,company_id int,google_drive_file_id text,client_visible boolean);
