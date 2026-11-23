@@ -146,3 +146,72 @@ def test_put_prefs_503_is_client_safe_when_database_write_fails() -> None:
     assert r.json() == {"detail": "Notification preferences are temporarily unavailable"}
     assert "notification_prefs" not in r.text
     assert "migration" not in r.text
+
+
+_VIEWER_ID = "00000000-0000-4000-8000-0000000000aa"
+_TARGET_ACCOUNT_ID = "00000000-0000-4000-8000-0000000000bb"
+
+
+def _viewing_client() -> dict:
+    return {"client_id": 42, "user_id": _VIEWER_ID, "impersonating": True}
+
+
+def test_get_prefs_while_viewing_reads_the_target_clients_own_row() -> None:
+    mock_conn = AsyncMock()
+    mock_conn.fetchval.return_value = _TARGET_ACCOUNT_ID
+    mock_conn.fetchrow.return_value = {
+        "email_enabled": False,
+        "wa_enabled": True,
+        "wa_phone": "628400022000",
+    }
+    tc = _build_app(mock_conn, client=_viewing_client())
+
+    r = tc.get("/api/portal/notifications/prefs?as_client=42")
+
+    assert r.status_code == 200
+    assert r.json()["wa_phone"] == "628400022000"
+    prefs_args = mock_conn.fetchrow.await_args.args
+    assert _TARGET_ACCOUNT_ID in prefs_args
+    assert _VIEWER_ID not in prefs_args
+
+
+def test_get_prefs_while_viewing_target_without_account_returns_defaults() -> None:
+    mock_conn = AsyncMock()
+    mock_conn.fetchval.return_value = None
+    tc = _build_app(mock_conn, client=_viewing_client())
+
+    r = tc.get("/api/portal/notifications/prefs?as_client=42")
+
+    assert r.status_code == 200
+    assert r.json() == {"email_enabled": True, "wa_enabled": False, "wa_phone": None}
+    for call in mock_conn.fetchrow.await_args_list:
+        assert _VIEWER_ID not in call.args
+
+
+def test_put_prefs_refused_while_viewing_as_client() -> None:
+    mock_conn = AsyncMock()
+    tc = _build_app(mock_conn, client=_viewing_client())
+
+    r = tc.put(
+        "/api/portal/notifications/prefs?as_client=42",
+        json={"email_enabled": False, "wa_enabled": False, "wa_phone": None},
+    )
+
+    assert r.status_code == 403
+    assert "read-only" in r.json()["detail"]
+    mock_conn.execute.assert_not_awaited()
+
+
+def test_own_session_still_saves_prefs_under_its_own_id() -> None:
+    mock_conn = AsyncMock()
+    own = {"client_id": 42, "user_id": _TARGET_ACCOUNT_ID, "impersonating": False}
+    tc = _build_app(mock_conn, client=own)
+
+    r = tc.put(
+        "/api/portal/notifications/prefs",
+        json={"email_enabled": False, "wa_enabled": True, "wa_phone": "628400022000"},
+    )
+
+    assert r.status_code == 200
+    assert _TARGET_ACCOUNT_ID in mock_conn.execute.await_args.args
+    mock_conn.fetchval.assert_not_awaited()

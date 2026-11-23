@@ -19,7 +19,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.dependencies import get_database_pool
-from backend.app.routers.portal import get_current_client
+from backend.app.routers.portal import (
+    VIEW_AS_READ_ONLY_DETAIL,
+    get_current_client,
+    is_viewing_as_client,
+)
 from backend.app.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -66,8 +70,18 @@ async def get_prefs(
     user_id = client.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="missing user_id")
+    viewing = is_viewing_as_client(client)
     async with pool.acquire() as conn:
         try:
+            if viewing:
+                user_id = await conn.fetchval(
+                    "SELECT id FROM team_members "
+                    "WHERE linked_client_id = $1 AND role = 'client' AND active = true "
+                    "ORDER BY id LIMIT 1",
+                    client["client_id"],
+                )
+                if user_id is None:
+                    return _default_prefs()
             row = await conn.fetchrow(
                 """
                 SELECT email_enabled, wa_enabled, wa_phone
@@ -100,6 +114,8 @@ async def put_prefs(
     user_id = client.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="missing user_id")
+    if is_viewing_as_client(client):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
 
     if payload.wa_enabled and not payload.wa_phone:
         raise HTTPException(
