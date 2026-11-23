@@ -244,3 +244,50 @@ async def test_mark_all_maps_pool_lifecycle_failure_to_safe_503(
             )
 
     _assert_safe_unavailable(exc_info, caplog, marker)
+
+
+@pytest.mark.asyncio
+async def test_mark_read_refused_while_viewing_as_client() -> None:
+    from backend.app.routers.portal_notifications import mark_notification_read
+
+    mock_conn = AsyncMock()
+    with pytest.raises(HTTPException) as exc_info:
+        await mark_notification_read(
+            notification_id=7,
+            client={"client_id": 1, "impersonating": True},
+            db_pool=_pool_with_connection(mock_conn),
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "read-only" in exc_info.value.detail
+    mock_conn.fetchval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mark_all_refused_while_viewing_as_client() -> None:
+    mock_conn = AsyncMock()
+    with pytest.raises(HTTPException) as exc_info:
+        await mark_all_read(
+            client={"client_id": 1, "impersonating": True},
+            db_pool=_pool_with_connection(mock_conn),
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "read-only" in exc_info.value.detail
+    mock_conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_own_session_still_marks_read_and_read_all() -> None:
+    from backend.app.routers.portal_notifications import mark_notification_read
+
+    mock_conn = AsyncMock()
+    mock_conn.fetchval.return_value = 7
+    pool = _pool_with_connection(mock_conn)
+    own = {"client_id": 1, "impersonating": False}
+
+    assert await mark_notification_read(notification_id=7, client=own, db_pool=pool) == {
+        "success": True
+    }
+    assert await mark_all_read(client=own, db_pool=pool) == {"success": True}
+    mock_conn.execute.assert_awaited_once()

@@ -288,6 +288,14 @@ async def get_current_client(
         }
 
 
+VIEW_AS_READ_ONLY_DETAIL = "The portal is read-only while viewing as a client"
+
+
+def is_viewing_as_client(client: dict) -> bool:
+    """True when a superuser looks at the portal as a client (?as_client=)."""
+    return bool(client.get("impersonating"))
+
+
 def get_portal_service(db_pool: asyncpg.Pool = Depends(get_database_pool)) -> PortalService:
     """Dependency injection for PortalService"""
     from backend.services.portal import PortalService as _PortalService
@@ -895,6 +903,8 @@ async def send_message(
     """
     Send a message to the team.
     """
+    if is_viewing_as_client(client):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
     try:
         message = await portal_service.send_message(
             client_id=client["client_id"],
@@ -931,6 +941,10 @@ async def mark_message_read(
     """
     Mark a message as read.
     """
+    if is_viewing_as_client(client):
+        # The chat page fires this by itself when it opens: answer the normal
+        # shape and leave the client's read state alone.
+        return {"success": True, "message": "Message marked as read"}
     try:
         result = await portal_service.mark_message_read(
             client["client_id"],
