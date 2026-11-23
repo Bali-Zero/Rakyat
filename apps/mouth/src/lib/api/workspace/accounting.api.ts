@@ -36,6 +36,7 @@ export interface CashoutRow {
   description: string | null;
   counterparty: string | null;
   payment_method: string | null;
+  cash_company_name?: string | null;
   recorded_by: string | null;
   recorded_at: string | null;
   reversed_by_id: number | null;
@@ -144,6 +145,22 @@ export interface AccountingCompany {
   statements: number;
   /** Incoming transfers of this account still waiting to be reconciled. */
   to_reconcile: number;
+}
+
+export interface CashInvoice {
+  invoice_id: number;
+  invoice_number: string;
+  practice_id: number;
+  client_name: string;
+  service_name: string;
+  amount_idr: number;
+  outstanding_idr: number;
+}
+
+export interface CashReceiptResponse {
+  cashout_id: number;
+  status_after: string;
+  outstanding_idr: number;
 }
 
 /** One unmatched incoming transfer with its light (GET /reconciliation-inbox). */
@@ -465,6 +482,17 @@ export const accountingApi = {
     return api.get<AccountingCompany[]>(
       `/api/crm/accounting/companies${qs({ month })}`,
     );
+  },
+
+  async getCashInvoices(companyKey: string, q: string): Promise<{ items: CashInvoice[] }> {
+    return api.get(`/api/crm/accounting/cash-invoices${qs({ company_key: companyKey, q })}`);
+  },
+
+  async createCashReceipt(payload: {
+    company_key: string; invoice_id: number; amount_idr: number; movement_date: string;
+    reference?: string; request_id: string;
+  }): Promise<CashReceiptResponse> {
+    return api.post("/api/crm/accounting/cash-receipts", payload);
   },
 
   /** Debits newest first with their reading and state; `state` lists one side only. */

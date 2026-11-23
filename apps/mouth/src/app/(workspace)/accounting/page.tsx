@@ -44,13 +44,14 @@ import "./control-centre.css";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
 import { OutgoingsView } from "./_components/OutgoingsView";
+import { CashReceiptForm } from "./_components/CashReceiptForm";
 import {
   accountingApi,
   type CashoutRow,
   type CashbookSummary,
 } from "@/lib/api/workspace/accounting.api";
 
-type View = "centre" | "cashout" | "outgoings";
+type View = "centre" | "cashout" | "outgoings" | "cash-receipt";
 
 function BackToCentre({ onClick }: { onClick: () => void }) {
   return (
@@ -156,6 +157,11 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
               </td>
               <td className="px-3 py-2 font-medium">
                 {r.client_name ?? r.counterparty ?? "—"}
+                {r.payment_method === "cash" && (
+                  <span className="block text-xs font-normal text-[var(--bz-text-2)]">
+                    Cash{r.cash_company_name ? ` · ${r.cash_company_name}` : ""}
+                  </span>
+                )}
               </td>
               <td className="px-3 py-2 text-[var(--bz-text-2)]">
                 {r.type === "cashout_worksheet" && (
@@ -322,12 +328,22 @@ function AccountingWorkspace({
         </select>
       </label>
       {view === "centre" ? (
-        <ReconciliationInbox
-          onConfirmed={handleConfirmed}
-          doneVersion={doneVersion}
-          onOpenCashout={() => setView("cashout")}
-          onOpenOutgoings={() => setView("outgoings")}
-        />
+        <>
+          <div className="px-4 pt-3">
+            <Button variant="outline" onClick={() => setView("cash-receipt")}>Record cash received</Button>
+          </div>
+          <ReconciliationInbox
+            onConfirmed={handleConfirmed}
+            doneVersion={doneVersion}
+            onOpenCashout={() => setView("cashout")}
+            onOpenOutgoings={() => setView("outgoings")}
+          />
+        </>
+      ) : view === "cash-receipt" ? (
+        <div className="space-y-6">
+          <BackToCentre onClick={() => setView("centre")} />
+          <CashReceiptForm onDone={() => { void loadCashout(); setView("cashout"); }} />
+        </div>
       ) : view === "outgoings" ? (
         <div className="space-y-6">
           <BackToCentre onClick={() => setView("centre")} />
@@ -343,6 +359,7 @@ function AccountingWorkspace({
                 Accounting
               </h1>
             </div>
+            <Button variant="outline" onClick={() => setView("cash-receipt")}>Record cash received</Button>
             <div className="flex items-center gap-2">
               <input
                 ref={fileInputRef}
