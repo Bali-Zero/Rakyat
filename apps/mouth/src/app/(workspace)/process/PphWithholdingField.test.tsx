@@ -82,8 +82,16 @@ describe("PPh draft", () => {
     );
   });
 
-  it.each([null, undefined, "not json", {}, { pph: { type: "X" } }])(
-    "treats unreadable metadata as empty: %j",
+  it.each([
+    null,
+    undefined,
+    "not json",
+    {},
+    { pph: { type: "X" } },
+    { pph: { type: "PPH23", rate_percent: 2.125 } },
+    { pph: { type: "PPH23", rate_percent: 11 } },
+  ])(
+    "treats unreadable metadata as empty, as the invoice does: %j",
     (metadata) => {
       expect(pphFromMetadata(metadata)).toEqual(EMPTY_PPH);
     },

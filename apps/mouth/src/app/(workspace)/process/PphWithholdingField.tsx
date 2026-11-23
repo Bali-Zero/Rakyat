@@ -65,7 +65,9 @@ export function pphFromMetadata(metadata: unknown): PphValue {
   if (!raw || !isPphType(raw.type) || !Number.isFinite(rate) || rate <= 0) {
     return EMPTY_PPH;
   }
-  return { type: raw.type, rate: String(rate) };
+  // A hand-edited value the invoice ignores must not block saving other fields.
+  const value: PphValue = { type: raw.type, rate: String(rate) };
+  return pphError(value) ? EMPTY_PPH : value;
 }
 
 const normalizedRate = (rate: string) => rate.trim().replace(",", ".");
@@ -105,7 +107,7 @@ interface Props {
 }
 
 const fieldClass =
-  "w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 disabled:opacity-50";
+  "w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)] placeholder:text-[var(--foreground-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50";
 
 export function PphWithholdingField({ value, onChange, disabled }: Props) {
   const error = pphError(value);
