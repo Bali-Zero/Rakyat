@@ -44,6 +44,13 @@ const MODAL_TETAP_SINGLE = [
 
 const QUARTERS = ["Q1", "Q2", "Q3", "Q4"] as const;
 
+const parsePastedAmount = (value: string) => {
+  const text = value.trim();
+  if (text.includes("-") || !/\d/.test(text)) return null;
+  const wholeAmount = text.replace(/[.,]\d{1,2}$/, "");
+  return parseInt(wholeAmount.replace(/\D/g, ""), 10) || 0;
+};
+
 interface CRMCompany {
   id: number;
   company_name: string;
@@ -140,6 +147,26 @@ export default function WorkspaceLKPMSubmitPage() {
   const updateInvestment = (field: string, value: string) => {
     const num = parseInt(value.replace(/\D/g, ""), 10) || 0;
     setInvestment((prev) => ({ ...prev, [field]: num }));
+  };
+
+  const handleInvestmentPaste = (
+    field: string,
+    e: React.ClipboardEvent<HTMLInputElement>,
+  ) => {
+    e.preventDefault();
+    const amount = parsePastedAmount(e.clipboardData.getData("text"));
+    if (amount !== null) {
+      setInvestment((prev) => ({ ...prev, [field]: amount }));
+    }
+  };
+
+  const handleRevenuePaste = (
+    e: React.ClipboardEvent<HTMLInputElement>,
+    setRevenue: (amount: number) => void,
+  ) => {
+    e.preventDefault();
+    const amount = parsePastedAmount(e.clipboardData.getData("text"));
+    if (amount !== null) setRevenue(amount);
   };
 
   const formatNumber = (n: number) =>
@@ -515,6 +542,9 @@ export default function WorkspaceLKPMSubmitPage() {
                   onChange={(e) =>
                     updateInvestment(`${cat.key}_domestic`, e.target.value)
                   }
+                  onPaste={(e) =>
+                    handleInvestmentPaste(`${cat.key}_domestic`, e)
+                  }
                   aria-label={`${cat.label} - Domestik`}
                   placeholder="0"
                   className="w-full rounded-lg border px-3 py-2 text-sm text-right"
@@ -530,6 +560,7 @@ export default function WorkspaceLKPMSubmitPage() {
                   onChange={(e) =>
                     updateInvestment(`${cat.key}_import`, e.target.value)
                   }
+                  onPaste={(e) => handleInvestmentPaste(`${cat.key}_import`, e)}
                   aria-label={`${cat.label} - Impor`}
                   placeholder="0"
                   className="w-full rounded-lg border px-3 py-2 text-sm text-right"
@@ -560,6 +591,7 @@ export default function WorkspaceLKPMSubmitPage() {
                   inputMode="numeric"
                   value={formatNumber(investment[field.key])}
                   onChange={(e) => updateInvestment(field.key, e.target.value)}
+                  onPaste={(e) => handleInvestmentPaste(field.key, e)}
                   aria-label={field.label}
                   placeholder="0"
                   className="w-full rounded-lg border px-3 py-2 text-sm text-right col-span-2"
@@ -599,6 +631,7 @@ export default function WorkspaceLKPMSubmitPage() {
             onChange={(e) =>
               updateInvestment("working_capital", e.target.value)
             }
+            onPaste={(e) => handleInvestmentPaste("working_capital", e)}
             aria-label="Total modal kerja untuk 1 siklus operasional"
             placeholder="Total modal kerja untuk 1 siklus operasional"
             className="w-full rounded-lg border px-3 py-2 text-sm text-right"
@@ -688,6 +721,7 @@ export default function WorkspaceLKPMSubmitPage() {
                     parseInt(e.target.value.replace(/\D/g, ""), 10) || 0,
                   )
                 }
+                onPaste={(e) => handleRevenuePaste(e, setRevenueQuarterly)}
                 placeholder="0"
                 className="w-full rounded-lg border px-3 py-2 text-sm text-right"
                 style={{
@@ -712,6 +746,7 @@ export default function WorkspaceLKPMSubmitPage() {
                     parseInt(e.target.value.replace(/\D/g, ""), 10) || 0,
                   )
                 }
+                onPaste={(e) => handleRevenuePaste(e, setRevenueAnnual)}
                 placeholder="0"
                 className="w-full rounded-lg border px-3 py-2 text-sm text-right"
                 style={{
