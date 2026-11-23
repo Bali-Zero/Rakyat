@@ -90,3 +90,116 @@ async def test_ensure_portal_profile_handles_db_error(mock_pool):
     )
 
     assert result is None
+
+
+# --- real Postgres: an e-mail conflict must never re-link a registered account ---
+
+from backend.services.portal.portal_profile_service import (  # noqa: E402
+    PLACEHOLDER_PIN_HASH,
+    PortalProfileService,
+)
+
+REGISTERED_HASH = "$2b$12$registeredhashregisteredhashregisteredhashregisteredha"
+
+
+async def _member(pool, email):
+    return await pool.fetchrow(
+        "SELECT id, linked_client_id, pin_hash, name, full_name, portal_access"
+        " FROM team_members WHERE email = $1",
+        email,
+    )
+
+
+async def _registered(pool, email, client_id):
+    await pool.execute(
+        "INSERT INTO team_members (name, full_name, email, pin_hash, role, linked_client_id,"
+        " portal_access, active) VALUES ('Client A', 'Client A', $1, $2, 'client', $3, true, true)",
+        email,
+        REGISTERED_HASH,
+        client_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_registered_account_of_another_client_is_never_relinked(portal_pg_pool, make_client):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    client_b = await make_client("Client B")
+    await _registered(pool, "shared@example.test", client_a)
+    before = await _member(pool, "shared@example.test")
+
+    result = await PortalProfileService(pool).ensure_portal_profile(
+        client_b, "shared@example.test", "Client B"
+    )
+
+    assert result is None
+    after = await _member(pool, "shared@example.test")
+    assert dict(after) == dict(before)
+    assert after["linked_client_id"] == client_a
+    assert after["pin_hash"] == REGISTERED_HASH
+
+
+@pytest.mark.asyncio
+async def test_refusal_logs_ids_only(portal_pg_pool, make_client, caplog):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    client_b = await make_client("Client B")
+    await _registered(pool, "shared@example.test", client_a)
+    with caplog.at_level("WARNING"):
+        await PortalProfileService(pool).ensure_portal_profile(
+            client_b, "shared@example.test", "Client B"
+        )
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert str(client_b) in text
+    assert "shared@example.test" not in text
+    assert "Client B" not in text
+
+
+@pytest.mark.asyncio
+async def test_never_registered_row_is_relinked(portal_pg_pool, make_client):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    client_b = await make_client("Client B")
+    service = PortalProfileService(pool)
+    await service.ensure_portal_profile(client_a, "old@example.test", "Client A")
+
+    member_id = await service.ensure_portal_profile(client_b, "old@example.test", "Client B")
+
+    row = await _member(pool, "old@example.test")
+    assert member_id == row["id"]
+    assert row["linked_client_id"] == client_b
+    assert row["pin_hash"] == PLACEHOLDER_PIN_HASH
+
+
+@pytest.mark.asyncio
+async def test_same_client_is_idempotent_and_keeps_registered_pin(portal_pg_pool, make_client):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    service = PortalProfileService(pool)
+    first = await service.ensure_portal_profile(client_a, "a@example.test", "Client A")
+    await pool.execute(
+        "UPDATE team_members SET pin_hash = $1 WHERE email = 'a@example.test'", REGISTERED_HASH
+    )
+
+    second = await service.ensure_portal_profile(client_a, "A@Example.test", "Client A")
+
+    assert second == first
+    row = await _member(pool, "a@example.test")
+    assert row["linked_client_id"] == client_a
+    assert row["pin_hash"] == REGISTERED_HASH
+    assert await pool.fetchval("SELECT count(*) FROM team_members") == 1
+
+
+@pytest.mark.asyncio
+async def test_new_address_creates_the_row(portal_pg_pool, make_client):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+
+    member_id = await PortalProfileService(pool).ensure_portal_profile(
+        client_a, "new@example.test", "Client A"
+    )
+
+    row = await _member(pool, "new@example.test")
+    assert member_id == row["id"]
+    assert row["linked_client_id"] == client_a
+    assert row["portal_access"] is True

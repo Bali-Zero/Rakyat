@@ -49,6 +49,9 @@ class PortalProfileService:
         Ensure a team_members record exists for this client.
 
         Returns the team_member id (UUID string) or None if skipped/failed.
+        On an e-mail conflict the existing row is updated only when it is already
+        linked to this client or has never been registered (placeholder PIN hash);
+        otherwise nothing changes and None is returned.
         Non-blocking: DB errors are caught and logged, never raised.
         """
         if not email or not email.strip():
@@ -77,6 +80,10 @@ class PortalProfileService:
                                 team_members.full_name, EXCLUDED.full_name
                             )
                         WHERE team_members.role = 'client'
+                          AND (
+                              team_members.linked_client_id = EXCLUDED.linked_client_id
+                              OR team_members.pin_hash = EXCLUDED.pin_hash
+                          )
                     RETURNING id
                     """,
                     full_name,
@@ -84,6 +91,17 @@ class PortalProfileService:
                     PLACEHOLDER_PIN_HASH,
                     client_id,
                 )
+
+                if member_id is None:
+                    # The address already belongs to an account that is not this
+                    # client's and has been registered (or is not a client login):
+                    # it is never re-linked and none of its fields change.
+                    logger.warning(
+                        "Portal profile not provisioned for client %s: address held by "
+                        "another account",
+                        client_id,
+                    )
+                    return None
 
                 logger.info(
                     "Portal profile ensured for client %s (member_id=%s)",
