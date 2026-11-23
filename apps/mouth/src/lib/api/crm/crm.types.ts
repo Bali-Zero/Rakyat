@@ -330,7 +330,8 @@ export interface Client {
   address?: string;
   notes?: string;
   google_drive_folder_id?: string;
-  status: "lead" | "active" | "completed" | "lost" | "inactive";
+  // "completed" and "lost" can still be stored on older rows; no write sets them.
+  status: "lead" | "prospect" | "active" | "completed" | "lost" | "inactive";
   client_type: "individual" | "company";
   assigned_to?: string;
   tax_consultant?: string | null;
@@ -674,7 +675,7 @@ export interface CreateClientParams {
   gender?: "M" | "F";
   birthplace?: string;
   notes?: string;
-  status?: "lead" | "active" | "completed" | "lost" | "inactive";
+  status?: "lead" | "prospect" | "active" | "inactive";
   client_type?: "individual" | "company";
   assigned_to?: string;
   tags?: string[];
@@ -897,12 +898,12 @@ export const COMMON_NATIONALITIES = [
   "Zimbabwean",
 ] as const;
 
-// Client statuses
-export const CLIENT_STATUSES = [
+// The client statuses the backend accepts on create, update and the list filter;
+// mirrors STATUS_VALUES in the backend crm_clients router (anything else is a 422).
+export const WRITABLE_CLIENT_STATUSES = [
   { value: "lead", label: "Lead", color: "blue" },
+  { value: "prospect", label: "Prospect", color: "blue" },
   { value: "active", label: "Active", color: "green" },
-  { value: "completed", label: "Completed", color: "purple" },
-  { value: "lost", label: "Lost", color: "red" },
   { value: "inactive", label: "Inactive", color: "gray" },
 ] as const;
 

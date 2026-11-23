@@ -32,7 +32,7 @@ import { logger } from "@/lib/logger";
 import { useToast } from "@/components/ui/toast";
 import {
   COMMON_NATIONALITIES,
-  CLIENT_STATUSES,
+  WRITABLE_CLIENT_STATUSES,
   LEAD_SOURCES,
   SERVICE_INTERESTS,
 } from "@/lib/api/crm/crm.types";
@@ -895,7 +895,7 @@ export default function NewClientPage() {
                         onChange={handleChange}
                         className={selectClass}
                       >
-                        {CLIENT_STATUSES.map((status) => (
+                        {WRITABLE_CLIENT_STATUSES.map((status) => (
                           <option key={status.value} value={status.value}>
                             {status.label}
                           </option>
@@ -1034,18 +1034,18 @@ export default function NewClientPage() {
                 {formData.status && (
                   <span
                     className={`px-2 py-1 rounded ${
-                      formData.status === "lead"
+                      formData.status === "lead" ||
+                      formData.status === "prospect"
                         ? "bg-[color-mix(in_srgb,var(--state-info)_20%,transparent)] text-[var(--state-info)]"
                         : formData.status === "active"
                           ? "bg-[color-mix(in_srgb,var(--state-success)_20%,transparent)] text-[var(--state-success)]"
-                          : formData.status === "completed"
-                            ? "bg-[color-mix(in_srgb,var(--bz-neon-purple)_20%,transparent)] text-[var(--bz-neon-purple)]"
-                            : "bg-[color-mix(in_srgb,var(--bz-text-2)_20%,transparent)] text-[var(--bz-text-2)]"
+                          : "bg-[color-mix(in_srgb,var(--bz-text-2)_20%,transparent)] text-[var(--bz-text-2)]"
                     }`}
                   >
                     {
-                      CLIENT_STATUSES.find((s) => s.value === formData.status)
-                        ?.label
+                      WRITABLE_CLIENT_STATUSES.find(
+                        (s) => s.value === formData.status,
+                      )?.label
                     }
                   </span>
                 )}

@@ -95,7 +95,7 @@ describe("EditClientModal — shows the record's current values", () => {
     expect(select.options).toHaveLength(2);
   });
 
-  it("a status outside the five buttons (prospect) is shown as selected", () => {
+  it("a status outside the stored list (prospect) is shown as selected", () => {
     renderModal(makeClient({ status: "prospect" as Client["status"] }));
     const current = within(statusGroup()).getByRole("button", {
       name: /prospect/i,
@@ -103,10 +103,10 @@ describe("EditClientModal — shows the record's current values", () => {
     expect(current).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("a known status keeps exactly the five buttons", () => {
+  it("a known status keeps exactly the four buttons the backend accepts", () => {
     renderModal(makeClient({ status: "active" }));
     const buttons = within(statusGroup()).getAllByRole("button");
-    expect(buttons).toHaveLength(5);
+    expect(buttons).toHaveLength(4);
     expect(
       within(statusGroup()).getByRole("button", { name: "Active" }),
     ).toHaveAttribute("aria-pressed", "true");

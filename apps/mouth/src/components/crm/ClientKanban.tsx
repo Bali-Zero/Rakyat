@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { Client } from "@/lib/api/crm/crm.types";
+import { Client, WRITABLE_CLIENT_STATUSES } from "@/lib/api/crm/crm.types";
 import { ClientCard } from "./ClientCard";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAutoAnimate } from "@formkit/auto-animate/react";
@@ -10,8 +10,12 @@ interface ClientKanbanProps {
   onStatusChange: (clientId: number, newStatus: string) => Promise<void>;
 }
 
+// Columns that accept a drop: the backend rejects any other status write.
+const DROPPABLE = new Set<string>(WRITABLE_CLIENT_STATUSES.map((s) => s.value));
+
 const COLUMNS = [
   { id: "lead", title: "Leads", color: "bg-[var(--neon-blue)]" },
+  { id: "prospect", title: "Prospects", color: "bg-[var(--neon-blue)]" },
   { id: "active", title: "Active", color: "bg-[var(--neon-emerald)]" },
   { id: "completed", title: "Completed", color: "bg-[var(--neon-purple)]" },
   { id: "inactive", title: "Inactive", color: "bg-[var(--tx-tertiary)]" },
@@ -157,6 +161,10 @@ export const ClientKanban = ({
 
   const handleDrop = async (e: React.DragEvent, status: string) => {
     e.preventDefault();
+    if (!DROPPABLE.has(status)) {
+      setDraggedClient(null);
+      return;
+    }
     const clientId = parseInt(e.dataTransfer.getData("clientId"));
 
     if (clientId && draggedClient && draggedClient.status !== status) {

@@ -7,24 +7,32 @@ import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
 import { cropToSquareBlob } from "@/lib/utils/imageResize";
 import type { Client } from "@/lib/api/crm/crm.types";
-import { COMMON_NATIONALITIES, CLIENT_STATUSES } from "@/lib/api/crm/crm.types";
+import {
+  COMMON_NATIONALITIES,
+  WRITABLE_CLIENT_STATUSES,
+} from "@/lib/api/crm/crm.types";
 import { Modal } from "../Modal";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { COUNTRY_CODES, extractCountryCode } from "../utils";
 
 /**
  * Static token map for the status picker — one named entry per
- * `CLIENT_STATUSES` value. Round-4 Q2: the old version built the CSS var
+ * `WRITABLE_CLIENT_STATUSES` value. Round-4 Q2: the old version built the CSS var
  * name AND the Tailwind class at runtime (`` `var(--${color}-500, #3b82f6)` ``,
  * `` `border-${color}-500/50` ``), which a source-text guard cannot see
  * through and which could resolve to the accent family. Every branch below
  * is a literal token name, never assembled from a variable.
  */
 const STATUS_PICKER_TONE: Record<
-  (typeof CLIENT_STATUSES)[number]["value"],
+  (typeof WRITABLE_CLIENT_STATUSES)[number]["value"],
   { border: string; text: string; bg: string }
 > = {
   lead: {
+    border: "var(--state-info)",
+    text: "var(--state-info)",
+    bg: "color-mix(in srgb, var(--state-info) 20%, transparent)",
+  },
+  prospect: {
     border: "var(--state-info)",
     text: "var(--state-info)",
     bg: "color-mix(in srgb, var(--state-info) 20%, transparent)",
@@ -33,16 +41,6 @@ const STATUS_PICKER_TONE: Record<
     border: "var(--state-success)",
     text: "var(--state-success)",
     bg: "color-mix(in srgb, var(--state-success) 20%, transparent)",
-  },
-  completed: {
-    border: "var(--tx-pure)",
-    text: "var(--tx-pure)",
-    bg: "color-mix(in srgb, var(--tx-pure) 12%, transparent)",
-  },
-  lost: {
-    border: "var(--state-warning)",
-    text: "var(--state-warning)",
-    bg: "color-mix(in srgb, var(--state-warning) 20%, transparent)",
   },
   inactive: {
     border: "var(--bz-border)",
@@ -70,7 +68,7 @@ export function EditClientModal({
     initialAssignee !== "" &&
     !teamMemberOptions.some((m) => m.value === initialAssignee);
   const initialStatus = client.status || "lead";
-  const statusIsUnlisted = !CLIENT_STATUSES.some(
+  const statusIsUnlisted = !WRITABLE_CLIENT_STATUSES.some(
     (s) => s.value === initialStatus,
   );
   const [isSaving, setIsSaving] = useState(false);
@@ -209,6 +207,13 @@ export function EditClientModal({
       // touched the photo).
       if (avatarRemoved) {
         updates.avatar_url = "";
+      }
+
+      // A stored status no write may set (an older "completed" or "lost") stays
+      // shown as current and is not sent back: an edit of any other field would
+      // otherwise fail on it.
+      if (statusIsUnlisted && updates.status === initialStatus) {
+        delete updates.status;
       }
 
       await api.crm.updateClient(client.id, updates, user.email);
@@ -528,7 +533,7 @@ export function EditClientModal({
                 {initialStatus} (current)
               </button>
             )}
-            {CLIENT_STATUSES.map(({ value, label }) => {
+            {WRITABLE_CLIENT_STATUSES.map(({ value, label }) => {
               const tone = STATUS_PICKER_TONE[value];
               const selected = formData.status === value;
               return (
@@ -536,7 +541,12 @@ export function EditClientModal({
                   key={value}
                   type="button"
                   aria-pressed={selected}
-                  onClick={() => setFormData({ ...formData, status: value })}
+                  onClick={() =>
+                    setFormData({
+                      ...formData,
+                      status: value as Client["status"],
+                    })
+                  }
                   className="px-3 py-1.5 rounded-full text-sm font-medium transition-all border"
                   style={{
                     borderColor: selected ? tone.border : "transparent",

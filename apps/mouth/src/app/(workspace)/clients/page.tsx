@@ -40,7 +40,6 @@ import {
   BarChart3,
   ExternalLink,
   Copy,
-  Check,
   MoreVertical,
 } from "lucide-react";
 
@@ -60,7 +59,10 @@ import { FilterBar, FilterSelect, SearchBox } from "@balizero/core";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type { Client } from "@/lib/api/crm/crm.types";
-import { CLIENT_STATUSES, COMMON_NATIONALITIES } from "@/lib/api/crm/crm.types";
+import {
+  COMMON_NATIONALITIES,
+  WRITABLE_CLIENT_STATUSES,
+} from "@/lib/api/crm/crm.types";
 import { ClientKanban } from "@/components/crm/ClientKanban";
 import { ClientCard } from "@/components/crm/ClientCard";
 import { CRMErrorBoundary, CRMSkeleton } from "@/components/crm";
@@ -561,43 +563,6 @@ function ClientsListContent() {
     [showSlip],
   );
 
-  const handleCompleteClient = useCallback(
-    async (client: Client) => {
-      const previousStatus = statusOf(client);
-      setOptimisticStatus((prev) => ({ ...prev, [client.id]: "completed" }));
-      try {
-        await updateClientStatus(client.id, "completed");
-        if (!mountedRef.current) return;
-        showSlip({
-          tone: "ok",
-          title: "Status updated",
-          detail: `Client ${client.id} is completed.`,
-          onUndo: () => {
-            setOptimisticStatus((prev) => {
-              const next = { ...prev };
-              delete next[client.id];
-              return next;
-            });
-            void handleStatusChange(client.id, previousStatus);
-            dismissSlip();
-          },
-        });
-      } catch {
-        if (!mountedRef.current) return;
-        setOptimisticStatus((prev) => {
-          const next = { ...prev };
-          delete next[client.id];
-          return next;
-        });
-        showSlip({
-          tone: "you",
-          title: "Could not update — the row is unchanged.",
-        });
-      }
-    },
-    [dismissSlip, handleStatusChange, showSlip, statusOf, updateClientStatus],
-  );
-
   // Filtering
   const visibleClients = isMounted ? clients : [];
   // Use API assignees list (all team members, not just those in the loaded page)
@@ -944,7 +909,7 @@ function ClientsListContent() {
                 pressed={needsOnly}
                 onClick={() => setNeedsOnly((v) => !v)}
               />
-              {(["lead", "active", "completed"] as const).map((status) => (
+              {(["lead", "active"] as const).map((status) => (
                 <StatePill
                   key={status}
                   tone="wait"
@@ -1040,7 +1005,7 @@ function ClientsListContent() {
             selectStyle={FILTER_SELECT_STYLE}
           >
             <option value="">All statuses</option>
-            {CLIENT_STATUSES.map(({ value, label }) => (
+            {WRITABLE_CLIENT_STATUSES.map(({ value, label }) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -1404,17 +1369,6 @@ function ClientsListContent() {
                           >
                             <Copy className="h-4 w-4" aria-hidden="true" />
                           </button>
-                          <button
-                            type="button"
-                            className={styles.rowAction}
-                            aria-label={`Mark ${displayName} completed`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleCompleteClient(client);
-                            }}
-                          >
-                            <Check className="h-4 w-4" aria-hidden="true" />
-                          </button>
                         </div>
                         <button
                           type="button"
@@ -1471,16 +1425,6 @@ function ClientsListContent() {
                             }}
                           >
                             Copy reference
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleCompleteClient(client);
-                              closeMenu(client.id);
-                            }}
-                          >
-                            Mark completed
                           </button>
                         </div>
                       </td>
