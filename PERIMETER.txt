@@ -94,6 +94,7 @@ scripts/tests/test_ban_predicates.py
 scripts/tests/test_cate_paid_budget.sh
 scripts/tests/test_cate_plan_oauth_baseline.sh
 scripts/tests/test_lint_ban_prose.py
+scripts/tests/test_redact_for_external.py
 scripts/tests/test_typesafe_client_pin.py
 scripts/tests/test_vendor_authorization_fence.py
 scripts/typesafe_client.py
