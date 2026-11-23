@@ -23,6 +23,7 @@ class GoogleServices:
     """Google Cloud services manager for Oracle endpoints"""
 
     def __init__(self) -> None:
+        self._initialized = False
         self._gemini_initialized = False
         self._drive_service = None
         self._genai_client: GenAIClient | None = None
@@ -31,6 +32,8 @@ class GoogleServices:
 
     def _ensure_services_initialized(self) -> None:
         """Initialize Google Gemini and Drive services if not already done"""
+        if self._initialized:
+            return
         if self._genai_client is None:
             try:
                 # Initialize GenAI client (only if API key is available)
@@ -50,6 +53,7 @@ class GoogleServices:
 
                 # Initialize Drive Service
                 self._initialize_drive_service()
+                self._initialized = True
 
             except Exception as e:
                 logger.error("❌ Failed to initialize Google services: %s", e)

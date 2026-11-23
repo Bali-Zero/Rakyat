@@ -14,6 +14,7 @@ REFACTORED: Uses sub-services following Single Responsibility Principle
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -170,6 +171,8 @@ class OracleService:
         # Adapter State
         self._orchestrator: AgenticRAGOrchestrator | None = None
         self._db_pool: asyncpg.Pool | None = None
+        self._db_pool_lock = asyncio.Lock()
+        self._orchestrator_lock = asyncio.Lock()
         self._entity_extractor = EntityExtractionService()
 
         # Lazy loaded services
@@ -184,30 +187,34 @@ class OracleService:
 
     async def _get_db_pool(self) -> asyncpg.Pool:
         """Lazy load asyncpg pool for Agentic RAG tools"""
-        if not self._db_pool:
-            try:
-                self._db_pool = await asyncpg.create_pool(dsn=config.database_url)
-            except Exception as e:
-                logger.error("Failed to create asyncpg pool: %s", e)
-                # Fallback or re-raise depending on criticality.
-                # RAG might partially work without DB (except for Memory/Team tools)
-                raise
+        if self._db_pool is None:
+            async with self._db_pool_lock:
+                if self._db_pool is None:
+                    try:
+                        self._db_pool = await asyncpg.create_pool(dsn=config.database_url)
+                    except Exception as e:
+                        logger.error("Failed to create asyncpg pool: %s", e)
+                        # Fallback or re-raise depending on criticality.
+                        # RAG might partially work without DB (except for Memory/Team tools)
+                        raise
         return self._db_pool
 
     async def _get_orchestrator(self, search_service: SearchService) -> AgenticRAGOrchestrator:
         """Lazy load orchestrator with injected dependencies"""
-        if not self._orchestrator:
-            pool = await self._get_db_pool()
-            self._orchestrator = create_agentic_rag(
-                retriever=search_service,
-                db_pool=pool,
-                semantic_cache=None,  # Oracle specific cache logic if needed
-                clarification_service=self.clarification_service,
-            )
-            # Inject pre-initialized entity extractor if needed, or rely on factory
-            # Factory creates new one. We can inject our shared one
-            # if we modify factory or set it after.
-            self._orchestrator.entity_extractor = self._entity_extractor
+        if self._orchestrator is None:
+            async with self._orchestrator_lock:
+                if self._orchestrator is None:
+                    pool = await self._get_db_pool()
+                    self._orchestrator = create_agentic_rag(
+                        retriever=search_service,
+                        db_pool=pool,
+                        semantic_cache=None,  # Oracle specific cache logic if needed
+                        clarification_service=self.clarification_service,
+                    )
+                    # Inject pre-initialized entity extractor if needed, or rely on factory
+                    # Factory creates new one. We can inject our shared one
+                    # if we modify factory or set it after.
+                    self._orchestrator.entity_extractor = self._entity_extractor
         return self._orchestrator
 
     @property
