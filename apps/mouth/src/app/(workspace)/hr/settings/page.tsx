@@ -195,7 +195,8 @@ export default function HRSettingsPage() {
             Bonus Rate Configuration
           </h1>
           <p className="mt-1 text-sm text-[var(--bz-text-2)]">
-            New visas earn their rate at Electronic Visa issuance. Other services
+            New visas earn their bonus when staff upload the Electronic Visa. KITAS
+            renewals earn it when staff upload the renewed IMK. Other services
             earn theirs at final delivery. Review missing rates on the Bonuses page.
           </p>
         </div>
