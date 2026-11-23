@@ -22,46 +22,20 @@ from uuid import UUID
 import asyncpg
 from fastapi import HTTPException
 
+from backend.app.utils.service_accounts import TEAM_ROLES
 from backend.services.crm.partners.models import Partner, PartnerAuditLogEntry
 from backend.services.crm.partners.repository import PartnersRepository
 
 logger = logging.getLogger(__name__)
 
 
-# CATA-6: SSOT for internal-team role strings. The router imports this to
-# keep both layers consistent (see _INTERNAL_ROLES_ALWAYS_ALLOWED re-export
-# in routers/partners.py). All comparisons are case-insensitive; callers
-# must .strip().lower() before membership checks.
-INTERNAL_ROLES_ALWAYS_ALLOWED: frozenset[str] = frozenset(
-    {
-        # Legacy/test conventions (kept so existing fixtures still pass)
-        "admin",
-        "team",
-        # Production team_members.role values (job titles)
-        "founder",
-        "ceo",
-        "board member",
-        "team leader",
-        "supervisor",
-        "tax lead",
-        "tax manager",
-        "manager",  # department head title (2026-10-20)
-        "direktur",  # reorganisation 2026-11-09
-        "tax supervisor",
-        "tax responsible",
-        "tax consultant",  # owner order 2026-11-15: same access as Tax Lead
-        "senior consultant",
-        "hr & accounting",
-        "tax care",
-        "accounting",
-        "marketing & accounting",
-        "executive consultant",
-        "specialist advisor",
-        "junior consultant",
-        "reception",
-        "member",
-    }
-)
+# CATA-6: the staff roles that may work with partners. It is the team roster of
+# backend.app.utils.service_accounts (every role a colleague can hold, normalised),
+# not a second hand-kept list: a job title added to the roster is admitted here the
+# same day. The router re-exports it (_INTERNAL_ROLES_ALWAYS_ALLOWED in
+# routers/partners.py). Comparisons are case-insensitive; callers must
+# .strip().lower() before membership checks.
+INTERNAL_ROLES_ALWAYS_ALLOWED: frozenset[str] = TEAM_ROLES
 
 # CATA-6: roles that count as admin-equivalent when email allowlist misses
 # (legacy test fixtures use 'admin'; production uses 'Founder').
