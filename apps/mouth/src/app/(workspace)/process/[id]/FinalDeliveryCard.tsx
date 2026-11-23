@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { api } from "@/lib/api";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import { fileToBase64 } from "@/lib/utils";
+import { workDayOf } from "@/lib/format/work-day";
 import {
   BASE64_UPLOAD_MAX_BYTES,
   BASE64_UPLOAD_MAX_LABEL,
@@ -19,6 +20,7 @@ interface Slot {
   file_name: string | null;
   waiver_reason: string | null;
   reusable_document_id: number | null;
+  issued_on: string | null;
 }
 
 interface Delivery {
@@ -48,6 +50,10 @@ export function FinalDeliveryCard({
     { shouldRetryOnError: false },
   );
   const [working, setWorking] = useState(false);
+  const [issueDate, setIssueDate] = useState("");
+  const today = workDayOf();
+  const validIssueDate =
+    /^\d{4}-\d{2}-\d{2}$/.test(issueDate) && issueDate <= today;
   const pending = useRef(false);
   const [feedback, setFeedback] = useState("");
   const [failure, setFailure] = useState("");
@@ -107,7 +113,20 @@ export function FinalDeliveryCard({
     }
   }
 
+  function needsIssueDate(slot: Slot): boolean {
+    return (
+      slot.key === data?.bonus_slot &&
+      data.bonus_event !== "electronic_visa_issued"
+    );
+  }
+
   function attach(slot: Slot, file: File) {
+    if (needsIssueDate(slot) && !validIssueDate) {
+      setFailure(
+        "Enter the issue date printed on the Electronic Visa, up to today in Bali.",
+      );
+      return;
+    }
     if (
       !file.size ||
       file.size > BASE64_UPLOAD_MAX_BYTES ||
@@ -122,6 +141,7 @@ export function FinalDeliveryCard({
       async () =>
         api.post<Delivery>(`${url}/slots/${encodeURIComponent(slot.key)}`, {
           file_name: file.name,
+          ...(needsIssueDate(slot) ? { issued_on: issueDate } : {}),
           file_content: await fileToBase64(file),
           mime_type: file.type,
           ...(chooseCompany && companyId
@@ -152,7 +172,7 @@ export function FinalDeliveryCard({
             <p className="mb-3 text-sm" role="status">
               {data.bonus_event === "electronic_visa_issued"
                 ? "Electronic Visa issuance recorded. Remaining documents do not earn another bonus."
-                : "Record issuance by uploading the official Electronic Visa. The bonus accrues at this step."}
+                : "Upload the official Electronic Visa and enter its printed issue date. The bonus accrues on that date."}
             </p>
           )}
           {writable && !practice.family_member_id && (
@@ -246,6 +266,26 @@ export function FinalDeliveryCard({
                         ? `Not applicable — ${slot.waiver_reason}`
                         : "Awaiting file")}
                   </p>
+                  {slot.key === data.bonus_slot && slot.issued_on && (
+                    <p className="text-sm">
+                      Electronic Visa issue date ·{" "}
+                      <time dateTime={slot.issued_on}>{slot.issued_on}</time>
+                    </p>
+                  )}
+                  {writable && needsIssueDate(slot) && (
+                    <label className="block my-1 text-sm">
+                      Electronic Visa issue date
+                      <input
+                        type="date"
+                        required
+                        max={today}
+                        value={issueDate}
+                        disabled={working}
+                        onChange={(e) => setIssueDate(e.currentTarget.value)}
+                        className="block rounded border p-1"
+                      />
+                    </label>
+                  )}
                   {writable && (
                     <>
                       <label className="block text-sm my-1">
@@ -255,7 +295,11 @@ export function FinalDeliveryCard({
                           className="block max-w-full text-sm"
                           type="file"
                           accept={UPLOAD_ACCEPT}
-                          disabled={working || !canUpload}
+                          disabled={
+                            working ||
+                            !canUpload ||
+                            (needsIssueDate(slot) && !validIssueDate)
+                          }
                           onChange={(e) => {
                             const f = e.currentTarget.files?.[0];
                             e.currentTarget.value = "";

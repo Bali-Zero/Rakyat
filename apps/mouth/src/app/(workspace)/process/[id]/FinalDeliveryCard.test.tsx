@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SWRConfig } from "swr";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import { FinalDeliveryCard } from "./FinalDeliveryCard";
+import { workDayOf } from "@/lib/format/work-day";
 
 const requests = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api: requests }));
@@ -55,9 +56,14 @@ describe("Final delivery", () => {
     requests.get.mockResolvedValue(initial);
   });
   it("records issuance on upload and keeps completion unavailable until the post-entry permit is saved", async () => {
+    const [year, month] = workDayOf().split("-").map(Number);
+    const printedDate = new Date(Date.UTC(year, month - 1, 0))
+      .toISOString()
+      .slice(0, 10);
     const issuedVisa = slot("electronic_visa", "Electronic Visa", {
       document_id: 21,
       file_name: "visa.pdf",
+      issued_on: printedDate,
     });
     const issued = {
       ...initial,
@@ -83,6 +89,13 @@ describe("Final delivery", () => {
       name: "Deliver and complete",
     });
     expect(deliver).toBeDisabled();
+    const date = screen.getByLabelText("Electronic Visa issue date");
+    expect(date).toHaveValue("");
+    expect(screen.getByLabelText("Upload Electronic Visa")).toBeDisabled();
+    fireEvent.change(date, { target: { value: "2999-12-01" } });
+    expect(screen.getByLabelText("Upload Electronic Visa")).toBeDisabled();
+    expect(requests.post).not.toHaveBeenCalled();
+    fireEvent.change(date, { target: { value: printedDate } });
     await user.upload(
       screen.getByLabelText("Upload Electronic Visa"),
       new File(["issued"], "visa.pdf", { type: "application/pdf" }),
@@ -95,6 +108,7 @@ describe("Final delivery", () => {
       {
         file_name: "visa.pdf",
         file_content: "aXNzdWVk",
+        issued_on: printedDate,
         mime_type: "application/pdf",
       },
     );
@@ -113,6 +127,32 @@ describe("Final delivery", () => {
       base + "/complete",
     ]);
   });
+  it("preserves the accrued issue date when replacing the Electronic Visa", async () => {
+    const recorded = {
+      ...initial,
+      bonus_event: "electronic_visa_issued",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", {
+          document_id: 21,
+          file_name: "visa.pdf",
+          issued_on: "2026-02-20",
+        }),
+        requiredSlots[1],
+      ],
+    };
+    requests.get.mockResolvedValue(recorded);
+    requests.post.mockResolvedValueOnce(recorded);
+    const { user } = setup();
+    expect(await screen.findByText("2026-02-20")).toBeVisible();
+    expect(screen.queryByLabelText("Electronic Visa issue date")).toBeNull();
+    await user.upload(
+      screen.getByLabelText("Replace Electronic Visa"),
+      new File(["corrected"], "visa.pdf", { type: "application/pdf" }),
+    );
+    await waitFor(() => expect(requests.post).toHaveBeenCalledOnce());
+    expect(requests.post.mock.calls[0][1]).not.toHaveProperty("issued_on");
+  });
+
   it("cannot revise or deliver from an unsettled practice", async () => {
     setup("partial");
     await screen.findByText("Electronic Visa");
