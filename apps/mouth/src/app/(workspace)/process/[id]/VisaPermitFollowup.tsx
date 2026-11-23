@@ -27,9 +27,11 @@ export interface VisaFollowup {
   can_postpone: boolean;
   can_escalate: boolean;
   can_release: boolean;
+  can_confirm_receipt: boolean;
+  email_receipt_confirmed_at: string | null;
 }
 
-export type FollowupAction = "postpone" | "escalate";
+export type FollowupAction = "postpone" | "escalate" | "confirm-receipt";
 const buttonStyle =
   "mt-2 text-sm font-semibold text-[var(--bz-accent)] underline disabled:opacity-50";
 
@@ -53,7 +55,13 @@ export function VisaPermitFollowup({
     {
       postpone: value.can_postpone,
       escalate: value.can_escalate,
+      "confirm-receipt":
+        value.status === "email_uncertain" && value.can_confirm_receipt,
     }[action];
+  const validNote =
+    draft === "confirm-receipt"
+      ? note.trim().length >= 3 && note.trim().length <= 250
+      : Boolean(note.trim());
   function prepare(action: FollowupAction) {
     setNote("");
     setDraft(action);
@@ -118,6 +126,9 @@ export function VisaPermitFollowup({
           </time>
         </p>
       )}
+      {value.email_receipt_confirmed_at && (
+        <p role="status">Email receipt confirmed by Zero.</p>
+      )}
       {value.status === "awaiting_owner" && <p>Awaiting Zero’s decision.</p>}
       {value.status === "owner_released" && <p>Release recorded by Zero.</p>}
       {allowed("postpone") && draft !== "postpone" && (
@@ -142,12 +153,22 @@ export function VisaPermitFollowup({
             : "Prepare official email to Zero"}
         </button>
       )}
+      {allowed("confirm-receipt") && draft !== "confirm-receipt" && (
+        <button
+          type="button"
+          className={buttonStyle}
+          disabled={busy}
+          onClick={() => prepare("confirm-receipt")}
+        >
+          Record receipt of the existing email
+        </button>
+      )}
       {draft && allowed(draft) && (
         <form
           className="mt-2"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (!note.trim() || busy || !allowed(draft)) return;
+            if (!validNote || busy || !allowed(draft)) return;
             await act(draft, note.trim());
           }}
         >
@@ -157,20 +178,24 @@ export function VisaPermitFollowup({
           <label>
             {draft === "postpone"
               ? "Private staff note about the client’s entry"
-              : "Note to Zero about the missing permit"}
+              : draft === "confirm-receipt"
+                ? "Mailbox Message-ID or Brevo reference for the received email"
+                : "Note to Zero about the missing permit"}
             <textarea
               className="mt-1 block w-full rounded border p-2"
               required
-              maxLength={1000}
+              maxLength={draft === "confirm-receipt" ? 250 : 1000}
               value={note}
               disabled={busy}
               onChange={(e) => setNote(e.target.value)}
             />
           </label>
-          <button className={buttonStyle} disabled={!note.trim() || busy}>
+          <button className={buttonStyle} disabled={!validNote || busy}>
             {draft === "postpone"
               ? `Confirm postponement to ${value.final_due_on}`
-              : "Confirm and send email to Zero"}
+              : draft === "confirm-receipt"
+                ? "Confirm existing email receipt"
+                : "Confirm and send email to Zero"}
           </button>
           <button
             type="button"

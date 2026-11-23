@@ -216,13 +216,15 @@ function StaffDeliveryCard({
       async () => {
         const next = await post<VisaFollowup>(
           `${url}/visa-followup/${action}`,
-          { note },
+          action === "confirm-receipt" ? { reference: note } : { note },
         );
         return { ...data, visa_followup: next };
       },
       action === "postpone"
         ? "Postponement recorded."
-        : "Escalation status updated.",
+        : action === "confirm-receipt"
+          ? "Existing email receipt recorded."
+          : "Escalation status updated.",
     );
   }
 

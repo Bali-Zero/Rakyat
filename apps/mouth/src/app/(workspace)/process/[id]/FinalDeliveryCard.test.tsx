@@ -403,8 +403,63 @@ describe("Final delivery", () => {
     });
     setup();
     expect(await screen.findByText(/Email outcome unconfirmed/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: /Record receipt of the existing email/,
+      }),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: /email to Zero/i })).toBeNull();
     expect(requests.post).not.toHaveBeenCalled();
+  });
+  it("lets the authorised owner confirm an existing ambiguous send by reference without sending or releasing", async () => {
+    const uncertain = {
+      ...followup,
+      status: "email_uncertain",
+      can_postpone: false,
+      can_escalate: false,
+      can_confirm_receipt: true,
+    };
+    requests.get.mockResolvedValue({ ...initial, visa_followup: uncertain });
+    requests.post.mockResolvedValueOnce({
+      ...uncertain,
+      status: "awaiting_owner",
+      email_sent_at: "2026-09-30T05:00:00Z",
+      email_receipt_confirmed_at: "2026-09-30T05:06:00Z",
+      can_confirm_receipt: false,
+    });
+    const { user } = setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Record receipt of the existing email",
+      }),
+    );
+    const confirm = screen.getByRole("button", {
+      name: "Confirm existing email receipt",
+    });
+    expect(confirm).toBeDisabled();
+    await user.type(
+      screen.getByLabelText(
+        "Mailbox Message-ID or Brevo reference for the received email",
+      ),
+      "  receipt-ref-42  ",
+    );
+    expect(requests.post).not.toHaveBeenCalled();
+    await user.click(confirm);
+    expect(
+      await screen.findByText("Email receipt confirmed by Zero."),
+    ).toBeVisible();
+    expect(requests.post.mock.calls).toEqual([
+      [
+        base + "/visa-followup/confirm-receipt",
+        { reference: "receipt-ref-42" },
+      ],
+    ]);
+    expect(
+      screen.queryByRole("button", {
+        name: "Record receipt of the existing email",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("Release recorded by Zero.")).toBeNull();
   });
   it("withholds staff notes and actions if the response belongs to another credential", async () => {
     requests.sentSub = "staff-b";
