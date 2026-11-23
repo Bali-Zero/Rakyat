@@ -16,6 +16,8 @@ from backend.core.qdrant_db import QdrantClient
 # Module-level patches: heavy deps that must never import for real
 # ---------------------------------------------------------------------------
 
+_RECENT = (datetime.now(tz=timezone.utc) - timedelta(days=1)).isoformat()
+
 _MOCK_INTEL_COLLECTIONS = {
     "visa": "bali_intel_visa",
     "news": "bali_intel_news",
@@ -165,7 +167,7 @@ class TestSearchIntel:
         mock_client = AsyncMock()
         mock_client.search.return_value = {
             "documents": ["doc1"],
-            "metadatas": [{"id": "1", "title": "Test", "tier": "T1"}],
+            "metadatas": [{"id": "1", "title": "Test", "tier": "T1", "published_at": _RECENT}],
             "distances": [0.5],
         }
 
@@ -228,7 +230,9 @@ class TestSearchIntel:
             else:
                 m.search.return_value = {
                     "documents": ["doc2"],
-                    "metadatas": [{"id": "2", "title": "News", "tier": "T2"}],
+                    "metadatas": [
+                        {"id": "2", "title": "News", "tier": "T2", "published_at": _RECENT}
+                    ],
                     "distances": [0.3],
                 }
             return m
@@ -258,8 +262,8 @@ class TestSearchIntel:
         mock_client.search.return_value = {
             "documents": ["doc1", "doc2"],
             "metadatas": [
-                {"id": "1", "title": "A", "tier": "T1"},
-                {"id": "2", "title": "B", "tier": "T1"},
+                {"id": "1", "title": "A", "published_at": _RECENT},
+                {"id": "2", "title": "B", "tier": "T1", "published_at": _RECENT},
             ],
             "distances": [1.0, 0.1],
         }
@@ -290,7 +294,7 @@ class TestSearchIntel:
         client = create_autospec(QdrantClient, instance=True)
         client.search.return_value = {
             "documents": ["visa news"],
-            "metadatas": [{"id": "1", "title": "Visa", "tier": "T1"}],
+            "metadatas": [{"id": "1", "title": "Visa", "tier": "T1", "published_at": _RECENT}],
             "distances": [0.0],
         }
 
@@ -314,7 +318,7 @@ class TestSearchIntel:
         working = create_autospec(QdrantClient, instance=True)
         working.search.return_value = {
             "documents": ["news doc"],
-            "metadatas": [{"id": "2", "title": "News", "tier": "T2"}],
+            "metadatas": [{"id": "2", "title": "News", "tier": "T2", "published_at": _RECENT}],
             "distances": [0.3],
         }
         clients = {"bali_intel_visa": failing, "bali_intel_news": working}
@@ -348,6 +352,108 @@ class TestSearchIntel:
 
         assert exc_info.value.status_code == 500
         assert "qdrant.internal" not in str(exc_info.value.detail)
+
+    @staticmethod
+    def _search_client(metadatas):
+        client = create_autospec(QdrantClient, instance=True)
+        client.search.return_value = {
+            "documents": [f"doc{i}" for i in range(len(metadatas))],
+            "metadatas": metadatas,
+            "distances": [0.1 * (i + 1) for i in range(len(metadatas))],
+        }
+        return client
+
+    @pytest.mark.asyncio
+    async def test_search_default_request_sends_no_tier_condition(self, _patch_imports):
+        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
+        client = self._search_client([{"id": "1", "title": "No tier", "published_at": _RECENT}])
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            result = await search_intel(IntelSearchRequest(query="q", category="visa"))
+
+        assert client.search.await_args.kwargs["filter"] is None
+        assert [r["id"] for r in result["results"]] == ["1"]
+        assert result["results"][0]["published_date"] == _RECENT
+
+    @pytest.mark.asyncio
+    async def test_search_explicit_tier_subset_is_still_a_condition(self, _patch_imports):
+        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
+        client = self._search_client([])
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            await search_intel(IntelSearchRequest(query="q", category="visa", tier=["T1"]))
+
+        assert client.search.await_args.kwargs["filter"] == {"tier": {"$in": ["T1"]}}
+
+    @pytest.mark.asyncio
+    async def test_search_applies_the_date_range_in_the_route(self, _patch_imports):
+        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
+        old = (datetime.now(tz=timezone.utc) - timedelta(days=30)).isoformat()
+        client = self._search_client(
+            [
+                {"id": "old", "published_at": old},
+                {"id": "undated"},
+                {"id": "recent", "published_at": _RECENT},
+            ]
+        )
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            result = await search_intel(IntelSearchRequest(query="q", category="visa", limit=10))
+
+        kwargs = client.search.await_args.kwargs
+        assert kwargs["limit"] == 50
+        assert "published_date" not in (kwargs["filter"] or {})
+        assert [r["id"] for r in result["results"]] == ["recent"]
+
+    @pytest.mark.asyncio
+    async def test_search_overfetch_is_capped(self, _patch_imports):
+        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
+        client = self._search_client([])
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            await search_intel(IntelSearchRequest(query="q", category="visa", limit=100))
+            assert client.search.await_args.kwargs["limit"] == 200
+            await search_intel(IntelSearchRequest(query="q", category="visa", limit=300))
+            assert client.search.await_args.kwargs["limit"] == 300
+
+    @pytest.mark.asyncio
+    async def test_search_date_range_all_keeps_limit_and_filters_nothing(self, _patch_imports):
+        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
+        client = self._search_client(
+            [{"id": "undated"}, {"id": "old", "published_at": "2001-01-01"}]
+        )
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            result = await search_intel(
+                IntelSearchRequest(query="q", category="visa", date_range="all", limit=7)
+            )
+
+        assert client.search.await_args.kwargs["limit"] == 7
+        assert [r["id"] for r in result["results"]] == ["undated", "old"]
+
+    @pytest.mark.asyncio
+    async def test_search_impact_level_is_passed_through(self, _patch_imports):
+        _patch_imports["embedder"].generate_single_embedding.return_value = [0.1, 0.2]
+        client = self._search_client([])
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            await search_intel(
+                IntelSearchRequest(query="q", category="visa", impact_level="critical")
+            )
+
+        assert client.search.await_args.kwargs["filter"] == {"impact_level": "critical"}
 
 
 # ---------------------------------------------------------------------------

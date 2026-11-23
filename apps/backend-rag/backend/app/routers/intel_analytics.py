@@ -31,6 +31,9 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["intel-analytics"])
 
 _CRITICAL_MAX_POINTS = 5000
+_DEFAULT_SEARCH_TIERS = frozenset({"T1", "T2", "T3"})
+_SEARCH_DATE_OVERFETCH = 5
+_SEARCH_FETCH_CAP = 200
 
 
 def _require_store_admin(user: dict[str, Any]) -> None:
@@ -164,6 +167,17 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
         else:
             collection_names = list(INTEL_COLLECTIONS.values())
 
+        cutoff: datetime | None = None
+        if request.date_range != "all":
+            days_map = {
+                "today": 1,
+                "last_7_days": 7,
+                "last_30_days": 30,
+                "last_90_days": 90,
+            }
+            days = days_map.get(request.date_range, IntelConstants.DUPLICATE_CHECK_DAYS)
+            cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+
         all_results = []
         searched = 0
         failed = 0
@@ -176,42 +190,47 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
             try:
                 client = QdrantClient(collection_name=collection_name)
 
-                # Build metadata filter
-                where_filter = {"tier": {"$in": request.tier}}
+                where_filter: dict[str, Any] = {}
 
-                # Add date range filter
-                if request.date_range != "all":
-                    days_map = {
-                        "today": 1,
-                        "last_7_days": 7,
-                        "last_30_days": 30,
-                        "last_90_days": 90,
-                    }
-                    days = days_map.get(request.date_range, IntelConstants.DUPLICATE_CHECK_DAYS)
-                    cutoff_date = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
-                    where_filter["published_date"] = {"$gte": cutoff_date}
+                # "Every tier" is no restriction; stored points carry no tier
+                if set(request.tier) != _DEFAULT_SEARCH_TIERS:
+                    where_filter["tier"] = {"$in": request.tier}
 
                 # Add impact level filter
                 if request.impact_level:
                     where_filter["impact_level"] = request.impact_level
 
+                # The date is stored as text, so the range is applied below, not by the database
+                fetch_limit = request.limit
+                if cutoff is not None:
+                    fetch_limit = max(
+                        request.limit,
+                        min(request.limit * _SEARCH_DATE_OVERFETCH, _SEARCH_FETCH_CAP),
+                    )
+
                 # Search (async)
                 results = await client.search(
                     query_embedding=query_embedding,
-                    filter=where_filter,
-                    limit=request.limit,
+                    filter=where_filter or None,
+                    limit=fetch_limit,
                 )
 
                 # Parse results
+                collection_results: list[dict[str, Any]] = []
                 for doc, metadata, distance in zip(
                     results.get("documents", []),
                     results.get("metadatas", []),
                     results.get("distances", []),
                     strict=True,
                 ):
+                    published = metadata.get("published_date") or metadata.get("published_at")
+                    if cutoff is not None:
+                        published_at = _parse_stored_date(published)
+                        if published_at is None or published_at < cutoff:
+                            continue
                     similarity_score = 1 / (1 + distance)
 
-                    all_results.append(
+                    collection_results.append(
                         {
                             "id": metadata.get("id"),
                             "title": metadata.get("title"),
@@ -219,7 +238,7 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
                             "summary_italian": metadata.get("summary_italian", ""),
                             "source": metadata.get("source"),
                             "tier": metadata.get("tier"),
-                            "published_date": metadata.get("published_date"),
+                            "published_date": published,
                             "category": collection_name.replace("bali_intel_", ""),
                             "impact_level": metadata.get("impact_level"),
                             "url": metadata.get("url"),
@@ -229,6 +248,7 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
                             "similarity_score": similarity_score,
                         },
                     )
+                all_results.extend(collection_results[: request.limit])
 
             except Exception as e:
                 failed += 1
