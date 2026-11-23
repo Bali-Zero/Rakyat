@@ -57,6 +57,9 @@ interface GeminiResponse {
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const MAX_MESSAGE_LENGTH = 1200;
 const MAX_HISTORY_ITEMS = 4;
+// The client replays assistant answers (Gemini, maxOutputTokens 700) as history,
+// so those turns may legitimately exceed the visitor message limit.
+const MAX_ASSISTANT_HISTORY_LENGTH = 4000;
 const MAX_SPOKEN_ANSWER_LENGTH = 96;
 const TEXT_PROVIDER_TIMEOUT_MS = 15_000;
 const SUPPORTED_LOCALES = new Set<SupportedLocale>([
@@ -159,6 +162,46 @@ function isSafeHistoryTurn(turn: unknown): turn is SafeHistoryTurn {
     (candidate.role === "user" || candidate.role === "assistant") &&
     typeof candidate.content === "string"
   );
+}
+
+type BodyValidation =
+  | { ok: true; message: string }
+  | { ok: false; error: string };
+
+function validateBody(parsed: unknown): BodyValidation {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "message required" };
+  }
+  const body = parsed as Record<string, unknown>;
+  if (typeof body.message !== "string") {
+    return { ok: false, error: "message required" };
+  }
+  const message = body.message.trim();
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return { ok: false, error: "message too long" };
+  }
+  if (
+    body.locale !== undefined &&
+    !SUPPORTED_LOCALES.has(body.locale as SupportedLocale)
+  ) {
+    return { ok: false, error: "invalid locale" };
+  }
+  if (body.history !== undefined) {
+    if (!Array.isArray(body.history) || body.history.length > MAX_HISTORY_ITEMS) {
+      return { ok: false, error: "invalid history" };
+    }
+    for (const turn of body.history) {
+      if (!isSafeHistoryTurn(turn)) return { ok: false, error: "invalid history" };
+      const limit =
+        turn.role === "assistant"
+          ? MAX_ASSISTANT_HISTORY_LENGTH
+          : MAX_MESSAGE_LENGTH;
+      if (turn.content.length > limit) {
+        return { ok: false, error: "invalid history" };
+      }
+    }
+  }
+  return { ok: true, message };
 }
 
 function getSafeHistory(body: VoiceConciergeRequest): SafeHistoryTurn[] {
@@ -449,13 +492,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const parsed: unknown = await request.json().catch(() => ({}));
-  const body = (
-    parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : {}
-  ) as VoiceConciergeRequest;
-  const message = body.message?.trim().slice(0, MAX_MESSAGE_LENGTH);
+  const parsed: unknown = await request.json().catch(() => null);
+  const validation = validateBody(parsed);
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+  const body = parsed as VoiceConciergeRequest;
+  const message = validation.message;
 
   if (!message) {
     return NextResponse.json({ error: "message required" }, { status: 400 });

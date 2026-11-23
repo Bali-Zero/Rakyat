@@ -112,6 +112,87 @@ describe("voice concierge route", () => {
     },
   );
 
+  it.each([7, true, ["a"], { a: 1 }, null])(
+    "refuses a message that is not a string with a 400 (%j)",
+    async (message) => {
+      const response = await POST(request({ message }));
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "message required",
+      });
+    },
+  );
+
+  it("accepts a message of exactly 1200 characters and refuses 1201", async () => {
+    const ok = await POST(request({ message: "a".repeat(1200) }));
+    expect(ok.status).toBe(200);
+
+    const tooLong = await POST(request({ message: "a".repeat(1201) }));
+    expect(tooLong.status).toBe(400);
+    await expect(tooLong.json()).resolves.toMatchObject({
+      error: "message too long",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["de", 7, null, ["en"]])(
+    "refuses an unsupported locale (%j)",
+    async (locale) => {
+      const response = await POST(request({ message: "visa?", locale }));
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "invalid locale",
+      });
+    },
+  );
+
+  it.each([
+    ["not an array", "hi"],
+    ["null", null],
+    ["a non-object item", ["hi"]],
+    ["an item without content", [{ role: "user" }]],
+    ["an item with numeric content", [{ role: "user", content: 5 }]],
+    ["an unknown role", [{ role: "system", content: "x" }]],
+    [
+      "more than four items",
+      Array.from({ length: 5 }, () => ({ role: "user", content: "x" })),
+    ],
+    [
+      "a user item over 1200 characters",
+      [{ role: "user", content: "a".repeat(1201) }],
+    ],
+    [
+      "an assistant item over 4000 characters",
+      [{ role: "assistant", content: "a".repeat(4001) }],
+    ],
+  ])("refuses a history with %s", async (_label, history) => {
+    const response = await POST(request({ message: "visa?", history }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid history",
+    });
+  });
+
+  it("accepts what the client sends: locale, four turns, a long assistant answer", async () => {
+    const response = await POST(
+      request({
+        message: "Vorrei aprire una societa a Bali",
+        locale: "it",
+        history: [
+          { role: "user", content: "ciao" },
+          { role: "assistant", content: "a".repeat(2500) },
+          { role: "user", content: "e le tasse?" },
+          { role: "assistant", content: "Ok." },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   it("requires internal auth in production before demo or Gemini text handling", async () => {
     vi.stubEnv("NODE_ENV", "production");
     process.env.VOICE_CONCIERGE_LAB_ENABLED = "true";
