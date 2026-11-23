@@ -165,6 +165,37 @@ async def link(pool: asyncpg.Pool, client_id: int, company_id: int, role: str = 
     )
 
 
+@pytest.mark.asyncio
+async def test_historical_filing_keeps_one_internal_process_in_its_wita_month(pool):
+    person = await client(pool)
+    business = await company(pool, "Synthetic Test Company")
+    await link(pool, person, business)
+    await pool.execute("""
+        CREATE TABLE team_members (email text, department text, active boolean);
+        INSERT INTO team_members VALUES ('consultant@example.invalid', 'Tax', true);
+        CREATE TABLE client_family_members (id bigint, full_name text, relationship text);
+        ALTER TABLE practice_types ADD COLUMN description text, ADD COLUMN typical_duration_days integer;
+    """)
+    migration = MIGRATION.with_name("378_historical_tax_completion_identity.sql")
+    up, _ = split_migration_sql(migration.read_text())
+    schema = await pool.fetchval("SELECT current_schema()")
+    await pool.execute(up.replace("public.", f'"{schema}".'))
+    filing = crm_practices.HistoricalTaxCompletionCreate(
+        client_id=person, company_id=business, assigned_to="consultant@example.invalid",
+        service="lkpm_quarterly", fiscal_year=2024, fiscal_period="Q3",
+        issuer_entity_key="permata_bali_nol_konsultan", completed_at="2024-09-30T16:00:00Z",
+        evidence_references=["synthetic-receipt"], source="test receipt",
+    )
+    saved = await crm_practices.create_historical_tax_completion(filing, pool, USER)
+    replay = await crm_practices.create_historical_tax_completion(filing, pool, USER)
+    assert saved.id == replay.id
+    assert not await pool.fetchval("SELECT client_visible FROM practices WHERE id=$1", saved.id)
+    await pool.execute("UPDATE practices SET created_at='2024-11-10T00:00:00Z' WHERE id=$1", saved.id)
+    for month in ("2024-09", "2024-10", "2024-11"):
+        listed = await crm_practices.list_practices(pool=pool, status="completed", month=month)
+        assert [r["id"] for r in listed] == ([saved.id] if month == "2024-10" else [])
+
+
 async def create(
     pool: asyncpg.Pool, client_id: int, code: str = "tax_annual_company", user: dict = USER, **extra
 ):

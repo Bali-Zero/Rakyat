@@ -10,6 +10,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path, Query, Request
@@ -638,7 +639,32 @@ class HistoricalTaxCompletionCreate(BaseModel):
             raise ValueError("issuer_entity_key must be permata_bali_nol_konsultan")
         if self.completed_at.tzinfo is None or self.completed_at.utcoffset() is None:
             raise ValueError("completed_at must include an offset (WITA is +08:00)")
+        self.completed_at = self.completed_at.astimezone(ZoneInfo("Asia/Makassar"))
+        quarter = 4 if self.fiscal_period == "ANNUAL" else int(self.fiscal_period[1])
+        first_filing_day = date(self.fiscal_year + (quarter == 4), 1 if quarter == 4 else 3 * quarter + 1, 1)
+        if self.completed_at.date() < first_filing_day or self.completed_at > datetime.now(timezone.utc):
+            raise ValueError("completion date must fall after the filing period and cannot be in the future")
         return self
+
+
+def _historical_tax_result(row: asyncpg.Record, filing: HistoricalTaxCompletionCreate) -> PracticeResponse:
+    data = dict(row)
+    meta = data["metadata"]
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    evidence = meta["historical_tax_completion"]
+    if (
+        data["client_id"] != filing.client_id
+        or data["assigned_to"] != filing.assigned_to.lower()
+        or data["completion_date"] != filing.completed_at
+        or data["status"] != "completed"
+        or evidence["source"] != filing.source
+        or set(evidence["evidence_references"]) != set(filing.evidence_references)
+    ):
+        raise HTTPException(status_code=409, detail="historical filing already exists with different details")
+    if data.get("uuid"):
+        data["uuid"] = str(data["uuid"])
+    return PracticeResponse.model_validate(data)
 
 
 def _can_import_historical_tax_completion(user: dict) -> bool:
@@ -674,6 +700,11 @@ async def create_historical_tax_completion(
 
     async with db_pool.acquire() as conn:
         async with conn.transaction():
+            lookup = "SELECT * FROM practices WHERE historical_completion_identity = $1"
+            existing = await conn.fetchrow(lookup, identity)
+            if existing:
+                return _historical_tax_result(existing, completion)
+
             assignee = await conn.fetchval(
                 """
                 SELECT 1 FROM team_members
@@ -715,18 +746,6 @@ async def create_historical_tax_completion(
                     detail="existing tax practice has no historical scope; review before import",
                 )
 
-            existing = await conn.fetchrow(
-                "SELECT * FROM practices WHERE historical_completion_identity = $1",
-                identity,
-            )
-            if existing:
-                if (existing["assigned_to"] or "").lower() != completion.assigned_to.lower():
-                    raise HTTPException(
-                        status_code=409,
-                        detail="historical completion identity is already assigned to another consultant",
-                    )
-                return PracticeResponse.model_validate(dict(existing))
-
             metadata = {
                 "historical_tax_completion": {
                     "issuer_entity_key": completion.issuer_entity_key,
@@ -753,12 +772,10 @@ async def create_historical_tax_completion(
                 completion.completed_at, completion.company_id, to_jsonb(metadata), operator, identity,
             )
             if row is None:
-                row = await conn.fetchrow(
-                    "SELECT * FROM practices WHERE historical_completion_identity = $1", identity
-                )
+                row = await conn.fetchrow(lookup, identity)
             if row is None:
                 raise HTTPException(status_code=500, detail="historical completion was not recorded")
-            return PracticeResponse.model_validate(dict(row))
+            return _historical_tax_result(row, completion)
 
 
 @router.post("/", response_model=PracticeResponse)
@@ -1257,10 +1274,11 @@ async def list_practices(
                 )
                 query_parts.append(
                     f" AND p.status != 'cancelled'"
-                    f" AND ((p.created_at >= ${param_index} AND p.created_at < ${param_index + 1})"
-                    f" OR (al.performed_at >= ${param_index} AND al.performed_at < ${param_index + 1})"
-                    f" OR (p.metadata ? 'historical_tax_completion'"
-                    f" AND p.completion_date >= ${param_index} AND p.completion_date < ${param_index + 1}))",
+                    f" AND CASE WHEN p.metadata ? 'historical_tax_completion' THEN"
+                    f" p.completion_date >= (${param_index}::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')"
+                    f" AND p.completion_date < (${param_index + 1}::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')"
+                    f" ELSE ((p.created_at >= ${param_index} AND p.created_at < ${param_index + 1})"
+                    f" OR (al.performed_at >= ${param_index} AND al.performed_at < ${param_index + 1})) END",
                 )
                 params.extend([month_start, month_end])
                 param_index += 2
