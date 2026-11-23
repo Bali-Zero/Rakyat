@@ -469,12 +469,13 @@ export const accountingApi = {
 
   /** Debits newest first with their reading and state; `state` lists one side only. */
   async getOutgoings(opts?: {
+    companyKey?: string;
     month?: string;
     limit?: number;
     state?: OutgoingState;
   }): Promise<OutgoingsResponse> {
     return api.get<OutgoingsResponse>(
-      `/api/crm/accounting/outgoings${qs({ limit: opts?.limit, state: opts?.state, month: opts?.month })}`,
+      `/api/crm/accounting/outgoings${qs({ company_key: opts?.companyKey, limit: opts?.limit, state: opts?.state, month: opts?.month })}`,
     );
   },
 

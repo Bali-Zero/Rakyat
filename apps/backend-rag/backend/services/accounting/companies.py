@@ -39,6 +39,23 @@ def company_key_for_account(account_number: str | None) -> str | None:
     return None
 
 
+def account_key_for_account(account_number: str | None) -> str | None:
+    """A stable, account-specific key for an account outside the registry."""
+    digits = _digits(account_number)
+    return f"account:{digits}" if digits else None
+
+
+def account_for_company_key(company_key: str) -> str | None:
+    """Digits of exactly one account selected by the accounting UI, if valid."""
+    entity = ENTITIES.get(company_key)
+    if entity:
+        return _digits(entity.bank_account_number)
+    if company_key.startswith("account:"):
+        digits = _digits(company_key.removeprefix("account:"))
+        return digits or None
+    return None
+
+
 def company_key_for_issuer(issuer_entity_key: str | None) -> str:
     """The company that issued an invoice: its stored issuer, or the default issuer when NULL.
 
@@ -96,25 +113,33 @@ async def load_companies(
             "statements": 0,
             "to_reconcile": 0,
         }
-    if any(
-        company_key_for_account(row["account_number"]) is None for row in (*statements, *waiting)
-    ):
-        per_key[OTHER_KEY] = {
-            "key": OTHER_KEY,
-            "company_name": "Other accounts",
-            "bank_name": None,
-            "account_number": None,
-            "data_through": None,
-            "statements": 0,
-            "to_reconcile": 0,
-        }
+    def account_key(row: Any) -> str:
+        return (
+            company_key_for_account(row["account_number"])
+            or account_key_for_account(row["account_number"])
+            or OTHER_KEY
+        )
+
+    def ensure_unknown(key: str, row: Any) -> None:
+        if key not in per_key:
+            per_key[key] = {
+                "key": key,
+                "company_name": "Unassigned bank account",
+                "bank_name": None,
+                "account_number": row["account_number"],
+                "data_through": None,
+                "statements": 0,
+                "to_reconcile": 0,
+            }
     for row in statements:
-        key = company_key_for_account(row["account_number"]) or OTHER_KEY
+        key = account_key(row)
+        ensure_unknown(key, row)
         entry = per_key[key]
         entry["data_through"] = _later(entry["data_through"], row["through"])
         entry["statements"] += int(row["statements"])
     for row in waiting:
-        key = company_key_for_account(row["account_number"]) or OTHER_KEY
+        key = account_key(row)
+        ensure_unknown(key, row)
         per_key[key]["to_reconcile"] += int(row["to_reconcile"])
     for entry in per_key.values():
         if entry["data_through"] is not None:

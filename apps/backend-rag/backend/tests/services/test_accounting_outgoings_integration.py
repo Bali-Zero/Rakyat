@@ -272,7 +272,7 @@ async def test_an_account_no_company_owns_is_other_and_the_limit_bounds_the_list
     for minute in range(3):
         await _row(db, sid, "bank_fee", 10_000, "", at.replace(minute=minute))
     result = await load_outgoings(db, limit=2)
-    assert [i["company_key"] for i in result["items"]] == ["other", "other"]
+    assert [i["company_key"] for i in result["items"]] == ["account:000", "account:000"]
     assert (result["n"], result["total_idr"]) == (3, 30_000)
 
 

@@ -98,11 +98,13 @@ export function companyStatus(row: AccountingCompany): string {
 export function CompanyStrip({
   companies,
   selected,
+  allowAll = true,
   locked = false,
   onSelect,
 }: {
   companies: CompaniesState;
   selected: string | null;
+  allowAll?: boolean;
   /** A write is pending or a dialog is open: the company cannot change under it. */
   locked?: boolean;
   onSelect: (key: string | null) => void;
@@ -125,7 +127,7 @@ export function CompanyStrip({
       data-testid="cc-companies"
       className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3"
     >
-      <Card
+      {allowAll && <Card
         testId="cc-company-all"
         selected={selected === null}
         disabled={locked}
@@ -133,7 +135,7 @@ export function CompanyStrip({
         detail={`${companies.rows.length} bank accounts`}
         status={`${waiting} to reconcile`}
         onClick={() => onSelect(null)}
-      />
+      />}
       {companies.rows.map((row) => (
         <Card
           key={row.key}

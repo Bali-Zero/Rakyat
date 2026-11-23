@@ -41,6 +41,7 @@ from backend.services.accounting.bank_pdf_readers import (
 )
 from backend.services.accounting.companies import (
     OTHER_KEY,
+    account_key_for_account,
     company_key_for_account,
     company_key_for_issuer,
     load_companies,
@@ -619,8 +620,9 @@ async def reconciliation_inbox(
             "txn_date": r["txn_date"],
             "amount_idr": int(r["amount_idr"]),
             "description": r["description"] or "",
-            # Same rule as the companies strip: an account no company owns is "other".
-            "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
+            "company_key": company_key_for_account(r["account_number"])
+            or account_key_for_account(r["account_number"])
+            or OTHER_KEY,
         }
         for r in rows
     ]
@@ -629,6 +631,7 @@ async def reconciliation_inbox(
 
 @router.get("/outgoings")
 async def outgoings(
+    company_key: str | None = Query(None, min_length=1),
     limit: int = Query(1000, ge=1, le=5000),
     state: Literal["to_justify", "justified", "all"] = Query("to_justify"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
@@ -638,7 +641,13 @@ async def outgoings(
     """Debits newest first, each with its state and justification, bank text read apart."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        return await load_outgoings(conn, limit=limit, state=state, month=month)
+        try:
+            kwargs: dict[str, Any] = {"limit": limit, "state": state, "month": month}
+            if company_key is not None:
+                kwargs["company_key"] = company_key
+            return await load_outgoings(conn, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class JustifyLine(BaseModel):

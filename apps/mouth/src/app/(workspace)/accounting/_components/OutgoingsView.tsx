@@ -28,8 +28,10 @@ import { caseText } from "./CasePicker";
 import { ccShort } from "./ccFormat";
 import { CATEGORY_LABELS, JustifyDialog } from "./JustifyDialog";
 import { PNBP_BATCH_LIMIT } from "./pnbpBatch";
+import { CompanyStrip, useCompanies } from "./CompanyStrip";
 
 const ALL = "all";
+const COMPANY_STORAGE_KEY = "accounting-outgoings-company";
 
 function timeOf(postedAt: string | null): string {
   const m = postedAt ? /T(\d{2}:\d{2})/.exec(postedAt) : null;
@@ -143,10 +145,19 @@ function KindButton({
 
 export function OutgoingsView() {
   const month = useAccountingMonth();
+  const companies = useCompanies();
   const { success, error } = useToast();
   const [data, setData] = useState<OutgoingsResponse | null>(null);
   const [status, setStatus] = useState<"loading" | "ok" | "failed">("loading");
   const [kind, setKind] = useState<string>(ALL);
+  const [company, setCompany] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : window.sessionStorage.getItem(COMPANY_STORAGE_KEY),
+  );
+  const selectCompany = useCallback((key: string | null) => {
+    setCompany(key);
+    if (key) window.sessionStorage.setItem(COMPANY_STORAGE_KEY, key);
+    else window.sessionStorage.removeItem(COMPANY_STORAGE_KEY);
+  }, []);
   const [tab, setTab] = useState<OutgoingState>("to_justify");
   const [justifying, setJustifying] = useState<OutgoingItem | null>(null);
   const [undoError, setUndoError] = useState<{
@@ -161,6 +172,7 @@ export function OutgoingsView() {
     id: string;
     n: number;
     at: string;
+    company: string;
   } | null>(null);
   // Token of the latest load: an older one answering late changes nothing.
   const loadReq = useRef(0);
@@ -179,7 +191,12 @@ export function OutgoingsView() {
     const token = ++loadReq.current;
     setStatus("loading");
     try {
-      const res = await accountingApi.getOutgoings({ state: tab, month });
+      if (!company) {
+        setData(null);
+        setStatus("ok");
+        return;
+      }
+      const res = await accountingApi.getOutgoings({ companyKey: company, state: tab, month });
       if (loadReq.current !== token) return;
       setData(res);
       setStatus("ok");
@@ -188,11 +205,16 @@ export function OutgoingsView() {
       if (loadReq.current !== token) return;
       setStatus("failed");
     }
-  }, [tab, month]);
+  }, [company, tab, month]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (company === null && companies.status === "ok" && companies.rows.length === 1)
+      selectCompany(companies.rows[0].key);
+  }, [companies, company, selectCompany]);
 
   const rows = useMemo(
     () =>
@@ -207,7 +229,7 @@ export function OutgoingsView() {
   const pnbpShown =
     tab === "to_justify" && (kind === ALL || kind === "government_fee");
   // The Undo of the set just justified, only on the Bali day it was made (the server decides too).
-  const undoable = lastBatch && justifiedToday(lastBatch.at) ? lastBatch : null;
+  const undoable = lastBatch && lastBatch.company === company && justifiedToday(lastBatch.at) ? lastBatch : null;
   const pnbp = useMemo(() => {
     const open = (data?.items ?? []).filter(
       (i) => i.kind === "government_fee" && i.state === "to_justify",
@@ -297,6 +319,7 @@ export function OutgoingsView() {
         id: res.batch_id,
         n: res.n,
         at: new Date().toISOString(),
+        company: company!,
       });
       setConfirmBatch(false);
       void load();
@@ -369,10 +392,24 @@ export function OutgoingsView() {
         </p>
       </div>
 
-      <div role="group" aria-label="Outgoings state" className="flex gap-2">
+      <CompanyStrip
+        companies={companies}
+        selected={company}
+        allowAll={false}
+        locked={Boolean(justifying) || undoing || batchBusy}
+        onSelect={selectCompany}
+      />
+
+      {!company && companies.status === "ok" && (
+        <p className="text-sm text-[var(--bz-text-2)]">
+          Choose a company to see its payments out.
+        </p>
+      )}
+
+      {company && <div role="group" aria-label="Outgoings state" className="flex gap-2">
         {tabButton("to_justify", "To justify", data?.n)}
         {tabButton("justified", "Justified", data?.n_justified)}
-      </div>
+      </div>}
 
       {status === "ok" &&
         pnbpShown &&
