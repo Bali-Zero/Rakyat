@@ -51,6 +51,7 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -274,10 +275,30 @@ class CaseCreateBody(BaseModel):
         return self
 
 
+_OFFICE_TZ = ZoneInfo("Asia/Makassar")
+
+
+def _latest_occurred_on() -> date:
+    # Staff date events in Bali, which is ahead of the server's UTC clock.
+    return max(date.today(), datetime.now(_OFFICE_TZ).date())
+
+
 class AdvanceBody(BaseModel):
     to_stage: E33Stage
     note: str | None = None
     occurred_on: date | None = None
+
+    @field_validator("occurred_on")
+    @classmethod
+    def _validate_occurred_on_bounds(cls, value: date | None) -> date | None:
+        if value is None:
+            return value
+        today = _latest_occurred_on()
+        if value > today:
+            raise ValueError("occurred_on cannot be after today")
+        if (value.year, value.month, value.day) < (today.year - 6, today.month, today.day):
+            raise ValueError("occurred_on cannot be more than six years ago")
+        return value
 
 
 class EvidenceBody(BaseModel):
@@ -543,6 +564,16 @@ async def advance_case(
                         "record the guarantee evidence (bank confirmation / property "
                         "title filing) before closing the Day-90 gate"
                     ),
+                )
+
+            if (
+                body.occurred_on is not None
+                and case.entry_date is not None
+                and body.occurred_on < case.entry_date
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="occurred_on cannot be before the case entry date",
                 )
 
             try:
