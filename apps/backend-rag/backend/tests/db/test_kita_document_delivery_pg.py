@@ -37,8 +37,8 @@ CREATE TABLE client_company_links(company_id int,client_id int);
 CREATE TABLE activity_log(entity_type text,entity_id int,action text,performed_by text,description text);
 CREATE TABLE timeline_events(client_id int,practice_id int,event_type text,title text,description text,
     event_date timestamptz,client_visible boolean,color text,created_by text);
-CREATE TABLE team_members(id int primary key,email text,role text,active boolean);
-CREATE TABLE hr_employees(id int primary key,team_member_id int,is_active boolean,profile jsonb);
+CREATE TABLE team_members(id varchar(36) primary key,email text,role text,active boolean);
+CREATE TABLE hr_employees(id int primary key,team_member_id varchar(36) REFERENCES team_members(id),is_active boolean,profile jsonb);
 CREATE TABLE hr_bonus_rates(id int primary key,practice_type_code text,is_active boolean,
     effective_from date,effective_to date,amount_idr bigint);
 CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text, payroll_period_id int,
@@ -75,8 +75,8 @@ async def pool(monkeypatch):
             await conn.execute("""
                 CREATE TRIGGER hr_validate BEFORE INSERT ON hr_bonus_ledger
                     FOR EACH ROW EXECUTE FUNCTION hr_validate_completed_practice();
-                INSERT INTO team_members VALUES(1,'consultant@example.test','consultant',true);
-                INSERT INTO hr_employees VALUES(1,1,true,'{}'::jsonb);
+                INSERT INTO team_members VALUES('staff-1','consultant@example.test','consultant',true);
+                INSERT INTO hr_employees VALUES(1,'staff-1',true,'{}'::jsonb);
                 INSERT INTO practice_types VALUES(1,'visa_c1_tourism','C1','single_entry_visa'),
                     (2,'kitas_working_extend','Working KITAS renewal','kitas');
                 INSERT INTO hr_bonus_rates VALUES(1,'visa_c1_tourism',true,'2025-01-01',null,100000);

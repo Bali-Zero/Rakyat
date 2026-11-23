@@ -134,6 +134,7 @@ function StaffDeliveryCard({
       (s) => s.document_id != null || Boolean(s.condition && s.waiver_reason),
     );
   const canUpload =
+    !writable ||
     !chooseCompany ||
     companies?.some((company) => String(company.company_id) === companyId);
 
