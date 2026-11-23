@@ -6,7 +6,7 @@ Outbound /send endpoint re-enabled 2026-03-15 with safety gates:
 - Recipient validation: must be a known CRM client OR a Bali Zero team member
   (team_members.whatsapp). Team/staff numbers in WHATSAPP_TEAM_ALLOWLIST also
   bypass the check via env config, without polluting the CRM.
-- Auth required: only authenticated users can send
+- Auth required: all three routes are limited to team members
 """
 
 import json
@@ -21,7 +21,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.app.core.config import settings
-from backend.app.dependencies import get_current_user, get_optional_database_pool
+from backend.app.dependencies import (
+    get_optional_database_pool,
+    require_team_member,
+)
 from backend.services.integrations.whatsapp_service import whatsapp_service
 from backend.security.pii_log_identifier import redact_identifier_for_log
 
@@ -77,7 +80,7 @@ async def get_whatsapp_conversations(
     limit: int = 50,
     offset: int = 0,
     db: Pool | None = Depends(get_optional_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_team_member),
 ) -> Any:
     if not db:
         logger.warning("Database unavailable")
@@ -171,7 +174,7 @@ async def get_whatsapp_messages(
     phone: str,
     limit: int = 100,
     db: Pool | None = Depends(get_optional_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_team_member),
 ) -> Any:
     if not db:
         return []
@@ -234,13 +237,13 @@ async def get_whatsapp_messages(
 async def send_whatsapp_message(
     body: SendWhatsAppRequest,
     db: Pool | None = Depends(get_optional_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_team_member),
 ) -> dict[str, Any]:
     """
     Send an outbound WhatsApp message via Meta Cloud API.
 
     Safety gates:
-    - Auth required (JWT)
+    - Auth required (JWT), team members only
     - Rate limit: 20 msgs/phone/hour
     - Recipient validation: must be a known CRM client (clients.phone) OR a
       Bali Zero team member (team_members.whatsapp). Numbers in
@@ -290,11 +293,28 @@ async def send_whatsapp_message(
                         "Cannot send to unknown contacts."
                     ),
                 )
+    else:
+        # No database handle: the known-contact check cannot run, so only the
+        # allow-list above may authorise a recipient. Fail closed.
+        logger.warning("whatsapp send refused: recipient check unavailable (no database)")
+        raise HTTPException(
+            status_code=503,
+            detail="Recipient validation is unavailable. Message not sent.",
+        )
+
+    # Reserve the rate-limit slot before awaiting the provider: the check and
+    # the reservation run with no await between them, so a concurrent burst
+    # cannot all pass the check together. A failed send keeps its slot.
+    if not _check_rate_limit(phone):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: max {_RATE_LIMIT_MAX} messages per phone per hour",
+        )
+    _outbound_rate[phone].append(time.time())
 
     # Send via Meta WhatsApp Cloud API
     try:
         result = await whatsapp_service.send_message(phone=phone, text=body.message)
-        _outbound_rate[phone].append(time.time())
         logger.info(
             f"Outbound WA sent to {redact_identifier_for_log(phone)} "
             f"by {current_user.get('email', 'unknown')}"
