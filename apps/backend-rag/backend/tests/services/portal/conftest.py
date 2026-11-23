@@ -33,9 +33,11 @@ async def portal_pg_pool() -> AsyncIterator[asyncpg.Pool]:
             CREATE TABLE clients (LIKE public.clients INCLUDING ALL);
             CREATE TABLE team_members (LIKE public.team_members INCLUDING ALL);
             ALTER TABLE team_members ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+            ALTER TABLE team_members ADD COLUMN IF NOT EXISTS linked_client_id INTEGER;
             ALTER TABLE team_members
-                ADD COLUMN linked_client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;
-            ALTER TABLE team_members ADD COLUMN portal_access BOOLEAN DEFAULT false;
+                ADD CONSTRAINT portal_t_linked_client FOREIGN KEY (linked_client_id)
+                REFERENCES clients(id) ON DELETE SET NULL;
+            ALTER TABLE team_members ADD COLUMN IF NOT EXISTS portal_access BOOLEAN DEFAULT false;
             CREATE TABLE client_invitations (
                 id SERIAL PRIMARY KEY,
                 client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,

@@ -44,7 +44,7 @@ CREATE TABLE clients (
     deleted_at timestamptz
 );
 CREATE TABLE team_members (
-    id serial PRIMARY KEY,
+    id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     email text NOT NULL UNIQUE,
     full_name text,
     name text,
