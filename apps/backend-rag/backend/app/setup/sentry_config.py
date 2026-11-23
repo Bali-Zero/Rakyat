@@ -142,9 +142,45 @@ _HR_ROUTE_PREFIX = "/api/hr/"
 # blob that we redact by key rather than parsing.
 _QUERY_KEYS: tuple[str, ...] = ("query_string", "query", "QUERY_STRING")
 
-# Email regex — mirrors the brief. Used both to mask stray emails in strings
-# and to scrub the URL path itself.
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[\w.-]+")
+# Email shape — mirrors the brief: a run of `[\w.+-]` (the local part), `@`, then a run of `[\w.-]`
+# that holds a `.` with a character on each side (the domain). Used both to mask stray emails in
+# strings and to scrub the URL path itself. It is found by `_redact_addresses`, one forward pass,
+# not by a regular expression: `[\w.+-]+@` tried at every start of a long run with no `@` read
+# the rest of the run each time, so the time grew with the square of the run (a minified blob or
+# a long dotted name in an exception text held the hook for seconds).
+_ADDRESS_LOCAL_RUN_RE = re.compile(r"[\w.+-]+")
+_ADDRESS_DOMAIN_RUN_RE = re.compile(r"[\w.-]*")
+
+
+def _redact_addresses(s: str) -> str:
+    """Replace each address with the placeholder: the text `[\\w.+-]+@[\\w.-]+\\.[\\w.-]+` would give.
+
+    A search that starts inside a run of local-part characters reads to the end of that run, so
+    every start in the run reaches the same `@` (or the same absence of one) and the same domain:
+    the run is judged once and the search moves past it. A match ends at the end of its domain run,
+    and the next search starts there, as a substitution would.
+    """
+    if "@" not in s:
+        return s
+    pieces: list[str] = []
+    done = pos = 0
+    while (local := _ADDRESS_LOCAL_RUN_RE.search(s, pos)) is not None:
+        at = local.end()
+        if s[at : at + 1] != "@":
+            pos = at
+            continue
+        end = _ADDRESS_DOMAIN_RUN_RE.match(s, at + 1).end()  # type: ignore[union-attr]
+        if s.rfind(".", at + 2, end - 1) == -1:
+            pos = at + 1
+            continue
+        pieces.append(s[done : local.start()])
+        pieces.append(PII_REDACTION_PLACEHOLDER)
+        done = pos = end
+    if not pieces:
+        return s
+    pieces.append(s[done:])
+    return "".join(pieces)
+
 
 # Bali Zero client_id pattern (e.g. "CL-000142"). These IDs are used as keys
 # into CRM/Drive so they're treated as identity PII even when the field name
@@ -430,7 +466,7 @@ def _redact_string(s: str) -> str:
     See the free-text block above for the two tiers and for what this still
     cannot reach (bare personal names, unlabelled passport numbers).
     """
-    s = _EMAIL_RE.sub(PII_REDACTION_PLACEHOLDER, s)
+    s = _redact_addresses(s)
     s = _CLIENT_ID_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _NPWP_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _PHONE_INTL_FMT_RE.sub(PII_REDACTION_PLACEHOLDER, s)
