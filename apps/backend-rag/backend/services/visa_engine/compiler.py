@@ -127,13 +127,6 @@ from backend.services.visa_engine.models import (
 #: eligibility, or review rules").
 _LEGAL_STAGES = frozenset({RuleStage.HARD_FILTER, RuleStage.ELIGIBILITY, RuleStage.HUMAN_REVIEW})
 
-#: Leaf operators that carry no comparison semantics — a rule whose `when`
-#: uses only these (plus `all`/`any`/`not` combinators) cannot manufacture
-#: positive eligibility from mere presence/absence (spec §2 compiler-only
-#: invariant "Eligibility rules cannot derive positive support solely from
-#: known, unknown, or absence tests").
-_PRESENCE_ONLY_OPERATORS = frozenset({"known", "unknown"})
-
 #: Spec §2 compiler-only invariant: "Maximum ... rules 4096, products 256".
 #: Redundant with `RulePackPayload.rules`/`.products`'s own `max_length`
 #: `Field` constraint (bypass-proof re-check, see module docstring).
@@ -556,20 +549,41 @@ def _check_eligibility_not_presence_only(
     for rule in rules:
         if rule.stage is not RuleStage.ELIGIBILITY:
             continue
-        leaf_ops = _safe_ast_call(rule, ast_module.collect_leaf_operators, errors=errors)
-        if leaf_ops is None:
-            continue
-        if leaf_ops and leaf_ops.issubset(_PRESENCE_ONLY_OPERATORS):
+        presence_only = _safe_ast_call(
+            rule, lambda when: _satisfiable_by_presence_alone(when, True), errors=errors
+        )
+        if presence_only:
             errors.append(
                 CompilationError(
                     code="ELIGIBILITY_RULE_PRESENCE_ONLY",
                     message=(
-                        "ELIGIBILITY rule's `when` uses only known/unknown presence "
-                        "tests — cannot derive positive support"
+                        "ELIGIBILITY rule's `when` can be satisfied through known/unknown "
+                        "presence tests alone — cannot derive positive support"
                     ),
                     rule_id=rule.rule_id,
                 )
             )
+
+
+def _satisfiable_by_presence_alone(node: object, positive: bool) -> bool:
+    """True iff ``node`` can evaluate to ``positive`` (TRUE when ``True``,
+    FALSE when ``False``) with the outcome decided by presence tests alone,
+    i.e. without any value comparison having to hold.
+
+    A presence leaf can be steered either way by presence alone; any other
+    leaf cannot. ``all``/``any`` flip between "every child" and "some child"
+    with the polarity, and ``not`` flips the polarity, so every branch of the
+    tree is read rather than only the flat set of leaf operators.
+    """
+    if isinstance(node, ast_module.PresenceCondition):
+        return True
+    if isinstance(node, ast_module.NotCondition):
+        return _satisfiable_by_presence_alone(node.arg, not positive)
+    if isinstance(node, (ast_module.AllCondition, ast_module.AnyCondition)):
+        children = [_satisfiable_by_presence_alone(arg, positive) for arg in node.args]
+        needs_every_child = isinstance(node, ast_module.AllCondition) == positive
+        return all(children) if needs_every_child else any(children)
+    return False
 
 
 def _check_stage_effect_compatibility(
