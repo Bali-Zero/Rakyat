@@ -1378,7 +1378,7 @@ async def update_profile(
     client: dict = Depends(get_current_client),
     portal_service: PortalService = Depends(get_portal_service),
 ) -> dict[str, Any]:
-    """Update client profile. Only phone, whatsapp and address can be changed."""
+    """Update client profile. Address is saved; phone/whatsapp become change requests."""
     from backend.services.portal._mixins.billing import ProfileContactRefused
 
     try:
@@ -1390,7 +1390,12 @@ async def update_profile(
         )
         if fields:
             await invalidate_cache("zantara:crm_clients_stats:*")
-        return {"success": True, "data": _mask_identity(result)}
+        requested = (result.pop("contact_change_requested", None) or []) if result else []
+        return {
+            "success": True,
+            "data": _mask_identity(result),
+            "contact_change_requested": requested,
+        }
     except ProfileContactRefused as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:

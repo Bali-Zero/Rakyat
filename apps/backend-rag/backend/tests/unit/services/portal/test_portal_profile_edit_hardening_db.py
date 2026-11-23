@@ -134,7 +134,7 @@ async def test_profile_patch_language_alone_is_a_no_op_success(db):
     assert result["address"] == "Old street"
 
 
-# --- own contact numbers: the rule staff edits follow --------------------------------------------
+# --- contact numbers: a client files a change request, never writes the column -----------------
 
 _NUM_A = "+62 800 0000 111"
 _NUM_B = "+62 800 0000 222"
@@ -158,90 +158,185 @@ async def _row(pool, cid):
         )
 
 
-async def _refusal(service, cid, fields):
-    from backend.services.portal._mixins.billing import ProfileContactRefused
+async def _requests(pool, cid):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT direction, content FROM portal_messages"
+            " WHERE client_id = $1 AND content LIKE 'Requested contact change:%' ORDER BY id",
+            cid,
+        )
+    return [(r["direction"], r["content"]) for r in rows]
 
-    with pytest.raises(ProfileContactRefused) as exc:
-        await service.update_profile(cid, fields, current_user=_user(cid))
-    return str(exc.value)
+
+async def _alerts(pool, cid):
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT message FROM notification_alerts"
+            " WHERE client_id = $1 AND alert_type = 'portal_profile_update'",
+            cid,
+        )
+
+
+class _LoggedConn:
+    """Wraps a pooled connection and records every statement text it is given."""
+
+    def __init__(self, conn, log):
+        self._conn = conn
+        self._log = log
+
+    def __getattr__(self, name):
+        attr = getattr(self._conn, name)
+        if name in {"execute", "fetch", "fetchrow", "fetchval"}:
+
+            async def _call(query, *args, **kwargs):
+                self._log.append(str(query))
+                return await attr(query, *args, **kwargs)
+
+            return _call
+        return attr
+
+
+class _LoggedPool:
+    def __init__(self, pool):
+        self._pool = pool
+        self.log: list[str] = []
+
+    def acquire(self):
+        outer = self
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                self_inner._cm = outer._pool.acquire()
+                conn = await self_inner._cm.__aenter__()
+                return _LoggedConn(conn, outer.log)
+
+            async def __aexit__(self_inner, *exc):
+                return await self_inner._cm.__aexit__(*exc)
+
+        return _Ctx()
+
+
+async def _route(service, cid, **body):
+    from backend.app.routers.portal import UpdateProfileRequest, update_profile
+
+    return await update_profile(
+        UpdateProfileRequest(**body), client=_user(cid), portal_service=service
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["phone", "whatsapp"])
-async def test_a_number_owned_by_another_client_is_refused_and_nothing_is_saved(db, field):
+async def test_an_owned_number_and_a_free_number_get_identical_answers(db, field):
+    """No ownership-dependent result: another client's number and a free one produce the same
+    response body and the same read-back (old number kept), each filing ONE request row."""
     a, b = await _two_clients(db)
+    pool = _LoggedPool(db)
+    service = PortalService(pool)
+
+    owned = await _route(service, a, **{field: "08000000222"})
+    after_owned = await _row(db, a)
+    free = await _route(service, a, **{field: "+62 800 0000 444"})
+    after_free = await _row(db, a)
+
+    assert owned == free
+    assert owned["contact_change_requested"] == [field]
+    assert owned["data"]["phone"] == _NUM_A and owned["data"]["whatsapp"] == _NUM_A
+    assert dict(after_owned) == dict(after_free)
+    assert after_free["phone"] == _NUM_A and after_free["whatsapp"] == _NUM_A
+    assert (await _row(db, b))["phone"] == _NUM_B
+    requests = await _requests(db, a)
+    assert [d for d, _ in requests] == ["client_to_team", "client_to_team"]
+    assert "Zz" not in " ".join(c for _, c in requests)
+    assert await _requests(db, b) == []
+
+
+@pytest.mark.asyncio
+async def test_the_ownership_query_is_never_executed_on_the_client_path(db):
+    from backend.db.repositories.client_repository import DUP_OWNER_SQL
+
+    a, _b = await _two_clients(db)
+    pool = _LoggedPool(db)
+    service = PortalService(pool)
+
+    await service.update_profile(
+        a, {"phone": "08000000222", "whatsapp": _NUM_C, "address": "X"}, current_user=_user(a)
+    )
+
+    assert pool.log and DUP_OWNER_SQL not in pool.log
+
+
+@pytest.mark.asyncio
+async def test_an_address_edit_saves_when_the_stored_contacts_are_unusable(db):
+    cid = await _client(db, "Zz Alpha", phone="+62999", whatsapp="+62999", address="Old")
     service = PortalService(db)
 
-    await _refusal(service, a, {field: "0800-0000-222", "address": "Never saved"})
+    result = await _route(service, cid, phone="+62999", whatsapp="+62999", address="New street 1")
+
+    assert result["contact_change_requested"] == []
+    row = await _row(db, cid)
+    assert row["address"] == "New street 1" and row["phone"] == "+62999"
+    assert await _requests(db, cid) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_an_empty_or_unusable_new_number_is_refused_and_nothing_is_saved(db, field):
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
+    a, _b = await _two_clients(db)
+    service = PortalService(db)
+
+    for unusable in ("", "   ", "12-3"):
+        with pytest.raises(ProfileContactRefused):
+            await service.update_profile(
+                a, {field: unusable, "address": "Never saved"}, current_user=_user(a)
+            )
 
     row = await _row(db, a)
     assert row["phone"] == _NUM_A and row["whatsapp"] == _NUM_A and row["address"] is None
+    assert await _requests(db, a) == [] and await _alerts(db, a) == []
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["phone", "whatsapp"])
-async def test_an_empty_or_unusable_number_is_refused_the_same_way(db, field):
-    a, b = await _two_clients(db)
+async def test_the_same_core_as_the_current_number_files_no_request(db):
+    a, _b = await _two_clients(db)
     service = PortalService(db)
 
-    taken = await _refusal(service, a, {field: "08000000222"})
-    for unusable in ("", "   ", "12-3"):
-        assert await _refusal(service, a, {field: unusable}) == taken
+    result = await service.update_profile(
+        a, {"phone": "08000000111", "whatsapp": "+62-800-0000-111"}, current_user=_user(a)
+    )
 
+    assert result["contact_change_requested"] == []
+    assert await _requests(db, a) == [] and await _alerts(db, a) == []
+    assert (await _row(db, a))["phone"] == _NUM_A
+
+
+@pytest.mark.asyncio
+async def test_other_fields_are_saved_with_the_request_and_the_alert_is_written(db):
+    a, _b = await _two_clients(db)
+    service = PortalService(db)
+
+    result = await service.update_profile(
+        a,
+        {"phone": _NUM_C, "whatsapp": "+62 800 0000 444", "address": "Street 9"},
+        current_user=_user(a),
+    )
+
+    assert result["contact_change_requested"] == ["phone", "whatsapp"]
     row = await _row(db, a)
-    assert row["phone"] == _NUM_A and row["whatsapp"] == _NUM_A
-
-
-@pytest.mark.asyncio
-async def test_the_refusal_names_nobody_and_does_not_say_which_case_it_was(db):
-    a, b = await _two_clients(db)
-    service = PortalService(db)
-
-    message = await _refusal(service, a, {"phone": "08000000222"})
-
-    assert "Zz" not in message and "Bravo" not in message and "222" not in message
-    assert "owned" not in message.lower() and "empty" not in message.lower()
-
-
-@pytest.mark.asyncio
-async def test_the_clients_own_current_number_saved_again_is_accepted(db):
-    a, b = await _two_clients(db)
-    service = PortalService(db)
-
-    result = await service.update_profile(
-        a, {"phone": "08000000111", "whatsapp": _NUM_A, "address": "Kept"}, current_user=_user(a)
+    assert row["address"] == "Street 9" and row["phone"] == _NUM_A and row["whatsapp"] == _NUM_A
+    requests = await _requests(db, a)
+    assert len(requests) == 1
+    assert requests[0][1] == (
+        "Requested contact change: phone \u2192 +62 800 0000 333; WhatsApp \u2192 +62 800 0000 444"
     )
-
-    assert result["phone"] == "08000000111" and result["address"] == "Kept"
-
-
-@pytest.mark.asyncio
-async def test_a_free_number_and_an_address_edit_save_as_before(db):
-    a, b = await _two_clients(db)
-    service = PortalService(db)
-
-    result = await service.update_profile(
-        a, {"phone": _NUM_C, "address": "Street 9"}, current_user=_user(a)
-    )
-
-    assert result["phone"] == _NUM_C and result["address"] == "Street 9"
-    assert (await _row(db, b))["phone"] == _NUM_B
-
-
-@pytest.mark.asyncio
-async def test_the_route_answers_a_refused_number_with_one_generic_409(db):
-    from backend.app.routers.portal import UpdateProfileRequest, update_profile
-
-    a, b = await _two_clients(db)
-    service = PortalService(db)
-    statuses = []
-    for value in ("08000000222", ""):
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException) as exc:
-            await update_profile(
-                UpdateProfileRequest(phone=value), client=_user(a), portal_service=service
-            )
-        statuses.append((exc.value.status_code, exc.value.detail))
-
-    assert statuses[0] == statuses[1] and statuses[0][0] == 409
+    alerts = await _alerts(db, a)
+    assert len(alerts) == 1
+    assert "address" in alerts[0]["message"] and "phone change requested" in alerts[0]["message"]
+    async with db.acquire() as conn:
+        profile_rows = await conn.fetchval(
+            "SELECT count(*) FROM portal_messages WHERE client_id = $1"
+            " AND subject = 'Profile updated'",
+            a,
+        )
+    assert profile_rows == 1

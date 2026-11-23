@@ -12,8 +12,7 @@ import asyncpg
 
 from backend.app.services.crm.audit_logger import audit_logger
 from backend.app.utils.logging_utils import get_logger
-from backend.db.repositories.client_repository import DUP_OWNER_SQL
-from backend.phone_lock import lock_phone_cores, phone_core
+from backend.phone_lock import phone_core
 from backend.services.common.cache import cache_invalidating
 from backend.services.portal._drive_fetch import fetch_drive_file
 from backend.services.portal._rbac import ClientContext, require_client_access
@@ -25,13 +24,14 @@ PROFILE_CONTACT_REFUSED_MESSAGE = (
     "This phone number cannot be saved on your profile. Please contact your consultant."
 )
 
+_CONTACT_LABELS = {"phone": "phone", "whatsapp": "WhatsApp"}
+_CONTACT_VALUE_MAX = 40
+
 
 class ProfileContactRefused(Exception):
-    """A self-service phone/whatsapp value was refused.
+    """A self-service phone/whatsapp value with no usable number was refused.
 
-    One exception and one message for both causes (no usable number, number
-    already on file for another client), so the answer reveals neither which
-    check failed nor whose number it is.
+    Format only: the refusal never depends on who else holds a number.
     """
 
     def __init__(self) -> None:
@@ -46,6 +46,9 @@ class PortalBillingMixin:
     # Whitelisted profile fields a client can self-serve update via the portal.
     # Anything else requires team intervention.
     PROFILE_EDITABLE_FIELDS: set[str] = {"phone", "whatsapp", "address"}
+    # Contact numbers are ownership keys: a client never writes them directly,
+    # a changed value becomes a change request for the consultant.
+    PROFILE_CONTACT_FIELDS: tuple[str, ...] = ("phone", "whatsapp")
 
     # ================================================
     # BILLING
@@ -274,7 +277,10 @@ class PortalBillingMixin:
         Update client profile with whitelisted fields only.
 
         Sensitive fields (full_name, email, passport_number, nationality, etc.)
-        are silently ignored — they require team intervention.
+        are silently ignored — they require team intervention. phone/whatsapp
+        are never written here: a changed usable number is recorded as a
+        client_to_team change request (see _request_contact_changes), and the
+        returned profile carries ``contact_change_requested`` (field names).
 
         Side effects when fields are actually changed:
         - Inserts a notification_alerts record (portal_profile_update) for the CRM bell
@@ -287,129 +293,64 @@ class PortalBillingMixin:
 
         Returns the updated profile.
         """
-        safe_fields = {
-            k: v for k, v in fields.items() if k in self.PROFILE_EDITABLE_FIELDS and v is not None
+        contact_in = {
+            k: v for k, v in fields.items() if k in self.PROFILE_CONTACT_FIELDS and v is not None
         }
+        safe_fields = {
+            k: v
+            for k, v in fields.items()
+            if k in self.PROFILE_EDITABLE_FIELDS
+            and k not in self.PROFILE_CONTACT_FIELDS
+            and v is not None
+        }
+        requested: list[str] = []
 
         async with self.pool.acquire() as conn:
-            if safe_fields:
-                set_parts = []
-                params: list[Any] = []
-                for i, (key, value) in enumerate(safe_fields.items(), start=1):
-                    set_parts.append(f"{key} = ${i}")
-                    params.append(value)
-
-                params.append(client_id)
-                set_clause = ", ".join(set_parts)
-
+            if safe_fields or contact_in:
                 async with conn.transaction():
-                    if "phone" in safe_fields or "whatsapp" in safe_fields:
-                        # Phone AND whatsapp are OWNERSHIP columns: intake
-                        # delivery and the upload ownership token resolve
-                        # identity over phone_normalized, phone and whatsapp
-                        # alike, so a portal self-serve change of EITHER must
-                        # be cooperative with the 'phonecore:' advisory-lock
-                        # window (Codex round 10 F12; round 15 F21 — a
-                        # whatsapp-only update used to bypass the protocol).
-                        # Re-read-under-lock CONVERGENCE loop (round 12, F12
-                        # gap 2): the pre-lock read can be stale, so keep
-                        # re-reading and additively locking until the row's
-                        # cores are covered — and fail CLOSED if that never
-                        # converges.
-                        def _val(row: Any, key: str) -> Any:
-                            try:
-                                return row[key]
-                            except (KeyError, TypeError):
-                                return None
+                    if contact_in:
+                        # A client never writes phone/whatsapp: a changed usable
+                        # number becomes a change request for the consultant.
+                        # No lookup of who owns a number happens here, so the
+                        # answer cannot depend on ownership.
+                        requested = await self._request_contact_changes(conn, client_id, contact_in)
+                    if safe_fields:
+                        set_parts = []
+                        params: list[Any] = []
+                        for i, (key, value) in enumerate(safe_fields.items(), start=1):
+                            set_parts.append(f"{key} = ${i}")
+                            params.append(value)
 
-                        _locked: set[str] = set()
-                        _converged = False
-                        for _ in range(3):
-                            _old = await conn.fetchrow(
-                                "SELECT phone, phone_normalized, whatsapp"
-                                "  FROM clients WHERE id = $1",
-                                client_id,
-                            )
-                            _want = {
-                                c
-                                for c in (
-                                    phone_core(safe_fields.get("phone")),
-                                    phone_core(safe_fields.get("whatsapp")),
-                                    phone_core(_val(_old, "phone") if _old else None),
-                                    phone_core(_val(_old, "phone_normalized") if _old else None),
-                                    phone_core(_val(_old, "whatsapp") if _old else None),
-                                )
-                                if c is not None
-                            }
-                            if _want <= _locked:
-                                _converged = True
-                                break
-                            _locked |= await lock_phone_cores(
-                                conn,
-                                safe_fields.get("phone"),
-                                safe_fields.get("whatsapp"),
-                                _val(_old, "phone") if _old else None,
-                                _val(_old, "phone_normalized") if _old else None,
-                                _val(_old, "whatsapp") if _old else None,
-                            )
-                        if not _converged:
-                            raise RuntimeError(
-                                "phone_lock_convergence_failed — concurrent phone "
-                                "writers, retry the profile update"
-                            )
-                    if "phone" in safe_fields or "whatsapp" in safe_fields:
-                        # Same rule staff edits follow (lock, then DUP_OWNER_SQL):
-                        # a number with no usable core (the empty string
-                        # included) or one that another client owns is refused
-                        # with the SAME error. The client's own current number
-                        # saved again is not a collision.
-                        _incoming = [
-                            phone_core(safe_fields[k])
-                            for k in ("phone", "whatsapp")
-                            if k in safe_fields
-                        ]
-                        if any(c is None for c in _incoming):
-                            raise ProfileContactRefused()
-                        _own = {
-                            phone_core(_val(_old, k))
-                            for k in ("phone", "phone_normalized", "whatsapp")
-                        }
-                        _foreign = sorted({c for c in _incoming if c not in _own})
-                        if _foreign:
-                            _dup = await conn.fetchrow(DUP_OWNER_SQL, _foreign)
-                            if _dup and _dup["id"] != client_id:
-                                raise ProfileContactRefused()
-                    # Capture pre-update values for the audit trail. Placed
-                    # HERE deliberately: inside the same transaction as the
-                    # UPDATE, and AFTER the phone-lock block above, so for a
-                    # phone/whatsapp write the row is already locked when we
-                    # read it. Read outside the transaction, another writer
-                    # could land between the read and the UPDATE and the trail
-                    # would record an old value that was never the value we
-                    # overwrote — an audit row that states a wrong prior value
-                    # is worse than no audit row, because it reads as evidence.
-                    # (It does NOT close the lost-update gap on non-phone
-                    # fields — there is no version column on `clients` either
-                    # side of the handoff; that is a wider design change and is
-                    # named in this PR's body, not fixed here.)
-                    audit_old_row = await conn.fetchrow(
-                        f"SELECT {', '.join(safe_fields.keys())} FROM clients WHERE id = $1",
-                        client_id,
-                    )
-                    audit_old_state = (
-                        {k: audit_old_row[k] for k in safe_fields} if audit_old_row else {}
-                    )
-                    await conn.execute(
-                        f"UPDATE clients SET {set_clause}, updated_at = NOW() WHERE id = ${len(params)} AND deleted_at IS NULL",
-                        *params,
-                    )
+                        params.append(client_id)
+                        set_clause = ", ".join(set_parts)
+                        # Capture pre-update values for the audit trail inside
+                        # the same transaction as the UPDATE, so the trail
+                        # cannot record a prior value that was never the one
+                        # overwritten. (No version column on `clients`, so
+                        # this does not close lost-update on its own.)
+                        audit_old_row = await conn.fetchrow(
+                            f"SELECT {', '.join(safe_fields.keys())} FROM clients WHERE id = $1",
+                            client_id,
+                        )
+                        audit_old_state = (
+                            {k: audit_old_row[k] for k in safe_fields} if audit_old_row else {}
+                        )
+                        await conn.execute(
+                            f"UPDATE clients SET {set_clause}, updated_at = NOW() WHERE id = ${len(params)} AND deleted_at IS NULL",
+                            *params,
+                        )
 
+            if safe_fields or requested:
                 logger.info(
-                    f"Portal profile updated for client {client_id}: {list(safe_fields.keys())}"
+                    f"Portal profile updated for client {client_id}: "
+                    f"{list(safe_fields.keys())} contact requests: {requested}"
                 )
 
                 # Notify CRM team: insert notification_alerts record (deduped daily)
-                fields_label = ", ".join(k.replace("_", " ") for k in safe_fields)
+                fields_label = ", ".join(
+                    [k.replace("_", " ") for k in safe_fields]
+                    + [f"{k} change requested" for k in requested]
+                )
                 try:
                     await conn.execute(
                         """
@@ -429,6 +370,7 @@ class PortalBillingMixin:
                         e,
                     )
 
+            if safe_fields:
                 # Insert portal_messages record so CRM team can see the change in thread view
                 try:
                     await conn.execute(
@@ -438,13 +380,15 @@ class PortalBillingMixin:
                         VALUES ($1, NULL, 'Profile updated', 'client_to_team', $2, 'portal', TRUE)
                         """,
                         client_id,
-                        f"Client updated their profile via the portal: {fields_label}.",
+                        "Client updated their profile via the portal: "
+                        f"{', '.join(k.replace('_', ' ') for k in safe_fields)}.",
                     )
                 except Exception as e:
                     logger.warning(
                         "Failed to insert portal_messages record for client %s: %s", client_id, e
                     )
 
+            if safe_fields:
                 # Structured audit trail (crm_audit_log) — the same trail the
                 # CRM's PATCH /api/crm/clients/{id} path writes via
                 # @audit_change. Actor is tagged "portal-client:<email>" (not
@@ -486,7 +430,64 @@ class PortalBillingMixin:
                         exc_info=True,
                     )
 
-            return await self._get_profile_data(conn, client_id)
+            result = await self._get_profile_data(conn, client_id)
+            if result:
+                result["contact_change_requested"] = requested
+            return result
+
+    async def _request_contact_changes(
+        self, conn: Any, client_id: int, contact_in: dict[str, Any]
+    ) -> list[str]:
+        """Turn changed contact numbers into ONE client_to_team request row.
+
+        Called inside the profile transaction. A value equal to the stored one
+        (raw or by phone core) is a no-op for that field; a value with no
+        usable core is refused (format only). Nothing here looks up who owns a
+        number, so the outcome never depends on ownership.
+        """
+        row = await conn.fetchrow(
+            "SELECT phone, phone_normalized, whatsapp FROM clients WHERE id = $1",
+            client_id,
+        )
+
+        def _val(key: str) -> str | None:
+            try:
+                v = row[key] if row else None
+            except (KeyError, TypeError):
+                return None
+            return None if v is None else str(v)
+
+        stored = [_val(k) for k in ("phone", "phone_normalized", "whatsapp")]
+        stored_raw = {v.strip() for v in stored if v is not None}
+        stored_cores = {c for c in (phone_core(v) for v in stored) if c is not None}
+
+        changes: list[tuple[str, str]] = []
+        for key, value in contact_in.items():
+            raw = str(value).strip()
+            if raw in stored_raw:
+                continue
+            core = phone_core(raw)
+            if core is None:
+                raise ProfileContactRefused()
+            if core in stored_cores:
+                continue
+            changes.append((key, raw[:_CONTACT_VALUE_MAX]))
+
+        if not changes:
+            return []
+        text = "Requested contact change: " + "; ".join(
+            f"{_CONTACT_LABELS[k]} \u2192 {v}" for k, v in changes
+        )
+        await conn.execute(
+            """
+            INSERT INTO portal_messages
+                (client_id, practice_id, subject, direction, content, sent_by, is_system_generated)
+            VALUES ($1, NULL, 'Contact change requested', 'client_to_team', $2, 'portal', TRUE)
+            """,
+            client_id,
+            text,
+        )
+        return [k for k, _ in changes]
 
     async def _get_profile_data(self, conn: Any, client_id: int) -> dict[str, Any]:
         """Fetch profile data from DB (shared between get_profile and update_profile)."""

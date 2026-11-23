@@ -1,13 +1,13 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-const { mockGetProfile, mockUpdateProfile, mockToastError } = vi.hoisted(
-  () => ({
+const { mockGetProfile, mockUpdateProfile, mockToastError, mockToastInfo } =
+  vi.hoisted(() => ({
     mockGetProfile: vi.fn(),
     mockUpdateProfile: vi.fn(),
     mockToastError: vi.fn(),
-  }),
-);
+    mockToastInfo: vi.fn(),
+  }));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -19,7 +19,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("@/components/ui/toast", () => ({
-  useToast: () => ({ error: mockToastError }),
+  useToast: () => ({ error: mockToastError, info: mockToastInfo }),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -135,6 +135,53 @@ describe("ProfilePage (WS3 day pass)", () => {
     });
     expect(mockUpdateProfile).toHaveBeenCalledWith(
       expect.objectContaining({ phone: "+628999" }),
+    );
+  });
+
+  it("sends only the fields the user changed and no notice without a request", async () => {
+    mockUpdateProfile.mockClear();
+    mockToastInfo.mockClear();
+    await renderLoaded({ ...PROFILE, phone: "+62999", whatsapp: "+62999" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Profile" }));
+    mockUpdateProfile.mockResolvedValue({
+      ...PROFILE,
+      contactChangeRequested: [],
+    });
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "New street 1" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    });
+
+    expect(mockUpdateProfile).toHaveBeenCalledTimes(1);
+    expect(mockUpdateProfile).toHaveBeenCalledWith({ address: "New street 1" });
+    expect(mockToastInfo).not.toHaveBeenCalled();
+  });
+
+  it("tells the client the consultant will confirm a requested number", async () => {
+    mockUpdateProfile.mockClear();
+    mockToastInfo.mockClear();
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Profile" }));
+    mockUpdateProfile.mockResolvedValue({
+      ...PROFILE,
+      contactChangeRequested: ["whatsapp"],
+    });
+    fireEvent.change(screen.getByLabelText("WhatsApp"), {
+      target: { value: "+6281200000001" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    });
+
+    expect(mockUpdateProfile).toHaveBeenCalledWith({
+      whatsapp: "+6281200000001",
+    });
+    expect(mockToastInfo).toHaveBeenCalledWith(
+      "Your consultant will confirm the new number.",
     );
   });
 

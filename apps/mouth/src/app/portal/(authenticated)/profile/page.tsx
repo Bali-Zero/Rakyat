@@ -36,6 +36,7 @@ import { Button } from "@/components/ui/button";
 import type {
   PortalProfile,
   PortalProfileIdentity,
+  UpdateProfileRequest,
 } from "@/lib/api/portal/portal.types";
 
 // ============================================================================
@@ -221,7 +222,7 @@ function ProfileMasthead() {
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { error } = useToast();
+  const { error, info } = useToast();
   const { formatDate: formatDateLocale } = usePortalDateFormat();
   const [profile, setProfile] = useState<PortalProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -301,15 +302,32 @@ export default function ProfilePage() {
   };
 
   const handleSave = async () => {
+    if (!profile) return;
+    // Send only what the user changed: an untouched contact is never
+    // resubmitted, and a cleared field stays omitted.
+    const changes: UpdateProfileRequest = {};
+    if (editData.phone && editData.phone !== (profile.phone || "")) {
+      changes.phone = editData.phone;
+    }
+    if (editData.whatsapp && editData.whatsapp !== (profile.whatsapp || "")) {
+      changes.whatsapp = editData.whatsapp;
+    }
+    if (editData.address && editData.address !== (profile.address || "")) {
+      changes.address = editData.address;
+    }
+    if (Object.keys(changes).length === 0) {
+      setIsEditing(false);
+      return;
+    }
     try {
       setIsSaving(true);
-      const updated = await api.portal.updateProfile({
-        phone: editData.phone || undefined,
-        whatsapp: editData.whatsapp || undefined,
-        address: editData.address || undefined,
-      });
+      const { contactChangeRequested, ...updated } =
+        await api.portal.updateProfile(changes);
       setProfile(updated);
       setIsEditing(false);
+      if (contactChangeRequested && contactChangeRequested.length > 0) {
+        info("Your consultant will confirm the new number.");
+      }
     } catch (err) {
       error("Failed to update profile", "Please try again");
       logger.error("Failed to update portal profile", {}, err as Error);

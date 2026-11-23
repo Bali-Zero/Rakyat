@@ -64,25 +64,23 @@ async def test_update_profile_updates_allowed_fields():
 
     assert result is not None
 
-    # Four execute calls: phone-core advisory lock (F12), UPDATE,
-    # notification_alerts, portal_messages
-    assert mock_conn.execute.call_count == 4
+    # The submitted phone/whatsapp equal the stored ones (no-op, no request
+    # row), so three execute calls: UPDATE (address only), notification_alerts,
+    # portal_messages. A client never writes phone/whatsapp.
+    assert mock_conn.execute.call_count == 3
 
-    lock_sql = mock_conn.execute.call_args_list[0][0][0]
-    assert "pg_advisory_xact_lock" in lock_sql
-
-    update_sql = mock_conn.execute.call_args_list[1][0][0]
-    assert "phone" in update_sql
-    assert "whatsapp" in update_sql
+    update_sql = mock_conn.execute.call_args_list[0][0][0]
+    assert "phone" not in update_sql
+    assert "whatsapp" not in update_sql
     assert "address" in update_sql
 
-    alert_sql = mock_conn.execute.call_args_list[2][0][0]
+    alert_sql = mock_conn.execute.call_args_list[1][0][0]
     assert "notification_alerts" in alert_sql
     assert "portal_profile_update" in alert_sql
     assert "ON CONFLICT (client_id, alert_type, created_date)" in alert_sql
     assert "ON CONSTRAINT" not in alert_sql
 
-    msg_sql = mock_conn.execute.call_args_list[3][0][0]
+    msg_sql = mock_conn.execute.call_args_list[2][0][0]
     assert "portal_messages" in msg_sql
     assert "is_system_generated" in msg_sql and ", TRUE)" in msg_sql
     assert "client_to_team" in msg_sql
@@ -90,7 +88,7 @@ async def test_update_profile_updates_allowed_fields():
 
 @pytest.mark.asyncio
 async def test_update_profile_rejects_sensitive_fields():
-    """update_profile ignores non-whitelisted fields; only allowed field triggers side effects."""
+    """update_profile ignores non-whitelisted fields; a new phone becomes a request, not a write."""
     service, mock_conn = _make_service(
         fetchrow_return={**_PROFILE_ROW, "phone": "+62999", "whatsapp": None, "address": None},
     )
@@ -101,16 +99,15 @@ async def test_update_profile_rejects_sensitive_fields():
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
-    assert result is not None
+    assert result["contact_change_requested"] == ["phone"]
 
-    # 4 calls: phone-core lock (the new number has a usable core), UPDATE
-    # (phone only), notification_alerts, portal_messages
-    assert mock_conn.execute.call_count == 4
-
-    update_sql = mock_conn.execute.call_args_list[1][0][0]
-    assert "full_name" not in update_sql
-    assert "passport_number" not in update_sql
-    assert "phone" in update_sql
+    # 2 calls: the change-request row, then the notification_alerts alert.
+    assert mock_conn.execute.call_count == 2
+    sqls = [c[0][0] for c in mock_conn.execute.call_args_list]
+    assert not any("UPDATE clients" in q for q in sqls)
+    assert "client_to_team" in sqls[0] and "portal_messages" in sqls[0]
+    assert "HACKED" not in str(mock_conn.execute.call_args_list)
+    assert "STOLEN" not in str(mock_conn.execute.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -140,10 +137,8 @@ async def test_update_profile_notification_failure_does_not_raise():
     async def execute_side_effect(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        # Call order with the F12 phone-core lock: #1 advisory lock (the OLD
-        # row's phone yields a core even though "+62888" does not), #2 UPDATE,
-        # #3 notification_alerts INSERT.
-        if call_count == 3:  # notification_alerts INSERT
+        # Call order: #1 UPDATE (address), #2 notification_alerts INSERT.
+        if call_count == 2:  # notification_alerts INSERT
             raise Exception("DB constraint error")
         return None
 
@@ -156,7 +151,7 @@ async def test_update_profile_notification_failure_does_not_raise():
     service = PortalService(mock_pool)
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+6281234567890"},
+        fields={"address": "New street 1"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
@@ -175,9 +170,8 @@ async def test_update_profile_message_failure_does_not_raise() -> None:
     async def execute_side_effect(*args: object, **kwargs: object) -> None:
         nonlocal call_count
         call_count += 1
-        # With the F12 lock as call #1 (old row's phone core), portal_messages
-        # is now call #4 (#2 UPDATE, #3 notification_alerts).
-        if call_count == 4:  # portal_messages INSERT
+        # #1 UPDATE (address), #2 notification_alerts, #3 portal_messages.
+        if call_count == 3:  # portal_messages INSERT
             raise Exception("message insert failed")
 
     mock_conn.execute.side_effect = execute_side_effect
@@ -189,7 +183,7 @@ async def test_update_profile_message_failure_does_not_raise() -> None:
     service = PortalService(mock_pool)
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+6281234567890"},
+        fields={"address": "New street 1"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
@@ -207,72 +201,104 @@ async def test_get_profile_data_returns_empty_when_client_missing() -> None:
     assert result == {}
 
 
+_USER = {"client_id": 1, "email": "c1@example.com"}
+
+
+def _sqls(mock_conn) -> list[str]:
+    return [str(c[0][0]) for c in mock_conn.execute.call_args_list]
+
+
 @pytest.mark.asyncio
-async def test_update_profile_phone_lock_fails_closed_on_nonconvergence():
-    """Round-12 F12 gap 2 guilt: a phone value oscillating across concurrent
-    cooperative writers for all 3 convergence rounds must abort the update
-    (fail CLOSED), never proceed while the row's current core is unlocked."""
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_update_profile_contact_change_is_a_request_never_a_write(field):
+    """A new usable number is recorded as ONE client_to_team request row, never
+    written to clients, never locked, and DUP_OWNER_SQL is never consulted."""
+    from backend.db.repositories.client_repository import DUP_OWNER_SQL
+
     service, mock_conn = _make_service()
-    # First item is the audit-trail pre-update read (one call, always, before
-    # the transaction); the remaining three are the phone-lock convergence
-    # loop's re-reads. Every re-read there shows a DIFFERENT phone (fresh
-    # core each time) — the lock set can never cover the row's current cores.
-    mock_conn.fetchrow.side_effect = [
-        {**_PROFILE_ROW, "phone": "+62800000000", "phone_normalized": "62800000000"},
-        {**_PROFILE_ROW, "phone": "+62811111111", "phone_normalized": "62811111111"},
-        {**_PROFILE_ROW, "phone": "+62822222222", "phone_normalized": "62822222222"},
-        {**_PROFILE_ROW, "phone": "+62833333333", "phone_normalized": "62833333333"},
+
+    result = await service.update_profile(
+        client_id=1, fields={field: "+6281200000001"}, current_user=_USER
+    )
+
+    assert result["contact_change_requested"] == [field]
+    sqls = _sqls(mock_conn)
+    assert not any("UPDATE clients" in q for q in sqls)
+    assert not any("pg_advisory_xact_lock" in q for q in sqls)
+    requests = [c for c in mock_conn.execute.call_args_list if "client_to_team" in c[0][0]]
+    assert len(requests) == 1
+    text = requests[0][0][2]
+    assert text.startswith("Requested contact change: ")
+    assert "+6281200000001" in text
+    seen = [
+        str(c[0][0]) for c in mock_conn.fetchrow.call_args_list + mock_conn.fetch.call_args_list
     ]
-
-    with pytest.raises(RuntimeError, match="phone_lock_convergence_failed"):
-        await service.update_profile(
-            client_id=1,
-            fields={"phone": "+6281234567890"},
-            current_user={"client_id": 1, "email": "c1@example.com"},
-        )
-
-    # The UPDATE never ran: every execute call was an advisory lock.
-    for call in mock_conn.execute.call_args_list:
-        assert "pg_advisory_xact_lock" in call[0][0]
+    assert DUP_OWNER_SQL not in seen + sqls
 
 
 @pytest.mark.asyncio
-async def test_update_profile_phone_lock_converges_on_stable_row():
-    """Round-12 F12 gap 2 innocence: a stable row converges on the second
-    read and the update proceeds normally."""
+async def test_update_profile_unusable_new_number_is_refused_before_any_write():
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
+    service, mock_conn = _make_service()
+
+    for bad in ("", "   ", "12-3"):
+        with pytest.raises(ProfileContactRefused):
+            await service.update_profile(
+                client_id=1, fields={"phone": bad, "address": "Never saved"}, current_user=_USER
+            )
+    mock_conn.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_profile_same_core_value_is_a_no_op():
     service, mock_conn = _make_service()
 
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+6281234567890"},
-        current_user={"client_id": 1, "email": "c1@example.com"},
+        fields={"phone": "081234567890", "whatsapp": "+62 812-3456-7890"},
+        current_user=_USER,
     )
 
-    assert result is not None
-    update_sqls = [c[0][0] for c in mock_conn.execute.call_args_list if "UPDATE clients" in c[0][0]]
-    assert update_sqls  # the write DID happen
+    assert result["contact_change_requested"] == []
+    mock_conn.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_update_profile_whatsapp_only_takes_phone_lock():
-    """Round-15 F21 guilt: a whatsapp-ONLY portal profile update must take
-    the phonecore advisory locks — whatsapp is an ownership column, and
-    before the fix this path bypassed the lock protocol entirely."""
+async def test_update_profile_address_save_survives_unusable_stored_contacts():
+    """A stored +62999 resubmitted unchanged is a no-op, so the address still saves."""
+    service, mock_conn = _make_service(
+        fetchrow_return={**_PROFILE_ROW, "phone": "+62999", "whatsapp": "+62999"}
+    )
+
+    result = await service.update_profile(
+        client_id=1,
+        fields={"phone": "+62999", "whatsapp": "+62999", "address": "New street 1"},
+        current_user=_USER,
+    )
+
+    assert result["contact_change_requested"] == []
+    sqls = _sqls(mock_conn)
+    assert any("UPDATE clients" in q and "address" in q for q in sqls)
+    assert not any("client_to_team" in q and "Contact change" in q for q in sqls)
+
+
+@pytest.mark.asyncio
+async def test_update_profile_two_requested_fields_make_one_request_row_and_the_alert():
     service, mock_conn = _make_service()
 
     result = await service.update_profile(
         client_id=1,
-        fields={"whatsapp": "+6281234567890"},
-        current_user={"client_id": 1, "email": "c1@example.com"},
+        fields={"phone": "+6281200000001", "whatsapp": "+6281200000002", "address": "A 1"},
+        current_user=_USER,
     )
 
-    assert result is not None
-    lock_sqls = [
-        c[0][0] for c in mock_conn.execute.call_args_list if "pg_advisory_xact_lock" in c[0][0]
-    ]
-    assert lock_sqls  # the whatsapp-only update DID take the phonecore lock
-    update_sqls = [c[0][0] for c in mock_conn.execute.call_args_list if "UPDATE clients" in c[0][0]]
-    assert update_sqls and "whatsapp" in update_sqls[0]
+    assert result["contact_change_requested"] == ["phone", "whatsapp"]
+    requests = [c for c in mock_conn.execute.call_args_list if "Contact change" in c[0][0]]
+    assert len(requests) == 1
+    assert "phone \u2192 +6281200000001; WhatsApp \u2192 +6281200000002" in requests[0][0][2]
+    alert = [c for c in mock_conn.execute.call_args_list if "notification_alerts" in c[0][0]]
+    assert len(alert) == 1 and "phone change requested" in alert[0][0][2]
 
 
 # ============================================
