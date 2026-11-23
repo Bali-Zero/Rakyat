@@ -640,9 +640,10 @@ async def outgoings(
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
         try:
-            return await load_outgoings(
-                conn, limit=limit, state=state, month=month, company_key=company_key
-            )
+            kwargs: dict[str, Any] = {"limit": limit, "state": state, "month": month}
+            if company_key is not None:
+                kwargs["company_key"] = company_key
+            return await load_outgoings(conn, **kwargs)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
