@@ -65,13 +65,26 @@ class PortalProfileService:
 
         try:
             async with self.pool.acquire() as conn:
+                # Rows written before addresses were normalised may hold the same
+                # mailbox in mixed case. The unique key compares exact text, so the
+                # stored spelling is used as the conflict key: such a row meets its
+                # own conflict and the guard below, and no second row is created.
                 member_id = await conn.fetchval(
                     """
+                    WITH stored AS (
+                        SELECT email FROM team_members
+                        WHERE LOWER(email) = $2
+                        ORDER BY (email = $2) DESC, id
+                        LIMIT 1
+                    )
                     INSERT INTO team_members (
                         name, full_name, email, pin_hash, role,
                         linked_client_id, portal_access, active
                     )
-                    VALUES ($1, $1, $2, $3, 'client', $4, true, true)
+                    VALUES (
+                        $1, $1, COALESCE((SELECT email FROM stored), $2), $3, 'client', $4,
+                        true, true
+                    )
                     ON CONFLICT (email) DO UPDATE
                         SET linked_client_id = EXCLUDED.linked_client_id,
                             portal_access = true,

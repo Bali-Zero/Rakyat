@@ -191,6 +191,66 @@ async def test_same_client_is_idempotent_and_keeps_registered_pin(portal_pg_pool
 
 
 @pytest.mark.asyncio
+async def test_a_mixed_case_login_of_the_same_client_is_reused_as_stored(
+    portal_pg_pool, make_client
+):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    await _registered(pool, "Mixed.Case@Example.test", client_a)
+    before = await _member(pool, "Mixed.Case@Example.test")
+
+    member_id = await PortalProfileService(pool).ensure_portal_profile(
+        client_a, "mixed.case@example.test", "Client A"
+    )
+
+    assert member_id == before["id"]
+    assert await pool.fetchval("SELECT count(*) FROM team_members") == 1
+    after = await _member(pool, "Mixed.Case@Example.test")
+    assert after["pin_hash"] == REGISTERED_HASH
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_case_placeholder_of_the_same_client_is_updated_in_place(
+    portal_pg_pool, make_client
+):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    await pool.execute(
+        "INSERT INTO team_members (name, full_name, email, pin_hash, role, linked_client_id,"
+        " portal_access, active) VALUES ('Client A', 'Client A', 'Mixed.Case@Example.test',"
+        " $1, 'client', $2, false, true)",
+        PLACEHOLDER_PIN_HASH,
+        client_a,
+    )
+
+    member_id = await PortalProfileService(pool).ensure_portal_profile(
+        client_a, "mixed.case@example.test", "Client A"
+    )
+
+    row = await _member(pool, "Mixed.Case@Example.test")
+    assert member_id == row["id"]
+    assert row["portal_access"] is True
+    assert await pool.fetchval("SELECT count(*) FROM team_members") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_case_login_of_another_client_is_refused(portal_pg_pool, make_client):
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    client_b = await make_client("Client B")
+    await _registered(pool, "Mixed.Case@Example.test", client_a)
+    before = await _member(pool, "Mixed.Case@Example.test")
+
+    result = await PortalProfileService(pool).ensure_portal_profile(
+        client_b, "mixed.case@example.test", "Client B"
+    )
+
+    assert result is None
+    assert await pool.fetchval("SELECT count(*) FROM team_members") == 1
+    assert dict(await _member(pool, "Mixed.Case@Example.test")) == dict(before)
+
+
+@pytest.mark.asyncio
 async def test_new_address_creates_the_row(portal_pg_pool, make_client):
     pool = portal_pg_pool
     client_a = await make_client("Client A")
