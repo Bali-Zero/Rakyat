@@ -117,7 +117,7 @@ async def test_update_practice_status_invalidates_per_practice(
     fake_conn.fetchrow = AsyncMock(
         side_effect=[
             {"status": "open", "client_id": 1},  # old
-            {"id": 99, "status": "in_progress", "client_id": 1},  # updated
+            {"id": 99, "status": "waiting_documents", "client_id": 1},  # updated
         ],
     )
 
@@ -130,7 +130,7 @@ async def test_update_practice_status_invalidates_per_practice(
         "backend.services.common.cache._invalidate_cache",
         side_effect=in_memory_cache.clear_pattern,
     ):
-        result = await svc.update_practice_status(99, "in_progress", user_id="asya@balizero.com")
+        result = await svc.update_practice_status(99, "waiting_documents", user_id="asya@balizero.com")
 
     assert result["id"] == 99
     await _assert_cleared(
