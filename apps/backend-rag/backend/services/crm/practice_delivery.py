@@ -556,10 +556,13 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
             practice_id,
         )
         view = await state(conn, p)
-        if p["status"] == "completed" and await conn.fetchval(
-            "SELECT 1 FROM practice_delivery_completions WHERE practice_id=$1",
+        prior_service = await conn.fetchval(
+            "SELECT service_code FROM practice_delivery_completions WHERE practice_id=$1",
             practice_id,
-        ):
+        )
+        if prior_service is not None and prior_service != p["code"]:
+            raise HTTPException(409, "This practice has already delivered a different service")
+        if p["status"] == "completed" and prior_service is not None:
             return view
         require_open(p)
         if not view["slots"] or any(
@@ -575,13 +578,14 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
         ):
             raise HTTPException(409, "The practice company is no longer linked to this client")
         await publish(conn, p, [s["key"] for s in view["slots"] if s["document_id"]])
-        await conn.execute(
-            """INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by)
-               VALUES($1,$2,$3)""",
-            practice_id,
-            p["code"],
-            user["email"],
-        )
+        if prior_service is None:
+            await conn.execute(
+                """INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by)
+                   VALUES($1,$2,$3)""",
+                practice_id,
+                p["code"],
+                user["email"],
+            )
         await conn.execute(
             """UPDATE practices SET status='completed',completion_date=COALESCE(completion_date,now()),
                updated_at=CASE WHEN EXTRACT(DAY FROM now() AT TIME ZONE 'Asia/Makassar')>28

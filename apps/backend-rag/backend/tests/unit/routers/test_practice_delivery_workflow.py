@@ -221,7 +221,7 @@ async def test_final_delivery_uses_correct_bonus_event(
 async def test_completed_retry_returns_receipt_and_preserves_history(db, writes):
     pool, conn = db
     conn.fetchrow.return_value = {**PRACTICE, "status": "completed"}
-    conn.fetchval.return_value = 1
+    conn.fetchval.return_value = PRACTICE["code"]
     tasks = BackgroundTasks()
     assert (await service.complete(pool, 7, STAFF, tasks))["status"] == "completed"
     assert not tasks.tasks
@@ -389,3 +389,20 @@ async def test_ordinary_staff_output_adoption_requires_same_visible_subject_and_
 )
 def test_company_outputs_populate_the_existing_company_vault_cards(label, kind):
     assert service.document_type("document_2", label) == kind
+
+
+@pytest.mark.asyncio
+async def test_same_service_reopened_practice_keeps_original_delivery_receipt(db, writes):
+    pool, conn = db
+    conn.fetchval.side_effect = [PRACTICE["code"], None]
+    conn.fetch.return_value = [
+        {"slot_key": key, "document_id": i, "file_name": "result.pdf", "waiver_reason": None}
+        for i, key in enumerate(("electronic_visa", "itk"), 1)
+    ]
+    result = await service.complete(pool, 7, STAFF, BackgroundTasks())
+    assert result["status"] == "completed"
+    assert not any(
+        "INSERT INTO practice_delivery_completions" in c.args[0]
+        for c in conn.execute.await_args_list
+    )
+    writes["record_delivery_bonus"].assert_not_awaited()
