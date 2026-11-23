@@ -24,6 +24,13 @@ import httpx
 
 from backend.app.core.config import settings
 from backend.services.crm.birthday_notifier_service import NATIONALITY_LANGUAGE_MAP
+from backend.services.crm.welcome.log_facts import (
+    LANGUAGES,
+    choice_fact,
+    error_word,
+    id_fact,
+    status_fact,
+)
 from backend.services.crm.welcome.welcome_templates import (
     ADVISOR_FALLBACK,
     WELCOME_WHATSAPP,
@@ -48,15 +55,19 @@ async def send_client_welcome(client_id: int, db_pool: asyncpg.Pool) -> None:
     """
     if not _WHATSAPP_WELCOME_ACTIVE:
         logger.debug(
-            "WelcomeWhatsApp: inactive (template approval pending), skipping client %d",
-            client_id,
+            "WelcomeWhatsApp: inactive (template approval pending), skipping client %s",
+            id_fact(client_id),
         )
         return
 
     try:
         await _send_client_welcome_impl(client_id, db_pool)
-    except Exception:
-        logger.error("WelcomeWhatsApp: unhandled error for client %d", client_id, exc_info=True)
+    except Exception as exc:
+        logger.error(
+            "WelcomeWhatsApp: unhandled error for client %s: %s error",
+            id_fact(client_id),
+            error_word(exc),
+        )
 
 
 async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> None:
@@ -76,12 +87,12 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
             client_id,
         )
         if not client:
-            logger.warning("WelcomeWhatsApp: client %d not found", client_id)
+            logger.warning("WelcomeWhatsApp: client %s not found", id_fact(client_id))
             return
 
         phone = (client["phone"] or "").strip()
         if not phone:
-            logger.info("WelcomeWhatsApp: client %d has no phone, skipping", client_id)
+            logger.info("WelcomeWhatsApp: client %s has no phone, skipping", id_fact(client_id))
             return
 
         # Idempotency check
@@ -91,7 +102,7 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
             ACTIVITY_ACTION,
         )
         if already_sent:
-            logger.info("WelcomeWhatsApp: already sent for client %d, skipping", client_id)
+            logger.info("WelcomeWhatsApp: already sent for client %s, skipping", id_fact(client_id))
             return
 
     # Language resolution
@@ -142,11 +153,14 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
                 ACTIVITY_ACTION,
                 f"lang={lang} phone={clean_phone}",
             )
-        logger.info("WelcomeWhatsApp: sent to client %d (lang=%s)", client_id, lang)
+        logger.info(
+            "WelcomeWhatsApp: sent to client %s (lang=%s)",
+            id_fact(client_id),
+            choice_fact(lang, LANGUAGES),
+        )
     else:
         logger.error(
-            "WelcomeWhatsApp: Meta API error for client %d: %d %s",
-            client_id,
-            resp.status_code,
-            resp.text[:200],
+            "WelcomeWhatsApp: Meta API error for client %s: status=%s",
+            id_fact(client_id),
+            status_fact(resp.status_code),
         )

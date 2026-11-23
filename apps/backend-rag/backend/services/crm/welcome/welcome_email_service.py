@@ -28,6 +28,13 @@ from typing import TYPE_CHECKING
 import httpx
 
 from backend.app.core.config import settings
+from backend.services.crm.welcome.log_facts import (
+    LANGUAGES,
+    choice_fact,
+    error_word,
+    id_fact,
+    status_fact,
+)
 from backend.services.crm.welcome.welcome_templates import WELCOME_EMAIL_SUBJECT
 from backend.services.notifications.email_audit import (
     EmailNotDelivered,
@@ -81,7 +88,7 @@ async def schedule_client_welcome_email(client_id: int, db_pool: asyncpg.Pool) -
     This is resilient to Fly.io auto_stop — no in-process timer needed.
     """
     if not _EMAIL_WELCOME_ACTIVE:
-        logger.debug("WelcomeEmail: inactive, skipping client %d", client_id)
+        logger.debug("WelcomeEmail: inactive, skipping client %s", id_fact(client_id))
         return
 
     try:
@@ -98,12 +105,16 @@ async def schedule_client_welcome_email(client_id: int, db_pool: asyncpg.Pool) -
                 send_at,
             )
         logger.info(
-            "WelcomeEmail: queued for client %d, will send at %s UTC",
-            client_id,
+            "WelcomeEmail: queued for client %s, will send at %s UTC",
+            id_fact(client_id),
             send_at.strftime("%H:%M"),
         )
-    except Exception:
-        logger.error("WelcomeEmail: failed to queue for client %d", client_id, exc_info=True)
+    except Exception as exc:
+        logger.error(
+            "WelcomeEmail: failed to queue for client %s: %s error",
+            id_fact(client_id),
+            error_word(exc),
+        )
 
 
 async def process_pending_welcome_emails(db_pool: asyncpg.Pool) -> dict[str, int]:
@@ -146,8 +157,12 @@ async def process_pending_welcome_emails(db_pool: asyncpg.Pool) -> dict[str, int
         try:
             await _send_client_welcome_impl(client_id, db_pool)
             stats["sent"] += 1
-        except Exception:
-            logger.error("WelcomeEmail: send failed for client %d", client_id, exc_info=True)
+        except Exception as exc:
+            logger.error(
+                "WelcomeEmail: send failed for client %s: %s error",
+                id_fact(client_id),
+                error_word(exc),
+            )
             stats["failed"] += 1
 
     return stats
@@ -160,12 +175,12 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
             client_id,
         )
         if not client:
-            logger.warning("WelcomeEmail: client %d not found", client_id)
+            logger.warning("WelcomeEmail: client %s not found", id_fact(client_id))
             return
 
         email = (client["email"] or "").strip()
         if not email:
-            logger.info("WelcomeEmail: client %d has no email, skipping", client_id)
+            logger.info("WelcomeEmail: client %s has no email, skipping", id_fact(client_id))
             return
 
         # Idempotency check: verify not already in sent log
@@ -179,7 +194,7 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
             ACTIVITY_ACTION,
         )
         if already_sent:
-            logger.info("WelcomeEmail: already sent for client %d, skipping", client_id)
+            logger.info("WelcomeEmail: already sent for client %s, skipping", id_fact(client_id))
             return
 
     # Language resolution — ENFORCED ENGLISH-ONLY 2026-05-26 per operator decree
@@ -243,14 +258,14 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
                     },
                 ]
                 logger.info("WelcomeEmail: brochure attached from local file")
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "WelcomeEmail: could not attach brochure for client %d",
-                    client_id,
-                    exc_info=True,
+                    "WelcomeEmail: could not attach brochure for client %s: %s error",
+                    id_fact(client_id),
+                    error_word(exc),
                 )
         else:
-            logger.warning("WelcomeEmail: brochure unavailable for client %d", client_id)
+            logger.warning("WelcomeEmail: brochure unavailable for client %s", id_fact(client_id))
 
     # Audit row — written before network call so a crash mid-send is visible.
     audit_row_id = await log_email_attempt(
@@ -265,7 +280,10 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
     # instead of propagating up and being counted as a permanent failure
     # (the welcome_email_queue row was already DELETEd, so losing it here
     # means the email is gone forever without this audit).
+    # Two accounts of a failure: the audit row keeps the diagnostic as it always was, the
+    # log line gets a reason built only from words written here (see log_facts).
     send_error: str | None = None
+    log_reason = "?"
     status_code = 0
     try:
         http = await get_email_client()
@@ -277,13 +295,19 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
         status_code = resp.status_code
         if status_code != 200:
             send_error = f"status={status_code} body={resp.text[:200]}"
+            log_reason = "status=" + status_fact(status_code)
         else:
             # The endpoint answers 200 when every provider failed: its body says so.
             raise_if_not_delivered(resp)
     except EmailNotDelivered as e:
         send_error = f"not delivered: {format_send_error(e)}"
+        if e.delivery_uncertain is True:
+            log_reason = "delivery uncertain"
+        else:
+            log_reason = "not delivered"
     except Exception as e:
         send_error = f"exception: {format_send_error(e)}"
+        log_reason = error_word(e) + " error"
 
     if send_error is None:
         async with db_pool.acquire() as conn:
@@ -303,12 +327,16 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
             status="sent",
             provider="brevo",
         )
-        logger.info("WelcomeEmail: sent to client %d (lang=%s, email=%s)", client_id, lang, email)
+        logger.info(
+            "WelcomeEmail: sent to client %s (lang=%s)",
+            id_fact(client_id),
+            choice_fact(lang, LANGUAGES),
+        )
     else:
         logger.error(
-            "WelcomeEmail: send failed for client %d: %s",
-            client_id,
-            send_error,
+            "WelcomeEmail: send failed for client %s: %s",
+            id_fact(client_id),
+            log_reason,
         )
         await record_email_result(
             db_pool,

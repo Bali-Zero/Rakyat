@@ -24,6 +24,7 @@ import jinja2
 
 from backend.services.crm.partners.repository import PartnersRepository
 from backend.services.crm.partners.sterilize import sterilize_service_type_for_partner
+from backend.services.crm.welcome.log_facts import uuid_fact
 from backend.services.notifications.email_audit import raise_if_not_delivered
 from backend.services.pricing.pricing_service import get_pricing_service
 
@@ -196,12 +197,12 @@ async def enqueue_welcome(
     repo = PartnersRepository(conn)
     p = await repo.get_partner(partner_id)
     if p is None:
-        logger.warning("enqueue_welcome: partner %s not found — skip", partner_id)
+        logger.warning("enqueue_welcome: partner %s not found — skip", uuid_fact(partner_id))
         return
     if p.welcome_email_sent_at is not None:
         logger.info(
             "enqueue_welcome: welcome already sent for partner %s — skip (idempotent)",
-            partner_id,
+            uuid_fact(partner_id),
         )
         return
 
@@ -229,7 +230,7 @@ async def enqueue_welcome(
         idempotency_key=f"welcome:{partner_id}",
         created_by=actor_user,
     )
-    logger.info("enqueue_welcome: enqueued for partner %s (%s)", partner_id, p.email)
+    logger.info("enqueue_welcome: enqueued for partner %s", uuid_fact(partner_id))
 
 
 async def enqueue_commission_earned(
@@ -250,19 +251,21 @@ async def enqueue_commission_earned(
     if c is None or c.status != "paid":
         logger.info(
             "enqueue_commission_earned: commission %s not found or not paid — skip",
-            commission_id,
+            uuid_fact(commission_id),
         )
         return
     if c.commission_email_sent_at is not None:
         logger.info(
             "enqueue_commission_earned: already sent for commission %s — skip (idempotent)",
-            commission_id,
+            uuid_fact(commission_id),
         )
         return
 
     p = await repo.get_partner(c.partner_id)
     if p is None:
-        logger.warning("enqueue_commission_earned: partner %s not found — skip", c.partner_id)
+        logger.warning(
+            "enqueue_commission_earned: partner %s not found — skip", uuid_fact(c.partner_id)
+        )
         return
 
     proc = None
@@ -320,9 +323,8 @@ async def enqueue_commission_earned(
         created_by=actor_user,
     )
     logger.info(
-        "enqueue_commission_earned: enqueued for commission %s to %s",
-        commission_id,
-        p.email,
+        "enqueue_commission_earned: enqueued for commission %s",
+        uuid_fact(commission_id),
     )
 
 
@@ -377,10 +379,12 @@ async def send_welcome(conn: Any, partner_id: UUID) -> None:
     repo = PartnersRepository(conn)
     p = await repo.get_partner(partner_id)
     if p is None:
-        logger.warning("send_welcome: partner %s not found — skip", partner_id)
+        logger.warning("send_welcome: partner %s not found — skip", uuid_fact(partner_id))
         return
     if p.welcome_email_sent_at is not None:
-        logger.info("send_welcome: already sent for partner %s — skip (idempotent)", partner_id)
+        logger.info(
+            "send_welcome: already sent for partner %s — skip (idempotent)", uuid_fact(partner_id)
+        )
         return
 
     pricing_services = _build_pricing_services()
@@ -406,7 +410,7 @@ async def send_welcome(conn: Any, partner_id: UUID) -> None:
         body=body,
     )
     await repo.mark_welcome_sent(partner_id)
-    logger.info("send_welcome: sent to partner %s (%s)", partner_id, p.email)
+    logger.info("send_welcome: sent to partner %s", uuid_fact(partner_id))
 
 
 async def send_commission_earned(conn: Any, commission_id: UUID) -> None:
@@ -425,19 +429,21 @@ async def send_commission_earned(conn: Any, commission_id: UUID) -> None:
     if c is None or c.status != "paid":
         logger.info(
             "send_commission_earned: commission %s not found or not paid — skip",
-            commission_id,
+            uuid_fact(commission_id),
         )
         return
     if c.commission_email_sent_at is not None:
         logger.info(
             "send_commission_earned: already sent for commission %s — skip (idempotent)",
-            commission_id,
+            uuid_fact(commission_id),
         )
         return
 
     p = await repo.get_partner(c.partner_id)
     if p is None:
-        logger.warning("send_commission_earned: partner %s not found — skip", c.partner_id)
+        logger.warning(
+            "send_commission_earned: partner %s not found — skip", uuid_fact(c.partner_id)
+        )
         return
 
     # Fetch practice + client name via JOIN
@@ -494,4 +500,4 @@ async def send_commission_earned(conn: Any, commission_id: UUID) -> None:
         body=body,
     )
     await repo.mark_commission_email_sent(commission_id)
-    logger.info("send_commission_earned: sent for commission %s to %s", commission_id, p.email)
+    logger.info("send_commission_earned: sent for commission %s", uuid_fact(commission_id))
