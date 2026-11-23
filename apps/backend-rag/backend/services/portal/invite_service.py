@@ -84,6 +84,16 @@ _ALREADY_REGISTERED = ("already_registered", "This client already has an active 
 _EMAIL_IN_USE = ("email_in_use", "Another account already uses this email address")
 _ADDRESS_REQUIRED = ("address_required", "Invitation address is required")
 
+#: What `/invite/validate` tells an unauthenticated token holder in place of a
+#: refusal that would reveal another account holding the address or a staff
+#: login. `complete_registration` keeps its own sentences.
+_NOT_AVAILABLE = (
+    "not_available",
+    "This invitation can no longer be used. "
+    "Please contact your account manager for a new invitation.",
+)
+_PRIVATE_REFUSALS = frozenset({_EMAIL_IN_USE, _NOT_REGISTRABLE})
+
 
 async def _registration_refusal(
     conn: Any, client_id: int, canonical: str
@@ -321,7 +331,8 @@ class InviteService:
                 logger.warning(
                     "Invitation cannot register (%s): %s...", refusal[0], _hash_token(token)[:8]
                 )
-                return {"error": refusal[0], "message": refusal[1]}
+                public = _NOT_AVAILABLE if refusal in _PRIVATE_REFUSALS else refusal
+                return {"error": public[0], "message": public[1]}
 
             return {
                 "valid": True,

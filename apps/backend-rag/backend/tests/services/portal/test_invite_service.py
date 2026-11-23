@@ -743,6 +743,11 @@ async def test_complete_registration_retires_the_live_siblings_of_the_redeemed_i
 
 
 _LIVE_LOGIN = {"id": 55, "active": True, "pin_hash": REAL_PIN_HASH, "role": "client"}
+_NOT_AVAILABLE = {
+    "error": "not_available",
+    "message": "This invitation can no longer be used. "
+    "Please contact your account manager for a new invitation.",
+}
 _REGISTRATION_CASES = [
     # (invitation address, login row linked to the client, row already holding
     #  the address, the code /invite/validate answers or None when it is valid)
@@ -796,8 +801,30 @@ async def test_an_invitation_is_valid_exactly_when_its_registration_would_succee
         else:
             with pytest.raises(ValueError) as refused:
                 await service.complete_registration(token="tok", pin="1234")
-            assert validated == {"error": code, "message": str(refused.value)}
+            if code in ("email_in_use", "not_registrable"):
+                # The token holder is not authenticated: another account holding
+                # the address, or a staff login, is not theirs to learn.
+                assert validated == _NOT_AVAILABLE
+                assert str(refused.value) not in validated["message"]
+            else:
+                assert validated == {"error": code, "message": str(refused.value)}
             assert register_conn.execute_calls == []
 
     assert validate_conn.fetchrow_calls[1] == register_conn.fetchrow_calls[1]
     assert validate_conn.fetchval_calls == register_conn.fetchval_calls
+
+
+@pytest.mark.parametrize(("email", "linked", "holder", "code"), _REGISTRATION_CASES)
+@pytest.mark.asyncio
+async def test_the_public_invitation_answer_names_no_other_account_or_staff_login(
+    email: str | None, linked: dict | None, holder: int | None, code: str | None
+) -> None:
+    conn = FakeConnection(
+        fetchrow_results=[_open_invitation(email), linked], fetchval_results=[holder]
+    )
+    validated = await InviteService(FakePool(conn)).validate_token("tok")
+
+    assert validated.get("error") not in ("email_in_use", "not_registrable")
+    words = " ".join(str(value) for value in validated.values()).lower()
+    for disclosure in ("another account", "already uses", "cannot be registered", "staff"):
+        assert disclosure not in words
