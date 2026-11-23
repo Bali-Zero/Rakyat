@@ -16,7 +16,11 @@ from typing import Any
 
 import asyncpg
 
-from backend.services.accounting.companies import OTHER_KEY, company_key_for_account
+from backend.services.accounting.companies import (
+    account_for_company_key,
+    account_key_for_account,
+    company_key_for_account,
+)
 from backend.services.accounting.outgoing_justify import BILLING, PAIR_LATERAL, code_counts
 from backend.services.accounting.period import month_condition
 
@@ -90,6 +94,7 @@ async def load_outgoings(
     limit: int = 1000,
     state: str = "to_justify",
     month: date | None = None,
+    company_key: str | None = None,
 ) -> dict[str, Any]:
     """Debits newest first, each with its reading and state, and the totals per kind.
 
@@ -106,14 +111,26 @@ async def load_outgoings(
     """
     if state not in _STATES:
         raise ValueError(f"state must be one of {_STATES}")
+    account = account_for_company_key(company_key) if company_key else None
+    if company_key and account is None:
+        raise ValueError("company_key must identify one bank account")
     row_params = [limit, None if state == "all" else state]
+    account_filter = ""
+    if account:
+        row_params.append(account)
+        account_filter = " AND regexp_replace(COALESCE(account_number, ''), '[^0-9]', '', 'g') = $3"
     row_period = month_condition("txn_date", month, row_params)
-    total_params = []
+    total_params: list[Any] = []
+    total_filter = ""
+    if account:
+        total_params.append(account)
+        total_filter = " AND regexp_replace(COALESCE(account_number, ''), '[^0-9]', '', 'g') = $1"
     total_period = month_condition("txn_date", month, total_params)
     rows = await conn.fetch(
         f"""
         SELECT * FROM ({_BASE}) b
-        WHERE ($2::text IS NULL OR is_justified = ($2::text = 'justified')){row_period}
+        WHERE ($2::text IS NULL OR is_justified = ($2::text = 'justified'))
+          {account_filter}{row_period}
         ORDER BY txn_date DESC, posted_at DESC NULLS LAST, id DESC
         LIMIT $1
         """,
@@ -124,7 +141,7 @@ async def load_outgoings(
         SELECT COALESCE(kind, 'other') AS kind, is_justified, count(*) AS n,
                COALESCE(sum(amount_idr), 0) AS total
         FROM ({_BASE}) b
-        WHERE TRUE{total_period}
+        WHERE TRUE{total_filter}{total_period}
         GROUP BY 1, 2
         """,
         *total_params,
@@ -153,7 +170,8 @@ async def load_outgoings(
                 "amount_idr": int(r["amount_idr"]),
                 "kind": kind,
                 "description": r["description"] or "",
-                "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
+                "company_key": company_key_for_account(r["account_number"])
+                or account_key_for_account(r["account_number"]),
                 "reading": reading,
                 "fee_of_txn_id": r["fee_of_txn_id"],
                 "state": "justified" if r["is_justified"] else "to_justify",

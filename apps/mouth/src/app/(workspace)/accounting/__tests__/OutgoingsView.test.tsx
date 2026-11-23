@@ -29,6 +29,7 @@ vi.mock("@/lib/api", () => ({ api: { crm: { getPractices: vi.fn() } } }));
 vi.mock("@/lib/api/workspace/accounting.api", () => ({
   accountingApi: {
     getOutgoings: vi.fn(),
+    getCompanies: vi.fn(),
     justifyOutgoing: vi.fn(),
     undoOutgoingJustification: vi.fn(),
     justifyPnbpBatch: vi.fn(),
@@ -251,6 +252,9 @@ const cells = (id: number) =>
 
 beforeEach(() => {
   vi.resetAllMocks();
+  api.getCompanies.mockResolvedValue([
+    { key: "test", company_name: "Test company", bank_name: null, account_number: null, data_through: null, statements: 0, to_reconcile: 0 },
+  ]);
 });
 
 describe("OutgoingsView", () => {
@@ -279,7 +283,7 @@ describe("OutgoingsView", () => {
       "e-billing 820261120000001",
     ]);
     expect(cells(2)[4]).toMatch(/12\.000\.000/);
-    expect(api.getOutgoings).toHaveBeenCalledWith({ state: "to_justify" });
+    expect(api.getOutgoings).toHaveBeenCalledWith({ companyKey: "test", month: undefined, state: "to_justify" });
     expect(screen.queryByText(/Showing the newest/)).toBeNull();
   });
 
@@ -351,7 +355,7 @@ describe("OutgoingsView", () => {
     ).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(within(group).getByRole("button", { name: /^Justified/ }));
     await screen.findByTestId("outgoing-6");
-    expect(api.getOutgoings).toHaveBeenLastCalledWith({ state: "justified" });
+    expect(api.getOutgoings).toHaveBeenLastCalledWith({ companyKey: "test", month: undefined, state: "justified" });
     expect(screen.queryByTestId("outgoing-1")).toBeNull();
     expect(
       within(group).getByRole("button", { name: "Justified (3)" }),

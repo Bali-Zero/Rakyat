@@ -629,6 +629,7 @@ async def reconciliation_inbox(
 
 @router.get("/outgoings")
 async def outgoings(
+    company_key: str | None = Query(None, min_length=1),
     limit: int = Query(1000, ge=1, le=5000),
     state: Literal["to_justify", "justified", "all"] = Query("to_justify"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
@@ -638,7 +639,12 @@ async def outgoings(
     """Debits newest first, each with its state and justification, bank text read apart."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        return await load_outgoings(conn, limit=limit, state=state, month=month)
+        try:
+            return await load_outgoings(
+                conn, limit=limit, state=state, month=month, company_key=company_key
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class JustifyLine(BaseModel):

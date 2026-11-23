@@ -35,6 +35,7 @@ import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import {
   AccountingMonth,
+  OCTOBER,
   NOVEMBER,
   useAccountingMonth,
 } from "./_components/accountingPeriod";
@@ -196,15 +197,17 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
-  const [archive, setArchive] = useState(false);
+  const [period, setPeriod] = useState<"november" | "october" | "archive">("november");
   const [view, setView] = useState<View>("centre");
+  const month = period === "october" ? OCTOBER.start : period === "november" ? NOVEMBER.start : undefined;
   return (
-    <AccountingMonth.Provider value={archive ? undefined : NOVEMBER.start}>
+    <AccountingMonth.Provider value={month}>
       <AccountingWorkspace
-        key={archive ? "archive" : NOVEMBER.start}
+        key={period}
         view={view}
         setView={setView}
-        onArchive={setArchive}
+        period={period}
+        onPeriod={setPeriod}
       />
     </AccountingMonth.Provider>
   );
@@ -213,11 +216,13 @@ export default function AccountingPage() {
 function AccountingWorkspace({
   view,
   setView,
-  onArchive,
+  period,
+  onPeriod,
 }: {
   view: View;
   setView: (view: View) => void;
-  onArchive: (archive: boolean) => void;
+  period: "november" | "october" | "archive";
+  onPeriod: (period: "november" | "october" | "archive") => void;
 }) {
   const month = useAccountingMonth();
   const { success, error } = useToast();
@@ -308,10 +313,11 @@ function AccountingWorkspace({
         Period
         <select
           className="rounded border border-[var(--bz-border)] bg-[var(--bz-card)] px-2 py-1"
-          value={month ?? "archive"}
-          onChange={(event) => onArchive(event.target.value === "archive")}
+          value={period}
+          onChange={(event) => onPeriod(event.target.value as "november" | "october" | "archive")}
         >
-          <option value={NOVEMBER.start}>November 2026</option>
+          <option value="november">November 2026</option>
+          <option value="october">October 2026</option>
           <option value="archive">All dates (history)</option>
         </select>
       </label>
