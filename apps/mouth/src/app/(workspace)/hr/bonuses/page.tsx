@@ -273,6 +273,8 @@ export default function BonusesPage() {
 
   const grandTotal = months.reduce((s, m) => s + m.total, 0);
   const grandPending = months.reduce((s, m) => s + m.pendingTotal, 0);
+  const memberGrandTotal = csvMonths.reduce((s, m) => s + m.total, 0);
+  const memberGrandPending = csvMonths.reduce((s, m) => s + m.pendingTotal, 0);
   const grandApproved = memberTotals.reduce(
     (s, m) => s + m.byStatus.approved,
     0,
@@ -534,11 +536,11 @@ export default function BonusesPage() {
       {memberRows.length > 0 && (
         <MemberTable
           rows={memberRows}
-          monthCount={months.length}
-          bonusCount={filtered.length}
-          grandPending={grandPending}
+          monthCount={csvMonths.length}
+          bonusCount={payrollFiltered.length}
+          grandPending={memberGrandPending}
           grandApproved={grandApproved}
-          grandTotal={grandTotal}
+          grandTotal={memberGrandTotal}
         />
       )}
 
