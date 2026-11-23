@@ -152,15 +152,19 @@ async def invoke_agent(
         metadata.update(
             {
                 "user_email": current_user.get("email"),
-                "user_id": current_user.get("id"),
+                "user_id": current_user.get("user_id"),
                 "request_timestamp": datetime.now(tz=timezone.utc).isoformat(),
             },
         )
 
+        # `client_id` selects whose stored conversation the graph loads: it is
+        # never taken from the caller's metadata on this route.
+        graph_metadata = {k: v for k, v in metadata.items() if k != "client_id"}
+
         # Invoke the workflow
         final_state = await invoke_rag_workflow(
             question=request.question,
-            metadata=metadata,
+            metadata=graph_metadata,
         )
 
         errors = final_state.get("errors")
