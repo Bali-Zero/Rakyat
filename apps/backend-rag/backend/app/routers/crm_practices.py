@@ -1774,6 +1774,9 @@ async def update_practice(
             if pph_touched:
                 _require_pph_role(current_user)
 
+            for field in ("payment_status", "paid_amount"):
+                if field in updates.model_fields_set and getattr(updates, field) is None:
+                    raise HTTPException(status_code=400, detail=f"{field} cannot be null")
             if {"payment_status", "paid_amount"} & updates.model_fields_set:
                 raise HTTPException(status_code=409, detail="Record the payment in Accounting.")
             try:
@@ -2030,14 +2033,18 @@ async def update_practice(
                 if new_practice_type_code and new_practice_type_code != old_practice_type_code:
                     # Serialise with a first delivery upload that may have gone to storage
                     # while this editor was open. An issued visa keeps its service identity.
-                    await conn.fetchval("SELECT id FROM practices WHERE id = $1 FOR UPDATE", practice_id)
+                    await conn.fetchval(
+                        "SELECT id FROM practices WHERE id = $1 FOR UPDATE", practice_id
+                    )
                     has_delivery = await conn.fetchval(
                         "SELECT EXISTS(SELECT 1 FROM practice_delivery_slots WHERE practice_id=$1) "
                         "OR EXISTS(SELECT 1 FROM practice_delivery_titles WHERE practice_id=$1)",
                         practice_id,
                     )
                     if has_delivery:
-                        raise HTTPException(status_code=409, detail="Service already has delivery records.")
+                        raise HTTPException(
+                            status_code=409, detail="Service already has delivery records."
+                        )
                 if updates.status and normalize_state(updates.status) == "sending_invoice":
                     # The gate above ran on values read before this transaction. Lock the row
                     # and decide on the LOCKED status and price: a concurrent commit (price

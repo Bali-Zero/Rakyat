@@ -40,9 +40,7 @@ def _catalog() -> dict[str, DeliveryPolicy]:
     with Path(__file__).with_suffix(".csv").open(encoding="utf-8", newline="") as file:
         for row in csv.DictReader(file):
             slots = [
-                _slot(i, row[f"upload_box_{i}"])
-                for i in range(1, 7)
-                if row[f"upload_box_{i}"]
+                _slot(i, row[f"upload_box_{i}"]) for i in range(1, 7) if row[f"upload_box_{i}"]
             ]
             trigger = row["bonus_trigger"]
             if trigger not in {"electronic_visa_issued", "service_delivered"}:
