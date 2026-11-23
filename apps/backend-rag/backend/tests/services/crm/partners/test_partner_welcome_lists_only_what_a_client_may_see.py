@@ -8,11 +8,14 @@ instead of the client display price. Synthetic fixtures only.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from backend.services.crm.partners import emails
+from backend.services.crm.partners import repository as partners_repository
 from backend.services.pricing.pricing_service import PricingService, _iter_service_entries
 
 LABEL_BASIC = "Monthly tax report, without LKPM & Annual"
@@ -91,6 +94,81 @@ def test_normal_row_keeps_its_price_and_nameless_row_falls_back_to_key(
     assert {"name": "Plain Permit Display", "price_display": "5.000.000 IDR"} in synthetic
     assert {"name": "No Name Permit", "price_display": "6.000.000 IDR"} in synthetic
     assert len(synthetic) == 4
+
+
+def _html_catalogue_service() -> PricingService:
+    svc = PricingService()
+    svc.prices = {
+        "services": {
+            "synthetic": {
+                "unsafe": {
+                    "name": "<em>Synthetic</em> & <b>Visa</b>",
+                    "price": "<i>On request</i>",
+                },
+                "plain": {"name": "Plain Permit", "price": "5.000.000 IDR"},
+            }
+        }
+    }
+    svc.loaded = True
+    return svc
+
+
+class _WelcomeRepo:
+    partner = SimpleNamespace(
+        full_name="Synthetic Partner",
+        email="synthetic@example.test",
+        default_commission_value=10,
+        default_commission_type="percentage",
+        welcome_email_sent_at=None,
+    )
+    outbox: dict[str, Any] | None = None
+
+    def __init__(self, _conn: Any) -> None:
+        pass
+
+    async def get_partner(self, _partner_id: Any) -> SimpleNamespace:
+        return self.partner
+
+    async def mark_welcome_sent(self, _partner_id: Any) -> None:
+        pass
+
+    async def insert_email_outbox(self, **kwargs: Any) -> None:
+        type(self).outbox = kwargs
+
+
+def _assert_catalogue_html_is_escaped(body: str) -> None:
+    assert "&lt;em&gt;Synthetic&lt;/em&gt; &amp; &lt;b&gt;Visa&lt;/b&gt;" in body
+    assert "&lt;i&gt;On request&lt;/i&gt;" in body
+    assert "<em>" not in body
+    assert "<b>" not in body
+    assert "<i>" not in body
+    assert "Plain Permit" in body
+
+
+@pytest.mark.asyncio
+async def test_direct_welcome_escapes_catalogue_html_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The direct welcome path passes escaped catalogue text to HTML delivery."""
+    monkeypatch.setattr(emails, "PartnersRepository", _WelcomeRepo)
+    monkeypatch.setattr(emails, "get_pricing_service", _html_catalogue_service)
+    post = AsyncMock()
+    monkeypatch.setattr(emails, "_post_email", post)
+
+    await emails.send_welcome(object(), object())
+
+    _assert_catalogue_html_is_escaped(post.call_args.kwargs["body"])
+
+
+@pytest.mark.asyncio
+async def test_queued_welcome_escapes_catalogue_html_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The queued welcome freezes escaped catalogue text in its outbox body."""
+    _WelcomeRepo.outbox = None
+    monkeypatch.setattr(partners_repository, "PartnersRepository", _WelcomeRepo)
+    monkeypatch.setattr(emails, "get_pricing_service", _html_catalogue_service)
+
+    await emails.enqueue_welcome(object(), object())
+
+    assert _WelcomeRepo.outbox is not None
+    _assert_catalogue_html_is_escaped(_WelcomeRepo.outbox["body_markdown"])
 
 
 def test_real_catalogue_lists_no_internal_row_and_no_sub_block() -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+from html import escape
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -183,6 +184,29 @@ def _build_pricing_services() -> list[dict[str, str]]:
     return result
 
 
+def _render_welcome_body(partner: Any) -> str:
+    """Render the welcome body with catalogue values safe for HTML delivery."""
+    pricing_services = [
+        {
+            "name": escape(service["name"]),
+            "price_display": escape(service["price_display"]),
+        }
+        for service in _build_pricing_services()
+    ]
+    commission_rate = (
+        f"{partner.default_commission_value}%"
+        if partner.default_commission_type == "percentage"
+        else f"IDR {partner.default_commission_value:,.0f}"
+    )
+    tpl = _env.get_template("welcome.md.j2")
+    return tpl.render(
+        partner=partner,
+        commission_rate=commission_rate,
+        commission_type=partner.default_commission_type,
+        pricing_services=pricing_services,
+    )
+
+
 # ─── Public API ─────────────────────────────────────────────────────────────
 
 
@@ -211,19 +235,7 @@ async def enqueue_welcome(
         )
         return
 
-    pricing = _build_pricing_services()
-    commission_rate = (
-        f"{p.default_commission_value}%"
-        if p.default_commission_type == "percentage"
-        else f"IDR {p.default_commission_value:,.0f}"
-    )
-    tpl = _env.get_template("welcome.md.j2")
-    body = tpl.render(
-        partner=p,
-        commission_rate=commission_rate,
-        commission_type=p.default_commission_type,
-        pricing_services=pricing,
-    )
+    body = _render_welcome_body(p)
     await repo.insert_email_outbox(
         email_type="welcome",
         partner_id=partner_id,
@@ -392,21 +404,7 @@ async def send_welcome(conn: Any, partner_id: UUID) -> None:
         )
         return
 
-    pricing_services = _build_pricing_services()
-
-    commission_rate = (
-        f"{p.default_commission_value}%"
-        if p.default_commission_type == "percentage"
-        else f"IDR {p.default_commission_value:,.0f}"
-    )
-
-    tpl = _env.get_template("welcome.md.j2")
-    body = tpl.render(
-        partner=p,
-        commission_rate=commission_rate,
-        commission_type=p.default_commission_type,
-        pricing_services=pricing_services,
-    )
+    body = _render_welcome_body(p)
 
     await _post_email(
         to=p.email,
