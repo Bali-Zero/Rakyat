@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from backend.app.services.hr.hr_service import business_today
 from backend.app.services.internal_email import EmailProviderRejected, send_internal_email
+from backend.app.utils.service_accounts import is_human_team_member
 from backend.services.crm.delivery_catalog import delivery_policy
 
 OWNER_MAILBOX = "zero@balizero.com"
@@ -42,6 +43,8 @@ async def record_visa_milestone(conn: Any, practice: dict, slot_key: str) -> Non
 def followup_view(
     row: Any, today: date, *, user: dict | None = None, now: datetime | None = None
 ) -> dict:
+    if user is not None and not is_human_team_member(user.get("role")):
+        raise HTTPException(403, "Staff access required for private permit notes")
     started, due = row["started_on"], row["due_on"]
     age = (today - started).days
     final_due = started + timedelta(days=60)
