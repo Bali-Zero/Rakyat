@@ -217,19 +217,23 @@ async def apply_transition(
     if spec.kind in _EVIDENCE_KIND:
         # An evidence_id already bound to a DIFFERENT practice is a
         # client-side mistake (evidence identifiers are meant to be
-        # practice-scoped), not a genuine conflict worth 409. A replay of
-        # the SAME (practice_id, evidence_id) pair is handled by the
-        # INSERT ... ON CONFLICT DO NOTHING below, not here.
-        other_owner = await conn.fetchval(
+        # practice-scoped), not a genuine conflict worth 409. So is one this
+        # practice already recorded as another kind (the filing id sent
+        # again to approve or reject): the INSERT below would skip it on
+        # the (practice_id, evidence_id) conflict and the transition would
+        # record no evidence of its own. A replay of the SAME pair and kind
+        # is handled by the INSERT ... ON CONFLICT DO NOTHING below.
+        recorded = await conn.fetchrow(
             """
-            SELECT practice_id FROM garuda_practice_evidence
-             WHERE evidence_id = $1 AND practice_id != $2
+            SELECT practice_id, kind FROM garuda_practice_evidence
+             WHERE evidence_id = $1
              LIMIT 1
             """,
             fields["evidence_id"],
-            practice_id,
         )
-        if other_owner is not None:
+        if recorded is not None and (
+            recorded["practice_id"] != practice_id or recorded["kind"] != _EVIDENCE_KIND[spec.kind]
+        ):
             raise HTTPException(
                 status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False}
             )
