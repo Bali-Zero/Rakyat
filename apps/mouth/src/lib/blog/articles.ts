@@ -133,7 +133,9 @@ export function normalizeTags(raw: unknown): string[] {
 export function resolveCategoryAlias(
   rawCategory: string,
 ): ArticleCategory | null {
-  return CATEGORY_MAP[rawCategory] ?? null;
+  return Object.prototype.hasOwnProperty.call(CATEGORY_MAP, rawCategory)
+    ? CATEGORY_MAP[rawCategory]
+    : null;
 }
 
 /** Strip markdown headings and formatting from excerpt text (used for frontmatter/backend strings) */
@@ -1013,12 +1015,10 @@ export type ArticleListItemWithUpdated = ArticleListItem & {
   updatedAt?: Date;
 };
 
-export const getAllArticles = unstable_cache(
+const listAllArticles = unstable_cache(
   async (options?: {
     category?: string;
     featured?: boolean;
-    limit?: number;
-    offset?: number;
   }): Promise<{ articles: ArticleListItemWithUpdated[]; total: number }> => {
     const allArticles: ArticleListItemWithUpdated[] = [];
     const seenSlugs = new Set<string>();
@@ -1122,18 +1122,7 @@ export const getAllArticles = unstable_cache(
       );
     });
 
-    const total = allArticles.length;
-
-    // Apply pagination
-    let result = allArticles;
-    if (options?.offset) {
-      result = result.slice(options.offset);
-    }
-    if (options?.limit) {
-      result = result.slice(0, options.limit);
-    }
-
-    return { articles: result, total };
+    return { articles: allArticles, total: allArticles.length };
   },
   ["articles"],
   {
@@ -1141,6 +1130,38 @@ export const getAllArticles = unstable_cache(
     revalidate: 60,
   },
 );
+
+export async function getAllArticles(options?: {
+  category?: string;
+  featured?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<{ articles: ArticleListItemWithUpdated[]; total: number }> {
+  // A category filter is a category or one of its aliases (immigration lists
+  // as visas). It is resolved before the cached list is asked, so an alias
+  // shares its category's entry and its local files, and a name that is no
+  // category asks nothing: no cache entry, no backend call, an empty list.
+  let category: ArticleCategory | undefined;
+  if (options?.category) {
+    const canonical = resolveCategoryAlias(options.category);
+    if (canonical === null) return { articles: [], total: 0 };
+    category = canonical;
+  }
+  // The cached list is keyed by category/featured only; pagination happens
+  // here so distinct limit/offset values never create cache entries.
+  const { articles, total } = await listAllArticles({
+    category,
+    featured: options?.featured,
+  });
+  let result = articles;
+  if (options?.offset) {
+    result = result.slice(options.offset);
+  }
+  if (options?.limit) {
+    result = result.slice(0, options.limit);
+  }
+  return { articles: result, total };
+}
 
 /**
  * Get featured articles
