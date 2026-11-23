@@ -4,7 +4,7 @@
  * Hook ottimizzato per gestione clienti CRM con caching e sincronizzazione
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Client, CreateClientParams } from "@/lib/api/crm/crm.types";
@@ -25,6 +25,17 @@ interface ClientsResponse {
   total: number;
   hasMore: boolean;
 }
+
+/** The pages of a list before the one being asked for, with the filter they belong to. */
+interface EarlierPages {
+  filterKey: string;
+  /** Offset of the page being asked for. */
+  offset: number;
+  /** The rows of every page before that offset. */
+  clients: Client[];
+}
+
+const NO_CLIENTS: Client[] = [];
 
 const logError = (...args: unknown[]) => {
   logger.error(
@@ -52,14 +63,42 @@ export function useCrmClients(options: UseCrmClientsOptions = {}) {
     enabled = true,
   } = options;
   const queryClient = useQueryClient();
-  const [allClients, setAllClients] = useState<Client[]>([]);
-  const [offset, setOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const loadingRef = useRef(false);
-  // Generation counter: incremented on each filter change so stale data from
-  // a previous filter set is never appended to a fresh accumulation.
-  const generationRef = useRef(0);
+
+  // The list is the list of ONE filter. Every filter that is part of the
+  // query is part of this key, so a change of any of them starts a new list
+  // in the very render that sees it: nothing has to empty the old one first.
+  const filterKey = JSON.stringify([
+    status ?? null,
+    assigned_to ?? null,
+    search ?? null,
+    nationality ?? null,
+    passport_expiring_days ?? null,
+  ]);
+
+  // The pages BEFORE the one being asked for, kept with the filter they
+  // belong to. The page being asked for is never copied into state: it is
+  // read from the query in the render. So data served from the cache is shown
+  // at once, no row of another filter is ever shown under this one, and only
+  // the page that is in the list says whether there is more.
+  const [earlier, setEarlier] = useState<EarlierPages>(() => ({
+    filterKey,
+    offset: 0,
+    clients: NO_CLIENTS,
+  }));
+  const offset = earlier.filterKey === filterKey ? earlier.offset : 0;
+  const earlierClients =
+    earlier.filterKey === filterKey ? earlier.clients : NO_CLIENTS;
+
+  // Forget the pages of a filter the list has left, so that coming back to it
+  // starts from its first page again. The render that sees a filter change
+  // does not wait for this: it has already started the new list above.
+  useEffect(() => {
+    setEarlier((kept) =>
+      kept.filterKey === filterKey
+        ? kept
+        : { filterKey, offset: 0, clients: NO_CLIENTS },
+    );
+  }, [filterKey]);
 
   // Base query key (without offset — we accumulate results)
   const queryKey = [
@@ -92,57 +131,27 @@ export function useCrmClients(options: UseCrmClientsOptions = {}) {
     gcTime: 10 * 60 * 1000,
   });
 
-  // Accumulate results when new data arrives.
-  // Use a captured generation snapshot to discard data from a previous filter
-  // set that arrived after the filter changed (stale flash fix).
-  useEffect(() => {
-    if (data) {
-      const currentGeneration = generationRef.current;
-      if (offset === 0) {
-        setAllClients(data);
-      } else {
-        setAllClients((prev) => {
-          // If filters changed since this fetch started, don't accumulate
-          if (generationRef.current !== currentGeneration) return prev;
-          const existingIds = new Set(prev.map((c) => c.id));
-          const newClients = data.filter((c) => !existingIds.has(c.id));
-          return [...prev, ...newClients];
-        });
-      }
-      setHasMore(data.length === limit);
-      setIsLoadingMore(false);
-      loadingRef.current = false;
-    }
-  }, [data, offset, limit]);
+  // The earlier pages, then the page the query holds, without repeats.
+  const clients = useMemo(() => {
+    if (!data) return earlierClients;
+    if (offset === 0) return data;
+    const seen = new Set(earlierClients.map((c) => c.id));
+    return [...earlierClients, ...data.filter((c) => !seen.has(c.id))];
+  }, [data, offset, earlierClients]);
 
-  // Reset loadingRef on error so loadMore can be retried
-  useEffect(() => {
-    if (isError) {
-      loadingRef.current = false;
-      setIsLoadingMore(false);
-    }
-  }, [isError]);
-
-  // Reset when filters change — bump generation so stale accumulations are discarded
-  useEffect(() => {
-    generationRef.current += 1;
-    setOffset(0);
-    setAllClients([]);
-    setHasMore(true);
-  }, [status, assigned_to, search, nationality]);
+  // Only a page that is in the list can say the list has ended.
+  const hasMore = data ? data.length === limit : true;
 
   const loadMore = useCallback(() => {
-    if (hasMore && !isLoading && !loadingRef.current) {
-      loadingRef.current = true;
-      setIsLoadingMore(true);
-      setOffset((prev) => prev + limit);
-    }
-  }, [hasMore, isLoading, limit]);
+    // The next page is asked for only once this one is in the list, and only
+    // if it was a full one. While it loads, or after it failed, asking for
+    // more asks for nothing: a page is never skipped.
+    if (!data || data.length < limit) return;
+    setEarlier({ filterKey, offset: offset + limit, clients });
+  }, [data, limit, filterKey, offset, clients]);
 
   const reset = useCallback(() => {
-    setOffset(0);
-    setAllClients([]);
-    setHasMore(true);
+    setEarlier({ filterKey, offset: 0, clients: NO_CLIENTS });
     refetch().catch((err) => {
       logger.error(
         "[CRM] Failed to refetch clients",
@@ -150,17 +159,17 @@ export function useCrmClients(options: UseCrmClientsOptions = {}) {
         err instanceof Error ? err : new Error(String(err)),
       );
     });
-  }, [refetch]);
+  }, [filterKey, refetch]);
 
   return {
-    clients: allClients,
-    total: allClients.length,
+    clients,
+    total: clients.length,
     isLoading: isLoading && offset === 0,
     isError,
     error: queryError,
     loadMore,
     hasMore,
-    isLoadingMore,
+    isLoadingMore: isLoading && offset > 0,
     reset,
     refetch,
   };
