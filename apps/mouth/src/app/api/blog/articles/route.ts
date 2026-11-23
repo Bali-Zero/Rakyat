@@ -5,8 +5,27 @@ import {
   searchArticles,
   getCategoryCounts,
 } from "@/lib/blog/articles";
+import { CATEGORY_MAP } from "@/lib/blog/categories";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
+
+const DEFAULT_LIMIT = 12;
+const MAX_LIMIT = 12;
+const KNOWN_CATEGORIES: ReadonlySet<string> = new Set([
+  ...Object.keys(CATEGORY_MAP),
+  ...Object.values(CATEGORY_MAP),
+]);
+
+function boundedLimit(raw: string | null): number {
+  const n = parseInt(raw || "", 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_LIMIT;
+  return Math.min(n, MAX_LIMIT);
+}
+
+function boundedOffset(raw: string | null): number {
+  const n = parseInt(raw || "", 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 
 /**
  * GET /api/blog/articles
@@ -20,8 +39,12 @@ export async function GET(request: NextRequest) {
     const query = searchParams.get("q") || undefined;
     const category = searchParams.get("category") || undefined;
     const featured = searchParams.get("featured") === "true" ? true : undefined;
-    const limit = parseInt(searchParams.get("limit") || "12");
-    const offset = parseInt(searchParams.get("offset") || "0");
+    const limit = boundedLimit(searchParams.get("limit"));
+    const offset = boundedOffset(searchParams.get("offset"));
+
+    if (category !== undefined && !KNOWN_CATEGORIES.has(category)) {
+      return NextResponse.json({ articles: [], total: 0, hasMore: false });
+    }
 
     // If search query, use search function
     if (query) {
