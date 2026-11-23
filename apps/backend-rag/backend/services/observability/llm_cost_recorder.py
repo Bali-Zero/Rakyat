@@ -177,6 +177,26 @@ def _retrieve(opening: asyncio.Future[Any]) -> None:
         opening.exception()
 
 
+def _log(level: int, msg: str, *args: object) -> None:
+    """Log one line about a recorded event; never raises.
+
+    A logging filter or handler that raises would otherwise leave the event half handled: a
+    state not set, the CRITICAL line not evaluated, an exception for the caller. The line is
+    dropped instead, and one plain line says so, with the logging error's traceback; if that
+    line cannot be emitted either, nothing more is tried.
+    """
+    try:
+        logger.log(level, msg, *args, stacklevel=2)
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            logger.error(
+                "a llm_cost log line for event=%s could not be logged: %r",
+                _EVENT_KEY.get(),
+                exc,
+                exc_info=exc,
+            )
+
+
 class LLMCostRecorder:
     """Singleton that handles the triple-write. Never raises to callers."""
 
@@ -222,7 +242,8 @@ class LLMCostRecorder:
             probe.unlink(missing_ok=True)
             self._jsonl_ready = True
         except OSError as exc:
-            logger.error(
+            _log(
+                logging.ERROR,
                 "⚠️ LLM cost JSONL root %s is not writable (event=%s): %s — "
                 "JSONL persistence disabled for this process",
                 self.jsonl_root,
@@ -266,8 +287,12 @@ class LLMCostRecorder:
                 finally:
                     await asyncio.to_thread(os.close, fd)
             except OSError as exc:
-                logger.error(
-                    "⚠️ JSONL write failed for %s (event=%s): %s", path, _EVENT_KEY.get(), exc
+                _log(
+                    logging.ERROR,
+                    "⚠️ JSONL write failed for %s (event=%s): %s",
+                    path,
+                    _EVENT_KEY.get(),
+                    exc,
                 )
                 raise
 
@@ -410,7 +435,7 @@ class LLMCostRecorder:
             self._write_prometheus(event)
             results["prometheus"] = True
         except Exception as exc:
-            logger.warning("prometheus write failed for llm_cost event=%s: %s", key, exc)
+            _log(logging.WARNING, "prometheus write failed for llm_cost event=%s: %s", key, exc)
 
         loop = asyncio.get_running_loop()
         state = self._loop_state()
@@ -427,8 +452,12 @@ class LLMCostRecorder:
             except Exception as exc:
                 coroutine.close()
                 outcome.states[sink] = "failed"
-                logger.warning(
-                    "%s write for llm_cost event=%s could not be started: %s", sink, key, exc
+                _log(
+                    logging.WARNING,
+                    "%s write for llm_cost event=%s could not be started: %s",
+                    sink,
+                    key,
+                    exc,
                 )
                 continue
             # Owned from creation, before the first await: whatever happens to this
@@ -456,7 +485,8 @@ class LLMCostRecorder:
                 results[sink] = True
             else:
                 outcome.states[sink] = "failed"
-                logger.warning(
+                _log(
+                    logging.WARNING,
                     "%s write failed for llm_cost event=%s (model=%s endpoint=%s): %s",
                     sink,
                     key,
@@ -465,7 +495,8 @@ class LLMCostRecorder:
                     error,
                 )
         if outcome.late:
-            logger.warning(
+            _log(
+                logging.WARNING,
                 "llm_cost event=%s: %s write not confirmed within %gs, it goes on",
                 key,
                 " and ".join(sorted(outcome.late)),
@@ -479,7 +510,8 @@ class LLMCostRecorder:
         outstanding = len(state.writes[sink])
         if outstanding >= MAX_OUTSTANDING_WRITES:
             if not state.skipped[sink]:
-                logger.warning(
+                _log(
+                    logging.WARNING,
                     "%s write skipped for llm_cost event=%s: admission is saturated, "
                     "%d writes outstanding",
                     sink,
@@ -489,7 +521,8 @@ class LLMCostRecorder:
             state.skipped[sink] += 1
             return False
         if state.skipped[sink]:
-            logger.warning(
+            _log(
+                logging.WARNING,
                 "%s write admitted for llm_cost event=%s after %d skipped "
                 "while admission was saturated",
                 sink,
@@ -502,42 +535,39 @@ class LLMCostRecorder:
     def _settle(
         self, state: _LoopState, sink: str, outcome: _Outcome, task: asyncio.Task[None]
     ) -> None:
-        """Done callback of a write: drop its reference, read its outcome, and log the
-        outcome of a write that ended after ``record()`` returned. Never raises."""
+        """Done callback of a write: drop its reference, read its outcome, and log the outcome
+        of a write that ended after ``record()`` returned.
+
+        Never raises: nothing here can, its lines go through ``_log``, and the CRITICAL line is
+        evaluated whether or not they could be logged.
+        """
         state.writes[sink].discard(task)
-        try:
-            error = _error_of(task)
-            if sink not in outcome.late:
-                return  # ended within the budget: record() reports it
-            elapsed = state.loop.time() - outcome.started
-            if error is None:
-                outcome.states[sink] = "ok"
-                logger.info(
-                    "%s write for llm_cost event=%s landed late, %.2fs after it started",
-                    sink,
-                    outcome.key,
-                    elapsed,
-                )
-            else:
-                outcome.states[sink] = "failed"
-                logger.warning(
-                    "%s write failed late for llm_cost event=%s (model=%s endpoint=%s), "
-                    "%.2fs after it started: %s",
-                    sink,
-                    outcome.key,
-                    outcome.event.model,
-                    outcome.event.endpoint,
-                    elapsed,
-                    error,
-                )
-            self._alarm_if_all_failed(outcome)
-        except Exception:
-            with contextlib.suppress(Exception):
-                logger.exception(
-                    "the %s write outcome of llm_cost event=%s could not be logged",
-                    sink,
-                    outcome.key,
-                )
+        if sink not in outcome.late:
+            return  # ended within the budget: record() reports it
+        error = _error_of(task)
+        outcome.states[sink] = "ok" if error is None else "failed"
+        elapsed = state.loop.time() - outcome.started
+        if error is None:
+            _log(
+                logging.INFO,
+                "%s write for llm_cost event=%s landed late, %.2fs after it started",
+                sink,
+                outcome.key,
+                elapsed,
+            )
+        else:
+            _log(
+                logging.WARNING,
+                "%s write failed late for llm_cost event=%s (model=%s endpoint=%s), "
+                "%.2fs after it started: %s",
+                sink,
+                outcome.key,
+                outcome.event.model,
+                outcome.event.endpoint,
+                elapsed,
+                error,
+            )
+        self._alarm_if_all_failed(outcome)
 
     @staticmethod
     def _alarm_if_all_failed(outcome: _Outcome) -> None:
@@ -552,7 +582,8 @@ class LLMCostRecorder:
             return
         outcome.alarm_settled = True
         event = outcome.event
-        logger.critical(
+        _log(
+            logging.CRITICAL,
             "🚨 ALL THREE llm_cost sinks failed for event=%s "
             "(provider=%s model=%s endpoint=%s cost=$%.6f) — "
             "COST TRACKING GAP, check Prometheus/Postgres/JSONL health",

@@ -778,6 +778,89 @@ async def test_a_write_that_cannot_be_started_leaves_nothing_unawaited(
     assert await db.requests() == ["request-1"]
 
 
+class _RefusesOne(logging.Filter):
+    """A filter that raises on the one line whose template starts with ``prefix``."""
+
+    def __init__(self, prefix: str) -> None:
+        super().__init__()
+        self.prefix = prefix
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if str(record.msg).startswith(self.prefix):
+            raise RuntimeError("synthetic logging failure")
+        return True
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "prometheus write failed",
+        "%s write failed for",
+        "llm_cost event=%s: %s write not confirmed",
+        "%s write failed late",
+    ],
+    ids=["prometheus", "in-budget-failure", "unconfirmed", "late-failure"],
+)
+async def test_a_line_that_cannot_be_logged_keeps_nothing_from_the_critical_line(
+    recorder: LLMCostRecorder,
+    budget: Callable[[float], None],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    prefix: str,
+) -> None:
+    # Prometheus fails at once, Postgres within the budget, JSONL late: each kind of line once.
+    jsonl = _Write()
+    monkeypatch.setattr(recorder, "_write_prometheus", _failing_prometheus)
+    monkeypatch.setattr(recorder, "_write_postgres", AsyncMock(side_effect=RuntimeError("db")))
+    monkeypatch.setattr(recorder, "_write_jsonl", jsonl)
+    refuses = _RefusesOne(prefix)
+    recorder_module.logger.addFilter(refuses)
+    try:
+        with (
+            _loop_reports() as reports,
+            caplog.at_level(logging.INFO, logger=recorder_module.logger.name),
+        ):
+            result = await asyncio.wait_for(recorder.record(_call(1)), _WATCHDOG_S)
+            assert _messages(caplog, logging.CRITICAL) == []
+            jsonl.fail_now(OSError("synthetic jsonl failure"))
+            await _settled(recorder, "jsonl")
+            await _collected()
+    finally:
+        recorder_module.logger.removeFilter(refuses)
+
+    assert result == {"prometheus": False, "postgres": False, "jsonl": False}
+    [critical] = _messages(caplog, logging.CRITICAL)
+    assert _KEY.search(critical)
+    [unlogged] = [r for r in caplog.records if "could not be logged" in r.getMessage()]
+    assert _keys([unlogged.getMessage()]) == _keys([critical])
+    assert unlogged.exc_info is not None and "synthetic logging failure" in str(
+        unlogged.exc_info[1]
+    )
+    assert reports == []
+
+
+async def test_a_logger_that_refuses_every_line_never_reaches_the_caller(
+    recorder: LLMCostRecorder, budget: Callable[[float], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jsonl = _Write()
+    monkeypatch.setattr(recorder, "_write_prometheus", _failing_prometheus)
+    monkeypatch.setattr(recorder, "_write_postgres", AsyncMock(side_effect=RuntimeError("db")))
+    monkeypatch.setattr(recorder, "_write_jsonl", jsonl)
+    refuses = _RefusesOne("")
+    recorder_module.logger.addFilter(refuses)
+    try:
+        with _loop_reports() as reports:
+            result = await asyncio.wait_for(recorder.record(_call(1)), _WATCHDOG_S)
+            jsonl.fail_now(OSError("synthetic jsonl failure"))
+            await _settled(recorder, "jsonl")
+            await _collected()
+    finally:
+        recorder_module.logger.removeFilter(refuses)
+
+    assert result == {"prometheus": False, "postgres": False, "jsonl": False}
+    assert reports == []
+
+
 # ── a finite number of outstanding writes ─────────────────────────────────────────────────
 
 
