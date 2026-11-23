@@ -581,6 +581,18 @@ def test_a_pardon_entry_without_a_usable_path_pardons_nothing():
     assert lint._valid_entry({k: v for k, v in good.items()}) is False  # no path key at all
 
 
+
+# The redactor's own corpus lives in tests/test_redact_for_external.py. The workflow that runs
+# this file names its test files one by one, and that list is not changed here, so every test of
+# that corpus is also collected under this file: it runs wherever this file runs.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
+import test_redact_for_external as _redactor_corpus  # noqa: E402
+
+for _name in dir(_redactor_corpus):
+    if _name.startswith("test_"):
+        assert _name not in globals(), f"test name used twice: {_name}"
+        globals()[_name] = getattr(_redactor_corpus, _name)
+
 if __name__ == "__main__":
     if "--bench" in sys.argv:
         raise SystemExit(_run_bench())
