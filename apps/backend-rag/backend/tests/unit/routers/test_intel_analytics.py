@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from fastapi import HTTPException
+
+from backend.core.embeddings import EmbeddingsGenerator
+from backend.core.qdrant_db import QdrantClient
 
 # ---------------------------------------------------------------------------
 # Module-level patches: heavy deps that must never import for real
@@ -33,7 +36,7 @@ def _patch_imports(monkeypatch):
     mock_staging.get_staging_dir.side_effect = lambda t: visa_dir if t == "visa" else news_dir
 
     mock_analytics = MagicMock()
-    mock_embedder = MagicMock()
+    mock_embedder = create_autospec(EmbeddingsGenerator, instance=True)
 
     # Patch the intel module references used by intel_analytics
     monkeypatch.setattr(
@@ -277,6 +280,75 @@ class TestSearchIntel:
             assert (
                 result["results"][0]["similarity_score"] >= result["results"][1]["similarity_score"]
             )
+
+
+    @pytest.mark.asyncio
+    async def test_search_passes_the_awaited_vector_to_the_client(self, _patch_imports):
+        """The client receives the vector the async embedder returned, not a coroutine."""
+        embedder = _patch_imports["embedder"]
+        embedder.generate_single_embedding.return_value = [0.25, 0.5, 0.75]
+
+        client = create_autospec(QdrantClient, instance=True)
+        client.search.return_value = {
+            "documents": ["visa news"],
+            "metadatas": [{"id": "1", "title": "Visa", "tier": "T1"}],
+            "distances": [0.0],
+        }
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            result = await search_intel(IntelSearchRequest(query="visa", category="visa"))
+
+        embedder.generate_single_embedding.assert_awaited_once_with("visa")
+        assert client.search.await_args.kwargs["query_embedding"] == [0.25, 0.5, 0.75]
+        assert result["total"] == 1
+        assert result["results"][0]["id"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_search_one_failing_collection_keeps_the_others(self, _patch_imports):
+        embedder = _patch_imports["embedder"]
+        embedder.generate_single_embedding.return_value = [0.1, 0.2]
+
+        failing = create_autospec(QdrantClient, instance=True)
+        failing.search.side_effect = RuntimeError("timeout")
+        working = create_autospec(QdrantClient, instance=True)
+        working.search.return_value = {
+            "documents": ["news doc"],
+            "metadatas": [{"id": "2", "title": "News", "tier": "T2"}],
+            "distances": [0.3],
+        }
+        clients = {"bali_intel_visa": failing, "bali_intel_news": working}
+
+        with patch(
+            "backend.app.routers.intel_analytics.QdrantClient",
+            side_effect=lambda collection_name: clients[collection_name],
+        ):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            result = await search_intel(IntelSearchRequest(query="test"))
+
+        assert result["total"] == 1
+        assert result["results"][0]["id"] == "2"
+
+    @pytest.mark.asyncio
+    async def test_search_every_collection_failing_is_an_error_not_an_empty_success(
+        self, _patch_imports
+    ):
+        embedder = _patch_imports["embedder"]
+        embedder.generate_single_embedding.return_value = [0.1, 0.2]
+
+        failing = create_autospec(QdrantClient, instance=True)
+        failing.search.side_effect = RuntimeError("connection refused to qdrant.internal")
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=failing):
+            from backend.app.routers.intel_analytics import IntelSearchRequest, search_intel
+
+            with pytest.raises(HTTPException) as exc_info:
+                await search_intel(IntelSearchRequest(query="test"))
+
+        assert exc_info.value.status_code == 500
+        assert "qdrant.internal" not in str(exc_info.value.detail)
 
 
 # ---------------------------------------------------------------------------

@@ -156,7 +156,7 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
     """Search intel news with semantic search"""
     try:
         # Generate query embedding
-        query_embedding = get_embedder().generate_single_embedding(request.query)
+        query_embedding = await get_embedder().generate_single_embedding(request.query)
 
         # Determine collections to search
         if request.category:
@@ -165,11 +165,14 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
             collection_names = list(INTEL_COLLECTIONS.values())
 
         all_results = []
+        searched = 0
+        failed = 0
 
         for collection_name in collection_names:
             if not collection_name:
                 continue
 
+            searched += 1
             try:
                 client = QdrantClient(collection_name=collection_name)
 
@@ -228,8 +231,12 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
                     )
 
             except Exception as e:
+                failed += 1
                 logger.warning("Error searching collection %s: %s", collection_name, e)
                 continue
+
+        if searched and failed == searched:
+            raise HTTPException(status_code=500, detail="Intel search unavailable")
 
         # Sort by similarity score
         all_results.sort(key=lambda x: x["similarity_score"], reverse=True)
@@ -239,6 +246,8 @@ async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
 
         return {"results": all_results, "total": len(all_results)}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Intel search error: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e
