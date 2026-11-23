@@ -176,35 +176,38 @@ async def update_company_docs(
     """Match Gemini results to company_documents and update OCR data."""
     updated = 0
 
-    for doc in docs:
+    for i, doc in enumerate(docs):
         file_name = doc.get("file_name", "")
         if not file_name:
             continue
 
-        # Find matching doc in DB
-        row = await conn.fetchrow(
-            "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND file_name = $2",
+        # Find the one matching doc in DB. The model may change the letter case
+        # of a name and nothing else is guessed: a prefix match wrote one
+        # document's extraction onto another of the same company, and a name
+        # carried by two documents writes neither.
+        rows = await conn.fetch(
+            "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND file_name = $2 LIMIT 2",
             company_id,
             file_name,
         )
 
-        if not row:
-            # Try fuzzy match (file names sometimes differ slightly)
-            row = await conn.fetchrow(
-                "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND file_name ILIKE $2",
+        if not rows:
+            rows = await conn.fetch(
+                "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND LOWER(file_name) = LOWER($2) LIMIT 2",
                 company_id,
-                f"%{file_name[:30]}%",
+                file_name,
             )
 
-        if not row:
-            logger.info(f"      ? No DB match for: {file_name}")
+        if len(rows) != 1:
+            logger.info(f"      ? No single DB match: company {company_id}, item {i} of the model's answer")
             continue
+        row = rows[0]
 
         doc_id = row["id"]
         ocr_json = json.dumps(doc)
 
         if dry_run:
-            logger.info(f"      [DRY] Would save OCR for [{doc_id}] {file_name}")
+            logger.info(f"      [DRY] Would save OCR for document {doc_id}")
         else:
             await conn.execute(
                 """UPDATE company_documents
