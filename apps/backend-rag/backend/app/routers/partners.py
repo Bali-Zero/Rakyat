@@ -766,7 +766,7 @@ async def create_referral(
 
     Access rules:
     - partner role: always blocked (403).
-    - team role: must own this partner (assigned_to == user_id) AND must
+    - non-admin staff (any role title): must own this partner (assigned_to == user_id) AND must
       own the referenced practice's client (client.assigned_to == user_id
       or fallback: practice exists — soft guard, team-or-admin is primary).
     - admin role: unrestricted.
@@ -781,14 +781,14 @@ async def create_referral(
             if partner is None:
                 raise HTTPException(status_code=404, detail="partner not found")
             # CATA-5: partner.assigned_to is a string (team_members.id VARCHAR)
-            if user["role"] == "team" and partner.assigned_to != str(user["user_id"]):
+            if not _is_admin_user(user) and partner.assigned_to != str(user["user_id"]):
                 raise HTTPException(
                     status_code=403,
                     detail="team members may only create referrals for partners they own",
                 )
 
             # Practice ownership check: team member must own the referenced practice's client.
-            if user["role"] == "team":
+            if not _is_admin_user(user):
                 practice_row = await conn.fetchrow(
                     "SELECT id, client_id FROM practices WHERE id = $1",
                     body.practice_id,

@@ -819,6 +819,72 @@ class TestCreateReferralCata3:
         assert resp.status_code == 201
 
 
+class TestCreateReferralJobTitleStaff:
+    """Ownership checks bind every non-admin staff member, whatever the role title."""
+
+    @staticmethod
+    def _job_title_app(mock_db_pool) -> tuple[TestClient, AsyncMock, dict[str, Any]]:
+        pool, conn = mock_db_pool
+        staff = {
+            "user_id": str(_TEAM_ID),
+            "email": "staff@test.invalid",
+            "role": "Tax Lead",
+            "permissions": [],
+        }
+        app = _make_app(staff, pool)
+        return TestClient(app, raise_server_exceptions=False), conn, staff
+
+    @pytest.mark.integration
+    def test_job_title_staff_cannot_attach_unowned_partner(self, mock_db_pool) -> None:
+        client, _, _ = self._job_title_app(mock_db_pool)
+        partner_owned_by_other = _make_partner(assigned_to=str(_USER_ID))
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=partner_owned_by_other)
+            svc_instance.repo.insert_referral = AsyncMock(return_value=_REFERRAL_ID)
+            resp = client.post(f"/api/partners/{_PARTNER_ID}/referrals", json={"practice_id": 1})
+        assert resp.status_code == 403
+        svc_instance.repo.insert_referral.assert_not_awaited()
+
+    @pytest.mark.integration
+    def test_job_title_staff_cannot_attach_practice_of_another_owner(self, mock_db_pool) -> None:
+        client, conn, staff = self._job_title_app(mock_db_pool)
+        own_partner = _make_partner(assigned_to=staff["user_id"])
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": 1, "client_id": 7},
+                {"assigned_to": str(_USER_ID)},
+            ]
+        )
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=own_partner)
+            svc_instance.repo.insert_referral = AsyncMock(return_value=_REFERRAL_ID)
+            resp = client.post(f"/api/partners/{_PARTNER_ID}/referrals", json={"practice_id": 1})
+        assert resp.status_code == 403
+        svc_instance.repo.insert_referral.assert_not_awaited()
+
+    @pytest.mark.integration
+    def test_job_title_staff_owning_partner_and_practice_passes(self, mock_db_pool) -> None:
+        client, conn, staff = self._job_title_app(mock_db_pool)
+        own_partner = _make_partner(assigned_to=staff["user_id"])
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": 1, "client_id": 7},
+                {"assigned_to": staff["user_id"]},
+            ]
+        )
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=own_partner)
+            svc_instance.repo.insert_referral = AsyncMock(return_value=_REFERRAL_ID)
+            resp = client.post(f"/api/partners/{_PARTNER_ID}/referrals", json={"practice_id": 1})
+        assert resp.status_code == 201
+
+
 # ── 8. commissions ────────────────────────────────────────────────────────────
 
 
