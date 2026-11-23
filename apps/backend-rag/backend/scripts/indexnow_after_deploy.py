@@ -48,6 +48,13 @@ _KEY = re.compile(r"^[0-9a-f]{32}$")
 _LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>")
 
 
+MAX_PAGES = 20  # of 100 deployments each
+
+
+class GitHubError(Exception):
+    """The GitHub API did not answer as expected."""
+
+
 def _say(line: str) -> None:
     """The run's report, read in the workflow log."""
     sys.stdout.write(line + "\n")
@@ -157,17 +164,32 @@ def run(
     api = f"https://api.github.com/repos/{repo}"
     gh = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
 
-    status, text = http.get(f"{api}/deployments?environment=Production&per_page=50", gh)
-    if status != 200:
-        _say(f"cannot list deployments: HTTP {status}")
-        return 1
-
     def latest_state(dep_id: int) -> str | None:
         st, body = http.get(f"{api}/deployments/{dep_id}/statuses?per_page=1", gh)
-        rows = json.loads(body) if st == 200 and body else []
+        if st != 200:
+            raise GitHubError(f"statuses of deployment {dep_id}: HTTP {st}")
+        rows = json.loads(body) if body else []
         return rows[0].get("state") if rows else None
 
-    prev = previous_production_sha(json.loads(text), latest_state, deployment_id)
+    # Walk every page until the predecessor is found: a failed or unknown answer is an error
+    # (red), never «nothing to compare», so no article is silently skipped (gate r1 on #710).
+    prev = None
+    try:
+        for page in range(1, MAX_PAGES + 1):
+            st, text = http.get(
+                f"{api}/deployments?environment=Production&per_page=100&page={page}", gh
+            )
+            if st != 200:
+                raise GitHubError(f"deployments page {page}: HTTP {st}")
+            rows = json.loads(text) if text else []
+            prev = previous_production_sha(rows, latest_state, deployment_id)
+            if prev or len(rows) < 100:
+                break
+        else:
+            raise GitHubError(f"no successful predecessor within {MAX_PAGES} pages")
+    except GitHubError as e:
+        _say(f"cannot find the previous Production deployment: {e}")
+        return 1
     if not prev:
         _say("no earlier successful Production deployment: nothing to compare")
         return 0

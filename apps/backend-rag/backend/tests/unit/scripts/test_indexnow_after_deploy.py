@@ -50,6 +50,17 @@ class FakeHttp:
         return self.post_code
 
 
+def page_url(n: int) -> str:
+    return f"{API}/deployments?environment=Production&per_page=100&page={n}"
+
+
+WORKFLOW = next(
+    d / ".github/workflows/indexnow-after-deploy.yml"
+    for d in Path(__file__).resolve().parents
+    if (d / ".github/workflows/indexnow-after-deploy.yml").is_file()
+)
+
+
 def deployments(*rows):
     return (200, json.dumps([{"id": i, "sha": s, "environment": e} for i, s, e in rows]))
 
@@ -68,7 +79,7 @@ def public(tmp_path: Path) -> Path:
 
 def base_routes(**extra):
     routes = {
-        f"{API}/deployments?environment=Production&per_page=50": deployments(
+        page_url(1): deployments(
             (30, "c" * 40, "Production"),
             (29, "b" * 40, "Production"),
             (28, "a" * 40, "Production"),
@@ -229,3 +240,77 @@ def test_a_deployments_api_failure_turns_the_run_red(public):
     http = FakeHttp({})
     assert go(http, public)[0] == 1
     assert http.posts == []
+
+
+def test_the_predecessor_is_found_on_a_later_page(public):
+    url = "https://balizero.com/living/new-test-article"
+    first = [(300 - i, f"{i:040d}", "Production") for i in range(100)]  # ids 300..201, all failed
+    routes = {
+        page_url(1): deployments((301, "c" * 40, "Production"), *first[:99]),
+        page_url(2): deployments((150, "a" * 40, "Production")),
+        f"{API}/deployments/150/statuses?per_page=1": statuses("success"),
+        SITEMAP: (200, sitemap(url)),
+        url: (200, "<html>"),
+    }
+    for dep_id, _, _ in first:
+        routes[f"{API}/deployments/{dep_id}/statuses?per_page=1"] = statuses("failure")
+    http = FakeHttp(routes)
+    seen = {}
+
+    def fake_added(prev, sha):
+        seen["range"] = (prev, sha)
+        return [NEW]
+
+    code = run(
+        sha="c" * 40,
+        deployment_id=301,
+        repo=REPO,
+        token="t",
+        http=http,
+        added=fake_added,
+        sleep=lambda s: None,
+        public_dir=public,
+        tries=2,
+    )
+    assert code == 0
+    assert seen["range"] == ("a" * 40, "c" * 40)
+    assert http.posts == [(INDEXNOW, indexnow_body(KEY, [url]))]
+
+
+def test_a_statuses_api_error_is_red_not_nothing_to_compare(public):
+    # Everything else would announce: only the unknown state of deployment 29 makes it red.
+    url = "https://balizero.com/living/new-test-article"
+    routes = base_routes(**{SITEMAP: (200, sitemap(url)), url: (200, "<html>")})
+    routes[f"{API}/deployments/29/statuses?per_page=1"] = (503, "")
+    http = FakeHttp(routes)
+    assert go(http, public)[0] == 1
+    assert http.posts == []
+
+
+def test_an_error_on_a_later_deployments_page_is_red(public):
+    rows = [(300 - i, f"{i:040d}", "Production") for i in range(100)]
+    routes = {page_url(1): deployments(*rows), page_url(2): (502, "")}
+    for dep_id, _, _ in rows:
+        routes[f"{API}/deployments/{dep_id}/statuses?per_page=1"] = statuses("failure")
+    http = FakeHttp(routes)
+    code = run(
+        sha="c" * 40,
+        deployment_id=999,
+        repo=REPO,
+        token="t",
+        http=http,
+        added=lambda p, s: [NEW],
+        sleep=lambda s: None,
+        public_dir=public,
+        tries=1,
+    )
+    assert code == 1
+    assert http.posts == []
+
+
+def test_the_workflow_never_queues_runs_in_one_concurrency_group():
+    # A pending run in a group is cancelled by the next one, and its articles would never be
+    # compared again (gate r1 on #710). Each run covers its own deployment range instead.
+    text = WORKFLOW.read_text()
+    assert "deployment_status" in text
+    assert not any(line.startswith("concurrency:") for line in text.splitlines())

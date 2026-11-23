@@ -15,9 +15,11 @@ permissions:
   contents: read
   deployments: read
 
-concurrency:
-  group: indexnow-after-deploy
-  cancel-in-progress: false
+# No concurrency group on purpose: GitHub keeps one pending run per group and
+# cancels the older pending one, whose articles the next run would then never
+# compare (it diffs against that deployment). Each run covers its own range
+# (previous successful Production deployment .. this one), so parallel runs do
+# not overlap.
 
 jobs:
   announce:
