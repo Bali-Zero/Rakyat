@@ -15,9 +15,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gc
+import logging
 import os
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ import pytest
 import pytest_asyncio
 
 import backend.app.core.database as database
+import backend.services.observability.llm_cost_recorder as recorder_module
 from backend.services.observability.llm_cost_recorder import LLMCallEvent, LLMCostRecorder
 
 _DB_URL = os.environ.get("TEST_DATABASE_URL")
@@ -94,9 +96,12 @@ def _call(number: int = 1) -> LLMCallEvent:
 class _Database:
     """Stands in for ``get_db_pool``: real pools, counted; and the server's own counts."""
 
-    def __init__(self, dsn: str, application: str, monitor: asyncpg.Connection) -> None:
+    def __init__(
+        self, dsn: str, application: str, schema: str, monitor: asyncpg.Connection
+    ) -> None:
         self._dsn = dsn
         self._application = application
+        self._schema = schema
         self._monitor = monitor
         self._opened: list[tuple[asyncpg.Pool, asyncio.AbstractEventLoop]] = []
         self.asked = 0
@@ -136,6 +141,31 @@ class _Database:
     async def rows(self) -> list[asyncpg.Record]:
         return await self._monitor.fetch("SELECT * FROM llm_cost_events ORDER BY id")
 
+    async def inserts_waiting_on_a_lock(self) -> int:
+        return await self._monitor.fetchval(
+            "SELECT count(*) FROM pg_stat_activity"
+            " WHERE application_name = $1 AND wait_event_type = 'Lock'",
+            self._application,
+        )
+
+    @contextlib.asynccontextmanager
+    async def table_locked_by_another_session(self) -> AsyncIterator[None]:
+        """Every insert waits for as long as this is open.
+
+        The lock is held by a session of its own: the counts above are read outside any
+        transaction, because PostgreSQL keeps one view of the sessions for a whole
+        transaction and a count taken inside the locking one would never move.
+        """
+        locker = await asyncpg.connect(_DB_URL, server_settings={"search_path": self._schema})
+        holding = locker.transaction()
+        await holding.start()
+        try:
+            await locker.execute("LOCK TABLE llm_cost_events IN ACCESS EXCLUSIVE MODE")
+            yield
+        finally:
+            await holding.rollback()
+            await locker.close()
+
 
 @pytest_asyncio.fixture
 async def db(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[_Database, None]:
@@ -146,7 +176,7 @@ async def db(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[_Database, None]
     await monitor.execute(_TABLE)
     separator = "&" if "?" in (_DB_URL or "") else "?"
     dsn = f"{_DB_URL}{separator}application_name={application}&search_path={schema}"
-    stand_in = _Database(dsn, application, monitor)
+    stand_in = _Database(dsn, application, schema, monitor)
     monkeypatch.setattr(database, "get_db_pool", stand_in.open_pool)
     try:
         yield stand_in
@@ -162,7 +192,12 @@ def recorder(tmp_path: Path) -> LLMCostRecorder:
 
 
 def _on_a_loop_of_its_own(recorder: LLMCostRecorder, db: _Database, event: LLMCallEvent) -> Any:
-    """Record as the synchronous client entry does: ``asyncio.run`` for this one call."""
+    """Record as a synchronous entry would: ``asyncio.run`` for this one call.
+
+    The helper closes that loop's pool before the loop ends. That is hygiene of this
+    test file only: nothing in the application closes a pool on a loop that
+    ``asyncio.run`` ends, so these tests say nothing about what such a loop leaves behind.
+    """
 
     async def call() -> dict[str, bool]:
         try:
@@ -329,6 +364,117 @@ async def test_an_opening_that_fails_after_its_only_caller_left_is_not_reported_
 
     assert db.asked == 1
     assert reports == []
+
+
+async def test_a_pool_held_full_by_blocked_inserts_does_not_hold_a_recording_back(
+    recorder: LLMCostRecorder,
+    db: _Database,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(recorder_module, "PG_ACQUIRE_TIMEOUT_S", 0.3)
+    assert (await recorder.record(_call(0)))["postgres"] is True
+    held = database._POOL_MAX_SIZE
+    blocked: list[asyncio.Future[dict[str, bool]]] = []
+    loop = asyncio.get_running_loop()
+
+    try:
+        async with db.table_locked_by_another_session():
+            # Each of these inserts waits on the lock and keeps its connection, until the
+            # pool has none left.
+            blocked = [asyncio.ensure_future(recorder.record(_call(n))) for n in range(1, held + 1)]
+            for _ in range(200):
+                if await db.inserts_waiting_on_a_lock() == held:
+                    break
+                await asyncio.sleep(0.02)
+            assert await db.inserts_waiting_on_a_lock() == held
+            assert not any(task.done() for task in blocked)
+
+            started = loop.time()
+            with caplog.at_level(logging.WARNING, logger=recorder_module.logger.name):
+                late = await asyncio.wait_for(
+                    asyncio.gather(*(recorder.record(_call(100 + n)) for n in range(3))), 5
+                )
+            waited = loop.time() - started
+
+            assert [result["postgres"] for result in late] == [False] * 3
+            assert [result["jsonl"] for result in late] == [True] * 3
+            assert [result["prometheus"] for result in late] == [True] * 3
+            assert 0.25 <= waited < 2.0
+            refused = [
+                record.getMessage()
+                for record in caplog.records
+                if "no free connection" in record.getMessage()
+            ]
+            assert len(refused) == 3
+            assert not any(task.done() for task in blocked)
+    finally:
+        done = await asyncio.wait_for(asyncio.gather(*blocked), 10)
+
+    # The inserts that were only waiting land once the lock is gone; nothing else does.
+    assert [result["postgres"] for result in done] == [True] * held
+    assert sorted(row["request_id"] for row in await db.rows()) == sorted(
+        f"request-{n}" for n in range(held + 1)
+    )
+    assert db.asked == 1
+
+
+async def test_a_pool_held_full_by_anyone_does_not_hold_a_recording_back(
+    recorder: LLMCostRecorder, db: _Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(recorder_module, "PG_ACQUIRE_TIMEOUT_S", 0.2)
+    assert (await recorder.record(_call(0)))["postgres"] is True
+    pool = db._opened[0][0]
+    taken = [await pool.acquire() for _ in range(database._POOL_MAX_SIZE)]
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    try:
+        result = await asyncio.wait_for(recorder.record(_call(1)), 5)
+    finally:
+        waited = loop.time() - started
+        for connection in taken:
+            await pool.release(connection)
+
+    assert result == {"prometheus": True, "postgres": False, "jsonl": True}
+    assert 0.15 <= waited < 2.0
+    assert (await recorder.record(_call(2)))["postgres"] is True
+    assert [row["request_id"] for row in await db.rows()] == ["request-0", "request-2"]
+
+
+class _PoolWhoseInsertTimesOut:
+    """Gives a connection at once; its statement then runs into the command timeout."""
+
+    def acquire(self, *, timeout: float) -> _PoolWhoseInsertTimesOut:
+        assert timeout == recorder_module.PG_ACQUIRE_TIMEOUT_S
+        return self
+
+    async def __aenter__(self) -> _PoolWhoseInsertTimesOut:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+    async def execute(self, *_: object) -> None:
+        raise asyncio.TimeoutError
+
+
+async def test_a_statement_that_times_out_is_not_called_a_missing_connection(
+    recorder: LLMCostRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def gives_the_pool() -> _PoolWhoseInsertTimesOut:
+        return _PoolWhoseInsertTimesOut()
+
+    monkeypatch.setattr(database, "get_db_pool", gives_the_pool)
+
+    with caplog.at_level(logging.WARNING, logger=recorder_module.logger.name):
+        result = await recorder.record(_call(1))
+
+    assert result["postgres"] is False
+    failures = [r.getMessage() for r in caplog.records if "postgres write failed" in r.getMessage()]
+    assert len(failures) == 1
+    assert "no free connection" not in failures[0]
 
 
 async def test_two_recorders_do_not_share_a_pool(tmp_path: Path, db: _Database) -> None:

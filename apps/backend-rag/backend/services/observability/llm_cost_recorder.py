@@ -60,6 +60,12 @@ DEFAULT_RETENTION_DAYS: Final[int] = int(
     os.getenv("LLM_COST_JSONL_RETENTION_DAYS", "90"),
 )
 
+# How long one recording waits for a free connection of the ledger's pool. The model
+# call being recorded waits for this write and its answer is already complete: when
+# no connection frees up in this time the Postgres row is given up for that call,
+# and its JSONL line remains.
+PG_ACQUIRE_TIMEOUT_S: float = 2.0
+
 
 # ---------------------------------------------------------------------------
 # Event model
@@ -250,28 +256,43 @@ class LLMCostRecorder:
         pool = await self._get_pg_pool()
         if pool is None:
             raise RuntimeError("db pool not initialised")
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO llm_cost_events (
-                    ts_utc, provider, model,
-                    input_tokens, output_tokens, cache_hit_tokens, cost_usd,
-                    endpoint, request_id, success, error_class, latency_ms
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                """,
-                event.ts_utc,
-                event.provider,
-                event.model,
-                event.input_tokens,
-                event.output_tokens,
-                event.cache_hit_tokens,
-                event.cost_usd,
-                event.endpoint,
-                event.request_id,
-                event.success,
-                event.error_class,
-                event.latency_ms,
-            )
+        # The pool is shared by every recording on this loop and can be held full, so
+        # the wait for a connection has a limit of its own. The command timeout of the
+        # pool covers the statement, not this wait.
+        acquired = False
+        try:
+            async with pool.acquire(timeout=PG_ACQUIRE_TIMEOUT_S) as conn:
+                acquired = True
+                await self._insert_event(conn, event)
+        except asyncio.TimeoutError as exc:
+            if acquired:
+                raise
+            raise RuntimeError(
+                f"no free connection for the cost ledger within {PG_ACQUIRE_TIMEOUT_S:g} s"
+            ) from exc
+
+    async def _insert_event(self, conn: Any, event: LLMCallEvent) -> None:
+        await conn.execute(
+            """
+            INSERT INTO llm_cost_events (
+                ts_utc, provider, model,
+                input_tokens, output_tokens, cache_hit_tokens, cost_usd,
+                endpoint, request_id, success, error_class, latency_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            """,
+            event.ts_utc,
+            event.provider,
+            event.model,
+            event.input_tokens,
+            event.output_tokens,
+            event.cache_hit_tokens,
+            event.cost_usd,
+            event.endpoint,
+            event.request_id,
+            event.success,
+            event.error_class,
+            event.latency_ms,
+        )
 
     def _write_prometheus(self, event: LLMCallEvent) -> None:
         # Lazy import to avoid circular dependency with app/metrics.py.
