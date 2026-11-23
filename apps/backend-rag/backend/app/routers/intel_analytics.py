@@ -10,11 +10,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.core.config import settings
-from backend.app.core.constants import HttpTimeoutConstants, IntelConstants
+from backend.app.core.constants import IntelConstants
 from backend.app.dependencies import get_current_user
 from backend.app.routers.intel import (
     INTEL_COLLECTIONS,
@@ -31,6 +29,8 @@ from backend.core.qdrant_db import QdrantClient
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["intel-analytics"])
+
+_CRITICAL_MAX_POINTS = 5000
 
 
 def _require_store_admin(user: dict[str, Any]) -> None:
@@ -281,12 +281,37 @@ async def store_intel(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def _stored_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Intel points keep their fields under a `metadata` object (flat payloads tolerated)."""
+    nested = payload.get("metadata")
+    if isinstance(nested, dict):
+        return nested
+    return {key: value for key, value in payload.items() if key not in {"text", "metadata"}}
+
+
+def _parse_stored_date(value: Any) -> datetime | None:
+    """Dates are stored as ISO-8601 text; naive values are read as UTC."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 @router.get("/api/intel/critical")
 async def get_critical_items(
     category: str | None = None,
     days: int = IntelConstants.DUPLICATE_CHECK_DAYS,
 ) -> dict[str, Any]:
-    """Get critical impact items"""
+    """Get critical impact items.
+
+    Points are matched on `metadata.impact_level` by the vector database; the date
+    range is applied here because the date is stored as text, which a range filter
+    cannot compare. The scroll is bounded by `_CRITICAL_MAX_POINTS` per collection;
+    when a collection exceeds it, or fails, the answer carries `partial: true`.
+    """
     try:
         if category:
             collection_names = [INTEL_COLLECTIONS.get(category)]
@@ -294,97 +319,80 @@ async def get_critical_items(
             collection_names = list(INTEL_COLLECTIONS.values())
 
         critical_items = []
-        cutoff_date = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+        searched = 0
+        failed = 0
+        partial = False
 
-        for collection_name in collection_names:
+        for collection_name in dict.fromkeys(collection_names):
             if not collection_name:
                 continue
 
+            searched += 1
             try:
                 client = QdrantClient(collection_name=collection_name)
-
-                # Use Qdrant scroll with filter for better performance
-                qdrant_filter = {
-                    "must": [
-                        {"key": "impact_level", "match": {"value": "critical"}},
-                        {"key": "published_date", "range": {"gte": cutoff_date}},
-                    ],
-                }
-
-                try:
-                    qdrant_url = settings.qdrant_url
-                    qdrant_api_key = settings.qdrant_api_key
-
-                    scroll_url = f"{qdrant_url}/collections/{collection_name}/points/scroll"
-                    headers = {}
-                    if qdrant_api_key:
-                        headers["api-key"] = qdrant_api_key
-
-                    scroll_payload = {
-                        "limit": 100,
-                        "with_payload": True,
-                        "with_vectors": False,
-                        "filter": qdrant_filter,
-                    }
-
-                    async with httpx.AsyncClient(
-                        timeout=HttpTimeoutConstants.INTEL_SCRAPER_TIMEOUT,
-                    ) as http_client:
-                        response = await http_client.post(
-                            scroll_url,
-                            json=scroll_payload,
-                            headers=headers,
-                        )
-                        response.raise_for_status()
-                        scroll_data = response.json().get("result", {})
-                        points = scroll_data.get("points", [])
-
-                        filtered_metadatas = [
-                            point.get("payload", {}).get("metadata", {}) for point in points
-                        ]
-                except Exception as scroll_error:
-                    logger.warning(
-                        "Qdrant scroll with filter failed, falling back to peek: %s",
-                        scroll_error,
-                    )
-                    results = await client.peek(limit=100)
-                    filtered_metadatas = []
-                    for metadata in results.get("metadatas", []):
-                        if (
-                            metadata.get("impact_level") == "critical"
-                            and metadata.get("published_date", "") >= cutoff_date
-                        ):
-                            filtered_metadatas.append(metadata)
-
-                for metadata in filtered_metadatas[:50]:
-                    critical_items.append(
-                        {
-                            "id": metadata.get("id"),
-                            "title": metadata.get("title"),
-                            "source": metadata.get("source"),
-                            "tier": metadata.get("tier"),
-                            "published_date": metadata.get("published_date"),
-                            "category": collection_name.replace("bali_intel_", ""),
-                            "url": metadata.get("url"),
-                            "action_required": metadata.get("action_required") == "True",
-                            "deadline_date": metadata.get("deadline_date"),
-                            "severity": "high",  # All critical items are high severity for chain compatibility
-                        },
-                    )
-
-            except Exception:
+                points = await client.scroll_strict(
+                    metadata_filter={"impact_level": "critical"},
+                    max_points=_CRITICAL_MAX_POINTS,
+                )
+            except RuntimeError as bound_error:
+                logger.warning(
+                    "Critical items read incomplete for %s: %s", collection_name, bound_error
+                )
+                partial = True
+                continue
+            except Exception as read_error:
+                logger.warning("Critical items read failed for %s: %s", collection_name, read_error)
+                failed += 1
+                partial = True
                 continue
 
+            collection_items = []
+            for point in points:
+                metadata = _stored_metadata(point.get("payload", {}))
+                if metadata.get("impact_level") != "critical":
+                    continue
+                published = metadata.get("published_at") or metadata.get("published_date")
+                published_at = _parse_stored_date(published)
+                if published_at is None or published_at < cutoff:
+                    continue
+                collection_items.append(
+                    {
+                        "id": metadata.get("id"),
+                        "title": metadata.get("title"),
+                        "source": metadata.get("source") or metadata.get("source_name"),
+                        "tier": metadata.get("tier"),
+                        "published_date": published,
+                        "category": collection_name.replace("bali_intel_", ""),
+                        "url": metadata.get("url") or metadata.get("source_url"),
+                        "action_required": metadata.get("action_required") == "True",
+                        "deadline_date": metadata.get("deadline_date"),
+                        "severity": "high",  # All critical items are high severity for chain compatibility
+                    },
+                )
+            collection_items.sort(
+                key=lambda x: _parse_stored_date(x["published_date"]), reverse=True
+            )
+            critical_items.extend(collection_items[:50])
+
+        if searched and failed == searched:
+            raise HTTPException(status_code=500, detail="Critical items unavailable")
+
         # Sort by date (newest first)
-        critical_items.sort(key=lambda x: x.get("published_date", ""), reverse=True)
+        critical_items.sort(key=lambda x: _parse_stored_date(x["published_date"]), reverse=True)
 
         # Return with both 'items' and 'alerts' keys for backward compatibility
-        return {
+        response: dict[str, Any] = {
             "items": critical_items,
             "alerts": critical_items,  # Alias for chain_daily_ops_autopilot compatibility
             "count": len(critical_items),
         }
+        if partial:
+            response["partial"] = True
+        return response
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Get critical items error: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e

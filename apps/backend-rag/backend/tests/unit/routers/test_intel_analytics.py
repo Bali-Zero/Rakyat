@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
@@ -281,7 +281,6 @@ class TestSearchIntel:
                 result["results"][0]["similarity_score"] >= result["results"][1]["similarity_score"]
             )
 
-
     @pytest.mark.asyncio
     async def test_search_passes_the_awaited_vector_to_the_client(self, _patch_imports):
         """The client receives the vector the async embedder returned, not a coroutine."""
@@ -412,55 +411,125 @@ class TestStoreIntel:
 class TestGetCriticalItems:
     """Tests for GET /api/intel/critical."""
 
+    @staticmethod
+    def _point(point_id, *, impact="critical", days_ago=1, **extra):
+        published = (datetime.now(tz=timezone.utc) - timedelta(days=days_ago)).isoformat()
+        metadata = {
+            "id": point_id,
+            "title": f"Item {point_id}",
+            "impact_level": impact,
+            "published_at": published,
+            **extra,
+        }
+        return {"id": point_id, "payload": {"text": "body", "metadata": metadata}}
+
+    @staticmethod
+    def _client(points=None, error=None):
+        client = create_autospec(QdrantClient, instance=True)
+        if error is not None:
+            client.scroll_strict.side_effect = error
+        else:
+            client.scroll_strict.return_value = points or []
+        return client
+
     @pytest.mark.asyncio
     async def test_critical_items_returns_structure(self, _patch_imports):
-        with (
-            patch("backend.app.routers.intel_analytics.QdrantClient"),
-            patch("backend.app.routers.intel_analytics.httpx.AsyncClient") as mock_http,
-        ):
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"result": {"points": []}}
-            mock_ctx = MagicMock()
-            mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
-            mock_ctx.__aexit__ = AsyncMock(return_value=False)
-            mock_ctx.post = AsyncMock(return_value=mock_resp)
-            mock_http.return_value = mock_ctx
+        client = self._client([])
 
-            with patch("backend.app.routers.intel_analytics.settings") as mock_settings:
-                mock_settings.qdrant_url = "http://localhost:6333"
-                mock_settings.qdrant_api_key = ""
-                from backend.app.routers.intel_analytics import get_critical_items
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_critical_items
 
-                result = await get_critical_items()
+            result = await get_critical_items()
 
-        assert "items" in result
-        assert "alerts" in result
-        assert "count" in result
+        assert result == {"items": [], "alerts": [], "count": 0}
 
     @pytest.mark.asyncio
-    async def test_critical_items_with_category(self, _patch_imports):
-        with patch("backend.app.routers.intel_analytics.QdrantClient") as mock_qd_cls:
-            # Make scroll fail so it falls back to peek
-            mock_client = MagicMock()
-            mock_client.peek = AsyncMock(return_value={"metadatas": []})
-            mock_qd_cls.return_value = mock_client
+    async def test_critical_returns_stored_shape_in_range_and_drops_out_of_range(
+        self, _patch_imports
+    ):
+        client = self._client(
+            [
+                self._point("in-range", days_ago=2, source_name="src"),
+                self._point("too-old", days_ago=60),
+                self._point("not-critical", impact="low", days_ago=1),
+                self._point("no-date", days_ago=1) | {},
+            ]
+        )
+        client.scroll_strict.return_value[3]["payload"]["metadata"].pop("published_at")
 
-            with (
-                patch(
-                    "backend.app.routers.intel_analytics.httpx.AsyncClient",
-                    side_effect=Exception("scroll fails"),
-                ),
-                patch("backend.app.routers.intel_analytics.settings") as mock_settings,
-            ):
-                mock_settings.qdrant_url = "http://localhost:6333"
-                mock_settings.qdrant_api_key = ""
-                from backend.app.routers.intel_analytics import get_critical_items
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_critical_items
 
-                result = await get_critical_items(category="visa")
+            result = await get_critical_items(category="visa", days=7)
 
+        assert [i["id"] for i in result["items"]] == ["in-range"]
+        assert result["count"] == 1
+        assert result["alerts"] == result["items"]
+        assert result["items"][0]["severity"] == "high"
+        assert "partial" not in result
+        assert client.scroll_strict.await_args.kwargs["metadata_filter"] == {
+            "impact_level": "critical"
+        }
+
+    @pytest.mark.asyncio
+    async def test_critical_newest_first_and_collections_are_read_once(
+        self, _patch_imports, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "backend.app.routers.intel_analytics.INTEL_COLLECTIONS",
+            {"news": "shared", "social": "shared", "roundup": "shared"},
+        )
+        client = self._client([self._point("older", days_ago=3), self._point("newer", days_ago=1)])
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_critical_items
+
+            result = await get_critical_items()
+
+        assert [i["id"] for i in result["items"]] == ["newer", "older"]
+        assert client.scroll_strict.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_critical_reading_past_the_bound_says_it_is_partial(self, _patch_imports):
+        client = self._client(error=RuntimeError("Qdrant strict scroll exceeded max_points"))
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_critical_items
+
+            result = await get_critical_items(category="visa")
+
+        assert result["partial"] is True
         assert result["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_critical_one_collection_failing_is_marked_partial(self, _patch_imports):
+        failing = self._client(error=ConnectionError("down"))
+        working = self._client([self._point("ok", days_ago=1)])
+        clients = {"bali_intel_visa": failing, "bali_intel_news": working}
+
+        with patch(
+            "backend.app.routers.intel_analytics.QdrantClient",
+            side_effect=lambda collection_name: clients[collection_name],
+        ):
+            from backend.app.routers.intel_analytics import get_critical_items
+
+            result = await get_critical_items()
+
+        assert [i["id"] for i in result["items"]] == ["ok"]
+        assert result["partial"] is True
+
+    @pytest.mark.asyncio
+    async def test_critical_every_collection_failing_is_an_error(self, _patch_imports):
+        client = self._client(error=ConnectionError("qdrant.internal down"))
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_critical_items
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_critical_items()
+
+        assert exc_info.value.status_code == 500
+        assert "qdrant.internal" not in str(exc_info.value.detail)
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +626,10 @@ class TestGetCollectionStats:
     @pytest.mark.asyncio
     async def test_stats_success(self, _patch_imports):
         client = create_autospec(QdrantClient, instance=True)
-        client.get_stats.return_value = {"collection_name": "bali_intel_visa", "total_documents": 99}
+        client.get_stats.return_value = {
+            "collection_name": "bali_intel_visa",
+            "total_documents": 99,
+        }
 
         with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_collection_stats
