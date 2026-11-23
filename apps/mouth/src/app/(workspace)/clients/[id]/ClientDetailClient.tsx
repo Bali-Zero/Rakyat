@@ -24,6 +24,7 @@ import { AvatarWithFallback } from "@/components/ui/avatar-with-fallback";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
+import { WRITABLE_CLIENT_STATUSES } from "@/lib/api/crm/crm.types";
 import type {
   FamilyMember,
   ClientDocument,
@@ -863,9 +864,7 @@ export function ClientDetailClient({
             </button>
             {showStatusMenu && (
               <div className="absolute top-full left-0 mt-1 z-50 flex flex-col gap-1 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-surface)] shadow-xl p-1 min-w-[140px]">
-                {(
-                  ["lead", "active", "completed", "lost", "inactive"] as const
-                ).map((s) => (
+                {WRITABLE_CLIENT_STATUSES.map(({ value: s }) => (
                   <StatePill
                     key={s}
                     tone={clientStatusTone(s)}

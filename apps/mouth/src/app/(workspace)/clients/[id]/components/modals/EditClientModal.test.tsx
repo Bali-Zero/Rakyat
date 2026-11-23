@@ -240,3 +240,73 @@ describe("EditClientModal — service_interest is sent as a list", () => {
     expect(lastUpdatePayload().service_interest).toEqual(["voa", "kitas"]);
   });
 });
+
+describe("EditClientModal — a stored status no write may set", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getProfile.mockResolvedValue({ email: "surya@balizero.com" });
+    updateClient.mockResolvedValue({});
+  });
+
+  it.each(["completed", "lost"] as const)(
+    "GUILT: saving a %s client without touching the status sends no status",
+    async (stored) => {
+      render(
+        <EditClientModal
+          client={makeClient({ status: stored })}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: `${stored} (current)` }),
+      ).toHaveAttribute("aria-pressed", "true");
+      await clickSave();
+      expect(lastUpdatePayload()).not.toHaveProperty("status");
+      expect(lastUpdatePayload().full_name).toBe("Test Client");
+    },
+  );
+
+  it.each(["completed", "lost"] as const)(
+    "GUILT: re-picking the current %s status still sends no status",
+    async (stored) => {
+      render(
+        <EditClientModal
+          client={makeClient({ status: stored })}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+        />,
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: `${stored} (current)` }),
+      );
+      await clickSave();
+      expect(lastUpdatePayload()).not.toHaveProperty("status");
+    },
+  );
+
+  it("INNOCENCE: a completed client moved to Active sends active", async () => {
+    render(
+      <EditClientModal
+        client={makeClient({ status: "completed" })}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Active" }));
+    await clickSave();
+    expect(lastUpdatePayload().status).toBe("active");
+  });
+
+  it("INNOCENCE: a lead client still sends its status", async () => {
+    render(
+      <EditClientModal
+        client={makeClient({ status: "lead" })}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    await clickSave();
+    expect(lastUpdatePayload().status).toBe("lead");
+  });
+});

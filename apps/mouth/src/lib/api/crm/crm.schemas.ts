@@ -11,11 +11,12 @@ import { z } from "@/lib/zod";
 // SHARED ENUMS & CONSTANTS
 // ============================================
 
+// The statuses a client write may carry: WRITABLE_CLIENT_STATUSES in crm.types,
+// STATUS_VALUES in the backend crm_clients router (anything else is a 422).
 export const clientStatusEnum = z.enum([
   "lead",
+  "prospect",
   "active",
-  "completed",
-  "lost",
   "inactive",
 ]);
 export const clientTypeEnum = z.enum(["individual", "company"]);

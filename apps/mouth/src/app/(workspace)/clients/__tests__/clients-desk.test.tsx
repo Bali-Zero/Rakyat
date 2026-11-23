@@ -581,68 +581,34 @@ describe("/clients desk", () => {
     }
   });
 
-  it("a failed completion rolls the copper back and says so", async () => {
-    mockUpdateClient.mockRejectedValue(new Error("write refused"));
+  it("offers no 'completed' write, which the backend rejects", async () => {
     renderPage();
     await waitFor(() => screen.getByText("Client 0401"));
     await switchToTableView();
 
-    const ownedRow = screen.getByRole("link", {
-      name: /Open client Client 0401/,
-    });
-    expect(within(ownedRow).getByText("Needs you")).toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Mark Client 0401 completed" }),
-    );
-
-    // The row must come BACK: an optimistic update that does not roll back
-    // leaves the desk claiming work is done that the server refused.
-    await waitFor(() => {
-      expect(
-        screen.getByText("Could not update — the row is unchanged."),
-      ).toBeInTheDocument();
-    });
-    expect(within(ownedRow).getByText("Needs you")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Mark Client 0401 completed" }),
+    ).toBeNull();
+    expect(screen.queryByText("Mark completed")).toBeNull();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
   });
 
-  it("optimistic completion clears the copper (DISPOSITION F6)", async () => {
+  it("filters only by the statuses the backend list accepts", async () => {
     renderPage();
     await waitFor(() => screen.getByText("Client 0401"));
-    await switchToTableView();
 
-    const needsLabel = screen.getByText("Needs action");
-    const kpiCell = needsLabel.closest("div");
-    expect(kpiCell).not.toBeNull();
-    expect(within(kpiCell as HTMLElement).getByText("01")).toBeInTheDocument();
-
-    const ownedRow = screen.getByRole("link", {
-      name: /Open client Client 0401/,
-    });
-    expect(within(ownedRow).getByText("Needs you")).toBeInTheDocument();
-
-    const completeButton = screen.getByRole("button", {
-      name: "Mark Client 0401 completed",
-    });
-    fireEvent.click(completeButton);
-
-    await waitFor(() => {
-      expect(
-        within(kpiCell as HTMLElement).getByText("00"),
-      ).toBeInTheDocument();
-    });
-    expect(within(ownedRow).queryByText("Needs you")).not.toBeInTheDocument();
-
-    const undoButton = await screen.findByRole("button", { name: "Undo" });
-    fireEvent.click(undoButton);
-
-    await waitFor(() => {
-      expect(
-        within(kpiCell as HTMLElement).getByText("01"),
-      ).toBeInTheDocument();
-    });
-    expect(within(ownedRow).getByText("Needs you")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Completed" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    const label = screen.getByText("Status", { selector: "label" });
+    const select = label.parentElement?.querySelector("select");
+    if (!select) throw new Error("status filter not rendered");
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      "",
+      "lead",
+      "prospect",
+      "active",
+      "inactive",
+    ]);
   });
 });
 

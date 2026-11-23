@@ -533,16 +533,18 @@ describe("status tone", () => {
       screen.getByRole("button", { name: "Change client status" }),
     );
 
-    const options = ["lead", "active", "completed", "lost", "inactive"].map(
-      (s) => screen.getByRole("button", { name: s }),
+    const options = ["lead", "prospect", "active", "inactive"].map((s) =>
+      screen.getByRole("button", { name: s }),
     );
-    expect(options).toHaveLength(5);
+    expect(options).toHaveLength(4);
+    expect(screen.queryByRole("button", { name: "completed" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "lost" })).toBeNull();
     options.forEach((opt) => expect(opt).toHaveAttribute("aria-pressed"));
     expect(screen.getByRole("button", { name: "active" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(screen.getByRole("button", { name: "lost" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "inactive" })).toHaveAttribute(
       "aria-pressed",
       "false",
     );

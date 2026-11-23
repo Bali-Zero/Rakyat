@@ -183,6 +183,7 @@ export const ClientCard = React.memo(
               ${
                 {
                   lead: "bg-[var(--neon-blue)]",
+                  prospect: "bg-[var(--neon-blue)]",
                   active: "bg-[var(--neon-emerald)]",
                   completed: "bg-[var(--neon-purple)]",
                   inactive: "bg-[var(--tx-tertiary)]",
