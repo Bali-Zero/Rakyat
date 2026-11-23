@@ -50,8 +50,10 @@ class PortalProfileService:
 
         Returns the team_member id (UUID string) or None if skipped/failed.
         On an e-mail conflict the existing row is updated only when it is already
-        linked to this client or has never been registered (placeholder PIN hash);
-        otherwise nothing changes and None is returned.
+        linked to this client, or is linked to no client and has never been
+        registered (placeholder PIN hash). A row linked to another client is never
+        moved, registered or not: a placeholder row can still have been signed in to
+        with an e-mail link. Otherwise nothing changes and None is returned.
         Non-blocking: DB errors are caught and logged, never raised.
         """
         if not email or not email.strip():
@@ -95,7 +97,10 @@ class PortalProfileService:
                         WHERE team_members.role = 'client'
                           AND (
                               team_members.linked_client_id = EXCLUDED.linked_client_id
-                              OR team_members.pin_hash = EXCLUDED.pin_hash
+                              OR (
+                                  team_members.linked_client_id IS NULL
+                                  AND team_members.pin_hash = EXCLUDED.pin_hash
+                              )
                           )
                     RETURNING id
                     """,
@@ -106,9 +111,9 @@ class PortalProfileService:
                 )
 
                 if member_id is None:
-                    # The address already belongs to an account that is not this
-                    # client's and has been registered (or is not a client login):
-                    # it is never re-linked and none of its fields change.
+                    # The address already belongs to an account that is linked to
+                    # another client, or registered without a client, or is not a
+                    # client login: it is never re-linked and none of its fields change.
                     logger.warning(
                         "Portal profile not provisioned for client %s: address held by "
                         "another account",

@@ -156,7 +156,7 @@ async def test_refusal_logs_ids_only(portal_pg_pool, make_client, caplog):
 
 
 @pytest.mark.asyncio
-async def test_never_registered_row_is_relinked(portal_pg_pool, make_client):
+async def test_a_never_registered_row_of_another_client_is_not_moved(portal_pg_pool, make_client):
     pool = portal_pg_pool
     client_a = await make_client("Client A")
     client_b = await make_client("Client B")
@@ -166,9 +166,71 @@ async def test_never_registered_row_is_relinked(portal_pg_pool, make_client):
     member_id = await service.ensure_portal_profile(client_b, "old@example.test", "Client B")
 
     row = await _member(pool, "old@example.test")
+    assert member_id is None
+    assert row["linked_client_id"] == client_a
+    assert row["pin_hash"] == PLACEHOLDER_PIN_HASH
+
+
+@pytest.mark.asyncio
+async def test_a_never_registered_row_linked_to_no_client_is_linked(portal_pg_pool, make_client):
+    pool = portal_pg_pool
+    client_b = await make_client("Client B")
+    await pool.execute(
+        "INSERT INTO team_members (name, full_name, email, pin_hash, role, linked_client_id,"
+        " portal_access, active) VALUES ('Gone', 'Gone', 'old@example.test', $1, 'client',"
+        " NULL, true, true)",
+        PLACEHOLDER_PIN_HASH,
+    )
+
+    member_id = await PortalProfileService(pool).ensure_portal_profile(
+        client_b, "old@example.test", "Client B"
+    )
+
+    row = await _member(pool, "old@example.test")
     assert member_id == row["id"]
     assert row["linked_client_id"] == client_b
-    assert row["pin_hash"] == PLACEHOLDER_PIN_HASH
+
+
+@pytest.mark.asyncio
+async def test_a_registered_row_linked_to_no_client_is_not_linked(portal_pg_pool, make_client):
+    pool = portal_pg_pool
+    client_b = await make_client("Client B")
+    await pool.execute(
+        "INSERT INTO team_members (name, full_name, email, pin_hash, role, linked_client_id,"
+        " portal_access, active) VALUES ('Gone', 'Gone', 'old@example.test', $1, 'client',"
+        " NULL, true, true)",
+        REGISTERED_HASH,
+    )
+
+    assert (
+        await PortalProfileService(pool).ensure_portal_profile(
+            client_b, "old@example.test", "Client B"
+        )
+        is None
+    )
+    assert (await _member(pool, "old@example.test"))["linked_client_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_e_mail_link_minted_or_used_for_one_client_never_opens_another(
+    portal_pg_pool, make_client
+):
+    from backend.services.portal.magic_link_service import MagicLinkService
+
+    pool = portal_pg_pool
+    client_a = await make_client("Client A")
+    client_b = await make_client("Client B")
+    service = PortalProfileService(pool)
+    await service.ensure_portal_profile(client_a, "old@example.test", "Client A")
+    links = MagicLinkService(pool)
+    used = await links.request_magic_link("old@example.test")
+    assert (await links.verify_magic_link(used["token"]))["client_id"] == client_a
+    minted = await links.request_magic_link("old@example.test")
+
+    assert await service.ensure_portal_profile(client_b, "old@example.test", "Client B") is None
+
+    assert (await _member(pool, "old@example.test"))["linked_client_id"] == client_a
+    assert (await links.verify_magic_link(minted["token"]))["client_id"] == client_a
 
 
 @pytest.mark.asyncio
