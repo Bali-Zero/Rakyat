@@ -30,7 +30,8 @@ beforeEach(() => {
         client_name: "Client",
         service_name: "Visa",
         amount_idr: 100,
-        outstanding_idr: 100,
+        // The previous API representation of a PostgreSQL NUMERIC during rollout.
+        outstanding_idr: JSON.parse('"100.00"'),
       },
     ],
   });

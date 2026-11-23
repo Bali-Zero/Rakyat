@@ -134,7 +134,7 @@ export function CashReceiptForm({ onDone }: { onDone: () => void }) {
               onClick={() => {
                 newRequest();
                 setInvoice(i);
-                setAmount(String(i.outstanding_idr));
+                setAmount(String(Number(i.outstanding_idr)));
               }}
             >
               {i.invoice_number} · {i.client_name} · {i.service_name} ·{" "}

@@ -15,10 +15,13 @@ from backend.services.accounting.reconcile_service import (
 from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 
 _COLLECTIBLE = """
-    COALESCE(i.issuer_entity_key, $2) = $1
+    COALESCE(NULLIF(i.issuer_entity_key, ''), $2) = $1
     AND COALESCE(p.payment_status, 'unpaid') <> 'paid'
     AND p.status IS DISTINCT FROM 'cancelled'
     AND i.amount_idr > 0 AND i.amount_idr < 'Infinity'::numeric
+    AND i.amount_idr = trunc(i.amount_idr)
+    AND COALESCE(i.paid_amount_idr, 0) = trunc(COALESCE(i.paid_amount_idr, 0))
+    AND COALESCE(p.paid_amount, 0) = trunc(COALESCE(p.paid_amount, 0))
 """
 
 
@@ -46,7 +49,15 @@ async def cash_invoices(conn: asyncpg.Connection, company_key: str, q: str) -> l
         DEFAULT_ENTITY_KEY,
         q.strip(),
     )
-    return [dict(row) for row in rows]
+    # Production uses NUMERIC(15,2); FastAPI otherwise serializes Decimal as a string.
+    return [
+        {
+            **row,
+            "amount_idr": int(row["amount_idr"]),
+            "outstanding_idr": int(row["outstanding_idr"]),
+        }
+        for row in rows
+    ]
 
 
 async def record_cash(

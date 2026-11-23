@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from backend.app.routers.accounting import _fetch_invoice_pool
 from backend.services.accounting.cash_receipts import cash_invoices, record_cash
 from backend.services.accounting.cashout_service import list_cashout
 from backend.services.accounting.reconcile_service import (
@@ -27,11 +28,19 @@ async def test_receipt_search_replay_partial_balance_and_bank_ceiling():
     conn, database, user = await _fresh_db()
     second = await _connect(database)
     try:
+        await conn.execute(
+            "ALTER TABLE invoices ALTER COLUMN amount_idr TYPE numeric(15,2),"
+            " ALTER COLUMN paid_amount_idr TYPE numeric(15,2);"
+            " ALTER TABLE practices ALTER COLUMN paid_amount TYPE numeric(12,2)"
+        )
         practices, invoices, bank = await _world(conn)
         pid, iid = practices[0], invoices[0]
         await conn.execute("UPDATE invoices SET pph_expected_idr=80000 WHERE id=$1", iid)
         await conn.execute("UPDATE practices SET paid_amount=20000 WHERE id=$1", pid)
         other = next(key for key in ENTITIES if key != DEFAULT_ENTITY_KEY)
+        item = (await cash_invoices(conn, DEFAULT_ENTITY_KEY, "inv-c"))[0]
+        assert type(item["amount_idr"]) is int
+        assert type(item["outstanding_idr"]) is int
         assert await cash_invoices(conn, other, "INV-C") == []
         assert (await cash_invoices(conn, DEFAULT_ENTITY_KEY, "inv-c"))[0][
             "outstanding_idr"
@@ -79,8 +88,13 @@ async def test_receipt_search_replay_partial_balance_and_bank_ceiling():
             "paid"
         ]
         assert await record_cash(conn, **payment) == first
-        assert await conn.fetchval("SELECT paid_amount_idr FROM invoices WHERE id=$1", iid) == 3_920_000
-        assert await conn.fetchval("SELECT paid_amount FROM practices WHERE id=$1", pid) == 3_920_000
+        assert (
+            await conn.fetchval("SELECT paid_amount_idr FROM invoices WHERE id=$1", iid)
+            == 3_920_000
+        )
+        assert (
+            await conn.fetchval("SELECT paid_amount FROM practices WHERE id=$1", pid) == 3_920_000
+        )
         assert await cash_invoices(conn, DEFAULT_ENTITY_KEY, "") == []
         with pytest.raises(ReconcileError):
             await link_recorded(
@@ -98,6 +112,14 @@ async def test_receipt_search_replay_partial_balance_and_bank_ceiling():
             await conn.fetchval("SELECT reconciled_status FROM bank_transactions WHERE id=$1", bank)
             == "unmatched"
         )
+        # The legacy part can still be linked to a bank credit. Once accounted for,
+        # this mixed-method invoice must leave the bank suggestion pool.
+        assert [row.invoice_id for row in await _fetch_invoice_pool(conn, recorded=True)] == [iid]
+        await conn.execute("UPDATE bank_transactions SET amount_idr=20000 WHERE id=$1", bank)
+        await link_recorded(
+            conn, bank_txn_id=bank, practice_id=pid, invoice_id=iid, linked_by="test"
+        )
+        assert await _fetch_invoice_pool(conn, recorded=True) == []
     finally:
         await second.close()
         await _drop_db(conn, database, user)

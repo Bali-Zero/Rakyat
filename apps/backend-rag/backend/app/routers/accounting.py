@@ -312,7 +312,15 @@ async def import_bank_statement(
 
 # An invoice is OPEN while its practice's payment status is not `paid`, RECORDED once it is.
 _OPEN_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') <> 'paid'"
-_RECORDED_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') = 'paid'"
+_RECORDED_POOL_SQL = """COALESCE(p.payment_status, 'unpaid') = 'paid'
+    AND NOT EXISTS (
+        SELECT 1 FROM weekly_cashout wc
+        WHERE wc.linked_practice_id=p.id AND wc.direction='in' AND wc.type='invoice_payment'
+          AND wc.reversed_by_id IS NULL
+        GROUP BY wc.linked_practice_id
+        HAVING bool_or(wc.payment_method='cash')
+           AND sum(wc.amount_idr) >= i.amount_idr - COALESCE(i.pph_expected_idr, 0)
+    )"""
 
 
 def _finite_int(value: Any) -> int:

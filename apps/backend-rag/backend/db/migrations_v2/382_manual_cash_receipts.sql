@@ -1,4 +1,5 @@
 -- Keep the original receipt and its replay result on the money-register row.
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE weekly_cashout
     ADD COLUMN IF NOT EXISTS cash_request_id UUID,
     ADD COLUMN IF NOT EXISTS cash_company_key TEXT,
