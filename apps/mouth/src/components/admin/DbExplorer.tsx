@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { TableDataResponse } from "@/lib/api/admin/admin.types";
 import {
@@ -28,6 +28,8 @@ export function DbExplorer() {
   const [tableData, setTableData] = useState<TableDataResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [page, setPage] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadSequence = useRef(0);
   const PAGE_SIZE = 50;
 
   useEffect(() => {
@@ -47,22 +49,34 @@ export function DbExplorer() {
   };
 
   const loadData = async (table: string, newPage: number) => {
+    const sequence = ++loadSequence.current;
     setIsLoading(true);
     try {
       const offset = newPage * PAGE_SIZE;
       const data = await api.getTableData(table, PAGE_SIZE, offset);
-      setTableData(data);
-      setPage(newPage);
+      if (sequence === loadSequence.current) {
+        setTableData(data);
+        setPage(newPage);
+        setLoadError(null);
+      }
     } catch (err) {
       logger.error("Failed to load data", {}, err as Error);
+      if (sequence === loadSequence.current) {
+        setTableData(null);
+        setLoadError(`Could not load ${table}.`);
+      }
     } finally {
-      setIsLoading(false);
+      if (sequence === loadSequence.current) {
+        setIsLoading(false);
+      }
     }
   };
 
   const handleTableChange = (value: string) => {
     setSelectedTable(value);
     setPage(0);
+    setTableData(null);
+    setLoadError(null);
     loadData(value, 0);
   };
 
@@ -186,7 +200,7 @@ export function DbExplorer() {
         </div>
       ) : (
         <div className="h-[400px] flex items-center justify-center border border-white/5 rounded-lg border-dashed text-muted-foreground">
-          Select a table to inspect data
+          {loadError ?? "Select a table to inspect data"}
         </div>
       )}
     </div>
