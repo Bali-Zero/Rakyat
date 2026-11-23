@@ -1066,7 +1066,19 @@ export const getAllArticles = unstable_cache(
     for (const { folderCategory, slug } of filteredSlugs) {
       if (seenSlugs.has(slug)) continue;
 
-      const article = await getMdxArticleBySlug(folderCategory, slug);
+      // One file that cannot be built is skipped alone; the listing, the feed
+      // and the sitemap keep the others. Its content is never logged.
+      let article: Article | null;
+      try {
+        article = await getMdxArticleBySlug(folderCategory, slug);
+      } catch (error) {
+        console.error(
+          `[articles] skipped unbuildable article file ${folderCategory}/${slug}.mdx: ${
+            error instanceof Error ? error.name : typeof error
+          }`,
+        );
+        continue;
+      }
       if (!article) continue;
 
       // noIndex articles leave every listing/feed surface (sitemap/robots
