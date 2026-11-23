@@ -282,11 +282,15 @@ export class AdminApi {
 
   async exportMessages(params: {
     user_id?: string;
+    role?: string;
+    search?: string;
     date_from?: string;
     date_to?: string;
   }): Promise<Blob> {
     const searchParams = new URLSearchParams();
     if (params.user_id) searchParams.append("user_id", params.user_id);
+    if (params.role) searchParams.append("role", params.role);
+    if (params.search) searchParams.append("search", params.search);
     if (params.date_from) searchParams.append("date_from", params.date_from);
     if (params.date_to) searchParams.append("date_to", params.date_to);
 
