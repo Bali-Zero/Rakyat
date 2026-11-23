@@ -51,6 +51,7 @@ class OpenInvoice:
     service_name: str | None = None
     # The stored issuer; NULL on invoices made before issuer routing (the default company's).
     issuer_entity_key: str | None = None
+    bill_to_company: str | None = None
 
 
 @dataclass
@@ -119,7 +120,16 @@ def _date_in_window(transfer_date: date, inv: OpenInvoice) -> bool:
 
 
 _NAME = r"([A-Za-z][A-Za-z .'-]*?)"
+_PERMATA_NAME = r"([A-Za-z0-9][A-Za-z0-9 .&'/-]*?)"
+_PERMATA_PATTERNS = (
+    re.compile(r"^TRF DARI\s+" + _PERMATA_NAME + r"\s+BANK\s+.+?\s+ATM\b", re.I),
+    re.compile(r"^TRF INCOMING BIFAST DARI\s+" + _PERMATA_NAME + r"\s+\d{6,}\s+BANK\b", re.I),
+    re.compile(
+        r"^PB DARI\s+" + _PERMATA_NAME + r"\s+(?:NEW PEB|PERMATA\s*ME)\s*\d{2}:\d{2}:\d{2}\b", re.I
+    ),
+)
 _PAYER_PATTERNS = (
+    *_PERMATA_PATTERNS,
     re.compile(r"\bFR\s+[A-Za-z]{4}IDJA\s+UN\s+(.+)$"),
     re.compile(r"\bTRF FR\s+" + _NAME + r"\s+\d{8,}\b"),
     re.compile(r"\bINCOMING SKN\s+\S+/[^/]+/" + _NAME + r"\s+[A-Za-z]?\d{6,}"),
@@ -143,6 +153,19 @@ def extract_payer_name(description: str) -> str:
 
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z]+", text.lower())
+
+
+def _company_name_tokens(name: str) -> tuple[str, list[str]]:
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    if words and words[0] in {"pt", "cv"}:
+        return words[0], words[1:]
+    if words and words[-1] in {"pt", "cv"}:
+        return words[-1], words[:-1]
+    return "", words
+
+
+def is_permata_transfer(memo: str) -> bool:
+    return any(pattern.match(memo or "") for pattern in _PERMATA_PATTERNS)
 
 
 def _name_score(payer_memo: str, client_name: str) -> float:
@@ -188,6 +211,9 @@ def rank_candidates(
     Empty list means nothing plausible — the transfer stays 'unmatched'.
     """
     candidates: list[MatchCandidate] = []
+    payer = extract_payer_name(payer_memo)
+    payer_prefix, company_words = _company_name_tokens(payer)
+    permata = is_permata_transfer(payer_memo)
 
     for inv in open_invoices:
         amount_score, reasons, delta, withheld, relation = _amount_signals(transfer_amount_idr, inv)
@@ -195,22 +221,43 @@ def rank_candidates(
             continue  # no amount relationship at all -> not a candidate
 
         name = _name_score(payer_memo, inv.client_name)
+        bill_prefix, bill_words = _company_name_tokens(inv.bill_to_company or "")
+        company_match = (
+            len(company_words) >= 2
+            and company_words == bill_words
+            and (not payer_prefix or not bill_prefix or payer_prefix == bill_prefix)
+        )
+        if company_match:
+            name = 100.0
         number_hit = bool(inv.invoice_number) and inv.invoice_number in _INVOICE_NUMBER.findall(
             payer_memo or ""
         )
         if number_hit:
             name = 100.0  # our own invoice number in the memo is stronger than any name
         in_window = _date_in_window(transfer_date, inv)
+        later_invoice = (
+            permata
+            and not number_hit
+            and inv.generated_at is not None
+            and transfer_date < inv.generated_at
+        )
 
         # Blend: amount is primary (up to 0.7), name adds up to 0.25, date gates.
         confidence = amount_score
         if number_hit:
             confidence += 0.25
             reasons.append("invoice number in bank memo")
+        elif company_match:
+            confidence += 0.25
+            reasons.append("payer matches the company on the invoice")
         elif name >= NAME_HINT_FLOOR:
             confidence += (name / 100.0) * 0.25
             reasons.append(f"payer name ~ client ({name:.0f}%)")
-        if not in_window:
+        if later_invoice:
+            in_window = False
+            confidence *= 0.5
+            reasons.append("invoice issued after the bank transfer")
+        elif not in_window:
             confidence *= 0.5
             reasons.append("outside 60-day date window")
 
@@ -219,7 +266,7 @@ def rank_candidates(
             MatchCandidate(
                 invoice_id=inv.invoice_id,
                 practice_id=inv.practice_id,
-                client_name=inv.client_name,
+                client_name=(inv.bill_to_company if company_match else None) or inv.client_name,
                 invoice_amount_idr=inv.amount_idr,
                 confidence=confidence,
                 reasons=reasons,

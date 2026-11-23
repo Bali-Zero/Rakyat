@@ -336,12 +336,13 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
         f"""
         SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
                i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
-               c.full_name AS client_name,
+               c.full_name AS client_name, billed.company_name AS bill_to_company,
                i.invoice_number, pt.name AS service_name, i.issuer_entity_key
         FROM invoices i
         JOIN practices p ON i.practice_id = p.id
         LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
         LEFT JOIN clients c ON p.client_id = c.id
+        LEFT JOIN companies billed ON billed.id = p.invoice_company_id
         WHERE {_RECORDED_POOL_SQL if recorded else _OPEN_POOL_SQL}
         """
     )
@@ -357,6 +358,7 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
             invoice_issued_at=_iso(r["generated_at"]),
             service_name=r.get("service_name"),
             issuer_entity_key=r.get("issuer_entity_key"),
+            bill_to_company=r.get("bill_to_company"),
         )
         for r in rows
     ]
