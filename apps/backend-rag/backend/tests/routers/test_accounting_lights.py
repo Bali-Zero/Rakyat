@@ -891,7 +891,13 @@ def test_each_pool_query_is_pinned_in_full(mock_db_pool) -> None:
     _client(mock_db_pool).get(f"{BASE}/match-candidates/3")
     open_sql, recorded_sql = [" ".join(c.args[0].split()) for c in conn.fetch.await_args_list]
     assert open_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') <> 'paid'"
-    assert recorded_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid'"
+    assert recorded_sql == (
+        _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid' AND NOT EXISTS ( "
+        "SELECT 1 FROM weekly_cashout wc WHERE wc.linked_practice_id=p.id AND wc.direction='in' "
+        "AND wc.type='invoice_payment' AND wc.reversed_by_id IS NULL GROUP BY wc.linked_practice_id "
+        "HAVING bool_or(wc.payment_method='cash') AND sum(wc.amount_idr) >= i.amount_idr "
+        "- COALESCE(i.pph_expected_idr, 0) )"
+    )
 
 
 @pytest.mark.parametrize(

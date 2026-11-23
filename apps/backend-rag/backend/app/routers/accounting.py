@@ -29,6 +29,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.accounting import (
     bank_import_service,
+    cash_receipts,
     cashout_import_service,
     cashout_service,
     reconcile_service,
@@ -311,7 +312,15 @@ async def import_bank_statement(
 
 # An invoice is OPEN while its practice's payment status is not `paid`, RECORDED once it is.
 _OPEN_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') <> 'paid'"
-_RECORDED_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') = 'paid'"
+_RECORDED_POOL_SQL = """COALESCE(p.payment_status, 'unpaid') = 'paid'
+    AND NOT EXISTS (
+        SELECT 1 FROM weekly_cashout wc
+        WHERE wc.linked_practice_id=p.id AND wc.direction='in' AND wc.type='invoice_payment'
+          AND wc.reversed_by_id IS NULL
+        GROUP BY wc.linked_practice_id
+        HAVING bool_or(wc.payment_method='cash')
+           AND sum(wc.amount_idr) >= i.amount_idr - COALESCE(i.pph_expected_idr, 0)
+    )"""
 
 
 def _finite_int(value: Any) -> int:
@@ -442,6 +451,48 @@ async def match_candidates(
         }
 
 
+class CashReceiptRequest(BaseModel):
+    company_key: str = Field(min_length=1, max_length=80)
+    invoice_id: int = Field(gt=0)
+    amount_idr: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
+    movement_date: date
+    reference: str | None = Field(default=None, max_length=120)
+    request_id: uuid.UUID
+
+
+@router.get("/cash-invoices")
+async def list_cash_invoices(
+    company_key: str,
+    q: str = Query("", max_length=120),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        try:
+            return {"items": await cash_receipts.cash_invoices(conn, company_key, q)}
+        except ReconcileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/cash-receipts")
+async def record_cash_receipt(
+    payload: CashReceiptRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        try:
+            result = await cash_receipts.record_cash(
+                conn, **payload.model_dump(), confirmed_by=current_user["email"].lower(),
+            )
+        except ReconcileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _invalidate_payment_caches()
+    return result
+
+
 class ConfirmRequest(BaseModel):
     bank_txn_id: int | None = None
     practice_id: int
@@ -500,6 +551,19 @@ async def confirm_reconciliation(
         except ReconcileError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    await _invalidate_payment_caches()
+    return {
+        "practice_id": result.practice_id,
+        "invoice_id": result.invoice_id,
+        "cashout_id": result.cashout_id,
+        "reconciliation_log_id": result.reconciliation_log_id,
+        "status_before": result.status_before,
+        "status_after": result.status_after,
+        "historical": payload.historical,
+    }
+
+
+async def _invalidate_payment_caches() -> None:
     # Same cache keys the CRM uses (superscar #9) — payment_status changed.
     try:
         from backend.core.cache import invalidate_cache
@@ -512,17 +576,6 @@ async def confirm_reconciliation(
         await invalidate_cache(f"zantara:{REVENUE_GROWTH_CACHE_NAMESPACE}:*")
     except Exception as cache_exc:  # cache failure must not fail the write
         logger.warning("accounting confirm cache invalidation failed: %s", cache_exc)
-
-    return {
-        "practice_id": result.practice_id,
-        "invoice_id": result.invoice_id,
-        "cashout_id": result.cashout_id,
-        "reconciliation_log_id": result.reconciliation_log_id,
-        "status_before": result.status_before,
-        "status_after": result.status_after,
-        "historical": payload.historical,
-    }
-
 
 # ── Lights: the reconciliation inbox and the three actions that move no money ───────────
 

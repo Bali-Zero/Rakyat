@@ -157,6 +157,7 @@ async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     await conn.execute(_forward_sql_of(MIGRATION_355))
     await conn.execute(_forward_sql_of(MIGRATION_363))
     await conn.execute(_forward_sql_of(MIGRATION_373))
+    await conn.execute(_forward_sql_of(MIGRATION_373.with_name("382_manual_cash_receipts.sql")))
     # 363 sets session timeouts for its own run; the tests here keep the defaults they had.
     await conn.execute("RESET lock_timeout; RESET statement_timeout")
     return conn, dbname, user
