@@ -255,7 +255,9 @@ class VectorSearchTool(BaseTool):
                 if accepts_query(query):
                     from backend.services.rag.voyage_observer import observe_legal_search
 
-                    summary = await observe_legal_search(query, target_collections, chunks, top_k, _settings)
+                    summary = await observe_legal_search(
+                        query, target_collections, chunks, top_k, _settings
+                    )
                     record_observation(query, summary)
 
             if not chunks:
@@ -1051,6 +1053,32 @@ class WebSearchTool(BaseTool):
                 )
 
 
+_TIMESHEET_NO_IDENTITY = "Timesheet actions need a signed-in team member"
+_TIMESHEET_NOT_YOURS = "A timesheet action can only be done for yourself"
+
+
+def _timesheet_caller(trusted: dict[str, Any]) -> str | None:
+    """The address of the person the executor's trusted arguments name, or None.
+
+    A desk session names its signed-in user. With no desk user, a trusted WhatsApp team
+    profile names its sender. Nothing else names anyone: ``_user_id`` is the transport's
+    principal (on the WhatsApp path, the bot's), and the creator profile carries no
+    address. No one acts for someone else here, an admin included.
+    """
+    desk_user = trusted.get("_desk_user")
+    if desk_user is not None:
+        email = desk_user.get("email") if isinstance(desk_user, dict) else None
+        if not isinstance(email, str) or "@" not in email.strip():
+            return None
+        return email.strip().lower()
+    profile = trusted.get("_caller_profile")
+    if isinstance(profile, dict) and str(profile.get("role") or "").strip().lower() == "team":
+        email = profile.get("email")
+        if isinstance(email, str) and "@" in email.strip():
+            return email.strip().lower()
+    return None
+
+
 class TimeSheetTool(BaseTool):
     """Tool for team timesheet management (clock-in, clock-out, status)"""
 
@@ -1067,7 +1095,8 @@ class TimeSheetTool(BaseTool):
         """Description."""
         return (
             "Manage work timesheet. Use this to clock in, clock out, or check work status. "
-            "REQUIRED: User email address."
+            "REQUIRED: User email address. It acts only for the signed-in user, so the "
+            "email must be that user's own address. "
             "Actions: clock_in, clock_out, status"
         )
 
@@ -1103,6 +1132,13 @@ class TimeSheetTool(BaseTool):
 
     async def execute(self, action: str, email: str, **kwargs) -> str:
         try:
+            caller = _timesheet_caller(kwargs)
+            if caller is None:
+                return json.dumps({"error": _TIMESHEET_NO_IDENTITY})
+            if not isinstance(email, str) or email.strip().lower() != caller:
+                return json.dumps({"error": _TIMESHEET_NOT_YOURS})
+            email = caller
+
             from backend.services.analytics.team_timesheet_service import get_timesheet_service
 
             service = get_timesheet_service()
