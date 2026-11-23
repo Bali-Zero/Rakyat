@@ -42,7 +42,7 @@ CREATE TABLE hr_bonus_rates(id int primary key,practice_type_code text,is_active
     effective_from date,effective_to date,amount_idr bigint);
 CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text, payroll_period_id int,
     bonus_rate_id int,amount_idr bigint,awarded_at timestamptz,status text);
-CREATE TABLE hr_payroll_periods(payroll_month int,payroll_year int,status text);
+CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY,period_start date,payroll_month int,payroll_year int,status text);
 """
 STAFF = {"email": "consultant@example.test", "role": "consultant"}
 
