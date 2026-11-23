@@ -1,5 +1,6 @@
 "use client";
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   accountingApi,
@@ -13,6 +14,7 @@ export type CompaniesState =
   | { status: "ok"; rows: AccountingCompany[] };
 
 export function useCompanies() {
+  const month = useAccountingMonth();
   const [state, setState] = useState<CompaniesState>({
     status: "loading",
     rows: [],
@@ -21,7 +23,7 @@ export function useCompanies() {
   const load = useCallback(async () => {
     const token = ++request.current;
     try {
-      const rows = await accountingApi.getCompanies();
+      const rows = await accountingApi.getCompanies(month);
       if (request.current !== token) return;
       setState(
         Array.isArray(rows)
@@ -33,7 +35,7 @@ export function useCompanies() {
       setState((cur) => ({ status: "failed", rows: cur.rows }));
       logger.error("accounting companies load failed", {}, err as Error);
     }
-  }, []);
+  }, [month]);
   useEffect(() => {
     void load();
   }, [load]);

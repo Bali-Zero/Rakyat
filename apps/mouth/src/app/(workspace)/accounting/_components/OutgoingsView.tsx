@@ -10,6 +10,7 @@
  * Nothing here enters the cash-out.
  */
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Money } from "@balizero/core";
@@ -141,6 +142,7 @@ function KindButton({
 }
 
 export function OutgoingsView() {
+  const month = useAccountingMonth();
   const { success, error } = useToast();
   const [data, setData] = useState<OutgoingsResponse | null>(null);
   const [status, setStatus] = useState<"loading" | "ok" | "failed">("loading");
@@ -177,7 +179,7 @@ export function OutgoingsView() {
     const token = ++loadReq.current;
     setStatus("loading");
     try {
-      const res = await accountingApi.getOutgoings({ state: tab });
+      const res = await accountingApi.getOutgoings({ state: tab, month });
       if (loadReq.current !== token) return;
       setData(res);
       setStatus("ok");
@@ -186,7 +188,7 @@ export function OutgoingsView() {
       if (loadReq.current !== token) return;
       setStatus("failed");
     }
-  }, [tab]);
+  }, [tab, month]);
 
   useEffect(() => {
     void load();
@@ -223,12 +225,19 @@ export function OutgoingsView() {
   // Sets justified together today, for their «Undo» on the Justified tab. Computed on every
   // render (not memoized) so the midnight re-render drops yesterday's.
   const todayBatches = (() => {
-    const out = new Map<string, { n: number; total: number; by: string }>();
+    const out = new Map<
+      string,
+      { n: number; total: number; activeCount?: number }
+    >();
     for (const i of data?.items ?? []) {
       const j = i.justification;
       if (i.state !== "justified" || !j?.batch_id || j.follows_txn_id) continue;
       if (!justifiedToday(j.at)) continue;
-      const b = out.get(j.batch_id) ?? { n: 0, total: 0, by: j.by };
+      const b = out.get(j.batch_id) ?? {
+        n: 0,
+        total: 0,
+        activeCount: j.batch_active_count,
+      };
       b.n += 1;
       b.total += i.amount_idr;
       out.set(j.batch_id, b);
@@ -500,14 +509,21 @@ export function OutgoingsView() {
                   {b.n} PNBP justified together today ·{" "}
                   <Money compact value={b.total} />
                 </span>
-                <button
-                  type="button"
-                  disabled={batchBusy}
-                  onClick={() => void undoBatch(id)}
-                  className="text-xs font-semibold underline underline-offset-4 disabled:opacity-50"
-                >
-                  Undo
-                </button>
+                {b.n === b.activeCount || (!month && b.activeCount == null) ? (
+                  <button
+                    type="button"
+                    disabled={batchBusy}
+                    onClick={() => void undoBatch(id)}
+                    className="text-xs font-semibold underline underline-offset-4 disabled:opacity-50"
+                  >
+                    Undo
+                  </button>
+                ) : (
+                  <span>
+                    Part of this group is outside the list. Undo individual
+                    payments below.
+                  </span>
+                )}
               </div>
             ))}
           {tab === "justified" && batchError && (

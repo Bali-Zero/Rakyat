@@ -70,6 +70,30 @@ beforeEach(() => {
 });
 
 describe("AccountingPage", () => {
+  it("opens on November and restores full history only when selected", async () => {
+    render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    expect(api.getReconciliationInbox).toHaveBeenCalledWith(1000, "2026-11-01");
+    expect(api.getDoneToday).toHaveBeenCalledWith("2026-11-01");
+    expect(api.getCashout).toHaveBeenCalledWith({
+      limit: 200,
+      month: "2026-11-01",
+    });
+    expect(api.getSummary).toHaveBeenCalledWith({
+      periodStart: "2026-11-01",
+      periodEnd: "2026-11-30",
+    });
+    fireEvent.change(screen.getByLabelText("Period"), {
+      target: { value: "archive" },
+    });
+    await screen.findByText("CONTOH TRANSFER");
+    expect(api.getReconciliationInbox).toHaveBeenLastCalledWith(
+      1000,
+      undefined,
+    );
+    expect(api.getSummary).toHaveBeenLastCalledWith(undefined);
+  });
+
   it("86: the control-centre container carries the P2 padding classes", async () => {
     const { container } = render(<AccountingPage />);
     await screen.findByText("CONTOH TRANSFER");

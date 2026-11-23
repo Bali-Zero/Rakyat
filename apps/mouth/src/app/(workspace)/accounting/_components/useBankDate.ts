@@ -1,5 +1,6 @@
 "use client";
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { accountingApi } from "@/lib/api/workspace/accounting.api";
 import { logger } from "@/lib/logger";
@@ -9,6 +10,7 @@ export type BankDateState =
   | { status: "ok"; date: string };
 
 export function useBankDate() {
+  const month = useAccountingMonth();
   const [state, setState] = useState<BankDateState>({
     status: "loading",
     date: null,
@@ -19,7 +21,7 @@ export function useBankDate() {
     const token = ++request.current;
     setState({ status: "loading", date: null });
     try {
-      const rows = await accountingApi.getBankTransactions({ limit: 1 });
+      const rows = await accountingApi.getBankTransactions({ limit: 1, month });
       if (request.current !== token) return;
       if (!Array.isArray(rows)) {
         setState({ status: "failed", date: null });
@@ -40,7 +42,7 @@ export function useBankDate() {
       setState({ status: "failed", date: null });
       logger.error("accounting bank date load failed", {}, err as Error);
     }
-  }, []);
+  }, [month]);
 
   useEffect(() => {
     void load();

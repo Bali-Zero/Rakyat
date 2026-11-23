@@ -972,7 +972,7 @@ describe("OutgoingsView", () => {
     });
 
     it("offers Undo on Justified only for a batch made today", async () => {
-      const done = (id: number, batch: string, at: string) => ({
+      const done = (id: number, batch: string, at: string, size = 2) => ({
         ...pnbp(id, 19, `82026111900000${id}`, 1),
         state: "justified" as const,
         justification: {
@@ -984,6 +984,7 @@ describe("OutgoingsView", () => {
           by: "staff@example.test",
           at,
           batch_id: batch,
+          batch_active_count: size,
         },
       });
       api.getOutgoings.mockImplementation(async (opts) =>
@@ -993,6 +994,7 @@ describe("OutgoingsView", () => {
               items: [
                 done(1, "b-today", todayIso()),
                 done(2, "b-today", todayIso()),
+                done(4, "b-partial", todayIso(), 3),
                 done(3, "b-old", "2026-11-02T03:00:00+00:00"),
               ],
             }
@@ -1009,6 +1011,11 @@ describe("OutgoingsView", () => {
       const today = await screen.findByTestId("batch-b-today");
       expect(today.textContent).toMatch(/^2 PNBP justified together today ·/);
       expect(screen.queryByTestId("batch-b-old")).toBeNull();
+      const partial = screen.getByTestId("batch-b-partial");
+      expect(
+        within(partial).queryByRole("button", { name: "Undo" }),
+      ).toBeNull();
+      expect(screen.getByTestId("undo-4")).toBeInTheDocument();
       expect(screen.getByTestId("justification-1").textContent).toMatch(
         /Justified together/,
       );

@@ -7,11 +7,13 @@ the inbox, so it is not "done"). The reason typed for an ignore is stored but ne
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import asyncpg
+
+from backend.services.accounting.period import month_condition
 
 BUSINESS_TZ = ZoneInfo("Asia/Makassar")
 
@@ -30,7 +32,7 @@ LEFT JOIN invoices i ON i.id = bt.matched_invoice_id
 LEFT JOIN practices p ON p.id = bt.matched_practice_id
 LEFT JOIN clients c ON c.id = p.client_id
 WHERE l.confirmed_at >= $1 AND l.confirmed_at < $2
-  AND bt.direction = 'credit'
+  AND bt.direction = 'credit'{period}
   AND bt.reconciled_status IN ('matched', 'manual', 'ignored')
   AND NOT EXISTS (
       SELECT 1 FROM reconciliation_log later
@@ -61,9 +63,13 @@ def _item(row: Any, action: str) -> dict[str, Any]:
     }
 
 
-async def load_done_today(conn: asyncpg.Connection, now: datetime) -> dict[str, Any]:
+async def load_done_today(
+    conn: asyncpg.Connection, now: datetime, *, month: date | None = None
+) -> dict[str, Any]:
     start, end = window_bounds(now)
-    rows = await conn.fetch(DONE_TODAY_SQL, start, end)
+    params = [start, end]
+    period = month_condition("bt.txn_date", month, params)
+    rows = await conn.fetch(DONE_TODAY_SQL.format(period=period), *params)
     counts = {"confirmed": 0, "linked": 0, "ignored": 0}
     items = []
     for row in rows:

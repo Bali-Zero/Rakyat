@@ -2,6 +2,7 @@
 
 /** Collapsed list of transfers linked or ignored, each with a Reopen button. */
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ export function LinkedIgnoredSection({
 }) {
   const { error, success } = useToast();
   const [open, setOpen] = useState(false);
+  const month = useAccountingMonth();
   const [rows, setRows] = useState<BankTransaction[]>([]);
   // Status of the LATEST STARTED refresh; with no rows it picks loading / empty / failure.
   const [loadStatus, setLoadStatus] = useState<"loading" | "ok" | "failed">(
@@ -47,8 +49,14 @@ export function LinkedIgnoredSection({
     setLoadStatus("loading");
     try {
       const [linked, ignored] = await Promise.all([
-        accountingApi.getBankTransactions({ reconciledStatus: "manual" }),
-        accountingApi.getBankTransactions({ reconciledStatus: "ignored" }),
+        accountingApi.getBankTransactions({
+          reconciledStatus: "manual",
+          month,
+        }),
+        accountingApi.getBankTransactions({
+          reconciledStatus: "ignored",
+          month,
+        }),
       ]);
       if (loadReq.current !== token) return;
       setRows([...linked, ...ignored].sort((a, b) => b.id - a.id));
@@ -59,7 +67,7 @@ export function LinkedIgnoredSection({
       error("Failed to load linked and ignored transfers", "Please try again");
       logger.error("accounting linked/ignored load failed", {}, err as Error);
     }
-  }, [error]);
+  }, [error, month]);
 
   useEffect(() => {
     if (open) void load();

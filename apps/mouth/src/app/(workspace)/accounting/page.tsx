@@ -13,6 +13,9 @@
  *      paid in full, it starts a case waiting for payment (owner rule a).
  *   3. Outgoings — every bank debit, to justify or justified (justify, undo the same day).
  *
+ * The default period is November 2026 by bank or cash movement date. All dates
+ * reopens the full history. The shared Sheets export always covers all dates.
+ *
  * RBAC is enforced server-side (403 → error boundary). Money is IDR.
  */
 
@@ -30,6 +33,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
+import {
+  AccountingMonth,
+  NOVEMBER,
+  useAccountingMonth,
+} from "./_components/accountingPeriod";
 import { ReconciliationInbox } from "./_components/ReconciliationInbox";
 import "./control-centre.css";
 import { formatIDR } from "@balizero/core/utils";
@@ -188,8 +196,31 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
-  const { success, error } = useToast();
+  const [archive, setArchive] = useState(false);
   const [view, setView] = useState<View>("centre");
+  return (
+    <AccountingMonth.Provider value={archive ? undefined : NOVEMBER.start}>
+      <AccountingWorkspace
+        key={archive ? "archive" : NOVEMBER.start}
+        view={view}
+        setView={setView}
+        onArchive={setArchive}
+      />
+    </AccountingMonth.Provider>
+  );
+}
+
+function AccountingWorkspace({
+  view,
+  setView,
+  onArchive,
+}: {
+  view: View;
+  setView: (view: View) => void;
+  onArchive: (archive: boolean) => void;
+}) {
+  const month = useAccountingMonth();
+  const { success, error } = useToast();
   const [summary, setSummary] = useState<CashbookSummary | null>(null);
   const [cashout, setCashout] = useState<CashoutRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -203,8 +234,10 @@ export default function AccountingPage() {
     try {
       setLoading(true);
       const [s, rows] = await Promise.all([
-        accountingApi.getSummary(),
-        accountingApi.getCashout({ limit: 200 }),
+        accountingApi.getSummary(
+          month ? { periodStart: month, periodEnd: NOVEMBER.end } : undefined,
+        ),
+        accountingApi.getCashout({ limit: 200, month }),
       ]);
       setSummary(s);
       setCashout(rows);
@@ -214,7 +247,7 @@ export default function AccountingPage() {
     } finally {
       setLoading(false);
     }
-  }, [error]);
+  }, [error, month]);
 
   useEffect(() => {
     loadCashout();
@@ -271,6 +304,17 @@ export default function AccountingPage() {
 
   return (
     <div className={view === "centre" ? "px-4 pb-2 pt-1.5" : "p-6"}>
+      <label className="my-2 flex items-center gap-2 text-sm text-[var(--bz-text-2)]">
+        Period
+        <select
+          className="rounded border border-[var(--bz-border)] bg-[var(--bz-card)] px-2 py-1"
+          value={month ?? "archive"}
+          onChange={(event) => onArchive(event.target.value === "archive")}
+        >
+          <option value={NOVEMBER.start}>November 2026</option>
+          <option value="archive">All dates (history)</option>
+        </select>
+      </label>
       {view === "centre" ? (
         <ReconciliationInbox
           onConfirmed={handleConfirmed}
@@ -327,7 +371,7 @@ export default function AccountingPage() {
                 ) : (
                   <Sheet className="mr-2 h-4 w-4" />
                 )}
-                Export to Sheets
+                Export to Sheets (all dates)
               </Button>
             </div>
           </div>

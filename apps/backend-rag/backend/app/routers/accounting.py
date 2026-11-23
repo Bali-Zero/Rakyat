@@ -62,6 +62,7 @@ from backend.services.accounting.outgoing_justify import (
     undo_justification,
 )
 from backend.services.accounting.outgoings import load_outgoings
+from backend.services.accounting.period import month_condition
 from backend.services.accounting.reconcile_service import ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
@@ -101,12 +102,13 @@ async def get_cashout(
     limit: int = Query(200, ge=1, le=1000),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """Weekly cashout rows (mirrors Asya's sheet), newest first."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
         return await cashout_service.list_cashout(
-            conn, week_label=week_label, type_filter=type_filter, limit=limit
+            conn, week_label=week_label, type_filter=type_filter, limit=limit, month=month
         )
 
 
@@ -118,6 +120,7 @@ async def get_bank_transactions(
     limit: int = Query(200, ge=1, le=1000),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """Parsed bank statement transactions, newest first."""
     _require_accounting_access(current_user)
@@ -130,7 +133,7 @@ async def get_bank_transactions(
         raise HTTPException(status_code=422, detail="invalid reconciled_status")
     async with db_pool.acquire() as conn:
         return await cashout_service.list_bank_transactions(
-            conn, reconciled_status=reconciled_status, limit=limit
+            conn, reconciled_status=reconciled_status, limit=limit, month=month
         )
 
 
@@ -590,20 +593,23 @@ async def reconciliation_inbox(
     limit: int = Query(200, ge=1, le=1000),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """Unmatched incoming transfers, newest first, each with its light and company. Advice only."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
+        params = [limit]
+        period = month_condition("bt.txn_date", month, params)
         rows = await conn.fetch(
-            """
+            f"""
             SELECT bt.id, bt.txn_date, bt.amount_idr, bt.description, bs.account_number
             FROM bank_transactions bt
             LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
-            WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'
+            WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'{period}
             ORDER BY bt.txn_date DESC, bt.id DESC
             LIMIT $1
             """,
-            limit,
+            *params,
         )
         open_invoices = await _fetch_invoice_pool(conn, recorded=False)
         recorded_invoices = await _fetch_invoice_pool(conn, recorded=True)
@@ -627,11 +633,12 @@ async def outgoings(
     state: Literal["to_justify", "justified", "all"] = Query("to_justify"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> dict[str, Any]:
     """Debits newest first, each with its state and justification, bank text read apart."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        return await load_outgoings(conn, limit=limit, state=state)
+        return await load_outgoings(conn, limit=limit, state=state, month=month)
 
 
 class JustifyLine(BaseModel):
@@ -754,11 +761,12 @@ async def undo_outgoing_batch(
 async def companies(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """The issuing companies with bank, account and how far their imported statements reach."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        return await load_companies(conn)
+        return await load_companies(conn, month=month)
 
 
 def _wita_now() -> dt.datetime:
@@ -769,12 +777,13 @@ def _wita_now() -> dt.datetime:
 async def done_today(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> dict[str, Any]:
     """Transfers handled today (WITA): counts by action and the latest items. Read-only."""
     _require_accounting_access(current_user)
     now = _wita_now()
     async with db_pool.acquire() as conn:
-        return await load_done_today(conn, now)
+        return await load_done_today(conn, now, month=month)
 
 
 # JSON integers only (A8): a boolean, a string or a number with a fraction is a 422.

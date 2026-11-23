@@ -297,6 +297,7 @@ export interface OutgoingJustification {
   follows_txn_id?: number;
   /** Set when justified with «Justify all PNBP»: the rows of one click share it. */
   batch_id?: string | null;
+  batch_active_count?: number;
 }
 
 /** POST /outgoings/pnbp-batch: the PNBP debits justified in one go. */
@@ -422,12 +423,14 @@ const qs = (params: Record<string, string | number | undefined>): string => {
 export const accountingApi = {
   /** Weekly cashout rows (Asya's sheet), newest first. */
   async getCashout(opts?: {
+    month?: string;
     weekLabel?: string;
     type?: string;
     limit?: number;
   }): Promise<CashoutRow[]> {
     return api.get<CashoutRow[]>(
       `/api/crm/accounting/cashout${qs({
+        month: opts?.month,
         week_label: opts?.weekLabel,
         type: opts?.type,
         limit: opts?.limit,
@@ -437,11 +440,13 @@ export const accountingApi = {
 
   /** Parsed bank-statement transactions, newest first; the reconciliation inbox. */
   async getBankTransactions(opts?: {
+    month?: string;
     reconciledStatus?: ReconciledStatus;
     limit?: number;
   }): Promise<BankTransaction[]> {
     return api.get<BankTransaction[]>(
       `/api/crm/accounting/bank-transactions${qs({
+        month: opts?.month,
         reconciled_status: opts?.reconciledStatus,
         limit: opts?.limit,
       })}`,
@@ -449,22 +454,27 @@ export const accountingApi = {
   },
 
   /** What was confirmed, linked or ignored today (WITA); read-only. */
-  async getDoneToday(): Promise<DoneTodayResponse> {
-    return api.get<DoneTodayResponse>("/api/crm/accounting/done-today");
+  async getDoneToday(month?: string): Promise<DoneTodayResponse> {
+    return api.get<DoneTodayResponse>(
+      `/api/crm/accounting/done-today${qs({ month })}`,
+    );
   },
 
   /** The issuing companies, each with its bank account and how far its statements reach. */
-  async getCompanies(): Promise<AccountingCompany[]> {
-    return api.get<AccountingCompany[]>("/api/crm/accounting/companies");
+  async getCompanies(month?: string): Promise<AccountingCompany[]> {
+    return api.get<AccountingCompany[]>(
+      `/api/crm/accounting/companies${qs({ month })}`,
+    );
   },
 
   /** Debits newest first with their reading and state; `state` lists one side only. */
   async getOutgoings(opts?: {
+    month?: string;
     limit?: number;
     state?: OutgoingState;
   }): Promise<OutgoingsResponse> {
     return api.get<OutgoingsResponse>(
-      `/api/crm/accounting/outgoings${qs({ limit: opts?.limit, state: opts?.state })}`,
+      `/api/crm/accounting/outgoings${qs({ limit: opts?.limit, state: opts?.state, month: opts?.month })}`,
     );
   },
 
@@ -509,9 +519,10 @@ export const accountingApi = {
   /** Unmatched incoming transfers with their light, newest first. */
   async getReconciliationInbox(
     limit?: number,
+    month?: string,
   ): Promise<ReconciliationInboxItem[]> {
     return api.get<ReconciliationInboxItem[]>(
-      `/api/crm/accounting/reconciliation-inbox${qs({ limit })}`,
+      `/api/crm/accounting/reconciliation-inbox${qs({ limit, month })}`,
     );
   },
 
