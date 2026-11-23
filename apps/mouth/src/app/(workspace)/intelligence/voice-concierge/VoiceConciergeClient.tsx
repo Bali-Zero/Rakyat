@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { VOICE_CONCIERGE_MAX_MESSAGE_LENGTH } from "@/lib/voice-concierge-limits";
 
 type ConciergeIntent =
   "visa" | "company" | "tax" | "property" | "operations" | "unknown";
@@ -146,10 +147,62 @@ function getAudioStackLabel(status: VoiceConciergeLabStatus | null): string {
   return "Audio gated";
 }
 
-function isConciergeResponse(
-  payload: ConciergeResponse | ConciergeErrorResponse,
-): payload is ConciergeResponse {
-  return "answer" in payload;
+const CONCIERGE_FALLBACK_ERROR = "The concierge could not answer. Try again.";
+const CONCIERGE_TOO_LONG_ERROR = `Message too long: at most ${VOICE_CONCIERGE_MAX_MESSAGE_LENGTH.toLocaleString("en-US")} characters.`;
+
+// String-typed optional fields the page reads from a response (spoken_answer,
+// safety_note, intent, risk_level, next_action, mode, provider, model): when
+// present and not null they must be strings.
+const OPTIONAL_STRING_FIELDS = [
+  "spoken_answer",
+  "safety_note",
+  "intent",
+  "risk_level",
+  "next_action",
+  "mode",
+  "provider",
+  "model",
+] as const;
+
+/**
+ * Defines at runtime what a concierge response is. Anything else (a 200 with
+ * another shape, an error body) is not an answer and never enters the history.
+ */
+function isConciergeResponse(value: unknown): value is ConciergeResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.answer !== "string" || !candidate.answer.trim()) {
+    return false;
+  }
+  for (const field of OPTIONAL_STRING_FIELDS) {
+    const entry = candidate[field];
+    if (entry !== undefined && entry !== null && typeof entry !== "string") {
+      return false;
+    }
+  }
+  const replies = candidate.quick_replies;
+  if (replies !== undefined && replies !== null) {
+    if (
+      !Array.isArray(replies) ||
+      replies.some((reply) => typeof reply !== "string")
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function readRouteError(value: unknown): string {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const body = value as ConciergeErrorResponse;
+    if (typeof body.safety_note === "string" && body.safety_note) {
+      return body.safety_note;
+    }
+    if (typeof body.error === "string" && body.error) return body.error;
+  }
+  return CONCIERGE_FALLBACK_ERROR;
 }
 
 function getSpeechText(response: ConciergeResponse): string {
@@ -596,17 +649,27 @@ export function VoiceConciergeClient(): React.JSX.Element {
       const trimmed = message.trim();
       if (!trimmed || isSubmitting) return;
 
+      // A long voice transcript bypasses the textarea's maxLength: refuse it
+      // here, before it can reach the route or the history.
+      if (trimmed.length > VOICE_CONCIERGE_MAX_MESSAGE_LENGTH) {
+        setError(CONCIERGE_TOO_LONG_ERROR);
+        return;
+      }
+
+      const messagesBeforeTurn = messages;
       const userMessage: ConciergeMessage = {
         id: `user-${Date.now()}`,
         role: "user",
         content: trimmed,
       };
-      const nextMessages = [...messages, userMessage].slice(-6);
+      const nextMessages = [...messagesBeforeTurn, userMessage].slice(-6);
       setMessages(nextMessages);
       setInput("");
       setError(null);
       setIsSubmitting(true);
 
+      let failure: string | null = null;
+      let answer: ConciergeResponse | null = null;
       try {
         const response = await fetch("/api/lab/voice-concierge", {
           method: "POST",
@@ -614,40 +677,48 @@ export function VoiceConciergeClient(): React.JSX.Element {
           body: JSON.stringify({
             message: trimmed,
             locale: inferLocaleFromText(trimmed),
-            history: messages.slice(-4).map((turn) => ({
+            history: messagesBeforeTurn.slice(-4).map((turn) => ({
               role: turn.role,
               content: turn.content,
             })),
           }),
         });
 
-        const payload = (await response.json()) as
-          ConciergeResponse | ConciergeErrorResponse;
-
-        if (!response.ok || !isConciergeResponse(payload)) {
-          const errorPayload = payload as ConciergeErrorResponse;
-          const nextError =
-            errorPayload.safety_note ??
-            errorPayload.error ??
-            "Voice concierge request failed";
-          setError(nextError);
-          return;
+        let payload: unknown = null;
+        let parsed = false;
+        try {
+          payload = await response.json();
+          parsed = true;
+        } catch {
+          parsed = false;
         }
 
-        const assistantMessage: ConciergeMessage = {
-          id: `assistant-${Date.now()}`,
-          role: "assistant",
-          content: payload.answer,
-        };
-        setLastResponse(payload);
-        setMessages([...nextMessages, assistantMessage].slice(-6));
-        void playLocalSpeech(getSpeechText(payload));
-      } catch (requestError) {
-        setError(
-          requestError instanceof Error
-            ? requestError.message
-            : "Voice concierge request failed",
-        );
+        if (response.ok && parsed && isConciergeResponse(payload)) {
+          answer = payload;
+        } else {
+          failure = readRouteError(parsed ? payload : null);
+        }
+      } catch {
+        failure = CONCIERGE_FALLBACK_ERROR;
+      }
+
+      try {
+        if (answer) {
+          const assistantMessage: ConciergeMessage = {
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: answer.answer,
+          };
+          setLastResponse(answer);
+          setMessages([...nextMessages, assistantMessage].slice(-6));
+          void playLocalSpeech(getSpeechText(answer));
+        } else {
+          // A failed turn leaves no trace in the conversation: the history is
+          // what it was, and the visitor gets the text back to edit or resend.
+          setMessages(messagesBeforeTurn);
+          setInput(trimmed);
+          setError(failure ?? CONCIERGE_FALLBACK_ERROR);
+        }
       } finally {
         setIsSubmitting(false);
       }
@@ -972,6 +1043,7 @@ export function VoiceConciergeClient(): React.JSX.Element {
                   aria-label="Concierge prompt"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
+                  maxLength={VOICE_CONCIERGE_MAX_MESSAGE_LENGTH}
                   placeholder="Can I open a cafe in Bali?"
                   className="min-h-[88px] resize-none"
                 />

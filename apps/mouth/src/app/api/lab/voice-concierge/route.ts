@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { VOICE_CONCIERGE_MAX_MESSAGE_LENGTH } from "@/lib/voice-concierge-limits";
 import { canAccessVoiceConcierge } from "./auth";
 
 export const runtime = "nodejs";
@@ -55,11 +56,8 @@ interface GeminiResponse {
 }
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
-const MAX_MESSAGE_LENGTH = 1200;
+const MAX_MESSAGE_LENGTH = VOICE_CONCIERGE_MAX_MESSAGE_LENGTH;
 const MAX_HISTORY_ITEMS = 4;
-// The client replays assistant answers (Gemini, maxOutputTokens 700) as history,
-// so those turns may legitimately exceed the visitor message limit.
-const MAX_ASSISTANT_HISTORY_LENGTH = 4000;
 const MAX_SPOKEN_ANSWER_LENGTH = 96;
 const TEXT_PROVIDER_TIMEOUT_MS = 15_000;
 const SUPPORTED_LOCALES = new Set<SupportedLocale>([
@@ -191,14 +189,9 @@ function validateBody(parsed: unknown): BodyValidation {
       return { ok: false, error: "invalid history" };
     }
     for (const turn of body.history) {
+      // Shape only: history is never forwarded upstream, so its length is
+      // never a reason to refuse a turn.
       if (!isSafeHistoryTurn(turn)) return { ok: false, error: "invalid history" };
-      const limit =
-        turn.role === "assistant"
-          ? MAX_ASSISTANT_HISTORY_LENGTH
-          : MAX_MESSAGE_LENGTH;
-      if (turn.content.length > limit) {
-        return { ok: false, error: "invalid history" };
-      }
     }
   }
   return { ok: true, message };
@@ -208,10 +201,7 @@ function getSafeHistory(body: VoiceConciergeRequest): SafeHistoryTurn[] {
   return (Array.isArray(body.history) ? body.history : [])
     .filter(isSafeHistoryTurn)
     .slice(-MAX_HISTORY_ITEMS)
-    .map((turn) => ({
-      role: turn.role,
-      content: turn.content.slice(0, MAX_MESSAGE_LENGTH),
-    }));
+    .map((turn) => ({ role: turn.role, content: turn.content }));
 }
 
 function containsRequestPii(
@@ -219,7 +209,11 @@ function containsRequestPii(
   message: string,
 ): boolean {
   if (containsObviousPii(message)) return true;
-  return getSafeHistory(body).some((turn) => containsObviousPii(turn.content));
+  // Only the visitor's own turns are screened, each whole. Assistant turns are
+  // this route's answers and never go upstream.
+  return getSafeHistory(body).some(
+    (turn) => turn.role === "user" && containsObviousPii(turn.content),
+  );
 }
 
 function inferLocaleFromText(message: string): SupportedLocale {
