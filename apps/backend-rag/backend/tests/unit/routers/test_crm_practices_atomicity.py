@@ -36,7 +36,7 @@ async def test_failed_operation_exits_transaction_without_notifications(
         "practice_type_id": 10,
         "practice_type_code": "open_inquiry" if operation == "create" else "ext_b1_voa",
         "practice_type_name": "Open inquiry",
-        "status": "inquiry" if operation == "create" else "on_process",
+        "status": "inquiry" if operation == "create" else "waiting_documents",
         "priority": "normal",
         "payment_status": "unpaid",
         "client_visible": False,
@@ -85,7 +85,7 @@ async def test_failed_operation_exits_transaction_without_notifications(
                 await router.update_practice(
                     request=MagicMock(),
                     practice_id=1,
-                    updates=router.PracticeUpdate(status="on_process"),
+                    updates=router.PracticeUpdate(status="waiting_documents"),
                     db_pool=mock_db_pool,
                     current_user=user,
                 )
