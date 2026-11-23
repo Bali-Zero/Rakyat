@@ -7,30 +7,32 @@ import { describe, expect, it } from "vitest";
  * urgent/high priority badges, the payment-status pill, the expiry
  * countdown badges, the "last updated" age badge and the "passate" divider
  * label. Measured at 3e76a31b. They now sit at 11px, the floor
- * /kbli-explorer and the portal company page already hold.
+ * /kbli-explorer and the portal company page already hold. The 18 labels
+ * that remained at 10px (measured at 1adaf23971) joined them.
  *
  * Declared limits: reads page.tsx as text and checks un-prefixed arbitrary
- * `text-[9px]` only. It does not render, does not cover the 10px labels in
- * the same file (a separate slice of the systemic text-[9|10]px task), and
- * does not cover process/[id] or process/new.
+ * `text-[9px]` and `text-[10px]` only. It does not render and does not
+ * cover process/[id] or process/new.
  */
 const SRC = readFileSync(join(__dirname, "page.tsx"), "utf8");
-const NINE_PX = /(?<![\w:-])text-\[9px\]/g;
+const BELOW_FLOOR = /(?<![\w:-])text-\[(?:9|10)px\]/g;
 
-describe("process board holds the 11px floor for its former 9px labels", () => {
+describe("process board holds the 11px floor for its labels", () => {
   it("positive control: page.tsx is read and carries arbitrary px text sizes", () => {
     expect(SRC).toContain("passate");
     expect([...SRC.matchAll(/text-\[\d+px\]/g)].length).toBeGreaterThan(0);
   });
 
-  it("no 9px text", () => {
-    expect([...SRC.matchAll(NINE_PX)].map((m) => m[0])).toEqual([]);
+  it("no 9px or 10px text", () => {
+    expect([...SRC.matchAll(BELOW_FLOOR)].map((m) => m[0])).toEqual([]);
   });
 
-  it("the probe fires on the size it forbids, not on prefixed variants", () => {
-    const probe = 'className="text-[9px] md:text-[9px] text-[10px]"';
-    expect([...probe.matchAll(NINE_PX)].map((m) => m[0])).toEqual([
+  it("the probe fires on the sizes it forbids, not on prefixed variants or the floor", () => {
+    const probe =
+      'className="text-[9px] md:text-[9px] text-[10px] md:text-[10px] text-[11px]"';
+    expect([...probe.matchAll(BELOW_FLOOR)].map((m) => m[0])).toEqual([
       "text-[9px]",
+      "text-[10px]",
     ]);
   });
 });
