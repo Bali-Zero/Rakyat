@@ -6,6 +6,7 @@ CI exposes TEST_DATABASE_URL on every backend shard. Each test owns a disposable
 
 import asyncio
 import base64
+import hashlib
 import os
 from datetime import date
 from pathlib import Path
@@ -18,6 +19,7 @@ import pytest
 import pytest_asyncio
 from fastapi import BackgroundTasks, HTTPException
 
+from backend.app.routers.crm_enhanced_documents import _active_duplicate_document_id
 from backend.app.routers.crm_practice_delivery import DeliveryFile
 from backend.services.crm import practice_delivery as service
 from backend.services.portal.portal_service import PortalService
@@ -86,11 +88,21 @@ async def pool(monkeypatch):
 
         async def sink(client_id, data, **kwargs):
             assert data.client_visible is False
+            digest = hashlib.md5(base64.b64decode(data.file), usedforsecurity=False).hexdigest()
             async with db.acquire() as conn:
+                if data.company_id is None and await _active_duplicate_document_id(
+                    conn,
+                    client_id,
+                    digest,
+                    practice_id=data.practice_id,
+                    family_member_id=data.family_member_id,
+                    missing_delivery_slot=kwargs.get("missing_delivery_slot"),
+                ):
+                    raise HTTPException(409, "Duplicate file: same subject and contents")
                 await conn.execute(
                     """INSERT INTO documents(practice_id,client_id,family_member_id,
-                    intake_idempotency_key,file_id,file_name,uploaded_source,status,client_visible,document_type)
-                    VALUES($1,$2,$3,$4,$4,$5,'team','active',false,$6)
+                    intake_idempotency_key,file_id,file_name,uploaded_source,status,client_visible,document_type,content_hash)
+                    VALUES($1,$2,$3,$4,$4,$5,'team','active',false,$6,$7)
                     ON CONFLICT(intake_idempotency_key) DO NOTHING""",
                     data.practice_id,
                     client_id,
@@ -98,6 +110,7 @@ async def pool(monkeypatch):
                     data.intake_idempotency_key,
                     data.file_name,
                     data.document_type,
+                    digest,
                 )
 
                 if data.company_id is not None:
@@ -454,3 +467,45 @@ async def test_completed_renewal_can_restore_a_missing_compound_permit_without_a
         assert (await service.portal_files(conn, 8, 31))["documents"] == [
             {"id": new_id, "file_name": "replacement-combined.pdf"}
         ]
+
+
+@pytest.mark.asyncio
+async def test_same_bytes_repair_only_exempts_its_missing_storage_pointer(pool):
+    await service.upload(
+        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
+    )
+    permit = final_file("itk")
+    posted = await service.upload(pool, 7, "document_2", STAFF, permit, BackgroundTasks())
+    original = posted["slots"][1]["document_id"]
+    await service.complete(pool, 7, STAFF, BackgroundTasks())
+    async with pool.acquire() as conn:
+        digest = await conn.fetchval("SELECT content_hash FROM documents WHERE id=$1", original)
+        # A real file continues to deduplicate even if the caller names its slot.
+        assert (
+            await _active_duplicate_document_id(
+                conn, 31, digest, practice_id=7, missing_delivery_slot="document_2"
+            )
+            == original
+        )
+        await conn.execute("UPDATE documents SET file_id=NULL WHERE id=$1", original)
+        assert await _active_duplicate_document_id(conn, 31, digest, practice_id=7) == original
+        assert (
+            await _active_duplicate_document_id(
+                conn, 31, digest, practice_id=7, missing_delivery_slot="electronic_visa"
+            )
+            == original
+        )
+        assert (
+            await _active_duplicate_document_id(
+                conn, 31, digest, practice_id=7, missing_delivery_slot="document_2"
+            )
+            is None
+        )
+    repaired = await service.upload(
+        pool, 7, "document_2", STAFF, permit, BackgroundTasks(), repair=True
+    )
+    assert repaired["status"] == "completed" and repaired["slots"][1]["document_id"] != original
+    assert repaired["visa_followup"]["fulfilled_at"]
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=7") == 1
+        assert await conn.fetchval("SELECT count(*) FROM timeline_events WHERE practice_id=7") == 1

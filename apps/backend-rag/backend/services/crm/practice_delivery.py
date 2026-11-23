@@ -292,7 +292,7 @@ async def recoverable_marker(conn: Any, p: dict, base: str) -> str:
     retired = await conn.fetchval(
         f"""SELECT max(d.id) FROM documents d WHERE d.client_id=$1
             AND (d.intake_idempotency_key=$2 OR d.intake_idempotency_key LIKE $2 || ':%')
-            AND (NOT ({_LIVE}) OR d.family_member_id IS DISTINCT FROM $3)""",
+            AND (NOT ({_LIVE}) OR NULLIF(d.file_id,'') IS NULL OR d.family_member_id IS DISTINCT FROM $3)""",
         p["client_id"],
         base,
         p["family_member_id"],
@@ -414,6 +414,8 @@ async def stage(
     request: Any,
     marker: str,
     tasks: BackgroundTasks,
+    *,
+    repair: bool = False,
 ) -> None:
     # A private draft remains recoverable by its deterministic storage key if
     # the operation is interrupted between Drive and the delivery transaction.
@@ -455,6 +457,7 @@ async def stage(
             background_tasks=tasks,
             access_already_verified=True,
             uploaded_source="team",
+            missing_delivery_slot=slot["key"] if repair else None,
         )
     except HTTPException as exc:
         if exc.status_code != 409:
@@ -514,7 +517,10 @@ async def retire_replaced_file(conn: Any, p: dict, previous: Any) -> None:
         f"""UPDATE company_documents cd SET client_visible=false
             FROM documents d JOIN practices p ON p.id=$1
             WHERE cd.id=$3 AND cd.company_id=$4 AND d.id=$2 AND {_SCOPED}
-              AND cd.google_drive_file_id=d.file_id AND d.uploaded_source='team'
+              AND d.uploaded_source='team'
+              AND (cd.google_drive_file_id=d.file_id OR (NULLIF(d.file_id,'') IS NULL AND (
+                to_jsonb(cd)->>'intake_idempotency_key'=d.intake_idempotency_key OR
+                strpos(COALESCE(to_jsonb(cd)->>'notes',''),'[intake_key:' || d.intake_idempotency_key || ']')>0)))
               AND d.intake_idempotency_key LIKE ('case-delivery:' || p.id::text || ':' || cd.company_id::text || ':%')
               AND EXISTS(SELECT 1 FROM client_company_links l WHERE l.client_id=p.client_id AND l.company_id=cd.company_id)
               AND NOT EXISTS (
@@ -584,7 +590,7 @@ async def upload(
             if replay and replay["document_id"] == initial_slot["document_id"]:
                 return initial_view
             raise HTTPException(409, "This delivered permit is already available")
-    await stage(pool, snapshot, initial_slot, user, request, marker, tasks)
+    await stage(pool, snapshot, initial_slot, user, request, marker, tasks, repair=repair)
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
         if not repair:
