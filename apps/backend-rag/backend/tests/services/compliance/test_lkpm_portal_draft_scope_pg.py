@@ -18,6 +18,7 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException, Request
 
+from backend.app.models.lkpm import LKPMClientSubmission
 from backend.app.routers import lkpm as lkpm_router
 from backend.db.migration_base import split_migration_sql
 from backend.services.compliance.lkpm_service import LKPMService
@@ -51,9 +52,32 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
             await conn.execute(forward)
             await conn.execute(
                 """
-                CREATE TABLE companies (id integer PRIMARY KEY, company_name text);
+                ALTER TABLE lkpm_reports ADD CONSTRAINT uq_lkpm_report
+                    UNIQUE (client_id, company_id, quarter, year);
+                CREATE TABLE companies (
+                    id integer PRIMARY KEY, company_name text,
+                    npwp_company text, nib text, kbli_code text
+                );
                 CREATE TABLE client_company_links (
-                    client_id integer, company_id integer, status text
+                    client_id integer, company_id integer, status text, is_primary boolean
+                );
+                CREATE TABLE lkpm_client_config (
+                    id serial PRIMARY KEY, client_id integer NOT NULL, company_id integer,
+                    company_name text NOT NULL, npwp text, nib text,
+                    kbli_codes text[] NOT NULL DEFAULT '{}',
+                    planned_equipment_domestic bigint NOT NULL DEFAULT 0,
+                    planned_equipment_import bigint NOT NULL DEFAULT 0,
+                    planned_building_domestic bigint NOT NULL DEFAULT 0,
+                    planned_building_import bigint NOT NULL DEFAULT 0,
+                    planned_vehicle_domestic bigint NOT NULL DEFAULT 0,
+                    planned_vehicle_import bigint NOT NULL DEFAULT 0,
+                    planned_land bigint NOT NULL DEFAULT 0,
+                    planned_working_capital bigint NOT NULL DEFAULT 0,
+                    planned_other bigint NOT NULL DEFAULT 0,
+                    planned_tki integer NOT NULL DEFAULT 0,
+                    planned_tka integer NOT NULL DEFAULT 0,
+                    jurnal_api_key text, jurnal_company_id text,
+                    CONSTRAINT uq_lkpm_client UNIQUE (client_id, company_id)
                 );
                 CREATE TABLE team_members (
                     id uuid PRIMARY KEY, role text, active boolean,
@@ -113,11 +137,11 @@ def _request(path: str) -> Request:
     )
 
 
-async def _portal_endpoint(pool: asyncpg.Pool) -> dict:
+async def _portal_endpoint(pool: asyncpg.Pool, quarter: str = "Q1") -> dict:
     return await lkpm_router.get_draft(
         client_id=0,
-        quarter="Q1",
-        request=_request("/api/v1/lkpm/draft/0/Q1"),
+        quarter=quarter,
+        request=_request(f"/api/v1/lkpm/draft/0/{quarter}"),
         year=YEAR,
         current_user={"user_id": PORTAL_USER, "email": "portal@example.test", "role": "client"},
         db_pool=pool,
@@ -239,3 +263,78 @@ async def test_staff_endpoint_still_selects_a_row_by_its_own_key(pool: asyncpg.P
     )
 
     assert response["draft"]["company_id"] == OTHER_COMPANY
+
+
+async def _realized(
+    pool: asyncpg.Pool, client_id: int, company_id: int | None, equipment: int
+) -> None:
+    """An earlier (Q1) report of one series with a realized domestic equipment figure."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO lkpm_reports (client_id, company_id, quarter, year, "
+            "realized_equipment_domestic) VALUES ($1, $2, 'Q1', $3, $4)",
+            client_id,
+            company_id,
+            YEAR,
+            equipment,
+        )
+
+
+async def _imported_namesake_and_own_history(pool: asyncpg.Pool) -> None:
+    """The caller is linked to 900010 only. An imported Q1 report of company 900005, which the
+    caller is not linked to, carries client_id 900005: the caller's own id."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO companies (id, company_name) VALUES "
+            "(900010, 'PT Contoh Satu'), (900005, 'PT Contoh Tiga')"
+        )
+    await _portal_user(pool)
+    await _link(pool, PORTAL_CLIENT, OWN_COMPANY, "active")
+    await _realized(pool, PORTAL_CLIENT, PORTAL_CLIENT, 7777)
+
+
+@pytest.mark.asyncio
+async def test_a_portal_submission_sums_only_the_callers_own_company_series(
+    pool: asyncpg.Pool,
+) -> None:
+    await _imported_namesake_and_own_history(pool)
+    await _realized(pool, PORTAL_CLIENT, OWN_COMPANY, 100)
+    portal_user = {"user_id": PORTAL_USER, "email": "portal@example.test", "role": "client"}
+
+    submitted = await lkpm_router.submit_data(
+        submission=LKPMClientSubmission(
+            client_id=0, company_id=OWN_COMPANY, quarter="Q2", year=YEAR
+        ),
+        current_user=portal_user,
+        db_pool=pool,
+    )
+    response = await _portal_endpoint(pool, "Q2")
+
+    assert submitted["success"] is True
+    assert response["draft"]["company_id"] == OWN_COMPANY
+    assert response["draft"]["cumulative"]["equipment_domestic"] == 100, (
+        "the cumulative of the portal draft carries figures outside the caller's own series"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_draft_generated_for_the_caller_sums_only_its_company_less_series(
+    pool: asyncpg.Pool,
+) -> None:
+    await _imported_namesake_and_own_history(pool)
+    await _realized(pool, PORTAL_CLIENT, None, 50)
+    await _realized(pool, PORTAL_CLIENT, OWN_COMPANY, 100)
+    await _realized(pool, PORTAL_CLIENT + 1, None, 9)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO lkpm_client_config (client_id, company_id, company_name) "
+            "VALUES ($1, NULL, 'PT Contoh Satu')",
+            PORTAL_CLIENT,
+        )
+
+    generated = await LKPMService(pool).generate_draft(PORTAL_CLIENT, "Q2", YEAR)
+    response = await _portal_endpoint(pool, "Q2")
+
+    assert generated.cumulative.equipment_domestic == 50
+    assert response["draft"]["company_id"] is None
+    assert response["draft"]["cumulative"]["equipment_domestic"] == 50

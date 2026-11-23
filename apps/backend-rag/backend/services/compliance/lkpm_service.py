@@ -496,6 +496,7 @@ class LKPMService:
             submission.client_id,
             submission.quarter,
             submission.year,
+            draft.company_id,
         )
         draft.cumulative = InvestmentRealization(
             equipment_domestic=cumulative.equipment_domestic + draft.realized.equipment_domestic,
@@ -595,7 +596,7 @@ class LKPMService:
         )
 
         # Calculate cumulative
-        cumulative = await self._calculate_cumulative(client_id, quarter, year)
+        cumulative = await self._calculate_cumulative(client_id, quarter, year, draft.company_id)
         draft.cumulative = InvestmentRealization(
             equipment_domestic=cumulative.equipment_domestic + draft.realized.equipment_domestic,
             equipment_import=cumulative.equipment_import + draft.realized.equipment_import,
@@ -1167,10 +1168,15 @@ class LKPMService:
         client_id: int,
         quarter: str,
         year: int,
+        company_id: int | None = None,
     ) -> InvestmentRealization:
-        """Sum all previous quarters' realization for cumulative total."""
-        # Quarter ordering for comparison
+        """Sum the realization of the earlier quarters of one report series.
 
+        A series is the key a draft is saved under: the client and the company, or
+        the client alone for a draft that names no company. `client_id` holds a
+        company id on imported rows, so a sum keyed by the client alone could add
+        the figures of a company the client is not linked to.
+        """
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -1186,11 +1192,13 @@ class LKPMService:
                     COALESCE(SUM(realized_other), 0) as other
                 FROM lkpm_reports
                 WHERE client_id = $1
+                  AND company_id IS NOT DISTINCT FROM $4
                   AND (year < $2 OR (year = $2 AND quarter < $3))
                 """,
                 client_id,
                 year,
                 quarter,
+                company_id,
             )
 
         if not rows or not rows[0]:
