@@ -26,6 +26,10 @@ _UNARYOP_MAP = {
     ast.USub: operator.neg,
 }
 
+MAX_EXPRESSION_LENGTH = 200
+MAX_POWER_EXPONENT = 100
+MAX_POWER_BASE = 10**15
+
 
 class SafeMathError(Exception):
     """Raised when expression is invalid or contains disallowed operations."""
@@ -52,6 +56,10 @@ def _eval_node(node: ast.AST) -> Any:
             raise SafeMathError(f"Binary operator not allowed: {type(node.op).__name__}")
         left = _eval_node(node.left)
         right = _eval_node(node.right)
+        if isinstance(node.op, ast.Pow) and (
+            abs(right) > MAX_POWER_EXPONENT or abs(left) > MAX_POWER_BASE
+        ):
+            raise SafeMathError("Power operands exceed allowed bounds")
         op = _BINOP_MAP[type(node.op)]
         try:
             return op(left, right)
@@ -83,6 +91,8 @@ def safe_evaluate(expression: str) -> int | float:
     expression = expression.strip()
     if not expression:
         raise SafeMathError("Expression cannot be empty")
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        raise SafeMathError("Expression exceeds maximum length")
 
     try:
         tree = ast.parse(expression, mode="eval")
