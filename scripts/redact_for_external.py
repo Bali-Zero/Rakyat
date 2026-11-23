@@ -34,6 +34,7 @@ Stdlib only — this runs in CI.
 from __future__ import annotations
 
 import bisect
+import heapq
 import re
 
 # Value shapes that are credentials wherever they appear. Ordered longest-first
@@ -245,8 +246,120 @@ def _redact_late_token_families(text: str) -> str:
     return text
 
 
-def redact(text: str) -> str:
-    """Return `text` with credential VALUES replaced and structure intact."""
+# The placeholders the rules above emit. The stage below never edits inside one:
+# whatever they hide stays hidden, and the order of what they left is kept.
+_RESERVED_PLACEHOLDERS = (
+    "<REDACTED:secret>",
+    "<REDACTED:email>",
+    "<REDACTED:dsn-credentials>",
+)
+_RESERVED_PLACEHOLDER = re.compile("|".join(map(re.escape, _RESERVED_PLACEHOLDERS)))
+
+# A credential name together with its separator, from the first character of the
+# name (or of the opening quote of a quoted key) to the end of the separator:
+# `NAME` + `\s*[:=]`, or a quoted `NAME` + `\s*:`. The stage never edits inside one.
+_RESERVED_NAME_SITE = re.compile(
+    r"""(?ix)
+    \b(?:"""
+    + _CREDENTIAL_NAME
+    + r""")\s*[:=]
+    | (?P<open>['"])(?:"""
+    + _CREDENTIAL_NAME
+    + r""")(?P=open)\s*:
+    """
+)
+
+# An Authorization credential: the header name (bare, as a quoted key, or as a
+# quoted subscript), a `:` or `=` with optional blanks, an optional string prefix
+# and quote, the scheme word Bearer or Basic, then a run of the RFC 6750 b64token
+# alphabet followed by any number of "=". Everything stays on one line. Only the
+# run is a candidate for hiding; the name, the joint, the quotes and the scheme
+# word always stay.
+_AUTHORIZATION_CREDENTIAL = re.compile(
+    r"""(?aix)
+    (?: \bauthorization\b | (?P<q>['"])authorization(?P=q)\]? )
+    [ \t]*[:=][ \t]*
+    (?: (?:rb|br|fr|rf|r|b|u|f)? ['"] )?
+    (?:bearer|basic)[ \t]+
+    (?P<run>[A-Za-z0-9\-._~+/]+=*)
+    """
+)
+_RUN_MARKER = re.compile(r"[0-9+/=]")
+_RUN_LOWER = re.compile(r"[a-z]")
+_RUN_CAPITAL = re.compile(r"[A-Z]")
+
+
+def _is_credential_run(run: str) -> bool:
+    """The whole run reads as a credential, not as a word or a template."""
+    if len(run) < 8:
+        return False
+    if _RUN_MARKER.search(run) or len(run) >= 24:
+        return True
+    return bool(_RUN_LOWER.search(run) and _RUN_CAPITAL.search(run, 1))
+
+
+def _reserved_intervals(text: str) -> list[tuple[int, int]]:
+    """Sorted, disjoint half-open intervals the stage must not edit inside."""
+    placeholders = [m.span() for m in _RESERVED_PLACEHOLDER.finditer(text)]
+    sites = [m.span() for m in _RESERVED_NAME_SITE.finditer(text)]
+    merged: list[tuple[int, int]] = []
+    for start, end in heapq.merge(placeholders, sites):
+        if merged and start <= merged[-1][1]:
+            if end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _authorization_edits(text: str) -> list[tuple[int, int]]:
+    """The spans of `text` to replace: credential runs, minus reserved intervals.
+
+    One pass over an immutable input. The spans come out sorted and disjoint, each
+    outside every reserved interval and holding a non-whitespace character.
+    """
+    reserved = _reserved_intervals(text)
+    edits: list[tuple[int, int]] = []
+    cursor = 0  # first reserved interval that can still reach a later run
+    for match in _AUTHORIZATION_CREDENTIAL.finditer(text):
+        start, end = match.span("run")
+        if not _is_credential_run(match["run"]):
+            continue
+        while cursor < len(reserved) and reserved[cursor][1] <= start:
+            cursor += 1
+        pos = start
+        i = cursor
+        while i < len(reserved) and reserved[i][0] < end:
+            if reserved[i][0] > pos and not text[pos : reserved[i][0]].isspace():
+                edits.append((pos, reserved[i][0]))
+            pos = max(pos, reserved[i][1])
+            i += 1
+        if pos < end and not text[pos:end].isspace():
+            edits.append((pos, end))
+    return edits
+
+
+def _stage(text: str) -> str:
+    """Hide Authorization credentials in the output of the rules before it.
+
+    It only replaces characters that no earlier rule touched and that lie outside
+    every placeholder and credential name, so it can only hide more.
+    """
+    edits = _authorization_edits(text)
+    if not edits:
+        return text
+    out: list[str] = []
+    done = 0
+    for start, end in edits:
+        out.append(text[done:start])
+        out.append("<REDACTED:secret>")
+        done = end
+    out.append(text[done:])
+    return "".join(out)
+
+
+def _redact_main(text: str) -> str:
+    """The rules that decide what a value is, in order, with no late stage."""
     out = text
     for pattern in _SECRET_LITERALS:
         out = pattern.sub("<REDACTED:secret>", out)
@@ -265,9 +378,28 @@ def redact(text: str) -> str:
         lambda m: f"{m['name']}{m['sep']}<REDACTED:secret>", out
     )
     out = _redact_emails(out)
-    # Last, on the output of every rule above: these can only hide more.
-    out = _redact_late_token_families(out)
     return out
+
+
+def redact(text: str) -> str:
+    """Return `text` with credential VALUES replaced and structure intact.
+
+    The rules above run first; the Authorization stage and the late token
+    families then only hide more, the families always last.
+
+    Declared limits. A value behind a string prefix, after an escaped quote, with
+    the opposite quote inside, triple-quoted or unterminated may stay in clear, as
+    the quoted-assignment rules read quotes. A quoted key with hyphens is not a
+    credential name. The Authorization stage does not find: a credential under 8
+    characters; one of 8 to 23 characters with no digit, "+", "/" or "=" that is
+    not lower case mixed with a capital after its first character; a credential
+    with no scheme word, or after a scheme other than Bearer and Basic; a header
+    value continued on the next line. A credential whose own run reads as a
+    credential name and separator (it ends in KEY=, say) is a name site, so the
+    stage leaves it as the earlier rules left it. PEM private-key blocks are not
+    handled here.
+    """
+    return _redact_late_token_families(_stage(_redact_main(text)))
 
 
 def redact_lines(lines: list[str]) -> list[str]:
