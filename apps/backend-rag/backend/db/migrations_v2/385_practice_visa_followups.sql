@@ -20,6 +20,10 @@ CREATE TABLE practice_visa_followups (
     email_last_attempt_at timestamptz,
     email_attempts integer NOT NULL DEFAULT 0 CHECK(email_attempts >= 0),
     email_sent_at timestamptz,
+    email_receipt_confirmed_at timestamptz,
+    email_receipt_confirmed_by text,
+    email_receipt_reference text UNIQUE,
+
     owner_release_at timestamptz,
     owner_release_by text,
     owner_release_note text,
@@ -28,6 +32,10 @@ CREATE TABLE practice_visa_followups (
             AND postponement_note IS NOT NULL AND due_on=started_on+60
             AND (postponed_at AT TIME ZONE 'Asia/Makassar')::date BETWEEN started_on+30 AND started_on+59)),
     CHECK ((email_state='sent') = (email_sent_at IS NOT NULL)),
+    CHECK ((email_receipt_confirmed_at IS NULL AND email_receipt_confirmed_by IS NULL AND email_receipt_reference IS NULL)
+        OR (email_state='sent' AND email_receipt_confirmed_at IS NOT NULL
+            AND email_receipt_confirmed_by IS NOT NULL AND email_receipt_reference IS NOT NULL)),
+
     CHECK ((owner_release_at IS NULL) = (owner_release_by IS NULL))
 );
 CREATE INDEX idx_practice_visa_followups_due ON practice_visa_followups(due_on,practice_id)

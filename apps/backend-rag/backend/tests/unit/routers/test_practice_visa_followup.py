@@ -29,6 +29,9 @@ def row(**kw):
         "email_state": "not_sent",
         "escalation_note": None,
         "email_sent_at": None,
+        "email_receipt_confirmed_at": None,
+        "email_receipt_confirmed_by": None,
+        "email_receipt_reference": None,
         "email_last_attempt_at": None,
         "email_requested_at": None,
         "email_requested_by": None,
@@ -242,3 +245,55 @@ async def test_issuance_cannot_start_a_clock_without_its_durable_receipt(monkeyp
             conn, {"id": 7, "code": "visa_c1_tourism"}, "electronic_visa"
         )
     conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consultant_cannot_attest_to_owner_receipt(db, monkeypatch):
+    allow = AsyncMock()
+    monkeypatch.setattr(tracking, "_authorized_record", allow)
+    with pytest.raises(HTTPException) as denied:
+        await tracking.confirm_receipt(db[0], 7, USER, "mailbox-message-1")
+    assert denied.value.status_code == 403
+    allow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_confirmation_preserves_ambiguous_attempt_and_pay_hold(db, monkeypatch):
+    pool, conn = db
+    owner = {"email": "zero@balizero.com", "role": "admin"}
+    stamp = datetime.now(UTC)
+    prior = row(email_state="uncertain", email_attempts=1, escalation_note="Client delayed")
+    final = {
+        **prior,
+        "email_state": "sent",
+        "email_sent_at": stamp,
+        "email_receipt_confirmed_at": stamp,
+        "email_receipt_confirmed_by": owner["email"],
+        "email_receipt_reference": "mailbox-message-1",
+    }
+    allowed = AsyncMock(side_effect=[prior, final, final])
+    conn.fetchrow.return_value = final
+    sender = AsyncMock()
+    monkeypatch.setattr(tracking, "_authorized_record", allowed)
+    monkeypatch.setattr(tracking, "send_internal_email", sender)
+    view = await tracking.confirm_receipt(pool, 7, owner, "mailbox-message-1")
+    assert view["email_receipt_confirmed_at"] == stamp and view["owner_release_at"] is None
+    assert not view["can_confirm_receipt"] and not view["can_release"]
+    assert await tracking.confirm_receipt(pool, 7, owner, "mailbox-message-1") == view
+    with pytest.raises(HTTPException):
+        await tracking.confirm_receipt(pool, 7, owner, "a-different-reference")
+    assert conn.fetchrow.await_count == 1
+    sender.assert_not_awaited()
+
+
+def test_only_owner_can_confirm_uncertain_or_abandoned_send():
+    owner = {"email": "zero@balizero.com", "role": "admin"}
+    now = datetime.now(UTC)
+    stale = row(
+        email_state="sending", email_attempts=1, email_last_attempt_at=now - timedelta(minutes=10)
+    )
+    assert tracking.followup_view(stale, DAY0, user=owner, now=now)["can_confirm_receipt"]
+    assert not tracking.followup_view(stale, DAY0, user=USER, now=now)["can_confirm_receipt"]
+    assert not tracking.followup_view(
+        row(email_state="failed", email_attempts=1), DAY0, user=owner
+    )["can_confirm_receipt"]

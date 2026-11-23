@@ -32,3 +32,17 @@ async def send_reasons_to_owner(
     practice_id: Practice, request: OfficialNote, user: Staff, pool: DB
 ) -> dict[str, Any]:
     return await visa_followup.escalate(pool, practice_id, user, request.note)
+
+
+class OwnerReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reference: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=3, max_length=250)
+    ]
+
+
+@router.post("/{practice_id}/delivery/visa-followup/confirm-receipt")
+async def attest_to_received_email(
+    practice_id: Practice, request: OwnerReceipt, user: Staff, pool: DB
+) -> dict[str, Any]:
+    return await visa_followup.confirm_receipt(pool, practice_id, user, request.reference)

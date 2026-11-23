@@ -13,7 +13,7 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException
 
-from backend.app.services.internal_email import EmailProviderRejected
+from backend.app.services.internal_email import EmailDeliveryUncertain, EmailProviderRejected
 from backend.services.crm import visa_followup as tracking
 
 USER = {"email": "consultant@example.test", "role": "consultant"}
@@ -194,3 +194,40 @@ async def test_first_upload_clock_uses_frozen_wita_receipt_when_replayed_on_anot
         view = await tracking.get_followup(conn, 7, user=USER)
     assert view["started_on"] == date(2026, 1, 29)
     assert view["due_on"] == date(2026, 2, 28) and view["final_due_on"] == date(2026, 3, 30)
+
+
+@pytest.mark.asyncio
+async def test_owner_attests_positive_receipt_without_resending_or_releasing_pay(pool, monkeypatch):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM documents WHERE id=11")
+    transport = AsyncMock(side_effect=EmailDeliveryUncertain("response lost"))
+    monkeypatch.setattr(tracking, "send_internal_email", transport)
+    with pytest.raises(HTTPException) as lost:
+        await tracking.escalate(pool, 7, USER, "Client delayed arrival")
+    assert lost.value.status_code == 502
+    reference = "synthetic-brevo-message-7"
+    with pytest.raises(HTTPException) as denied:
+        await tracking.confirm_receipt(pool, 7, USER, reference)
+    assert denied.value.status_code == 403
+    owner = {"email": "zero@balizero.com", "role": "admin"}
+    confirmed = await tracking.confirm_receipt(pool, 7, owner, reference)
+    assert (
+        confirmed["email_receipt_confirmed_at"] is not None
+        and confirmed["owner_release_at"] is None
+    )
+    assert await tracking.confirm_receipt(pool, 7, owner, reference) == confirmed
+    assert (await tracking.escalate(pool, 7, USER, "Client delayed arrival"))[
+        "email_state"
+    ] == "sent"
+    assert transport.await_count == 1
+    async with pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT outcome FROM practice_visa_followup_send_attempts WHERE practice_id=7"
+            )
+            == "uncertain"
+        )
+        saved = await conn.fetchrow(
+            "SELECT email_receipt_confirmed_by,email_receipt_reference,owner_release_at FROM practice_visa_followups WHERE practice_id=7"
+        )
+        assert tuple(saved.values()) == (owner["email"], reference, None)

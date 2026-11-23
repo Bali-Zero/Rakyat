@@ -4,9 +4,11 @@ from datetime import UTC, date, datetime, timedelta
 from html import escape
 from typing import Any
 
+import asyncpg
 import httpx
 from fastapi import HTTPException
 
+from backend.app.deps.owner import OWNER_EMAILS, require_owner
 from backend.app.services.hr.hr_service import business_today
 from backend.app.services.internal_email import EmailProviderRejected, send_internal_email
 from backend.app.utils.service_accounts import is_human_team_member
@@ -89,6 +91,12 @@ def followup_view(
         "postponement_note": row["postponement_note"],
         "escalation_note": row["escalation_note"],
         "email_sent_at": row["email_sent_at"],
+        "email_receipt_confirmed_at": row["email_receipt_confirmed_at"],
+        "can_confirm_receipt": bool(
+            email == "uncertain"
+            and row["email_attempts"] > 0
+            and (user or {}).get("email") in OWNER_EMAILS
+        ),
         "fulfilled_at": row["fulfilled_at"],
         "owner_release_at": row["owner_release_at"],
         "can_postpone": bool(
@@ -209,7 +217,17 @@ async def escalate(pool: Any, practice_id: int, user: dict, note: str) -> dict:
             outcome,
         )
         if result is None:
-            raise HTTPException(409, "The escalation attempt has already been reconciled")
+            # The owner may have found the message while the original request
+            # was still in flight. Keep that attestation and record this wire
+            # response separately on its attempt.
+            result = await conn.fetchrow(
+                """SELECT * FROM practice_visa_followups WHERE practice_id=$1 AND email_attempts=$2
+                   AND email_receipt_confirmed_at IS NOT NULL""",
+                practice_id,
+                attempt,
+            )
+            if result is None:
+                raise HTTPException(409, "The escalation attempt has already been reconciled")
         await conn.execute(
             """UPDATE practice_visa_followup_send_attempts SET finished_at=now(),outcome=$3
                WHERE practice_id=$1 AND attempt=$2""",
@@ -217,11 +235,54 @@ async def escalate(pool: Any, practice_id: int, user: dict, note: str) -> dict:
             attempt,
             outcome,
         )
-    if outcome != "sent":
+    if result["email_state"] != "sent":
         detail = (
             "The email provider rejected this send. Retry the recorded reason."
             if outcome == "failed"
             else "Email acceptance is uncertain. Verify the owner mailbox before any further send."
         )
         raise HTTPException(502, detail)
+    return followup_view(result, business_today(), user=user)
+
+
+async def confirm_receipt(pool: Any, practice_id: int, user: dict, reference: str) -> dict:
+    """Attest to the already received message without contacting any transport.
+
+    The provider's attempt outcome and the owner's independent receipt are
+    both retained. A receipt is deliberately independent of payroll release.
+    """
+    # Reject non-owners without putting the employee's address in a log.
+    if user.get("email") not in OWNER_EMAILS:
+        raise HTTPException(403, "Owner access required")
+    await require_owner(user)
+    async with pool.acquire() as conn, conn.transaction():
+        row = await _authorized_record(conn, practice_id, user)
+        view = followup_view(row, business_today(), user=user)
+        if row["email_receipt_confirmed_at"] and row["email_receipt_reference"] == reference:
+            return view
+        if not view["can_confirm_receipt"]:
+            raise HTTPException(
+                409, "Only an uncertain send can be confirmed from the owner mailbox"
+            )
+        try:
+            result = await conn.fetchrow(
+                """UPDATE practice_visa_followups SET email_state='sent',email_sent_at=now(),
+                   email_receipt_confirmed_at=now(),email_receipt_confirmed_by=$2,email_receipt_reference=$3
+                   WHERE practice_id=$1 RETURNING *""",
+                practice_id,
+                user["email"],
+                reference,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            raise HTTPException(
+                409, "This message reference already confirms another escalation"
+            ) from exc
+        # If the process disappeared, its actual delivery outcome is unknown.
+        # A previously recorded provider response remains untouched.
+        await conn.execute(
+            """UPDATE practice_visa_followup_send_attempts SET finished_at=now(),outcome='uncertain'
+               WHERE practice_id=$1 AND attempt=$2 AND outcome='sending'""",
+            practice_id,
+            row["email_attempts"],
+        )
     return followup_view(result, business_today(), user=user)
