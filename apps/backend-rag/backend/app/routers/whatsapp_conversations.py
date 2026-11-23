@@ -295,11 +295,28 @@ async def send_whatsapp_message(
                         "Cannot send to unknown contacts."
                     ),
                 )
+    else:
+        # No database handle: the known-contact check cannot run, so only the
+        # allow-list above may authorise a recipient. Fail closed.
+        logger.warning("whatsapp send refused: recipient check unavailable (no database)")
+        raise HTTPException(
+            status_code=503,
+            detail="Recipient validation is unavailable. Message not sent.",
+        )
+
+    # Reserve the rate-limit slot before awaiting the provider: the check and
+    # the reservation run with no await between them, so a concurrent burst
+    # cannot all pass the check together. A failed send keeps its slot.
+    if not _check_rate_limit(phone):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: max {_RATE_LIMIT_MAX} messages per phone per hour",
+        )
+    _outbound_rate[phone].append(time.time())
 
     # Send via Meta WhatsApp Cloud API
     try:
         result = await whatsapp_service.send_message(phone=phone, text=body.message)
-        _outbound_rate[phone].append(time.time())
         logger.info(
             f"Outbound WA sent to {redact_identifier_for_log(phone)} "
             f"by {current_user.get('email', 'unknown')}"
