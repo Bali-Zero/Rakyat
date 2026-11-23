@@ -108,6 +108,13 @@ WHERE e.event_kind='electronic_visa_issued' AND pt.category IN ('single_entry_vi
 SELECT refresh_practice_visa_followup(practice_id) FROM practice_visa_followups;
 
 -- === ROLLBACK ===
+LOCK TABLE practice_visa_followups, practice_visa_followup_send_attempts IN ACCESS EXCLUSIVE MODE;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM practice_visa_followups) OR
+       EXISTS (SELECT 1 FROM practice_visa_followup_send_attempts) THEN
+        RAISE EXCEPTION 'Preserve recorded practice evidence before rollback of migration 385';
+    END IF;
+END $$;
 DROP TRIGGER visa_followup_document_changed ON documents;
 DROP FUNCTION sync_visa_followup_document();
 DROP TRIGGER visa_followup_slot_changed ON practice_delivery_slots;

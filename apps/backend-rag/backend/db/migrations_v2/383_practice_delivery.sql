@@ -65,6 +65,15 @@ CREATE TRIGGER practice_delivery_subject_guard
     EXECUTE FUNCTION guard_practice_delivery_subject();
 
 -- === ROLLBACK ===
+LOCK TABLE practice_delivery_titles, practice_delivery_slots, practice_delivery_fingerprints, practice_delivery_completions IN ACCESS EXCLUSIVE MODE;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM practice_delivery_titles) OR
+       EXISTS (SELECT 1 FROM practice_delivery_slots) OR
+       EXISTS (SELECT 1 FROM practice_delivery_fingerprints) OR
+       EXISTS (SELECT 1 FROM practice_delivery_completions) THEN
+        RAISE EXCEPTION 'Preserve recorded practice evidence before rollback of migration 383';
+    END IF;
+END $$;
 DROP TRIGGER practice_delivery_subject_guard ON practices;
 DROP FUNCTION guard_practice_delivery_subject();
 DROP TABLE practice_delivery_completions;
