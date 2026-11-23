@@ -196,14 +196,24 @@ def match_human_request(text: str | None) -> HumanRequestTurn | None:
 
 # ── Half B: the notification (I/O — NOT pure, unlike match_human_request) ──
 
+# Soft-deleted rows (`deleted_at`, migration 136) are not the client. Live
+# duplicates are ordered exactly as `whatsapp_identity._CLIENT_LOOKUP_SQL`
+# orders them (status priority, then id); a test pins the two together.
 _ASSIGNEE_LOOKUP_SQL = """
 SELECT id, assigned_to
   FROM clients
- WHERE NULLIF(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), '')
-       IN ($1, '62' || $1, '0' || $1)
-    OR NULLIF(regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g'), '')
-       IN ($1, '62' || $1, '0' || $1)
- ORDER BY id
+ WHERE deleted_at IS NULL
+   AND (NULLIF(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), '')
+        IN ($1, '62' || $1, '0' || $1)
+        OR NULLIF(regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g'), '')
+        IN ($1, '62' || $1, '0' || $1))
+ ORDER BY CASE status
+            WHEN 'active' THEN 0
+            WHEN 'lead' THEN 1
+            WHEN 'prospect' THEN 2
+            ELSE 3
+          END,
+          id
  LIMIT 1
 """
 
