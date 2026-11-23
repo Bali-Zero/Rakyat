@@ -1131,7 +1131,7 @@ export default function PratichePage() {
           aria-label="Process board"
           className="relative grid grid-flow-col auto-cols-[85vw] gap-4 overflow-x-auto overscroll-x-contain scroll-px-1 snap-x snap-mandatory pb-2 pt-6 sm:auto-cols-[minmax(280px,1fr)] xl:grid-flow-row xl:auto-cols-auto xl:grid-cols-5 xl:overflow-visible xl:pt-0"
         >
-          <p className="absolute right-1 top-0 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--bz-text-2)] xl:hidden">
+          <p className="absolute right-1 top-0 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--bz-text-2)] xl:hidden">
             Swipe to explore stages
             <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
           </p>
@@ -1238,7 +1238,7 @@ export default function PratichePage() {
                         return null;
                       return (
                         <div
-                          className="mb-3 text-[10px] font-medium tabular-nums opacity-70"
+                          className="mb-3 text-[11px] font-medium tabular-nums opacity-70"
                           style={{ color: colors.textColor }}
                         >
                           <Money compact value={colRevenue} />
@@ -1269,7 +1269,7 @@ export default function PratichePage() {
                         <p className="font-medium">
                           {columnPractices.length} completed{" "}
                         </p>
-                        <p className="opacity-70 mt-1 text-[10px]">
+                        <p className="opacity-70 mt-1 text-[11px]">
                           Click to expand
                         </p>
                       </button>
@@ -1438,7 +1438,7 @@ export default function PratichePage() {
 
                                 {hasSubStatus && (
                                   <p
-                                    className={`mb-2 text-[10px] font-medium ${
+                                    className={`mb-2 text-[11px] font-medium ${
                                       statusColumn === "unknown"
                                         ? "text-[var(--state-danger)]"
                                         : "text-[var(--bz-text-2)]"
@@ -1453,7 +1453,7 @@ export default function PratichePage() {
 
                                 {/* Family-member tag */}
                                 {practice.family_member_name && (
-                                  <p className="text-[10px] text-[var(--bz-accent)] flex items-center gap-1 mb-2">
+                                  <p className="text-[11px] text-[var(--bz-accent)] flex items-center gap-1 mb-2">
                                     <User className="w-2.5 h-2.5" />
                                     <span className="truncate">
                                       for {practice.family_member_name}
@@ -1466,7 +1466,7 @@ export default function PratichePage() {
 
                                 {/* Team leader — small muted line */}
                                 {teamLeaderLabel && (
-                                  <p className="text-[10px] text-[var(--bz-text-2)] mb-3 truncate">
+                                  <p className="text-[11px] text-[var(--bz-text-2)] mb-3 truncate">
                                     {teamLeaderLabel}
                                   </p>
                                 )}
@@ -1603,7 +1603,7 @@ export default function PratichePage() {
                                     [statusKey]: true,
                                   }))
                                 }
-                                className="w-full text-center text-[10px] text-[var(--bz-text-2)]/60 hover:text-[var(--bz-text-2)] py-1 transition-colors"
+                                className="w-full text-center text-[11px] text-[var(--bz-text-2)]/60 hover:text-[var(--bz-text-2)] py-1 transition-colors"
                               >
                                 +{hiddenGhostCount} passate
                               </button>
@@ -1759,7 +1759,7 @@ export default function PratichePage() {
                         {practice.client_lead ? (
                           <div className="inline-flex items-center gap-1.5 bg-[var(--bz-accent)]/10 px-2 py-0.5 rounded text-[var(--bz-accent)]">
                             <User className="w-3 h-3" />
-                            <span className="text-[10px] font-medium">
+                            <span className="text-[11px] font-medium">
                               {teamMemberOptions.find(
                                 (m) => m.value === practice.client_lead,
                               )?.label || practice.client_lead.split("@")[0]}
@@ -1795,11 +1795,11 @@ export default function PratichePage() {
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {practice.priority === "urgent" ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)]">
+                          <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)]">
                             🔥 urgent
                           </span>
                         ) : practice.priority === "high" ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[color-mix(in_srgb,var(--state-warning)_12%,transparent)] text-[var(--state-warning)]">
+                          <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-[color-mix(in_srgb,var(--state-warning)_12%,transparent)] text-[var(--state-warning)]">
                             ↑ high
                           </span>
                         ) : (
@@ -1815,7 +1815,7 @@ export default function PratichePage() {
                       <td className="px-4 py-3 text-sm">
                         {practice.payment_status ? (
                           <span
-                            className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                            className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium ${
                               practice.payment_status === "paid"
                                 ? "bg-[color-mix(in_srgb,var(--state-success)_15%,transparent)] text-[var(--state-success)]"
                                 : practice.payment_status === "partial"
@@ -2024,7 +2024,7 @@ export default function PratichePage() {
                 <p className="text-xs font-semibold text-[var(--bz-text-1)]">
                   Update Status
                 </p>
-                <p className="text-[10px] text-[var(--bz-text-2)]">
+                <p className="text-[11px] text-[var(--bz-text-2)]">
                   {selectedPractice.practice_type_code
                     ?.toUpperCase()
                     .replace(/_/g, " ") || "Process"}{" "}
@@ -2037,7 +2037,7 @@ export default function PratichePage() {
                   setSelectedPractice(null);
                   setMenuPosition(null);
                 }}
-                className="text-[10px] px-2 py-1 rounded border border-[var(--bz-border)] text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)] hover:border-[var(--bz-accent)]/40 transition-colors"
+                className="text-[11px] px-2 py-1 rounded border border-[var(--bz-border)] text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)] hover:border-[var(--bz-accent)]/40 transition-colors"
               >
                 Open →
               </button>
@@ -2077,7 +2077,7 @@ export default function PratichePage() {
                       {option.label}
                     </span>
                     {needsPrice && (
-                      <span className="text-[10px] text-[var(--bz-text-2)] pl-4">
+                      <span className="text-[11px] text-[var(--bz-text-2)] pl-4">
                         {QUOTED_PRICE_REQUIRED_TEXT_ID}
                       </span>
                     )}
@@ -2091,7 +2091,7 @@ export default function PratichePage() {
           </div>
           {/* Payment Status Section */}
           <div className="border-t border-[var(--bz-border)] px-3 py-2">
-            <p className="text-[10px] text-[var(--bz-text-2)] mb-1.5 font-medium uppercase tracking-wide">
+            <p className="text-[11px] text-[var(--bz-text-2)] mb-1.5 font-medium uppercase tracking-wide">
               Payment
             </p>
             <div className="flex gap-1">
@@ -2103,7 +2103,7 @@ export default function PratichePage() {
                     selectedPractice.payment_status === ps ||
                     updatingId !== null
                   }
-                  className="flex-1 text-[10px] py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-default capitalize"
+                  className="flex-1 text-[11px] py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-default capitalize"
                   style={{
                     background:
                       selectedPractice.payment_status === ps
@@ -2138,7 +2138,7 @@ export default function PratichePage() {
           </div>
           {/* Priority Section */}
           <div className="border-t border-[var(--bz-border)] px-3 py-2">
-            <p className="text-[10px] text-[var(--bz-text-2)] mb-1.5 font-medium uppercase tracking-wide">
+            <p className="text-[11px] text-[var(--bz-text-2)] mb-1.5 font-medium uppercase tracking-wide">
               Priority
             </p>
             <div className="flex gap-1">
@@ -2182,7 +2182,7 @@ export default function PratichePage() {
                       handlePriorityChange(selectedPractice.id, p.value)
                     }
                     disabled={isCurrent || updatingId !== null}
-                    className="flex-1 text-[10px] py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-default capitalize"
+                    className="flex-1 text-[11px] py-1 rounded font-medium transition-all disabled:opacity-40 disabled:cursor-default capitalize"
                     style={{
                       background: isCurrent ? p.active : "var(--bz-surface)",
                       color: isCurrent ? p.color : "var(--bz-text-2)",
