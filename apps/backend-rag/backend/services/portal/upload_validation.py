@@ -7,6 +7,7 @@ reject active, encrypted, ambiguous, or resource-amplifying payloads before
 any external side effect.
 """
 
+import re
 import struct
 import zlib
 from io import BytesIO
@@ -101,6 +102,19 @@ _DOCX_FORBIDDEN_NAMES: Final = frozenset(
     {
         "word/vbaproject.bin",
         "word/vbadata.xml",
+    }
+)
+_DOCX_FORBIDDEN_FIELD_NAMES: Final = frozenset(
+    {
+        "DDE",
+        "DDEAUTO",
+        "INCLUDE",
+        "INCLUDETEXT",
+        "INCLUDEPICTURE",
+        "LINK",
+        "IMPORT",
+        "DATABASE",
+        "RD",
     }
 )
 
@@ -466,6 +480,49 @@ def _docx_manifests_are_safe(
     return True
 
 
+def _local_name(name: str) -> str:
+    return name.rsplit("}", 1)[-1]
+
+
+def _docx_field_is_forbidden(instruction: str) -> bool:
+    field_name = re.match(r"\s*([A-Za-z]*)", instruction)
+    return field_name is not None and field_name.group(1).upper() in _DOCX_FORBIDDEN_FIELD_NAMES
+
+
+def _docx_word_fields_are_safe(xml_roots: dict[str, ElementTree.Element]) -> bool:
+    """Refuse Word fields that run a command or pull content from elsewhere.
+
+    Tags and attributes are compared by local name, so the Strict OOXML namespace is read
+    too. A field's instruction is a `fldSimple` `instr`, or the `instrText` runs between a
+    `begin` fldChar and its `separate` or `end`; fields nest. Its name is the leading run of
+    letters, so a quote right after the name does not hide it.
+    """
+    for name, root in xml_roots.items():
+        if not name.startswith("word/") or not name.endswith(".xml"):
+            continue
+        fields: list[list[str] | None] = []
+        for node in root.iter():
+            tag = _local_name(node.tag) if isinstance(node.tag, str) else ""
+            attributes = {_local_name(key): value for key, value in node.attrib.items()}
+            if tag == "fldSimple" and _docx_field_is_forbidden(attributes.get("instr", "")):
+                return False
+            if tag == "fldChar":
+                character_type = attributes.get("fldCharType")
+                if character_type == "begin":
+                    fields.append([])
+                elif character_type == "separate" and fields and fields[-1] is not None:
+                    if _docx_field_is_forbidden("".join(fields[-1])):
+                        return False
+                    fields[-1] = None
+                elif character_type == "end" and fields:
+                    instruction = fields.pop()
+                    if instruction is not None and _docx_field_is_forbidden("".join(instruction)):
+                        return False
+            elif tag == "instrText" and fields and fields[-1] is not None:
+                fields[-1].append(node.text or "")
+    return True
+
+
 def _is_safe_docx(content: bytes) -> bool:
     with ZipFile(BytesIO(content)) as archive:
         infos = archive.infolist()
@@ -510,6 +567,8 @@ def _is_safe_docx(content: bytes) -> bool:
             return False
         xml_roots = _parse_docx_xml_members(archive, frozen_names)
         if not _docx_manifests_are_safe(xml_roots, frozen_names):
+            return False
+        if not _docx_word_fields_are_safe(xml_roots):
             return False
 
     # python-docx resolves the package relationships and main document part.
