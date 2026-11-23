@@ -20,6 +20,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from backend.app.routers.crm_practice_delivery import DeliveryFile
 from backend.services.crm import practice_delivery as service
+from backend.services.portal.portal_service import PortalService
 
 SQL_BASE = """
 CREATE TABLE practice_types(id int primary key,code text,name text,category text);
@@ -29,9 +30,9 @@ CREATE TABLE practices(id int primary key,client_id int,family_member_id int,ass
 CREATE TABLE client_family_members(id int primary key,client_id int);
 CREATE TABLE documents(id serial primary key,practice_id int,client_id int,family_member_id int,
     intake_idempotency_key text UNIQUE,file_id text,file_name text,content_hash text,document_type text,uploaded_source text,status text,
-    deleted_at timestamptz,is_archived boolean,client_visible boolean,updated_at timestamptz);
+    deleted_at timestamptz,deleted_by text,is_archived boolean,client_visible boolean,updated_at timestamptz);
 CREATE TABLE companies(id int primary key);
-CREATE TABLE company_documents(id int primary key,company_id int,google_drive_file_id text,client_visible boolean);
+CREATE TABLE company_documents(id serial primary key,company_id int,google_drive_file_id text,client_visible boolean);
 CREATE TABLE client_company_links(company_id int,client_id int);
 CREATE TABLE activity_log(entity_type text,entity_id int,action text,performed_by text,description text);
 CREATE TABLE timeline_events(client_id int,practice_id int,event_type text,title text,description text,
@@ -98,6 +99,15 @@ async def pool(monkeypatch):
                     data.file_name,
                     data.document_type,
                 )
+
+                if data.company_id is not None:
+                    await conn.execute(
+                        """INSERT INTO company_documents(company_id,google_drive_file_id,client_visible)
+                           SELECT $1,$2,false WHERE NOT EXISTS (
+                           SELECT 1 FROM company_documents WHERE company_id=$1 AND google_drive_file_id=$2)""",
+                        data.company_id,
+                        data.intake_idempotency_key,
+                    )
 
         monkeypatch.setattr(service, "upload_document_base64", sink)
         monkeypatch.setattr(service, "invalidate_delivery_cache", AsyncMock())
@@ -281,3 +291,166 @@ async def test_direct_writers_cannot_reassign_an_evidenced_practice(pool, eviden
         )
         assert await conn.fetchval("SELECT status FROM practices WHERE id=7") == "cancelled"
         assert await conn.fetchval("SELECT client_id FROM practices WHERE id=8") == 32
+
+
+@pytest.mark.asyncio
+async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_completion(pool):
+    client = {"client_id": 31, "email": "client@example.test"}
+    vault = PortalService(pool)
+    issuance = await service.upload(
+        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
+    )
+    with pytest.raises(HTTPException) as issued:
+        await vault.soft_delete_document(
+            31, issuance["slots"][0]["document_id"], current_user=client
+        )
+    assert issued.value.status_code == 409
+    await service.upload(pool, 7, "document_2", STAFF, final_file("itk"), BackgroundTasks())
+    closed = await service.complete(pool, 7, STAFF, BackgroundTasks())
+    old = closed["slots"][1]["document_id"]
+    with pytest.raises(HTTPException) as protected:
+        await vault.soft_delete_document(31, old, current_user=client)
+    assert protected.value.status_code == 409
+    assert await vault.soft_delete_document(32, old, current_user={"client_id": 32}) is None
+    async with pool.acquire() as conn:
+        original = await conn.fetchrow(
+            "SELECT delivered_at,delivered_by FROM practice_delivery_completions WHERE practice_id=7"
+        )
+        await conn.execute("UPDATE documents SET is_archived=true WHERE id=$1", old)
+        view = await service.state(conn, await service.practice(conn, 7, STAFF), STAFF)
+        assert view["slots"][1]["can_repair"] and not view["slots"][0]["can_repair"]
+        assert view["visa_followup"]["fulfilled_at"] is None
+    tasks = BackgroundTasks()
+    with pytest.raises(HTTPException):
+        await service.upload(
+            pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), tasks, repair=True
+        )
+    with pytest.raises(HTTPException):
+        await service.upload(
+            pool,
+            7,
+            "document_2",
+            {"email": "other@example.test", "role": "consultant"},
+            final_file("restored-itk"),
+            tasks,
+            repair=True,
+        )
+    repaired = await service.upload(
+        pool, 7, "document_2", STAFF, final_file("restored-itk"), tasks, repair=True
+    )
+    assert (
+        repaired["status"] == "completed"
+        and repaired["visa_followup"]["fulfilled_at"]
+        and not repaired["slots"][1]["can_repair"]
+    )
+    assert not tasks.tasks
+    repeated = await service.upload(
+        pool, 7, "document_2", STAFF, final_file("restored-itk"), tasks, repair=True
+    )
+    assert repeated["slots"][1]["document_id"] == repaired["slots"][1]["document_id"]
+    with pytest.raises(HTTPException):
+        await service.upload(
+            pool, 7, "document_2", STAFF, final_file("different-live-itk"), tasks, repair=True
+        )
+    async with pool.acquire() as conn:
+        assert original == await conn.fetchrow(
+            "SELECT delivered_at,delivered_by FROM practice_delivery_completions WHERE practice_id=7"
+        )
+        assert (
+            await conn.fetchval("SELECT count(*) FROM hr_delivery_bonus_events WHERE practice_id=7")
+            == 1
+        )
+        assert await conn.fetchval("SELECT count(*) FROM timeline_events WHERE practice_id=7") == 1
+        assert [d["file_name"] for d in (await service.portal_files(conn, 7, 31))["documents"]] == [
+            "electronic-visa.pdf",
+            "restored-itk.pdf",
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shared", [True, False])
+async def test_company_slot_replacement_uses_previous_company_identity(pool, shared):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO companies VALUES(81),(82); INSERT INTO client_company_links VALUES(81,31),(82,31)"
+        )
+    initial = await service.upload(
+        pool,
+        8,
+        "document_1",
+        STAFF,
+        final_file("original-compound").model_copy(update={"company_id": 81}),
+        BackgroundTasks(),
+    )
+    old_doc = initial["slots"][0]["document_id"]
+    async with pool.acquire() as conn:
+        old_company_doc = await conn.fetchval(
+            "SELECT company_document_id FROM practice_delivery_slots WHERE practice_id=8 AND slot_key='document_1'"
+        )
+        unrelated = await conn.fetchval(
+            "INSERT INTO company_documents(company_id,google_drive_file_id,client_visible) SELECT 82,file_id,true FROM documents WHERE id=$1 RETURNING id",
+            old_doc,
+        )
+    if shared:
+        await service.reuse(pool, 8, "document_2", STAFF, old_doc)
+    await service.upload(
+        pool, 8, "document_1", STAFF, final_file("replaced-imk"), BackgroundTasks()
+    )
+    async with pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT client_visible FROM company_documents WHERE id=$1", old_company_doc
+            )
+            is shared
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT client_visible FROM company_documents WHERE id=$1", unrelated
+            )
+            is True
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT company_id FROM practice_delivery_slots WHERE practice_id=8 AND slot_key='document_1'"
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_completed_renewal_can_restore_a_missing_compound_permit_without_another_award(pool):
+    original = await service.upload(
+        pool, 8, "document_1", STAFF, final_file("old-combined"), BackgroundTasks()
+    )
+    old_id = original["slots"][0]["document_id"]
+    await service.reuse(pool, 8, "document_2", STAFF, old_id)
+    await service.waive(pool, 8, "document_3", STAFF, "Not in the original contract")
+    await service.complete(pool, 8, STAFF, BackgroundTasks())
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE documents SET is_archived=true WHERE id=$1", old_id)
+    recovered = await service.upload(
+        pool,
+        8,
+        "document_1",
+        STAFF,
+        final_file("replacement-combined"),
+        BackgroundTasks(),
+        repair=True,
+    )
+    new_id = recovered["slots"][0]["document_id"]
+    assert (
+        recovered["slots"][1]["can_repair"]
+        and recovered["slots"][1]["reusable_document_id"] == new_id
+    )
+    repaired = await service.reuse(pool, 8, "document_2", STAFF, new_id)
+    assert [s["document_id"] for s in repaired["slots"][:2]] == [new_id, new_id]
+    assert not repaired["slots"][0]["can_repair"] and not repaired["slots"][1]["can_repair"]
+    async with pool.acquire() as conn:
+        assert (
+            await conn.fetchval("SELECT count(*) FROM hr_delivery_bonus_events WHERE practice_id=8")
+            == 1
+        )
+        assert await conn.fetchval("SELECT count(*) FROM timeline_events WHERE practice_id=8") == 1
+        assert (await service.portal_files(conn, 8, 31))["documents"] == [
+            {"id": new_id, "file_name": "replacement-combined.pdf"}
+        ]

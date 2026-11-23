@@ -401,7 +401,7 @@ def test_company_outputs_populate_the_existing_company_vault_cards(label, kind):
 @pytest.mark.asyncio
 async def test_same_service_reopened_practice_keeps_original_delivery_receipt(db, writes):
     pool, conn = db
-    conn.fetchval.side_effect = [PRACTICE["code"], None]
+    conn.fetchval.side_effect = [PRACTICE["code"], None, True]
     conn.fetch.return_value = [
         {"slot_key": key, "document_id": i, "file_name": "result.pdf", "waiver_reason": None}
         for i, key in enumerate(("electronic_visa", "itk"), 1)
@@ -521,3 +521,73 @@ async def test_explicit_combined_permit_can_satisfy_renewal_bonus_slot(db, write
         "kitas_imk_uploaded",
         issued_on=None,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "completion,document,waiver,expected",
+    [
+        (True, None, None, True),
+        (True, 12, None, False),
+        (False, None, None, False),
+        (True, None, "Out of scope", False),
+    ],
+)
+async def test_completed_slot_repair_projection_requires_missing_previously_delivered_permit(
+    db, writes, completion, document, waiver, expected
+):
+    conn = db[1]
+    conn.fetchval.return_value = completion
+    conn.fetch.return_value = [
+        {"slot_key": "itk", "document_id": document, "file_name": None, "waiver_reason": waiver}
+    ]
+    writes["get_delivery_bonus"].return_value = {
+        "event_kind": "electronic_visa_issued",
+        "status": "ineligible",
+    }
+    view = await service.state(conn, {**PRACTICE, "status": "completed"})
+    assert view["slots"][1]["can_repair"] is expected
+    assert not view["slots"][0]["can_repair"]
+    assert view["bonus_status"] == "ineligible" and "amount_idr" not in view
+
+
+@pytest.mark.asyncio
+async def test_repair_publishes_only_missing_permit_and_never_triggers_issuance_or_completion(
+    db, writes, monkeypatch
+):
+    pool, conn = db
+    conn.fetchrow.return_value = {**PRACTICE, "status": "completed"}
+
+    async def value(sql, *args):
+        return "practice_delivery_completions" in sql
+
+    conn.fetchval.side_effect = value
+    monkeypatch.setattr(service, "previous_slot", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        service,
+        "staged_file",
+        AsyncMock(return_value={"document_id": 28, "company_document_id": None}),
+    )
+    tasks = BackgroundTasks()
+    result = await service.upload(pool, 7, "itk", STAFF, request(), tasks, repair=True)
+    assert result["status"] == "completed" and not tasks.tasks
+    writes["publish"].assert_awaited_once()
+    assert writes["publish"].await_args.args[-1] == ["itk"]
+    writes["record_delivery_bonus"].assert_not_awaited()
+    assert all(
+        "UPDATE practices SET" not in c.args[0] and "INSERT INTO timeline_events" not in c.args[0]
+        for c in conn.execute.await_args_list
+    )
+    assert "repaired" in writes["audit"].await_args.args[-1]
+
+
+@pytest.mark.asyncio
+async def test_replaced_company_identity_comes_from_old_slot_and_respects_other_valid_refs(db):
+    conn = db[1]
+    await service.retire_replaced_file(
+        conn, PRACTICE, {"document_id": 19, "company_document_id": 93, "company_id": 81}
+    )
+    sql, *params = conn.execute.await_args.args
+    assert params == [7, 19, 93, 81]
+    assert "cd.id=$3 AND cd.company_id=$4" in sql and "cd.google_drive_file_id=d.file_id" in sql
+    assert "s.company_document_id=cd.id AND s.company_id=cd.company_id" in sql

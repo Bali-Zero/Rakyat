@@ -40,6 +40,7 @@ OPERATORS = {
     "tax responsible",
 }
 _LIVE = f"{admin_document_not_deleted_clause('d')} AND NOT COALESCE(d.is_archived, FALSE)"
+_PERMIT_TYPES = {"itk", "itas", "imk", "itap"}
 _SCOPED = """d.practice_id = p.id AND d.client_id = p.client_id
              AND d.family_member_id IS NOT DISTINCT FROM p.family_member_id"""
 
@@ -93,7 +94,7 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
     rows = await conn.fetch(
         f"""SELECT s.slot_key, s.waiver_reason, s.issued_on, d.id AS document_id, d.file_name
             FROM practice_delivery_slots s JOIN practices p ON p.id = s.practice_id
-            LEFT JOIN documents d ON d.id = s.document_id AND {_SCOPED} AND {_LIVE}
+            LEFT JOIN documents d ON d.id = s.document_id AND {_SCOPED} AND {_LIVE} AND NULLIF(d.file_id,'') IS NOT NULL
             WHERE s.practice_id=$1 AND s.service_code=$2""",
         p["id"],
         p["code"],
@@ -110,7 +111,18 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         }
         for slot in slots
     ]
+    delivered = p["status"] == "completed" and await conn.fetchval(
+        "SELECT EXISTS(SELECT 1 FROM practice_delivery_completions WHERE practice_id=$1 AND service_code=$2)",
+        p["id"],
+        p["code"],
+    )
     for slot in resolved:
+        slot["can_repair"] = bool(
+            delivered
+            and not slot["document_id"]
+            and not slot["waiver_reason"]
+            and document_type(slot["key"], slot["label"]) in _PERMIT_TYPES
+        )
         if (
             slot["key"] == policy["bonus_slot"]
             and slot["issued_on"] is None
@@ -131,6 +143,7 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         )
     return {
         "status": p["status"],
+        "delivery_recorded": bool(delivered),
         "needs_titles": bool(needs_titles),
         "slots": resolved,
         "bonus_slot": policy["bonus_slot"],
@@ -139,6 +152,7 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
             await get_followup(conn, p["id"], user=user) if policy["followup_slot"] else None
         ),
         "bonus_event": bonus["event_kind"] if bonus else None,
+        "bonus_status": bonus.get("status") if bonus else None,
     }
 
 
@@ -339,13 +353,33 @@ def combined_permit(first: dict, second: dict) -> bool:
 async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: int) -> dict:
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        require_open(p)
+        repair = p["status"] == "completed"
+        if not repair:
+            require_open(p)
         view = await state(conn, p, user)
         slot = slot_for(view, key)
+        if repair and (
+            not view["delivery_recorded"] or document_type(key, slot["label"]) not in _PERMIT_TYPES
+        ):
+            raise HTTPException(409, "Only a previously delivered permit can be repaired")
         if slot["document_id"] == document_id:
             return await state(conn, p, user)
-        if slot["reusable_document_id"] != document_id:
+        if (repair and not slot["can_repair"]) or slot["reusable_document_id"] != document_id:
             raise HTTPException(409, "Select the combined permit already attached to this practice")
+        source = await conn.fetchrow(
+            f"""SELECT s.company_id FROM practice_delivery_slots s
+                JOIN practices p ON p.id=s.practice_id JOIN documents d ON d.id=s.document_id
+                WHERE p.id=$1 AND s.service_code=$2 AND d.id=$3 AND {_SCOPED} AND {_LIVE}
+                  AND NULLIF(d.file_id,'') IS NOT NULL LIMIT 1 FOR UPDATE OF d""",
+            practice_id,
+            p["code"],
+            document_id,
+        )
+        if not source:
+            raise HTTPException(409, "The combined permit is no longer available")
+        previous = await previous_slot(conn, p, key)
+        if repair and previous and previous.get("company_id") != source.get("company_id"):
+            raise HTTPException(409, "A repair cannot change the permit's company")
         await conn.execute(
             """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,
                                                   company_id,company_document_id,updated_by)
@@ -361,9 +395,15 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
             document_id,
             user["email"],
         )
-        await apply_document_milestone(conn, p, view, key)
+        if repair:
+            await publish(conn, p, [key])
+        else:
+            await apply_document_milestone(conn, p, view, key)
+        await retire_replaced_file(conn, p, previous)
         await audit(conn, practice_id, user["email"], f"Combined permit confirmed for slot: {key}")
-        return await state(conn, p, user)
+        updated = await state(conn, p, user)
+    await invalidate_delivery_cache(p)
+    return updated
 
 
 async def stage(
@@ -444,24 +484,111 @@ def issue_date(view: dict, slot: dict, supplied: date | None) -> date | None:
     return supplied
 
 
+async def previous_slot(conn: Any, p: dict, key: str) -> Any:
+    return await conn.fetchrow(
+        """SELECT document_id, company_document_id, company_id FROM practice_delivery_slots
+           WHERE practice_id=$1 AND service_code=$2 AND slot_key=$3""",
+        p["id"],
+        p["code"],
+        key,
+    )
+
+
+async def retire_replaced_file(conn: Any, p: dict, previous: Any) -> None:
+    if not previous or not previous.get("document_id"):
+        return
+    # Only hide a workflow-owned version from this exact practice/subject.
+    # Capturing IDs before replacement also handles a new upload without a
+    # company and an old archived document that disappeared from the live view.
+    await conn.execute(
+        f"""UPDATE documents d SET client_visible=false FROM practices p
+            WHERE p.id=$1 AND d.id=$2 AND {_SCOPED} AND d.uploaded_source='team'
+              AND d.intake_idempotency_key LIKE 'case-delivery:%' AND NOT EXISTS
+              (SELECT 1 FROM practice_delivery_slots s WHERE s.document_id=d.id)""",
+        p["id"],
+        previous["document_id"],
+    )
+    if previous["company_document_id"] is None:
+        return
+    await conn.execute(
+        f"""UPDATE company_documents cd SET client_visible=false
+            FROM documents d JOIN practices p ON p.id=$1
+            WHERE cd.id=$3 AND cd.company_id=$4 AND d.id=$2 AND {_SCOPED}
+              AND cd.google_drive_file_id=d.file_id AND d.uploaded_source='team'
+              AND d.intake_idempotency_key LIKE ('case-delivery:' || p.id::text || ':' || cd.company_id::text || ':%')
+              AND EXISTS(SELECT 1 FROM client_company_links l WHERE l.client_id=p.client_id AND l.company_id=cd.company_id)
+              AND NOT EXISTS (
+                  SELECT 1 FROM practice_delivery_slots s
+                  JOIN practices owner ON owner.id=s.practice_id
+                  JOIN practice_types pt ON pt.id=owner.practice_type_id AND pt.code=s.service_code
+                  JOIN documents source ON source.id=s.document_id AND source.practice_id=owner.id
+                    AND source.client_id=owner.client_id AND source.family_member_id IS NOT DISTINCT FROM owner.family_member_id
+                  WHERE s.company_document_id=cd.id AND s.company_id=cd.company_id AND source.file_id=cd.google_drive_file_id
+                    AND {admin_document_not_deleted_clause("source")} AND NOT COALESCE(source.is_archived,false)
+                    AND EXISTS(SELECT 1 FROM client_company_links cl
+                               WHERE cl.company_id=cd.company_id AND cl.client_id=owner.client_id))""",
+        p["id"],
+        previous["document_id"],
+        previous["company_document_id"],
+        previous["company_id"],
+    )
+
+
 async def upload(
-    pool: Any, practice_id: int, key: str, user: dict, request: Any, tasks: BackgroundTasks
+    pool: Any,
+    practice_id: int,
+    key: str,
+    user: dict,
+    request: Any,
+    tasks: BackgroundTasks,
+    *,
+    repair: bool = False,
 ) -> dict:
     async with pool.acquire() as conn:
         snapshot = await practice(conn, practice_id, user)
-        require_open(snapshot)
+        if not repair:
+            require_open(snapshot)
         initial_view = await state(conn, snapshot, user)
         initial_slot = slot_for(initial_view, key)
+        if repair:
+            if (
+                not initial_view["delivery_recorded"]
+                or initial_slot["waiver_reason"]
+                or document_type(key, initial_slot["label"]) not in _PERMIT_TYPES
+            ):
+                raise HTTPException(
+                    409,
+                    "Only a missing final permit on a previously delivered practice can be repaired",
+                )
+            previous = await previous_slot(conn, snapshot, key)
+            original_company = previous["company_id"] if previous else None
+            if request.company_id is not None and request.company_id != original_company:
+                raise HTTPException(409, "A repair cannot change the permit's company")
+            request = request.model_copy(update={"company_id": original_company})
         issue_date(initial_view, initial_slot, request.issued_on)
     digest = upload_digest(request.file_content, request.file_name, request.mime_type)
     base = f"case-delivery:{practice_id}:{request.company_id or 0}:{key}:{digest}"
     async with pool.acquire() as conn:
         await check_fingerprint(conn, snapshot, key, digest, record=False)
         marker = await recoverable_marker(conn, snapshot, base)
+        if repair and not initial_slot["can_repair"]:
+            replay = await staged_file(
+                conn,
+                snapshot,
+                request.company_id,
+                marker,
+                document_type(key, initial_slot["label"]),
+            )
+            if not replay:
+                replay = await existing_output(conn, snapshot, initial_slot, request)
+            if replay and replay["document_id"] == initial_slot["document_id"]:
+                return initial_view
+            raise HTTPException(409, "This delivered permit is already available")
     await stage(pool, snapshot, initial_slot, user, request, marker, tasks)
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        require_open(p)
+        if not repair:
+            require_open(p)
         view = await state(conn, p, user)
         slot = slot_for(view, key)
         if (
@@ -469,6 +596,7 @@ async def upload(
                 p[k] != snapshot[k]
                 for k in ("code", "client_id", "family_member_id", "assigned_to")
             )
+            or (repair and not view["delivery_recorded"])
             or initial_slot["label"] != slot["label"]
         ):
             raise HTTPException(409, "Practice changed during upload. Review the current practice.")
@@ -502,8 +630,13 @@ async def upload(
             for other in view["slots"]
         ):
             raise HTTPException(409, "This document already fills another slot")
-        if slot["document_id"] != initial_slot["document_id"]:
+        if (repair and not slot["can_repair"]) or slot["document_id"] != initial_slot[
+            "document_id"
+        ]:
             raise HTTPException(409, "Another operator changed this slot. Refresh and review.")
+        previous = await previous_slot(conn, p, key)
+        if repair and ((previous and previous.get("company_id")) or None) != request.company_id:
+            raise HTTPException(409, "Permit destination changed. Refresh and review.")
         await conn.execute(
             """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,
                                                   company_id,company_document_id,updated_by,issued_on)
@@ -520,25 +653,13 @@ async def upload(
             user["email"],
             issued_on,
         )
-        await apply_document_milestone(conn, p, view, key, issued_on=issued_on)
-        if slot["document_id"] is not None:
-            # Keep the previous version for staff. A shared PDF might still
-            # satisfy another box; in that case it keeps its current visibility.
-            await conn.execute(
-                """UPDATE documents d SET client_visible=false WHERE d.id=$1
-                   AND d.intake_idempotency_key LIKE 'case-delivery:%' AND NOT EXISTS
-                   (SELECT 1 FROM practice_delivery_slots WHERE document_id=d.id)""",
-                slot["document_id"],
-            )
-            await conn.execute(
-                """UPDATE company_documents cd SET client_visible=false WHERE cd.google_drive_file_id=(
-                   SELECT file_id FROM documents WHERE id=$1 AND client_visible=false)
-                   AND cd.company_id=$2 AND NOT EXISTS (
-                   SELECT 1 FROM practice_delivery_slots WHERE company_document_id=cd.id)""",
-                slot["document_id"],
-                request.company_id,
-            )
-        await audit(conn, practice_id, user["email"], f"Final document uploaded: {key}")
+        if repair:
+            await publish(conn, p, [key])
+        else:
+            await apply_document_milestone(conn, p, view, key, issued_on=issued_on)
+        await retire_replaced_file(conn, p, previous)
+        description = "Missing final permit repaired" if repair else "Final document uploaded"
+        await audit(conn, practice_id, user["email"], f"{description}: {key}")
         updated = await state(conn, p, user)
     await invalidate_delivery_cache(p)
     return updated

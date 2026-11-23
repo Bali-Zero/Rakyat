@@ -88,6 +88,18 @@ async def upload_slot(
     return await delivery.upload(pool, practice_id, key, user, request, tasks)
 
 
+@staff.post("/{practice_id}/delivery/slots/{key}/repair")
+async def repair_missing_permit(
+    practice_id: PracticeId,
+    key: SlotKey,
+    request: DeliveryFile,
+    user: Staff,
+    pool: Pool,
+    tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    return await delivery.upload(pool, practice_id, key, user, request, tasks, repair=True)
+
+
 @staff.post("/{practice_id}/delivery/complete")
 async def complete_delivery(
     practice_id: PracticeId, user: Staff, pool: Pool, tasks: BackgroundTasks
