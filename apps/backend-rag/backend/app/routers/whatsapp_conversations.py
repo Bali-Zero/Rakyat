@@ -6,8 +6,7 @@ Outbound /send endpoint re-enabled 2026-03-15 with safety gates:
 - Recipient validation: must be a known CRM client OR a Bali Zero team member
   (team_members.whatsapp). Team/staff numbers in WHATSAPP_TEAM_ALLOWLIST also
   bypass the check via env config, without polluting the CRM.
-- Auth required: only authenticated users can send
-- The two read routes (conversations, messages) are limited to team members
+- Auth required: all three routes are limited to team members
 """
 
 import json
@@ -23,7 +22,6 @@ from pydantic import BaseModel, Field
 
 from backend.app.core.config import settings
 from backend.app.dependencies import (
-    get_current_user,
     get_optional_database_pool,
     require_team_member,
 )
@@ -239,13 +237,13 @@ async def get_whatsapp_messages(
 async def send_whatsapp_message(
     body: SendWhatsAppRequest,
     db: Pool | None = Depends(get_optional_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_team_member),
 ) -> dict[str, Any]:
     """
     Send an outbound WhatsApp message via Meta Cloud API.
 
     Safety gates:
-    - Auth required (JWT)
+    - Auth required (JWT), team members only
     - Rate limit: 20 msgs/phone/hour
     - Recipient validation: must be a known CRM client (clients.phone) OR a
       Bali Zero team member (team_members.whatsapp). Numbers in

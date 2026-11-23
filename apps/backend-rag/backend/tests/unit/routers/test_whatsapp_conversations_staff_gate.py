@@ -1,8 +1,8 @@
 """
 Staff-only gate on the WhatsApp conversation read routes.
 
-GET /api/whatsapp/conversations and GET /api/whatsapp/messages/{phone} expose
-customer conversations, so they require a person on the team
+GET /api/whatsapp/conversations, GET /api/whatsapp/messages/{phone} and
+POST /api/whatsapp/send expose customer conversations or message customers, so they require a person on the team
 (`require_team_member`), not merely an authenticated caller. The identities
 below are shaped the way `HybridAuthMiddleware` and `APIKeyAuth` really build
 them (placed on `request.state.user`, then reduced by `get_current_user`).
@@ -13,14 +13,15 @@ touched. Innocence: a team member still gets the same answers as before.
 """
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from backend.app.dependencies import get_optional_database_pool
-from backend.app.routers.whatsapp_conversations import router
+from backend.app.routers import whatsapp_conversations
+from backend.app.routers.whatsapp_conversations import _outbound_rate, router
 from backend.app.services import api_key_auth
 
 PHONE = "6280000000001"
@@ -144,3 +145,52 @@ def test_team_member_still_reads_messages(role, monkeypatch, mock_db_pool, mock_
     body = response.json()
     assert [m["message_text"] for m in body] == ["hello", "hi"]
     assert [m["direction"] for m in body] == ["inbound", "outbound"]
+
+
+@pytest.fixture
+def _clean_rate_state():
+    _outbound_rate.clear()
+    yield
+    _outbound_rate.clear()
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["monitoring", "roleless", "user_api_key", "internal_key", "client", "partner"],
+)
+def test_send_refuses_non_team_identity_and_never_sends(
+    kind, monkeypatch, mock_db_pool, mock_db_conn, _clean_rate_state
+):
+    # The recipient is known: only the caller is wrong.
+    mock_db_conn.fetchval = AsyncMock(return_value=True)
+    client = _client(_identity(kind, monkeypatch), mock_db_pool)
+
+    with patch.object(
+        whatsapp_conversations.whatsapp_service, "send_message", new=AsyncMock()
+    ) as mock_send:
+        response = client.post(
+            "/api/whatsapp/send", json={"phone": "+6280000000001", "message": "hello"}
+        )
+
+    assert response.status_code == 403
+    mock_send.assert_not_awaited()
+    mock_db_pool.acquire.assert_not_called()
+    assert not any(_outbound_rate.values())
+
+
+@pytest.mark.parametrize("role", ["Consultant", "member", "Tax Lead", "admin"])
+def test_team_member_still_sends(role, monkeypatch, mock_db_pool, mock_db_conn, _clean_rate_state):
+    mock_db_conn.fetchval = AsyncMock(return_value=True)
+    client = _client(_identity(role, monkeypatch), mock_db_pool)
+
+    with patch.object(
+        whatsapp_conversations.whatsapp_service,
+        "send_message",
+        new=AsyncMock(return_value={"messages": [{"id": "wamid.synthetic"}]}),
+    ) as mock_send:
+        response = client.post(
+            "/api/whatsapp/send", json={"phone": "+6280000000001", "message": "hello"}
+        )
+
+    assert response.status_code == 200
+    mock_send.assert_awaited_once_with(phone="6280000000001", text="hello")
