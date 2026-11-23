@@ -120,6 +120,26 @@ async def _refuse_if_payroll_closed(conn: Any, month: int, year: int) -> None:
         raise BonusPeriodLockedError(msg)
 
 
+async def _open_year_balances(conn: Any, year: int, employee_id: int | None = None) -> None:
+    """Open a year's balances from the prior year's tracked leave types."""
+    query = """
+        INSERT INTO hr_leave_balances
+            (employee_id, leave_type_id, balance_year, allocated_days,
+             carried_over, used_days, pending_days)
+        SELECT employee_id, leave_type_id, $1::int, allocated_days, 0, 0, 0
+        FROM hr_leave_balances
+        WHERE balance_year = $1::int - 1
+    """
+    params: list[int] = [year]
+    if employee_id is not None:
+        query += " AND employee_id = $2::int"
+        params.append(employee_id)
+    query += """
+        ON CONFLICT (employee_id, leave_type_id, balance_year) DO NOTHING
+    """
+    await conn.execute(query, *params)
+
+
 def department_of(email: str | None, stored: str | None = None) -> str:
     """The department chip of a person: 'tax', 'setup' or 'office'.
 
@@ -1279,6 +1299,8 @@ class HRService:
                     msg = f"Leave type {data['leave_type_id']} not found or inactive"
                     raise ValueError(msg)
 
+                await _open_year_balances(conn, data["start_date"].year, data["employee_id"])
+
                 # Check balance
                 balance = await conn.fetchrow(
                     """
@@ -1463,6 +1485,7 @@ class HRService:
         if year is None:
             year = date.today().year
         async with self.db_pool.acquire() as conn:
+            await _open_year_balances(conn, year, employee_id)
             rows = await conn.fetch(
                 """
                 SELECT lb.*, lt.code, lt.name as leave_type_name, lt.is_paid
@@ -1484,6 +1507,7 @@ class HRService:
         if year is None:
             year = date.today().year
         async with self.db_pool.acquire() as conn:
+            await _open_year_balances(conn, year)
             rows = await conn.fetch(
                 """
                 SELECT tm.full_name as employee_name, tm.email,
