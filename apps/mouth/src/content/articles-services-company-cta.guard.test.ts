@@ -35,6 +35,7 @@ describe.each(ARTICLES)("%s links to /services/company", (file) => {
   it("the card carries no price or figure", () => {
     const [card] = cardsWithLink(src);
     expect(card).toBeDefined();
-    expect(card).not.toMatch(/\d|IDR|USD|Rp/);
+    // "E25B" is the visa's name, the only digits a card may carry.
+    expect(card?.replace(/\bE25B\b/g, "")).not.toMatch(/\d|IDR|USD|Rp/);
   });
 });
