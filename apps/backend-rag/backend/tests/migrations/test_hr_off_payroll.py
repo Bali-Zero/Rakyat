@@ -14,6 +14,7 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from backend.app.services.hr.hr_card_edit import CardEditBody
 from backend.app.services.hr.hr_overview_compose import compose_member_overview
@@ -28,6 +29,7 @@ from backend.app.services.hr.hr_service import (
 from backend.db.migration_base import split_migration_sql
 from backend.migrations.migration_068_hr_payroll import UPGRADE_SQL
 from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
+from backend.tests.migrations.hr_bonus_fixture import install_delivery_payroll_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -51,7 +53,7 @@ class Env:
     admin: str
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def env() -> AsyncIterator[Env]:
     admin = await asyncpg.connect(_dsn())
     pool: asyncpg.Pool | None = None
@@ -69,6 +71,7 @@ async def env() -> AsyncIterator[Env]:
         for name in ("354_hr_employees_profile.sql", "357_hr_bonus_manual.sql"):
             sql = (MIGRATIONS / name).read_text(encoding="utf-8")
             await admin.execute(split_migration_sql(sql)[0])
+        await install_delivery_payroll_migrations(admin)
         await admin.execute(
             "INSERT INTO team_members (id, full_name, email, role) VALUES "
             "('tm-admin','Fake Admin','fake.admin@example.com','admin'),"

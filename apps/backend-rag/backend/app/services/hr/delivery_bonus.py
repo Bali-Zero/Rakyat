@@ -1,6 +1,6 @@
 """Employee bonus receipts. The CRM caller owns the transaction that records issuance or delivery."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import asyncpg
@@ -28,7 +28,7 @@ def payroll_award_date(earned_at: datetime) -> datetime:
 async def get_delivery_bonus(conn: asyncpg.Connection, practice_id: int) -> dict | None:
     row = await conn.fetchrow(
         """
-        SELECT e.event_kind, e.earned_at, e.recorded_at, e.awarded_at, e.amount_idr,
+        SELECT e.event_kind, e.earned_at, e.recorded_at, e.evidence_issued_on, e.awarded_at, e.amount_idr,
                COALESCE(b.status, CASE WHEN e.employee_id IS NULL THEN 'awaiting_employee'
                                       WHEN e.amount_idr IS NULL THEN 'awaiting_rate'
                                       ELSE 'payroll_locked' END) AS status
@@ -78,7 +78,6 @@ async def record_delivery_bonus(
 ) -> dict | None:
     """Call inside the practice mutation's transaction after recording the qualifying output."""
     recorded = datetime.now(WITA)
-    earned = recorded
     if event_kind == "electronic_visa_issued":
         if issued_on is None or issued_on > recorded.date():
             previous = await get_delivery_bonus(conn, practice_id)
@@ -87,17 +86,16 @@ async def record_delivery_bonus(
             raise ValueError(
                 "An issued Electronic Visa needs its actual issue date, up to today in Bali"
             )
-        earned = datetime.combine(issued_on, time.min, tzinfo=WITA)
     # Existing payroll records win across upgrades, including already paid/reversed bonuses.
     # An ineligible assignee still claims the event to prevent awards after reassignment.
     event = await conn.fetchrow(
         f"""
         INSERT INTO hr_delivery_bonus_events
             (practice_id, employee_id, service_code, event_kind, earned_at, awarded_at,
-             bonus_rate_id, amount_idr, ledger_id)
+             bonus_rate_id, amount_idr, ledger_id, recorded_at, evidence_issued_on)
         SELECT $1, COALESCE(old.employee_id, employee.id), $2, $4, $5, COALESCE(old.awarded_at, $6),
                CASE WHEN old.id IS NOT NULL THEN old.bonus_rate_id ELSE rate.id END,
-               CASE WHEN old.id IS NOT NULL THEN old.amount_idr ELSE rate.amount_idr END, old.id
+               CASE WHEN old.id IS NOT NULL THEN old.amount_idr ELSE rate.amount_idr END, old.id, $5, $8
         FROM (SELECT 1) seed
         LEFT JOIN LATERAL (
             SELECT id, employee_id, awarded_at, bonus_rate_id, amount_idr FROM hr_bonus_ledger
@@ -116,9 +114,10 @@ async def record_delivery_bonus(
         service_code,
         assigned_to,
         event_kind,
-        earned,
-        payroll_award_date(earned),
-        earned.date(),
+        recorded,
+        payroll_award_date(recorded),
+        recorded.date(),
+        issued_on,
     )
     if (
         event
@@ -250,8 +249,22 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
         employee["email"],
         today,
     )
+    holds = await conn.fetch(
+        """SELECT o.practice_id, COALESCE(pt.name,o.service_code) AS service, o.slot_key,
+                  o.due_on, COALESCE(o.bound_month,o.payout_from_month) AS payout_from_month, o.email_state,
+                  CASE WHEN $2::date < o.started_on + 60 THEN 'upload_permit'
+                       WHEN o.email_state IN ('sending','uncertain') THEN 'verify_escalation_email'
+                       WHEN o.email_state='sent' THEN 'await_owner'
+                       ELSE 'send_escalation_email' END AS next_action
+           FROM hr_visa_bonus_obligations o LEFT JOIN practice_types pt ON pt.code=o.service_code
+           WHERE o.employee_id=$1 AND o.due_on <= $2
+           ORDER BY o.due_on, o.practice_id""",
+        emp_id,
+        today,
+    )
     return {
         **result,
+        "holds": [dict(r) for r in holds],
         "totals": dict(totals),
         "milestones": milestones,
         "target": target,

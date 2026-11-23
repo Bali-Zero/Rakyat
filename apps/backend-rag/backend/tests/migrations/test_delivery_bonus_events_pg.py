@@ -1,7 +1,6 @@
 """Exercise the real issuance trigger and payroll writer on an isolated PostgreSQL schema."""
 
 from datetime import date
-from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
@@ -14,10 +13,8 @@ from backend.app.services.hr.delivery_bonus import (
     record_delivery_bonus,
     resolve_delivery_bonus,
 )
-from backend.db.migration_base import split_migration_sql
+from backend.tests.migrations.hr_bonus_fixture import install_delivery_payroll_migrations
 from backend.tests.migrations.test_migration_357_hr_bonus_manual import _DDL, _dsn, _parts
-
-MIGRATION = Path(__file__).resolve().parents[2] / "db/migrations_v2/384_delivery_bonus.sql"
 
 
 @pytest_asyncio.fixture
@@ -35,11 +32,11 @@ async def db():
             ALTER TABLE hr_employees ADD COLUMN is_active boolean DEFAULT true, ADD COLUMN profile jsonb;
             CREATE TABLE hr_bonus_rates(id serial PRIMARY KEY, practice_type_code text UNIQUE,
                 is_active boolean, effective_from date, effective_to date, amount_idr bigint);
-            CREATE TABLE hr_payroll_periods(payroll_month int, payroll_year int, status text);
+            CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY, period_start date, payroll_month int, payroll_year int, status text);
             CREATE TABLE practice_types(id serial PRIMARY KEY, code text, name text);
             ALTER TABLE practices ADD COLUMN assigned_to text, ADD COLUMN practice_type_id int,
                 ADD COLUMN start_date timestamptz, ADD COLUMN created_at timestamptz DEFAULT now(), ADD COLUMN payment_status text;
-            ALTER TABLE hr_bonus_ledger ADD COLUMN bonus_rate_id int REFERENCES hr_bonus_rates(id);
+            ALTER TABLE hr_bonus_ledger ADD COLUMN bonus_rate_id int REFERENCES hr_bonus_rates(id), ADD COLUMN payroll_period_id integer;
             UPDATE team_members SET email='consultant@example.invalid',role='consultant';
             INSERT INTO practice_types(code,name) VALUES ('visa_demo','Example new visa');
             INSERT INTO hr_bonus_rates(practice_type_code,is_active,effective_from,amount_idr)
@@ -47,7 +44,7 @@ async def db():
             UPDATE practices SET assigned_to='consultant@example.invalid', practice_type_id=1, payment_status='paid';
             UPDATE practices SET status='on_process' WHERE id=2;
         """)
-        await conn.execute(split_migration_sql(MIGRATION.read_text())[0])
+        await install_delivery_payroll_migrations(conn)
         yield conn
     finally:
         await transaction.rollback()
@@ -65,8 +62,9 @@ async def test_issuance_pays_once_before_completion_reassignment_cannot_duplicat
         issued_on=date(2020, 12, 29),
     )
     assert issued["amount_idr"] == 125000 and issued["status"] == "pending"
-    assert issued["earned_at"] < issued["recorded_at"]
-    assert issued["awarded_at"].astimezone(bonus.WITA).date() == date(2021, 1, 1)
+    assert issued["earned_at"] == issued["recorded_at"]
+    assert issued["evidence_issued_on"] == date(2020, 12, 29)
+    assert issued["awarded_at"] == bonus.payroll_award_date(issued["recorded_at"])
     assert await db.fetchval("SELECT status FROM practices WHERE id=2") == "on_process"
     assert (await delivery_desk(db, "tm-1"))["next_case"]["already_earned"]
     await db.execute("UPDATE practices SET status='completed' WHERE id=2")
@@ -119,3 +117,24 @@ async def test_unattributed_issuance_requires_hr_selection(db):
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_renewed_imk_upload_earns_before_completion_and_freezes_its_original_evidence(db):
+    first = await record_delivery_bonus(
+        db,
+        2,
+        "visa_demo",
+        "consultant@example.invalid",
+        "kitas_imk_uploaded",
+        issued_on=date(2020, 12, 29),
+    )
+    assert first["status"] == "pending" and first["event_kind"] == "kitas_imk_uploaded"
+    assert first["earned_at"] == first["recorded_at"]
+    assert first["evidence_issued_on"] == date(2020, 12, 29)
+    assert await db.fetchval("SELECT status FROM practices WHERE id=2") == "on_process"
+    later = await record_delivery_bonus(
+        db, 2, "visa_demo", "replacement@example.invalid", "service_delivered"
+    )
+    assert later == first
+    assert await db.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=2") == 1

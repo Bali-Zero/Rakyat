@@ -56,9 +56,10 @@ async def test_only_new_eligible_priced_event_writes_payroll(monkeypatch, receip
     assert result["event_kind"] == "electronic_visa_issued"
     assert write.await_count == expected_writes
     insert = conn.fetchrow.await_args_list[0].args
-    assert insert[5].date() == date(2020, 12, 29)
-    assert insert[6].date() == date(2021, 1, 1)
-    assert insert[7] == date(2020, 12, 29)
+    assert insert[5].date() == datetime.now(bonus.WITA).date()
+    assert insert[6] == bonus.payroll_award_date(insert[5])
+    assert insert[7] == insert[5].date()
+    assert insert[8] == date(2020, 12, 29)
 
 
 @pytest.mark.asyncio
