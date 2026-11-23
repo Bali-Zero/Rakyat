@@ -5,7 +5,6 @@ import binascii
 import hashlib
 from datetime import date
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, HTTPException
 
@@ -20,6 +19,7 @@ from backend.services.crm.admin_document_visibility import admin_document_not_de
 from backend.services.crm.delivery_catalog import delivery_policy
 from backend.services.crm.documents import auto_categorize_document
 from backend.services.crm.practice_state_machine import normalize_state
+from backend.services.crm.visa_followup import get_followup, record_visa_milestone
 from backend.services.portal._document_visibility import document_visibility_clause
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
 from backend.services.portal.document_processing import VirusScanner
@@ -75,7 +75,7 @@ def require_open(p: dict) -> None:
         raise HTTPException(409, "Final delivery requires a paid practice that is On Process")
 
 
-async def state(conn: Any, p: dict) -> dict:
+async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
     policy = delivery_policy(p["code"])
     if not policy:
         raise HTTPException(409, "No delivery requirements configured for this service")
@@ -119,7 +119,7 @@ async def state(conn: Any, p: dict) -> dict:
             and bonus
             and bonus["event_kind"] == "electronic_visa_issued"
         ):
-            slot["issued_on"] = bonus["earned_at"].astimezone(ZoneInfo("Asia/Makassar")).date()
+            slot["issued_on"] = bonus.get("evidence_issued_on")
         slot["reusable_document_id"] = next(
             (
                 other["document_id"]
@@ -136,6 +136,10 @@ async def state(conn: Any, p: dict) -> dict:
         "needs_titles": bool(needs_titles),
         "slots": resolved,
         "bonus_slot": policy["bonus_slot"],
+        "bonus_trigger": policy["bonus_trigger"],
+        "visa_followup": (
+            await get_followup(conn, p["id"], user=user) if policy["followup_slot"] else None
+        ),
         "bonus_event": bonus["event_kind"] if bonus else None,
     }
 
@@ -178,14 +182,14 @@ async def set_titles(pool: Any, practice_id: int, user: dict, titles: list[str])
             titles,
         )
         await audit(conn, practice_id, user["email"], "Final output titles set")
-        return await state(conn, p)
+        return await state(conn, p, user)
 
 
 async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) -> dict:
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
         require_open(p)
-        slot = slot_for(await state(conn, p), key)
+        slot = slot_for(await state(conn, p, user), key)
         if not slot["condition"] or slot["document_id"]:
             raise HTTPException(409, "Only unfilled conditional slots may be marked inapplicable")
         await conn.execute(
@@ -201,7 +205,7 @@ async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) 
             user["email"],
         )
         await audit(conn, practice_id, user["email"], f"Delivery slot {key} inapplicable: {reason}")
-        return await state(conn, p)
+        return await state(conn, p, user)
 
 
 def upload_digest(encoded: str, file_name: str, mime_type: str) -> str:
@@ -335,9 +339,10 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
         require_open(p)
-        slot = slot_for(await state(conn, p), key)
+        view = await state(conn, p, user)
+        slot = slot_for(view, key)
         if slot["document_id"] == document_id:
-            return await state(conn, p)
+            return await state(conn, p, user)
         if slot["reusable_document_id"] != document_id:
             raise HTTPException(409, "Select the combined permit already attached to this practice")
         await conn.execute(
@@ -355,8 +360,9 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
             document_id,
             user["email"],
         )
+        await apply_document_milestone(conn, p, view, key)
         await audit(conn, practice_id, user["email"], f"Combined permit confirmed for slot: {key}")
-        return await state(conn, p)
+        return await state(conn, p, user)
 
 
 async def stage(
@@ -421,7 +427,7 @@ async def stage(
 
 
 def issue_date(view: dict, slot: dict, supplied: date | None) -> date | None:
-    if view["bonus_slot"] != slot["key"]:
+    if view["bonus_slot"] != "electronic_visa" or slot["key"] != "electronic_visa":
         if supplied is not None:
             raise HTTPException(422, "An issue date belongs only on the Electronic Visa")
         return None
@@ -441,7 +447,7 @@ async def upload(
     async with pool.acquire() as conn:
         snapshot = await practice(conn, practice_id, user)
         require_open(snapshot)
-        initial_view = await state(conn, snapshot)
+        initial_view = await state(conn, snapshot, user)
         initial_slot = slot_for(initial_view, key)
         issue_date(initial_view, initial_slot, request.issued_on)
     digest = upload_digest(request.file_content, request.file_name, request.mime_type)
@@ -453,7 +459,7 @@ async def upload(
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
         require_open(p)
-        view = await state(conn, p)
+        view = await state(conn, p, user)
         slot = slot_for(view, key)
         if (
             any(
@@ -511,16 +517,7 @@ async def upload(
             user["email"],
             issued_on,
         )
-        if view["bonus_slot"] == key:
-            await publish(conn, p, [key])
-            await record_delivery_bonus(
-                conn,
-                practice_id,
-                p["code"],
-                p["assigned_to"],
-                "electronic_visa_issued",
-                issued_on=issued_on,
-            )
+        await apply_document_milestone(conn, p, view, key, issued_on=issued_on)
         if slot["document_id"] is not None:
             # Keep the previous version for staff. A shared PDF might still
             # satisfy another box; in that case it keeps its current visibility.
@@ -539,9 +536,27 @@ async def upload(
                 request.company_id,
             )
         await audit(conn, practice_id, user["email"], f"Final document uploaded: {key}")
-        updated = await state(conn, p)
+        updated = await state(conn, p, user)
     await invalidate_delivery_cache(p)
     return updated
+
+
+async def apply_document_milestone(
+    conn: Any, practice_row: dict, view: dict, key: str, *, issued_on: date | None = None
+) -> None:
+    """Apply the validated attachment, including a confirmed combined permit, under the practice lock."""
+    if view["bonus_slot"] == key:
+        await publish(conn, practice_row, [key])
+        await record_delivery_bonus(
+            conn,
+            practice_row["id"],
+            practice_row["code"],
+            practice_row["assigned_to"],
+            view["bonus_trigger"],
+            issued_on=issued_on,
+        )
+    if view["bonus_trigger"] == "electronic_visa_issued":
+        await record_visa_milestone(conn, practice_row, key)
 
 
 async def publish(conn: Any, p: dict, keys: list[str]) -> None:
@@ -578,7 +593,7 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
                WHERE s.practice_id=$1 ORDER BY d.id FOR UPDATE OF d""",
             practice_id,
         )
-        view = await state(conn, p)
+        view = await state(conn, p, user)
         prior_service = await conn.fetchval(
             "SELECT service_code FROM practice_delivery_completions WHERE practice_id=$1",
             practice_id,
@@ -631,7 +646,7 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
                 practice_id,
                 user["email"],
             )
-        updated = await state(conn, {**p, "status": "completed"})
+        updated = await state(conn, {**p, "status": "completed"}, user)
     from backend.services.crm.completed_process_service import CompletedProcessService
     from backend.services.portal.portal_notification_service import PortalNotificationService
 

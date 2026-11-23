@@ -42,6 +42,9 @@ def issued_policy(code):
             {"key": "itk", "label": "ITK", "condition": None},
         ],
         "bonus_slot": "electronic_visa",
+        "bonus_trigger": "electronic_visa_issued",
+        "followup_slot": "itk",
+        "can_postpone": True,
     }
 
 
@@ -56,6 +59,8 @@ def writes(monkeypatch):
         "publish",
         "get_delivery_bonus",
         "record_delivery_bonus",
+        "get_followup",
+        "record_visa_milestone",
     ):
         mocks[name] = AsyncMock(return_value=None)
         monkeypatch.setattr(service, name, mocks[name])
@@ -122,6 +127,7 @@ async def test_issuance_earns_bonus_while_post_entry_task_remains_open(db, write
     )
     writes["publish"].assert_awaited_once_with(conn, PRACTICE, ["electronic_visa"])
     assert result["status"] == "on_process"
+    writes["record_visa_milestone"].assert_awaited_once_with(conn, PRACTICE, "electronic_visa")
     assert result["slots"][1]["document_id"] is None
     assert not any("UPDATE practices" in call.args[0] for call in conn.execute.await_args_list)
 
@@ -455,3 +461,62 @@ async def test_staged_document_lookup_matches_kind_and_practice_subject(db):
         and "d.family_member_id IS NOT DISTINCT FROM p.family_member_id" in sql
     )
     assert args[-1] == "itk"
+
+
+@pytest.mark.asyncio
+async def test_renewed_imk_rewards_upload_before_completion_without_second_followup(
+    db, writes, monkeypatch
+):
+    from backend.services.crm.delivery_catalog import delivery_policy
+
+    pool, conn = db
+    practice = {**PRACTICE, "code": "kitas_working_extend"}
+    conn.fetchrow.return_value = practice
+    monkeypatch.setattr(service, "delivery_policy", delivery_policy)
+    monkeypatch.setattr(
+        service,
+        "staged_file",
+        AsyncMock(return_value={"document_id": 9, "company_document_id": None}),
+    )
+    result = await service.upload(
+        pool, practice["id"], "document_1", STAFF, request(), BackgroundTasks()
+    )
+    writes["record_delivery_bonus"].assert_awaited_once_with(
+        conn,
+        practice["id"],
+        practice["code"],
+        STAFF["email"],
+        "kitas_imk_uploaded",
+        issued_on=None,
+    )
+    writes["record_visa_milestone"].assert_not_awaited()
+    assert result["status"] == "on_process"
+    assert result["visa_followup"] is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_combined_permit_can_satisfy_renewal_bonus_slot(db, writes, monkeypatch):
+    from backend.services.crm.delivery_catalog import delivery_policy
+
+    pool, conn = db
+    p = {**PRACTICE, "code": "kitas_investor_2yr_extend"}
+    conn.fetchrow.return_value = p
+    conn.fetch.return_value = [
+        {
+            "slot_key": "document_2",
+            "document_id": 42,
+            "file_name": "combined.pdf",
+            "waiver_reason": None,
+            "issued_on": None,
+        }
+    ]
+    monkeypatch.setattr(service, "delivery_policy", delivery_policy)
+    await service.reuse(pool, p["id"], "document_1", STAFF, 42)
+    writes["record_delivery_bonus"].assert_awaited_once_with(
+        conn,
+        p["id"],
+        p["code"],
+        STAFF["email"],
+        "kitas_imk_uploaded",
+        issued_on=None,
+    )

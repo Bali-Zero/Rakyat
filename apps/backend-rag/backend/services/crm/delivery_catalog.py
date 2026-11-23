@@ -15,6 +15,9 @@ class DeliverySlot(TypedDict):
 class DeliveryPolicy(TypedDict):
     slots: list[DeliverySlot]
     bonus_slot: str | None
+    bonus_trigger: str
+    followup_slot: str | None
+    can_postpone: bool
 
 
 # Legacy codes still occur on open practices created before the catalogue was consolidated.
@@ -43,12 +46,26 @@ def _catalog() -> dict[str, DeliveryPolicy]:
                 _slot(i, row[f"upload_box_{i}"]) for i in range(1, 7) if row[f"upload_box_{i}"]
             ]
             trigger = row["bonus_trigger"]
-            if trigger not in {"electronic_visa_issued", "service_delivered"}:
+            if trigger == "electronic_visa_issued":
+                bonus_slot = "electronic_visa"
+            elif trigger == "kitas_imk_uploaded":
+                bonus_slot = next(s["key"] for s in slots if s["label"].startswith("Renewed IMK"))
+            elif trigger == "service_delivered":
+                bonus_slot = None
+            else:
                 raise ValueError(f"Unknown delivery bonus trigger for {row['service_code']}")
-            bonus_slot = "electronic_visa" if trigger == "electronic_visa_issued" else None
             if bonus_slot and not any(slot["key"] == bonus_slot for slot in slots):
-                raise ValueError(f"Missing issuance evidence for {row['service_code']}")
-            result[row["service_code"]] = DeliveryPolicy(slots=slots, bonus_slot=bonus_slot)
+                raise ValueError(f"Missing bonus evidence for {row['service_code']}")
+            followup_slot = (
+                slots[int(row["followup_box"]) - 1]["key"] if row["followup_box"] else None
+            )
+            result[row["service_code"]] = DeliveryPolicy(
+                slots=slots,
+                bonus_slot=bonus_slot,
+                bonus_trigger=trigger,
+                followup_slot=followup_slot,
+                can_postpone=bool(followup_slot and not row["service_code"].endswith("_onshore")),
+            )
     return result
 
 

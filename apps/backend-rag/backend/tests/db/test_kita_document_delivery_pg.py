@@ -149,11 +149,13 @@ async def test_concurrent_issue_one_bonus_and_post_entry_completion(pool):
 
 
 @pytest.mark.asyncio
-async def test_combined_renewal_earns_only_at_completion_and_keeps_rate_gap(pool):
+async def test_combined_renewal_earns_on_imk_upload_and_keeps_rate_gap(pool):
     result = await service.upload(
         pool, 8, "document_1", STAFF, final_file("combined-permit"), BackgroundTasks()
     )
-    assert not result["bonus_event"]
+    assert result["bonus_event"] == "kitas_imk_uploaded"
+    assert result["status"] == "on_process"
+    assert result["visa_followup"] is None
     doc_id = result["slots"][0]["document_id"]
     assert result["slots"][1]["reusable_document_id"] == doc_id
     with pytest.raises(HTTPException):
@@ -161,7 +163,7 @@ async def test_combined_renewal_earns_only_at_completion_and_keeps_rate_gap(pool
     await service.reuse(pool, 8, "document_2", STAFF, doc_id)
     await service.waive(pool, 8, "document_3", STAFF, "No separate manpower filing in this order")
     result = await service.complete(pool, 8, STAFF, BackgroundTasks())
-    assert result["bonus_event"] == "service_delivered"
+    assert result["bonus_event"] == "kitas_imk_uploaded"
     async with pool.acquire() as conn:
         assert await conn.fetchval("SELECT count(*) FROM documents") == 1
         assert (

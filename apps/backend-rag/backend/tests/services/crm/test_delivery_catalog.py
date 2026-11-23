@@ -22,12 +22,20 @@ def test_issuance_is_its_own_event_and_post_entry_slots_are_required():
                 assert any(
                     "ITK" in s["label"] and s["condition"] is None for s in policy["slots"]
                 ), code
+            followup = next(s for s in policy["slots"] if s["key"] == policy["followup_slot"])
+            assert followup["label"].startswith(("ITK", "IMK")), code
+            assert policy["can_postpone"] == (not code.endswith("_onshore")), code
+        elif code.startswith("kitas_") and code.endswith("_extend"):
+            assert policy["bonus_trigger"] == "kitas_imk_uploaded", code
+            assert policy["bonus_slot"] == "document_1", code
+            assert policy["followup_slot"] is None, code
         else:
             assert policy["bonus_slot"] is None, code
+            assert policy["followup_slot"] is None, code
     assert delivery_policy("visa_c1_tourism")["bonus_slot"] == "electronic_visa"
     assert delivery_policy("kitas_investor_2yr_offshore")["bonus_slot"] == "electronic_visa"
     renewal = delivery_policy("kitas_working_extend")
-    assert renewal["bonus_slot"] is None
+    assert renewal["bonus_slot"] == "document_1"
     assert any(
         s["label"].startswith("Renewed IMK") and not s["condition"] for s in renewal["slots"]
     )
