@@ -47,6 +47,7 @@ async def portal_pg_pool() -> AsyncIterator[asyncpg.Pool]:
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             );
             CREATE TABLE magic_link_tokens (LIKE public.magic_link_tokens INCLUDING ALL);
+            CREATE TABLE client_preferences (client_id INTEGER PRIMARY KEY REFERENCES clients(id));
             """
         )
         pool = await asyncpg.create_pool(
