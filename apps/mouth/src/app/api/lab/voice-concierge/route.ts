@@ -449,9 +449,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const body = (await request
-    .json()
-    .catch(() => ({}))) as VoiceConciergeRequest;
+  const parsed: unknown = await request.json().catch(() => ({}));
+  const body = (
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {}
+  ) as VoiceConciergeRequest;
   const message = body.message?.trim().slice(0, MAX_MESSAGE_LENGTH);
 
   if (!message) {

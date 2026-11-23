@@ -100,6 +100,18 @@ describe("voice concierge route", () => {
     });
   });
 
+  it.each([null, 7, "text", [1, 2]])(
+    "answers a JSON body that is not an object like a missing message (%j)",
+    async (body) => {
+      const response = await POST(request(body));
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "message required",
+      });
+    },
+  );
+
   it("requires internal auth in production before demo or Gemini text handling", async () => {
     vi.stubEnv("NODE_ENV", "production");
     process.env.VOICE_CONCIERGE_LAB_ENABLED = "true";
