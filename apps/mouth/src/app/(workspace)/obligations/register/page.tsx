@@ -38,7 +38,7 @@
  * same as `(workspace)/review/page.tsx`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { api } from "@/lib/api";
@@ -100,11 +100,12 @@ export default function ComplianceRegisterPage() {
   );
 
   // ── per-row decision state ─────────────────────────────────────────────
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyIds, setBusyIds] = useState<ReadonlySet<number>>(() => new Set());
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [evidenceRefs, setEvidenceRefs] = useState<Record<number, string>>({});
   const [declarations, setDeclarations] = useState<Record<number, boolean>>({});
   const [rowError, setRowError] = useState<Record<number, string>>({});
+  const listRequestSequence = useRef(0);
 
   // ── catalog, client names, counters ────────────────────────────────────
   const catalog = useObligationsCatalog();
@@ -120,6 +121,7 @@ export default function ComplianceRegisterPage() {
   const groupByMonth = trimmedClientFilter !== "";
 
   const loadList = useCallback(async () => {
+    const sequence = ++listRequestSequence.current;
     setLoading(true);
     setListError(null);
     try {
@@ -132,32 +134,31 @@ export default function ComplianceRegisterPage() {
       const res = await api.get<ObligationListOut>(
         `/api/compliance/obligations?${params.toString()}`,
       );
-      setItems(res.items ?? []);
-      setTotal(res.total ?? 0);
+      if (sequence === listRequestSequence.current) {
+        setItems(res.items ?? []);
+        setTotal(res.total ?? 0);
+      }
     } catch (e) {
       logger.error(
         "obligations list load failed",
         { component: "ObligationsPage", action: "loadList" },
         e instanceof Error ? e : new Error(String(e)),
       );
-      setListError(
-        describeError(e, "Could not load the obligations register."),
-      );
-      setItems([]);
-      setTotal(0);
+      if (sequence === listRequestSequence.current) {
+        setListError(
+          describeError(e, "Could not load the obligations register."),
+        );
+        setItems([]);
+        setTotal(0);
+      }
     } finally {
-      setLoading(false);
+      if (sequence === listRequestSequence.current) setLoading(false);
     }
   }, [filterClientId, filterStatus, offset]);
 
   useEffect(() => {
     void loadList();
   }, [loadList]);
-
-  // A filter change starts back at the first page.
-  useEffect(() => {
-    setOffset(0);
-  }, [filterClientId, filterStatus]);
 
   /**
    * `clientIdOverride` lets the profile panel (U2) reuse this exact path after a
@@ -205,7 +206,7 @@ export default function ComplianceRegisterPage() {
 
   const handleApprove = useCallback(
     async (row: ObligationOut) => {
-      setBusyId(row.id);
+      setBusyIds((prev) => new Set(prev).add(row.id));
       setRowError((prev) => ({ ...prev, [row.id]: "" }));
       setNotice(null);
       try {
@@ -229,12 +230,20 @@ export default function ComplianceRegisterPage() {
           },
           e instanceof Error ? e : new Error(String(e)),
         );
-        setRowError((prev) => ({
-          ...prev,
-          [row.id]: describeError(e, "Could not approve this obligation."),
-        }));
+        const message = describeError(e, "Could not approve this obligation.", {
+          409: e instanceof ApiError ? (e.detail ?? e.message) : "",
+        });
+        setRowError((prev) => ({ ...prev, [row.id]: message }));
+        if (e instanceof ApiError && e.statusCode === 409) {
+          setRefreshTick((t) => t + 1);
+          await loadList();
+        }
       } finally {
-        setBusyId(null);
+        setBusyIds((prev) => {
+          const next = new Set(prev);
+          next.delete(row.id);
+          return next;
+        });
       }
     },
     [notes, loadList],
@@ -253,7 +262,7 @@ export default function ComplianceRegisterPage() {
         }));
         return;
       }
-      setBusyId(row.id);
+      setBusyIds((prev) => new Set(prev).add(row.id));
       setRowError((prev) => ({ ...prev, [row.id]: "" }));
       setNotice(null);
       try {
@@ -273,12 +282,20 @@ export default function ComplianceRegisterPage() {
           },
           e instanceof Error ? e : new Error(String(e)),
         );
-        setRowError((prev) => ({
-          ...prev,
-          [row.id]: describeError(e, "Could not reject this obligation."),
-        }));
+        const message = describeError(e, "Could not reject this obligation.", {
+          409: e instanceof ApiError ? (e.detail ?? e.message) : "",
+        });
+        setRowError((prev) => ({ ...prev, [row.id]: message }));
+        if (e instanceof ApiError && e.statusCode === 409) {
+          setRefreshTick((t) => t + 1);
+          await loadList();
+        }
       } finally {
-        setBusyId(null);
+        setBusyIds((prev) => {
+          const next = new Set(prev);
+          next.delete(row.id);
+          return next;
+        });
       }
     },
     [notes, loadList],
@@ -289,7 +306,7 @@ export default function ComplianceRegisterPage() {
       const evidenceRef = (evidenceRefs[row.id] ?? "").trim();
       if (!evidenceRef || evidenceRef.length > 500 || !declarations[row.id])
         return;
-      setBusyId(row.id);
+      setBusyIds((prev) => new Set(prev).add(row.id));
       setRowError((prev) => ({ ...prev, [row.id]: "" }));
       setNotice(null);
       try {
@@ -321,7 +338,11 @@ export default function ComplianceRegisterPage() {
           await loadList();
         }
       } finally {
-        setBusyId(null);
+        setBusyIds((prev) => {
+          const next = new Set(prev);
+          next.delete(row.id);
+          return next;
+        });
       }
     },
     [evidenceRefs, declarations, loadList],
@@ -462,7 +483,10 @@ export default function ComplianceRegisterPage() {
         loading={countsLoading}
         clientId={trimmedClientFilter}
         activeStatus={filterStatus}
-        onSelect={setFilterStatus}
+        onSelect={(status) => {
+          setOffset(0);
+          setFilterStatus(status);
+        }}
       />
 
       {/* ── Filters ──────────────────────────────────────────────────── */}
@@ -483,7 +507,10 @@ export default function ComplianceRegisterPage() {
                 tone="wait"
                 label={s}
                 pressed={filterStatus === s}
-                onClick={() => setFilterStatus(s)}
+                onClick={() => {
+                  setOffset(0);
+                  setFilterStatus(s);
+                }}
               />
             ))}
           </div>
@@ -497,7 +524,10 @@ export default function ComplianceRegisterPage() {
                 min={1}
                 className="h-9 w-28 border border-[var(--line-control)] bg-transparent px-2 text-[12px] normal-case tracking-normal text-[var(--tx-pure)] focus:border-[var(--bz-copper)] focus:outline-none"
                 value={filterClientId}
-                onChange={(e) => setFilterClientId(e.target.value)}
+                onChange={(e) => {
+                  setOffset(0);
+                  setFilterClientId(e.target.value);
+                }}
                 placeholder="all clients"
               />
             </label>
@@ -549,7 +579,7 @@ export default function ComplianceRegisterPage() {
             evidenceRefs={evidenceRefs}
             declarations={declarations}
             rowError={rowError}
-            busyId={busyId}
+            busyIds={busyIds}
             onNoteChange={handleNoteChange}
             onApprove={(row) => void handleApprove(row)}
             onReject={(row) => void handleReject(row)}
