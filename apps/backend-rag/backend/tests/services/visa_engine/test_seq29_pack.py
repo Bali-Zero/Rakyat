@@ -1,10 +1,11 @@
 """Seq-29 fold gates: the organ re-stamp of signed seq-28 plus four decision-free corrections.
 
-Until the organ run that follows seq-28 exists the committed source is the dry-run output: the
-2026-10-11 ledger is first re-proved (it must reproduce signed seq-28 from signed seq-27) and
-its stamps are kept.  Once a newer ledger is committed the same fixture folds it from seq-28
-and compares the result with the committed seq-29 source.  Signed-bundle checks wake up when
-the ceremony adds the signed artifact.
+The ledger is PINNED to research/visa/2026-10-13-organ-reattest-seq29, the one that produced
+the committed seq-29 source.  It is deliberately not the newest ledger: the weekly
+re-attestation organ commits a newer one every week, and a newest-ledger fixture would then fold
+a different ledger than the one that was signed, breaking the byte-for-byte comparison.  The
+fixture folds the pinned ledger from seq-28 and compares the result with the committed seq-29
+source.  Signed-bundle checks wake up when the ceremony adds the signed artifact.
 """
 
 from __future__ import annotations
@@ -89,7 +90,8 @@ def anchor_signed() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def newest_ledger() -> Path:
-    return seq28_mod.discover_newest_ledger(_RESEARCH)
+    # Pinned, not discover_newest_ledger(): see the module docstring.
+    return _RESEARCH / "2026-10-13-organ-reattest-seq29"
 
 
 @pytest.fixture(scope="module")
