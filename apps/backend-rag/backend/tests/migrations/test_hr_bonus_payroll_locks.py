@@ -413,6 +413,21 @@ async def test_one_overdue_case_holds_one_month_and_carries_each_bonus_once(env,
     )
     assert await env.pool.fetchval("SELECT count(*) FROM hr_bonus_deferral_causes") == 2
     await env.svc.approve_bonus(feb_pending, env.admin)
+    # Even confirmed receipt at day 60 leaves February's deferred payment outstanding.
+    await env.pool.execute(
+        """UPDATE practice_visa_followups SET email_state='sent', email_sent_at=now(),
+               email_receipt_confirmed_at=now(),email_receipt_confirmed_by=$2,email_receipt_reference=$3
+           WHERE practice_id=$1""",
+        pid,
+        env.admin,
+        "fixture-mail-receipt",
+    )
+    assert (
+        await env.pool.fetchval(
+            "SELECT count(*) FROM hr_visa_bonus_obligations WHERE practice_id=$1", pid
+        )
+        == 1
+    )
     await _award(env.pool, consultant, 3, 95_000)
     monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 3, 31))
     assert (await _run_month(env, 3))["Fake A"]["bonus_total"] == 95_000

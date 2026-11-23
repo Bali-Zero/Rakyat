@@ -50,7 +50,8 @@ SELECT f.practice_id, e.employee_id, f.service_code, f.slot_key, f.started_on,
 FROM practice_visa_followups f JOIN hr_delivery_bonus_events e ON e.practice_id=f.practice_id
 LEFT JOIN hr_visa_bonus_hold_periods h ON h.practice_id=f.practice_id
 LEFT JOIN hr_payroll_periods p ON p.id=h.payroll_period_id
-WHERE f.fulfilled_at IS NULL AND f.owner_release_at IS NULL AND e.employee_id IS NOT NULL;
+-- An accepted escalation email leaves the payment hold in force until permit evidence exists.
+WHERE f.fulfilled_at IS NULL AND e.employee_id IS NOT NULL;
 
 CREATE FUNCTION hr_visa_holds_for_period(target_month DATE, target_period INTEGER, as_of DATE)
 RETURNS TABLE (practice_id INTEGER,employee_id INTEGER)

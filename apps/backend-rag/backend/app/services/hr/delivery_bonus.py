@@ -254,7 +254,7 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
                   o.due_on, COALESCE(o.bound_month,o.payout_from_month) AS payout_from_month, o.email_state,
                   CASE WHEN $2::date < o.started_on + 60 THEN 'upload_permit'
                        WHEN o.email_state IN ('sending','uncertain') THEN 'verify_escalation_email'
-                       WHEN o.email_state='sent' THEN 'await_owner'
+                       WHEN o.email_state='sent' THEN 'upload_after_email'
                        ELSE 'send_escalation_email' END AS next_action
            FROM hr_visa_bonus_obligations o LEFT JOIN practice_types pt ON pt.code=o.service_code
            WHERE o.employee_id=$1 AND o.due_on <= $2

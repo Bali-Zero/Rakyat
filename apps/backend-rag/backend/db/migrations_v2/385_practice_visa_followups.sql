@@ -24,9 +24,6 @@ CREATE TABLE practice_visa_followups (
     email_receipt_confirmed_by text,
     email_receipt_reference text UNIQUE,
 
-    owner_release_at timestamptz,
-    owner_release_by text,
-    owner_release_note text,
     CHECK ((postponed_at IS NULL AND postponed_by IS NULL AND postponement_note IS NULL AND due_on=started_on+30)
         OR (allow_postpone AND postponed_at IS NOT NULL AND postponed_by IS NOT NULL
             AND postponement_note IS NOT NULL AND due_on=started_on+60
@@ -34,12 +31,10 @@ CREATE TABLE practice_visa_followups (
     CHECK ((email_state='sent') = (email_sent_at IS NOT NULL)),
     CHECK ((email_receipt_confirmed_at IS NULL AND email_receipt_confirmed_by IS NULL AND email_receipt_reference IS NULL)
         OR (email_state='sent' AND email_receipt_confirmed_at IS NOT NULL
-            AND email_receipt_confirmed_by IS NOT NULL AND email_receipt_reference IS NOT NULL)),
-
-    CHECK ((owner_release_at IS NULL) = (owner_release_by IS NULL))
+            AND email_receipt_confirmed_by IS NOT NULL AND email_receipt_reference IS NOT NULL))
 );
 CREATE INDEX idx_practice_visa_followups_due ON practice_visa_followups(due_on,practice_id)
-    WHERE fulfilled_at IS NULL AND owner_release_at IS NULL;
+    WHERE fulfilled_at IS NULL;
 
 CREATE TABLE practice_visa_followup_send_attempts (
     practice_id integer NOT NULL REFERENCES practice_visa_followups(practice_id) ON DELETE CASCADE,

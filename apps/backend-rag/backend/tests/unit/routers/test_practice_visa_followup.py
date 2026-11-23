@@ -23,7 +23,6 @@ def row(**kw):
         "due_on": DAY0 + timedelta(days=30),
         "allow_postpone": True,
         "fulfilled_at": None,
-        "owner_release_at": None,
         "postponed_at": None,
         "postponement_note": None,
         "email_state": "not_sent",
@@ -277,8 +276,8 @@ async def test_owner_confirmation_preserves_ambiguous_attempt_and_pay_hold(db, m
     monkeypatch.setattr(tracking, "_authorized_record", allowed)
     monkeypatch.setattr(tracking, "send_internal_email", sender)
     view = await tracking.confirm_receipt(pool, 7, owner, "mailbox-message-1")
-    assert view["email_receipt_confirmed_at"] == stamp and view["owner_release_at"] is None
-    assert not view["can_confirm_receipt"] and not view["can_release"]
+    assert view["email_receipt_confirmed_at"] == stamp and view["status"] == "email_sent_permit_due"
+    assert not view["can_confirm_receipt"] and view["fulfilled_at"] is None
     assert await tracking.confirm_receipt(pool, 7, owner, "mailbox-message-1") == view
     with pytest.raises(HTTPException):
         await tracking.confirm_receipt(pool, 7, owner, "a-different-reference")

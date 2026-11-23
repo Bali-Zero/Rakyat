@@ -1158,7 +1158,7 @@ class HRService:
                 await _lock_bonus_allocations(conn, exclusive=True)
                 await conn.execute(
                     """SELECT practice_id FROM practice_visa_followups
-                       WHERE owner_release_at IS NULL AND due_on <= $1
+                       WHERE due_on <= $1
                        ORDER BY practice_id FOR SHARE""",
                     as_of,
                 )

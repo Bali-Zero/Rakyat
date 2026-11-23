@@ -139,7 +139,10 @@ async def test_concurrent_explicit_send_records_one_accepted_attempt(pool, monke
         release.set()
     first = await task
     second = await tracking.escalate(pool, 7, USER, "Travel remains on hold")
-    assert first["email_sent_at"] == second["email_sent_at"] and first["owner_release_at"] is None
+    assert (
+        first["email_sent_at"] == second["email_sent_at"]
+        and first["status"] == "email_sent_permit_due"
+    )
     assert sender.await_count == 1
     async with pool.acquire() as conn:
         assert (
@@ -163,7 +166,7 @@ async def test_known_rejection_retries_same_frozen_payload_and_key(pool, monkeyp
         await tracking.escalate(pool, 7, USER, "Changed reason")
     assert change.value.status_code == 409
     result = await tracking.escalate(pool, 7, USER, "Awaiting permit from immigration")
-    assert result["email_sent_at"] is not None and result["owner_release_at"] is None
+    assert result["email_sent_at"] is not None and result["status"] == "email_sent_permit_due"
     assert sender.await_args_list[0].kwargs == sender.await_args_list[1].kwargs
     async with pool.acquire() as conn:
         outcomes = await conn.fetch(
@@ -213,7 +216,7 @@ async def test_owner_attests_positive_receipt_without_resending_or_releasing_pay
     confirmed = await tracking.confirm_receipt(pool, 7, owner, reference)
     assert (
         confirmed["email_receipt_confirmed_at"] is not None
-        and confirmed["owner_release_at"] is None
+        and confirmed["status"] == "email_sent_permit_due"
     )
     assert await tracking.confirm_receipt(pool, 7, owner, reference) == confirmed
     assert (await tracking.escalate(pool, 7, USER, "Client delayed arrival"))[
@@ -228,6 +231,6 @@ async def test_owner_attests_positive_receipt_without_resending_or_releasing_pay
             == "uncertain"
         )
         saved = await conn.fetchrow(
-            "SELECT email_receipt_confirmed_by,email_receipt_reference,owner_release_at FROM practice_visa_followups WHERE practice_id=7"
+            "SELECT email_receipt_confirmed_by,email_receipt_reference,fulfilled_at FROM practice_visa_followups WHERE practice_id=7"
         )
         assert tuple(saved.values()) == (owner["email"], reference, None)

@@ -15,18 +15,15 @@ export interface VisaFollowup {
     | "email_sending"
     | "email_failed"
     | "email_uncertain"
-    | "awaiting_owner"
-    | "owner_released"
+    | "email_sent_permit_due"
     | "fulfilled";
   postponed_at: string | null;
   postponement_note: string | null;
   escalation_note: string | null;
   email_sent_at: string | null;
   fulfilled_at: string | null;
-  owner_release_at: string | null;
   can_postpone: boolean;
   can_escalate: boolean;
-  can_release: boolean;
   can_confirm_receipt: boolean;
   email_receipt_confirmed_at: string | null;
 }
@@ -78,7 +75,7 @@ export function VisaPermitFollowup({
       </p>
       <p>
         Due <time dateTime={value.due_on}>{value.due_on}</time>
-        {!value.fulfilled_at && !value.owner_release_at && ` · ${dayText}`}
+        {!value.fulfilled_at && ` · ${dayText}`}
       </p>
       {value.postponed_at && (
         <p>
@@ -129,8 +126,11 @@ export function VisaPermitFollowup({
       {value.email_receipt_confirmed_at && (
         <p role="status">Email receipt confirmed by Zero.</p>
       )}
-      {value.status === "awaiting_owner" && <p>Awaiting Zero’s decision.</p>}
-      {value.status === "owner_released" && <p>Release recorded by Zero.</p>}
+      {value.status === "email_sent_permit_due" && (
+        <p>
+          The bonus payment stays on hold until the required permit is uploaded.
+        </p>
+      )}
       {allowed("postpone") && draft !== "postpone" && (
         <button
           type="button"

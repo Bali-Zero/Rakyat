@@ -29,14 +29,15 @@ type Hold = {
     | "upload_permit"
     | "send_escalation_email"
     | "verify_escalation_email"
-    | "await_owner";
+    | "upload_after_email";
   email_state: string;
 };
 const holdActions: Record<Hold["next_action"], string> = {
   upload_permit: "Upload the missing permit or review postponement",
   send_escalation_email: "Review official email to Zero",
   verify_escalation_email: "Check the email delivery record",
-  await_owner: "Awaiting Zero’s decision",
+  upload_after_email:
+    "Email sent. Upload the required permit to clear this hold.",
 };
 type Desk = {
   team_member_id: string;
@@ -125,7 +126,6 @@ export function DeliveryBonusDesk() {
             slot_key: string;
             due_on: string;
             fulfilled_at: string | null;
-            owner_release_at: string | null;
           } | null;
           slots: {
             key: string;
@@ -137,8 +137,7 @@ export function DeliveryBonusDesk() {
         }>(`/api/crm/practices/${next.practice_id}/delivery`);
         if (!live || !acceptResponse(pack, owner)) return;
         const followup = pack.data.visa_followup;
-        const openFollowup =
-          followup && !followup.fulfilled_at && !followup.owner_release_at;
+        const openFollowup = followup && !followup.fulfilled_at;
         const missing = pack.data.slots.filter(
           (slot) =>
             !slot.document_id &&

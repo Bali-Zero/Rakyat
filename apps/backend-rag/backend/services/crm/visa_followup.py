@@ -66,10 +66,8 @@ def followup_view(
         email = "uncertain"
     if row["fulfilled_at"]:
         status = "fulfilled"
-    elif row["owner_release_at"]:
-        status = "owner_released"
     elif email == "sent":
-        status = "awaiting_owner"
+        status = "email_sent_permit_due"
     elif email != "not_sent":
         status = "email_" + email
     elif today >= final_due:
@@ -78,7 +76,7 @@ def followup_view(
         status = "overdue"
     else:
         status = "awaiting_permit"
-    open_ = not (row["fulfilled_at"] or row["owner_release_at"])
+    open_ = row["fulfilled_at"] is None
     return {
         "slot_key": row["slot_key"],
         "started_on": started,
@@ -98,12 +96,10 @@ def followup_view(
             and (user or {}).get("email") in OWNER_EMAILS
         ),
         "fulfilled_at": row["fulfilled_at"],
-        "owner_release_at": row["owner_release_at"],
         "can_postpone": bool(
             open_ and row["allow_postpone"] and not row["postponed_at"] and 30 <= age < 60
         ),
         "can_escalate": bool(open_ and age >= 60 and email in {"not_sent", "failed"}),
-        "can_release": False,
     }
 
 

@@ -295,10 +295,8 @@ describe("Final delivery", () => {
     escalation_note: null,
     email_sent_at: null,
     fulfilled_at: null,
-    owner_release_at: null,
     can_postpone: true,
     can_escalate: false,
-    can_release: false,
   };
   it("records a private not-entered note once against the original 60-day deadline", async () => {
     requests.get.mockResolvedValue({ ...initial, visa_followup: followup });
@@ -355,7 +353,7 @@ describe("Final delivery", () => {
       .mockRejectedValueOnce(new Error("Mail not accepted"))
       .mockResolvedValueOnce({
         ...due,
-        status: "awaiting_owner",
+        status: "email_sent_permit_due",
         email_sent_at: "2026-09-30T05:04:00Z",
         can_escalate: false,
       });
@@ -422,7 +420,7 @@ describe("Final delivery", () => {
     requests.get.mockResolvedValue({ ...initial, visa_followup: uncertain });
     requests.post.mockResolvedValueOnce({
       ...uncertain,
-      status: "awaiting_owner",
+      status: "email_sent_permit_due",
       email_sent_at: "2026-09-30T05:00:00Z",
       email_receipt_confirmed_at: "2026-09-30T05:06:00Z",
       can_confirm_receipt: false,
@@ -459,7 +457,11 @@ describe("Final delivery", () => {
         name: "Record receipt of the existing email",
       }),
     ).toBeNull();
-    expect(screen.queryByText("Release recorded by Zero.")).toBeNull();
+    expect(
+      screen.getByText(
+        "The bonus payment stays on hold until the required permit is uploaded.",
+      ),
+    ).toBeVisible();
   });
   it("withholds staff notes and actions if the response belongs to another credential", async () => {
     requests.sentSub = "staff-b";
