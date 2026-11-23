@@ -40,6 +40,17 @@ function fullPlanFixture(): PlanState {
   };
 }
 
+/** A valid plan whose JSON is exactly `bytes` long, padded through one
+ *  checklist key, so only the size guard can tell two such plans apart. */
+function planOfJsonBytes(bytes: number): PlanState {
+  const base = { ...fullPlanFixture(), checklist: { k: true } };
+  const pad = bytes - JSON.stringify(base).length;
+  if (pad < 0) throw new Error("fixture larger than the requested size");
+  const plan = { ...base, checklist: { ["k" + "x".repeat(pad)]: true } };
+  if (JSON.stringify(plan).length !== bytes) throw new Error("size drift");
+  return plan;
+}
+
 describe("emptyPlan", () => {
   it("returns a fresh v1 plan with all-null answers and an empty checklist", () => {
     const plan = emptyPlan();
@@ -116,17 +127,24 @@ describe("decodePlanFragment — malformed / wrong-version / oversized => null, 
     expect(decodePlanFragment(wrongVersion)).toBeNull();
   });
 
-  it("rejects an oversized fragment (>8KB)", () => {
-    const huge = "A".repeat(8 * 1024 + 1);
-    expect(decodePlanFragment(huge)).toBeNull();
+  it("rejects a VALID plan whose fragment is longer than 8KB, and accepts one at exactly 8KB", () => {
+    // 6,144 bytes of JSON encode to exactly 8,192 base64url characters; one
+    // byte more encodes to 8,194 (no unpadded length of 8,193 exists).
+    const atLimit = planOfJsonBytes(6144);
+    const overLimit = planOfJsonBytes(6145);
+    expect(toB64Url(JSON.stringify(atLimit))).toHaveLength(8 * 1024);
+    expect(toB64Url(JSON.stringify(overLimit))).toHaveLength(8 * 1024 + 2);
+
+    expect(decodePlanFragment(toB64Url(JSON.stringify(atLimit)))).toEqual(
+      atLimit,
+    );
+    expect(decodePlanFragment(toB64Url(JSON.stringify(overLimit)))).toBeNull();
   });
 
-  it("accepts a fragment right at the 8KB boundary shape (sanity: boundary itself isn't rejected by length alone)", () => {
-    // A same-length string of valid alphabet chars that is NOT valid JSON
-    // still correctly resolves to null via the JSON-parse guard, proving
-    // the size guard isn't masking a separate bug at the boundary.
-    const atLimit = "A".repeat(8 * 1024);
-    expect(decodePlanFragment(atLimit)).toBeNull();
+  it("returns null without throwing for a very long fragment", () => {
+    const huge = "A".repeat(64 * 1024);
+    expect(() => decodePlanFragment(huge)).not.toThrow();
+    expect(decodePlanFragment(huge)).toBeNull();
   });
 });
 
