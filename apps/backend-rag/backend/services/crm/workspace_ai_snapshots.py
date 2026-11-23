@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from bisect import bisect_left, bisect_right
 from typing import Any, Literal
 
 import asyncpg
@@ -65,24 +66,23 @@ _ABSOLUTE_COMPLIANCE_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-# An amount in rupiah, however it is written: "Rp 5.000", "Rp. 5.000", "IDR.5000",
-# or a number followed by "rupiah" ("5.000.000 rupiah", "5 juta rupiah").
-# The number is read only from its first digit (the lookbehind) and without
-# backtracking (possessive quantifiers), so each run of digits and separators
-# is scanned once: the search stays linear on unbounded fact text.
-_RUPIAH_AMOUNT = (
-    r"(?:(?:rp|idr)\.?\s*\d|"
-    r"(?<![\d.,])\d[\d.,]*+\s*+(?:(?:juta|miliar|ribu|million|billion|thousand)\s*+)?rupiah\b)"
-)
 _SENSITIVE_FINANCIAL_TERMS = (
     r"(?:pph|ppn|vat|tax|pajak|omzet|withholding|salary|salaries|"
     r"revenue|income|profit|loss|debt|balance|invoice|fee|royalty)"
 )
-_SENSITIVE_FINANCIAL_AMOUNT_PATTERN = re.compile(
-    rf"\b{_SENSITIVE_FINANCIAL_TERMS}\b.{{0,80}}\b{_RUPIAH_AMOUNT}|"
-    rf"\b{_RUPIAH_AMOUNT}.{{0,80}}\b{_SENSITIVE_FINANCIAL_TERMS}\b",
-    re.IGNORECASE | re.DOTALL,
+# R1 preserves round one's answer, including a qualifying digit within a number run.
+# R2 finds amounts and whole-word terms separately, then measures their positions in code.
+# Each pattern enters a number run once without giving characters back; bisection joins are O(n log n).
+_RUPIAH_PREFIX_AMOUNT = re.compile(r"\b(?:rp|idr)\.?\s*\d", re.IGNORECASE)
+_RUPIAH_NUMBER_AMOUNT = re.compile(
+    r"(?<![\d.,])"
+    r"(?:(?<!\w)(?=(?P<first>\d))|(?=[\d.,]*?[.,](?P<later>\d)))"
+    r"[.,]*+\d[\d.,]*+\s*+"
+    r"(?:(?:juta|miliar|ribu|million|billion|thousand)\s*+)?rupiah\b",
+    re.IGNORECASE,
 )
+_SENSITIVE_FINANCIAL_TERM = re.compile(rf"\b{_SENSITIVE_FINANCIAL_TERMS}\b", re.IGNORECASE)
+_AMOUNT_TERM_WINDOW = 80
 _UNSAFE_ADVICE_PATTERN = re.compile(
     r"\b(?:client|company|director|commissioner|shareholder|they|you)\s+"
     r"(?:should|must|need to|required to|has to)\b|"
@@ -412,7 +412,30 @@ def _contains_absolute_compliance_claim(text: str) -> bool:
 
 
 def _contains_sensitive_financial_amount(text: str) -> bool:
-    return bool(_SENSITIVE_FINANCIAL_AMOUNT_PATTERN.search(text))
+    if not text:
+        return False
+
+    term_matches = list(_SENSITIVE_FINANCIAL_TERM.finditer(text))
+    if not term_matches:
+        return False
+    term_starts = [match.start() for match in term_matches]
+    term_ends = [match.end() for match in term_matches]
+    amounts = [(match.start(), match.end()) for match in _RUPIAH_PREFIX_AMOUNT.finditer(text)]
+    for match in _RUPIAH_NUMBER_AMOUNT.finditer(text):
+        start = match.start("first") if match.group("first") else match.start("later")
+        amounts.append((start, match.end()))
+
+    for start, end in amounts:
+        preceding_term = bisect_right(term_ends, start) - 1
+        if preceding_term >= 0 and start - term_ends[preceding_term] <= _AMOUNT_TERM_WINDOW:
+            return True
+        following_term = bisect_left(term_starts, end)
+        if (
+            following_term < len(term_starts)
+            and term_starts[following_term] - end <= _AMOUNT_TERM_WINDOW
+        ):
+            return True
+    return False
 
 
 def _contains_unsafe_advice_claim(text: str) -> bool:

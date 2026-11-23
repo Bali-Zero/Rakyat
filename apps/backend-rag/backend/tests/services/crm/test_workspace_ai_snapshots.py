@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import random
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -15,11 +17,26 @@ from backend.services.crm.workspace_ai_snapshots import (
     WorkspaceAiSnapshotCreate,
     WorkspaceAiSnapshotResponse,
     _contains_credential_or_portal_secret,
+    _contains_sensitive_financial_amount,
     approve_workspace_ai_snapshot,
     auto_approve_workspace_ai_snapshots,
     create_workspace_ai_snapshot,
     evaluate_workspace_ai_auto_approve_snapshot,
     fetch_workspace_ai_review_queue,
+)
+
+_ROUND_1_6AD585BE8_7A3DB376_RUPIAH_AMOUNT = (
+    r"(?:(?:rp|idr)\.?\s*\d|"
+    r"\d[\d.,]*\s*(?:(?:juta|miliar|ribu|million|billion|thousand)\s*)?rupiah\b)"
+)
+_ROUND_1_6AD585BE8_7A3DB376_TERMS = (
+    r"(?:pph|ppn|vat|tax|pajak|omzet|withholding|salary|salaries|"
+    r"revenue|income|profit|loss|debt|balance|invoice|fee|royalty)"
+)
+_ROUND_1_6AD585BE8_7A3DB376_PATTERN = re.compile(
+    rf"\b{_ROUND_1_6AD585BE8_7A3DB376_TERMS}\b.{{0,80}}\b{_ROUND_1_6AD585BE8_7A3DB376_RUPIAH_AMOUNT}|"
+    rf"\b{_ROUND_1_6AD585BE8_7A3DB376_RUPIAH_AMOUNT}.{{0,80}}\b{_ROUND_1_6AD585BE8_7A3DB376_TERMS}\b",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -522,6 +539,140 @@ def test_auto_approve_policy_blocks_every_written_form_of_a_rupiah_amount(
 @pytest.mark.parametrize(
     "detail",
     [
+        "PPh,5 juta rupiah",
+        "tax .5 million rupiah",
+        "PPh ,5 rupiah",
+        "income x,5 rupiah",
+        ",5 juta rupiah of PPh",
+        ".5 million rupiah owed as tax",
+    ],
+)
+@pytest.mark.parametrize("category", ["compliance", "next_action"])
+def test_auto_approve_policy_blocks_rupiah_amounts_with_leading_separators(
+    detail: str, category: str
+) -> None:
+    assert _amount_blocked(detail, category)
+
+
+@pytest.mark.parametrize("offset", [79, 80, 81])
+@pytest.mark.parametrize(
+    ("amount", "digit_offset"),
+    [
+        ("5 rupiah", 0),
+        (".,5 rupiah", 2),
+    ],
+    ids=["plain", "leading-separators"],
+)
+def test_term_first_window_is_measured_to_qualifying_digit(
+    amount: str, digit_offset: int, offset: int
+) -> None:
+    detail = "PPh" + " " * (offset - digit_offset) + amount
+    assert _contains_sensitive_financial_amount(detail) is (offset <= 80)
+    if offset == 80:
+        assert _amount_blocked(detail)
+
+
+@pytest.mark.parametrize("offset", [79, 80, 81])
+def test_term_first_window_for_word_glued_run_uses_qualifying_digit(offset: int) -> None:
+    detail = "PPh x" + "1" * (offset - 3) + ",5 rupiah"
+    assert _contains_sensitive_financial_amount(detail) is (offset <= 80)
+    if offset == 80:
+        assert _amount_blocked(detail)
+
+
+@pytest.mark.parametrize("offset", [79, 80, 81])
+def test_amount_first_window_is_measured_to_term_start(offset: int) -> None:
+    detail = "5 rupiah" + " " * offset + "tax"
+    assert _contains_sensitive_financial_amount(detail) is (offset <= 80)
+    if offset == 80:
+        assert _amount_blocked(detail)
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "tax " + "." * 80 + "5 rupiah",
+        "tax x" + "1" * 80 + ",5 rupiah",
+    ],
+)
+def test_reading_one_counterexamples_are_not_sensitive(detail: str) -> None:
+    assert not _contains_sensitive_financial_amount(detail)
+
+
+def _round_one_short_texts() -> list[str]:
+    texts: list[str] = []
+    terms = ["PPh", "tax", "income"]
+    left_contexts = ["", " ", ",", ".", "x", "x,", "_", "(", "\n"]
+    number_forms = [
+        "5",
+        "5.000.000",
+        "2,5",
+        ".5",
+        ",5",
+        "5,-",
+        "1.2.3",
+        "5x5",
+        "٥",
+        "Rp 5",
+        "rp\n5",
+    ]
+    units = ["", "juta", "miliar", "ribu", "million", "billion", "thousand"]
+    for term in terms:
+        for left_context in left_contexts:
+            for number in number_forms:
+                for unit in units:
+                    amount = (
+                        number
+                        if number.lower().startswith(("rp", "idr"))
+                        else f"{number} {unit} rupiah"
+                    )
+                    for filler_size in range(78, 83):
+                        filler = "z" * filler_size
+                        texts.extend(
+                            [
+                                f"{term}{left_context}{filler}{amount}",
+                                f"{amount}{filler}{left_context}{term}",
+                            ]
+                        )
+    chooser = random.Random(20261124)
+    pieces = [
+        "PPh",
+        "tax",
+        "income",
+        "5",
+        ".5",
+        ",5",
+        "rupiah",
+        "Rp",
+        "juta",
+        "x",
+        " ",
+        "\n",
+        ".",
+        ",",
+        "z" * 20,
+        "1" * 30,
+        "_",
+        "(",
+    ]
+    for _ in range(20000):
+        texts.append("".join(chooser.choice(pieces) for _ in range(chooser.randrange(1, 10))))
+    return texts
+
+
+def test_financial_amount_matches_round_one_on_short_texts() -> None:
+    failures = [
+        text
+        for text in _round_one_short_texts()
+        if _contains_sensitive_financial_amount(text)
+        != bool(_ROUND_1_6AD585BE8_7A3DB376_PATTERN.search(text))
+    ]
+    assert not failures, failures[:20]
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
         "RPTKA renewal due",
         "IDR currency risk noted",
         "the rupiah weakened against the tax base",
@@ -529,6 +680,10 @@ def test_auto_approve_policy_blocks_every_written_form_of_a_rupiah_amount(
         "PPh owed Rp. soon",
         "Rp. ",
         "IDR. tax reminder",
+        "x5 rupiah tax",
+        "PPh x5 juta rupiah",
+        "harp 5 tax",
+        "Rp 5.000.000",
     ],
 )
 def test_auto_approve_policy_does_not_flag_text_without_an_amount(detail: str) -> None:
@@ -538,13 +693,35 @@ def test_auto_approve_policy_does_not_flag_text_without_an_amount(detail: str) -
 @pytest.mark.parametrize(
     "detail",
     [
-        "1." * 20000,
-        "PPh " + "1." * 20000,
-        "1," * 20000 + " PPh",
-        "PPh " + "1.2 " * 10000 + "rupiah",
-        "a." * 20000,
+        "1." * 50000,
+        "PPh " + "1." * 50000,
+        "1," * 50000 + " PPh",
+        "PPh " + "1.2 " * 50000 + "rupiah",
+        "a." * 50000,
+        "PPh " + ",5" * 50000,
+        ",1" * 50000 + " tax",
+        "PPh x" + "1" * 50000,
+        "x" + "1" * 50000 + " tax",
+        "PPh " + "x1" * 50000,
+        "tax " * 20 + ",1" * 50000,
+        "PPh " * 50000,
+        "rp " * 50000,
     ],
-    ids=["dotted-run", "term-then-run", "run-then-term", "many-runs", "address-like-run"],
+    ids=[
+        "dotted-run",
+        "term-then-run",
+        "run-then-term",
+        "many-runs",
+        "address-like-run",
+        "separator-run-after-term",
+        "separator-run-before-term",
+        "word-glued-run-after-term",
+        "word-glued-run-before-term",
+        "many-word-glued-runs",
+        "term-dense-before-separator-run",
+        "repeated-terms",
+        "repeated-prefixes",
+    ],
 )
 def test_a_long_run_of_digits_is_judged_in_linear_time(detail: str) -> None:
     started = time.perf_counter()
