@@ -600,7 +600,7 @@ class HistoricalTaxCompletionCreate(BaseModel):
     service: Literal["lkpm_quarterly", "spt_annual_company"]
     fiscal_year: int
     fiscal_period: str
-    issuer: str
+    issuer_entity_key: str
     completed_at: datetime
     evidence_references: list[str]
     source: str
@@ -612,7 +612,7 @@ class HistoricalTaxCompletionCreate(BaseModel):
             raise ValueError("fiscal_year must be between 2000 and 2100")
         return value
 
-    @field_validator("issuer", "source")
+    @field_validator("issuer_entity_key", "source")
     @classmethod
     def _required_text(cls, value: str) -> str:
         value = value.strip()
@@ -634,11 +634,8 @@ class HistoricalTaxCompletionCreate(BaseModel):
             raise ValueError("LKPM fiscal_period must be Q1, Q2, Q3, or Q4")
         if self.service == "spt_annual_company" and self.fiscal_period != "ANNUAL":
             raise ValueError("annual SPT fiscal_period must be ANNUAL")
-        canonical_issuer = self.issuer.upper()
-        expected_issuer = "OSS" if self.service == "lkpm_quarterly" else "DJP"
-        if canonical_issuer != expected_issuer:
-            raise ValueError(f"{self.service} issuer must be {expected_issuer}")
-        self.issuer = canonical_issuer
+        if self.issuer_entity_key != "permata_bali_nol_konsultan":
+            raise ValueError("issuer_entity_key must be permata_bali_nol_konsultan")
         if self.completed_at.tzinfo is None or self.completed_at.utcoffset() is None:
             raise ValueError("completed_at must include an offset (WITA is +08:00)")
         return self
@@ -669,7 +666,7 @@ async def create_historical_tax_completion(
         "spt_annual_company": "tax_annual_company",
     }[completion.service]
     identity_material = "|".join(
-        (completion.issuer.casefold(), str(completion.company_id), service_code,
+        (completion.issuer_entity_key, str(completion.company_id), service_code,
          str(completion.fiscal_year), completion.fiscal_period)
     )
     identity = "historical-tax:" + hashlib.sha256(identity_material.encode()).hexdigest()
@@ -680,7 +677,7 @@ async def create_historical_tax_completion(
             assignee = await conn.fetchval(
                 """
                 SELECT 1 FROM team_members
-                WHERE LOWER(email) = $1 AND active = TRUE AND LOWER(role) = 'tax consultant'
+                WHERE LOWER(email) = $1 AND active = TRUE AND LOWER(department) = 'tax'
                 """,
                 completion.assigned_to.lower(),
             )
@@ -732,7 +729,8 @@ async def create_historical_tax_completion(
 
             metadata = {
                 "historical_tax_completion": {
-                    "issuer": completion.issuer,
+                    "issuer_entity_key": completion.issuer_entity_key,
+                    "evidence_authority": "OSS" if completion.service == "lkpm_quarterly" else "DJP",
                     "fiscal_year": completion.fiscal_year,
                     "fiscal_period": completion.fiscal_period,
                     "evidence_references": completion.evidence_references,

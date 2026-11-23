@@ -71,7 +71,7 @@ def _payload(**overrides):
         "service": "lkpm_quarterly",
         "fiscal_year": 2026,
         "fiscal_period": "Q3",
-        "issuer": "OSS",
+        "issuer_entity_key": "permata_bali_nol_konsultan",
         "completed_at": "2026-10-01T09:00:00+08:00",
         "evidence_references": ["receipt-1", "receipt-2"],
         "source": "controlled historical import",
@@ -94,14 +94,14 @@ def test_historical_lkpm_rejects_ambiguous_period(period):
 
 def test_historical_spt_is_annual_only():
     result = HistoricalTaxCompletionCreate(
-        **_payload(service="spt_annual_company", fiscal_period="ANNUAL", issuer="DJP")
+        **_payload(service="spt_annual_company", fiscal_period="ANNUAL")
     )
     assert result.service == "spt_annual_company"
 
 
-def test_historical_service_refuses_noncanonical_issuer():
+def test_historical_service_refuses_noncanonical_billing_entity():
     with pytest.raises(ValidationError):
-        HistoricalTaxCompletionCreate(**_payload(issuer="other"))
+        HistoricalTaxCompletionCreate(**_payload(issuer_entity_key="other"))
 
 
 def test_only_privileged_tax_roles_can_import():
