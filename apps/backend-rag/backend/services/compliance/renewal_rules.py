@@ -403,7 +403,6 @@ RENEWAL_RULES: dict[str, RenewalRule] = {
 RULE_PRIORITY_ORDER: tuple[str, ...] = (
     "kitap_investor_upgrade",
     "kitas_impresariat_new_application",
-    "kitas_working_extend",
     "kitas_remote_worker_extend",
     # Senior second-home routes come BEFORE the generic E33 rule: "e33" and
     # "second home" are substrings of every senior string, so the generic rule
@@ -416,6 +415,9 @@ RULE_PRIORITY_ORDER: tuple[str, ...] = (
     "kitas_retirement_extend",
     "kitas_spouse_extend",
     "kitas_dependent_extend",
+    # "working" occurs inside remote, dependent, spouse and retirement visa names,
+    # so the narrower rules are asked first.
+    "kitas_working_extend",
     "imta_annual_renewal",
     "visa_voa_extension",
     "visa_tourist_extension",
