@@ -523,6 +523,7 @@ export default function NewPracticePage() {
       } as CreatePracticeParams;
 
       const createdPractice = await api.crm.createPractice(backendData);
+      let referralSaveFailed = false;
 
       if (formData.referrer_id != null && createdPractice?.id) {
         try {
@@ -536,6 +537,7 @@ export default function NewPracticePage() {
             { component: "NewProcess", action: "createReferral" },
             toError(referralErr),
           );
+          referralSaveFailed = true;
         }
       }
       const apiDuration = performance.now() - apiStart;
@@ -557,12 +559,16 @@ export default function NewPracticePage() {
       );
       casesMetrics.endPerformanceMark("case_creation", caseId, user.email);
 
-      toast.success(
-        "Process Created",
-        selectedService
-          ? `${selectedService.name} created successfully.`
-          : "Open inquiry created — pick the service before Waiting Documents.",
-      );
+      if (referralSaveFailed) {
+        toast.warning("Case created, but the partner referral was not saved.");
+      } else {
+        toast.success(
+          "Process Created",
+          selectedService
+            ? `${selectedService.name} created successfully.`
+            : "Open inquiry created — pick the service before Waiting Documents.",
+        );
+      }
       if (preselectedClientId) {
         await invalidatePreselectedClient();
         router.push(`/clients/${preselectedClientId}?tab=process`);

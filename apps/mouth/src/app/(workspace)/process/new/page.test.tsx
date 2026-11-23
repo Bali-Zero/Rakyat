@@ -25,6 +25,9 @@ const {
   mockSearch,
   mockGetClients,
   mockToastError,
+  mockToastSuccess,
+  mockToastWarning,
+  mockCreateReferral,
   mockRefetchClientProfile,
   stableSearchParams,
   teamOptions,
@@ -39,6 +42,9 @@ const {
   mockSearch: vi.fn(),
   mockGetClients: vi.fn(),
   mockToastError: vi.fn(),
+  mockToastSuccess: vi.fn(),
+  mockToastWarning: vi.fn(),
+  mockCreateReferral: vi.fn(),
   mockRefetchClientProfile: vi.fn(),
   stableSearchParams: {
     get: vi.fn((key: string) => (key === "client_id" ? "7" : null)),
@@ -80,17 +86,22 @@ vi.mock("@/hooks/useTeamMembers", () => ({
 
 vi.mock("@/components/ui/toast", () => ({
   useToast: () => ({
-    success: vi.fn(),
+    success: mockToastSuccess,
     error: mockToastError,
+    warning: mockToastWarning,
   }),
 }));
 
 vi.mock("@/components/partners/ReferrerDropdown", () => ({
-  ReferrerDropdown: () => <div data-testid="referrer-dropdown" />,
+  ReferrerDropdown: ({ onChange }: { onChange: (id: number) => void }) => (
+    <button type="button" onClick={() => onChange(42)}>
+      Choose synthetic referrer
+    </button>
+  ),
 }));
 
 vi.mock("@/lib/api/partners/partners", () => ({
-  createReferral: vi.fn(),
+  createReferral: mockCreateReferral,
 }));
 
 vi.mock("@/lib/metrics/cases-metrics", () => ({
@@ -177,6 +188,7 @@ describe("NewPracticePage", () => {
     mockGetFamilyMembers.mockResolvedValue([]);
     mockGetClientPractices.mockResolvedValue([]);
     mockCreatePractice.mockResolvedValue({ id: 71 });
+    mockCreateReferral.mockResolvedValue(undefined);
     mockSuggest.mockResolvedValue({
       autofill: true,
       suggested_company_id: null,
@@ -241,6 +253,63 @@ describe("NewPracticePage", () => {
     );
     await screen.findByText("Synthetic Process Client");
   }
+
+  async function submitStandardProcess(
+    user: ReturnType<typeof userEvent.setup>,
+  ) {
+    const selects = await screen.findAllByRole("combobox");
+    await user.selectOptions(selects[0], "visa");
+    await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+    await user.click(screen.getByRole("button", { name: "Create Process" }));
+  }
+
+  it("warns instead of showing success when saving the selected referral fails", async () => {
+    const user = userEvent.setup();
+    mockCreateReferral.mockRejectedValueOnce(
+      new Error("synthetic referral failure"),
+    );
+    await renderPage();
+    await user.click(
+      screen.getByRole("button", { name: "Choose synthetic referrer" }),
+    );
+
+    await submitStandardProcess(user);
+
+    await waitFor(() =>
+      expect(mockToastWarning).toHaveBeenCalledWith(
+        "Case created, but the partner referral was not saved.",
+      ),
+    );
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("shows success when saving the selected referral succeeds", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    await user.click(
+      screen.getByRole("button", { name: "Choose synthetic referrer" }),
+    );
+
+    await submitStandardProcess(user);
+
+    await waitFor(() => expect(mockCreateReferral).toHaveBeenCalled());
+    expect(mockToastSuccess).toHaveBeenCalledWith(
+      "Process Created",
+      "Synthetic Visa Process created successfully.",
+    );
+    expect(mockToastWarning).not.toHaveBeenCalled();
+  });
+
+  it("does not create a referral and shows success when no referrer is selected", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    await submitStandardProcess(user);
+
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalled());
+    expect(mockCreateReferral).not.toHaveBeenCalled();
+    expect(mockToastWarning).not.toHaveBeenCalled();
+  });
 
   it("sends the prefilled company with the new process", async () => {
     const user = userEvent.setup();
