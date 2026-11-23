@@ -11,8 +11,7 @@ export async function GET() {
     getUpcomingTaxDeadlines(new Date(), 12).map((d) => ({
       uid: `balizero-tax-${d.id}@balizero.com`,
       summary: d.title,
-      start: new Date(d.date),
-      end: new Date(new Date(d.date).getTime() + 86400_000),
+      allDayDate: d.date.slice(0, 10),
       description: d.description,
     })),
     { prodId: "BaliZero//TaxCalendar//EN" },
