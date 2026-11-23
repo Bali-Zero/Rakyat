@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/error-handler";
@@ -580,6 +580,72 @@ describe("invoice company helpers", () => {
       ),
     ).toBeNull();
     expect(ambiguityFromError(new Error("x"), "a")).toBeNull();
+  });
+
+  const ambiguousError = (candidates: unknown) =>
+    new ApiError("x", 409, {
+      detail: { code: "invoice_company_ambiguous", candidates },
+    });
+
+  it("shows one named button per candidate and picks its id", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: false,
+      suggested_company_id: null,
+      companies: [],
+    });
+    const ambiguity = ambiguityFromError(
+      ambiguousError([
+        { id: 1, company_name: "A" },
+        { id: 2, company_name: "B" },
+      ]),
+      "typed",
+    );
+    const onPick = vi.fn();
+    render(
+      <InvoiceCompanyField
+        clientId={7}
+        practiceTypeCode="tax_annual_company"
+        value={EMPTY_INVOICE_COMPANY}
+        onChange={vi.fn()}
+        ambiguity={ambiguity}
+        onPickCandidate={onPick}
+      />,
+    );
+    const panel = await screen.findByTestId("invoice-company-ambiguity");
+    const buttons = within(panel).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["A", "B"]);
+    await userEvent.click(buttons[1]);
+    expect(onPick).toHaveBeenCalledWith(2, "B");
+  });
+
+  it("treats candidates sent as text as an ordinary error", () => {
+    expect(
+      ambiguityFromError(
+        ambiguousError(["{'id': 1, 'company_name': 'A'}", "{'id': 2}"]),
+        "typed",
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["no candidates", []],
+    ["a missing id", [{ company_name: "A" }]],
+    ["a text id", [{ id: "1", company_name: "A" }]],
+    ["a fractional id", [{ id: 1.5, company_name: "A" }]],
+    ["a missing name", [{ id: 1 }]],
+    ["a blank name", [{ id: 1, company_name: "  " }]],
+    ["a null row", [null]],
+  ])("treats %s as an ordinary error", (_label, candidates) => {
+    expect(ambiguityFromError(ambiguousError(candidates), "typed")).toBeNull();
+  });
+
+  it("keeps only the candidates that can be shown and picked", () => {
+    expect(
+      ambiguityFromError(
+        ambiguousError([{ id: 1, company_name: "A" }, "{'id': 2}", { id: 3 }]),
+        "typed",
+      ),
+    ).toEqual({ typed: "typed", candidates: [{ id: 1, company_name: "A" }] });
   });
 });
 

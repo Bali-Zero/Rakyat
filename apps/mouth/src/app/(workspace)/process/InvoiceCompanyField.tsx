@@ -58,7 +58,24 @@ export function invoiceCompanyIncomplete(value: InvoiceCompanyValue): boolean {
   );
 }
 
-/** The 409 the backend sends when a typed name matches several companies. */
+function isAmbiguityCandidate(
+  candidate: unknown,
+): candidate is InvoiceCompanyAmbiguity["candidates"][number] {
+  if (typeof candidate !== "object" || candidate === null) return false;
+  const { id, company_name: name } = candidate as {
+    id?: unknown;
+    company_name?: unknown;
+  };
+  return (
+    Number.isInteger(id) && typeof name === "string" && Boolean(name.trim())
+  );
+}
+
+/**
+ * The 409 the backend sends when a typed name matches several companies.
+ * Only candidates that can be shown and picked count: with none, this is an
+ * ordinary error rather than a panel of empty buttons.
+ */
 export function ambiguityFromError(
   err: unknown,
   typed: string,
@@ -66,15 +83,15 @@ export function ambiguityFromError(
   const e = err as { statusCode?: number; data?: { detail?: unknown } };
   if (e?.statusCode !== 409) return null;
   const detail = e.data?.detail as
-    | { code?: string; candidates?: InvoiceCompanyAmbiguity["candidates"] }
-    | undefined;
+    { code?: string; candidates?: unknown } | undefined;
   if (
     detail?.code !== "invoice_company_ambiguous" ||
     !Array.isArray(detail.candidates)
   ) {
     return null;
   }
-  return { typed, candidates: detail.candidates };
+  const candidates = detail.candidates.filter(isAmbiguityCandidate);
+  return candidates.length > 0 ? { typed, candidates } : null;
 }
 
 interface Props {
