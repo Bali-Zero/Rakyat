@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,6 +100,29 @@ class LLMCallEvent:
 # ---------------------------------------------------------------------------
 
 
+class _LoopPool:
+    """The ledger's Postgres pool on one event loop, and the one attempt to open it."""
+
+    __slots__ = ("loop", "opening", "pool")
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.pool: Any = None
+        self.opening: asyncio.Future[Any] | None = None
+
+
+def _retrieve(opening: asyncio.Future[Any]) -> None:
+    """Read the outcome of an opening.
+
+    Every write that waited may have been cancelled by then, and ``asyncio.shield``
+    drops its own reading of the outcome when its waiter goes: without this the
+    failure of an opening nobody waits for any more is reported as an exception
+    that was never retrieved.
+    """
+    if not opening.cancelled():
+        opening.exception()
+
+
 class LLMCostRecorder:
     """Singleton that handles the triple-write. Never raises to callers."""
 
@@ -114,6 +138,12 @@ class LLMCostRecorder:
         self._jsonl_ready: bool | None = (
             None  # tri-state: None=unchecked, True=ok, False=unavailable
         )
+
+        # One Postgres pool per event loop, opened at that loop's first write
+        # and kept. A pool works only on the loop that opened it, and the
+        # synchronous client entry runs every call on a loop of its own.
+        self._pg_pools: dict[int, _LoopPool] = {}
+        self._pg_pools_guard = threading.Lock()
 
         # Lazy refs so import-time cycles stay impossible.
         self._pg_pool_getter = None
@@ -178,11 +208,46 @@ class LLMCostRecorder:
                 logger.error("⚠️ JSONL write failed for %s: %s", path, exc)
                 raise
 
-    async def _write_postgres(self, event: LLMCallEvent) -> None:
-        # Lazy import to avoid pulling in asyncpg at module load (tests).
-        from backend.app.core.database import get_db_pool
+    def _loop_pool(self) -> _LoopPool:
+        """The pool holder of the running event loop; loops that have closed are forgotten."""
+        loop = asyncio.get_running_loop()
+        with self._pg_pools_guard:
+            for key in [k for k, known in self._pg_pools.items() if known.loop.is_closed()]:
+                del self._pg_pools[key]
+            holder = self._pg_pools.get(id(loop))
+            if holder is None or holder.loop is not loop:
+                holder = self._pg_pools[id(loop)] = _LoopPool(loop)
+            return holder
 
-        pool = await get_db_pool()
+    async def _open_pg_pool(self, holder: _LoopPool) -> Any:
+        try:
+            # Lazy import to avoid pulling in asyncpg at module load (tests).
+            from backend.app.core.database import get_db_pool
+
+            holder.pool = await get_db_pool()
+            return holder.pool
+        finally:
+            holder.opening = None
+
+    async def _get_pg_pool(self) -> Any:
+        """The pool of the running event loop, opened at its first use and kept.
+
+        Writes that arrive while the pool is being opened wait on that one
+        attempt and share its outcome: none of them opens a second pool, and
+        none waits longer than the attempt takes. A failed attempt keeps
+        nothing, so the next write tries again. A writer that is cancelled
+        while it waits does not cancel the attempt.
+        """
+        holder = self._loop_pool()
+        if holder.pool is not None:
+            return holder.pool
+        if holder.opening is None:
+            holder.opening = asyncio.ensure_future(self._open_pg_pool(holder))
+            holder.opening.add_done_callback(_retrieve)
+        return await asyncio.shield(holder.opening)
+
+    async def _write_postgres(self, event: LLMCallEvent) -> None:
+        pool = await self._get_pg_pool()
         if pool is None:
             raise RuntimeError("db pool not initialised")
         async with pool.acquire() as conn:
