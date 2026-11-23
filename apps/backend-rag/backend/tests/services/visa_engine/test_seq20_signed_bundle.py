@@ -26,9 +26,10 @@ the public funnel answers. The rule id lists are IMPORTED from
 moment the fold's own constants move.
 
 ACTIVATION IS OUT OF SCOPE HERE. This module never calls
-``activate_pack.py`` (it needs a live Postgres DSN even in its default
-dry-run mode — see that script's ``asyncpg.create_pool`` calls — which this
-test suite must never touch) and never calls ``validate_activation`` either:
+``activate_pack.py`` (its default dry run opens no pool, as
+``test_activate_pack_run.py`` pins, but with ``--yes`` it writes to the
+ledger, which this test suite must never touch) and never calls
+``validate_activation`` either:
 promoting this bundle into the currently-active production sequence is a
 separate, Zero-only ceremony. What this module proves is narrower and
 sufficient for a PR gate: the bytes on disk are a validly signed,

@@ -2,8 +2,8 @@
 
 Uses the real signed pack fixture on main (rulepack-prod-001.signed.json)
 for the field-mapping test — the exact document the operator will point
-the tool at. No database, no network: the DB-touching path is the dry-run
-(default), which these tests exercise end-to-end minus the final print.
+the tool at. No database, no network. ``run`` itself, its default dry run
+included, is exercised in ``test_activate_pack_run.py``.
 """
 
 from __future__ import annotations
