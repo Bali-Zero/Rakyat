@@ -78,17 +78,8 @@ class PartnersService:
         self.conn = conn
         self.repo = PartnersRepository(conn)
 
-    async def create_partner(
-        self,
-        *,
-        full_name: str,
-        email: str,
-        entity_type: str,
-        # CATA-5: assigned_to and created_by are team_members.id (VARCHAR string IDs)
-        assigned_to: str | None = None,
-        created_by: str | None = None,
-        **optional: Any,
-    ) -> UUID:
+    @staticmethod
+    def _reject_disabled_entity_type(entity_type: str | None) -> None:
         # NB-2 immigration compliance gate (CRIT-5):
         # entity_type='foreign' violates Indonesian KITAS conditions for most
         # foreign partners. Paying commission to a foreign partner on a standard
@@ -103,6 +94,19 @@ class PartnersService:
                 "See docs/superpowers/reviews/2026-04-21-partners-v1/04-nb2.md for context. "
                 "v1.1 will split into foreign_kitap and foreign_offshore variants."
             )
+
+    async def create_partner(
+        self,
+        *,
+        full_name: str,
+        email: str,
+        entity_type: str,
+        # CATA-5: assigned_to and created_by are team_members.id (VARCHAR string IDs)
+        assigned_to: str | None = None,
+        created_by: str | None = None,
+        **optional: Any,
+    ) -> UUID:
+        self._reject_disabled_entity_type(entity_type)
         try:
             pid = await self.repo.insert_partner(
                 full_name=full_name,
@@ -167,6 +171,8 @@ class PartnersService:
                 detail="partners may not update their own profile via this endpoint",
             )
         current = await verify_partner_access_with_role(self, actor_user, actor_role, partner_id)
+        if "entity_type" in fields and fields["entity_type"] != current.entity_type:
+            self._reject_disabled_entity_type(fields["entity_type"])
         before = {k: getattr(current, k) for k in fields if hasattr(current, k)}
         try:
             await self.repo.update_partner(partner_id, **fields)

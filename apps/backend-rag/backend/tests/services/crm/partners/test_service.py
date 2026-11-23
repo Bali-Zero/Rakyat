@@ -347,3 +347,45 @@ async def test_update_partner_with_a_commission_value_writes_its_audit_row(svc, 
     assert updated[0].after_json["default_commission_value"] == "12.5"
     assert updated[0].before_json["bank_account_number"] == "1234567890"
     assert updated[0].after_json["bank_account_number"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_partner_cannot_set_the_entity_type_creation_refuses(svc, user_factory):
+    admin = await user_factory(role="admin")
+    pid = await svc.create_partner(
+        full_name="Type Edit",
+        email="type1@d.io",
+        entity_type="individual",
+        created_by=admin,
+    )
+    with pytest.raises(ConflictError) as exc:
+        await svc.update_partner(pid, actor_user=admin, actor_role="admin", entity_type="foreign")
+    assert exc.value.status_code == 409
+    assert "foreign" in exc.value.detail.lower()
+    p = await svc.get_partner(pid, actor_user=admin)
+    assert p.entity_type == "individual"
+    assert [a for a in await svc.list_audit(pid) if a.action == "updated"] == []
+
+
+@pytest.mark.asyncio
+async def test_update_partner_with_legacy_foreign_type_keeps_other_edits(
+    svc, user_factory, partner_factory, db_conn
+):
+    admin = await user_factory(role="admin")
+    legacy = await partner_factory(entity_type="foreign")
+    await svc.update_partner(
+        legacy.id, actor_user=admin, actor_role="admin", full_name="Legacy Renamed"
+    )
+    p = await svc.get_partner(legacy.id, actor_user=admin)
+    assert p.full_name == "Legacy Renamed"
+    assert p.entity_type == "foreign"
+    await svc.update_partner(
+        legacy.id, actor_user=admin, actor_role="admin", entity_type="foreign", phone="000"
+    )
+    p = await svc.get_partner(legacy.id, actor_user=admin)
+    assert p.phone == "000"
+    await svc.update_partner(
+        legacy.id, actor_user=admin, actor_role="admin", entity_type="individual"
+    )
+    p = await svc.get_partner(legacy.id, actor_user=admin)
+    assert p.entity_type == "individual"
