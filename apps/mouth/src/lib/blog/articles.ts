@@ -656,6 +656,18 @@ function isEnglishArticleNoIndex(category: string, slug: string): boolean {
   return Boolean(readMdxFile(filePath)?.data.noIndex);
 }
 
+/**
+ * True when any category folder holds <slug>.mdx. The reviewed file is the
+ * artifact: a backend row for such a slug is never listed, whatever its own
+ * category says, and the file loop decides (its category, draft, noIndex).
+ */
+function hasArticleFile(slug: string): boolean {
+  if (!isArticleFileSlug(slug)) return false;
+  return ARTICLE_FOLDER_NAMES.some((folder) =>
+    fs.existsSync(articleMdxPath(folder, slug)),
+  );
+}
+
 const PIN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
@@ -1027,7 +1039,7 @@ export const getAllArticles = unstable_cache(
     if (backendResult) {
       for (const item of backendResult.items) {
         const listItem = backendToArticleListItem(item);
-        if (isArticleHidden(listItem.category, item.slug)) continue;
+        if (hasArticleFile(item.slug)) continue;
         if (
           options?.featured !== undefined &&
           listItem.featured !== options.featured
@@ -1192,7 +1204,7 @@ export async function searchArticles(
   if (backendResult && backendResult.items.length > 0) {
     return backendResult.items
       .map(backendToArticleListItem)
-      .filter((article) => !isArticleHidden(article.category, article.slug));
+      .filter((article) => !hasArticleFile(article.slug));
   }
 
   // Fallback to in-memory MDX search
