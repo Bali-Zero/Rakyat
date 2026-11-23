@@ -200,6 +200,14 @@ def test_write_release_creates_kind_keyword_index_for_own_collection(
     release = sh.PublicRelease.load(*files(tmp_path))
     if existing:
         sh.check_collection(db, release, create=True)
+        db.upsert(
+            release.collection,
+            [
+                models.PointStruct(id=1, vector={}, payload=release.marker("build")),
+                sh.passage_point(release, sh.LegalSparseV1(), digest_text(TEXTS[0])),
+            ],
+            wait=True,
+        )
     get_collection = db.get_collection
     monkeypatch.setattr(
         db,
@@ -217,6 +225,32 @@ def test_write_release_creates_kind_keyword_index_for_own_collection(
         field_schema=models.PayloadSchemaType.KEYWORD,
         wait=True,
     )
+
+
+@pytest.mark.parametrize("state", ["foreign_build_marker", "nonempty_unowned"])
+def test_write_release_refusals_do_not_create_kind_keyword_index(db, tmp_path, monkeypatch, state):
+    release = sh.PublicRelease.load(*files(tmp_path))
+    sh.check_collection(db, release, create=True)
+    if state == "foreign_build_marker":
+        point = models.PointStruct(id=1, vector={}, payload={"kind": "build", "foreign": True})
+        error = "foreign release marker"
+    else:
+        point = models.PointStruct(id=2, vector={}, payload={"kind": "passage"})
+        error = "nonempty unowned"
+    db.upsert(release.collection, [point], wait=True)
+    get_collection = db.get_collection
+    monkeypatch.setattr(
+        db,
+        "get_collection",
+        lambda name: get_collection(name).model_copy(update={"payload_schema": {}}),
+    )
+    create_index = Mock()
+    monkeypatch.setattr(db, "create_payload_index", create_index)
+
+    with pytest.raises(ValueError, match=error):
+        sh.write_release(db, release)
+
+    create_index.assert_not_called()
 
 
 def test_write_release_skips_existing_kind_keyword_index(tmp_path, db, monkeypatch):

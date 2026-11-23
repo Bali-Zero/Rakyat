@@ -213,18 +213,18 @@ def write_release(db: QdrantClient, release: PublicRelease) -> int:
     """Resume a content-addressed collection and return the number of new passages written."""
     check_collection(db, release, create=True)
     name = release.collection
+    if not marker(db, release, 1, "build"):
+        if db.count(name, exact=True).count and not marker(db, release, 1, "build"):
+            raise ValueError("nonempty unowned shadow collection")
+        db.upsert(
+            name, [models.PointStruct(id=1, vector={}, payload=release.marker("build"))], wait=True
+        )
     if "kind" not in (db.get_collection(name).payload_schema or {}):
         db.create_payload_index(
             name,
             field_name="kind",
             field_schema=models.PayloadSchemaType.KEYWORD,
             wait=True,
-        )
-    if not marker(db, release, 1, "build"):
-        if db.count(name, exact=True).count and not marker(db, release, 1, "build"):
-            raise ValueError("nonempty unowned shadow collection")
-        db.upsert(
-            name, [models.PointStruct(id=1, vector={}, payload=release.marker("build"))], wait=True
         )
     ready = marker(db, release, 0, "ready")
     hashes = sorted(release.passages)
