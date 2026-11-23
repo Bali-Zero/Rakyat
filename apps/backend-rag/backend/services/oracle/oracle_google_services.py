@@ -8,6 +8,7 @@ UPDATED 2025-12-23:
 
 import json
 import logging
+import time
 from typing import Any
 
 from google.oauth2 import service_account
@@ -19,6 +20,11 @@ from backend.services.oracle.oracle_config import oracle_config
 logger = logging.getLogger(__name__)
 
 
+#: After a Drive set-up that failed, the next attempt waits this long: a permanent
+#: failure costs one attempt per interval, not one per request.
+_DRIVE_RETRY_SECONDS = 300.0
+
+
 class GoogleServices:
     """Google Cloud services manager for Oracle endpoints"""
 
@@ -27,12 +33,13 @@ class GoogleServices:
         self._gemini_initialized = False
         self._drive_service = None
         self._genai_client: GenAIClient | None = None
+        self._drive_retry_at = 0.0
         # Services are now lazily initialized to prevent gRPC fork safety issues
         # self._initialize_services()
 
     def _ensure_services_initialized(self) -> None:
         """Initialize Google Gemini and Drive services if not already done"""
-        if self._initialized:
+        if self._initialized or time.monotonic() < self._drive_retry_at:
             return
         try:
             if self._genai_client is None:
@@ -51,8 +58,10 @@ class GoogleServices:
                     )
                     self._gemini_initialized = False
 
-            # A Drive set-up that failed is tried again on the next access.
+            # A Drive set-up that failed is tried again, after an interval.
             self._initialized = self._initialize_drive_service()
+            if not self._initialized:
+                self._drive_retry_at = time.monotonic() + _DRIVE_RETRY_SECONDS
 
         except Exception as e:
             logger.error("❌ Failed to initialize Google services: %s", e)

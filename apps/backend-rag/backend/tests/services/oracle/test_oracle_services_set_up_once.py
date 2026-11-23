@@ -218,17 +218,60 @@ def _flaky_build(monkeypatch: pytest.MonkeyPatch, drive_service: object) -> list
     return calls
 
 
-def test_a_drive_set_up_that_failed_is_tried_again_on_the_next_access(
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _fake_clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    clock = _Clock()
+    monkeypatch.setattr(google_module, "time", clock)
+    return clock
+
+
+def test_a_drive_set_up_that_failed_is_tried_again_after_the_interval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    clock = _fake_clock(monkeypatch)
     service = GoogleServices()
     drive_service = object()
     _drive_config(monkeypatch)
     calls = _flaky_build(monkeypatch, drive_service)
 
     assert service.drive_service is None
+    clock.now += google_module._DRIVE_RETRY_SECONDS - 1
+    assert service.drive_service is None
+    assert len(calls) == 1
+    clock.now += 1
     assert service.drive_service is drive_service
+    clock.now += 10 * google_module._DRIVE_RETRY_SECONDS
     assert service.drive_service is drive_service
+    assert len(calls) == 2
+
+
+def test_a_permanent_drive_failure_is_tried_once_per_interval_not_per_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _fake_clock(monkeypatch)
+    service = GoogleServices()
+    _drive_config(monkeypatch)
+    calls: list[str] = []
+
+    def build(name: str, version: str, *, credentials: object) -> object:
+        calls.append(name)
+        raise ValueError("synthetic malformed credentials")
+
+    monkeypatch.setattr(google_module, "build", build)
+
+    for _ in range(50):
+        assert service.drive_service is None
+    assert len(calls) == 1
+    clock.now += google_module._DRIVE_RETRY_SECONDS
+    for _ in range(50):
+        assert service.drive_service is None
     assert len(calls) == 2
 
 
@@ -247,6 +290,7 @@ def test_a_failed_drive_set_up_is_retried_without_recreating_the_gemini_client(
 
     monkeypatch.setattr(genai_client_module, "GenAIClient", _GenAIClient)
     monkeypatch.setattr(google_module, "GENAI_AVAILABLE", True)
+    clock = _fake_clock(monkeypatch)
     service = GoogleServices()
     drive_service = object()
     _drive_config(monkeypatch, api_key=_SYNTHETIC_KEY)
@@ -254,6 +298,7 @@ def test_a_failed_drive_set_up_is_retried_without_recreating_the_gemini_client(
 
     assert service.drive_service is None
     assert service.gemini_available is True
+    clock.now += google_module._DRIVE_RETRY_SECONDS
     assert service.drive_service is drive_service
     assert len(calls) == 2
     assert created == [_SYNTHETIC_KEY]
@@ -275,8 +320,10 @@ def test_a_drive_without_credentials_is_settled_and_not_set_up_again(
 
     monkeypatch.setattr(google_module, "oracle_config", _Config())
     monkeypatch.chdir(tmp_path)
+    clock = _fake_clock(monkeypatch)
     service = GoogleServices()
 
     assert service.drive_service is None
+    clock.now += 10 * google_module._DRIVE_RETRY_SECONDS
     assert service.drive_service is None
     assert reads == 1
