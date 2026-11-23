@@ -7,6 +7,7 @@ Outbound /send endpoint re-enabled 2026-03-15 with safety gates:
   (team_members.whatsapp). Team/staff numbers in WHATSAPP_TEAM_ALLOWLIST also
   bypass the check via env config, without polluting the CRM.
 - Auth required: only authenticated users can send
+- The two read routes (conversations, messages) are limited to team members
 """
 
 import json
@@ -21,7 +22,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.app.core.config import settings
-from backend.app.dependencies import get_current_user, get_optional_database_pool
+from backend.app.dependencies import (
+    get_current_user,
+    get_optional_database_pool,
+    require_team_member,
+)
 from backend.services.integrations.whatsapp_service import whatsapp_service
 from backend.security.pii_log_identifier import redact_identifier_for_log
 
@@ -77,7 +82,7 @@ async def get_whatsapp_conversations(
     limit: int = 50,
     offset: int = 0,
     db: Pool | None = Depends(get_optional_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_team_member),
 ) -> Any:
     if not db:
         logger.warning("Database unavailable")
@@ -171,7 +176,7 @@ async def get_whatsapp_messages(
     phone: str,
     limit: int = 100,
     db: Pool | None = Depends(get_optional_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_team_member),
 ) -> Any:
     if not db:
         return []
