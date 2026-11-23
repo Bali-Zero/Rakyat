@@ -55,6 +55,33 @@ def _client(app: FastAPI) -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
+@pytest.mark.asyncio
+async def test_mark_submitted_maps_submission_conflict_to_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.services.compliance.lkpm_service import LKPMSubmissionConflict
+
+    service = SimpleNamespace(
+        mark_submitted=AsyncMock(side_effect=LKPMSubmissionConflict("LKPM report is not approved")),
+    )
+    async with _client(_app(monkeypatch, service)) as http:
+        resp = await http.post("/api/v1/lkpm/mark-submitted/7")
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "LKPM report is not approved"
+
+
+@pytest.mark.asyncio
+async def test_mark_submitted_keeps_missing_report_as_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = SimpleNamespace(mark_submitted=AsyncMock(side_effect=LookupError()))
+    async with _client(_app(monkeypatch, service)) as http:
+        resp = await http.post("/api/v1/lkpm/mark-submitted/7")
+
+    assert resp.status_code == 404, resp.text
+
+
 # --------------------------------------------------------------------------
 # KBLI-3A-01: upload-receipt accepts BOTH JSON body and legacy query params
 # --------------------------------------------------------------------------

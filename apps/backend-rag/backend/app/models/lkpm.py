@@ -270,6 +270,7 @@ class LKPMReadyPack(BaseModel):
     nib: str | None = None
     quarter: str
     year: int
+    status: str | None = None
 
     # KBLI codes registered
     kbli_codes: list[str] = []

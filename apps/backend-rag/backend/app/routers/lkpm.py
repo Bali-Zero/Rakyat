@@ -494,6 +494,8 @@ async def mark_submitted(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict:
     """Team marks LKPM as submitted to OSS."""
+    from backend.services.compliance.lkpm_service import LKPMSubmissionConflict
+
     actor = _require_lkpm_staff(current_user)
     actor_email = str(actor.get("email") or "").strip().lower()
     service = _get_service(db_pool)
@@ -502,6 +504,8 @@ async def mark_submitted(
         # for audit attribution: the authenticated principal owns the mutation.
         _ = submitted_by
         return await service.mark_submitted(draft_id, actor_email)
+    except LKPMSubmissionConflict as e:
+        raise HTTPException(status_code=409, detail=e.detail) from e
     except LookupError as e:
         raise HTTPException(status_code=404, detail="LKPM draft not found") from e
     except Exception as e:

@@ -323,9 +323,59 @@ class TestSubmissionTracking:
     @pytest.mark.asyncio
     async def test_mark_submitted(self, service, mock_db_pool):
         _, conn = mock_db_pool
+        conn.fetchrow.return_value = {"id": 1}
         result = await service.mark_submitted(1, "uxxx2@dxx1.com")
         assert result["success"] is True
         assert result["status"] == "submitted"
+
+    @pytest.mark.asyncio
+    async def test_mark_submitted_updates_only_an_approved_unsubmitted_report(
+        self, service, mock_db_pool
+    ):
+        _, conn = mock_db_pool
+        conn.fetchrow.return_value = {"id": 1}
+
+        await service.mark_submitted(1, "staff@example.test")
+
+        sql = conn.fetchrow.await_args.args[0]
+        assert "AND status = 'approved'" in sql
+        assert "AND oss_submitted IS NOT TRUE" in sql
+
+    @pytest.mark.asyncio
+    async def test_mark_submitted_missing_report_raises_lookup_error(self, service, mock_db_pool):
+        _, conn = mock_db_pool
+        conn.fetchrow.return_value = None
+
+        with pytest.raises(LookupError, match="LKPM draft not found"):
+            await service.mark_submitted(1, "staff@example.test")
+
+    @pytest.mark.asyncio
+    async def test_mark_submitted_rejects_report_not_approved(self, service, mock_db_pool):
+        from backend.services.compliance.lkpm_service import LKPMSubmissionConflict
+
+        _, conn = mock_db_pool
+        conn.fetchrow.return_value = {
+            "id": None,
+            "status": "client_review",
+            "oss_submitted": False,
+        }
+
+        with pytest.raises(LKPMSubmissionConflict, match="not approved"):
+            await service.mark_submitted(1, "staff@example.test")
+
+    @pytest.mark.asyncio
+    async def test_mark_submitted_rejects_report_already_submitted(self, service, mock_db_pool):
+        from backend.services.compliance.lkpm_service import LKPMSubmissionConflict
+
+        _, conn = mock_db_pool
+        conn.fetchrow.return_value = {
+            "id": None,
+            "status": "submitted",
+            "oss_submitted": True,
+        }
+
+        with pytest.raises(LKPMSubmissionConflict, match="already submitted"):
+            await service.mark_submitted(1, "staff@example.test")
 
     @pytest.mark.asyncio
     async def test_upload_receipt(self, service, mock_db_pool):
@@ -460,6 +510,7 @@ class TestGetReadyPack:
         result = await service.get_ready_pack(1)
         assert result.draft_id == 1
         assert result.company_name == "PT Test PMA"
+        assert result.status == "draft"
         assert isinstance(result.realization_percentage, float)
 
     @pytest.mark.asyncio

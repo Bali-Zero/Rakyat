@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
 import { Money } from "@balizero/core";
 import { logger } from "@/lib/logger";
+import { ApiError } from "@/lib/api/error-handler";
 import { lkpmApi } from "@/lib/api/workspace/lkpm.api";
 import type { LKPMReadyPack } from "@/lib/api/portal/portal.types";
 import { safeHtml } from "@/lib/utils/safe-html";
@@ -19,6 +20,7 @@ export default function LKPMReadyPackPage() {
   const [pack, setPack] = useState<LKPMReadyPack | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
   const [showReceiptForm, setShowReceiptForm] = useState(false);
   const [receiptNumber, setReceiptNumber] = useState("");
 
@@ -50,7 +52,11 @@ export default function LKPMReadyPackPage() {
       success("Marked as submitted", "LKPM report marked as submitted to OSS");
       await loadReadyPack();
     } catch (err) {
-      error("Failed to mark submitted", "Please try again");
+      const conflict =
+        err instanceof ApiError && err.statusCode === 409
+          ? err.detail
+          : undefined;
+      error("Failed to mark submitted", conflict ?? "Please try again");
       logger.error(`LKPM mark submitted failed ${draftId}`, {}, err as Error);
     } finally {
       setIsSubmitting(false);
@@ -144,19 +150,52 @@ export default function LKPMReadyPackPage() {
             <Printer className="w-4 h-4" />
             Print
           </button>
-          <button
-            onClick={handleMarkSubmitted}
-            disabled={isSubmitting}
-            className="px-3 py-2 rounded-lg text-sm font-medium text-white flex items-center gap-2 disabled:opacity-50"
-            style={{ background: "var(--bz-accent-warm)" }}
-          >
-            {isSubmitting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+          {pack.status === "approved" ? (
+            showSubmitConfirmation ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs" style={{ color: "var(--bz-text-2)" }}>
+                  Mark this report as submitted to OSS? Do this only after you
+                  have filed it in OSS.
+                </span>
+                <button
+                  onClick={handleMarkSubmitted}
+                  disabled={isSubmitting}
+                  className="px-3 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
+                  style={{ background: "var(--bz-accent-warm)" }}
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Confirm"
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowSubmitConfirmation(false)}
+                  disabled={isSubmitting}
+                  className="px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                  style={{
+                    background: "var(--bz-surface)",
+                    color: "var(--bz-text-2)",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             ) : (
-              <CheckCircle className="w-4 h-4" />
-            )}
-            Mark Submitted
-          </button>
+              <button
+                onClick={() => setShowSubmitConfirmation(true)}
+                className="px-3 py-2 rounded-lg text-sm font-medium text-white flex items-center gap-2"
+                style={{ background: "var(--bz-accent-warm)" }}
+              >
+                <CheckCircle className="w-4 h-4" />
+                Mark Submitted
+              </button>
+            )
+          ) : (
+            <span className="text-sm" style={{ color: "var(--bz-text-2)" }}>
+              Status: {pack.status ?? "unknown"}
+            </span>
+          )}
           <button
             onClick={() => setShowReceiptForm(!showReceiptForm)}
             className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2"

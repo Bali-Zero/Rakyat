@@ -31,6 +31,21 @@ from backend.services.compliance.lkpm_validator import LKPMValidator
 
 logger = logging.getLogger(__name__)
 
+
+class LKPMSubmissionConflict(ValueError):
+    """Raised when an LKPM report cannot transition to submitted.
+
+    ``detail`` is one of the fixed sentences below and is safe to show a client.
+    """
+
+    ALREADY_SUBMITTED = "LKPM report is already submitted"
+    NOT_APPROVED = "LKPM report is not approved"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
 # LKPM quarterly deadlines (PerBKPM 5/2025 — extended from 10th to 15th)
 # Q1 (Jan-Mar) → due April 15
 # Q2 (Apr-Jun) → due July 15
@@ -699,6 +714,7 @@ class LKPMService:
             narrative_obstacles=draft.narrative_obstacles,
             narrative_plans=draft.narrative_plans,
             validation_summary=draft.validation,
+            status=draft.status.value,
             generated_at=datetime.now(timezone.utc),
         )
 
@@ -767,21 +783,34 @@ class LKPMService:
         async with self.db_pool.acquire() as conn:
             updated = await conn.fetchrow(
                 """
-                UPDATE lkpm_reports SET
-                    oss_submitted = TRUE,
-                    oss_submitted_at = NOW(),
-                    oss_submitted_by = $1,
-                    status = $2,
-                    updated_at = NOW()
-                WHERE id = $3
-                RETURNING id
+                WITH updated AS (
+                    UPDATE lkpm_reports SET
+                        oss_submitted = TRUE,
+                        oss_submitted_at = NOW(),
+                        oss_submitted_by = $1,
+                        status = $2,
+                        updated_at = NOW()
+                    WHERE id = $3
+                      AND status = 'approved'
+                      AND oss_submitted IS NOT TRUE
+                    RETURNING id
+                )
+                SELECT updated.id, report.status, report.oss_submitted
+                FROM (
+                    SELECT status, oss_submitted FROM lkpm_reports WHERE id = $3
+                ) AS report
+                LEFT JOIN updated ON TRUE
                 """,
                 submitted_by,
                 LKPMStatus.SUBMITTED.value,
                 draft_id,
             )
-        if updated is None:
-            raise LookupError("LKPM draft not found")
+            if updated is None:
+                raise LookupError("LKPM draft not found")
+            if updated["id"] is None:
+                if updated["oss_submitted"]:
+                    raise LKPMSubmissionConflict(LKPMSubmissionConflict.ALREADY_SUBMITTED)
+                raise LKPMSubmissionConflict(LKPMSubmissionConflict.NOT_APPROVED)
         logger.info("Draft %s marked as submitted by %s", draft_id, submitted_by)
         return {"success": True, "draft_id": draft_id, "status": "submitted"}
 
