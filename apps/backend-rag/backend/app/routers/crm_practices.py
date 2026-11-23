@@ -634,6 +634,11 @@ class HistoricalTaxCompletionCreate(BaseModel):
             raise ValueError("LKPM fiscal_period must be Q1, Q2, Q3, or Q4")
         if self.service == "spt_annual_company" and self.fiscal_period != "ANNUAL":
             raise ValueError("annual SPT fiscal_period must be ANNUAL")
+        canonical_issuer = self.issuer.upper()
+        expected_issuer = "OSS" if self.service == "lkpm_quarterly" else "DJP"
+        if canonical_issuer != expected_issuer:
+            raise ValueError(f"{self.service} issuer must be {expected_issuer}")
+        self.issuer = canonical_issuer
         if self.completed_at.tzinfo is None or self.completed_at.utcoffset() is None:
             raise ValueError("completed_at must include an offset (WITA is +08:00)")
         return self
@@ -673,7 +678,10 @@ async def create_historical_tax_completion(
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             assignee = await conn.fetchval(
-                "SELECT 1 FROM team_members WHERE LOWER(email) = $1 AND active = TRUE",
+                """
+                SELECT 1 FROM team_members
+                WHERE LOWER(email) = $1 AND active = TRUE AND LOWER(role) = 'tax consultant'
+                """,
                 completion.assigned_to.lower(),
             )
             if not assignee:
@@ -715,6 +723,11 @@ async def create_historical_tax_completion(
                 identity,
             )
             if existing:
+                if (existing["assigned_to"] or "").lower() != completion.assigned_to.lower():
+                    raise HTTPException(
+                        status_code=409,
+                        detail="historical completion identity is already assigned to another consultant",
+                    )
                 return PracticeResponse.model_validate(dict(existing))
 
             metadata = {

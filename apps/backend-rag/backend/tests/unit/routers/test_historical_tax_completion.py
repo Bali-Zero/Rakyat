@@ -94,9 +94,14 @@ def test_historical_lkpm_rejects_ambiguous_period(period):
 
 def test_historical_spt_is_annual_only():
     result = HistoricalTaxCompletionCreate(
-        **_payload(service="spt_annual_company", fiscal_period="ANNUAL")
+        **_payload(service="spt_annual_company", fiscal_period="ANNUAL", issuer="DJP")
     )
     assert result.service == "spt_annual_company"
+
+
+def test_historical_service_refuses_noncanonical_issuer():
+    with pytest.raises(ValidationError):
+        HistoricalTaxCompletionCreate(**_payload(issuer="other"))
 
 
 def test_only_privileged_tax_roles_can_import():
@@ -125,6 +130,18 @@ async def test_route_replay_returns_existing_and_never_inserts():
     )
     assert result.id == 8
     assert not any("INSERT INTO practices" in query for query in conn.calls)
+
+
+@pytest.mark.asyncio
+async def test_route_replay_refuses_assignee_mismatch():
+    existing = _row()
+    existing["assigned_to"] = "other-tax@example.test"
+    with pytest.raises(HTTPException, match="another consultant") as error:
+        await create_historical_tax_completion(
+            HistoricalTaxCompletionCreate(**_payload()), _Pool(_Conn(existing=existing)),
+            {"role": "tax supervisor", "email": "lead@example.test"},
+        )
+    assert error.value.status_code == 409
 
 
 @pytest.mark.asyncio
