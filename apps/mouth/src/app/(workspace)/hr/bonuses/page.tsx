@@ -30,6 +30,7 @@ import {
 } from "@/lib/hr/bonus-aggregation";
 import { Money } from "@balizero/core";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
+import { DeliveryReviews } from "./_components/delivery-reviews";
 import { AddBonusDialog } from "./_components/add-bonus-dialog";
 import { BonusRow } from "./_components/bonus-row";
 import { MemberTable } from "./_components/member-table";
@@ -519,14 +520,16 @@ export default function BonusesPage() {
         })}
       </div>
 
+      {isAdmin && <DeliveryReviews onResolved={() => void loadBonuses()} />}
       {displayMonths.length === 0 && (
         <div
           className="border rounded-xl p-8 text-center"
           style={{ ...PANEL, color: "var(--bz-text-2)" }}
         >
           <Gift size={20} className="mx-auto mb-2 opacity-50" />
-          No bonuses for this selection. Bonuses are created automatically when
-          practices are completed{isAdmin ? ", or add one by hand" : ""}.
+          No bonuses for this selection. New visas earn a bonus at Electronic
+          Visa issuance. Other services earn it at final delivery
+          {isAdmin ? ", or add one by hand" : ""}.
         </div>
       )}
 

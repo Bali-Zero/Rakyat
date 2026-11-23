@@ -18,6 +18,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.services.hr.delivery_bonus import (
+    delivery_desk,
+    payroll_member,
+    resolve_delivery_bonus,
+)
 from backend.app.services.hr.hr_card_models import StaffCard, member_card
 from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_pending,
@@ -387,6 +392,91 @@ async def upsert_bonus_rate(
     result = await service.upsert_bonus_rate(payload)
     await invalidate_cache("zantara:hr_bonuses:*")
     return {"success": True, "rate": result}
+
+
+class DeliveryGoal(BaseModel):
+    target: int = Field(ge=1, le=200)
+
+
+class DeliveryRateResolution(BaseModel):
+    amount_idr: int = Field(ge=0, le=100_000_000)
+    use_current_period: bool = False
+
+
+@router.get("/me/delivery-desk")
+async def my_delivery_desk(
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    async with db_pool.acquire() as conn:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            return await delivery_desk(conn, _get_user_id(current_user))
+
+
+@router.put("/me/delivery-goal")
+async def save_delivery_goal(
+    data: DeliveryGoal,
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    member = _get_user_id(current_user)
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            emp = await payroll_member(conn, member)
+            if not emp:
+                raise HTTPException(403, "An eligible staff account is required")
+            await conn.execute(
+                """INSERT INTO hr_delivery_goals(employee_id,month,target) VALUES ($1,$2,$3)
+                   ON CONFLICT (employee_id,month) DO UPDATE SET target=EXCLUDED.target""",
+                emp["id"],
+                business_today().replace(day=1),
+                data.target,
+            )
+            return await delivery_desk(conn, member)
+
+
+@router.get("/delivery-bonus-reviews")
+async def delivery_bonus_reviews(
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    _require_hr_admin(current_user)
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT e.practice_id, COALESCE(pt.name,e.service_code) AS service, e.earned_at,
+                      e.event_kind, tm.full_name AS employee_name, e.amount_idr
+               FROM hr_delivery_bonus_events e JOIN hr_employees emp ON emp.id=e.employee_id
+               JOIN team_members tm ON tm.id=emp.team_member_id
+               LEFT JOIN practice_types pt ON pt.code=e.service_code
+               WHERE e.ledger_id IS NULL ORDER BY e.earned_at, e.practice_id LIMIT 100"""
+        )
+    return {"viewer_team_member_id": _get_user_id(current_user), "items": [dict(r) for r in rows]}
+
+
+@router.post("/delivery-bonus-reviews/{practice_id}")
+async def resolve_delivery_rate(
+    practice_id: int,
+    data: DeliveryRateResolution,
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    _require_hr_admin(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                result = await resolve_delivery_bonus(
+                    conn,
+                    practice_id,
+                    data.amount_idr,
+                    _get_user_id(current_user),
+                    data.use_current_period,
+                )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (BonusPeriodLockedError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await invalidate_cache("zantara:hr_bonuses:*")
+    return {"bonus": result}
 
 
 # ─── BONUSES ─────────────────────────────────────────────────────────────
