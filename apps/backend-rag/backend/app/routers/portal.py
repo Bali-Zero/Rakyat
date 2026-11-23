@@ -15,6 +15,7 @@ All endpoints require client authentication (role='client').
 Created: 2025-12-30
 """
 
+from collections.abc import Callable, Coroutine
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote
@@ -22,7 +23,9 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from backend.app.core.config import settings
@@ -1372,7 +1375,31 @@ class UpdateProfileRequest(BaseModel):
     address: str | None = None
 
 
-@router.patch("/profile")
+class _NoEchoProfileRoute(APIRoute):
+    """FastAPI's default 422 echoes the submitted value (`input`, `ctx`, `url`); on the profile
+    route that value can be a contact number. A validation error is answered with `loc`, `msg`
+    and `type` only; any other exception propagates unchanged."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original(request)
+            except RequestValidationError as exc:
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "detail": [
+                            {"loc": list(err["loc"]), "msg": str(err["msg"]), "type": err["type"]}
+                            for err in exc.errors()
+                        ]
+                    },
+                )
+
+        return handler
+
+
 async def update_profile(
     request: UpdateProfileRequest,
     client: dict = Depends(get_current_client),
@@ -1415,3 +1442,11 @@ async def update_profile(
             status_code=500,
             detail="Failed to update profile",
         ) from e
+
+
+router.add_api_route(
+    "/profile",
+    update_profile,
+    methods=["PATCH"],
+    route_class_override=_NoEchoProfileRoute,
+)

@@ -470,15 +470,18 @@ class PortalBillingMixin:
         as trimmed. Nothing here looks up who owns a number, so the outcome
         never depends on ownership.
 
-        The first statement locks the client row, so two overlapping saves of
-        one client serialise: the second reads the first one's committed request
-        and is suppressed as a repeat. Returns (requested fields, whether a
+        The first statement locks the client row FOR NO KEY UPDATE, so two
+        overlapping saves of one client serialise: the second reads the first
+        one's committed request and is suppressed as a repeat. That lock does
+        not conflict with the KEY SHARE lock a foreign-key check takes, so
+        another session's alert or message insert for this client never waits
+        on this transaction. Returns (requested fields, whether a
         request row was inserted by this call). The bell alert for an inserted
         request is written here, in the same transaction, and is not best-effort.
         """
         row = await conn.fetchrow(
             "SELECT phone, phone_normalized, whatsapp, email FROM clients"
-            " WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+            " WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE",
             client_id,
         )
 
@@ -561,12 +564,15 @@ class PortalBillingMixin:
         await conn.execute(
             """
             INSERT INTO notification_alerts
-                (client_id, alert_type, status, message, email_subject)
-            VALUES ($1, 'portal_profile_update', 'pending', $2, $3)
+                (client_id, alert_type, status, message, email_subject, created_at)
+            VALUES ($1, 'portal_profile_update', 'pending', $2, $3, clock_timestamp())
             ON CONFLICT (client_id, alert_type, created_date) DO UPDATE
                SET status = 'pending',
                    message = EXCLUDED.message,
-                   created_at = NOW(),
+                   created_at = GREATEST(
+                       notification_alerts.created_at + interval '1 microsecond',
+                       EXCLUDED.created_at
+                   ),
                    sent_at = NULL
             """,
             client_id,

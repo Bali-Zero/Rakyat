@@ -314,7 +314,12 @@ async def test_update_profile_two_requested_fields_make_one_request_row_and_the_
     assert alert[0][0][2] == (
         "Client requested a contact change: phone, WhatsApp; also updated: address"
     )
-    assert "'pending'" in alert[0][0][0] and "created_at = NOW()" in alert[0][0][0]
+    sql = " ".join(alert[0][0][0].split())
+    assert "'pending'" in sql and "clock_timestamp()" in sql
+    assert (
+        "created_at = GREATEST( notification_alerts.created_at + interval '1 microsecond'," in sql
+    )
+    assert "EXCLUDED.created_at )" in sql
 
 
 # ============================================
@@ -601,7 +606,8 @@ async def test_r7_the_first_statement_locks_the_client_row():
     await service.update_profile(client_id=1, fields={"phone": _PHONE_B}, current_user=_USER)
 
     first = str(mock_conn.fetchrow.call_args_list[0][0][0])
-    assert "FROM clients" in first and "FOR UPDATE" in first and "deleted_at IS NULL" in first
+    assert "FROM clients" in first and "deleted_at IS NULL" in first
+    assert "FOR NO KEY UPDATE" in first
 
 
 @pytest.mark.asyncio
@@ -626,3 +632,78 @@ async def test_r8_a_failure_log_carries_the_class_and_client_id_never_the_text(r
     logged = " ".join(r.getMessage() for r in caplog.records)
     assert raised.__name__ in logged and "77" in logged
     assert "6281299998888" not in logged and "invalid" not in logged
+
+
+# --- R8 (v4/v6): a validation error before the handler carries no submitted value -----------------
+
+_SYNTHETIC = "+62 800 0000 333"
+
+
+def _profile_client(stub):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.app.routers import portal as portal_module
+
+    application = FastAPI()
+    application.include_router(portal_module.router)
+    application.dependency_overrides[portal_module.get_current_client] = lambda: {"client_id": 7}
+    application.dependency_overrides[portal_module.get_portal_service] = lambda: stub
+    return TestClient(application, raise_server_exceptions=False)
+
+
+def _refusal_stub():
+    stub = MagicMock()
+    stub.update_profile = AsyncMock(
+        side_effect=AssertionError("a refused body reached the service")
+    )
+    return stub
+
+
+_JSON = {"content-type": "application/json"}
+_GUILT_BODIES = {
+    "list_phone": {"json": {"phone": [_SYNTHETIC]}},
+    "object_whatsapp": {"json": {"whatsapp": {"n": _SYNTHETIC}}},
+    "number_phone": {"json": {"phone": 628000000333}},
+    "malformed_json": {"content": '{"phone": "' + _SYNTHETIC + '"', "headers": _JSON},
+    "no_body": {},
+    "zero_bytes": {"content": b"", "headers": _JSON},
+    "json_null": {"content": "null", "headers": _JSON},
+    "empty_list": {"content": "[]", "headers": _JSON},
+    "string_body": {"content": '"x"', "headers": _JSON},
+}
+
+
+@pytest.mark.parametrize("case", sorted(_GUILT_BODIES))
+def test_r8_a_refused_profile_body_answers_loc_msg_type_only(case):
+    stub = _refusal_stub()
+
+    response = _profile_client(stub).patch("/api/portal/profile", **_GUILT_BODIES[case])
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail and all(set(entry) == {"loc", "msg", "type"} for entry in detail)
+    assert all(isinstance(e["loc"], list) and isinstance(e["msg"], str) for e in detail)
+    body = response.text
+    for run in ("800", "0000", "333", "628000000333"):
+        assert run not in body
+    stub.update_profile.assert_not_called()
+
+
+@pytest.mark.parametrize("body", [{}, {"unknown_key": 1}])
+def test_r8_an_empty_or_unknown_key_body_is_accepted_as_before(body):
+    stub = MagicMock()
+    stub.update_profile = AsyncMock(return_value={"id": 7, "contact_change_requested": []})
+
+    response = _profile_client(stub).patch("/api/portal/profile", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["contact_change_requested"] == []
+
+
+def test_r8_another_portal_route_keeps_the_default_422_with_input():
+    response = _profile_client(MagicMock()).get("/api/portal/messages", params={"limit": "abc"})
+
+    assert response.status_code == 422
+    assert "input" in response.json()["detail"][0]

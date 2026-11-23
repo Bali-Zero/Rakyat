@@ -751,3 +751,214 @@ async def test_r8_a_lone_surrogate_is_422_and_nothing_is_written(db, field):
 
     assert (await _row(db, cid))["address"] is None
     assert await _requests(db, cid) == [] and await _alert_row(db, cid) is None
+
+
+# --- v4/v5/v6: lock level, alert time and order, on two pooled connections -----------------------
+
+
+class _Gate:
+    """Pauses one pooled connection around chosen statements; every wait is bounded."""
+
+    def __init__(self, *, pause_before=None, pause_after=None):
+        import asyncio
+
+        self.pause_before = pause_before
+        self.pause_after = pause_after
+        self.reached = asyncio.Event()
+        self.release = asyncio.Event()
+        self.returned = asyncio.Event()
+
+    async def around(self, conn, name, query, args, kwargs):
+        text = str(query)
+        if self.pause_before and self.pause_before in text:
+            self.reached.set()
+            await self.release.wait()
+        result = await getattr(conn, name)(query, *args, **kwargs)
+        if self.pause_before and self.pause_before in text:
+            self.returned.set()
+        if self.pause_after and self.pause_after in text:
+            self.reached.set()
+            await self.release.wait()
+        return result
+
+
+class _GatedConn:
+    def __init__(self, conn, gate):
+        self._conn = conn
+        self._gate = gate
+
+    def __getattr__(self, name):
+        attr = getattr(self._conn, name)
+        if name in {"execute", "fetch", "fetchrow", "fetchval"}:
+
+            async def _call(query, *args, **kwargs):
+                return await self._gate.around(self._conn, name, query, args, kwargs)
+
+            return _call
+        return attr
+
+
+class _GatedPool:
+    def __init__(self, pool, gate):
+        self._pool = pool
+        self._gate = gate
+
+    def acquire(self):
+        outer = self
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                self_inner._cm = outer._pool.acquire()
+                return _GatedConn(await self_inner._cm.__aenter__(), outer._gate)
+
+            async def __aexit__(self_inner, *exc):
+                return await self_inner._cm.__aexit__(*exc)
+
+        return _Ctx()
+
+
+_LOCK_STATEMENT = "SELECT phone, phone_normalized"
+
+
+async def _wait(event, seconds=5.0):
+    import asyncio
+
+    try:
+        await asyncio.wait_for(event.wait(), seconds)
+    except asyncio.TimeoutError:
+        return False
+    return True
+
+
+async def _settle(tasks, *gates):
+    """Release every pause, then await the tasks (bounded) and cancel what is left."""
+    import asyncio
+
+    for gate in gates:
+        gate.release.set()
+    pending = [t for t in tasks if t is not None]
+    if pending:
+        _, still = await asyncio.wait(pending, timeout=10)
+        for task in still:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_r7_an_address_saves_alert_insert_never_waits_on_a_contact_saves_lock(db):
+    import asyncio
+
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    assert await _alert_row(db, cid) is None
+    gate_a = _Gate(pause_before="INSERT INTO notification_alerts")
+    gate_b = _Gate(pause_after=_LOCK_STATEMENT)
+    task_a = task_b = None
+    try:
+        task_a = asyncio.create_task(
+            PortalService(_GatedPool(db, gate_a)).update_profile(
+                cid, {"address": "Street A"}, current_user=_user(cid)
+            )
+        )
+        assert await _wait(gate_a.reached), "A never reached its alert insert"
+        task_b = asyncio.create_task(
+            PortalService(_GatedPool(db, gate_b)).update_profile(
+                cid, {"phone": _NUM_C, "address": "Street B"}, current_user=_user(cid)
+            )
+        )
+        assert await _wait(gate_b.reached), "B never returned from its lock statement"
+
+        gate_a.release.set()
+        completed = await _wait(gate_a.returned, 5.0)
+        assert completed, "A's alert insert waited on B's client lock"
+        first = await _alert_row(db, cid)
+        assert first is not None and first["status"] == "sent"
+
+        gate_b.release.set()
+        await asyncio.wait_for(asyncio.gather(task_a, task_b), 15)
+    finally:
+        await _settle([task_a, task_b], gate_a, gate_b)
+
+    assert (await _row(db, cid))["address"] == "Street B"
+    assert len(await _requests(db, cid)) == 1
+    alert = await _alert_row(db, cid)
+    assert alert["status"] == "pending"
+    assert alert["message"] == ("Client requested a contact change: phone; also updated: address")
+    assert alert["created_at"] > first["created_at"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rearm", [True, False], ids=["rearm", "plain_insert"])
+async def test_r3_order_the_request_alert_is_stamped_when_its_statement_runs(db, rearm):
+    import asyncio
+
+    from backend.app.routers.crm_notifications import get_crm_notifications
+
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    others = [await _client(db, f"Zz Other {i}") for i in range(21)]
+    if rearm:
+        await PortalService(db).update_profile(
+            cid, {"address": "Street 1"}, current_user=_user(cid)
+        )
+        assert (await _alert_row(db, cid))["status"] == "sent"
+    else:
+        assert await _alert_row(db, cid) is None
+    gate = _Gate(pause_after=_LOCK_STATEMENT)
+    task = None
+    try:
+        task = asyncio.create_task(
+            PortalService(_GatedPool(db, gate)).update_profile(
+                cid, {"phone": _NUM_C}, current_user=_user(cid)
+            )
+        )
+        assert await _wait(gate.reached), "B never returned from its lock statement"
+        async with db.acquire() as conn:
+            for o in others:
+                await conn.execute(
+                    "INSERT INTO notification_alerts (client_id, alert_type, status, message)"
+                    " VALUES ($1, 'portal_document_upload', 'pending', 'doc')",
+                    o,
+                )
+            lower = await conn.fetchval("SELECT clock_timestamp()")
+        gate.release.set()
+        await asyncio.wait_for(task, 15)
+    finally:
+        await _settle([task], gate)
+
+    row = await _alert_row(db, cid)
+    assert row["created_at"] >= lower
+    assert row["status"] == "pending"
+    assert row["message"] == "Client requested a contact change: phone"
+    admin = {"email": "admin@example.invalid", "role": "admin"}
+    bell = await get_crm_notifications(unread_only=False, limit=20, pool=db, current_user=admin)
+    assert bell[0]["client_id"] == cid
+
+
+@pytest.mark.asyncio
+async def test_r3_time_a_rearm_never_moves_a_row_backwards(db):
+    from datetime import timedelta
+
+    async with db.acquire() as conn:
+        seconds = await conn.fetchval(
+            "SELECT EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC')::time)::int"
+        )
+    if seconds >= 86398:
+        pytest.skip("the run starts in the last two seconds of a UTC day")
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    await service.update_profile(cid, {"address": "Street 1"}, current_user=_user(cid))
+    async with db.acquire() as conn:
+        await conn.execute(
+            "UPDATE notification_alerts SET created_at ="
+            " (date_trunc('day', NOW() AT TIME ZONE 'UTC') + interval '23:59:59') AT TIME ZONE 'UTC'"
+            " WHERE client_id = $1",
+            cid,
+        )
+    before = await _alert_row(db, cid)
+    assert before["status"] == "sent"
+
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+
+    after = await _alert_row(db, cid)
+    assert after["status"] == "pending"
+    assert after["message"] == "Client requested a contact change: phone"
+    assert after["created_at"] == before["created_at"] + timedelta(microseconds=1)
