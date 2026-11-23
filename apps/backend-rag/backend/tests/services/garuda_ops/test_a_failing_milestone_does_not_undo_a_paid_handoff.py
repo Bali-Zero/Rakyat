@@ -123,3 +123,29 @@ async def test_a_cancelled_milestone_still_cancels_the_handoff(pool, monkeypatch
     monkeypatch.undo()
 
     assert await _practice_count(key) == 0
+
+
+async def test_a_savepoint_that_cannot_roll_back_undoes_the_handoff(pool, monkeypatch):
+    """The milestone fails and so does its ROLLBACK TO: the outer COMMIT would end as a
+    ROLLBACK, so the writer must raise rather than return an id nothing stores. A raising
+    writer reaches the outbox consumer as a failed handler, which leaves the job pending."""
+    writer = PostgresCrmWriter(pool)
+    key = f"evt_{uuid.uuid4().hex}"
+    execute = asyncpg.connection.Connection.execute
+
+    async def the_savepoint_rollback_times_out(self, query, *args, **kwargs):
+        if query.startswith("ROLLBACK TO"):
+            raise TimeoutError("savepoint rollback timed out")
+        return await execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(asyncpg.connection.Connection, "execute", the_savepoint_rollback_times_out)
+
+    with pytest.raises(TimeoutError):
+        await writer.create_client_and_practice(
+            _snapshot(customer_email=_EMAIL),
+            source_idempotency_key=key,
+            practice_type_code=PRACTICE_TYPE,
+        )
+    monkeypatch.undo()
+
+    assert await _practice_count(key) == 0
