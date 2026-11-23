@@ -30,6 +30,11 @@ export class ApiError extends Error {
    * read as a fallback rather than assumed away.
    */
   readonly correlationId?: string;
+  /**
+   * The HTTP status under the name SWR retry rules and most consumers read
+   * (`err.status`); same value as `statusCode`, which stays for existing callers.
+   */
+  readonly status: number;
 
   constructor(
     message: string,
@@ -38,6 +43,7 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = "ApiError";
+    this.status = statusCode;
     const body = data as
       | {
           detail?: unknown;
