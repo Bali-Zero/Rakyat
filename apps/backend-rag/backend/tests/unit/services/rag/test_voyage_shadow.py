@@ -1,5 +1,6 @@
 import hashlib
 import json
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -190,6 +191,48 @@ def test_other_release_never_mutates_the_first(tmp_path, db):
     assert sh.write_release(db, second) == 1
     assert first.collection != second.collection
     assert db.count(first.collection).count == 4 and db.count(second.collection).count == 3
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_write_release_creates_kind_keyword_index_for_own_collection(
+    tmp_path, db, monkeypatch, existing
+):
+    release = sh.PublicRelease.load(*files(tmp_path))
+    if existing:
+        sh.check_collection(db, release, create=True)
+    get_collection = db.get_collection
+    monkeypatch.setattr(
+        db,
+        "get_collection",
+        lambda name: get_collection(name).model_copy(update={"payload_schema": {}}),
+    )
+    create_index = Mock()
+    monkeypatch.setattr(db, "create_payload_index", create_index)
+
+    sh.write_release(db, release)
+
+    create_index.assert_called_once_with(
+        release.collection,
+        field_name="kind",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+        wait=True,
+    )
+
+
+def test_write_release_skips_existing_kind_keyword_index(tmp_path, db, monkeypatch):
+    release = sh.PublicRelease.load(*files(tmp_path))
+    get_collection = db.get_collection
+    monkeypatch.setattr(
+        db,
+        "get_collection",
+        lambda name: get_collection(name).model_copy(update={"payload_schema": {"kind": {}}}),
+    )
+    create_index = Mock()
+    monkeypatch.setattr(db, "create_payload_index", create_index)
+
+    sh.write_release(db, release)
+
+    create_index.assert_not_called()
 
 
 def test_remote_shadow_uses_configured_https_only(monkeypatch):

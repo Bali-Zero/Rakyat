@@ -141,6 +141,8 @@ async def test_observer_on_normal_tool_preserves_answer_and_readonly_boundaries(
         "_provider",
         lambda cfg: httpx.AsyncClient(base_url=BASE_URL, transport=httpx.MockTransport(answer)),
     )
+    if case == "time_limit":
+        monkeypatch.setattr(observer, "OBSERVATION_TIMEOUT_SECONDS", 0.01)
     collection = "visa_oracle" if case == "another_collection" else "legal_unified"
     query = "unapproved question with private details" if case == "unknown_query" else QUESTION
     base = input_result(collection)

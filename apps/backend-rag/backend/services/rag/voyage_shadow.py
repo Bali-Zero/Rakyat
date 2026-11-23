@@ -68,7 +68,9 @@ class PublicSnapshot:
     queries: dict
 
     @classmethod
-    def read_manifest(cls, manifest: Path, manifest_digest: str, index_digest: str) -> PublicSnapshot:
+    def read_manifest(
+        cls, manifest: Path, manifest_digest: str, index_digest: str
+    ) -> PublicSnapshot:
         if re.fullmatch(r"[a-f0-9]{64}", index_digest) is None:
             raise ValueError("invalid pinned vector index digest")
         with manifest.open("rb") as f:
@@ -80,7 +82,12 @@ class PublicSnapshot:
         data = json.loads(raw)
         docs = data["public_documents"]
         questions = data["public_queries"]
-        if not isinstance(docs, list) or not docs or not isinstance(questions, list) or not questions:
+        if (
+            not isinstance(docs, list)
+            or not docs
+            or not isinstance(questions, list)
+            or not questions
+        ):
             raise ValueError("invalid public manifest")
         passages = {digest_text(text): text for text in docs}
         queries = {digest_text(q["text"]): q["rerank_model"] for q in questions}
@@ -110,7 +117,9 @@ class PublicRelease(PublicSnapshot):
     vectors: dict
 
     @classmethod
-    def load(cls, manifest: Path, manifest_digest: str, index: Path, index_digest: str) -> PublicRelease:
+    def load(
+        cls, manifest: Path, manifest_digest: str, index: Path, index_digest: str
+    ) -> PublicRelease:
         snapshot = PublicSnapshot.read_manifest(manifest, manifest_digest, index_digest)
         queries, vectors = load_index(str(index), index_digest)
         if snapshot.queries != queries or set(snapshot.passages) != set(vectors):
@@ -204,6 +213,13 @@ def write_release(db: QdrantClient, release: PublicRelease) -> int:
     """Resume a content-addressed collection and return the number of new passages written."""
     check_collection(db, release, create=True)
     name = release.collection
+    if "kind" not in (db.get_collection(name).payload_schema or {}):
+        db.create_payload_index(
+            name,
+            field_name="kind",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+            wait=True,
+        )
     if not marker(db, release, 1, "build"):
         if db.count(name, exact=True).count and not marker(db, release, 1, "build"):
             raise ValueError("nonempty unowned shadow collection")
