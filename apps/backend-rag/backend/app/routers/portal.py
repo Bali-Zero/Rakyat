@@ -296,6 +296,39 @@ def is_viewing_as_client(client: dict) -> bool:
     return bool(client.get("impersonating"))
 
 
+# Writes that stay open under view-as, as (METHOD, route template). Keep it
+# tiny: POST /messages/{id}/read answers its normal success shape and writes
+# nothing (the chat page fires it by itself), so it must not turn into a 403.
+VIEW_AS_WRITE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
+    {("POST", "/api/portal/messages/{message_id}/read")}
+)
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+async def view_as_write_guard(
+    request: Request,
+    client: dict = Depends(get_current_client),
+) -> None:
+    """Router dependency: a view-as session may read, never write.
+
+    Every non-GET route of this router is refused with 403 while a superuser
+    views the portal as a client, so a route added tomorrow is covered
+    without remembering a per-route check.
+    """
+    if request.method in _SAFE_METHODS or not is_viewing_as_client(client):
+        return
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    if (request.method, template) in VIEW_AS_WRITE_ALLOWLIST:
+        return
+    raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
+
+
+# Registered before the first route below: FastAPI copies router.dependencies
+# into each route when the decorator runs.
+router.dependencies.append(Depends(view_as_write_guard))
+
+
 def get_portal_service(db_pool: asyncpg.Pool = Depends(get_database_pool)) -> PortalService:
     """Dependency injection for PortalService"""
     from backend.services.portal import PortalService as _PortalService

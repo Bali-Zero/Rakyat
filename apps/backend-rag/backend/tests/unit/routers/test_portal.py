@@ -601,6 +601,105 @@ class TestViewingAsClientMessages:
         mock_portal_service.mark_message_read.assert_awaited_once()
 
 
+class TestViewAsRefusesEveryWrite:
+    """One guard on the portal routers: no write while viewing as a client."""
+
+    @staticmethod
+    def _mutating_client_routes():
+        from fastapi.routing import APIRoute
+
+        from backend.app.routers import (
+            portal,
+            portal_notification_prefs,
+            portal_notifications,
+        )
+        from backend.app.routers.portal import VIEW_AS_WRITE_ALLOWLIST
+
+        found = []
+        for module in (portal, portal_notifications, portal_notification_prefs):
+            for route in module.router.routes:
+                if not isinstance(route, APIRoute):
+                    continue
+                for method in route.methods - {"GET", "HEAD", "OPTIONS"}:
+                    found.append((module, route, method))
+        assert found, "no mutating portal route found"
+        return found, VIEW_AS_WRITE_ALLOWLIST
+
+    def _app(self, mock_portal_client, mock_portal_service, mock_db_pool):
+        from backend.app.dependencies import get_database_pool
+        from backend.app.routers import portal_notification_prefs, portal_notifications
+
+        app = FastAPI()
+        for r in (router, portal_notifications.router, portal_notification_prefs.router):
+            app.include_router(r)
+        app.dependency_overrides[get_current_client] = lambda: {
+            **mock_portal_client,
+            "impersonating": True,
+        }
+        app.dependency_overrides[get_portal_service] = lambda: mock_portal_service
+        app.dependency_overrides[get_database_pool] = lambda: mock_db_pool
+        return app
+
+    def test_every_mutating_route_is_refused_or_allowlisted(
+        self, mock_portal_client, mock_portal_service, mock_db_pool
+    ):
+        routes, allowlist = self._mutating_client_routes()
+        tc = TestClient(self._app(mock_portal_client, mock_portal_service, mock_db_pool))
+        refused = []
+        for _module, route, method in routes:
+            path = route.path
+            for name in ("company_id", "document_id", "message_id", "notification_id"):
+                path = path.replace("{" + name + "}", "5")
+            response = tc.request(
+                method,
+                path + "?as_client=42",
+                json={
+                    "content": "x",
+                    "email_enabled": False,
+                    "wa_enabled": False,
+                    "wa_phone": None,
+                },
+            )
+            if (method, route.path) in allowlist:
+                assert response.status_code != 403, (method, route.path)
+                continue
+            assert response.status_code == 403, (method, route.path, response.status_code)
+            assert "read-only" in response.json()["detail"], (method, route.path)
+            refused.append((method, route.path))
+        mock_portal_service.assert_not_called()
+        # The six findings of the gate are in the walked set.
+        for expected in (
+            ("PATCH", "/api/portal/profile"),
+            ("POST", "/api/portal/documents/upload"),
+            ("DELETE", "/api/portal/documents/{document_id}"),
+            ("POST", "/api/portal/documents/{document_id}/restore"),
+            ("POST", "/api/portal/company/{company_id}/select"),
+            ("PATCH", "/api/portal/settings"),
+        ):
+            assert expected in refused
+
+    def test_no_service_write_is_reached_while_viewing(
+        self, mock_portal_client, mock_portal_service, mock_db_pool
+    ):
+        tc = TestClient(self._app(mock_portal_client, mock_portal_service, mock_db_pool))
+        tc.patch("/api/portal/profile?as_client=42", json={"phone": "1"})
+        tc.delete("/api/portal/documents/5?as_client=42")
+        tc.patch("/api/portal/settings?as_client=42", json={"language": "en"})
+        assert mock_portal_service.method_calls == []
+
+    def test_own_session_writes_still_pass_the_guard(
+        self, app, mock_portal_client, mock_portal_service
+    ):
+        app.dependency_overrides[get_current_client] = lambda: {
+            **mock_portal_client,
+            "impersonating": False,
+        }
+        mock_portal_service.update_profile.return_value = {}
+        response = TestClient(app).patch("/api/portal/profile", json={"phone": "1"})
+        assert response.status_code != 403
+        mock_portal_service.update_profile.assert_awaited_once()
+
+
 # ============================================
 # SETTINGS TESTS
 # ============================================

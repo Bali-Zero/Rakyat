@@ -74,11 +74,17 @@ async def get_prefs(
     async with pool.acquire() as conn:
         try:
             if viewing:
+                # Same rule as get_current_client / the portal login: the
+                # client's own login is role='client', active, portal_access.
+                # Never the viewer's own row; oldest account wins.
                 user_id = await conn.fetchval(
                     "SELECT id FROM team_members "
-                    "WHERE linked_client_id = $1 AND role = 'client' AND active = true "
-                    "ORDER BY id LIMIT 1",
+                    "WHERE linked_client_id = $1 AND role = 'client' "
+                    "AND active = true AND portal_access = true "
+                    "AND id::text <> $2 "
+                    "ORDER BY created_at, id LIMIT 1",
                     client["client_id"],
+                    str(client["user_id"]),
                 )
                 if user_id is None:
                     return _default_prefs()

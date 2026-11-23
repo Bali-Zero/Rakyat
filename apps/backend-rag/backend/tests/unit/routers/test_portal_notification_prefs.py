@@ -215,3 +215,19 @@ def test_own_session_still_saves_prefs_under_its_own_id() -> None:
     assert r.status_code == 200
     assert _TARGET_ACCOUNT_ID in mock_conn.execute.await_args.args
     mock_conn.fetchval.assert_not_awaited()
+
+
+def test_get_prefs_while_viewing_excludes_viewer_and_disabled_accounts() -> None:
+    mock_conn = AsyncMock()
+    mock_conn.fetchval.return_value = None
+    tc = _build_app(mock_conn, client=_viewing_client())
+
+    tc.get("/api/portal/notifications/prefs?as_client=42")
+
+    sql, *args = mock_conn.fetchval.await_args.args
+    assert "portal_access = true" in sql
+    assert "active = true" in sql
+    assert "role = 'client'" in sql
+    assert "id::text <> $2" in sql
+    assert "ORDER BY created_at, id" in sql
+    assert args == [42, _VIEWER_ID]
