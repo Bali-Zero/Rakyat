@@ -43,14 +43,25 @@ export function DependentsSection({
         <div className="space-y-1.5">
           {dependents.map((dep, idx) => (
             <div
-              key={idx}
+              key={dep.case_id ?? idx}
               className="flex items-center justify-between text-xs p-2 rounded-lg bg-[var(--bz-base)]/40"
             >
               <span className="text-[var(--bz-text-1)]">
-                {dep.client_name || `Client #${dep.client_id}`}{" "}
-                <span className="text-[var(--bz-text-2)]">
-                  ({dep.relationship})
-                </span>
+                {dep.case_id ? (
+                  <Link
+                    href={`/second-home/${encodeURIComponent(dep.case_id)}`}
+                    className="hover:underline"
+                  >
+                    {dep.client_name || `Client #${dep.client_id}`}
+                  </Link>
+                ) : (
+                  dep.client_name || `Client #${dep.client_id}`
+                )}{" "}
+                {(dep.relationship || dep.stage) && (
+                  <span className="text-[var(--bz-text-2)]">
+                    ({dep.relationship || dep.stage})
+                  </span>
+                )}
               </span>
               <span className="font-mono text-[10px] text-[var(--bz-accent)]">
                 {dep.code}
