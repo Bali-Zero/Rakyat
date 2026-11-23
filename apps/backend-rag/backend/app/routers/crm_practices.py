@@ -5,10 +5,12 @@ Endpoints for managing practices (KITAS, PT PMA, Visas, etc.)
 Refactored: Migrated to asyncpg with connection pooling (2025-12-07)
 """
 
+import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path, Query, Request
@@ -590,9 +592,190 @@ class PracticeResponse(BaseModel):
     invoice_company_id: int | None = None
 
 
+class HistoricalTaxCompletionCreate(BaseModel):
+    """Evidence-backed historical filing; deliberately separate from normal sales flow."""
+
+    client_id: int
+    company_id: int
+    assigned_to: str
+    service: Literal["lkpm_quarterly", "spt_annual_company"]
+    fiscal_year: int
+    fiscal_period: str
+    issuer_entity_key: str
+    completed_at: datetime
+    evidence_references: list[str]
+    source: str
+
+    @field_validator("fiscal_year")
+    @classmethod
+    def _year_is_finite(cls, value: int) -> int:
+        if not 2000 <= value <= 2100:
+            raise ValueError("fiscal_year must be between 2000 and 2100")
+        return value
+
+    @field_validator("issuer_entity_key", "source")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value is required")
+        return value
+
+    @field_validator("evidence_references")
+    @classmethod
+    def _evidence_is_explicit(cls, value: list[str]) -> list[str]:
+        value = [reference.strip() for reference in value if reference.strip()]
+        if not value:
+            raise ValueError("at least one evidence reference is required")
+        return value
+
+    @model_validator(mode="after")
+    def _scope_is_supported(self) -> "HistoricalTaxCompletionCreate":
+        if self.service == "lkpm_quarterly" and self.fiscal_period not in {"Q1", "Q2", "Q3", "Q4"}:
+            raise ValueError("LKPM fiscal_period must be Q1, Q2, Q3, or Q4")
+        if self.service == "spt_annual_company" and self.fiscal_period != "ANNUAL":
+            raise ValueError("annual SPT fiscal_period must be ANNUAL")
+        if self.issuer_entity_key != "permata_bali_nol_konsultan":
+            raise ValueError("issuer_entity_key must be permata_bali_nol_konsultan")
+        if self.completed_at.tzinfo is None or self.completed_at.utcoffset() is None:
+            raise ValueError("completed_at must include an offset (WITA is +08:00)")
+        self.completed_at = self.completed_at.astimezone(ZoneInfo("Asia/Makassar"))
+        quarter = 4 if self.fiscal_period == "ANNUAL" else int(self.fiscal_period[1])
+        first_filing_day = date(self.fiscal_year + (quarter == 4), 1 if quarter == 4 else 3 * quarter + 1, 1)
+        if self.completed_at.date() < first_filing_day or self.completed_at > datetime.now(timezone.utc):
+            raise ValueError("completion date must fall after the filing period and cannot be in the future")
+        return self
+
+
+def _historical_tax_result(row: asyncpg.Record, filing: HistoricalTaxCompletionCreate) -> PracticeResponse:
+    data = dict(row)
+    meta = data["metadata"]
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    evidence = meta["historical_tax_completion"]
+    if (
+        data["client_id"] != filing.client_id
+        or data["assigned_to"] != filing.assigned_to.lower()
+        or data["completion_date"] != filing.completed_at
+        or data["status"] != "completed"
+        or evidence["source"] != filing.source
+        or set(evidence["evidence_references"]) != set(filing.evidence_references)
+    ):
+        raise HTTPException(status_code=409, detail="historical filing already exists with different details")
+    if data.get("uuid"):
+        data["uuid"] = str(data["uuid"])
+    return PracticeResponse.model_validate(data)
+
+
+def _can_import_historical_tax_completion(user: dict) -> bool:
+    role = (user.get("role") or "").lower().strip()
+    return is_crm_admin(user) or role in {"accounting", "tax supervisor", "tax lead", "tax responsible"}
+
+
 # ================================================
 # ENDPOINTS
 # ================================================
+
+
+@router.post("/historical-tax-completions", response_model=PracticeResponse, status_code=201)
+async def create_historical_tax_completion(
+    completion: HistoricalTaxCompletionCreate,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict = Depends(get_current_user),
+) -> PracticeResponse:
+    """Register a proved historical tax filing without any sales or completion automation."""
+    if not _can_import_historical_tax_completion(current_user):
+        raise HTTPException(status_code=403, detail="Tax supervisor or CRM/accounting admin required")
+
+    service_code = {
+        "lkpm_quarterly": "tax_lkpm_quarterly_historical",
+        "spt_annual_company": "tax_annual_company",
+    }[completion.service]
+    identity_material = "|".join(
+        (completion.issuer_entity_key, str(completion.company_id), service_code,
+         str(completion.fiscal_year), completion.fiscal_period)
+    )
+    identity = "historical-tax:" + hashlib.sha256(identity_material.encode()).hexdigest()
+    operator = (current_user.get("email") or "").lower().strip()
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            lookup = "SELECT * FROM practices WHERE historical_completion_identity = $1"
+            existing = await conn.fetchrow(lookup, identity)
+            if existing:
+                return _historical_tax_result(existing, completion)
+
+            assignee = await conn.fetchval(
+                """
+                SELECT 1 FROM team_members
+                WHERE LOWER(email) = $1 AND active = TRUE AND LOWER(department) = 'tax'
+                """,
+                completion.assigned_to.lower(),
+            )
+            if not assignee:
+                raise HTTPException(status_code=422, detail="assigned_to must be an active team member")
+            linked = await conn.fetchval(
+                "SELECT 1 FROM client_company_links WHERE client_id = $1 AND company_id = $2",
+                completion.client_id,
+                completion.company_id,
+            )
+            if not linked:
+                raise HTTPException(status_code=422, detail="company must be linked to client")
+            type_id = await conn.fetchval(
+                "SELECT id FROM practice_types WHERE code = $1",
+                service_code,
+            )
+            if type_id is None:
+                raise HTTPException(status_code=503, detail="historical tax catalog is not seeded")
+
+            # A legacy record for this company/service without an explicit period
+            # cannot safely be distinguished from this import: leave it for review.
+            ambiguous = await conn.fetchval(
+                """
+                SELECT 1 FROM practices
+                WHERE invoice_company_id = $1 AND practice_type_id = $2
+                  AND historical_completion_identity IS NULL
+                LIMIT 1
+                """,
+                completion.company_id,
+                type_id,
+            )
+            if ambiguous:
+                raise HTTPException(
+                    status_code=409,
+                    detail="existing tax practice has no historical scope; review before import",
+                )
+
+            metadata = {
+                "historical_tax_completion": {
+                    "issuer_entity_key": completion.issuer_entity_key,
+                    "evidence_authority": "OSS" if completion.service == "lkpm_quarterly" else "DJP",
+                    "fiscal_year": completion.fiscal_year,
+                    "fiscal_period": completion.fiscal_period,
+                    "evidence_references": completion.evidence_references,
+                    "source": completion.source,
+                    "completed_at_wita": completion.completed_at.isoformat(),
+                    "operator": operator,
+                }
+            }
+            row = await conn.fetchrow(
+                """
+                INSERT INTO practices (
+                    client_id, practice_type_id, status, priority, assigned_to,
+                    completion_date, invoice_company_id, metadata, created_by,
+                    historical_completion_identity, client_visible
+                ) VALUES ($1, $2, 'completed', 'normal', $3, $4, $5, $6::text::jsonb, $7, $8, false)
+                ON CONFLICT (historical_completion_identity) WHERE historical_completion_identity IS NOT NULL
+                DO NOTHING RETURNING *
+                """,
+                completion.client_id, type_id, completion.assigned_to.lower(),
+                completion.completed_at, completion.company_id, to_jsonb(metadata), operator, identity,
+            )
+            if row is None:
+                row = await conn.fetchrow(lookup, identity)
+            if row is None:
+                raise HTTPException(status_code=500, detail="historical completion was not recorded")
+            return _historical_tax_result(row, completion)
 
 
 @router.post("/", response_model=PracticeResponse)
@@ -1091,8 +1274,11 @@ async def list_practices(
                 )
                 query_parts.append(
                     f" AND p.status != 'cancelled'"
-                    f" AND ((p.created_at >= ${param_index} AND p.created_at < ${param_index + 1})"
-                    f" OR (al.performed_at >= ${param_index} AND al.performed_at < ${param_index + 1}))",
+                    f" AND CASE WHEN p.metadata ? 'historical_tax_completion' THEN"
+                    f" p.completion_date >= (${param_index}::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')"
+                    f" AND p.completion_date < (${param_index + 1}::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Makassar')"
+                    f" ELSE ((p.created_at >= ${param_index} AND p.created_at < ${param_index + 1})"
+                    f" OR (al.performed_at >= ${param_index} AND al.performed_at < ${param_index + 1})) END",
                 )
                 params.extend([month_start, month_end])
                 param_index += 2

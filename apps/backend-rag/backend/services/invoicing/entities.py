@@ -259,6 +259,7 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     "tax_bpjs_insurance": PERMATA_BALI_NOL_KONSULTAN.key,
     "tax_consulting": PERMATA_BALI_NOL_KONSULTAN.key,
     "tax_efin_application": PERMATA_BALI_NOL_KONSULTAN.key,
+    "tax_lkpm_quarterly_historical": PERMATA_BALI_NOL_KONSULTAN.key,
     "tax_lkpm_yearly": PERMATA_BALI_NOL_KONSULTAN.key,
     "tax_monthly_basic_0_50": PERMATA_BALI_NOL_KONSULTAN.key,
     "tax_monthly_basic_100_200": PERMATA_BALI_NOL_KONSULTAN.key,
