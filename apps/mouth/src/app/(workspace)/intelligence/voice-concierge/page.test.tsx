@@ -67,6 +67,85 @@ describe("workspace voice concierge page", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("hides the page in production when the lab flag is not set", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    headersMock.mockResolvedValue(
+      new Headers({ cookie: "nz_access_token=staff-token" }),
+    );
+
+    await expect(VoiceConciergePage()).rejects.toThrow("NEXT_NOT_FOUND");
+
+    expect(notFoundMock).toHaveBeenCalledTimes(1);
+    expect(headersMock).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("hides the page in production for a signed-in profile that is not internal", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.VOICE_CONCIERGE_LAB_ENABLED = "true";
+    process.env.VOICE_CONCIERGE_BACKEND_URL = "https://backend.test/api";
+    headersMock.mockResolvedValue(
+      new Headers({ cookie: "nz_access_token=client-token" }),
+    );
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { email: "someone@example.test", role_level: "member" },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(VoiceConciergePage()).rejects.toThrow("NEXT_NOT_FOUND");
+
+    expect(notFoundMock).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://backend.test/api/auth/profile",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer client-token" },
+      }),
+    );
+  });
+
+  it.each([
+    ["no backend URL is configured", null],
+    ["the profile request fails", "reject"],
+    ["the profile endpoint answers 500", "500"],
+    ["the profile body is not JSON", "not-json"],
+  ] as const)("hides the page in production when %s", async (_case, mode) => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.VOICE_CONCIERGE_LAB_ENABLED = "true";
+    if (mode !== null) {
+      process.env.VOICE_CONCIERGE_BACKEND_URL = "https://backend.test/api";
+    }
+    headersMock.mockResolvedValue(
+      new Headers({ cookie: "nz_access_token=staff-token" }),
+    );
+    const internal = JSON.stringify({
+      data: { email: "founder@balizero.com", role: "founder" },
+    });
+    if (mode === "reject") {
+      vi.mocked(global.fetch).mockRejectedValue(new Error("fixture down"));
+    } else if (mode === "500") {
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response(internal, { status: 500 }),
+      );
+    } else if (mode === "not-json") {
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response("<html>fixture</html>", { status: 200 }),
+      );
+    }
+
+    await expect(VoiceConciergePage()).rejects.toThrow("NEXT_NOT_FOUND");
+
+    expect(notFoundMock).toHaveBeenCalledTimes(1);
+    if (mode === null) {
+      expect(global.fetch).not.toHaveBeenCalled();
+    } else {
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("renders in production for an internal session cookie", async () => {
     vi.stubEnv("NODE_ENV", "production");
     process.env.VOICE_CONCIERGE_LAB_ENABLED = "true";
