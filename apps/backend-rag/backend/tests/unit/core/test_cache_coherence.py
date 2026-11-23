@@ -256,7 +256,7 @@ class TestUnifiedInvalidation:
 
 
 class TestRouterInvalidationCoverage:
-    """Verify all 17 mutation routers import invalidate_cache (source-level check)."""
+    """Verify all 16 mutation routers import invalidate_cache (source-level check)."""
 
     ROUTERS_WITH_INVALIDATION = [
         "news",
@@ -266,7 +266,6 @@ class TestRouterInvalidationCoverage:
         "team_drive",
         "agents",
         "lam_memory",
-        "session",
         "sheets",
         "newsletter",
         "messaging_identity",

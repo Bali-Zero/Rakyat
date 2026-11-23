@@ -1,17 +1,21 @@
 """
 Session Management API Router
-Exposes SessionService functionality via REST API endpoints
+
+Only the health check is left. The conversation-session routes (create, read,
+overwrite, extend, info, export, delete, analytics, cleanup) had no caller in
+the repository, and every route that named a session acted on whatever id the
+caller supplied: any staff or API-key caller could read or rewrite another
+person's conversation, and the analytics overview published session ids. They
+are retired rather than given an owner check nobody would exercise.
 """
 
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends
 
 from backend.app.core.config import settings
 from backend.app.deps.auth import reject_portal_roles
-from backend.core.cache import invalidate_cache
 from backend.services.misc.session_service import SessionService
 
 logger = logging.getLogger(__name__)
@@ -33,205 +37,6 @@ def get_session_service() -> SessionService:
         redis_url = getattr(settings, "redis_url", "redis://localhost:6379")
         _session_service = SessionService(redis_url)
     return _session_service
-
-
-class SessionHistoryRequest(BaseModel):
-    """Request model for updating session history"""
-
-    history: list[dict] = Field(..., description="Conversation history")
-
-
-class SessionUpdateRequest(BaseModel):
-    """Request model for updating session with custom TTL"""
-
-    history: list[dict] = Field(..., description="Conversation history")
-    ttl_hours: int | None = Field(None, description="Custom TTL in hours")
-
-
-class SessionTTLRequest(BaseModel):
-    """Request model for extending session TTL"""
-
-    ttl_hours: int = Field(..., description="New TTL in hours")
-
-
-@router.post("/create")
-async def create_session(service: SessionService = Depends(get_session_service)) -> dict[str, Any]:
-    """Create a new conversation session"""
-    try:
-        session_id = await service.create_session()
-        await invalidate_cache("zantara:sessions:*")
-        return {"success": True, "session_id": session_id}
-    except Exception as e:
-        logger.error("Failed to create session: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.get("/{session_id}")
-async def get_session(
-    session_id: str,
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Get conversation history for a session"""
-    try:
-        history = await service.get_history(session_id)
-        if history is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"success": True, "session_id": session_id, "history": history}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to get session: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.put("/{session_id}")
-async def update_session(
-    session_id: str,
-    request: SessionHistoryRequest,
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Update conversation history for a session"""
-    try:
-        success = await service.update_history(session_id, request.history)
-        if not success:
-            raise HTTPException(status_code=400, detail="Failed to update session")
-        await invalidate_cache("zantara:sessions:*")
-        return {"success": True, "session_id": session_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to update session: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.put("/{session_id}/ttl")
-async def update_session_with_ttl(
-    session_id: str,
-    request: SessionUpdateRequest,
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Update session with custom TTL"""
-    try:
-        success = await service.update_history_with_ttl(
-            session_id,
-            request.history,
-            request.ttl_hours,
-        )
-        if not success:
-            raise HTTPException(status_code=400, detail="Failed to update session")
-        await invalidate_cache("zantara:sessions:*")
-        return {"success": True, "session_id": session_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to update session: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.delete("/{session_id}")
-async def delete_session(
-    session_id: str,
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Delete a session"""
-    try:
-        success = await service.delete_session(session_id)
-        await invalidate_cache("zantara:sessions:*")
-        return {"success": success, "session_id": session_id}
-    except Exception as e:
-        logger.error("Failed to delete session: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.post("/{session_id}/extend")
-async def extend_session_ttl(
-    session_id: str,
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Extend session TTL"""
-    try:
-        success = await service.extend_ttl(session_id)
-        return {"success": success, "session_id": session_id}
-    except Exception as e:
-        logger.error("Failed to extend TTL: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.post("/{session_id}/extend-custom")
-async def extend_session_ttl_custom(
-    session_id: str,
-    request: SessionTTLRequest,
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Extend session TTL to custom duration"""
-    try:
-        success = await service.extend_ttl_custom(session_id, request.ttl_hours)
-        return {"success": success, "session_id": session_id}
-    except Exception as e:
-        logger.error("Failed to extend TTL: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.get("/{session_id}/info")
-async def get_session_info(
-    session_id: str,
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Get session metadata"""
-    try:
-        info = await service.get_session_info(session_id)
-        if info is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"success": True, "info": info}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to get session info: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.get("/{session_id}/export")
-async def export_session(
-    session_id: str,
-    format: str = "json",
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Export session conversation"""
-    try:
-        exported = await service.export_session(session_id, format)
-        if exported is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"success": True, "session_id": session_id, "format": format, "data": exported}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to export session: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.get("/analytics/overview")
-async def get_analytics(service: SessionService = Depends(get_session_service)) -> dict[str, Any]:
-    """Get analytics about all sessions"""
-    try:
-        analytics = await service.get_analytics()
-        return {"success": True, "analytics": analytics}
-    except Exception as e:
-        logger.error("Failed to get analytics: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.post("/cleanup")
-async def cleanup_sessions(
-    service: SessionService = Depends(get_session_service),
-) -> dict[str, Any]:
-    """Cleanup expired sessions (no-op, Redis handles automatically)"""
-    try:
-        cleaned = await service.cleanup_expired_sessions()
-        await invalidate_cache("zantara:sessions:*")
-        return {"success": True, "cleaned": cleaned}
-    except Exception as e:
-        logger.error("Failed to cleanup sessions: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/health")
