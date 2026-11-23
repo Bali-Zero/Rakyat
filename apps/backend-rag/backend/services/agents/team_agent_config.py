@@ -103,11 +103,11 @@ ROLE_VISA_SPECIALIST = AgentRole(
         "list_telegram_conversations",
         # Phase 2 v8: path Z runtime tools
         "vector_search",
-        "pricing",
+        "get_pricing",
         "team_knowledge",
-        "knowledge_graph",
+        "knowledge_graph_search",
         "calculator",
-        "vision",
+        "vision_analysis",
         "web_search",
         "crm_query",
     ],
@@ -120,7 +120,7 @@ ROLE_VISA_SPECIALIST = AgentRole(
         "federation_send",
         "federation_mark_read",
         "save_episode",
-        "image_generation",
+        "generate_image",
         "timesheet",
         # Content & Marketing
         "compose_article",
@@ -142,7 +142,7 @@ ROLE_VISA_SPECIALIST = AgentRole(
         "get_admin_logs",
     ],
     client_scope="assigned",
-    requires_confirmation=["image_generation"],
+    requires_confirmation=["generate_image"],
 )
 
 ROLE_EXECUTIVE_CONSULTANT = AgentRole(
@@ -190,11 +190,11 @@ ROLE_EXECUTIVE_CONSULTANT = AgentRole(
         # Same gap analysis as ROLE_VISA_SPECIALIST — see
         # VASSAL_PHASE2_HANDOFF.md (a)1-2.
         "vector_search",
-        "pricing",
+        "get_pricing",
         "team_knowledge",
-        "knowledge_graph",
+        "knowledge_graph_search",
         "calculator",
-        "vision",
+        "vision_analysis",
         "web_search",
         "crm_query",
     ],
@@ -211,7 +211,7 @@ ROLE_EXECUTIVE_CONSULTANT = AgentRole(
         "federation_send",
         "federation_mark_read",
         "save_episode",
-        "image_generation",
+        "generate_image",
         "timesheet",  # Own HR timesheet
     ],
     blocked_tools=[
@@ -223,7 +223,7 @@ ROLE_EXECUTIVE_CONSULTANT = AgentRole(
         "get_admin_logs",
     ],
     client_scope="assigned",
-    requires_confirmation=["image_generation"],
+    requires_confirmation=["generate_image"],
 )
 
 ROLE_ADMIN = AgentRole(
@@ -269,18 +269,18 @@ ROLE_HR_MANAGER = AgentRole(
         "list_team_members",
         # Runtime tools
         "vector_search",
-        "pricing",
+        "get_pricing",
         "team_knowledge",
-        "knowledge_graph",
+        "knowledge_graph_search",
         "calculator",
-        "vision",
+        "vision_analysis",
         "web_search",
     ],
     allowed_write_tools=[
         "log_interaction",
         "update_practice_status",
         "timesheet",
-        "image_generation",
+        "generate_image",
         "save_episode",
     ],
     blocked_tools=[
@@ -348,11 +348,11 @@ ROLE_CRM_FULL = AgentRole(
         "search_drive",
         # Runtime tools
         "vector_search",
-        "pricing",
+        "get_pricing",
         "team_knowledge",
-        "knowledge_graph",
+        "knowledge_graph_search",
         "calculator",
-        "vision",
+        "vision_analysis",
         "web_search",
     ],
     allowed_write_tools=[
@@ -368,7 +368,7 @@ ROLE_CRM_FULL = AgentRole(
         "federation_send",
         "federation_mark_read",
         "save_episode",
-        "image_generation",
+        "generate_image",
     ],
     blocked_tools=[
         "execute_plan",
@@ -431,11 +431,11 @@ ROLE_TAX_SPECIALIST = AgentRole(
         "get_lkpm_deadlines",
         # Runtime tools
         "vector_search",
-        "pricing",
+        "get_pricing",
         "team_knowledge",
-        "knowledge_graph",
+        "knowledge_graph_search",
         "calculator",
-        "vision",
+        "vision_analysis",
         "web_search",
     ],
     allowed_write_tools=[
@@ -449,7 +449,7 @@ ROLE_TAX_SPECIALIST = AgentRole(
         "federation_send",
         "federation_mark_read",
         "save_episode",
-        "image_generation",
+        "generate_image",
         # Own timesheet
         "timesheet",
         # LKPM
@@ -541,7 +541,7 @@ ROLE_FINANCE_VIEWER = replace(
         "send_portal_message",
         "federation_send",
         "federation_mark_read",
-        "image_generation",
+        "generate_image",
     ],
 )
 
