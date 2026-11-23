@@ -9,8 +9,11 @@ there.
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import re
+import traceback
+from types import SimpleNamespace
 
 import pytest
 
@@ -325,3 +328,108 @@ def test_an_unparsable_model_output_is_logged_by_length_only(script, caplog, cap
     assert [r.getMessage() for r in caplog.records] == [
         f"Could not parse JSON from Gemini output ({len(text)} chars)"
     ]
+
+
+def test_a_failed_cli_logs_stderr_length_not_its_contents(
+    script, monkeypatch, caplog, capsys
+) -> None:
+    stderr = "Synthetic Person.pdf could not be read"
+    monkeypatch.setattr(
+        script.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=7, stderr=stderr, stdout=""),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=script.logger.name):
+        assert script.call_gemini("synthetic prompt") is None
+
+    out = capsys.readouterr()
+    seen = caplog.text + "".join(record.getMessage() for record in caplog.records)
+    assert f"rc=7, stderr_len={len(stderr)}" in seen
+    for text in (seen, out.out, out.err):
+        assert "Synthetic Person" not in text
+
+
+@pytest.mark.asyncio
+async def test_wrong_model_field_types_are_skipped_without_exception_text(
+    script, caplog, capsys
+) -> None:
+    conn = FakeConnection(["Valid Akta.pdf"])
+    docs = [
+        {"file_name": {"name": "Synthetic Person.pdf"}, "document_type": "akta_pendirian"},
+        {
+            "file_name": "Valid Akta.pdf",
+            "document_type": "akta_pendirian",
+            "deed_number": "17/2026",
+            "authorized_capital": 1000,
+            "paid_capital": [["not", "a", "number"]],
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=script.logger.name):
+        updated = await script.update_company_docs(conn, 5, docs, "00_AKTA", False)
+
+    out = capsys.readouterr()
+    seen = caplog.text + "".join(record.getMessage() for record in caplog.records)
+    assert updated == 1
+    assert "Skipping model field file_name with unexpected type dict" in seen
+    assert "Skipping model field paid_capital with unexpected type list" in seen
+    for text in (seen, out.out, out.err):
+        assert "Synthetic Person" not in text
+        assert "invalid input for query argument" not in text
+
+    ocr_writes = [args for query, args in conn.updates if "UPDATE company_documents" in query]
+    assert len(ocr_writes) == 1
+    # The stored extraction is the model's answer as given (a JSON document);
+    # the wrong-typed field is kept out of the bound company columns only.
+    assert json.loads(ocr_writes[0][0]) == docs[1]
+    company_writes = [
+        args for query, args in conn.updates if query.startswith("UPDATE companies SET")
+    ]
+    assert ("17/2026", 5) in company_writes
+    assert (json.dumps({"authorized_capital": 1000}), 5) in company_writes
+
+
+@pytest.mark.asyncio
+async def test_well_typed_model_fields_write_exactly_as_before(script) -> None:
+    conn = FakeConnection(["Valid Akta.pdf"])
+    doc = {
+        "file_name": "Valid Akta.pdf",
+        "document_type": "akta_pendirian",
+        "deed_number": "17/2026",
+        "authorized_capital": 1000,
+        "paid_capital": 800,
+    }
+
+    updated = await script.update_company_docs(conn, 5, [doc], "00_AKTA", False)
+
+    assert updated == 1
+    assert (json.dumps(doc), 1) in [
+        args for query, args in conn.updates if "company_documents" in query
+    ]
+    assert ("17/2026", 5) in [
+        args for query, args in conn.updates if query.startswith("UPDATE companies SET")
+    ]
+    assert (json.dumps({"authorized_capital": 1000, "paid_capital": 800}), 5) in [
+        args for query, args in conn.updates if query.startswith("UPDATE companies SET")
+    ]
+
+
+class _EchoingConnection(FakeConnection):
+    async def execute(self, query: str, *args):
+        raise ValueError(f"invalid input for query argument $1: {args[0]!r}")
+
+
+@pytest.mark.asyncio
+async def test_a_database_error_stops_the_run_without_its_text(script) -> None:
+    conn = _EchoingConnection(["Synthetic Person.pdf"])
+    docs = [{"file_name": "Synthetic Person.pdf", "document_type": "akta_pendirian"}]
+
+    with pytest.raises(RuntimeError) as raised:
+        await script.update_company_docs(conn, 5, docs, "00_AKTA", False)
+
+    assert str(raised.value) == "OCR update failed for company 5, item 0: ValueError"
+    assert raised.value.__suppress_context__
+    assert "Synthetic Person" not in "".join(
+        traceback.format_exception(raised.type, raised.value, raised.tb)
+    )
