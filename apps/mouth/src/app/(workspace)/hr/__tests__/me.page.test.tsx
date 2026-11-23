@@ -22,14 +22,26 @@ interface Pending {
   auth: string | undefined;
   resolve: (body: unknown, status?: number) => void;
 }
-let pending: Pending[];
+let pendingOverview: Pending[];
+let pendingDesk: Pending[];
 
 function mockTransport() {
-  pending = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+  pendingOverview = [];
+  pendingDesk = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(
+      input instanceof Request ? input.url : String(input),
+      window.location.origin,
+    );
+    const bucket = url.pathname.endsWith("/hr/me/overview")
+      ? pendingOverview
+      : url.pathname.endsWith("/hr/me/delivery-desk")
+        ? pendingDesk
+        : null;
+    if (!bucket) throw new Error(`Unexpected My HR request: ${url.pathname}`);
     const headers = (init as { headers: Record<string, string> }).headers;
     return new Promise<Response>((resolve) => {
-      pending.push({
+      bucket.push({
         auth: headers["Authorization"],
         resolve: (body, status = 200) =>
           resolve(
@@ -161,6 +173,36 @@ function overview(owner: string, name = "Made Contoh"): MyHrOverview {
   };
 }
 
+function deliveryDesk(owner: string, service: string, amount: number) {
+  const earned = new Date().toISOString();
+  return {
+    team_member_id: owner,
+    on_payroll: true,
+    month: THIS_MONTH + "-01",
+    milestones: 1,
+    target: null,
+    totals: {
+      pending: amount,
+      approved: 0,
+      paid: 0,
+      awaiting_rate: 0,
+      payroll_locked: 0,
+    },
+    recent: [
+      {
+        practice_id: 41,
+        service,
+        event_kind: "electronic_visa_issued",
+        earned_at: earned,
+        awarded_at: earned,
+        status: "pending",
+        amount_idr: amount,
+      },
+    ],
+    next_case: null,
+  };
+}
+
 const EMPTY = (owner: string): MyHrOverview => ({
   ...overview(owner),
   payslips: [],
@@ -178,8 +220,8 @@ const shown = (name: string) => screen.queryByText(new RegExp(name));
 async function loaded(sub: string, body: MyHrOverview) {
   localStorage.setItem("auth_token", tokenFor(sub));
   render(<MyHrPage />);
-  await waitFor(() => expect(pending).toHaveLength(1));
-  await act(async () => pending[0].resolve(body));
+  await waitFor(() => expect(pendingOverview).toHaveLength(1));
+  await act(async () => pendingOverview[0].resolve(body));
 }
 
 beforeEach(() => {
@@ -220,10 +262,10 @@ describe("My HR page (/hr/me)", () => {
   it("shows the member's portrait in the header when the card carries one", async () => {
     localStorage.setItem("auth_token", tokenFor("A"));
     render(<MyHrPage />);
-    await waitFor(() => expect(pending).toHaveLength(1));
+    await waitFor(() => expect(pendingOverview).toHaveLength(1));
     const body = overview("A");
     body.card.avatar_url = "/static/team/contoh.jpg";
-    await act(async () => pending[0].resolve(body));
+    await act(async () => pendingOverview[0].resolve(body));
     expect(screen.getByAltText("Made Contoh")).toHaveAttribute(
       "src",
       "/static/team/contoh.jpg",
@@ -233,10 +275,10 @@ describe("My HR page (/hr/me)", () => {
   it("shows initials, and no image, when the card has no avatar", async () => {
     localStorage.setItem("auth_token", tokenFor("A"));
     render(<MyHrPage />);
-    await waitFor(() => expect(pending).toHaveLength(1));
+    await waitFor(() => expect(pendingOverview).toHaveLength(1));
     const body = overview("A");
     body.card.avatar_url = null;
-    await act(async () => pending[0].resolve(body));
+    await act(async () => pendingOverview[0].resolve(body));
     expect(screen.queryByAltText("Made Contoh")).toBeNull();
     expect(screen.getByRole("img", { name: "Made Contoh" })).toHaveTextContent(
       "MC",
@@ -247,9 +289,9 @@ describe("My HR page (/hr/me)", () => {
     const token = tokenFor("A");
     localStorage.setItem("auth_token", token);
     render(<MyHrPage />);
-    await waitFor(() => expect(pending).toHaveLength(1));
-    expect(pending[0].auth).toBe(`Bearer ${token}`);
-    await act(async () => pending[0].resolve(overview("A")));
+    await waitFor(() => expect(pendingOverview).toHaveLength(1));
+    expect(pendingOverview[0].auth).toBe(`Bearer ${token}`);
+    await act(async () => pendingOverview[0].resolve(overview("A")));
 
     expect(screen.getByRole("heading", { level: 1 }).textContent).toContain(
       "Made",
@@ -288,15 +330,39 @@ describe("My HR page (/hr/me)", () => {
   it("A -> B in another tab clears A at once and shows B once B's response is accepted", async () => {
     await loaded("A", overview("A", "Made Contoh"));
     expect(shown("Made")).not.toBeNull();
+    const bonusA = deliveryDesk("A", "Synthetic visa A", 123456);
+    await waitFor(() => expect(pendingDesk).toHaveLength(1));
+    expect(pendingDesk[0].auth).toBe(pendingOverview[0].auth);
+    await act(async () => pendingDesk[0].resolve(bonusA));
+    expect(
+      screen.getByRole("link", { name: "Synthetic visa A" }),
+    ).toBeVisible();
+    act(() => window.dispatchEvent(new Event("kita:delivery-changed")));
+    await waitFor(() => expect(pendingDesk).toHaveLength(2));
 
     const tokenB = tokenFor("B");
     localStorage.setItem("auth_token", tokenB);
     act(() => storageEvent("auth_token"));
-    expect(shown("Made")).toBeNull(); // A's data is gone before B's arrives
-    await waitFor(() => expect(pending).toHaveLength(2));
-    expect(pending[1].auth).toBe(`Bearer ${tokenB}`);
-    await act(async () => pending[1].resolve(overview("B", "Ketut Contoh")));
+    expect(shown("Made")).toBeNull();
+    expect(shown("Synthetic visa A")).toBeNull(); // Both panels clear before B's response.
+    expect(screen.queryAllByText(/123\.456/)).toHaveLength(0);
+    await waitFor(() => expect(pendingOverview).toHaveLength(2));
+    expect(pendingOverview[1].auth).toBe(`Bearer ${tokenB}`);
+    await act(async () =>
+      pendingOverview[1].resolve(overview("B", "Ketut Contoh")),
+    );
     expect(shown("Ketut")).not.toBeNull();
+    await waitFor(() => expect(pendingDesk).toHaveLength(3));
+    expect(pendingDesk[2].auth).toBe(`Bearer ${tokenB}`);
+    await act(async () =>
+      pendingDesk[2].resolve(deliveryDesk("B", "Synthetic visa B", 654321)),
+    );
+    await act(async () => pendingDesk[1].resolve(bonusA)); // A's delayed refresh loses the race.
+    expect(
+      screen.getByRole("link", { name: "Synthetic visa B" }),
+    ).toBeVisible();
+    expect(shown("Synthetic visa A")).toBeNull();
+    expect(screen.queryAllByText(/123\.456/)).toHaveLength(0);
     expect(shown("Made")).toBeNull();
   });
 
@@ -304,12 +370,20 @@ describe("My HR page (/hr/me)", () => {
     await loaded("A", overview("A"));
     // A reload in flight when the user signs out.
     act(() => storageEvent("auth_token")); // re-binds: fetch #2
-    await waitFor(() => expect(pending).toHaveLength(2));
+    await waitFor(() => expect(pendingOverview).toHaveLength(2));
     act(() => api.clearToken());
     expect(shown("Made")).toBeNull();
-    await act(async () => pending[1].resolve(overview("A")));
+    await act(async () => pendingOverview[1].resolve(overview("A")));
     expect(shown("Made")).toBeNull();
-    expect(pending).toHaveLength(2); // nothing refetched without an identity
+    await act(async () =>
+      pendingDesk[0].resolve(deliveryDesk("A", "Synthetic visa A", 123456)),
+    );
+    expect(shown("Synthetic visa A")).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "My delivery bonuses" }),
+    ).toBeNull();
+    expect(pendingOverview).toHaveLength(2);
+    expect(pendingDesk).toHaveLength(1); // neither panel refetched without an identity
   });
 
   it("a response whose team_member_id differs from the sent sub is not shown", async () => {
@@ -327,9 +401,9 @@ describe("My HR page (/hr/me)", () => {
     });
     localStorage.setItem("auth_token", tokenFor("A"));
     render(<MyHrPage />);
-    await waitFor(() => expect(pending).toHaveLength(1));
-    expect(pending[0].auth).toBeUndefined();
-    await act(async () => pending[0].resolve(overview("A")));
+    await waitFor(() => expect(pendingOverview).toHaveLength(1));
+    expect(pendingOverview[0].auth).toBeUndefined();
+    await act(async () => pendingOverview[0].resolve(overview("A")));
     expect(shown("Made")).toBeNull();
     expect(shown("Contoh")).toBeNull();
   });
@@ -338,7 +412,8 @@ describe("My HR page (/hr/me)", () => {
     render(<MyHrPage />);
     await settle();
     await settle();
-    expect(pending).toHaveLength(0);
+    expect(pendingOverview).toHaveLength(0);
+    expect(pendingDesk).toHaveLength(0);
     expect(shown("Made")).toBeNull();
   });
 
@@ -373,8 +448,10 @@ describe("My HR page (/hr/me)", () => {
   it("a member without an HR record is told so, not shown an error", async () => {
     localStorage.setItem("auth_token", tokenFor("A"));
     render(<MyHrPage />);
-    await waitFor(() => expect(pending).toHaveLength(1));
-    await act(async () => pending[0].resolve({ detail: "no record" }, 404));
+    await waitFor(() => expect(pendingOverview).toHaveLength(1));
+    await act(async () =>
+      pendingOverview[0].resolve({ detail: "no record" }, 404),
+    );
     expect(screen.getByText(/No HR record is linked/)).toBeInTheDocument();
   });
 
