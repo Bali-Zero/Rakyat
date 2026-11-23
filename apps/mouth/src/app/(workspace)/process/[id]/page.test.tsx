@@ -458,6 +458,98 @@ describe("CaseDetailPage", () => {
     ).toBeEnabled();
   });
 
+  describe("PPh withholding in the edit form (DAI-168)", () => {
+    const savedPph = { pph: { type: "PPH23", rate_percent: 2 } };
+
+    async function openEdit(practice: Practice = makePractice()) {
+      const user = await renderLoaded(practice);
+      await waitFor(() => expect(mocks.isAdmin).toHaveBeenCalled());
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const modal = screen.getByRole("heading", { name: "Edit Process #42" })
+        .parentElement?.parentElement as HTMLElement;
+      return { user, modal };
+    }
+
+    const save = (
+      user: Awaited<ReturnType<typeof renderLoaded>>,
+      modal: HTMLElement,
+    ) =>
+      user.click(within(modal).getByRole("button", { name: "Save Changes" }));
+
+    it("sends pph when it is set", async () => {
+      const { user, modal } = await openEdit();
+      await user.selectOptions(
+        await within(modal).findByRole("combobox", { name: "PPh type" }),
+        "PPH21",
+      );
+      await user.type(
+        within(modal).getByRole("textbox", { name: "PPh rate percent" }),
+        "2.5",
+      );
+      await save(user, modal);
+      await waitFor(() =>
+        expect(mocks.updatePractice).toHaveBeenCalledWith(42, {
+          pph: { type: "PPH21", rate_percent: 2.5 },
+        }),
+      );
+    });
+
+    it("sends no pph key when the saved value is unchanged", async () => {
+      const { user, modal } = await openEdit(
+        makePractice({ metadata: savedPph }),
+      );
+      expect(
+        await within(modal).findByRole("combobox", { name: "PPh type" }),
+      ).toHaveValue("PPH23");
+      await user.selectOptions(
+        within(modal).getAllByRole("combobox")[0],
+        "sending_invoice",
+      );
+      await save(user, modal);
+      await waitFor(() => expect(mocks.updatePractice).toHaveBeenCalled());
+      expect(mocks.updatePractice.mock.calls[0][1]).not.toHaveProperty("pph");
+    });
+
+    it("sends pph null when a saved value is cleared", async () => {
+      const { user, modal } = await openEdit(
+        makePractice({ metadata: savedPph }),
+      );
+      await user.selectOptions(
+        await within(modal).findByRole("combobox", { name: "PPh type" }),
+        "",
+      );
+      await save(user, modal);
+      await waitFor(() =>
+        expect(mocks.updatePractice).toHaveBeenCalledWith(42, { pph: null }),
+      );
+    });
+
+    it("blocks the save on an invalid rate", async () => {
+      const { user, modal } = await openEdit();
+      await user.selectOptions(
+        await within(modal).findByRole("combobox", { name: "PPh type" }),
+        "PPH23",
+      );
+      await save(user, modal);
+      await waitFor(() =>
+        expect(mocks.toastError).toHaveBeenCalledWith(
+          "PPh withholding",
+          "Enter the PPh rate, or clear the type.",
+        ),
+      );
+      expect(mocks.updatePractice).not.toHaveBeenCalled();
+    });
+
+    it("hides the field from a role the API would refuse", async () => {
+      mocks.isAdmin.mockReturnValue(false);
+      mocks.getProfile.mockResolvedValue({ ...profile, role: "consultant" });
+      const { modal } = await openEdit(makePractice({ metadata: savedPph }));
+      expect(
+        within(modal).queryByRole("combobox", { name: "PPh type" }),
+      ).toBeNull();
+    });
+  });
+
   it("shows the Indonesian text when the edit form is refused by the backend", async () => {
     mocks.updatePractice.mockRejectedValueOnce(
       new ApiError("Quoted Price is required before Sending Invoice", 422, {
