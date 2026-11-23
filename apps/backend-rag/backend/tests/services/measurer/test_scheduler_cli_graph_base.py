@@ -10,10 +10,16 @@ problem (operator[secret]); this guards the code half.
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
+from uuid import UUID
+
+import httpx
 import pytest
 
 from backend.services.measurer import scheduler_cli
-from backend.services.measurer.meta_graph_sampler import DEFAULT_GRAPH_BASE
+from backend.services.measurer.meta_graph_sampler import DEFAULT_GRAPH_BASE, MetaGraphSampler
+from backend.services.war_room.models import Platform, WarRoomPost
 
 INSTAGRAM_BASE = "https://graph.instagram.com/v21.0"
 
@@ -67,3 +73,39 @@ def test_no_token_builds_no_samplers(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_ig_env(monkeypatch)
 
     assert scheduler_cli._build_samplers() == []
+
+
+@pytest.mark.asyncio
+async def test_configured_logging_redacts_sampler_and_warning_tokens(caplog) -> None:
+    token = "SYNTHETIC_TOKEN_VALUE_123"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": []}, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sampler = MetaGraphSampler(access_token=token, http_client=client)
+        post = WarRoomPost(
+            id=UUID("00000000-0000-0000-0000-000000000001"),
+            draft_id=UUID("00000000-0000-0000-0000-000000000002"),
+            platform=Platform.INSTAGRAM,
+            post_external_id="synthetic-post",
+            tone_register=None,
+            published_at=datetime.now(timezone.utc),
+        )
+        with caplog.at_level(logging.INFO):
+            scheduler_cli._configure_logging()
+            await sampler.sample(post)
+            logging.getLogger("synthetic.warning").warning(
+                "request https://graph.example.test/?access_token=%s", token
+            )
+
+    assert token not in caplog.text
+    assert "access_token=<redacted>" in caplog.text
+
+
+def test_configured_logging_keeps_measurer_info(caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        scheduler_cli._configure_logging()
+        logging.getLogger("measurer.scheduler.cli").info("ordinary measurer sweep")
+
+    assert "ordinary measurer sweep" in caplog.text
