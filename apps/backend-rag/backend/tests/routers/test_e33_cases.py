@@ -1015,9 +1015,7 @@ class TestSummary:
         assert body["scan_switch"] == "enabled"
 
     @pytest.mark.integration
-    def test_guarantee_due_30d_filters_to_active_permit_stages_only(
-        self, mock_db_pool, admin_user
-    ) -> None:
+    def test_guarantee_due_30d_counts_open_gates_only(self, mock_db_pool, admin_user) -> None:
         pool, conn = mock_db_pool
         client = TestClient(_make_app(pool, admin_user), raise_server_exceptions=False)
         conn.fetch = AsyncMock(return_value=[])
@@ -1036,10 +1034,87 @@ class TestSummary:
         due_query = conn.fetchval.call_args.args[0]
         due_params = conn.fetchval.call_args.args[1:]
         assert "ANY(" in due_query
-        assert ["annual_maintenance", "guarantee_proof_due", "itas_active"] in due_params
+        # only the stages where the Day-90 proof can still be owed: annual_maintenance
+        # (reachable only with complete evidence) is NOT among them ...
+        assert ["guarantee_proof_due", "itas_active"] in due_params
+        assert not any("annual_maintenance" in p for p in due_params if isinstance(p, list))
+        # ... and evidence-complete cases in the open stages are excluded too, while an
+        # OVERDUE open gate still counts (no lower bound on the deadline)
+        assert "NOT stayguard_eligible" in due_query
+        assert "guarantee_proof_deadline <= CURRENT_DATE + 30" in due_query
+        assert ">=" not in due_query
         # terminal stages must never appear in the "due" stage filter
         assert not any("epo" in p for p in due_params if isinstance(p, list))
         assert not any("status_change" in p for p in due_params if isinstance(p, list))
+
+
+class TestGuaranteeGateOpen:
+    @staticmethod
+    def _complete(case: E33Case) -> E33Case:
+        case.add_evidence(
+            EvidenceRef(
+                evidence_id="ev-1", kind=EvidenceKind.BANK_CONFIRMATION, document_ref="doc-1"
+            )
+        )
+        case.add_evidence(
+            EvidenceRef(
+                evidence_id="ev-2",
+                kind=EvidenceKind.IMMIGRATION_FILING,
+                document_ref="doc-2",
+                filed_date=date(2026, 1, 1),
+            )
+        )
+        return case
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("stage", "complete", "expected"),
+        [
+            (E33Stage.ITAS_ACTIVE, False, True),
+            (E33Stage.GUARANTEE_PROOF_DUE, False, True),
+            (E33Stage.ITAS_ACTIVE, True, False),
+            (E33Stage.GUARANTEE_PROOF_DUE, True, False),
+            (E33Stage.ANNUAL_MAINTENANCE, False, False),
+            (E33Stage.ANNUAL_MAINTENANCE, True, False),
+            (E33Stage.RENEWAL, False, False),
+            (E33Stage.EPO, False, False),
+            (E33Stage.STATUS_CHANGE, False, False),
+        ],
+    )
+    def test_summary_and_detail_flag_follow_stage_and_evidence(
+        self, stage, complete, expected
+    ) -> None:
+        case = _existing_case(stage=stage)
+        case.entry_date = date(2026, 1, 1)  # deadline long past: still no gate once closed
+        if complete:
+            self._complete(case)
+
+        assert case.guarantee_gate_open is expected
+        assert (
+            e33_cases_module._case_summary_dict(case, client_name="Alice")["guarantee_gate_open"]
+            is expected
+        )
+        row = case_to_row(case)
+        row["client_name"] = "Alice"
+        assert e33_cases_module._row_to_summary_dict(row)["guarantee_gate_open"] is expected
+
+    @pytest.mark.integration
+    def test_detail_carries_gate_flag_with_stale_deadline(self, mock_db_pool, admin_user) -> None:
+        pool, conn = mock_db_pool
+        client = TestClient(_make_app(pool, admin_user), raise_server_exceptions=False)
+        case = self._complete(_existing_case(stage=E33Stage.ANNUAL_MAINTENANCE))
+        case.entry_date = date(2026, 1, 1)
+        fake_repo = MagicMock()
+        fake_repo.load = AsyncMock(return_value=case)
+        conn.fetchrow = AsyncMock(
+            return_value={"full_name": "Alice", "assigned_to": "admin@balizero.com"}
+        )
+
+        with patch.object(e33_cases_module, "E33CaseRepository", return_value=fake_repo):
+            body = client.get(f"/api/e33/cases/{case.case_id}").json()
+
+        assert body["guarantee"] is not None  # the stale deadline is still emitted ...
+        assert body["guarantee_gate_open"] is False  # ... but the gate is closed
 
 
 class TestRouterStructure:

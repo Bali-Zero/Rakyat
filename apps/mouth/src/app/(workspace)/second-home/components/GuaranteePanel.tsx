@@ -5,9 +5,14 @@ import { severityColorVar, severityLabel } from "./severity";
 export function GuaranteePanel({
   guarantee,
   hasEntryOrItasDate,
+  gateOpen,
+  evidenceComplete,
 }: {
   guarantee: GuaranteeInfo | null;
   hasEntryOrItasDate: boolean;
+  /** `guarantee_gate_open` from the case detail: the proof is still due. */
+  gateOpen: boolean;
+  evidenceComplete: boolean;
 }) {
   return (
     <div className="rounded-xl border border-[var(--bz-border)] bg-[var(--bz-card)] p-4 space-y-3">
@@ -16,7 +21,13 @@ export function GuaranteePanel({
         Day-90 Guarantee Gate
       </h3>
 
-      {guarantee ? (
+      {guarantee && !gateOpen ? (
+        <p className="text-xs text-[var(--bz-text-2)]">
+          {evidenceComplete
+            ? `Guarantee proof complete (deadline ${guarantee.deadline}).`
+            : `Day-90 gate closed (deadline ${guarantee.deadline}).`}
+        </p>
+      ) : guarantee ? (
         <>
           <div className="flex items-baseline gap-2">
             <span
