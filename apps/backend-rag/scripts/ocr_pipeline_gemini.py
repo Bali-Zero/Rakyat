@@ -162,7 +162,7 @@ def parse_json_from_output(text: str) -> list[dict] | None:
         except json.JSONDecodeError:
             pass
 
-    logger.warning(f"Could not parse JSON from Gemini output: {text[:300]}")
+    logger.warning(f"Could not parse JSON from Gemini output ({len(text)} chars)")
     return None
 
 
@@ -234,7 +234,9 @@ async def update_company_docs(
                         nib,
                         company_id,
                     )
-                    logger.info(f"      → companies.nib = {nib}")
+                    logger.info(
+                        f"      → companies.nib set for company {company_id} (document {doc_id})"
+                    )
         elif not dry_run and folder_type == "02_NPWP":
             npwp = doc.get("npwp_number", "").strip()
             if npwp:
@@ -247,7 +249,9 @@ async def update_company_docs(
                         npwp,
                         company_id,
                     )
-                    logger.info(f"      → companies.npwp_company = {npwp}")
+                    logger.info(
+                        f"      → companies.npwp_company set for company {company_id} (document {doc_id})"
+                    )
 
     return updated
 
@@ -269,7 +273,7 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: 
                     deed_no,
                     company_id,
                 )
-                logger.info(f"      → companies.akta_pendirian_no = {deed_no}")
+                logger.info(f"      → companies.akta_pendirian_no set for company {company_id}")
         if deed_date and deed_date != "YYYY-MM-DD":
             current = await conn.fetchval(
                 "SELECT akta_pendirian_date FROM companies WHERE id = $1", company_id
@@ -284,7 +288,9 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: 
                         d,
                         company_id,
                     )
-                    logger.info(f"      → companies.akta_pendirian_date = {deed_date}")
+                    logger.info(
+                        f"      → companies.akta_pendirian_date set for company {company_id}"
+                    )
                 except ValueError:
                     pass
 
@@ -311,7 +317,7 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: 
                     sk_no,
                     company_id,
                 )
-                logger.info(f"      → companies.sk_menhumkam_no = {sk_no}")
+                logger.info(f"      → companies.sk_menhumkam_no set for company {company_id}")
         if sk_date and sk_date != "YYYY-MM-DD":
             current = await conn.fetchval(
                 "SELECT sk_menhumkam_date FROM companies WHERE id = $1", company_id
@@ -414,7 +420,7 @@ async def main(dry_run: bool, batch_size: int, folder: str) -> None:
                     logger.info("    ○ Empty folder")
                     stats["empty"] += 1
                 else:
-                    logger.warning(f"    ✗ Could not parse output: {raw_output[:200]}")
+                    logger.warning(f"    ✗ Could not parse output ({len(raw_output)} chars)")
                     stats["failed"] += 1
                 continue
 

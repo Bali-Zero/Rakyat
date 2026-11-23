@@ -71,6 +71,9 @@ class FakeConnection:
         rows = self._rows(query, args)
         return rows[0] if rows else None
 
+    async def fetchval(self, query: str, *args):
+        return None
+
     async def execute(self, query: str, *args):
         self.updates.append((query, args))
         return "UPDATE 1"
@@ -216,4 +219,109 @@ async def test_the_skip_line_counts_items_of_the_models_answer(script, caplog) -
 
     assert [r.getMessage().strip() for r in caplog.records] == [
         "? No single DB match: company 5, item 1 of the model's answer"
+    ]
+
+
+_FIELD_BY_FOLDER = {
+    "01_NIB": (
+        "nib_number",
+        "companies.nib set for company 5 (document 1)",
+        "UPDATE companies SET nib",
+    ),
+    "02_NPWP": (
+        "npwp_number",
+        "companies.npwp_company set for company 5 (document 1)",
+        "UPDATE companies SET npwp_company",
+    ),
+}
+
+
+async def _run_folder(script, folder, field, value):
+    conn = FakeConnection(["Scan.pdf"])
+    docs = [{"file_name": "Scan.pdf", "document_type": "x", field: value}]
+    updated = await script.update_company_docs(conn, 5, docs, folder, False)
+    return conn, updated
+
+
+@pytest.mark.parametrize("value", ["Synthetic Person.pdf", "Synthetic Person"])
+@pytest.mark.parametrize("folder", ["01_NIB", "02_NPWP"])
+@pytest.mark.asyncio
+async def test_a_name_bearing_number_is_not_logged_or_printed(
+    script, caplog, capsys, folder, value
+) -> None:
+    field = _FIELD_BY_FOLDER[folder][0]
+    with caplog.at_level(logging.DEBUG, logger=script.logger.name):
+        await _run_folder(script, folder, field, value)
+
+    seen = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    out = capsys.readouterr()
+    for text in (seen, out.out, out.err):
+        assert "Synthetic" not in text
+        assert "Person" not in text
+        assert ".pdf" not in text
+
+
+@pytest.mark.parametrize("folder", ["01_NIB", "02_NPWP"])
+@pytest.mark.asyncio
+async def test_a_valid_number_is_still_written_and_logged_by_identifiers(
+    script, caplog, folder
+) -> None:
+    field, expected_log, expected_update = _FIELD_BY_FOLDER[folder]
+    with caplog.at_level(logging.INFO, logger=script.logger.name):
+        conn, updated = await _run_folder(script, folder, field, " 1234567890123 ")
+
+    assert updated == 1
+    assert [a for q, a in conn.updates if q.startswith(expected_update)] == [("1234567890123", 5)]
+    assert expected_log in [r.getMessage().strip().lstrip("→ ").strip() for r in caplog.records]
+
+
+@pytest.mark.asyncio
+async def test_an_akta_number_date_and_sk_number_are_not_logged_or_printed(
+    script, caplog, capsys
+) -> None:
+    # Name-bearing deed_number / sk_no and a valid date: none of the three values may
+    # reach a log or a stream, and every write is the same as before.
+    conn = FakeConnection(["Scan.pdf"])
+    doc = {
+        "file_name": "Scan.pdf",
+        "document_type": "akta_pendirian",
+        "deed_number": "Synthetic Person.pdf",
+        "deed_date": "2019-03-04",
+    }
+    sk = {
+        "file_name": "Scan.pdf",
+        "document_type": "sk_decree",
+        "sk_number": "Synthetic Person.pdf",
+        "deed_date": "2020-05-06",
+    }
+    with caplog.at_level(logging.DEBUG, logger=script.logger.name):
+        await script.update_company_docs(conn, 5, [doc], "00_AKTA", False)
+        await script.update_company_docs(conn, 5, [sk], "00_AKTA", False)
+
+    out = capsys.readouterr()
+    for text in (caplog.text, out.out, out.err):
+        for leaked in ("Synthetic", "Person", ".pdf", "2019-03-04", "2020-05-06"):
+            assert leaked not in text
+    messages = [r.getMessage().strip() for r in caplog.records]
+    for column in ("akta_pendirian_no", "akta_pendirian_date", "sk_menhumkam_no"):
+        assert f"→ companies.{column} set for company 5" in messages
+    written = [a for q, a in conn.updates if q.startswith("UPDATE companies SET")]
+    assert written.count(("Synthetic Person.pdf", 5)) == 2  # deed number and SK number
+    assert [w[0].isoformat() for w in written if hasattr(w[0], "isoformat")] == [
+        "2019-03-04",
+        "2020-05-06",
+    ]
+
+
+def test_an_unparsable_model_output_is_logged_by_length_only(script, caplog, capsys) -> None:
+    text = "Synthetic Person [not json"
+    with caplog.at_level(logging.DEBUG, logger=script.logger.name):
+        assert script.parse_json_from_output(text) is None
+
+    out = capsys.readouterr()
+    for seen in (caplog.text, out.out, out.err):
+        assert "Synthetic" not in seen
+        assert "Person" not in seen
+    assert [r.getMessage() for r in caplog.records] == [
+        f"Could not parse JSON from Gemini output ({len(text)} chars)"
     ]
