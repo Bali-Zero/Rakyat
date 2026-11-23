@@ -19,6 +19,7 @@ Depends on PortalService for:
 """
 
 import asyncio
+import html
 import re
 from datetime import date, datetime, timezone
 from typing import Any
@@ -1276,23 +1277,23 @@ class PortalDocumentsMixin:
                 # Build email content
                 doc_type_display = document_type.replace("_", " ").title()
 
-                subject = f"📄 New Document Uploaded - {client['full_name']}"
+                subject_name = re.sub(r"[\r\n\u2028\u2029]+", " ", str(client["full_name"]))
+                subject = f"📄 New Document Uploaded - {subject_name}"
 
-                # Build extra info section
-                extra_info = ""
-                if expiry_date:
-                    extra_info += f"• Detected Expiry Date: {expiry_date}\n"
-                if drive_url:
-                    extra_info += f"• Drive Link: {drive_url}\n"
+                def _render(esc: Any) -> str:
+                    extra_info = ""
+                    if expiry_date:
+                        extra_info += f"• Detected Expiry Date: {esc(expiry_date)}\n"
+                    if drive_url:
+                        extra_info += f"• Drive Link: {esc(drive_url)}\n"
+                    return f"""Hello,
 
-                body = f"""Hello,
-
-Client {client["full_name"]} has uploaded a new document to the portal.
+Client {esc(client["full_name"])} has uploaded a new document to the portal.
 
 Details:
-• File: {document_name}
-• Type: {doc_type_display}
-• Client: {client["full_name"]}
+• File: {esc(document_name)}
+• Type: {esc(doc_type_display)}
+• Client: {esc(client["full_name"])}
 {extra_info}
 Open the workspace to review and verify the document:
 https://kita.balizero.com/clients/{client_id}
@@ -1301,13 +1302,17 @@ https://kita.balizero.com/clients/{client_id}
 This is an automated notification from Bali Zero CRM.
 """
 
+                body = _render(str)
+                # Values from the client or a form are escaped for the HTML part only.
+                html_body = _render(lambda v: html.escape(str(v))).replace("\n", "<br>")
+
                 # Primary: Brevo
                 sent = False
                 if gate_notice_adapter is not None:
                     await gate_notice_adapter.send_document_notification(
                         recipient=lead_email,
                         subject=subject,
-                        html_body=body.replace("\n", "<br>"),
+                        html_body=html_body,
                     )
                     sent = True
                     logger.info("Document upload notification captured by the portal QA sink")
@@ -1322,7 +1327,6 @@ This is an automated notification from Bali Zero CRM.
                             "https://nuzantara-rag.fly.dev/api/notifications/send-email",
                         )
                         _api_key = os.getenv("NUZANTARA_API_KEY", "")
-                        html_body = body.replace("\n", "<br>")
                         async with httpx.AsyncClient(timeout=30.0) as http_client:
                             resp = await http_client.post(
                                 _api_url,
