@@ -72,6 +72,7 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, dry_r
         SELECT id, document_type, file_name, ocr_extracted_data
         FROM company_documents
         WHERE company_id = $1 AND ocr_status = 'completed' AND ocr_extracted_data IS NOT NULL
+        ORDER BY id
     """,
         company_id,
     )
@@ -84,6 +85,13 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, dry_r
     npwp: dict = {}
     sk: dict = {}
     profile: dict = {}
+    # Per class and top-level key: the id of the document that supplied it (the
+    # last one in id order wins, as in the merge itself).
+    akta_src: dict = {}
+    nib_src: dict = {}
+    npwp_src: dict = {}
+    sk_src: dict = {}
+    profile_src: dict = {}
 
     for doc in docs:
         ocr = doc["ocr_extracted_data"]
@@ -100,16 +108,19 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, dry_r
 
         if "akta" in dtype or "akta" in fname:
             akta = {**akta, **ocr}
+            akta_src.update(dict.fromkeys(ocr, doc["id"]))
         elif "nib" in dtype or "nib" in fname:
             nib = {**nib, **ocr}
+            nib_src.update(dict.fromkeys(ocr, doc["id"]))
         elif "npwp" in dtype or "npwp" in fname:
             npwp = {**npwp, **ocr}
+            npwp_src.update(dict.fromkeys(ocr, doc["id"]))
         elif "sk" in dtype or "sk" in fname:
             sk = {**sk, **ocr}
-        elif "profil" in fname or "profile" in fname:
-            profile = {**profile, **ocr}
+            sk_src.update(dict.fromkeys(ocr, doc["id"]))
         else:
             profile = {**profile, **ocr}
+            profile_src.update(dict.fromkeys(ocr, doc["id"]))
 
     async def set_if_null(col: str, val: Any, is_date: bool = False) -> bool:
         if not val or val == "YYYY-MM-DD" or val == "":
@@ -248,73 +259,71 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, dry_r
                 stats["fields_updated"] += 1
 
     # Step 3: Link directors/commissioners/shareholders
-    directors = profile.get("directors", []) or akta.get("directors", [])
-    commissioners = profile.get("commissioners", []) or akta.get("commissioners", [])
+    # Each list is read from one dict; its locator names the document that
+    # supplied it, i.e. the dict that actually won the `or`.
+    if profile.get("directors", []):
+        directors, directors_doc = profile["directors"], profile_src.get("directors")
+    else:
+        directors, directors_doc = akta.get("directors", []), akta_src.get("directors")
+    if profile.get("commissioners", []):
+        commissioners, commissioners_doc = profile["commissioners"], profile_src.get("commissioners")
+    else:
+        commissioners, commissioners_doc = akta.get("commissioners", []), akta_src.get("commissioners")
     shareholders = profile.get("shareholders", [])
+    shareholders_doc = profile_src.get("shareholders")
 
-    for person in directors:
-        if isinstance(person, dict):
-            name = person.get("name", "").strip()
-            pct = person.get("ownership_pct", 0)
-            if name and len(name) > 2:
-                linked = await link_person_to_company(
-                    conn, company_id, name, "director", pct, dry_run
-                )
-                if linked:
-                    stats["directors_linked"] += 1
-
-    for person in commissioners:
-        if isinstance(person, dict):
-            name = person.get("name", "").strip()
-            pct = person.get("ownership_pct", 0)
-            if name and len(name) > 2:
-                linked = await link_person_to_company(
-                    conn, company_id, name, "commissioner", pct, dry_run
-                )
-                if linked:
-                    stats["directors_linked"] += 1
-
-    for person in shareholders:
-        if isinstance(person, dict):
-            name = person.get("name", "").strip()
-            pct = person.get("ownership_pct", 0)
-            if name and len(name) > 2:
-                linked = await link_person_to_company(
-                    conn, company_id, name, "shareholder", pct, dry_run
-                )
-                if linked:
-                    stats["directors_linked"] += 1
+    for key, people, doc_id, role in (
+        ("directors", directors, directors_doc, "director"),
+        ("commissioners", commissioners, commissioners_doc, "commissioner"),
+        ("shareholders", shareholders, shareholders_doc, "shareholder"),
+    ):
+        for i, person in enumerate(people):
+            if isinstance(person, dict):
+                name = person.get("name", "").strip()
+                pct = person.get("ownership_pct", 0)
+                if name and len(name) > 2:
+                    linked = await link_person_to_company(
+                        conn,
+                        company_id,
+                        name,
+                        role,
+                        pct,
+                        dry_run,
+                        locator=f"document {doc_id} {key}[{i}]",
+                    )
+                    if linked:
+                        stats["directors_linked"] += 1
 
     return stats
 
 
-async def link_person_to_company(conn, company_id, person_name, role, ownership_pct, dry_run):
+async def link_person_to_company(
+    conn, company_id, person_name, role, ownership_pct, dry_run, *, locator: str
+):
     name = re.sub(r"\s+", " ", person_name).strip()
 
-    client_id = await conn.fetchval(
-        "SELECT id FROM clients WHERE LOWER(TRIM(full_name)) = LOWER(TRIM($1)) AND deleted_at IS NULL LIMIT 1",
+    # A person read from a deed is linked only to the one client whose full
+    # name is exactly theirs (outer spaces and letter case aside). A partial
+    # match, or two clients with that name, links nobody: a wrong link puts a
+    # stranger among the company's directors and shareholders, so those are
+    # left for a person to decide.
+    matches = await conn.fetch(
+        "SELECT id FROM clients WHERE LOWER(TRIM(full_name)) = LOWER(TRIM($1)) AND deleted_at IS NULL LIMIT 2",
         name,
     )
-
-    if not client_id:
-        parts = name.split()
-        if len(parts) >= 2:
-            client_id = await conn.fetchval(
-                "SELECT id FROM clients WHERE LOWER(full_name) LIKE $1 AND LOWER(full_name) LIKE $2 AND deleted_at IS NULL LIMIT 1",
-                f"%{parts[0].lower()}%",
-                f"%{parts[-1].lower()}%",
+    if len(matches) != 1:
+        # The line names the document and the position the person was read at,
+        # never the person.
+        if matches:
+            logger.info(
+                f"    ? Several clients carry this exact name: company {company_id}, {role}, {locator}; not linked"
             )
-
-    if not client_id and len(name.split()) >= 2:
-        last = name.split()[-1].lower()
-        if len(last) >= 4:
-            client_id = await conn.fetchval(
-                "SELECT id FROM clients WHERE LOWER(full_name) LIKE $1 AND deleted_at IS NULL LIMIT 1",
-                f"%{last}%",
+        else:
+            logger.info(
+                f"    ? No client carries this exact name: company {company_id}, {role}, {locator}; not linked"
             )
-
-    if not client_id:
         return False
+    client_id = matches[0]["id"]
 
     existing = await conn.fetchval(
         "SELECT id FROM client_company_links WHERE client_id = $1 AND company_id = $2",
