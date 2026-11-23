@@ -51,12 +51,18 @@ def _healthy(email: str) -> list[dict]:
     ids=["last-three-zero", "first-three-zero", "one-null", "all-null", "all-zero"],
 )
 async def test_one_member_with_empty_sessions_does_not_drop_the_team(minutes: list) -> None:
-    rows = [_session("odd.member@example.invalid", d, m) for d, m in enumerate(minutes)]
+    # The odd member works on Saturdays, a warning that needs no duration, so
+    # the member is in the result only if its sessions were judged, not dropped.
+    rows = [_session("odd.member@example.invalid", d, m, dow=6) for d, m in enumerate(minutes)]
     rows += _healthy("steady.member@example.invalid")
 
     result = await _detect(rows)
 
-    assert "steady.member@example.invalid" in {r["email"] for r in result}
+    by_email = {r["email"]: r for r in result}
+    assert "steady.member@example.invalid" in by_email
+    odd = by_email["odd.member@example.invalid"]
+    assert odd["total_sessions_analyzed"] == len(minutes)
+    assert any("weekends" in w for w in odd["warning_signals"])
 
 
 @pytest.mark.unit
