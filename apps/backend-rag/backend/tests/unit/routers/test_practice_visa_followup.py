@@ -100,16 +100,19 @@ async def test_clock_starts_from_upload_not_official_issue_date_and_does_not_res
     await tracking.record_visa_milestone(
         conn, {"id": 7, "code": "visa_c1_tourism"}, "electronic_visa"
     )
-    first = conn.execute.await_args_list[0]
+    first = conn.fetchval.await_args
     assert "ON CONFLICT(practice_id) DO NOTHING" in first.args[0]
     assert first.args[1:] == (
         7,
         "visa_c1_tourism",
         "document_2",
-        DAY0,
-        DAY0 + timedelta(days=30),
         True,
     )
+    assert (
+        "recorded_at AT TIME ZONE 'Asia/Makassar'" in first.args[0]
+        and "day_zero+30" in first.args[0]
+    )
+    assert "earned_at" not in first.args[0]
     conn.reset_mock()
     await tracking.record_visa_milestone(conn, {"id": 7, "code": "visa_c1_tourism"}, "document_2")
     assert (
@@ -225,3 +228,17 @@ async def test_reading_and_replaying_a_claim_never_sends_again(db, monkeypatch, 
         with pytest.raises(HTTPException):
             await tracking.escalate(pool, 7, USER, "Explanation")
     sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_issuance_cannot_start_a_clock_without_its_durable_receipt(monkeypatch):
+    monkeypatch.setattr(
+        tracking, "delivery_policy", lambda _: {"followup_slot": "document_2", "can_postpone": True}
+    )
+    conn = AsyncMock()
+    conn.fetchval.return_value = False
+    with pytest.raises(HTTPException, match="receipt is missing"):
+        await tracking.record_visa_milestone(
+            conn, {"id": 7, "code": "visa_c1_tourism"}, "electronic_visa"
+        )
+    conn.execute.assert_not_awaited()

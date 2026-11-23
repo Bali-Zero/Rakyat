@@ -26,17 +26,24 @@ async def record_visa_milestone(conn: Any, practice: dict, slot_key: str) -> Non
     if not permit or slot_key not in {"electronic_visa", permit}:
         return
     if slot_key == "electronic_visa":
-        started = business_today()
-        await conn.execute(
-            """INSERT INTO practice_visa_followups(practice_id,service_code,slot_key,started_on,due_on,allow_postpone)
-               VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(practice_id) DO NOTHING""",
+        has_receipt = await conn.fetchval(
+            """WITH issuance AS (
+                   SELECT practice_id,service_code,(recorded_at AT TIME ZONE 'Asia/Makassar')::date AS day_zero
+                   FROM hr_delivery_bonus_events WHERE practice_id=$1 AND service_code=$2
+                     AND event_kind='electronic_visa_issued'
+               ), recorded AS (
+                   INSERT INTO practice_visa_followups(practice_id,service_code,slot_key,started_on,due_on,allow_postpone)
+                   SELECT practice_id,service_code,$3,day_zero,day_zero+30,$4 FROM issuance
+                   ON CONFLICT(practice_id) DO NOTHING
+               )
+               SELECT EXISTS (SELECT 1 FROM issuance)""",
             practice["id"],
             practice["code"],
             permit,
-            started,
-            started + timedelta(days=30),
             bool(policy.get("can_postpone")),
         )
+        if not has_receipt:
+            raise HTTPException(409, "The official visa upload receipt is missing")
     await conn.execute("SELECT refresh_practice_visa_followup($1)", practice["id"])
 
 

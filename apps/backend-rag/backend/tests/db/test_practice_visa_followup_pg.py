@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock
 from urllib.parse import urlsplit
@@ -170,3 +170,27 @@ async def test_known_rejection_retries_same_frozen_payload_and_key(pool, monkeyp
             "SELECT outcome FROM practice_visa_followup_send_attempts ORDER BY attempt"
         )
         assert [r["outcome"] for r in outcomes] == ["failed", "sent"]
+
+
+@pytest.mark.asyncio
+async def test_first_upload_clock_uses_frozen_wita_receipt_when_replayed_on_another_day(
+    pool, monkeypatch
+):
+    monkeypatch.setattr(
+        tracking, "delivery_policy", lambda _: {"followup_slot": "document_2", "can_postpone": True}
+    )
+    monkeypatch.setattr(tracking, "business_today", lambda: date(2026, 3, 22))
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("DELETE FROM practice_visa_followups WHERE practice_id=7")
+        await conn.execute(
+            "UPDATE hr_delivery_bonus_events SET recorded_at='2026-01-28 16:01:00+00' WHERE practice_id=7"
+        )
+        await tracking.record_visa_milestone(
+            conn, {"id": 7, "code": "visa_c1_tourism"}, "electronic_visa"
+        )
+        await tracking.record_visa_milestone(
+            conn, {"id": 7, "code": "visa_c1_tourism"}, "electronic_visa"
+        )
+        view = await tracking.get_followup(conn, 7, user=USER)
+    assert view["started_on"] == date(2026, 1, 29)
+    assert view["due_on"] == date(2026, 2, 28) and view["final_due_on"] == date(2026, 3, 30)
