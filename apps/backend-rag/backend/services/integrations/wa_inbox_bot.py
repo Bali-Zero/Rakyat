@@ -58,7 +58,7 @@ import httpx
 
 from backend.app.core.config import settings
 from backend.app.rag_proxy import get_rag_worker_url
-from backend.services.integrations.human_escalation_notifier import notify_human_telegram
+from backend.services.communication import detect_language
 from backend.services.integrations.wa_bot_outcomes import BotStandingCondition
 from backend.services.integrations.wa_finalize import (
     # Re-exported for existing importers (tests exercise these through this
@@ -73,11 +73,19 @@ from backend.services.integrations.wa_finalize import (
 from backend.services.integrations.wa_finalize import (
     _abstain_answer_worth_sending as _abstain_answer_worth_sending,
 )
+from backend.services.integrations.wa_human_handoff import notify_human_handoff
 
 logger = logging.getLogger("zantara.backend")
 
 
-async def _tell_a_human(*, phone: str, reason: str, thread_id: Any) -> bool:
+async def _tell_a_human(
+    *,
+    phone: str,
+    reason: str,
+    thread_id: Any,
+    pool: asyncpg.Pool | None = None,
+    language: str = "auto",
+) -> bool:
     """Tell a human this thread needs them. Never raises.
 
     Extracted so the SILENT exits can reach it. The notification used to live
@@ -91,12 +99,21 @@ async def _tell_a_human(*, phone: str, reason: str, thread_id: Any) -> bool:
 
     Swallows its own failures on purpose: on the silent paths this runs
     immediately before a ``raise``, and a notifier error must not replace the
-    real cause with a Telegram stack trace.
+    real cause with a notifier stack trace.
 
-    Returns whether Telegram accepted THIS call (see ``notify_human_telegram``).
-    ``False`` also covers "suppressed by the 30-minute per-thread dedup", so it
-    never means "nobody was ever told about this thread" — which is also why
-    the outbox worker's five retries produce one alert, not five.
+    The alert goes through ``wa_human_handoff.notify_human_handoff`` (kita bell
+    plus internal e-mail; the Telegram transport is retired and always fails).
+    That function owns the recipients, the wording and the per-thread dedup, so
+    the outbox worker's five retries still produce one alert, not five. It has
+    no wording for the individual causes, so every cause is sent under its
+    default reason (a person is needed on this thread); ``reason`` is kept in
+    this module's log line. ``pool`` lets it find the client's consultant and
+    raise the bell; callers that pass none still reach the fixed recipient by
+    e-mail. ``language`` is the client's, as ``detect_language`` names it.
+
+    Returns whether a colleague has been reached for this thread (see
+    ``notify_human_handoff``: ``True`` also covers a dedup-suppressed call, as
+    someone was already told), ``False`` when nobody was or the handoff failed.
 
     **Scope, declared rather than left to be inferred: 3 of the 5 exits that
     raise out of ``generate_bot_reply`` call this.** The three are the
@@ -119,11 +136,11 @@ async def _tell_a_human(*, phone: str, reason: str, thread_id: Any) -> bool:
     honoured on the threads that invoked it.
     """
     try:
-        accepted = await notify_human_telegram(
-            phone=phone,
-            message_text=None,
-            reason=reason,
-            thread_ref=str(thread_id),
+        accepted = await notify_human_handoff(
+            pool,
+            thread_id=thread_id,
+            counterpart_phone=phone,
+            language=language,
         )
     # Broad on purpose — see docstring: a notifier failure must never replace
     # the real cause the caller is about to raise.
@@ -136,7 +153,7 @@ async def _tell_a_human(*, phone: str, reason: str, thread_id: Any) -> bool:
         )
         return False
     logger.info(
-        "wa-inbox bot: thread %s needs a human (reason=%s), telegram accepted=%s",
+        "wa-inbox bot: thread %s needs a human (reason=%s), handoff delivered=%s",
         thread_id,
         reason,
         accepted,
@@ -516,8 +533,12 @@ async def generate_bot_reply(pool: asyncpg.Pool, thread: Any) -> str:
     # messages raised below are the same RuntimeError strings as before the
     # extraction, so the worker's retry ladder and the ledger vocabulary are
     # unchanged.
+    language = detect_language(query)
+
     async def _tell(reason: str) -> bool:
-        return await _tell_a_human(phone=phone, reason=reason, thread_id=thread_id)
+        return await _tell_a_human(
+            phone=phone, reason=reason, thread_id=thread_id, pool=pool, language=language
+        )
 
     result = await finalize_wa_answer(
         data=data,

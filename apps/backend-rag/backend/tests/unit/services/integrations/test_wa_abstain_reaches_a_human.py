@@ -2,6 +2,8 @@
 
 `whatsapp_chat.py` (the router) captures the persona's `[ESCALATE]` marker,
 strips it, sends the answer and then calls `notify_human_telegram`.
+(The inbox bot's own helper, `_tell_a_human`, now goes through
+`wa_human_handoff`; the tests below observe the helper's call.)
 `wa_inbox_bot.py` — the background service behind `wa_outbox_worker` — stripped
 the same marker under a comment reading *"mirror whatsapp_chat.py"* and called
 nothing. It mirrored the FORM and not the EFFECT. Verified on `origin/main`
@@ -81,7 +83,7 @@ async def _run_expecting_silence(
         patch(f"{BOT}.is_bot_autoreply_enabled", return_value=True),
         patch(f"{BOT}._load_thread_context", AsyncMock(return_value=(query, []))),
         patch(f"{BOT}._get_rag_client", AsyncMock(return_value=client)),
-        patch(f"{BOT}.notify_human_telegram", notifier),
+        patch(f"{BOT}._tell_a_human", notifier),
         pytest.raises(RuntimeError) as excinfo,
     ):
         await wa_inbox_bot.generate_bot_reply(None, _thread())
@@ -103,7 +105,7 @@ async def _run(payload: dict, *, query: str = "What documents do I need for a KI
         patch(f"{BOT}.is_bot_autoreply_enabled", return_value=True),
         patch(f"{BOT}._load_thread_context", AsyncMock(return_value=(query, []))),
         patch(f"{BOT}._get_rag_client", AsyncMock(return_value=client)),
-        patch(f"{BOT}.notify_human_telegram", notifier),
+        patch(f"{BOT}._tell_a_human", notifier),
     ):
         reply = await wa_inbox_bot.generate_bot_reply(None, _thread())
     return reply, notifier
@@ -119,7 +121,7 @@ class TestGuiltAHumanIsTold:
         notifier.assert_awaited_once()
         kwargs = notifier.await_args.kwargs
         assert kwargs["reason"] == "rag_abstain"
-        assert kwargs["thread_ref"] == "42"
+        assert kwargs["thread_id"] == 42
         # Main's client-facing choice, unchanged by this PR.
         assert reply == get_localized_stub("abstain", "ENGLISH")
 
@@ -205,7 +207,7 @@ class TestPIIThePayloadIsNotWidened:
         )
 
         kwargs = notifier.await_args.kwargs
-        assert kwargs["message_text"] is None
+        assert "message_text" not in kwargs
         assert secret not in repr(notifier.await_args)
 
 
@@ -270,7 +272,7 @@ class TestGuiltSilenceAlsoTellsAHuman:
 
         notifier.assert_awaited_once()
         assert notifier.await_args.kwargs["reason"] == "empty_rag_answer"
-        assert notifier.await_args.kwargs["thread_ref"] == "42"
+        assert notifier.await_args.kwargs["thread_id"] == 42
         assert "empty RAG answer" in str(exc)
 
     @pytest.mark.asyncio
@@ -330,5 +332,5 @@ class TestInnocenceTheNotifierCannotMakeThingsWORSE:
             {"abstain": False, "answer": "   "}, query=secret
         )
 
-        assert notifier.await_args.kwargs["message_text"] is None
+        assert "message_text" not in notifier.await_args.kwargs
         assert secret not in repr(notifier.await_args)
