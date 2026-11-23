@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -138,3 +139,144 @@ def test_repeated_drive_service_access_initializes_once_without_google_api_key(
     assert service.drive_service is drive_service
     assert service.drive_service is drive_service
     assert len(build_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_direct_pool_requests_create_one_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = blank_oracle_service()
+    pool = object()
+    pool_creations = 0
+
+    async def create_pool(**kwargs: Any) -> object:
+        nonlocal pool_creations
+        pool_creations += 1
+        await asyncio.sleep(0)
+        return pool
+
+    monkeypatch.setattr(oracle_module.asyncpg, "create_pool", create_pool)
+
+    results = await asyncio.gather(*(service._get_db_pool() for _ in range(6)))
+
+    assert pool_creations == 1
+    assert results == [pool] * 6
+
+
+@pytest.mark.asyncio
+async def test_a_pool_that_failed_to_open_is_opened_on_the_next_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = blank_oracle_service()
+    pool = object()
+    outcomes: list[object] = [ConnectionError("database not reachable"), pool]
+
+    async def create_pool(**kwargs: Any) -> object:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(oracle_module.asyncpg, "create_pool", create_pool)
+
+    with pytest.raises(ConnectionError):
+        await service._get_db_pool()
+    assert await service._get_db_pool() is pool
+    assert await service._get_db_pool() is pool
+    assert outcomes == []
+
+
+_SYNTHETIC_KEY = "synthetic-key"  # pragma: allowlist secret
+
+
+def _drive_config(monkeypatch: pytest.MonkeyPatch, *, api_key: str = "") -> None:
+    monkeypatch.setattr(
+        google_module,
+        "oracle_config",
+        SimpleNamespace(
+            google_api_key=api_key,
+            google_credentials_json='{"type": "service_account"}',
+        ),
+    )
+    monkeypatch.setattr(
+        google_module.service_account.Credentials,
+        "from_service_account_info",
+        lambda *args, **kwargs: object(),
+    )
+
+
+def _flaky_build(monkeypatch: pytest.MonkeyPatch, drive_service: object) -> list[str]:
+    calls: list[str] = []
+
+    def build(name: str, version: str, *, credentials: object) -> object:
+        calls.append(name)
+        if len(calls) == 1:
+            raise TimeoutError("discovery document not reachable")
+        return drive_service
+
+    monkeypatch.setattr(google_module, "build", build)
+    return calls
+
+
+def test_a_drive_set_up_that_failed_is_tried_again_on_the_next_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = GoogleServices()
+    drive_service = object()
+    _drive_config(monkeypatch)
+    calls = _flaky_build(monkeypatch, drive_service)
+
+    assert service.drive_service is None
+    assert service.drive_service is drive_service
+    assert service.drive_service is drive_service
+    assert len(calls) == 2
+
+
+def test_a_failed_drive_set_up_is_retried_without_recreating_the_gemini_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import backend.llm.genai_client as genai_client_module
+
+    created: list[str] = []
+
+    class _GenAIClient:
+        is_available = True
+
+        def __init__(self, *, api_key: str) -> None:
+            created.append(api_key)
+
+    monkeypatch.setattr(genai_client_module, "GenAIClient", _GenAIClient)
+    monkeypatch.setattr(google_module, "GENAI_AVAILABLE", True)
+    service = GoogleServices()
+    drive_service = object()
+    _drive_config(monkeypatch, api_key=_SYNTHETIC_KEY)
+    calls = _flaky_build(monkeypatch, drive_service)
+
+    assert service.drive_service is None
+    assert service.gemini_available is True
+    assert service.drive_service is drive_service
+    assert len(calls) == 2
+    assert created == [_SYNTHETIC_KEY]
+
+
+def test_a_drive_without_credentials_is_settled_and_not_set_up_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reads = 0
+
+    class _Config:
+        google_api_key = ""
+
+        @property
+        def google_credentials_json(self) -> str:
+            nonlocal reads
+            reads += 1
+            return ""
+
+    monkeypatch.setattr(google_module, "oracle_config", _Config())
+    monkeypatch.chdir(tmp_path)
+    service = GoogleServices()
+
+    assert service.drive_service is None
+    assert service.drive_service is None
+    assert reads == 1

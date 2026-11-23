@@ -34,8 +34,8 @@ class GoogleServices:
         """Initialize Google Gemini and Drive services if not already done"""
         if self._initialized:
             return
-        if self._genai_client is None:
-            try:
+        try:
+            if self._genai_client is None:
                 # Initialize GenAI client (only if API key is available)
                 api_key = oracle_config.google_api_key
                 if api_key and GENAI_AVAILABLE:
@@ -51,20 +51,22 @@ class GoogleServices:
                     )
                     self._gemini_initialized = False
 
-                # Initialize Drive Service
-                self._initialize_drive_service()
-                self._initialized = True
+            # A Drive set-up that failed is tried again on the next access.
+            self._initialized = self._initialize_drive_service()
 
-            except Exception as e:
-                logger.error("❌ Failed to initialize Google services: %s", e)
-                logger.warning(
-                    "⚠️ Continuing without Google services - some Oracle features may be unavailable",
-                )
-                self._gemini_initialized = False
-                self._drive_service = None
+        except Exception as e:
+            logger.error("❌ Failed to initialize Google services: %s", e)
+            logger.warning(
+                "⚠️ Continuing without Google services - some Oracle features may be unavailable",
+            )
+            self._gemini_initialized = False
+            self._drive_service = None
 
-    def _initialize_drive_service(self) -> None:
-        """Initialize Google Drive service using service account"""
+    def _initialize_drive_service(self) -> bool:
+        """Initialize Google Drive service using service account.
+
+        Returns False when the set-up failed and is worth trying again.
+        """
         import base64
         import os
 
@@ -104,14 +106,16 @@ class GoogleServices:
                     "Set GOOGLE_SERVICE_ACCOUNT_JSON or add google_credentials.json",
                 )
                 self._drive_service = None
-                return
+                return True
 
             self._drive_service = build("drive", "v3", credentials=credentials)
             logger.info("✅ Google Drive service initialized successfully")
+            return True
 
         except Exception as e:
             logger.error("❌ Error initializing Google Drive service: %s", e)
             self._drive_service = None
+            return False
 
     @property
     def gemini_available(self) -> bool:
