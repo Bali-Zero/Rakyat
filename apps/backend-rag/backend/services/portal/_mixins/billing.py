@@ -28,7 +28,7 @@ class PortalBillingMixin:
 
     # Whitelisted profile fields a client can self-serve update via the portal.
     # Anything else requires team intervention.
-    PROFILE_EDITABLE_FIELDS: set[str] = {"phone", "whatsapp", "address", "language"}
+    PROFILE_EDITABLE_FIELDS: set[str] = {"phone", "whatsapp", "address"}
 
     # ================================================
     # BILLING

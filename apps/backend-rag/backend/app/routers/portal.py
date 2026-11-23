@@ -1370,7 +1370,6 @@ class UpdateProfileRequest(BaseModel):
     phone: str | None = None
     whatsapp: str | None = None
     address: str | None = None
-    language: str | None = None
 
 
 @router.patch("/profile")
@@ -1379,7 +1378,7 @@ async def update_profile(
     client: dict = Depends(get_current_client),
     portal_service: PortalService = Depends(get_portal_service),
 ) -> dict[str, Any]:
-    """Update client profile. Only phone, whatsapp, address, and language can be changed."""
+    """Update client profile. Only phone, whatsapp and address can be changed."""
     try:
         fields = {k: v for k, v in request.model_dump().items() if v is not None}
         result = await portal_service.update_profile(
