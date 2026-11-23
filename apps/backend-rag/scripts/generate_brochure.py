@@ -208,7 +208,7 @@ def get_price(pricing: dict, path: tuple[str, ...], expected_name: str) -> str:
 #
 # The second element is a PIN, not documentation. A key is a proxy for a service
 # and a proxy can lie: `other_process["ERP (Exit Re-entry Permit)"]` is named
-# "ERP (Exit Permit Only — Offshore)" and its own description says re-entry has
+# "TSP (Termination Stay Permit)" and its own description says re-entry has
 # been bundled into the KITAS/KITAP since UU 63/2024 — there is no re-entry
 # product to sell. A brochure row written from the KEY sold a thing that no
 # longer exists. Writing the name down here puts that contradiction in front of
@@ -267,7 +267,7 @@ PRICE_MAP: dict[str, tuple[tuple[str, ...], str]] = {
     "PRICE_MUT_PP":        (('other_process', 'Mutation Passport'), 'Mutation Passport'),
     "PRICE_MUT_ADDR":      (('other_process', 'Mutation Address'), 'Mutation Address'),
     "PRICE_EPO":           (('other_process', 'EPO (Exit Permit Only)'), 'EPO (Exit Permit Only)'),
-    "PRICE_ERP":           (('other_process', 'ERP (Exit Re-entry Permit)'), 'ERP (Exit Permit Only — Offshore)'),
+    "PRICE_ERP":           (('other_process', 'ERP (Exit Re-entry Permit)'), 'TSP (Termination Stay Permit)'),
 }
 
 # Inner whitespace is tolerated deliberately: `{{ PRICE_VOA }}` is what a human
