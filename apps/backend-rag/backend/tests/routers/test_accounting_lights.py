@@ -418,10 +418,10 @@ def test_each_inbox_transfer_names_the_company_whose_account_received_it(mock_db
     assert [i["company_key"] for i in items] == [
         first.key,
         second.key,
+        "account:999000111",
         "other",
-        "other",
-        "other",
-        "other",
+        f"account:{''.join(c for c in f'9{first.bank_account_number}' if c.isdigit())}",
+        f"account:{''.join(c for c in f'{first.bank_account_number}9' if c.isdigit())}",
     ]
 
 
@@ -1013,6 +1013,21 @@ def test_outgoings_passes_the_state_filter_and_refuses_an_unknown_one(mock_db_po
         bad = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "nope"})
     assert ok.status_code == 200 and load.await_args.kwargs == {"limit": 1000, "state": "justified", "month": None}
     assert bad.status_code == 422
+
+
+def test_outgoings_passes_one_company_key_to_the_service(mock_db_pool) -> None:
+    reading = {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
+        resp = _client(mock_db_pool).get(
+            f"{BASE}/outgoings", params={"company_key": DEFAULT_ENTITY_KEY}
+        )
+    assert resp.status_code == 200
+    assert load.await_args.kwargs == {
+        "limit": 1000,
+        "state": "to_justify",
+        "month": None,
+        "company_key": DEFAULT_ENTITY_KEY,
+    }
 
 
 def test_justify_and_undo_are_admin_only(mock_db_pool) -> None:

@@ -41,6 +41,7 @@ from backend.services.accounting.bank_pdf_readers import (
 )
 from backend.services.accounting.companies import (
     OTHER_KEY,
+    account_key_for_account,
     company_key_for_account,
     company_key_for_issuer,
     load_companies,
@@ -619,8 +620,9 @@ async def reconciliation_inbox(
             "txn_date": r["txn_date"],
             "amount_idr": int(r["amount_idr"]),
             "description": r["description"] or "",
-            # Same rule as the companies strip: an account no company owns is "other".
-            "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
+            "company_key": company_key_for_account(r["account_number"])
+            or account_key_for_account(r["account_number"])
+            or OTHER_KEY,
         }
         for r in rows
     ]
