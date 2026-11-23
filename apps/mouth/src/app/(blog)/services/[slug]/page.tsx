@@ -55,7 +55,7 @@ export async function generateMetadata({
       ],
     },
     company: {
-      title: "Business License in Indonesia (2026 Guide) | Bali Zero",
+      title: "PT PMA & Company Setup in Bali 2026 | Bali Zero",
       description:
         "Need a business license in Indonesia? We handle PT PMA setup, OSS licensing, and NIB permits end-to-end. 5,000+ businesses registered.",
       keywords: [
@@ -143,7 +143,10 @@ export async function generateMetadata({
 const HEADING_OVERRIDES: Record<string, { h1?: string; includedH2?: string }> =
   {
     visa: { h1: "Bali Visa Agency: KITAS, Visit & Working Visas" },
-    company: { includedH2: "PT PMA Company Setup: What's Included" },
+    company: {
+      h1: "PT PMA & Company Setup in Bali",
+      includedH2: "PT PMA Company Setup: What's Included",
+    },
   };
 
 export default async function ServiceDetailPage({
