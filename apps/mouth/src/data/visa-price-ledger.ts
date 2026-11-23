@@ -400,7 +400,7 @@ export const VISA_LEDGER_SPEC: ChapterSpec[] = [
         kind: "list",
         id: "registrations",
         name: "Registrations and letters",
-        keys: ["SKTT", "SKCK", "Domicilie Letter"],
+        keys: ["SKTT", "SKCK", "Domicilie Letter", "Driving License"],
       },
       {
         kind: "matrix",
