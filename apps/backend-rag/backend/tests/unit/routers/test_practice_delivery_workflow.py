@@ -322,10 +322,11 @@ def test_immigration_outputs_retain_semantic_document_type(label, kind):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("issued_on", [None, date.today() + timedelta(days=3)])
+@pytest.mark.parametrize("days_ahead", [None, 3])
 async def test_first_issuance_requires_official_bali_issue_date_before_storage(
-    db, writes, issued_on
+    db, writes, days_ahead
 ):
+    issued_on = None if days_ahead is None else date.today() + timedelta(days=days_ahead)
     with pytest.raises(HTTPException) as invalid:
         await service.upload(
             db[0], 7, "electronic_visa", STAFF, request(issued_on), BackgroundTasks()

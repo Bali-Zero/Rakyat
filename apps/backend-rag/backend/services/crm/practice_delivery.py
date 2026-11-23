@@ -21,8 +21,6 @@ from backend.services.crm.documents import auto_categorize_document
 from backend.services.crm.practice_state_machine import normalize_state
 from backend.services.crm.visa_followup import get_followup, record_visa_milestone
 from backend.services.portal._document_visibility import document_visibility_clause
-from backend.services.portal._mixins.documents import PortalDocumentsMixin
-from backend.services.portal.document_processing import VirusScanner
 
 # Same transport ceiling as the Kita base64 uploader.
 MAX_BYTES = 3 * 1024 * 1024
@@ -209,6 +207,9 @@ async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) 
 
 
 def upload_digest(encoded: str, file_name: str, mime_type: str) -> str:
+    # Imported here so the light API process does not load the portal document pipeline at startup.
+    from backend.services.portal.document_processing import VirusScanner
+
     try:
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
@@ -380,6 +381,8 @@ async def stage(
     async with pool.acquire() as conn:
         if await staged_file(conn, p, request.company_id, marker, kind):
             return
+    from backend.services.portal._mixins.documents import PortalDocumentsMixin
+
     category = (
         "tax"
         if p["category"].startswith("tax")

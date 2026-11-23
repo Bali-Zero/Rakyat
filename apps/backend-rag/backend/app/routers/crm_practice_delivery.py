@@ -8,7 +8,6 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Path
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from backend.app.dependencies import get_current_user, get_database_pool
-from backend.app.routers.crm_visa_followup import router as visa_followup_router
 from backend.app.routers.portal import get_current_client
 from backend.services.crm import practice_delivery as delivery
 
@@ -104,6 +103,5 @@ async def get_delivered_documents(
         return await delivery.portal_files(conn, practice_id, client["client_id"])
 
 
-router.include_router(visa_followup_router)
 router.include_router(staff)
 router.include_router(portal_router)
