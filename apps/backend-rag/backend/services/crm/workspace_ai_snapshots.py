@@ -46,7 +46,9 @@ _CREDENTIAL_OR_PORTAL_SECRET_PATTERN = re.compile(
     r"efin|password|passcode|otp|credential|credentials|username|login|"
     r"tax portal|djp/coretax|coretax access|portal access|accessed via|"
     r"npwp ending|individual accounts|personal tax oversight"
-    r")\b|[\w.+-]+@(?:gmail|yahoo|hotmail|outlook)\.[\w.-]+",
+    # The address is read from the first character of its run and without
+    # backtracking, so a long run with no "@" is scanned once (linear).
+    r")\b|(?<![\w.+-])[\w.+-]++@(?:gmail|yahoo|hotmail|outlook)\.[\w.-]+",
     re.IGNORECASE,
 )
 _BACKSTAGE_SOURCE_REFERENCE_PATTERN = re.compile(
@@ -65,9 +67,12 @@ _ABSOLUTE_COMPLIANCE_PATTERN = re.compile(
 )
 # An amount in rupiah, however it is written: "Rp 5.000", "Rp. 5.000", "IDR.5000",
 # or a number followed by "rupiah" ("5.000.000 rupiah", "5 juta rupiah").
+# The number is read only from its first digit (the lookbehind) and without
+# backtracking (possessive quantifiers), so each run of digits and separators
+# is scanned once: the search stays linear on unbounded fact text.
 _RUPIAH_AMOUNT = (
     r"(?:(?:rp|idr)\.?\s*\d|"
-    r"\d[\d.,]*\s*(?:(?:juta|miliar|ribu|million|billion|thousand)\s*)?rupiah\b)"
+    r"(?<![\d.,])\d[\d.,]*+\s*+(?:(?:juta|miliar|ribu|million|billion|thousand)\s*+)?rupiah\b)"
 )
 _SENSITIVE_FINANCIAL_TERMS = (
     r"(?:pph|ppn|vat|tax|pajak|omzet|withholding|salary|salaries|"

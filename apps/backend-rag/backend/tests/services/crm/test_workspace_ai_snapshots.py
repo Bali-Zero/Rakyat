@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,7 @@ from backend.services.crm.workspace_ai_snapshots import (
     AUTO_APPROVE_POLICY_VERSION,
     WorkspaceAiSnapshotCreate,
     WorkspaceAiSnapshotResponse,
+    _contains_credential_or_portal_secret,
     approve_workspace_ai_snapshot,
     auto_approve_workspace_ai_snapshots,
     create_workspace_ai_snapshot,
@@ -531,3 +533,29 @@ def test_auto_approve_policy_blocks_every_written_form_of_a_rupiah_amount(
 )
 def test_auto_approve_policy_does_not_flag_text_without_an_amount(detail: str) -> None:
     assert not _amount_blocked(detail)
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "1." * 20000,
+        "PPh " + "1." * 20000,
+        "1," * 20000 + " PPh",
+        "PPh " + "1.2 " * 10000 + "rupiah",
+        "a." * 20000,
+    ],
+    ids=["dotted-run", "term-then-run", "run-then-term", "many-runs", "address-like-run"],
+)
+def test_a_long_run_of_digits_is_judged_in_linear_time(detail: str) -> None:
+    started = time.perf_counter()
+    _amount_blocked(detail)
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["john.doe+tax@gmail.com", "a_b-c.d@outlook.co.id", "x@yahoo.com"],
+)
+def test_a_personal_mailbox_is_still_a_credential_reference(address: str) -> None:
+    assert _contains_credential_or_portal_secret(f"write to {address} today")
+    assert not _contains_credential_or_portal_secret("write to the office today")
