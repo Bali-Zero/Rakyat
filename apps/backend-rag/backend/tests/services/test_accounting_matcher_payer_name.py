@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -39,6 +40,61 @@ def _classify(memo: str, inv: OpenInvoice):
         open_invoices=[inv],
         recorded_invoices=[],
     )
+
+
+@pytest.mark.parametrize(
+    "memo",
+    [
+        "TRF DARI EXAMPLE WORKSHOP BANK DEMO ATM PRIMA (BANK PERMATA TBK) 11:39:38",
+        "TRF INCOMING BIFAST DARI EXAMPLE WORKSHOP 0123456789 BANK DEMO 12:00:00",
+        "PB DARI EXAMPLE WORKSHOP New PeB 11:04:03 report",
+        "PB DARI EXAMPLE WORKSHOP PermataME06:50:04 report",
+    ],
+)
+def test_permata_matches_explicit_payer_to_billed_company(memo: str) -> None:
+    inv = replace(_inv(1, "Example Director"), bill_to_company="PT Example Workshop")
+    assert extract_payer_name(memo) == "EXAMPLE WORKSHOP"
+    result = _classify(memo, inv)
+    assert result.suggestion is not None
+    assert result.suggestion.client_name == inv.bill_to_company
+    assert "payer matches the company on the invoice" in result.suggestion.reasons
+
+
+@pytest.mark.parametrize(
+    "memo",
+    [SKN.replace("MARIO ROSSINELLI", "EXAMPLE WORKSHOP"),
+     CIMB.replace("MARIO ROSSINELL", "EXAMPLE WORKSHOP")],
+)
+def test_other_bank_formats_do_not_promote_a_company_only_match(memo: str) -> None:
+    invoice = replace(_inv(1, "Unrelated Person"), bill_to_company="PT Example Workshop")
+    assert extract_payer_name(memo) == "EXAMPLE WORKSHOP"
+    assert _classify(memo, replace(invoice, generated_at=date(2026, 11, 5))).suggestion is None
+    result = classify_transfer(
+        transfer_amount_idr=5_000_000, transfer_date=DAY, payer_memo=memo,
+        open_invoices=[], recorded_invoices=[invoice, replace(invoice, invoice_id=2)],
+    )
+    assert result.suggestion is None
+
+
+def test_legal_form_and_numbers_remain_distinct_from_other_companies() -> None:
+    inv = replace(_inv(1, "Unrelated Person"), bill_to_company="PT Invented Outlet 2")
+    for payer in ("CV INVENTED OUTLET 2", "INVENTED OUTLET 3", "INVENTED OUTLET"):
+        memo = f"PB DARI {payer} New PeB 11:04:03 PT Invented Outlet 2"
+        assert _classify(memo, inv).suggestion is None
+
+
+def test_permata_keeps_ambiguous_and_later_invoices_for_manual_choice() -> None:
+    memo = "PB DARI EXAMPLE WORKSHOP New PeB 11:04:03"
+    inv = replace(_inv(1, "Unrelated Person"), bill_to_company="PT Example Workshop")
+    assert _classify(memo, replace(inv, generated_at=date(2026, 11, 5))).suggestion is None
+    result = classify_transfer(
+        transfer_amount_idr=5_000_000,
+        transfer_date=DAY,
+        payer_memo=memo,
+        open_invoices=[],
+        recorded_invoices=[inv, replace(inv, invoice_id=2)],
+    )
+    assert result.suggestion is None
 
 
 @pytest.mark.parametrize(

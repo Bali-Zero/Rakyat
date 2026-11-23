@@ -63,6 +63,7 @@ DEFAULT_COMPANY_STATEMENT_SQL = (
 )
 
 STUBS = """
+CREATE TABLE IF NOT EXISTS companies (id SERIAL PRIMARY KEY, company_name VARCHAR);
 CREATE TABLE IF NOT EXISTS team_members (id VARCHAR PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, full_name VARCHAR);
 -- Real types: models.py PracticeType (id int PK, code VARCHAR(50) NOT NULL UNIQUE, name
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, full_name VARCHAR);
 CREATE TABLE IF NOT EXISTS practice_types (
     id SERIAL PRIMARY KEY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);
 CREATE TABLE IF NOT EXISTS practices (
+    invoice_company_id INT REFERENCES companies(id),
     id SERIAL PRIMARY KEY, client_id INT, payment_status VARCHAR DEFAULT 'unpaid',
     practice_type_id INT REFERENCES practice_types(id),
     paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now(),

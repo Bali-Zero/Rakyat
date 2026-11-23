@@ -25,6 +25,7 @@ from backend.services.accounting.matcher import (
     MatchCandidate,
     OpenInvoice,
     _amount_signals,
+    is_permata_transfer,
     rank_candidates,
 )
 
@@ -96,7 +97,7 @@ def classify_transfer(
     elif len(open_s) == 1 and not rec_s:
         light = GREEN
         suggestion = open_s[0]
-    elif rec_s and not open_s:
+    elif rec_s and not open_s and (len(rec_s) == 1 or not is_permata_transfer(payer_memo)):
         light = RECORDED
         suggestion = sorted(rec_s, key=lambda c: (-c.confidence, c.invoice_id))[0]
     else:
