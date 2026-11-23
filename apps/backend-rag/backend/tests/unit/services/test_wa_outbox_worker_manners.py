@@ -786,3 +786,75 @@ async def test_silent_standing_conditions_get_no_apology_and_no_telegram(
         svc.send_message.assert_not_awaited()
         notify_spy.assert_not_awaited()
         notify_spy.reset_mock()
+
+
+# ── the real worker path hands the pool it holds to the human alert ────────
+
+
+@pytest.mark.asyncio
+async def test_terminal_generation_failure_gives_the_human_alert_the_pool(monkeypatch) -> None:
+    """GUILT (gate round 1): ``_process_claimed_row`` holds the pool but the
+    apology used to call ``_tell_a_human`` without it, so consultant resolution
+    and the kita bell were skipped. Drives ``process_outbox_once`` end to end
+    and asserts the helper receives that very pool."""
+    notify_spy = AsyncMock(return_value=True)
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", notify_spy)
+    candidate = _candidate(
+        20,
+        thread_id=7,
+        message_id=2000,
+        needs_generation=True,
+        attempts=wa_outbox_worker.MAX_ATTEMPTS - 1,
+    )
+    conn = ScriptedConn(
+        fetchrow_results=[_open_window_thread(thread_id=7), {"id": 20}, {"id": 20}],
+        fetchval_results=[True, "hi", False, False, None, _NON_TRIVIAL_TEXT],
+        fetch_results=[[candidate], []],
+    )
+    pool = _make_pool(conn)
+
+    async def _bot_raises(_thread: Any) -> str:
+        raise RuntimeError("RAG unreachable")
+
+    result = await wa_outbox_worker.process_outbox_once(pool, _wa_service(), _bot_raises)
+
+    assert result == "failed"
+    notify_spy.assert_awaited_once()
+    assert notify_spy.await_args.kwargs["pool"] is pool
+
+
+@pytest.mark.asyncio
+async def test_terminal_send_failure_gives_the_apology_the_pool(monkeypatch) -> None:
+    """GUILT: the Graph-send-exhausted branch of the real worker path passes
+    the pool it holds on to the apology (and so to the human alert)."""
+    apology_spy = AsyncMock()
+    monkeypatch.setattr(wa_outbox_worker, "_maybe_send_apology", apology_spy)
+    candidate = _candidate(
+        5,
+        thread_id=7,
+        message_id=500,
+        needs_generation=False,
+        attempts=wa_outbox_worker.MAX_ATTEMPTS - 1,
+    )
+    conn = ScriptedConn(
+        fetchrow_results=[
+            _thread_row(human_handling=True),
+            {"body": "last try"},
+            {"id": 5},
+            {"id": 5},
+        ],
+        fetchval_results=[True, True],
+        fetch_results=[[candidate]],
+    )
+    pool = _make_pool(conn)
+    svc = _wa_service(raise_exc=RuntimeError("graph 500"))
+
+    async def _bot_gen(_thread: Any) -> str:
+        return "unused"
+
+    result = await wa_outbox_worker.process_outbox_once(pool, svc, _bot_gen)
+
+    assert result == "failed"
+    apology_spy.assert_awaited_once()
+    assert apology_spy.await_args.kwargs["reason"] == "graph_send_exhausted"
+    assert apology_spy.await_args.kwargs["pool"] is pool

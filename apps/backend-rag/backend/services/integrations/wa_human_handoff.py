@@ -287,6 +287,12 @@ ON CONFLICT (client_id, alert_type, created_date) DO UPDATE
 
 _DEFAULT_REASON = "human_request"
 
+# The bot's own give-ups (abstain, discarded answer, terminal failure) are NOT
+# the client asking for a person: callers send ``bot_escalation:<cause>``. The
+# whole string keys the dedup (so each cause has its own window and an abstain
+# never silences a later explicit request); the wording key is the prefix.
+BOT_ESCALATION_REASON = "bot_escalation"
+
 # Both the in-app bell text and the email carry a REASON-specific line — a
 # client who sends a caption-less photo did not ask to speak to a human, and
 # telling the consultant they did is its own small lie (the class this whole
@@ -297,11 +303,20 @@ _DEFAULT_REASON = "human_request"
 _INAPP_MESSAGES: dict[str, str] = {
     _DEFAULT_REASON: "Client asked to speak to a person on WhatsApp",
     "media_attachment_no_caption": "Client sent an attachment with no caption on WhatsApp",
+    BOT_ESCALATION_REASON: "The WhatsApp bot could not settle a thread and needs a person",
 }
 _INAPP_SUBJECT_TEMPLATES: dict[str, str] = {
     _DEFAULT_REASON: "[WA] Client asked for a human — thread {thread_id}",
     "media_attachment_no_caption": "[WA] Client sent an attachment with no caption — thread {thread_id}",
+    BOT_ESCALATION_REASON: "[WA] Bot needs a person on this thread — thread {thread_id}",
 }
+
+
+def _wording_key(reason: str) -> str:
+    """The key of the wording tables for ``reason`` (bot causes share one)."""
+    if reason.split(":", 1)[0] == BOT_ESCALATION_REASON:
+        return BOT_ESCALATION_REASON
+    return reason
 
 
 async def _record_inapp_alert(
@@ -317,8 +332,9 @@ async def _record_inapp_alert(
     find the assignee. An unfamiliar number therefore has no in-app row and is
     carried by the email alone — which is why the email is never conditional.
     """
-    message = _INAPP_MESSAGES.get(reason, _INAPP_MESSAGES[_DEFAULT_REASON])
-    subject = _INAPP_SUBJECT_TEMPLATES.get(reason, _INAPP_SUBJECT_TEMPLATES[_DEFAULT_REASON])
+    key = _wording_key(reason)
+    message = _INAPP_MESSAGES.get(key, _INAPP_MESSAGES[_DEFAULT_REASON])
+    subject = _INAPP_SUBJECT_TEMPLATES.get(key, _INAPP_SUBJECT_TEMPLATES[_DEFAULT_REASON])
     try:
         async with pool.acquire() as conn:
             await conn.execute(
@@ -368,12 +384,16 @@ _EMAIL_INTROS: dict[str, str] = {
     "media_attachment_no_caption": (
         "Klien mengirim lampiran (foto/dokumen/audio/video) tanpa keterangan melalui WhatsApp."
     ),
+    BOT_ESCALATION_REASON: (
+        "Bot WhatsApp tidak dapat menyelesaikan thread ini dan membutuhkan bantuan kolega manusia."
+    ),
 }
 _EMAIL_SUBJECT_TEMPLATES: dict[str, str] = {
     _DEFAULT_REASON: "[WA] Klien minta bicara dengan manusia — thread {thread_id}",
     "media_attachment_no_caption": (
         "[WA] Klien kirim lampiran tanpa keterangan — thread {thread_id}"
     ),
+    BOT_ESCALATION_REASON: "[WA] Bot butuh bantuan manusia — thread {thread_id}",
 }
 
 
@@ -473,7 +493,7 @@ async def notify_human_handoff(
     )
 
     body_lines = [
-        _EMAIL_INTROS.get(reason, _EMAIL_INTROS[_DEFAULT_REASON]),
+        _EMAIL_INTROS.get(_wording_key(reason), _EMAIL_INTROS[_DEFAULT_REASON]),
         "",
         f"Thread: {thread_id}",
     ]
@@ -483,7 +503,9 @@ async def notify_human_handoff(
     body_lines.append("")
     body_lines.append("Silakan buka thread di konsol operator untuk membaca detailnya.")
 
-    subject = _EMAIL_SUBJECT_TEMPLATES.get(reason, _EMAIL_SUBJECT_TEMPLATES[_DEFAULT_REASON])
+    subject = _EMAIL_SUBJECT_TEMPLATES.get(
+        _wording_key(reason), _EMAIL_SUBJECT_TEMPLATES[_DEFAULT_REASON]
+    )
     try:
         email_sent = await send_internal_email(
             to=to_email,

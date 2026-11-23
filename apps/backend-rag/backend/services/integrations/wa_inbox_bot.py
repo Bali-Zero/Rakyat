@@ -73,7 +73,10 @@ from backend.services.integrations.wa_finalize import (
 from backend.services.integrations.wa_finalize import (
     _abstain_answer_worth_sending as _abstain_answer_worth_sending,
 )
-from backend.services.integrations.wa_human_handoff import notify_human_handoff
+from backend.services.integrations.wa_human_handoff import (
+    BOT_ESCALATION_REASON,
+    notify_human_handoff,
+)
 
 logger = logging.getLogger("zantara.backend")
 
@@ -141,6 +144,7 @@ async def _tell_a_human(
             thread_id=thread_id,
             counterpart_phone=phone,
             language=language,
+            reason=f"{BOT_ESCALATION_REASON}:{reason}",
         )
     # Broad on purpose — see docstring: a notifier failure must never replace
     # the real cause the caller is about to raise.
