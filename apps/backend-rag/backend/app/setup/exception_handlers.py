@@ -6,6 +6,7 @@ and prevent TypeError when serializing HTTPException with non-serializable objec
 """
 
 import logging
+import math
 from typing import Any
 
 import asyncpg
@@ -18,9 +19,55 @@ from backend.app.utils.logging_utils import sanitize_log_path
 logger = logging.getLogger("zantara.backend")
 
 
+_MAX_DETAIL_DEPTH = 32
+_TRUNCATED_DETAIL = "[truncated]"
+
+
+def _encodable_text(text: str) -> str:
+    """Escape lone surrogates, which JSONResponse cannot encode as UTF-8."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "backslashreplace").decode("utf-8")
+    return text
+
+
+def _sanitize_key(key: Any) -> Any:
+    """Keep a key JSON accepts; anything else (a tuple, an object) becomes text."""
+    if key is None or isinstance(key, (str, int, float)):
+        return _sanitize_value(key, frozenset())
+    return _encodable_text(str(key))
+
+
+def _sanitize_value(value: Any, parents: frozenset[int]) -> Any:
+    """Keep the structure of a detail value; only what JSON cannot carry becomes text.
+
+    ``parents`` holds the containers above this value, so a cycle or an absurdly
+    deep value ends in a fixed marker instead of a failed error response.
+    """
+    if isinstance(value, str):
+        return _encodable_text(value)
+    if value is None or isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        # JSONResponse refuses NaN and Infinity (allow_nan=False).
+        return value if math.isfinite(value) else str(value)
+    if isinstance(value, (dict, list, tuple)):
+        if id(value) in parents or len(parents) >= _MAX_DETAIL_DEPTH:
+            return _TRUNCATED_DETAIL
+        inside = parents | {id(value)}
+        if isinstance(value, dict):
+            return {_sanitize_key(k): _sanitize_value(v, inside) for k, v in value.items()}
+        return [_sanitize_value(item, inside) for item in value]
+    return _encodable_text(str(value))
+
+
 def sanitize_detail(detail: Any) -> str | dict[str, Any]:
     """
     Sanitize exception detail to ensure JSON serialization.
+
+    Dicts and lists nested inside a dict detail keep their shape, so a client
+    can read structured fields such as ``candidates[0].company_name``.
 
     Args:
         detail: Exception detail (can be str, dict, or any object)
@@ -31,21 +78,7 @@ def sanitize_detail(detail: Any) -> str | dict[str, Any]:
     if isinstance(detail, str):
         return detail
     if isinstance(detail, dict):
-        # Create a copy and sanitize any non-serializable values
-        sanitized = {}
-        for key, value in detail.items():
-            if isinstance(value, (str, int, float, bool, type(None))):
-                sanitized[key] = value
-            elif isinstance(value, (list, tuple)):
-                # Recursively sanitize list items
-                sanitized[key] = [
-                    str(item) if not isinstance(item, (str, int, float, bool, type(None))) else item
-                    for item in value
-                ]
-            else:
-                # Convert non-serializable objects to string
-                sanitized[key] = str(value)
-        return sanitized
+        return _sanitize_value(detail, frozenset())
     # Convert non-serializable objects to string
     return str(detail)
 
