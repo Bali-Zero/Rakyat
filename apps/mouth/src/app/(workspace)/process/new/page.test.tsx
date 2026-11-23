@@ -277,18 +277,27 @@ describe("NewPracticePage", () => {
   describe("PPh withholding (DAI-168)", () => {
     const selfEmail = "synthetic.team@example.test";
 
-    function asRole(role: string) {
+    async function submitAs(role: string, fill?: [string, string]) {
       vi.mocked(api.isAdmin).mockReturnValue(false);
       vi.mocked(api.getProfile).mockResolvedValue({
         email: selfEmail,
         role,
       } as Awaited<ReturnType<typeof api.getProfile>>);
-    }
-
-    async function pickService(user: ReturnType<typeof userEvent.setup>) {
+      const user = userEvent.setup();
+      await renderPage();
+      if (role === "tax lead") {
+        await screen.findByRole("combobox", { name: "PPh type" });
+      }
       const selects = await screen.findAllByRole("combobox");
       await user.selectOptions(selects[0], "visa");
       await user.selectOptions(selects[1], "SYNTHETIC_VISA");
+      if (fill) {
+        const type = screen.getByRole("combobox", { name: "PPh type" });
+        await user.selectOptions(type, fill[0]);
+        const rate = screen.getByRole("textbox", { name: "PPh rate percent" });
+        await user.type(rate, fill[1]);
+      }
+      await user.click(screen.getByRole("button", { name: "Create Process" }));
     }
 
     afterEach(() => {
@@ -299,19 +308,7 @@ describe("NewPracticePage", () => {
     });
 
     it("sends pph when the tax team fills the field", async () => {
-      asRole("tax lead");
-      const user = userEvent.setup();
-      await renderPage();
-      await pickService(user);
-      await user.selectOptions(
-        await screen.findByRole("combobox", { name: "PPh type" }),
-        "PPH23",
-      );
-      await user.type(
-        screen.getByRole("textbox", { name: "PPh rate percent" }),
-        "2",
-      );
-      await user.click(screen.getByRole("button", { name: "Create Process" }));
+      await submitAs("tax lead", ["PPH23", "2"]);
       await waitFor(() => expect(mockCreatePractice).toHaveBeenCalled());
       expect(mockCreatePractice.mock.calls[0][0].pph).toEqual({
         type: "PPH23",
@@ -320,30 +317,13 @@ describe("NewPracticePage", () => {
     });
 
     it("sends no pph key when the field stays empty", async () => {
-      asRole("tax lead");
-      const user = userEvent.setup();
-      await renderPage();
-      await screen.findByRole("combobox", { name: "PPh type" });
-      await pickService(user);
-      await user.click(screen.getByRole("button", { name: "Create Process" }));
+      await submitAs("tax lead");
       await waitFor(() => expect(mockCreatePractice).toHaveBeenCalled());
       expect(mockCreatePractice.mock.calls[0][0]).not.toHaveProperty("pph");
     });
 
     it("blocks the create on an invalid rate", async () => {
-      asRole("tax lead");
-      const user = userEvent.setup();
-      await renderPage();
-      await pickService(user);
-      await user.selectOptions(
-        await screen.findByRole("combobox", { name: "PPh type" }),
-        "PPH23",
-      );
-      await user.type(
-        screen.getByRole("textbox", { name: "PPh rate percent" }),
-        "11",
-      );
-      await user.click(screen.getByRole("button", { name: "Create Process" }));
+      await submitAs("tax lead", ["PPH23", "11"]);
       await waitFor(() =>
         expect(mockToastError).toHaveBeenCalledWith(
           "PPh withholding",
@@ -354,11 +334,7 @@ describe("NewPracticePage", () => {
     });
 
     it("hides the field from a role the API would refuse", async () => {
-      asRole("consultant");
-      const user = userEvent.setup();
-      await renderPage();
-      await pickService(user);
-      await user.click(screen.getByRole("button", { name: "Create Process" }));
+      await submitAs("consultant");
       await waitFor(() => expect(mockCreatePractice).toHaveBeenCalled());
       expect(screen.queryByRole("combobox", { name: "PPh type" })).toBeNull();
       expect(mockCreatePractice.mock.calls[0][0]).not.toHaveProperty("pph");
