@@ -402,16 +402,15 @@ async def list_partners(
     Python; v1.1 should push pagination to SQL for large datasets.
     """
     _require_team_or_admin(user)  # CATA-2: partner role cannot list all partners
-    # A non-admin staff member lists only the partners assigned to them, whatever
-    # their job title; an admin may filter by any owner or none.
-    if not _is_admin_user(user):
-        assigned_to = str(user["user_id"])
+    # The owner scope is decided once, here, by the administrator test: a non-admin staff
+    # member lists only the partners assigned to them, whatever their job title and whatever
+    # owner filter they name; an administrator keeps the filter they name, or none.
+    # CATA-5: team_members.id is a string — no UUID wrapping
+    scope_to = None if _is_admin_user(user) else str(user["user_id"])
     async with pool.acquire() as conn:
         svc = PartnersService(conn)
-        # CATA-5: actor_user is team_members.id string — no UUID wrapping
         all_partners = await svc.list_partners(
-            actor_user=str(user["user_id"]),
-            actor_role=user.get("role", "team"),
+            scope_to=scope_to,
             assigned_to=assigned_to,
             onboarding_status=onboarding_status,
             orphaned=orphaned,
