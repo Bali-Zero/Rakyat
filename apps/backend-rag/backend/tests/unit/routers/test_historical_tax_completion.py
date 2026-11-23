@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -6,7 +7,60 @@ from pydantic import ValidationError
 from backend.app.routers.crm_practices import (
     HistoricalTaxCompletionCreate,
     _can_import_historical_tax_completion,
+    create_historical_tax_completion,
 )
+from fastapi import HTTPException
+
+
+class _Context:
+    def __init__(self, value):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, *_):
+        return None
+
+
+class _Pool:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        return _Context(self.conn)
+
+
+def _row():
+    return {
+        "id": 8, "uuid": str(uuid4()), "client_id": 1, "practice_type_id": 9,
+        "status": "completed", "priority": "normal", "quoted_price": None,
+        "actual_price": None, "payment_status": "unpaid", "assigned_to": "consultant@example.test",
+        "start_date": None, "completion_date": datetime(2026, 10, 1, tzinfo=timezone.utc),
+        "expiry_date": None, "created_at": datetime(2026, 10, 1, tzinfo=timezone.utc),
+    }
+
+
+class _Conn:
+    def __init__(self, *, existing=None, ambiguous=None):
+        self.existing, self.ambiguous, self.calls = existing, ambiguous, []
+
+    def transaction(self):
+        return _Context(self)
+
+    async def fetchval(self, query, *args):
+        self.calls.append(query)
+        if "team_members" in query or "client_company_links" in query:
+            return 1
+        if "practice_types" in query:
+            return 9
+        return self.ambiguous
+
+    async def fetchrow(self, query, *args):
+        self.calls.append(query)
+        if query.startswith("SELECT *"):
+            return self.existing
+        return _row()
 
 
 def _payload(**overrides):
@@ -48,3 +102,36 @@ def test_historical_spt_is_annual_only():
 def test_only_privileged_tax_roles_can_import():
     assert _can_import_historical_tax_completion({"role": "tax supervisor"})
     assert not _can_import_historical_tax_completion({"role": "tax consultant"})
+
+
+@pytest.mark.asyncio
+async def test_route_creates_completed_board_practice_without_automation():
+    conn = _Conn()
+    result = await create_historical_tax_completion(
+        HistoricalTaxCompletionCreate(**_payload()), _Pool(conn), {"role": "tax supervisor", "email": "lead@example.test"}
+    )
+    insert = next(query for query in conn.calls if "INSERT INTO practices" in query)
+    assert result.status == "completed"
+    assert "quoted_price" not in insert and "payment_status" not in insert
+    assert "text::jsonb" in insert
+    assert not any("INSERT INTO invoices" in query or "bonus" in query.lower() for query in conn.calls)
+
+
+@pytest.mark.asyncio
+async def test_route_replay_returns_existing_and_never_inserts():
+    conn = _Conn(existing=_row())
+    result = await create_historical_tax_completion(
+        HistoricalTaxCompletionCreate(**_payload()), _Pool(conn), {"role": "tax supervisor", "email": "lead@example.test"}
+    )
+    assert result.id == 8
+    assert not any("INSERT INTO practices" in query for query in conn.calls)
+
+
+@pytest.mark.asyncio
+async def test_route_refuses_ambiguous_open_or_closed_practice():
+    with pytest.raises(HTTPException, match="no historical scope") as error:
+        await create_historical_tax_completion(
+            HistoricalTaxCompletionCreate(**_payload()), _Pool(_Conn(ambiguous=1)),
+            {"role": "tax supervisor", "email": "lead@example.test"},
+        )
+    assert error.value.status_code == 409

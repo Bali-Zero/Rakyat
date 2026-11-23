@@ -734,7 +734,7 @@ async def create_historical_tax_completion(
                     client_id, practice_type_id, status, priority, assigned_to,
                     completion_date, invoice_company_id, metadata, created_by,
                     historical_completion_identity
-                ) VALUES ($1, $2, 'completed', 'normal', $3, $4, $5, $6, $7, $8)
+                ) VALUES ($1, $2, 'completed', 'normal', $3, $4, $5, $6::text::jsonb, $7, $8)
                 ON CONFLICT (historical_completion_identity) WHERE historical_completion_identity IS NOT NULL
                 DO NOTHING RETURNING *
                 """,
