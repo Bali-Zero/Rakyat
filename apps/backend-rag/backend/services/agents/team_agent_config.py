@@ -301,6 +301,7 @@ ROLE_HR_MANAGER = AgentRole(
         "approve_staging_item",
     ],
     client_scope="all",
+    requires_confirmation=["generate_image"],
 )
 
 ROLE_CRM_FULL = AgentRole(
@@ -381,6 +382,7 @@ ROLE_CRM_FULL = AgentRole(
         "approve_staging_item",
     ],
     client_scope="all",
+    requires_confirmation=["generate_image"],
 )
 
 ROLE_TAX_SPECIALIST = AgentRole(
@@ -467,6 +469,7 @@ ROLE_TAX_SPECIALIST = AgentRole(
         "approve_staging_item",
     ],
     client_scope="all",
+    requires_confirmation=["generate_image"],
 )
 
 

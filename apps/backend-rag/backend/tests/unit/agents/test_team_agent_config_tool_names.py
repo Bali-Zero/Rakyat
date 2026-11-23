@@ -190,3 +190,46 @@ async def test_admin_still_allows_every_registry_tool_without_confirmation(
             user_email="admin@example.test", agent_role=ROLE_ADMIN, tool_name=tool, args={}
         )
         assert result.is_allowed, tool
+
+
+def _holds_image_tool(role: AgentRole) -> bool:
+    if "generate_image" in role.blocked_tools:
+        return False
+    if not role.allowed_read_tools and not role.allowed_write_tools:
+        return True
+    return "generate_image" in role.allowed_read_tools + role.allowed_write_tools
+
+
+def test_every_role_that_can_generate_images_asks_for_confirmation() -> None:
+    drifted = sorted(
+        role.role_id
+        for role in _all_roles()
+        if _holds_image_tool(role)
+        and role.allowed_write_tools
+        and "generate_image" not in role.requires_confirmation
+    )
+    assert not drifted, f"image generation runs unconfirmed in: {drifted}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role",
+    [
+        ROLE_VISA_SPECIALIST,
+        ROLE_EXECUTIVE_CONSULTANT,
+        ROLE_HR_MANAGER,
+        ROLE_CRM_FULL,
+        ROLE_TAX_SPECIALIST,
+        team_agent_config.ROLE_MANAGER,
+    ],
+)
+async def test_image_tool_needs_confirmation_in_every_role_that_allows_it(
+    role: AgentRole,
+) -> None:
+    result = await ToolAuthorizer().authorize(
+        user_email="staff@example.test",
+        agent_role=role,
+        tool_name="generate_image",
+        args={"prompt": "a lotus"},
+    )
+    assert result.decision == AuthDecision.NEEDS_CONFIRMATION
