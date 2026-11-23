@@ -1445,6 +1445,7 @@ async def test_recorded_payment_uses_only_the_company_selected_for_that_case(db)
 
     conn, _ = db
     pid, iid = await _typed_practice(conn, "paid", type_name=None, number=None)
+    await conn.execute("INSERT INTO companies (company_name) VALUES ('Unbilled Example')")
     company = await conn.fetchval(
         "INSERT INTO companies (company_name) VALUES ('PT Example Workshop') RETURNING id"
     )

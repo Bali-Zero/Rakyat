@@ -223,7 +223,8 @@ def rank_candidates(
         name = _name_score(payer_memo, inv.client_name)
         bill_prefix, bill_words = _company_name_tokens(inv.bill_to_company or "")
         company_match = (
-            len(company_words) >= 2
+            permata
+            and len(company_words) >= 2
             and company_words == bill_words
             and (not payer_prefix or not bill_prefix or payer_prefix == bill_prefix)
         )

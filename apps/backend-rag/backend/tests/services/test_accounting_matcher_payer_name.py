@@ -60,6 +60,22 @@ def test_permata_matches_explicit_payer_to_billed_company(memo: str) -> None:
     assert "payer matches the company on the invoice" in result.suggestion.reasons
 
 
+@pytest.mark.parametrize(
+    "memo",
+    [SKN.replace("MARIO ROSSINELLI", "EXAMPLE WORKSHOP"),
+     CIMB.replace("MARIO ROSSINELL", "EXAMPLE WORKSHOP")],
+)
+def test_other_bank_formats_do_not_promote_a_company_only_match(memo: str) -> None:
+    invoice = replace(_inv(1, "Unrelated Person"), bill_to_company="PT Example Workshop")
+    assert extract_payer_name(memo) == "EXAMPLE WORKSHOP"
+    assert _classify(memo, replace(invoice, generated_at=date(2026, 11, 5))).suggestion is None
+    result = classify_transfer(
+        transfer_amount_idr=5_000_000, transfer_date=DAY, payer_memo=memo,
+        open_invoices=[], recorded_invoices=[invoice, replace(invoice, invoice_id=2)],
+    )
+    assert result.suggestion is None
+
+
 def test_legal_form_and_numbers_remain_distinct_from_other_companies() -> None:
     inv = replace(_inv(1, "Unrelated Person"), bill_to_company="PT Invented Outlet 2")
     for payer in ("CV INVENTED OUTLET 2", "INVENTED OUTLET 3", "INVENTED OUTLET"):
