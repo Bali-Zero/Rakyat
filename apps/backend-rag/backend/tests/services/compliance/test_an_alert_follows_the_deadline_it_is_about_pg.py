@@ -2,7 +2,8 @@
 
 The engine keeps one open alert per dedup key. An alert whose deadline had passed stayed open
 for ever, so a renewed visa, KITAS or passport under the same key never got an alert of its
-own.
+own; and a promoted alert kept the deadline, the texts and the cost of the run that created it,
+so it was dispatched saying "80 days" six days before the deadline.
 
 The table is created from migration 114 itself, so its unique index on open keys and its status
 check are the real ones.
@@ -472,3 +473,89 @@ async def test_a_forecast_with_no_open_alert_gets_a_new_one(pool: asyncpg.Pool) 
     assert row["message_en"].startswith("Your E33G visa will expire in 30 days.")
     assert row["estimated_cost_idr"] == 9_000_000
     assert [a.alert_id for a in dispatcher.sent] == [alert.alert_id]
+
+
+# ── a promotion carries the deadline, texts and cost of its forecast ────────────────────
+
+
+async def test_a_promoted_alert_carries_the_deadline_texts_and_cost_of_its_forecast(
+    pool: asyncpg.Pool,
+) -> None:
+    today = await _today(pool)
+    await _store(pool, deadline=today + timedelta(days=20))
+    engine, dispatcher = _engine(pool, {"kitas.renewal": 9_000_000})
+
+    [alert] = await engine.generate_alerts(
+        [
+            _forecast(
+                today,
+                expiry=today + timedelta(days=6),
+                urgency="urgent",
+                pricing_key="kitas.renewal",
+            )
+        ]
+    )
+
+    assert alert.alert_id == STORED
+    row = (await _rows(pool, VISA_KEY))[STORED]
+    assert row["status"] == "pending"
+    assert row["severity"] == "urgent"
+    assert row["upgrade_count"] == 1
+    assert row["days_until"] == 6
+    assert row["deadline"] == today + timedelta(days=6)
+    assert row["message_en"] == "Your E33G visa will expire in 6 days. " + (
+        "To avoid overstay penalties, start the renewal process now."
+    )
+    assert row["message_it"].startswith("Il visto E33G scadrà tra 6 giorni.")
+    assert row["message_id"].startswith("Visa E33G Anda akan habis dalam 6 hari.")
+    assert row["suggested_action"] != "stored text"
+    assert row["estimated_cost_idr"] == 9_000_000
+    [sent] = dispatcher.sent
+    assert (sent.alert_id, sent.message_en, sent.deadline) == (
+        STORED,
+        row["message_en"],
+        today + timedelta(days=6),
+    )
+
+
+async def test_a_failed_render_or_an_unknown_cost_keeps_the_stored_values(
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    today = await _today(pool)
+    await _store(pool, deadline=today + timedelta(days=20))
+    monkeypatch.setattr(engine_module, "render_template", _failing_render)
+    engine, dispatcher = _engine(pool)
+
+    await engine.generate_alerts(
+        [
+            _forecast(
+                today,
+                expiry=today + timedelta(days=6),
+                urgency="urgent",
+                pricing_key="kitas.renewal",
+            )
+        ]
+    )
+
+    row = (await _rows(pool, VISA_KEY))[STORED]
+    assert row["severity"] == "urgent"
+    assert row["deadline"] == today + timedelta(days=6)
+    for column in ("message_it", "message_en", "message_id", "suggested_action"):
+        assert row[column] == "stored text"
+    assert row["estimated_cost_idr"] == 1_000
+    assert len(dispatcher.sent) == 1
+
+
+async def test_a_promotion_given_only_severity_and_days_keeps_everything_else(
+    pool: asyncpg.Pool,
+) -> None:
+    today = await _today(pool)
+    await _store(pool, deadline=today + timedelta(days=20))
+
+    promoted = await AlertRepository(pool).promote(STORED, new_severity="urgent", new_days_until=6)
+
+    assert (promoted.severity, promoted.days_until, promoted.upgrade_count) == ("urgent", 6, 1)
+    assert promoted.deadline == today + timedelta(days=20)
+    assert promoted.message_en == "stored text"
+    assert promoted.suggested_action == "stored text"
+    assert promoted.estimated_cost_idr == 1_000

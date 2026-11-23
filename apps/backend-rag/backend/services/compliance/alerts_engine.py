@@ -185,10 +185,16 @@ class AlertsEngine:
             old_sev = AlertSeverity(existing.severity)
             new_sev = AlertSeverity(new_severity_str)
             if should_promote(old_sev, new_sev):
+                # A promoted alert is dispatched, so it carries this forecast's deadline, texts
+                # and cost; a failed render (logged) or an unknown cost keeps the stored value.
+                texts = self._render(fc, category, reporting_period, lang) or {}
                 promoted = await self._repo.promote(
                     existing.alert_id,
                     new_severity=new_severity_str,
                     new_days_until=fc.days_until_expiry,
+                    deadline=fc.expiry_date,
+                    estimated_cost_idr=self._cost(fc),
+                    **texts,
                 )
                 await self._safe_dispatch(promoted)
                 return promoted

@@ -174,13 +174,26 @@ class AlertRepository(BaseRepository):
         *,
         new_severity: str,
         new_days_until: int,
+        deadline: date | None = None,
+        message_it: str | None = None,
+        message_en: str | None = None,
+        message_id: str | None = None,
+        suggested_action: str | None = None,
+        estimated_cost_idr: int | None = None,
     ) -> AlertRow:
+        """Raise an alert's severity; every other value left as None keeps the stored one."""
         record = await self._exec(
             "fetchrow",
             """
             UPDATE compliance_alerts
                SET severity = $2,
                    days_until = $3,
+                   deadline = COALESCE($4::date, deadline),
+                   message_it = COALESCE($5::text, message_it),
+                   message_en = COALESCE($6::text, message_en),
+                   message_id = COALESCE($7::text, message_id),
+                   suggested_action = COALESCE($8::text, suggested_action),
+                   estimated_cost_idr = COALESCE($9::bigint, estimated_cost_idr),
                    upgrade_count = upgrade_count + 1
              WHERE alert_id = $1
             RETURNING *
@@ -188,6 +201,12 @@ class AlertRepository(BaseRepository):
             alert_id,
             new_severity,
             new_days_until,
+            deadline,
+            message_it,
+            message_en,
+            message_id,
+            suggested_action,
+            estimated_cost_idr,
         )
         if record is None:
             raise LookupError(f"alert_id {alert_id} not found")

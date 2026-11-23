@@ -502,7 +502,9 @@ class _StubAlertRepo:
         self.rows[row.dedup_key] = row
         return row
 
-    async def promote(self, alert_id: str, *, new_severity: str, new_days_until: int):
+    async def promote(
+        self, alert_id: str, *, new_severity: str, new_days_until: int, **_carried: object
+    ):
         row = next(r for r in self.rows.values() if r.alert_id == alert_id)
         row.severity = new_severity
         row.days_until = new_days_until
