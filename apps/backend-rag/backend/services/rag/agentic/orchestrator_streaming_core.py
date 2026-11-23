@@ -475,11 +475,7 @@ class OrchestratorStreamingCore:
 
                 # Check if this is a tool call event
                 if raw_event and raw_event.get("type") == "tool_call":
-                    tool_name = (
-                        raw_event.get("data", {}).get("tool")
-                        or raw_event.get("data", {}).get("tool_name")
-                        or "unknown tool"
-                    )
+                    tool_name = raw_event.get("data", {}).get("tool") or raw_event.get("data", {}).get("tool_name") or "unknown tool"
                     # M2 (operand rule): bind the yield operand FIRST, so building it is
                     # producer time; the pause read sits between it and the yield.
                     pending_event = thinking_service.create_thinking_event(
