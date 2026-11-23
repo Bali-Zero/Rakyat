@@ -18,10 +18,12 @@ import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
 from backend.app.dependencies import get_current_user, get_database_pool
@@ -220,7 +222,32 @@ class FunnelEvent(BaseModel):
     hostname: str | None = Field(default=None, max_length=253)
 
 
-@router.post("/funnel-event")
+# The funnel events are small: every producer (packages/core/analytics, apps/mouth/src/lib/analytics.ts)
+# sends a few fixed fields and no free text (a search sends its length, not its words), and the
+# largest payload ever stored is 144 bytes. The route is public, so a body above this bound is
+# refused before it is read as an event, walked by the scrub or written.
+MAX_FUNNEL_EVENT_BODY_BYTES = 4096
+
+
+class _BoundedBodyRoute(APIRoute):
+    """A route that refuses a body above MAX_FUNNEL_EVENT_BODY_BYTES with 413.
+
+    The check runs before FastAPI parses and validates the body, so an oversized body gets 413
+    whatever it holds, and a validation error never carries a large value back to the caller.
+    FastAPI reads the cached bytes afterwards, and the documented body schema is unchanged.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        handler = super().get_route_handler()
+
+        async def bounded(request: Request) -> Response:
+            if len(await request.body()) > MAX_FUNNEL_EVENT_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="funnel_event_too_large")
+            return await handler(request)
+
+        return bounded
+
+
 async def ingest_funnel_event(
     req: FunnelEvent,
     pool=Depends(get_database_pool_dep),
@@ -228,7 +255,8 @@ async def ingest_funnel_event(
     """
     Ingest a funnel analytics event. Never blocks the UX: unknown events
     return ok=False instead of raising an error. Payload values are
-    PII-scrubbed (MYTHOS §6 guardrail) before storage.
+    PII-scrubbed (MYTHOS §6 guardrail) before storage. A body larger than
+    MAX_FUNNEL_EVENT_BODY_BYTES is refused with 413 and nothing is stored.
     """
     if req.event not in ALLOWED_EVENTS:
         return {"ok": False, "reason": "unknown_event"}
@@ -252,6 +280,14 @@ async def ingest_funnel_event(
             req.hostname,
         )
     return {"ok": True}
+
+
+router.add_api_route(
+    "/funnel-event",
+    ingest_funnel_event,
+    methods=["POST"],
+    route_class_override=_BoundedBodyRoute,
+)
 
 
 # ---------------------------------------------------------------------------
