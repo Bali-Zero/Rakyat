@@ -356,7 +356,10 @@ async def get_draft(
     else:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    draft = await service.get_draft(client_id, quarter, year)
+    if role == "client":
+        draft = await service.get_draft_for_portal_client(client_id, quarter, year)
+    else:
+        draft = await service.get_draft(client_id, quarter, year)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     return {"success": True, "draft": draft.model_dump()}

@@ -818,6 +818,44 @@ class LKPMService:
         """Get a specific draft."""
         return await self._load_draft(client_id, quarter, year)
 
+    async def get_draft_for_portal_client(
+        self, client_id: int, quarter: str, year: int
+    ) -> LKPMDraft | None:
+        """Get the draft of a portal client: a report of one of its active linked
+        companies, or a draft generated for the client itself.
+
+        A report with a company is scoped by `r.company_id` (the authoritative FK),
+        never by `r.client_id`, which holds a company id for imported rows (see
+        `get_history_for_portal_client`). A draft generated for a client carries no
+        company, and only then does `r.client_id` identify the caller. One draft is
+        returned: the lowest linked company id first, the client's own generated
+        draft after them.
+        """
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT r.* FROM lkpm_reports r
+                WHERE r.quarter = $2 AND r.year = $3
+                  AND (
+                    r.company_id IN (
+                        SELECT DISTINCT ccl.company_id
+                        FROM client_company_links ccl
+                        WHERE ccl.client_id = $1
+                          AND ccl.status = 'active'
+                    )
+                    OR (r.company_id IS NULL AND r.client_id = $1)
+                  )
+                ORDER BY r.company_id ASC NULLS LAST, r.id ASC
+                LIMIT 1
+                """,
+                client_id,
+                quarter,
+                year,
+            )
+        if not row:
+            return None
+        return self._row_to_draft(row)
+
     async def get_history(self, client_id: int) -> list[LKPMBatchItem]:
         """
         Get LKPM report history visible to a client (workspace view).
