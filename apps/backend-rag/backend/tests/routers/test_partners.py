@@ -949,6 +949,76 @@ class TestCreateReferralJobTitleStaff:
 # ── 8. commissions ────────────────────────────────────────────────────────────
 
 
+class TestJobTitleStaffListAndCreate:
+    """Every non-admin staff member lists and creates partners as their owner."""
+
+    @staticmethod
+    def _client(mock_db_pool, role: str, email: str) -> tuple[TestClient, dict[str, Any]]:
+        pool, _ = mock_db_pool
+        user = {"user_id": str(_TEAM_ID), "email": email, "role": role, "permissions": []}
+        return TestClient(_make_app(user, pool), raise_server_exceptions=False), user
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("query", ["", f"?assigned_to={_USER_ID}"])
+    def test_job_title_staff_list_is_scoped_to_their_own_partners(
+        self, mock_db_pool, query
+    ) -> None:
+        client, staff = self._client(mock_db_pool, "Tax Lead", "staff@test.invalid")
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.list_partners = AsyncMock(return_value=[])
+            resp = client.get(f"/api/partners{query}")
+        assert resp.status_code == 200
+        assert svc_instance.list_partners.await_args.kwargs["assigned_to"] == staff["user_id"]
+
+    @pytest.mark.integration
+    def test_admin_list_keeps_the_owner_filter_it_names(self, admin_app) -> None:
+        _, client, _, _ = admin_app
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.list_partners = AsyncMock(return_value=[])
+            named = client.get(f"/api/partners?assigned_to={_TEAM_ID}")
+            unfiltered = client.get("/api/partners")
+        assert named.status_code == 200 and unfiltered.status_code == 200
+        calls = svc_instance.list_partners.await_args_list
+        assert calls[0].kwargs["assigned_to"] == str(_TEAM_ID)
+        assert calls[1].kwargs["assigned_to"] is None
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("named_owner", [None, str(_USER_ID)])
+    def test_job_title_staff_owns_the_partner_they_create(self, mock_db_pool, named_owner) -> None:
+        client, staff = self._client(mock_db_pool, "Tax Lead", "staff@test.invalid")
+        body = {"full_name": "Hotel Kama", "email": "h@k.io", "entity_type": "corporate_pt"}
+        if named_owner is not None:
+            body["assigned_to"] = named_owner
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.create_partner = AsyncMock(return_value=_PARTNER_ID)
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(
+                return_value=_make_partner(assigned_to=staff["user_id"])
+            )
+            resp = client.post("/api/partners", json=body)
+        assert resp.status_code == 201
+        assert svc_instance.create_partner.await_args.kwargs["assigned_to"] == staff["user_id"]
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("named_owner", [None, str(_TEAM_ID)])
+    def test_admin_create_keeps_the_owner_it_names(self, admin_app, named_owner) -> None:
+        _, client, _, _ = admin_app
+        body = {"full_name": "Hotel Kama", "email": "h@k.io", "entity_type": "corporate_pt"}
+        if named_owner is not None:
+            body["assigned_to"] = named_owner
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.create_partner = AsyncMock(return_value=_PARTNER_ID)
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=_make_partner())
+            resp = client.post("/api/partners", json=body)
+        assert resp.status_code == 201
+        assert svc_instance.create_partner.await_args.kwargs["assigned_to"] == named_owner
+
+
 class TestCommissions:
     @pytest.mark.integration
     def test_list_commissions_scoped(self, admin_app) -> None:

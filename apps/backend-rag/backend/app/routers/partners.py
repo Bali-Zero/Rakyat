@@ -350,12 +350,12 @@ async def create_partner(
             svc = PartnersService(conn)
             data = body.model_dump(exclude_none=True)
             assigned_to = data.pop("assigned_to", None)
-            # Team role: always scope to self (ignore any supplied assigned_to)
+            # A non-admin staff member always owns the partner they create, whatever
+            # their job title and whatever owner the request names; an admin may name
+            # any owner or none.
             # CATA-5: user["user_id"] is already a string (team_members.id VARCHAR) — no UUID wrapping
-            if user.get("role") == "team":
+            if not _is_admin_user(user):
                 assigned_to = str(user["user_id"])
-            elif assigned_to is None and user.get("role") == "admin":
-                assigned_to = None  # explicit None allowed for admin
             elif assigned_to is not None:
                 # CATA-5: assigned_to is already str (team_members.id VARCHAR); keep as-is
                 assigned_to = str(assigned_to)  # harmless cast for defensive safety
@@ -396,6 +396,10 @@ async def list_partners(
     Python; v1.1 should push pagination to SQL for large datasets.
     """
     _require_team_or_admin(user)  # CATA-2: partner role cannot list all partners
+    # A non-admin staff member lists only the partners assigned to them, whatever
+    # their job title; an admin may filter by any owner or none.
+    if not _is_admin_user(user):
+        assigned_to = str(user["user_id"])
     async with pool.acquire() as conn:
         svc = PartnersService(conn)
         # CATA-5: actor_user is team_members.id string — no UUID wrapping
