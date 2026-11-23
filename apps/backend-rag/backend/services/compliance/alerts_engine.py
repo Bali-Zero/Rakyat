@@ -166,22 +166,33 @@ class AlertsEngine:
         lang: str = "en"
         _ = client_lang_resolver  # silence unused warning
 
+        if (
+            existing is not None
+            and category in _ONE_DOCUMENT_CATEGORIES
+            and fc.expiry_date > existing.deadline
+        ):
+            # The stored alert may be about a deadline that has passed. The new alert is
+            # rendered first, so a failed render leaves the stored one open; the repository
+            # then closes the stored alert and inserts this one together, or changes nothing.
+            row = self._new_row(fc, category, dedup_key, reporting_period, new_severity_str, lang)
+            if row is not None:
+                try:
+                    replaced = await self._repo.replace_passed(existing.alert_id, row)
+                except asyncpg.UniqueViolationError:
+                    return await self._repo.find_active_by_dedup_key(dedup_key)
+                if replaced is not None:
+                    await self._safe_dispatch(replaced)
+                    return replaced
+                # Nothing was replaced: the stored alert is not passed, or another run has
+                # replaced or closed it since this run read it. The key is read once more. A
+                # run writes to, and sends for, only the alert it read, or a new one when the
+                # key has none: an alert another run wrote is returned as found.
+                current = await self._repo.find_active_by_dedup_key(dedup_key)
+                if current is not None and current.alert_id != existing.alert_id:
+                    return current
+                existing = current
+
         if existing is not None:
-            if category in _ONE_DOCUMENT_CATEGORIES and fc.expiry_date > existing.deadline:
-                # The stored alert may be about a deadline that has passed. The new alert is
-                # rendered first, so a failed render leaves the stored one open; the repository
-                # then closes the stored alert and inserts this one together, or changes nothing.
-                row = self._new_row(
-                    fc, category, dedup_key, reporting_period, new_severity_str, lang
-                )
-                if row is not None:
-                    try:
-                        replaced = await self._repo.replace_passed(existing.alert_id, row)
-                    except asyncpg.UniqueViolationError:
-                        return await self._repo.find_active_by_dedup_key(dedup_key)
-                    if replaced is not None:
-                        await self._safe_dispatch(replaced)
-                        return replaced
             old_sev = AlertSeverity(existing.severity)
             new_sev = AlertSeverity(new_severity_str)
             if should_promote(old_sev, new_sev):
@@ -196,6 +207,10 @@ class AlertsEngine:
                     estimated_cost_idr=self._cost(fc),
                     **texts,
                 )
+                if promoted is None:
+                    # Refused by the statement: another run raised it as high or higher, or
+                    # closed it, after this one read it. Nothing is sent.
+                    return await self._repo.find_active_by_dedup_key(dedup_key)
                 await self._safe_dispatch(promoted)
                 return promoted
             # Same/lower severity → return existing, no dispatch.

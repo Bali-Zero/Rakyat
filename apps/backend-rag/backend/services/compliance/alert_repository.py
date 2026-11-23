@@ -75,6 +75,9 @@ def _row_to_alert(record: asyncpg.Record) -> AlertRow:
     )
 
 
+# Lowest first: the order alert_dedup.should_promote ranks severities by.
+_SEVERITY_ORDER: tuple[str, ...] = ("info", "warning", "urgent", "critical")
+
 _INSERT_SQL = """
     INSERT INTO compliance_alerts (
       alert_id, client_id, category, severity, status,
@@ -180,8 +183,14 @@ class AlertRepository(BaseRepository):
         message_id: str | None = None,
         suggested_action: str | None = None,
         estimated_cost_idr: int | None = None,
-    ) -> AlertRow:
-        """Raise an alert's severity; every other value left as None keeps the stored one."""
+    ) -> AlertRow | None:
+        """Raise an open alert's severity; every other value left as None keeps the stored one.
+
+        The rise is decided by the statement itself, against the row as it is when written:
+        only an open alert whose stored severity is strictly lower changes. Returns None when
+        that is not so (another run raised it first, or it was closed), and raises
+        LookupError when the alert does not exist.
+        """
         record = await self._exec(
             "fetchrow",
             """
@@ -196,6 +205,8 @@ class AlertRepository(BaseRepository):
                    estimated_cost_idr = COALESCE($9::bigint, estimated_cost_idr),
                    upgrade_count = upgrade_count + 1
              WHERE alert_id = $1
+               AND status IN ('pending','sent','acknowledged')
+               AND array_position($10::text[], severity) < array_position($10::text[], $2::text)
             RETURNING *
             """,
             alert_id,
@@ -207,8 +218,11 @@ class AlertRepository(BaseRepository):
             message_id,
             suggested_action,
             estimated_cost_idr,
+            list(_SEVERITY_ORDER),
         )
         if record is None:
+            if await self.get(alert_id) is not None:
+                return None
             raise LookupError(f"alert_id {alert_id} not found")
         return _row_to_alert(record)
 
