@@ -1,5 +1,11 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspaceLayout from "./layout";
 // Resolves to the mock below, which re-exports the REAL ApiError class — so
@@ -14,6 +20,7 @@ const {
   mockLocationReplace,
   mockRouterPush,
   mockLogger,
+  mockPathname,
 } = vi.hoisted(() => ({
   mockGetGateStatus: vi.fn(),
   mockGetUserProfile: vi.fn(),
@@ -30,6 +37,7 @@ const {
     warn: vi.fn(),
     error: vi.fn(),
   },
+  mockPathname: { current: "/dashboard" },
 }));
 
 // Level is the assertion, not "did it log": warn and error BOTH forward to
@@ -39,7 +47,7 @@ vi.mock("@/lib/logger", () => ({ logger: mockLogger }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockRouterPush }),
-  usePathname: () => "/dashboard",
+  usePathname: () => mockPathname.current,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -85,6 +93,15 @@ vi.mock("@/components/workspace/KitaCommandPalette", () => ({
   KitaCommandPalette: () => null,
 }));
 
+vi.mock("./GateScreen", () => ({
+  default: ({ onRefresh }: { onRefresh: () => void }) => (
+    <div>
+      <div>Gate wall</div>
+      <button onClick={onRefresh}>Refresh gate</button>
+    </div>
+  ),
+}));
+
 vi.mock("@/components/ui/toast", () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
@@ -117,6 +134,7 @@ describe("WorkspaceLayout CELL decommission", () => {
   const originalLocation = window.location;
 
   beforeEach(() => {
+    mockPathname.current = "/dashboard";
     delete (window as { location?: Location }).location;
     (window as unknown as { location: Partial<Location> }).location = {
       hostname: "kita.balizero.com",
@@ -419,5 +437,165 @@ describe("WorkspaceLayout early route data", () => {
       expect(screen.getByText("Dashboard content")).toBeInTheDocument(),
     );
     expect(mockPrefetchClientDetail).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceLayout gate probe ordering", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((nextResolve, nextReject) => {
+      resolve = nextResolve;
+      reject = nextReject;
+    });
+    return { promise, resolve, reject };
+  }
+
+  async function renderBlockedGate() {
+    mockPathname.current = "/dashboard";
+    mockGetUserProfile.mockReturnValue({
+      name: "Test Admin",
+      email: "test-admin@example.test",
+      role: "admin",
+      team: "Testing",
+    });
+    mockGetGateStatus.mockResolvedValueOnce({ blocked: true });
+    const view = render(
+      <WorkspaceLayout>
+        <div>Workspace content</div>
+      </WorkspaceLayout>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Gate wall")).toBeInTheDocument(),
+    );
+    return view;
+  }
+
+  beforeEach(() => {
+    mockPathname.current = "/dashboard";
+  });
+
+  afterEach(() => vi.clearAllMocks());
+
+  it("keeps the newer clear response when an older blocked refresh resolves last", async () => {
+    const first = deferred<{ blocked: boolean }>();
+    const second = deferred<{ blocked: boolean }>();
+    const view = await renderBlockedGate();
+    mockGetGateStatus
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh gate" }));
+    await waitFor(() => expect(mockGetGateStatus).toHaveBeenCalledTimes(2));
+    mockPathname.current = "/clients";
+    view.rerender(
+      <WorkspaceLayout>
+        <div>Workspace content</div>
+      </WorkspaceLayout>,
+    );
+    await waitFor(() => expect(mockGetGateStatus).toHaveBeenCalledTimes(3));
+    second.resolve({ blocked: false });
+    await waitFor(() =>
+      expect(screen.getByText("Workspace content")).toBeInTheDocument(),
+    );
+    first.resolve({ blocked: true });
+    await waitFor(() =>
+      expect(screen.getByText("Workspace content")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Gate wall")).not.toBeInTheDocument();
+  });
+
+  it("keeps the newer blocked response when an older clear refresh resolves last", async () => {
+    const first = deferred<{ blocked: boolean }>();
+    const second = deferred<{ blocked: boolean }>();
+    const view = await renderBlockedGate();
+    mockGetGateStatus
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh gate" }));
+    await waitFor(() => expect(mockGetGateStatus).toHaveBeenCalledTimes(2));
+    mockPathname.current = "/clients";
+    view.rerender(
+      <WorkspaceLayout>
+        <div>Workspace content</div>
+      </WorkspaceLayout>,
+    );
+    await waitFor(() => expect(mockGetGateStatus).toHaveBeenCalledTimes(3));
+    second.resolve({ blocked: true });
+    await waitFor(() =>
+      expect(screen.getByText("Gate wall")).toBeInTheDocument(),
+    );
+    first.resolve({ blocked: false });
+    await waitFor(() =>
+      expect(screen.getByText("Gate wall")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Workspace content")).not.toBeInTheDocument();
+  });
+
+  it("ignores an older refresh failure after a newer blocked response", async () => {
+    const first = deferred<{ blocked: boolean }>();
+    const second = deferred<{ blocked: boolean }>();
+    const view = await renderBlockedGate();
+    mockGetGateStatus
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh gate" }));
+    await waitFor(() => expect(mockGetGateStatus).toHaveBeenCalledTimes(2));
+    mockPathname.current = "/clients";
+    view.rerender(
+      <WorkspaceLayout>
+        <div>Workspace content</div>
+      </WorkspaceLayout>,
+    );
+    await waitFor(() => expect(mockGetGateStatus).toHaveBeenCalledTimes(3));
+    second.resolve({ blocked: true });
+    await waitFor(() =>
+      expect(screen.getByText("Gate wall")).toBeInTheDocument(),
+    );
+    await act(async () => {
+      first.reject(new Error("synthetic older failure"));
+    });
+    expect(screen.getByText("Gate wall")).toBeInTheDocument();
+    expect(screen.queryByText("Workspace content")).not.toBeInTheDocument();
+  });
+
+  it("keeps the review exemption and latest-probe fail-open behavior", async () => {
+    const view = await renderBlockedGate();
+    mockGetGateStatus.mockResolvedValueOnce({ blocked: true });
+    mockPathname.current = "/review";
+    view.rerender(
+      <WorkspaceLayout>
+        <div>Workspace content</div>
+      </WorkspaceLayout>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Workspace content")).toBeInTheDocument(),
+    );
+
+    mockGetGateStatus.mockResolvedValueOnce({ blocked: true });
+    mockPathname.current = "/dashboard";
+    view.rerender(
+      <WorkspaceLayout>
+        <div>Workspace content</div>
+      </WorkspaceLayout>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Gate wall")).toBeInTheDocument(),
+    );
+
+    mockGetGateStatus.mockRejectedValueOnce(
+      new Error("synthetic latest failure"),
+    );
+    mockPathname.current = "/clients";
+    view.rerender(
+      <WorkspaceLayout>
+        <div>Workspace content</div>
+      </WorkspaceLayout>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Workspace content")).toBeInTheDocument(),
+    );
   });
 });
