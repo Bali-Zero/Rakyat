@@ -14,7 +14,10 @@ import type {
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
-const calls = vi.hoisted(() => ({ list: [] as unknown[] }));
+const calls = vi.hoisted(() => ({
+  list: [] as unknown[],
+  summary: undefined as unknown,
+}));
 
 function row(case_id: string, client_name: string, stage: string) {
   return {
@@ -36,7 +39,7 @@ const TERMINAL = ["epo", "status_change"];
 
 vi.mock("@/hooks/useSecondHome", () => ({
   useSecondHomeSummary: () => ({
-    data: undefined,
+    data: calls.summary,
     isLoading: false,
     isError: false,
   }),
@@ -63,6 +66,27 @@ const pickStage = (v: string) =>
 describe("second-home console stage filter", () => {
   beforeEach(() => {
     calls.list.length = 0;
+    calls.summary = undefined;
+  });
+
+  describe("terminal chip", () => {
+    const summary = (by_stage: Record<string, number>) => ({
+      by_stage,
+      active_total: 1,
+      scan_switch: "disarmed",
+    });
+
+    it("does not count itap_eval", () => {
+      calls.summary = summary({ epo: 2, status_change: 1, itap_eval: 3 });
+      render(<SecondHomeConsolePage />);
+      expect(screen.getByText(/^3 terminal/)).toBeTruthy();
+    });
+
+    it("states that it covers all time", () => {
+      calls.summary = summary({ epo: 2 });
+      render(<SecondHomeConsolePage />);
+      expect(screen.getByText("2 terminal (all time)")).toBeTruthy();
+    });
   });
 
   it("default view stays active-only", () => {

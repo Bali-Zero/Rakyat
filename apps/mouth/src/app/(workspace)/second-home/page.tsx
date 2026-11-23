@@ -85,12 +85,15 @@ export default function SecondHomeConsolePage() {
     let pipeline = 0;
     let permit = 0;
     let terminal = 0;
+    // Terminal = what the backend excludes from "active" (epo, status_change).
+    // itap_eval is grouped "terminal" in STAGE_GROUP but is backend-active and
+    // currently disabled, so it is counted in no chip.
     for (const [stage, count] of Object.entries(byStage)) {
       const group = STAGE_GROUP[stage as E33Stage];
       const n = count ?? 0;
       if (group === "pipeline") pipeline += n;
       else if (group === "permit") permit += n;
-      else if (group === "terminal") terminal += n;
+      else if (isTerminalStage(stage)) terminal += n;
     }
     return { pipeline, permit, terminal };
   }, [summaryQuery.data]);
@@ -145,7 +148,7 @@ export default function SecondHomeConsolePage() {
             },
             {
               key: "terminal",
-              content: <>{groupCounts.terminal} terminal</>,
+              content: <>{groupCounts.terminal} terminal (all time)</>,
               className:
                 "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)]",
             },
