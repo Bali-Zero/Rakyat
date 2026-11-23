@@ -1125,8 +1125,9 @@ def test_extract_visa_refuses_a_drive_file_that_is_not_the_clients(extract_visa_
     ocr.assert_not_awaited()
 
 
+@pytest.mark.parametrize("doc_id", [77, 0, -1])
 def test_extract_visa_refuses_a_document_that_is_not_this_clients_record_of_the_file(
-    extract_visa_client, mock_db_pool
+    extract_visa_client, mock_db_pool, doc_id
 ):
     """Guilt: doc_id alone chose the row the OCR overwrote, so another client's
     document (or another file's) was rewritten and synced onto this client."""
@@ -1142,7 +1143,7 @@ def test_extract_visa_refuses_a_document_that_is_not_this_clients_record_of_the_
     ):
         response = extract_visa_client.post(
             "/api/crm/clients/1/extract-visa",
-            json={"file_id": "drive-file-123", "doc_id": 77},
+            json={"file_id": "drive-file-123", "doc_id": doc_id},
         )
 
     assert response.status_code == 404

@@ -735,7 +735,8 @@ async def extract_visa_data(
         # other document write uses) and the document must be this client's live
         # record of that same file.
         await assert_drive_file_belongs_to_client(body.file_id, client_id, conn)
-        if body.doc_id and not await conn.fetchval(
+        # 0 is a document id like any other: only an absent doc_id skips the check.
+        if body.doc_id is not None and not await conn.fetchval(
             _CLIENT_DOCUMENT_OF_FILE_SQL, body.doc_id, client_id, body.file_id
         ):
             raise HTTPException(status_code=404, detail="Document not found")
