@@ -14,6 +14,8 @@ Fixture layout:
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -1393,6 +1395,67 @@ class TestFinanceExport:
         assert "commission_id" in first_line
         assert "partner" in first_line
         assert "net_idr" in first_line
+
+    @pytest.mark.integration
+    def test_finance_export_escapes_formula_prefixes(self, admin_app) -> None:
+        _, client, pool, conn = admin_app
+        values = {
+            "id": str(_COMMISSION_ID),
+            "full_name": "=SUM(1,1)",
+            "npwp": None,
+            "entity_type": "individual",
+            "entry_type": "accrual",
+            "gross_amount_idr": Decimal("1000000"),
+            "withholding_category": "tbd",
+            "withholding_amount_idr": Decimal("0"),
+            "net_amount_idr": Decimal("1000000"),
+            "status": "approved",
+            "paid_at": None,
+            "paid_via": None,
+            "payment_reference": "@synthetic-ref",
+        }
+        mock_row = MagicMock()
+        mock_row.keys = MagicMock(return_value=list(values))
+        mock_row.__getitem__ = MagicMock(side_effect=values.__getitem__)
+        conn.fetch = AsyncMock(return_value=[mock_row])
+
+        resp = client.get("/api/partners/finance/export?from=2026-01-01&to=2026-04-30")
+
+        assert resp.status_code == 200
+        row = list(csv.reader(io.StringIO(resp.text)))[1]
+        assert row[1] == "'=SUM(1,1)"
+        assert row[12] == "'@synthetic-ref"
+
+    @pytest.mark.integration
+    def test_finance_export_preserves_safe_text_numbers_and_none(self, admin_app) -> None:
+        _, client, pool, conn = admin_app
+        values = {
+            "id": str(_COMMISSION_ID),
+            "full_name": "Synthetic Partner",
+            "npwp": None,
+            "entity_type": "individual",
+            "entry_type": "accrual",
+            "gross_amount_idr": Decimal("1000000"),
+            "withholding_category": "tbd",
+            "withholding_amount_idr": Decimal("0"),
+            "net_amount_idr": Decimal("-2500"),
+            "status": "approved",
+            "paid_at": None,
+            "paid_via": None,
+            "payment_reference": None,
+        }
+        mock_row = MagicMock()
+        mock_row.keys = MagicMock(return_value=list(values))
+        mock_row.__getitem__ = MagicMock(side_effect=values.__getitem__)
+        conn.fetch = AsyncMock(return_value=[mock_row])
+
+        resp = client.get("/api/partners/finance/export?from=2026-01-01&to=2026-04-30")
+
+        assert resp.status_code == 200
+        row = list(csv.reader(io.StringIO(resp.text)))[1]
+        assert row[1] == "Synthetic Partner"
+        assert row[8] == "-2500"
+        assert row[2] == ""
 
     @pytest.mark.integration
     def test_finance_export_team_forbidden(self, team_app) -> None:

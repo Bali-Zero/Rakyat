@@ -285,6 +285,12 @@ def _require_finance(user: dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail="finance.mark_paid permission required")
 
 
+def _escape_csv_formula(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return f"'{value}"
+    return value
+
+
 def _sterilize_client_for_partner(full_name: str) -> str:
     """'Mario Rossi' → 'Mario R.' — hide client surname from partner-role user."""
     parts = full_name.strip().split()
@@ -585,7 +591,7 @@ async def finance_export(
             ]
         )
         for r in rows:
-            writer.writerow([r[k] for k in r.keys()])
+            writer.writerow([_escape_csv_formula(r[k]) for k in r.keys()])
         return Response(
             content=buf.getvalue(),
             media_type="text/csv",
