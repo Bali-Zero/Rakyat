@@ -905,6 +905,7 @@ async def list_partner_audit_log(
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> Any:
     """List the audit log for a partner. Admin or team-owner only."""
+    _require_team_or_admin(user)  # internal view: partner role never reads it
     try:
         async with pool.acquire() as conn:
             svc = PartnersService(conn)

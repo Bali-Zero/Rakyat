@@ -995,6 +995,56 @@ class TestCommissions:
         assert resp.status_code == 403
 
 
+class TestPartnerAuditLogAccess:
+    """The audit log of a partner record is an internal view: staff only."""
+
+    @staticmethod
+    def _get_audit_log(client: TestClient):
+        partner = _make_partner()
+
+        async def _verify(*args, **kwargs):
+            return partner
+
+        with (
+            patch("backend.app.routers.partners.verify_partner_access_with_role") as mock_verify,
+            patch("backend.app.routers.partners.PartnersService") as MockSvc,
+        ):
+            mock_verify.side_effect = _verify
+            MockSvc.return_value.list_audit = AsyncMock(return_value=[])
+            return client.get(f"/api/partners/{_PARTNER_ID}/audit-log")
+
+    @pytest.mark.integration
+    def test_partner_role_cannot_read_own_audit_log(self, partner_app) -> None:
+        _, client, _, _ = partner_app
+        resp = self._get_audit_log(client)
+        assert resp.status_code == 403
+
+    @pytest.mark.integration
+    def test_admin_can_read_audit_log(self, admin_app) -> None:
+        _, client, _, _ = admin_app
+        resp = self._get_audit_log(client)
+        assert resp.status_code == 200
+
+    @pytest.mark.integration
+    def test_owning_staff_can_read_audit_log(self, team_app) -> None:
+        _, client, _, _ = team_app
+        resp = self._get_audit_log(client)
+        assert resp.status_code == 200
+
+    @pytest.mark.integration
+    def test_partner_role_still_reads_own_record(self, partner_app) -> None:
+        _, client, _, _ = partner_app
+        partner = _make_partner()
+
+        async def _verify(*args, **kwargs):
+            return partner
+
+        with patch("backend.app.routers.partners.verify_partner_access_with_role") as mock_verify:
+            mock_verify.side_effect = _verify
+            resp = client.get(f"/api/partners/{_PARTNER_ID}")
+        assert resp.status_code == 200
+
+
 # ── 9. /me endpoints ──────────────────────────────────────────────────────────
 
 
