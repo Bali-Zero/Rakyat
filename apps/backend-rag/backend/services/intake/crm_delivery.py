@@ -607,7 +607,7 @@ async def deliver_committed_to_crm(
                 await conn.execute(
                     """
                     UPDATE intake_commit_audit
-                       SET plan = COALESCE(plan, '{}'::jsonb) || $2::jsonb
+                       SET plan = COALESCE(plan, '{}'::jsonb) || $2::text::jsonb
                      WHERE id = $1
                     """,
                     result.audit_id,
