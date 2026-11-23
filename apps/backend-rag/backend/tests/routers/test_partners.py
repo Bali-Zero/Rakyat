@@ -503,6 +503,67 @@ class TestUpdatePartner:
         assert resp.status_code == 403
 
 
+class TestPartnerUpdateCommissionBounds:
+    """default_commission_value is bounded on the PATCH request model."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"default_commission_value": "-1"},
+            {"default_commission_type": "percentage", "default_commission_value": "100.01"},
+            {"default_commission_type": "percentage", "default_commission_value": "5000"},
+            {"default_commission_type": "flat", "default_commission_value": "-0.01"},
+            {"default_commission_value": "99999999999"},
+        ],
+    )
+    def test_out_of_range_commission_is_refused(self, payload) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            partners_module.PartnerUpdate(**payload)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"default_commission_value": "0"},
+            {"default_commission_value": "12.5"},
+            {"default_commission_type": "percentage", "default_commission_value": "100"},
+            {"default_commission_type": "flat", "default_commission_value": "250000"},
+        ],
+    )
+    def test_ordinary_commission_is_accepted(self, payload) -> None:
+        partners_module.PartnerUpdate(**payload)
+
+    @pytest.mark.integration
+    def test_patch_with_negative_commission_returns_422(self, team_app) -> None:
+        _, client, _, _ = team_app
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.update_partner = AsyncMock()
+            resp = client.patch(
+                f"/api/partners/{_PARTNER_ID}",
+                json={"default_commission_value": "-5"},
+            )
+        assert resp.status_code == 422
+        svc_instance.update_partner.assert_not_awaited()
+
+    @pytest.mark.integration
+    def test_patch_with_percentage_over_100_returns_422(self, team_app) -> None:
+        _, client, _, _ = team_app
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.update_partner = AsyncMock()
+            resp = client.patch(
+                f"/api/partners/{_PARTNER_ID}",
+                json={"default_commission_type": "percentage", "default_commission_value": "150"},
+            )
+        assert resp.status_code == 422
+        svc_instance.update_partner.assert_not_awaited()
+
+
 # ── 5. activate / deactivate ──────────────────────────────────────────────────
 
 

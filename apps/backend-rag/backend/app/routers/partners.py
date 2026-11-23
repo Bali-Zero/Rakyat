@@ -103,6 +103,10 @@ _PARTNER_FIELDS_NEVER_EMPTIED = (
     "terms_version",
 )
 
+_MAX_PERCENTAGE = Decimal("100")
+# partners.default_commission_value is NUMERIC(14,4).
+_MAX_COMMISSION_VALUE = Decimal("9999999999.9999")
+
 
 class PartnerUpdate(BaseModel):
     full_name: str | None = None
@@ -140,6 +144,24 @@ class PartnerUpdate(BaseModel):
         ]
         if emptied:
             raise ValueError(f"cannot be empty: {', '.join(emptied)}")
+        return self
+
+    @model_validator(mode="after")
+    def _bound_commission_value(self) -> PartnerUpdate:
+        value = self.default_commission_value
+        if value is None:
+            return self
+        if value < 0:
+            raise ValueError("default_commission_value must not be negative")
+        # A percentage tops out at 100. When the kind is not part of this
+        # request, the bound is the largest value the column holds.
+        ceiling = (
+            _MAX_PERCENTAGE
+            if self.default_commission_type == "percentage"
+            else _MAX_COMMISSION_VALUE
+        )
+        if value > ceiling:
+            raise ValueError(f"default_commission_value must be at most {ceiling}")
         return self
 
 
