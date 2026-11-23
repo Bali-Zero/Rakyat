@@ -136,8 +136,9 @@ class PortalDocumentsMixin:
         ):
             return "personal"
 
-        # Family
-        if any(k in combined for k in ("akte lahir", "akta lahir", "birth", "nikah", "marriage")):
+        # Family. "lahir" also reaches "kelahiran" and a filename whose spaces the
+        # upload path has already turned into underscores ("akta_lahir").
+        if any(k in combined for k in ("lahir", "birth", "nikah", "marriage")):
             return "family"
 
         # Company / PMA
