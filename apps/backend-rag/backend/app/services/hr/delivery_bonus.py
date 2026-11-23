@@ -1,6 +1,6 @@
 """Employee bonus receipts. The CRM caller owns the transaction that records issuance or delivery."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import asyncpg
@@ -28,11 +28,12 @@ def payroll_award_date(earned_at: datetime) -> datetime:
 async def get_delivery_bonus(conn: asyncpg.Connection, practice_id: int) -> dict | None:
     row = await conn.fetchrow(
         """
-        SELECT e.event_kind, e.earned_at, e.awarded_at, e.amount_idr,
-               COALESCE(b.status, CASE WHEN e.amount_idr IS NULL THEN 'awaiting_rate'
+        SELECT e.event_kind, e.earned_at, e.recorded_at, e.awarded_at, e.amount_idr,
+               COALESCE(b.status, CASE WHEN e.employee_id IS NULL THEN 'awaiting_employee'
+                                      WHEN e.amount_idr IS NULL THEN 'awaiting_rate'
                                       ELSE 'payroll_locked' END) AS status
         FROM hr_delivery_bonus_events e LEFT JOIN hr_bonus_ledger b ON b.id = e.ledger_id
-        WHERE e.practice_id = $1 AND e.employee_id IS NOT NULL
+        WHERE e.practice_id = $1
         """,
         practice_id,
     )
@@ -72,9 +73,21 @@ async def record_delivery_bonus(
     service_code: str,
     assigned_to: str | None,
     event_kind: str,
+    *,
+    issued_on: date | None = None,
 ) -> dict | None:
     """Call inside the practice mutation's transaction after recording the qualifying output."""
-    earned = datetime.now(WITA)
+    recorded = datetime.now(WITA)
+    earned = recorded
+    if event_kind == "electronic_visa_issued":
+        if issued_on is None or issued_on > recorded.date():
+            previous = await get_delivery_bonus(conn, practice_id)
+            if previous:
+                return previous
+            raise ValueError(
+                "An issued Electronic Visa needs its actual issue date, up to today in Bali"
+            )
+        earned = datetime.combine(issued_on, time.min, tzinfo=WITA)
     # Existing payroll records win across upgrades, including already paid/reversed bonuses.
     # An ineligible assignee still claims the event to prevent awards after reassignment.
     event = await conn.fetchrow(
@@ -127,11 +140,13 @@ async def resolve_delivery_bonus(
     amount_idr: int,
     reviewer: str,
     use_current_period: bool = False,
+    *,
+    employee_id: int | None = None,
 ) -> dict | None:
     """Record HR's valuation for the original beneficiary. The caller owns a transaction."""
 
     event = await conn.fetchrow(
-        "SELECT * FROM hr_delivery_bonus_events WHERE practice_id=$1 AND employee_id IS NOT NULL FOR UPDATE",
+        "SELECT * FROM hr_delivery_bonus_events WHERE practice_id=$1 FOR UPDATE",
         practice_id,
     )
     if not event:
@@ -140,10 +155,16 @@ async def resolve_delivery_bonus(
         return await get_delivery_bonus(conn, practice_id)
     if event["amount_idr"] is not None and amount_idr != event["amount_idr"]:
         raise ValueError("The recorded rate must be preserved")
+    frozen_beneficiary = event["employee_id"]
+    if frozen_beneficiary is not None and employee_id not in (None, frozen_beneficiary):
+        raise ValueError("The original beneficiary must be preserved")
+    beneficiary = frozen_beneficiary or employee_id
+    if beneficiary is None:
+        raise ValueError("Select the employee who earned this bonus")
     eligible = await conn.fetchval(
         f"""SELECT {payroll_set_sql()} FROM hr_employees e JOIN team_members tm ON tm.id=e.team_member_id
             WHERE e.id=$1 FOR SHARE OF e, tm""",
-        event["employee_id"],
+        beneficiary,
     )
     if not eligible:
         raise ValueError("This employee is no longer on payroll")
@@ -158,10 +179,11 @@ async def resolve_delivery_bonus(
         else:
             raise ValueError("The original payroll month is still open")
     updated = await conn.fetchrow(
-        "UPDATE hr_delivery_bonus_events SET amount_idr=$2, resolved_by=$3 WHERE practice_id=$1 RETURNING *",
+        "UPDATE hr_delivery_bonus_events SET amount_idr=$2, resolved_by=$3, employee_id=$4 WHERE practice_id=$1 RETURNING *",
         practice_id,
         amount_idr,
         reviewer,
+        beneficiary,
     )
     await _write_ledger(conn, updated, award_date)
     return await get_delivery_bonus(conn, practice_id)
@@ -212,7 +234,7 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
                                          ELSE 'payroll_locked' END) AS status
            FROM hr_delivery_bonus_events e LEFT JOIN hr_bonus_ledger b ON b.id=e.ledger_id
            LEFT JOIN practice_types pt ON pt.code=e.service_code
-           WHERE e.employee_id=$1 ORDER BY e.earned_at DESC, e.practice_id DESC LIMIT 5""",
+           WHERE e.employee_id=$1 ORDER BY e.recorded_at DESC, e.practice_id DESC LIMIT 5""",
         emp_id,
     )
     next_case = await conn.fetchrow(

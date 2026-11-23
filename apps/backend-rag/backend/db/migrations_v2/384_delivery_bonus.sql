@@ -7,6 +7,7 @@ CREATE TABLE hr_delivery_bonus_events (
     service_code TEXT NOT NULL,
     event_kind TEXT NOT NULL CHECK (event_kind IN ('electronic_visa_issued', 'service_delivered')),
     earned_at TIMESTAMPTZ NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     awarded_at TIMESTAMPTZ NOT NULL,
     bonus_rate_id INTEGER REFERENCES hr_bonus_rates(id) ON DELETE SET NULL,
     amount_idr BIGINT CHECK (amount_idr >= 0),

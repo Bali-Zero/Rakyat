@@ -399,6 +399,7 @@ class DeliveryGoal(BaseModel):
 
 
 class DeliveryRateResolution(BaseModel):
+    employee_id: int | None = Field(default=None, gt=0)
     amount_idr: int = Field(ge=0, le=100_000_000)
     use_current_period: bool = False
 
@@ -444,9 +445,9 @@ async def delivery_bonus_reviews(
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT e.practice_id, COALESCE(pt.name,e.service_code) AS service, e.earned_at,
-                      e.event_kind, tm.full_name AS employee_name, e.amount_idr
-               FROM hr_delivery_bonus_events e JOIN hr_employees emp ON emp.id=e.employee_id
-               JOIN team_members tm ON tm.id=emp.team_member_id
+                      e.event_kind, e.employee_id, tm.full_name AS employee_name, e.amount_idr
+               FROM hr_delivery_bonus_events e LEFT JOIN hr_employees emp ON emp.id=e.employee_id
+               LEFT JOIN team_members tm ON tm.id=emp.team_member_id
                LEFT JOIN practice_types pt ON pt.code=e.service_code
                WHERE e.ledger_id IS NULL ORDER BY e.earned_at, e.practice_id LIMIT 100"""
         )
@@ -470,6 +471,7 @@ async def resolve_delivery_rate(
                     data.amount_idr,
                     _get_user_id(current_user),
                     data.use_current_period,
+                    employee_id=data.employee_id,
                 )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc

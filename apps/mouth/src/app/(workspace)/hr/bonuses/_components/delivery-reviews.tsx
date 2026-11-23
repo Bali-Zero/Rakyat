@@ -9,16 +9,28 @@ import {
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 
+type Employee = { id: number; full_name: string };
+
 type Item = {
   practice_id: number;
   service: string;
-  employee_name: string;
+  employee_id: number | null;
+  employee_name: string | null;
   earned_at: string;
   amount_idr: number | null;
 };
 type Reviews = { viewer_team_member_id: string; items: Item[] };
 
-function Review({ item, onResolved }: { item: Item; onResolved: () => void }) {
+function Review({
+  item,
+  employees,
+  onResolved,
+}: {
+  item: Item;
+  employees: Employee[];
+  onResolved: () => void;
+}) {
+  const [beneficiary, setBeneficiary] = useState("");
   const [amount, setAmount] = useState(String(item.amount_idr ?? ""));
   const [message, setMessage] = useState("");
   const [carry, setCarry] = useState(false);
@@ -34,6 +46,8 @@ function Review({ item, onResolved }: { item: Item; onResolved: () => void }) {
       await api.post(`/api/hr/delivery-bonus-reviews/${item.practice_id}`, {
         amount_idr: rate,
         use_current_period: carry,
+        employee_id:
+          item.employee_id === null ? Number(beneficiary) : undefined,
       });
       onResolved();
     } catch (e) {
@@ -50,7 +64,27 @@ function Review({ item, onResolved }: { item: Item; onResolved: () => void }) {
       className="flex flex-wrap items-end gap-3 border-t border-[var(--bz-border)] py-2 text-sm"
     >
       <div className="flex-1">
-        <strong>{item.employee_name}</strong>
+        {item.employee_id !== null ? (
+          <strong>{item.employee_name}</strong>
+        ) : (
+          <label>
+            Employee to credit
+            <select
+              aria-label="Employee to credit"
+              required
+              value={beneficiary}
+              onChange={(e) => setBeneficiary(e.target.value)}
+              className="block rounded border bg-[var(--bz-surface)] px-2 py-1"
+            >
+              <option value="">Select employee</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.full_name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <p>
           {item.service} · #{item.practice_id} ·{" "}
           {new Date(item.earned_at).toLocaleDateString("en-GB", {
@@ -91,7 +125,13 @@ function Review({ item, onResolved }: { item: Item; onResolved: () => void }) {
     </form>
   );
 }
-export function DeliveryReviews({ onResolved }: { onResolved: () => void }) {
+export function DeliveryReviews({
+  employees,
+  onResolved,
+}: {
+  employees: Employee[];
+  onResolved: () => void;
+}) {
   const identity = useSessionIdentity();
   const [bound, setBound] = useState<{
     identity: SessionIdentity;
@@ -142,6 +182,7 @@ export function DeliveryReviews({ onResolved }: { onResolved: () => void }) {
         <Review
           key={`${identity.epoch}-${identity.sub}-${item.practice_id}`}
           item={item}
+          employees={employees}
           onResolved={() => {
             setSeq((s) => s + 1);
             onResolved();

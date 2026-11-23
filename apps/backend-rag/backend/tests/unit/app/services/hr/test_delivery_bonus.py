@@ -46,10 +46,19 @@ async def test_only_new_eligible_priced_event_writes_payroll(monkeypatch, receip
     write = AsyncMock()
     monkeypatch.setattr(bonus, "_write_ledger", write)
     result = await bonus.record_delivery_bonus(
-        conn, 12, "visa_c1_tourism", "member@example.invalid", "electronic_visa_issued"
+        conn,
+        12,
+        "visa_c1_tourism",
+        "member@example.invalid",
+        "electronic_visa_issued",
+        issued_on=date(2020, 12, 29),
     )
     assert result["event_kind"] == "electronic_visa_issued"
     assert write.await_count == expected_writes
+    insert = conn.fetchrow.await_args_list[0].args
+    assert insert[5].date() == date(2020, 12, 29)
+    assert insert[6].date() == date(2021, 1, 1)
+    assert insert[7] == date(2020, 12, 29)
 
 
 @pytest.mark.asyncio
@@ -96,3 +105,26 @@ async def test_resolving_missing_rate_requires_current_payroll_eligibility():
     with pytest.raises(ValueError, match="no longer on payroll"):
         await bonus.resolve_delivery_bonus(conn, 2, 175000, "hr-reviewer")
     conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_first_visa_needs_real_issue_date_but_a_replacement_preserves_its_receipt():
+    conn = AsyncMock()
+    conn.fetchrow.return_value = None
+    with pytest.raises(ValueError, match="actual issue date"):
+        await bonus.record_delivery_bonus(
+            conn, 8, "visa", "member@example.invalid", "electronic_visa_issued"
+        )
+    with pytest.raises(ValueError, match="actual issue date"):
+        await bonus.record_delivery_bonus(
+            conn, 8, "visa", "member@example.invalid", "electronic_visa_issued", issued_on=date.max
+        )
+    conn.fetchrow.return_value = {
+        "status": "awaiting_employee",
+        "event_kind": "electronic_visa_issued",
+    }
+    assert (
+        await bonus.record_delivery_bonus(
+            conn, 8, "visa", "replacement@example.invalid", "electronic_visa_issued"
+        )
+    )["status"] == "awaiting_employee"

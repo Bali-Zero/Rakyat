@@ -520,7 +520,12 @@ export default function BonusesPage() {
         })}
       </div>
 
-      {isAdmin && <DeliveryReviews onResolved={() => void loadBonuses()} />}
+      {isAdmin && (
+        <DeliveryReviews
+          employees={employees}
+          onResolved={() => void loadBonuses()}
+        />
+      )}
       {displayMonths.length === 0 && (
         <div
           className="border rounded-xl p-8 text-center"

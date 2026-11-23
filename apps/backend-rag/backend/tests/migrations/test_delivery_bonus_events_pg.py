@@ -1,5 +1,6 @@
 """Exercise the real issuance trigger and payroll writer on an isolated PostgreSQL schema."""
 
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from backend.app.services.hr import delivery_bonus as bonus
 from backend.app.services.hr.delivery_bonus import (
     delivery_desk,
     record_delivery_bonus,
@@ -55,9 +57,16 @@ async def db():
 @pytest.mark.asyncio
 async def test_issuance_pays_once_before_completion_reassignment_cannot_duplicate_it(db):
     issued = await record_delivery_bonus(
-        db, 2, "visa_demo", "consultant@example.invalid", "electronic_visa_issued"
+        db,
+        2,
+        "visa_demo",
+        "consultant@example.invalid",
+        "electronic_visa_issued",
+        issued_on=date(2020, 12, 29),
     )
     assert issued["amount_idr"] == 125000 and issued["status"] == "pending"
+    assert issued["earned_at"] < issued["recorded_at"]
+    assert issued["awarded_at"].astimezone(bonus.WITA).date() == date(2021, 1, 1)
     assert await db.fetchval("SELECT status FROM practices WHERE id=2") == "on_process"
     assert (await delivery_desk(db, "tm-1"))["next_case"]["already_earned"]
     await db.execute("UPDATE practices SET status='completed' WHERE id=2")
@@ -92,3 +101,21 @@ async def test_legacy_award_survives_upgrade_and_unqualified_insert_is_rejected(
         async with db.transaction():
             await db.execute("""INSERT INTO hr_bonus_ledger(practice_id,employee_id,practice_type_code,amount_idr)
                             VALUES(2,1,'visa_demo',100)""")
+
+
+@pytest.mark.asyncio
+async def test_unattributed_issuance_requires_hr_selection(db):
+    result = await record_delivery_bonus(
+        db, 2, "visa_demo", None, "electronic_visa_issued", issued_on=date(2020, 12, 29)
+    )
+    assert result["status"] == "awaiting_employee"
+    with pytest.raises(ValueError, match="Select the employee"):
+        await resolve_delivery_bonus(db, 2, 125000, "hr-reviewer")
+    resolved = await resolve_delivery_bonus(db, 2, 125000, "hr-reviewer", employee_id=1)
+    assert resolved["status"] == "pending"
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=2 AND employee_id=1"
+        )
+        == 1
+    )
