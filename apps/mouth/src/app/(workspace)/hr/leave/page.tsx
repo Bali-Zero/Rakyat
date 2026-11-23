@@ -71,9 +71,16 @@ const statusRowBg: Record<string, string> = {
 // ── Mini Calendar ─────────────────────────────────────────────────────────────
 
 function MiniCalendar({ requests }: { requests: LeaveRequest[] }) {
-  const today = new Date();
+  const todayParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Makassar",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const todayStr = `${todayParts.find((part) => part.type === "year")?.value}-${todayParts.find((part) => part.type === "month")?.value}-${todayParts.find((part) => part.type === "day")?.value}`;
+  const [todayYear, todayMonth] = todayStr.split("-").map(Number);
   const [current, setCurrent] = useState(
-    new Date(today.getFullYear(), today.getMonth(), 1),
+    new Date(todayYear, todayMonth - 1, 1),
   );
 
   const year = current.getFullYear();
@@ -86,20 +93,18 @@ function MiniCalendar({ requests }: { requests: LeaveRequest[] }) {
     const map: Record<string, string[]> = {};
     for (const req of requests) {
       if (req.status === "rejected" || req.status === "cancelled") continue;
-      const start = new Date(req.start_date);
-      const end = new Date(req.end_date);
+      const start = new Date(`${req.start_date.slice(0, 10)}T00:00:00.000Z`);
+      const end = new Date(`${req.end_date.slice(0, 10)}T00:00:00.000Z`);
       const cursor = new Date(start);
       while (cursor <= end) {
         const key = cursor.toISOString().slice(0, 10);
         if (!map[key]) map[key] = [];
         map[key].push(req.status);
-        cursor.setDate(cursor.getDate() + 1);
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
     }
     return map;
   }, [requests]);
-
-  const todayStr = today.toISOString().slice(0, 10);
 
   const cells: (number | null)[] = [
     ...Array(startOffset).fill(null),
@@ -357,11 +362,13 @@ function RequestRow({
   const start = new Date(req.start_date).toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
+    timeZone: "UTC",
   });
   const end = new Date(req.end_date).toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: "UTC",
   });
   const dateLabel =
     req.start_date === req.end_date ? start : `${start} → ${end}`;
@@ -679,6 +686,7 @@ function TeamRequestsGrouped({ requests }: { requests: LeaveRequest[] }) {
     return new Date(d).toLocaleDateString("en-GB", {
       day: "numeric",
       month: "short",
+      timeZone: "UTC",
     });
   }
 
