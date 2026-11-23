@@ -53,12 +53,10 @@ export async function GET(request: NextRequest) {
       toError(error),
     );
 
-    // Return mock data as fallback
-    return NextResponse.json({
-      articles: MOCK_ARTICLES,
-      total: MOCK_ARTICLES.length,
-      hasMore: false,
-    });
+    return NextResponse.json(
+      { error: "Failed to fetch articles" },
+      { status: 500 },
+    );
   }
 }
 
@@ -75,73 +73,3 @@ export async function POST(_request: NextRequest) {
     { status: 501 },
   );
 }
-
-// Mock data for development/fallback
-const MOCK_ARTICLES = [
-  {
-    id: "1",
-    slug: "golden-visa-revolution",
-    title: "The Golden Visa Revolution: Indonesia's $350K Bet on Global Talent",
-    excerpt:
-      "Indonesia launches its Golden Visa program, offering 5-10 year stays for investors.",
-    coverImage: "/static/blog/golden-visa.jpg",
-    category: "visas",
-    author: {
-      id: "zantara-ai",
-      name: "Zantara AI",
-      avatar: "/static/zantara-avatar.png",
-      role: "AI Research Assistant",
-      isAI: true,
-    },
-    publishedAt: new Date().toISOString(),
-    readingTime: 12,
-    viewCount: 15420,
-    featured: true,
-    trending: true,
-    aiGenerated: true,
-  },
-  {
-    id: "2",
-    slug: "oss-2-complete-guide",
-    title: "OSS 2.0: The Complete Guide to Indonesia Business Licensing",
-    excerpt:
-      "Everything about the Online Single Submission system for company registration.",
-    coverImage: "/static/blog/oss-guide.jpg",
-    category: "business",
-    author: {
-      id: "zantara-ai",
-      name: "Zantara AI",
-      avatar: "/static/zantara-avatar.png",
-      role: "AI Research Assistant",
-      isAI: true,
-    },
-    publishedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    readingTime: 15,
-    viewCount: 8932,
-    featured: false,
-    trending: true,
-    aiGenerated: false,
-  },
-  {
-    id: "3",
-    slug: "tax-deadlines-2026",
-    title: "Tax Deadlines 2026: What Every Expat Needs to Know",
-    excerpt:
-      "Key dates for personal and corporate tax filings. New Coretax system fully operational.",
-    coverImage: "/static/blog/tax-calendar.jpg",
-    category: "taxes",
-    author: {
-      id: "zantara-ai",
-      name: "Zantara AI",
-      avatar: "/static/zantara-avatar.png",
-      role: "AI Research Assistant",
-      isAI: true,
-    },
-    publishedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    readingTime: 8,
-    viewCount: 6234,
-    featured: false,
-    trending: false,
-    aiGenerated: true,
-  },
-];
