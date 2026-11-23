@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api/agents", tags=["agentic-functions"])
 
 # Security - JWT Authentication (using centralized dependency)
 from backend.app.dependencies import get_current_user
+from backend.app.utils.crm_utils import is_crm_admin
 
 # Initialize agents that don't require dependencies
 journey_orchestrator = ClientJourneyOrchestrator()
@@ -386,7 +387,13 @@ async def extract_knowledge_graph(
 
     Entities: Person, Organization, Location, Document, Concept
     Relationships: WORKS_FOR, LOCATED_IN, REQUIRES, RELATED_TO, etc.
+
+    Writes stored graph entries: administrators only (same `is_crm_admin`
+    check as the team-activity admin routes).
     """
+    if not is_crm_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
     try:
         # Dependency Injection (Lazy)
         if not knowledge_graph.db_pool:
