@@ -76,6 +76,102 @@ _LEGACY_PLAINTEXT_PREDICATE = (
 )
 
 
+#: Why an invitation that is unused and in date still cannot register, as
+#: (the code `/invite/validate` answers, the sentence `complete_registration`
+#: raises).
+_NOT_REGISTRABLE = ("not_registrable", "This account cannot be registered")
+_ALREADY_REGISTERED = ("already_registered", "This client already has an active portal account")
+_EMAIL_IN_USE = ("email_in_use", "Another account already uses this email address")
+_ADDRESS_REQUIRED = ("address_required", "Invitation address is required")
+
+
+async def _registration_refusal(
+    conn: Any, client_id: int, canonical: str
+) -> tuple[Any, tuple[str, str] | None]:
+    """The login row already linked to the client, and why registering through
+    an invitation that would write `canonical` is refused, or None.
+
+    One predicate for both doors: `validate_token` answers it before the client
+    chooses a PIN, and `complete_registration` enforces it, so the invitation
+    page never offers a form the registration is certain to refuse.
+    """
+    existing_user = await conn.fetchrow(
+        """
+        SELECT id, active, pin_hash, role FROM team_members
+        WHERE linked_client_id = $1
+        ORDER BY (role = 'client') DESC, created_at
+        """,
+        client_id,
+    )
+
+    if existing_user and is_group_staff(existing_user.get("role")):
+        # Group staff hold an HR card, never an app login.
+        return existing_user, _NOT_REGISTRABLE
+
+    if existing_user:
+        # Consuming an invitation is not proof the consumer controls
+        # the client's mailbox — it must never function as a
+        # password reset on a LIVE account.
+        #
+        # `active` alone cannot express "live": `create_client` calls
+        # `ensure_portal_profile`, which provisions EVERY CRM client as
+        # `active=true` carrying PLACEHOLDER_PIN_HASH. Gating on the
+        # flag therefore refuses the ordinary first-time registration
+        # — the very flow this guard exists to protect — while the
+        # takeover it targets keeps working on any account that
+        # happens to be inactive.
+        #
+        # The credential itself is the honest signal: a row still
+        # holding the placeholder has never been registered, so
+        # writing the first real PIN over it is onboarding, not
+        # takeover. Both other cases stay as before — a real PIN on
+        # an active row is refused, and a deactivated account may be
+        # re-onboarded.
+        already_registered = existing_user["pin_hash"] != PLACEHOLDER_PIN_HASH
+        if already_registered and existing_user["active"]:
+            return existing_user, _ALREADY_REGISTERED
+
+        if canonical:
+            # team_members.email is unique. A different row already
+            # holding it is a real identity collision, not something
+            # to overwrite silently — refuse and say so.
+            conflict = await conn.fetchval(
+                """
+                SELECT id FROM team_members
+                WHERE LOWER(email) = LOWER($1) AND id <> $2
+                LIMIT 1
+                """,
+                canonical,
+                existing_user["id"],
+            )
+            if conflict:
+                return existing_user, _EMAIL_IN_USE
+        return existing_user, None
+
+    # No row is linked to this client yet, but the address can
+    # still belong to another row: a staff member, or the account
+    # of another client. `team_members.email` is unique by exact
+    # text while login and every other lookup lower it, so an
+    # address that differs only in letter case would be stored as
+    # a second login for one mailbox, and the same text would
+    # fail on the unique index as an opaque server error on every
+    # retry. Refuse it as the branch above does, on the address
+    # the row would be written with.
+    if not canonical:
+        return None, _ADDRESS_REQUIRED
+    conflict = await conn.fetchval(
+        """
+        SELECT id FROM team_members
+        WHERE LOWER(email) = LOWER($1)
+        LIMIT 1
+        """,
+        canonical,
+    )
+    if conflict:
+        return None, _EMAIL_IN_USE
+    return None, None
+
+
 class InviteService:
     """Service for managing client portal invitations."""
 
@@ -219,6 +315,14 @@ class InviteService:
                 logger.warning("Token expired: %s...", _hash_token(token)[:8])
                 return {"error": "expired", "message": "This invitation has expired"}
 
+            canonical = (result["email"] or "").strip().lower()
+            _, refusal = await _registration_refusal(conn, result["client_id"], canonical)
+            if refusal is not None:
+                logger.warning(
+                    "Invitation cannot register (%s): %s...", refusal[0], _hash_token(token)[:8]
+                )
+                return {"error": refusal[0], "message": refusal[1]}
+
             return {
                 "valid": True,
                 "invitation_id": result["id"],
@@ -283,46 +387,16 @@ class InviteService:
                 # every check below and every write use this same value.
                 canonical = (invitation["email"] or "").strip().lower()
 
+                existing_user, refusal = await _registration_refusal(
+                    conn, invitation["client_id"], canonical
+                )
+                if refusal is not None:
+                    raise ValueError(refusal[1])
+
                 # Hash PIN
                 pin_hash = bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
 
-                # Check if team_member already exists for this client
-                existing_user = await conn.fetchrow(
-                    """
-                    SELECT id, active, pin_hash, role FROM team_members
-                    WHERE linked_client_id = $1
-                    ORDER BY (role = 'client') DESC, created_at
-                    """,
-                    invitation["client_id"],
-                )
-
-                if existing_user and is_group_staff(existing_user.get("role")):
-                    # Group staff hold an HR card, never an app login.
-                    raise ValueError("This account cannot be registered")
-
                 if existing_user:
-                    # Consuming an invitation is not proof the consumer controls
-                    # the client's mailbox — it must never function as a
-                    # password reset on a LIVE account.
-                    #
-                    # `active` alone cannot express "live": `create_client` calls
-                    # `ensure_portal_profile`, which provisions EVERY CRM client as
-                    # `active=true` carrying PLACEHOLDER_PIN_HASH. Gating on the
-                    # flag therefore refuses the ordinary first-time registration
-                    # — the very flow this guard exists to protect — while the
-                    # takeover it targets keeps working on any account that
-                    # happens to be inactive.
-                    #
-                    # The credential itself is the honest signal: a row still
-                    # holding the placeholder has never been registered, so
-                    # writing the first real PIN over it is onboarding, not
-                    # takeover. Both other cases stay as before — a real PIN on
-                    # an active row is refused, and a deactivated account may be
-                    # re-onboarded.
-                    already_registered = existing_user["pin_hash"] != PLACEHOLDER_PIN_HASH
-                    if already_registered and existing_user["active"]:
-                        raise ValueError("This client already has an active portal account")
-
                     # The login identity must be the address the invitation
                     # was SENT to, or registration succeeds and login fails.
                     #
@@ -338,21 +412,6 @@ class InviteService:
                     # Invitations stored before addresses were normalised may still
                     # hold mixed case; the login row is always written lower-case.
                     invite_email = canonical or None
-                    if invite_email:
-                        # team_members.email is unique. A different row already
-                        # holding it is a real identity collision, not something
-                        # to overwrite silently — refuse and say so.
-                        conflict = await conn.fetchval(
-                            """
-                            SELECT id FROM team_members
-                            WHERE LOWER(email) = LOWER($1) AND id <> $2
-                            LIMIT 1
-                            """,
-                            invite_email,
-                            existing_user["id"],
-                        )
-                        if conflict:
-                            raise ValueError("Another account already uses this email address")
 
                     # Update existing (never-registered or deactivated) user
                     await conn.execute(
@@ -370,28 +429,6 @@ class InviteService:
                     )
                     user_id = existing_user["id"]
                 else:
-                    # No row is linked to this client yet, but the address can
-                    # still belong to another row: a staff member, or the account
-                    # of another client. `team_members.email` is unique by exact
-                    # text while login and every other lookup lower it, so an
-                    # address that differs only in letter case would be stored as
-                    # a second login for one mailbox, and the same text would
-                    # fail on the unique index as an opaque server error on every
-                    # retry. Refuse it as the branch above does, on the address
-                    # the row would be written with.
-                    if not canonical:
-                        raise ValueError("Invitation address is required")
-                    conflict = await conn.fetchval(
-                        """
-                        SELECT id FROM team_members
-                        WHERE LOWER(email) = LOWER($1)
-                        LIMIT 1
-                        """,
-                        canonical,
-                    )
-                    if conflict:
-                        raise ValueError("Another account already uses this email address")
-
                     # Create new team_member with role='client'
                     # Note: team_members has both 'name' (required) and 'full_name' columns
                     user = await conn.fetchrow(
