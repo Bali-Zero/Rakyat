@@ -76,110 +76,132 @@ _LEGACY_PLAINTEXT_PREDICATE = (
 )
 
 
+#: The token lookup of both doors. A legacy plaintext row and a digest row can
+#: both match one token; the digest row wins, then the lowest id, so the two
+#: doors always read the same invitation. `complete_registration` appends its
+#: row lock to this same text.
+_INVITATION_BY_TOKEN_SQL = (
+    """
+    SELECT i.id, i.client_id, i.email, i.expires_at, i.used_at,
+           c.full_name AS client_name
+    FROM client_invitations i
+    JOIN clients c ON c.id = i.client_id AND c.deleted_at IS NULL
+    WHERE """
+    + _LEGACY_PLAINTEXT_PREDICATE
+    + """
+    ORDER BY (i.token = $1) DESC, i.id
+    LIMIT 1
+    """
+)
+
+#: The registration state of both doors, one statement and always one row: the
+#: login already linked to the client (a client-role row first, then the
+#: oldest, then the lowest id) and another login holding the address.
+#:
+#: `$2` is the canonical address computed in Python, never recomputed here, so
+#: Unicode whitespace and letter case are settled by one rule only; the stored
+#: `team_members.email` is lowered as before and not trimmed. "Another" means
+#: any row but the linked one, or any row when none is linked. With no
+#: invitation both parameters are NULL and the row is all NULL: the check runs
+#: the same two statements whatever the token turns out to be.
+_REGISTRATION_STATE_SQL = """
+    SELECT l.id AS linked_id, l.active AS linked_active,
+           l.pin_hash AS linked_pin_hash, l.role AS linked_role,
+           h.id AS holder_id
+    FROM (SELECT 1) AS one
+    LEFT JOIN LATERAL (
+        SELECT id, active, pin_hash, role FROM team_members
+        WHERE linked_client_id = $1
+        ORDER BY (role = 'client') DESC, created_at, id
+        LIMIT 1
+    ) l ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT id FROM team_members
+        WHERE $2 <> '' AND LOWER(email) = LOWER($2) AND id IS DISTINCT FROM l.id
+        LIMIT 1
+    ) h ON TRUE
+"""
+
 #: Why an invitation that is unused and in date still cannot register, as
 #: (the code `/invite/validate` answers, the sentence `complete_registration`
-#: raises).
+#: raises). The first and the third are never answered to the token holder:
+#: `validate_token` treats them as an unknown token (see there).
 _NOT_REGISTRABLE = ("not_registrable", "This account cannot be registered")
 _ALREADY_REGISTERED = ("already_registered", "This client already has an active portal account")
 _EMAIL_IN_USE = ("email_in_use", "Another account already uses this email address")
 _ADDRESS_REQUIRED = ("address_required", "Invitation address is required")
 
-#: What `/invite/validate` tells an unauthenticated token holder in place of a
-#: refusal that would reveal another account holding the address or a staff
-#: login. `complete_registration` keeps its own sentences.
-_NOT_AVAILABLE = (
-    "not_available",
-    "This invitation can no longer be used. "
-    "Please contact your account manager for a new invitation.",
-)
-_PRIVATE_REFUSALS = frozenset({_EMAIL_IN_USE, _NOT_REGISTRABLE})
+
+def _canonical_address(invitation: Any) -> str:
+    """The address the login will hold, in its one canonical spelling ("" when blank)."""
+    return (invitation["email"] or "").strip().lower()
 
 
-async def _registration_refusal(
-    conn: Any, client_id: int, canonical: str
-) -> tuple[Any, tuple[str, str] | None]:
-    """The login row already linked to the client, and why registering through
-    an invitation that would write `canonical` is refused, or None.
+async def _registration_state(
+    conn: Any, client_id: int | None, canonical: str | None
+) -> tuple[dict[str, Any] | None, int | None]:
+    """The login linked to the client (or None) and the id of another login
+    holding `canonical` (or None), read in one statement."""
+    row = await conn.fetchrow(_REGISTRATION_STATE_SQL, client_id, canonical)
+    if row is None:
+        return None, None
+    linked = None
+    if row["linked_id"] is not None:
+        linked = {
+            "id": row["linked_id"],
+            "active": row["linked_active"],
+            "pin_hash": row["linked_pin_hash"],
+            "role": row["linked_role"],
+        }
+    return linked, row["holder_id"]
 
-    One predicate for both doors: `validate_token` answers it before the client
-    chooses a PIN, and `complete_registration` enforces it, so the invitation
-    page never offers a form the registration is certain to refuse.
+
+def _refusal_of(
+    linked: dict[str, Any] | None, canonical: str, holder_id: int | None
+) -> tuple[str, str] | None:
+    """Why registering through an invitation that would write `canonical` is
+    refused, or None. One decision for both doors: `validate_token` answers it
+    before the client chooses a PIN and `complete_registration` enforces it, so
+    the invitation page never offers a form the registration is certain to
+    refuse.
     """
-    existing_user = await conn.fetchrow(
-        """
-        SELECT id, active, pin_hash, role FROM team_members
-        WHERE linked_client_id = $1
-        ORDER BY (role = 'client') DESC, created_at
-        """,
-        client_id,
-    )
-
-    if existing_user and is_group_staff(existing_user.get("role")):
+    if linked is not None and is_group_staff(linked["role"]):
         # Group staff hold an HR card, never an app login.
-        return existing_user, _NOT_REGISTRABLE
+        return _NOT_REGISTRABLE
 
-    if existing_user:
-        # Consuming an invitation is not proof the consumer controls
-        # the client's mailbox — it must never function as a
-        # password reset on a LIVE account.
-        #
-        # `active` alone cannot express "live": `create_client` calls
-        # `ensure_portal_profile`, which provisions EVERY CRM client as
-        # `active=true` carrying PLACEHOLDER_PIN_HASH. Gating on the
-        # flag therefore refuses the ordinary first-time registration
-        # — the very flow this guard exists to protect — while the
-        # takeover it targets keeps working on any account that
-        # happens to be inactive.
-        #
-        # The credential itself is the honest signal: a row still
-        # holding the placeholder has never been registered, so
-        # writing the first real PIN over it is onboarding, not
-        # takeover. Both other cases stay as before — a real PIN on
-        # an active row is refused, and a deactivated account may be
-        # re-onboarded.
-        already_registered = existing_user["pin_hash"] != PLACEHOLDER_PIN_HASH
-        if already_registered and existing_user["active"]:
-            return existing_user, _ALREADY_REGISTERED
+    if linked is not None:
+        # Consuming an invitation is not proof the consumer controls the
+        # client's mailbox: it must never work as a password reset on a LIVE
+        # account. `active` alone cannot say "live", because
+        # `ensure_portal_profile` provisions every CRM client as active with
+        # PLACEHOLDER_PIN_HASH; the credential is the honest signal. A row
+        # still holding the placeholder has never been registered, so writing
+        # the first real PIN over it is onboarding, and a deactivated account
+        # may be re-onboarded.
+        if linked["pin_hash"] != PLACEHOLDER_PIN_HASH and linked["active"]:
+            return _ALREADY_REGISTERED
+        # team_members.email is unique: another row already holding the
+        # address is a real identity collision, not something to overwrite.
+        if canonical and holder_id is not None:
+            return _EMAIL_IN_USE
+        return None
 
-        if canonical:
-            # team_members.email is unique. A different row already
-            # holding it is a real identity collision, not something
-            # to overwrite silently — refuse and say so.
-            conflict = await conn.fetchval(
-                """
-                SELECT id FROM team_members
-                WHERE LOWER(email) = LOWER($1) AND id <> $2
-                LIMIT 1
-                """,
-                canonical,
-                existing_user["id"],
-            )
-            if conflict:
-                return existing_user, _EMAIL_IN_USE
-        return existing_user, None
-
-    # No row is linked to this client yet, but the address can
-    # still belong to another row: a staff member, or the account
-    # of another client. `team_members.email` is unique by exact
-    # text while login and every other lookup lower it, so an
-    # address that differs only in letter case would be stored as
-    # a second login for one mailbox, and the same text would
-    # fail on the unique index as an opaque server error on every
-    # retry. Refuse it as the branch above does, on the address
-    # the row would be written with.
+    # No row is linked to this client yet, but the address can still belong
+    # to another row, a staff member or another client's login. The unique
+    # index is on the exact text while login and every lookup lower it, so an
+    # address differing only in letter case would become a second login for
+    # one mailbox; it is refused on the address the row would be written with.
     if not canonical:
-        return None, _ADDRESS_REQUIRED
-    conflict = await conn.fetchval(
-        """
-        SELECT id FROM team_members
-        WHERE LOWER(email) = LOWER($1)
-        LIMIT 1
-        """,
-        canonical,
-    )
-    if conflict:
-        return None, _EMAIL_IN_USE
-    return None, None
+        return _ADDRESS_REQUIRED
+    if holder_id is not None:
+        return _EMAIL_IN_USE
+    return None
+
+
+#: Refusals `validate_token` answers as an unknown token. The link holder is not
+#: authenticated: that another login holds the address, or that the client is
+#: a staff member, is not theirs to learn, and a distinct answer would tell it.
+_ANSWERED_AS_UNKNOWN = frozenset({_EMAIL_IN_USE, _NOT_REGISTRABLE})
 
 
 class InviteService:
@@ -291,56 +313,64 @@ class InviteService:
         """
         Validate an invitation token.
 
+        Every token costs the same two statements (the token lookup, then the
+        registration state, with NULL parameters when no invitation matched)
+        and writes the same one log line, whatever the outcome. A refusal that
+        would reveal another login holding the address, or a staff login, is
+        answered as an unknown token.
+
         Args:
             token: Invitation token from URL
 
         Returns:
             Dict with invitation details if valid, None otherwise
         """
+        digest = _hash_token(token)
         async with self.pool.acquire() as conn:
-            result = await conn.fetchrow(
-                """
-                SELECT i.id, i.client_id, i.email, i.expires_at, i.used_at,
-                       c.full_name as client_name
-                FROM client_invitations i
-                JOIN clients c ON c.id = i.client_id AND c.deleted_at IS NULL
-                WHERE """
-                + _LEGACY_PLAINTEXT_PREDICATE,
-                _hash_token(token),
-                token,
+            invitation = await conn.fetchrow(_INVITATION_BY_TOKEN_SQL, digest, token)
+            canonical = _canonical_address(invitation) if invitation else None
+            linked, holder_id = await _registration_state(
+                conn, invitation["client_id"] if invitation else None, canonical
             )
 
-            if not result:
-                # The DIGEST prefix, never the raw token's: a log line is
-                # storage too, and these three used to print the first 8
-                # characters of a live 72h credential.
-                logger.warning("Invalid invitation token: %s...", _hash_token(token)[:8])
-                return None
+        outcome, answer = self._validate_outcome(invitation, canonical, linked, holder_id)
+        # The DIGEST prefix, never the raw token's: a log line is storage too.
+        logger.info("invitation validate: %s %s...", outcome, digest[:8])
+        return answer
 
-            if result["used_at"] is not None:
-                logger.warning("Token already used: %s...", _hash_token(token)[:8])
-                return {"error": "already_used", "message": "This invitation has already been used"}
+    @staticmethod
+    def _validate_outcome(
+        invitation: Any,
+        canonical: str | None,
+        linked: dict[str, Any] | None,
+        holder_id: int | None,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """(the outcome logged, the answer returned) for one validation."""
+        if not invitation:
+            return "invalid_token", None
 
-            if result["expires_at"] < datetime.now(timezone.utc):
-                logger.warning("Token expired: %s...", _hash_token(token)[:8])
-                return {"error": "expired", "message": "This invitation has expired"}
-
-            canonical = (result["email"] or "").strip().lower()
-            _, refusal = await _registration_refusal(conn, result["client_id"], canonical)
-            if refusal is not None:
-                logger.warning(
-                    "Invitation cannot register (%s): %s...", refusal[0], _hash_token(token)[:8]
-                )
-                public = _NOT_AVAILABLE if refusal in _PRIVATE_REFUSALS else refusal
-                return {"error": public[0], "message": public[1]}
-
-            return {
-                "valid": True,
-                "invitation_id": result["id"],
-                "client_id": result["client_id"],
-                "client_name": result["client_name"],
-                "email": result["email"],
+        if invitation["used_at"] is not None:
+            return "already_used", {
+                "error": "already_used",
+                "message": "This invitation has already been used",
             }
+
+        if invitation["expires_at"] < datetime.now(timezone.utc):
+            return "expired", {"error": "expired", "message": "This invitation has expired"}
+
+        refusal = _refusal_of(linked, canonical or "", holder_id)
+        if refusal in _ANSWERED_AS_UNKNOWN:
+            return refusal[0], None
+        if refusal is not None:
+            return refusal[0], {"error": refusal[0], "message": refusal[1]}
+
+        return "valid", {
+            "valid": True,
+            "invitation_id": invitation["id"],
+            "client_id": invitation["client_id"],
+            "client_name": invitation["client_name"],
+            "email": invitation["email"],
+        }
 
     @cache_invalidating(
         [
@@ -371,16 +401,7 @@ class InviteService:
             async with conn.transaction():
                 # Get and validate invitation
                 invitation = await conn.fetchrow(
-                    """
-                    SELECT i.id, i.client_id, i.email, i.expires_at, i.used_at,
-                           c.full_name as client_name
-                    FROM client_invitations i
-                    JOIN clients c ON c.id = i.client_id AND c.deleted_at IS NULL
-                    WHERE """
-                    + _LEGACY_PLAINTEXT_PREDICATE
-                    + """
-                    FOR UPDATE
-                    """,
+                    _INVITATION_BY_TOKEN_SQL + "FOR UPDATE OF i, c\n",
                     _hash_token(token),
                     token,
                 )
@@ -396,11 +417,16 @@ class InviteService:
 
                 # The address the login will hold, in its one canonical spelling:
                 # every check below and every write use this same value.
-                canonical = (invitation["email"] or "").strip().lower()
+                canonical = _canonical_address(invitation)
 
-                existing_user, refusal = await _registration_refusal(
+                # The same statement `validate_token` runs. It takes no row
+                # lock: the invitation and the client row locked above are the
+                # whole lock set, in the order the sibling retirement below
+                # relies on.
+                existing_user, holder_id = await _registration_state(
                     conn, invitation["client_id"], canonical
                 )
+                refusal = _refusal_of(existing_user, canonical, holder_id)
                 if refusal is not None:
                     raise ValueError(refusal[1])
 
