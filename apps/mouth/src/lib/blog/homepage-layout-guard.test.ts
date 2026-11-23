@@ -56,6 +56,33 @@ describe("validateHomepageLayout (pure)", () => {
     expect(result.checked).toBe(1);
     expect(result.ok).toBe(true);
   });
+
+  it("flags an insight slug that is known but cannot be pinned", () => {
+    const result = validateHomepageLayout({ insight_1: "alpha" }, known, [
+      "beta",
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.missing).toEqual([{ key: "insight_1", slug: "alpha" }]);
+  });
+
+  it("accepts an insight slug that can be pinned", () => {
+    const result = validateHomepageLayout({ insight_1: "alpha" }, known, [
+      "alpha",
+    ]);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("still checks a hero slug against known articles when pins are supplied", () => {
+    const result = validateHomepageLayout(
+      { hero_main: "missing", insight_1: "alpha" },
+      known,
+      ["alpha", "missing"],
+    );
+
+    expect(result.missing).toEqual([{ key: "hero_main", slug: "missing" }]);
+  });
 });
 
 describe("homepage-layout.json (real, offline)", () => {
