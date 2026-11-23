@@ -3,6 +3,10 @@
 One-shot backfill: create team_members records (role='client') for all
 existing CRM clients that don't have one yet.
 
+Every profile is written by `PortalProfileService.ensure_portal_profile`, the
+same statement and the same guard the live provisioning uses: a login linked to
+another client, or registered, is never moved to the client being backfilled.
+
 Usage:
     cd apps/backend-rag
     source .venv/bin/activate
@@ -16,20 +20,12 @@ import sys
 
 import asyncpg
 
-# Placeholder bcrypt hash — login impossible until client sets real PIN via invite
-PLACEHOLDER_PIN = "$2b$12$000000000000000000000uNOLOGIN.placeholder.hash.nevermatches"
 
+async def backfill(pool: asyncpg.Pool, *, dry_run: bool = False) -> dict[str, int]:
+    """Provision the missing portal profiles; return the counts it printed."""
+    from backend.services.portal.portal_profile_service import PortalProfileService
 
-async def main(dry_run: bool = False) -> None:
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        print("ERROR: DATABASE_URL not set")
-        sys.exit(1)
-
-    conn = await asyncpg.connect(database_url)
-
-    try:
-        # Count current state
+    async with pool.acquire() as conn:
         total_clients = await conn.fetchval(
             "SELECT COUNT(*) FROM clients WHERE deleted_at IS NULL",
         )
@@ -58,68 +54,60 @@ async def main(dry_run: bool = False) -> None:
             """,
         )
 
-        print(f"Clients to backfill (with valid email): {len(missing)}")
+    print(f"Clients to backfill (with valid email): {len(missing)}")
 
-        if dry_run:
-            print("\n[DRY RUN] Would create portal profiles for:")
-            for row in missing[:10]:
-                print(f"  - {row['full_name']} ({row['email']}) [id={row['id']}]")
-            if len(missing) > 10:
-                print(f"  ... and {len(missing) - 10} more")
-            return
+    if dry_run:
+        print("\n[DRY RUN] Would create portal profiles for:")
+        for row in missing[:10]:
+            print(f"  - {row['full_name']} ({row['email']}) [id={row['id']}]")
+        if len(missing) > 10:
+            print(f"  ... and {len(missing) - 10} more")
+        return {"to_backfill": len(missing), "created": 0, "skipped": 0}
 
-        # Batch insert
-        created = 0
-        skipped = 0
-        errors = 0
+    service = PortalProfileService(pool)
+    created = 0
+    skipped = 0
+    for row in missing:
+        member_id = await service.ensure_portal_profile(
+            client_id=row["id"],
+            email=row["email"],
+            full_name=row["full_name"] or "Unknown",
+        )
+        if member_id:
+            created += 1
+        else:
+            skipped += 1
 
-        for row in missing:
-            try:
-                result = await conn.fetchval(
-                    """
-                    INSERT INTO team_members (
-                        name, email, pin_hash, role,
-                        linked_client_id, portal_access, active
-                    )
-                    VALUES ($1, $2, $3, 'client', $4, true, true)
-                    ON CONFLICT (email) DO UPDATE
-                        SET linked_client_id = EXCLUDED.linked_client_id,
-                            portal_access = true,
-                            name = EXCLUDED.name
-                        WHERE team_members.role = 'client'
-                    RETURNING id
-                    """,
-                    row["full_name"] or "Unknown",
-                    row["email"].strip().lower(),
-                    PLACEHOLDER_PIN,
-                    row["id"],
-                )
-                if result:
-                    created += 1
-                else:
-                    skipped += 1
-            except Exception as e:
-                errors += 1
-                print(f"  ERROR for client {row['id']} ({row['email']}): {e}")
+    print("\nResults:")
+    print(f"  Created or linked: {created}")
+    print(f"  Skipped (address held by another account, or failed; see the log): {skipped}")
 
-        print("\nResults:")
-        print(f"  Created: {created}")
-        print(f"  Skipped (conflict with non-client): {skipped}")
-        print(f"  Errors: {errors}")
-
-        # Verify
+    async with pool.acquire() as conn:
         final_count = await conn.fetchval(
             "SELECT COUNT(*) FROM team_members WHERE role = 'client' AND linked_client_id IS NOT NULL",
         )
-        print(f"\nFinal portal profiles: {final_count}")
+    print(f"\nFinal portal profiles: {final_count}")
+    return {"to_backfill": len(missing), "created": created, "skipped": skipped}
 
+
+async def main(dry_run: bool = False) -> None:
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        print("ERROR: DATABASE_URL not set")
+        sys.exit(1)
+
+    pool = await asyncpg.create_pool(database_url, min_size=1, max_size=2)
+    try:
+        await backfill(pool, dry_run=dry_run)
     finally:
-        await conn.close()
+        await pool.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backfill portal profiles for existing clients")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be done without doing it")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be done without doing it"
+    )
     args = parser.parse_args()
 
     asyncio.run(main(dry_run=args.dry_run))

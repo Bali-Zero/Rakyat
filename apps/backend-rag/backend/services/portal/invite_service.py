@@ -105,6 +105,10 @@ class InviteService:
         Returns:
             Dict with invitation details including token
         """
+        # The address is a login identity: one canonical spelling from here on.
+        email = (email or "").strip().lower()
+        if not email:
+            raise ValueError("Invitation address is required")
         # Generate secure token
         token = secrets.token_urlsafe(INVITE_TOKEN_LENGTH)
         expires_at = datetime.now(timezone.utc) + timedelta(hours=INVITE_EXPIRY_HOURS)
@@ -275,6 +279,10 @@ class InviteService:
                 if invitation["expires_at"] < datetime.now(timezone.utc):
                     raise ValueError("Invitation expired")
 
+                # The address the login will hold, in its one canonical spelling:
+                # every check below and every write use this same value.
+                canonical = (invitation["email"] or "").strip().lower()
+
                 # Hash PIN
                 pin_hash = bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
 
@@ -327,7 +335,9 @@ class InviteService:
                     # cannot repair it either: `email` IS its ON CONFLICT key.
                     # Nothing surfaced the failure to either side; the CRM
                     # panel kept reporting "Portal active — <dead address>".
-                    invite_email = invitation["email"]
+                    # Invitations stored before addresses were normalised may still
+                    # hold mixed case; the login row is always written lower-case.
+                    invite_email = canonical or None
                     if invite_email:
                         # team_members.email is unique. A different row already
                         # holding it is a real identity collision, not something
@@ -367,14 +377,17 @@ class InviteService:
                     # address that differs only in letter case would be stored as
                     # a second login for one mailbox, and the same text would
                     # fail on the unique index as an opaque server error on every
-                    # retry. Refuse it as the branch above does.
+                    # retry. Refuse it as the branch above does, on the address
+                    # the row would be written with.
+                    if not canonical:
+                        raise ValueError("Invitation address is required")
                     conflict = await conn.fetchval(
                         """
                         SELECT id FROM team_members
                         WHERE LOWER(email) = LOWER($1)
                         LIMIT 1
                         """,
-                        invitation["email"],
+                        canonical,
                     )
                     if conflict:
                         raise ValueError("Another account already uses this email address")
@@ -391,7 +404,7 @@ class InviteService:
                         RETURNING id
                         """,
                         invitation["client_name"],  # name (required)
-                        invitation["email"],
+                        canonical,
                         invitation["client_name"],  # full_name
                         pin_hash,
                         invitation["client_id"],
@@ -452,7 +465,7 @@ class InviteService:
                     "success": True,
                     "user_id": user_id,
                     "client_id": invitation["client_id"],
-                    "email": invitation["email"],
+                    "email": (invitation["email"] or "").strip().lower(),
                     "name": invitation["client_name"],
                 }
 
