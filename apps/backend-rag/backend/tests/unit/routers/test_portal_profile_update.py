@@ -97,16 +97,17 @@ async def test_update_profile_rejects_sensitive_fields():
 
     result = await service.update_profile(
         client_id=1,
-        fields={"full_name": "HACKED", "passport_number": "STOLEN", "phone": "+62999"},
+        fields={"full_name": "HACKED", "passport_number": "STOLEN", "phone": "+62 800 0000 999"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
     assert result is not None
 
-    # Still 3 calls: UPDATE (phone only), notification_alerts, portal_messages
-    assert mock_conn.execute.call_count == 3
+    # 4 calls: phone-core lock (the new number has a usable core), UPDATE
+    # (phone only), notification_alerts, portal_messages
+    assert mock_conn.execute.call_count == 4
 
-    update_sql = mock_conn.execute.call_args_list[0][0][0]
+    update_sql = mock_conn.execute.call_args_list[1][0][0]
     assert "full_name" not in update_sql
     assert "passport_number" not in update_sql
     assert "phone" in update_sql
@@ -155,7 +156,7 @@ async def test_update_profile_notification_failure_does_not_raise():
     service = PortalService(mock_pool)
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+62888"},
+        fields={"phone": "+6281234567890"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
@@ -188,7 +189,7 @@ async def test_update_profile_message_failure_does_not_raise() -> None:
     service = PortalService(mock_pool)
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+62888"},
+        fields={"phone": "+6281234567890"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 

@@ -12,6 +12,7 @@ import asyncpg
 
 from backend.app.services.crm.audit_logger import audit_logger
 from backend.app.utils.logging_utils import get_logger
+from backend.db.repositories.client_repository import DUP_OWNER_SQL
 from backend.phone_lock import lock_phone_cores, phone_core
 from backend.services.common.cache import cache_invalidating
 from backend.services.portal._drive_fetch import fetch_drive_file
@@ -19,6 +20,22 @@ from backend.services.portal._rbac import ClientContext, require_client_access
 from backend.services.portal.gate_upload_adapter import GateUploadClient
 
 logger = get_logger(__name__)
+
+PROFILE_CONTACT_REFUSED_MESSAGE = (
+    "This phone number cannot be saved on your profile. Please contact your consultant."
+)
+
+
+class ProfileContactRefused(Exception):
+    """A self-service phone/whatsapp value was refused.
+
+    One exception and one message for both causes (no usable number, number
+    already on file for another client), so the answer reveals neither which
+    check failed nor whose number it is.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(PROFILE_CONTACT_REFUSED_MESSAGE)
 
 
 class PortalBillingMixin:
@@ -340,6 +357,28 @@ class PortalBillingMixin:
                                 "phone_lock_convergence_failed — concurrent phone "
                                 "writers, retry the profile update"
                             )
+                    if "phone" in safe_fields or "whatsapp" in safe_fields:
+                        # Same rule staff edits follow (lock, then DUP_OWNER_SQL):
+                        # a number with no usable core (the empty string
+                        # included) or one that another client owns is refused
+                        # with the SAME error. The client's own current number
+                        # saved again is not a collision.
+                        _incoming = [
+                            phone_core(safe_fields[k])
+                            for k in ("phone", "whatsapp")
+                            if k in safe_fields
+                        ]
+                        if any(c is None for c in _incoming):
+                            raise ProfileContactRefused()
+                        _own = {
+                            phone_core(_val(_old, k))
+                            for k in ("phone", "phone_normalized", "whatsapp")
+                        }
+                        _foreign = sorted({c for c in _incoming if c not in _own})
+                        if _foreign:
+                            _dup = await conn.fetchrow(DUP_OWNER_SQL, _foreign)
+                            if _dup and _dup["id"] != client_id:
+                                raise ProfileContactRefused()
                     # Capture pre-update values for the audit trail. Placed
                     # HERE deliberately: inside the same transaction as the
                     # UPDATE, and AFTER the phone-lock block above, so for a

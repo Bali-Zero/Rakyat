@@ -1379,6 +1379,8 @@ async def update_profile(
     portal_service: PortalService = Depends(get_portal_service),
 ) -> dict[str, Any]:
     """Update client profile. Only phone, whatsapp and address can be changed."""
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
     try:
         fields = {k: v for k, v in request.model_dump().items() if v is not None}
         result = await portal_service.update_profile(
@@ -1389,6 +1391,8 @@ async def update_profile(
         if fields:
             await invalidate_cache("zantara:crm_clients_stats:*")
         return {"success": True, "data": _mask_identity(result)}
+    except ProfileContactRefused as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         # Client soft-deleted / gone (portal_service filters
         # `deleted_at IS NULL`) -> not-found, not a 500. Consistent
