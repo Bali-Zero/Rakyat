@@ -127,10 +127,53 @@ _WORDPROCESSINGML_NAMESPACES: Final = frozenset(
 _DOCX_TRANSPARENT_ELEMENTS: Final = frozenset(
     {"p", "r", "hyperlink", "smartTag", "customXml", "sdt", "sdtContent", "bdo", "dir"}
 )
-# A view keeps or drops every insertion together, and every deletion together.
-_DOCX_REVISION_ELEMENTS: Final = {"ins": "ins", "moveTo": "ins", "del": "del", "moveFrom": "del"}
+# A view keeps or drops every insertion together, and every deletion together. Content moved
+# away keeps its run and instruction text (only `del` holds delText and delInstrText), so a move
+# away is a kind of its own.
+_DOCX_REVISION_ELEMENTS: Final = {
+    "ins": "ins",
+    "moveTo": "ins",
+    "del": "del",
+    "moveFrom": "moveFrom",
+}
 # Imported content, sub-documents, frames and legacy field data are not read here.
 _DOCX_REFUSED_ELEMENTS: Final = frozenset({"altChunk", "subDoc", "frameset", "frame", "fldData"})
+# Elements whose subtree describes formatting or a field piece, and makes no character.
+_DOCX_PROPERTY_ELEMENTS: Final = frozenset(
+    {"rPr", "sdtPr", "sdtEndPr", "smartTagPr", "customXmlPr", "fldChar"}
+)
+# All an instruction may hold. None of it makes a character Word would read into the code, so
+# the instruction pieces joined with "" are the code Word reads; anything else is refused there.
+_DOCX_INSTRUCTION_ALPHABET: Final = frozenset(
+    {
+        *(_DOCX_TRANSPARENT_ELEMENTS - {"p"}),
+        *_DOCX_REVISION_ELEMENTS,
+        *_DOCX_PROPERTY_ELEMENTS,
+        "instrText",
+        "delInstrText",
+        "fldSimple",
+        "bookmarkStart",
+        "bookmarkEnd",
+        "proofErr",
+        "permStart",
+        "permEnd",
+        "commentRangeStart",
+        "commentRangeEnd",
+        "moveFromRangeStart",
+        "moveFromRangeEnd",
+        "moveToRangeStart",
+        "moveToRangeEnd",
+        "customXmlInsRangeStart",
+        "customXmlInsRangeEnd",
+        "customXmlDelRangeStart",
+        "customXmlDelRangeEnd",
+        "customXmlMoveFromRangeStart",
+        "customXmlMoveFromRangeEnd",
+        "customXmlMoveToRangeStart",
+        "customXmlMoveToRangeEnd",
+        "lastRenderedPageBreak",
+    }
+)
 _FIELD_NAME_RE: Final = re.compile(r"[A-Za-z]+")
 _FIELD_NAME_ENDINGS: Final = frozenset('"\\\u201c\u201d')
 
@@ -497,12 +540,13 @@ def _docx_manifests_are_safe(
 
 
 class _WordField:
-    __slots__ = ("context", "instruction", "reading_instruction")
+    __slots__ = ("context", "instruction", "reading_instruction", "simple")
 
-    def __init__(self, context: tuple[object, ...]) -> None:
+    def __init__(self, context: tuple[object, ...], *, simple: bool = False) -> None:
         self.context = context
         self.instruction: list[str] = []
-        self.reading_instruction = True
+        self.reading_instruction = not simple
+        self.simple = simple
 
 
 def _word_name(node: ElementTree.Element) -> str | None:
@@ -542,23 +586,40 @@ def _field_name_is_settled(instruction: str) -> bool:
 def _docx_part_fields_are_safe(root: ElementTree.Element) -> bool:
     """Read every field of one part as Word would, or refuse the part.
 
-    A field's instruction is a `fldSimple` `instr`, or the `instrText`/`delInstrText` between a
-    `begin` fldChar and its `separate` or `end`. Word may drop some content (a tracked change of
-    the other view, an `mc:AlternateContent` branch it does not choose, an element it does not
-    know), so every piece of one field must sit in the same such context: then Word keeps or
-    drops the instruction whole. Insertions are one context and deletions another, because a view
-    keeps or drops all of them together. A field nested in an instruction before the name is
-    settled would make the name, and an open field at the end of the part is malformed.
+    A field's instruction is a `fldSimple` `instr`, or the instruction text between a `begin`
+    fldChar and its `separate` or `end`: `instrText` outside a deletion, `delInstrText` inside
+    one, never with a child element. While a field reads its instruction only the closed
+    alphabet above is accepted, so no character Word would add to the code (run text, a tab, a
+    break, a paragraph mark) can sit between the pieces. Word may drop some content (a tracked
+    change of the other view, an `mc:AlternateContent` branch it does not choose, an element it
+    does not know), so every piece of one field must sit in the same such context, and every
+    run inside an open field in that context or deeper: then Word keeps or drops the field
+    whole. A `fldSimple` is in its result for all of its content and closes only itself; a
+    `separate` or `end` closes only the innermost `begin` field, and with none open it refuses.
+    A field nested in an instruction before the name is settled would make the name, and an
+    open field at the end of the part is malformed.
     """
     fields: list[_WordField] = []
-    pending: list[tuple[ElementTree.Element, tuple[object, ...]]] = [(root, ())]
+    pending: list[tuple[ElementTree.Element | _WordField, tuple[object, ...], bool]] = [
+        (root, (), False)
+    ]
     while pending:
-        node, context = pending.pop()
+        node, context, in_properties = pending.pop()
+        if isinstance(node, _WordField):
+            if not fields or fields[-1] is not node:
+                return False
+            fields.pop()
+            continue
         name = _word_name(node)
         if name in _DOCX_REFUSED_ELEMENTS:
             return False
         open_field = fields[-1] if fields else None
         reading = open_field is not None and open_field.reading_instruction
+        if reading and not in_properties and name not in _DOCX_INSTRUCTION_ALPHABET:
+            return False
+        if open_field is not None and name in ("r", "fldSimple"):
+            if context[: len(open_field.context)] != open_field.context:
+                return False
         kind = _word_attribute(node, "fldCharType") if name == "fldChar" else None
         if name == "fldChar" and kind not in ("begin", "separate", "end"):
             return False
@@ -570,10 +631,13 @@ def _docx_part_fields_are_safe(root: ElementTree.Element) -> bool:
             instructions = (node.attrib.get(key) for key in node.attrib if key.endswith("instr"))
             if any(_field_instruction_is_refused(value or "") for value in instructions):
                 return False
+            simple_field = _WordField(context, simple=True)
+            fields.append(simple_field)
+            pending.append((simple_field, context, in_properties))
         elif kind == "begin":
             fields.append(_WordField(context))
-        elif kind is not None and open_field is not None:
-            if open_field.context != context:
+        elif kind is not None:
+            if open_field is None or open_field.simple or open_field.context != context:
                 return False
             instruction = "".join(open_field.instruction)
             if open_field.reading_instruction and _field_instruction_is_refused(instruction):
@@ -582,7 +646,8 @@ def _docx_part_fields_are_safe(root: ElementTree.Element) -> bool:
             if kind == "end":
                 fields.pop()
         elif name in ("instrText", "delInstrText") and open_field is not None and reading:
-            if open_field.context != context:
+            deleted = "del" in context
+            if open_field.context != context or len(node) or deleted != (name == "delInstrText"):
                 return False
             open_field.instruction.append(node.text or "")
         if name in _DOCX_TRANSPARENT_ELEMENTS:
@@ -591,7 +656,8 @@ def _docx_part_fields_are_safe(root: ElementTree.Element) -> bool:
             child_context = (*context, _DOCX_REVISION_ELEMENTS[name])
         else:
             child_context = (*context, id(node))
-        pending.extend((child, child_context) for child in reversed(node))
+        child_in_properties = in_properties or name in _DOCX_PROPERTY_ELEMENTS
+        pending.extend((child, child_context, child_in_properties) for child in reversed(node))
     return not fields
 
 
