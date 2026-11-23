@@ -49,13 +49,20 @@ export function ArticleEditor({
       return;
     }
 
+    const updates = {
+      ...(title !== item.title ? { title: title.trim() } : {}),
+      ...(content !== (item.content || "") ? { content: content.trim() } : {}),
+      ...(category !== (item.category || "news") ? { category } : {}),
+    };
+
+    if (Object.keys(updates).length === 0) {
+      onOpenChange(false);
+      return;
+    }
+
     setSaving(true);
     try {
-      await intelligenceApi.editItem(item.type, item.id, {
-        title: title.trim(),
-        content: content.trim(),
-        category,
-      });
+      await intelligenceApi.editItem(item.type, item.id, updates);
       toast.success("Saved!", "Article updated successfully");
       onSaved();
       onOpenChange(false);
