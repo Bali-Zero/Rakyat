@@ -296,7 +296,6 @@ ROUTING_REVIEW_GROUPS = {
         "urgent_1_day",
         "urgent_2_days",
         "urgent_3_days",
-        "other_driving_license",
         "other_create_molina_express",
     ),
 }
