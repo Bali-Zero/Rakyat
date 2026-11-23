@@ -487,6 +487,30 @@ _COVERAGE = [
         "Authorization: Bearer <REDACTED:secret>API_KEY=<REDACTED:secret>",
     ),
     ("Authorization: Bearer AbcdEfgh", "Authorization: Bearer <REDACTED:secret>"),
+    (
+        "Authorization: Bearer Authorization: Bearer abcd1234efgh",
+        "Authorization: Bearer Authorization: Bearer <REDACTED:secret>",
+    ),
+    (
+        "Authorization: Basic Authorization: Basic abcd1234efgh",
+        "Authorization: Basic Authorization: Basic <REDACTED:secret>",
+    ),
+    (
+        "Authorization: Bearer Authorization: Basic abcd1234efgh",
+        "Authorization: Bearer Authorization: Basic <REDACTED:secret>",
+    ),
+    (
+        "Authorization: Basic " * 3 + "abcd1234efgh",
+        "Authorization: Basic " * 3 + "<REDACTED:secret>",
+    ),
+    (
+        '{"Authorization": "Bearer Authorization: Bearer abcd1234efgh"}',
+        '{"Authorization": "Bearer Authorization: Bearer <REDACTED:secret>"}',
+    ),
+    (
+        "Authorization: Bearer ab-Authorization=Basic abcd1234efgh",
+        "Authorization: Bearer <REDACTED:secret>Basic <REDACTED:secret>",
+    ),
 ]
 
 
@@ -591,6 +615,40 @@ def test_the_edit_list_is_sorted_disjoint_outside_every_reserved_interval():
     assert edited > 100  # the corpus reaches the stage
 
 
+def _accepted_runs_from_every_start(text: str) -> list[tuple[int, int]]:
+    """Every accepted run, trying a header at each position of `text` (a slow reference)."""
+    runs = []
+    for position in range(len(text)):
+        match = module._AUTHORIZATION_CREDENTIAL.match(text, position)
+        if match and module._is_credential_run(match["run"]):
+            runs.append(match.span("run"))
+    return runs
+
+
+def test_a_rejected_or_hidden_run_never_hides_the_header_after_it():
+    nested = [
+        "Authorization: Bearer " * depth + "Authorization: " + scheme + " abcd1234efgh"
+        for depth in range(1, 4)
+        for scheme in ("Bearer", "Basic")
+    ]
+    reached = 0
+    for original in _edit_corpus() + nested:
+        text = module._redact_main(original)
+        edits = module._authorization_edits(text)
+        reserved = module._reserved_intervals(text)
+        for start, end in _accepted_runs_from_every_start(text):
+            for index in range(start, end):
+                if text[index].isspace() or any(a <= index < b for a, b in reserved):
+                    continue
+                assert any(a <= index < b for a, b in edits), (
+                    text,
+                    edits,
+                    (start, end),
+                )
+                reached += 1
+    assert reached > 1000
+
+
 def test_the_stage_never_touches_a_reserved_interval():
     for original in _edit_corpus():
         text = module._redact_main(original)
@@ -612,6 +670,11 @@ def _growth_families():
         ),
         "words-without-a-scheme": lambda n: "Authorization " * n,
         "one-edit-each": lambda n: "Authorization: Bearer abcd1234 " * n,
+        "nested-bearer": lambda n: "Authorization: Bearer " * n + "abcd1234efgh",
+        "nested-basic": lambda n: "Authorization: Basic " * n,
+        "nested-in-hidden-runs": lambda n: (
+            "Authorization: Bearer ab-Authorization=" * n
+        ),
     }
 
 

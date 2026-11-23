@@ -274,14 +274,15 @@ _RESERVED_NAME_SITE = re.compile(
 # and quote, the scheme word Bearer or Basic, then a run of the RFC 6750 b64token
 # alphabet followed by any number of "=". Everything stays on one line. Only the
 # run is a candidate for hiding; the name, the joint, the quotes and the scheme
-# word always stay.
+# word always stay. The run is read in a lookahead, so the scan resumes at the
+# run's first character and a header name inside a run is still found.
 _AUTHORIZATION_CREDENTIAL = re.compile(
     r"""(?aix)
     (?: \bauthorization\b | (?P<q>['"])authorization(?P=q)\]? )
     [ \t]*[:=][ \t]*
     (?: (?:rb|br|fr|rf|r|b|u|f)? ['"] )?
     (?:bearer|basic)[ \t]+
-    (?P<run>[A-Za-z0-9\-._~+/]+=*)
+    (?=(?P<run>[A-Za-z0-9\-._~+/]+=*))
     """
 )
 _RUN_MARKER = re.compile(r"[0-9+/=]")
@@ -315,8 +316,11 @@ def _reserved_intervals(text: str) -> list[tuple[int, int]]:
 def _authorization_edits(text: str) -> list[tuple[int, int]]:
     """The spans of `text` to replace: credential runs, minus reserved intervals.
 
-    One pass over an immutable input. The spans come out sorted and disjoint, each
-    outside every reserved interval and holding a non-whitespace character.
+    One pass over an immutable input. A run holds no blank and every candidate's
+    scheme is followed by one, so the runs of successive candidates are disjoint
+    and increasing even when a header name sits inside the run before it. The
+    spans come out sorted and disjoint, each outside every reserved interval and
+    holding a non-whitespace character.
     """
     reserved = _reserved_intervals(text)
     edits: list[tuple[int, int]] = []
