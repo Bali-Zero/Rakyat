@@ -40,7 +40,7 @@ CREATE TABLE team_members(id int primary key,email text,role text,active boolean
 CREATE TABLE hr_employees(id int primary key,team_member_id int,is_active boolean,profile jsonb);
 CREATE TABLE hr_bonus_rates(id int primary key,practice_type_code text,is_active boolean,
     effective_from date,effective_to date,amount_idr bigint);
-CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text,
+CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text, payroll_period_id int,
     bonus_rate_id int,amount_idr bigint,awarded_at timestamptz,status text);
 CREATE TABLE hr_payroll_periods(payroll_month int,payroll_year int,status text);
 """
@@ -64,7 +64,12 @@ async def pool(monkeypatch):
         folder = Path(__file__).resolve().parents[2] / "db" / "migrations_v2"
         async with db.acquire() as conn:
             await conn.execute(SQL_BASE)
-            for filename in ("383_practice_delivery.sql", "384_delivery_bonus.sql"):
+            for filename in (
+                "383_practice_delivery.sql",
+                "384_delivery_bonus.sql",
+                "385_practice_visa_followups.sql",
+                "386_visa_bonus_payout_hold.sql",
+            ):
                 await conn.execute((folder / filename).read_text().split("-- === ROLLBACK ===")[0])
             await conn.execute("""
                 CREATE TRIGGER hr_validate BEFORE INSERT ON hr_bonus_ledger
