@@ -729,14 +729,15 @@ async def process_company(
     )
     if not company_id:
         first_word = pt_name.split()[1] if len(pt_name.split()) > 1 else pt_name
-        company_id = await conn.fetchval(
-            "SELECT id FROM companies WHERE company_name ILIKE $1 LIMIT 1",
+        matching_company_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM companies WHERE company_name ILIKE $1",
             f"%{first_word}%",
         )
 
     if not company_id:
         logger.info(
-            f"    ⚠️  no matching company found for '{pt_name}' — skipping (not creating placeholder)"
+            f"    ⚠️  no matching company found for '{pt_name}' — skipping "
+            f"(not creating placeholder; {matching_company_count} substring matches)"
         )
         return False
     else:
