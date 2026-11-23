@@ -17,6 +17,7 @@ import os
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -71,7 +72,16 @@ _TABLES = f"""
 CREATE TABLE clients (
     id integer PRIMARY KEY, full_name text, email text, nationality text, status text,
     phone text, passport_number text, assigned_to text, tax_consultant text,
-    deleted_at timestamptz, created_at timestamptz, updated_at timestamptz
+    deleted_at timestamptz, created_at timestamptz, updated_at timestamptz,
+    passport_expiry date
+);
+CREATE TABLE client_family_members (
+    id integer PRIMARY KEY, client_id integer, full_name text,
+    passport_expiry date, visa_expiry date
+);
+CREATE TABLE documents (
+    id integer PRIMARY KEY, client_id integer, document_type text, expiry_date date,
+    status text, is_archived boolean
 );
 CREATE TABLE practice_types (id integer PRIMARY KEY, name text);
 CREATE TABLE practices (
@@ -112,6 +122,38 @@ UPDATE practices SET updated_at = timestamptz '2026-03-01' + id * interval '1 da
 """
 
 _LIVE = {1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12}  # every client that is not deleted
+
+# The expiry dates of record are read through the production view, as migrated.
+_MIGRATION = (
+    Path(__file__).resolve().parents[4]
+    / "db"
+    / "migrations_v2"
+    / "352_client_expiry_alerts_view_finite_dates.sql"
+).read_text()
+_EXPIRY_VIEW = _MIGRATION[
+    _MIGRATION.index("CREATE OR REPLACE VIEW client_expiry_alerts_view") : _MIGRATION.index(
+        "-- === ROLLBACK ==="
+    )
+]
+
+# Days from today. In the default 30 days: 10, 12, 15, 20, 25. Left out: the passport of
+# an inactive client (the view's rule), a deleted client, today, yesterday, a rejected and
+# an archived document, and 45 days out (inside 60).
+_EXPIRIES = """
+UPDATE clients SET passport_expiry = CURRENT_DATE + 10 WHERE id = 1;
+UPDATE clients SET passport_expiry = CURRENT_DATE + 3 WHERE id = 4;
+UPDATE clients SET passport_expiry = CURRENT_DATE + 5 WHERE id = 6;
+INSERT INTO client_family_members VALUES (1, 4, 'Family Of Four', NULL, CURRENT_DATE + 20);
+INSERT INTO documents VALUES
+ (1, 3, 'KITAS', CURRENT_DATE + 15, 'verified', false),
+ (2, 1, 'KITAS', CURRENT_DATE + 45, 'verified', NULL),
+ (3, 1, 'Visa', CURRENT_DATE - 1, 'verified', false),
+ (4, 1, 'Visa', CURRENT_DATE, 'verified', false),
+ (5, 2, 'KITAS', CURRENT_DATE + 7, 'rejected', false),
+ (6, 2, 'KITAS', CURRENT_DATE + 8, 'verified', true),
+ (7, 2, 'NPWP', CURRENT_DATE + 25, 'verified', false),
+ (8, 9, 'KITAS', CURRENT_DATE + 12, 'verified', false);
+"""
 
 
 class _Recording:
@@ -163,6 +205,8 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[asyncpg.Pool, 
     try:
         async with created.acquire() as c:
             await c.execute(_TABLES)
+            await c.execute(_EXPIRY_VIEW)
+            await c.execute(_EXPIRIES)
         yield created
     finally:
         await created.close()
@@ -377,29 +421,65 @@ async def test_whatsapp_holds_a_practice_through_its_client_s_assignee(tool: CRM
     assert (await _ask(tool, "client_stats", _whatsapp("creator")))["practices"]["total"] == 10
 
 
-def _expiring(rows: list[dict[str, Any]]) -> list[tuple[str, int, str]]:
-    return [(r["full_name"], r["practice_type_id"], r["status"]) for r in rows]
+def _expiring(rows: list[dict[str, Any]]) -> list[tuple[int, str, str, int]]:
+    return [
+        (r["client_id"], r["entity_type"], r["document_type"], r["days_until_expiry"]) for r in rows
+    ]
+
+
+_EVERYONE_IN_30_DAYS = [
+    (1, "client", "passport", 10),
+    (9, "document", "KITAS", 12),
+    (3, "document", "KITAS", 15),
+    (4, "family_member", "visa", 20),
+    (2, "document", "NPWP", 25),
+]
+
+
+async def test_expiring_documents_are_the_expiry_dates_of_record_inside_the_window(
+    tool: CRMTool,
+) -> None:
+    admin = _desk(BOSS, "ceo")
+
+    rows = await _ask(tool, "expiring_documents", admin)
+    assert _expiring(rows) == _EVERYONE_IN_30_DAYS
+    assert {frozenset(row) for row in rows} == {ROW_FIELDS["expiring_documents"]}
+    assert rows[2]["client_name"] == "Client Three"
+    assert rows[3]["entity_name"] == "Family Of Four"
+
+    wider = _expiring(await _ask(tool, "expiring_documents", admin, days_ahead=60))
+    assert wider == [*_EVERYONE_IN_30_DAYS, (1, "document", "KITAS", 45)]
+    assert (
+        _expiring(await _ask(tool, "expiring_documents", admin, days_ahead=12))
+        == (_EVERYONE_IN_30_DAYS[:2])
+    )
+    assert (
+        _expiring(await _ask(tool, "expiring_documents", admin, limit=2))
+        == (_EVERYONE_IN_30_DAYS[:2])
+    )
 
 
 async def test_expiring_documents_follow_the_scope_and_leave_deleted_clients_out(
     tool: CRMTool,
 ) -> None:
-    # In progress and of a visa or stay-permit type: practices 1, 2, 3 and 5 (5 is on a
-    # deleted client). Newest update first.
+    # The desk holds an expiry row by its client's assignee under the practices rule: the
+    # member's pool (the member and the peer), exactly as stored.
+    assert get_practices_user_filter({"email": MEMBER, "role": "team"}) == [MEMBER, PEER]
     assert _expiring(await _ask(tool, "expiring_documents", _desk(MEMBER))) == [
-        ("Client Four", 1, "waiting_documents"),
-        ("Zzfind Own", 1, "on_process"),
+        (1, "client", "passport", 10),
+        (2, "document", "NPWP", 25),
     ]
+    assert _expiring(await _ask(tool, "expiring_documents", _desk(OTHER))) == [
+        (3, "document", "KITAS", 15),
+        (4, "family_member", "visa", 20),
+    ]
+    # WhatsApp: the sender's own address, in any letter case, as its client rule.
     assert _expiring(await _ask(tool, "expiring_documents", _whatsapp("team", MEMBER))) == [
-        ("Zzfind Own", 3, "on_process"),
-        ("Zzfind Own", 1, "on_process"),
-    ]
-    assert _expiring(await _ask(tool, "expiring_documents", _desk(BOSS, "ceo"))) == [
-        ("Zzfind Own", 3, "on_process"),
-        ("Client Four", 1, "waiting_documents"),
-        ("Zzfind Own", 1, "on_process"),
+        (1, "client", "passport", 10),
+        (9, "document", "KITAS", 12),
     ]
     assert await _ask(tool, "expiring_documents", _desk(LONER)) == []
+    assert await _ask(tool, "expiring_documents", _whatsapp("team", LONER)) == []
 
 
 _NOBODY = [

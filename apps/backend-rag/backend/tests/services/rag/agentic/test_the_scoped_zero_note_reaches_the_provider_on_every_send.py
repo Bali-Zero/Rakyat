@@ -50,8 +50,8 @@ CONSTRAINT = (
 NOTES = {
     "practice_stats": "The CRM holds no practices within the signed-in user's scope. " + CONSTRAINT,
     "expiring_documents": (
-        "The CRM holds no visa or stay-permit practice in progress within the signed-in user's "
-        "scope. " + CONSTRAINT
+        "The CRM holds no passport, visa or document expiring in the next 30 days within the "
+        "signed-in user's scope. " + CONSTRAINT
     ),
     "search_clients": (
         "The automatic CRM lookup matched no client for this question as typed; that is not a "

@@ -41,8 +41,8 @@ CONSTRAINT = (
 NOTES = {
     "practice_stats": "The CRM holds no practices within the signed-in user's scope. " + CONSTRAINT,
     "expiring_documents": (
-        "The CRM holds no visa or stay-permit practice in progress within the signed-in user's "
-        "scope. " + CONSTRAINT
+        "The CRM holds no passport, visa or document expiring in the next 30 days within the "
+        "signed-in user's scope. " + CONSTRAINT
     ),
     "search_clients": (
         "The automatic CRM lookup matched no client for this question as typed; that is not a "
@@ -75,13 +75,13 @@ ROWS: dict[str, dict[str, Any]] = {
         "created_at": "2026-01-02 00:00:00+00:00",
     },
     "expiring_documents": {
-        "full_name": "Client One",
-        "email": "c1@example.test",
-        "nationality": None,
-        "practice_type_id": 1,
-        "status": "on_process",
-        "notes": None,
-        "updated_at": "2026-03-02 00:00:00+00:00",
+        "client_id": 1,
+        "client_name": "Client One",
+        "entity_type": "client",
+        "entity_name": "Client One",
+        "document_type": "passport",
+        "expiry_date": "2026-03-02",
+        "days_until_expiry": 10,
     },
     "practice_stats": {"service_type": "KITAS E33", "count": 3, "on_process": 1, "completed": 0},
 }

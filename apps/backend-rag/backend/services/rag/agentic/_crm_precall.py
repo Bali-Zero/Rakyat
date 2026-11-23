@@ -33,13 +33,13 @@ ROW_FIELDS: dict[str, frozenset[str]] = {
     ),
     "expiring_documents": frozenset(
         {
-            "full_name",
-            "email",
-            "nationality",
-            "practice_type_id",
-            "status",
-            "notes",
-            "updated_at",
+            "client_id",
+            "client_name",
+            "entity_type",
+            "entity_name",
+            "document_type",
+            "expiry_date",
+            "days_until_expiry",
         }
     ),
     "practice_stats": frozenset({"service_type", "count", "on_process", "completed"}),
@@ -64,9 +64,10 @@ CRM_NOTE_CONSTRAINT = (
 )
 ZERO_NOTES: dict[str, str] = {
     "practice_stats": "The CRM holds no practices within the signed-in user's scope.",
+    # The pre-call asks with the tool's default window of 30 days.
     "expiring_documents": (
-        "The CRM holds no visa or stay-permit practice in progress within the signed-in "
-        "user's scope."
+        "The CRM holds no passport, visa or document expiring in the next 30 days within "
+        "the signed-in user's scope."
     ),
     # The pre-call hands the whole question to the tool as the search term, so an empty
     # answer says nothing about whether a client exists.
