@@ -252,3 +252,18 @@ async def test_347_real_locks_and_post_ledger_failure_roll_back(
     assert await signature() == before
     for ledger in ("schema_migrations", "_schema_versions"):
         assert await conn.fetchval(f"SELECT count(*) FROM {ledger} WHERE migration_number=347") == 0
+
+
+@pytest.mark.parametrize("table", ["hr_bonus_rates", "hr_payroll_periods"])
+def test_delivery_payroll_prerequisites_match_legacy_068(table: str) -> None:
+    """Keep the rate window, closed-month states and foreign keys in CI faithful to payroll."""
+    import re
+
+    pattern = rf"CREATE TABLE IF NOT EXISTS {table} \([\s\S]*?\n\s*\)"
+    # An outer ')' terminates the SQL literal, while inner CHECKs also have
+    # closing parens. Match the literal's end in each of its source formats.
+    legacy = (ROOT / "backend/migrations/migration_068_hr_payroll.py").read_text()
+    expected = re.search(pattern + r";", legacy)
+    actual = re.search(pattern + r'\s*"""', BOOTSTRAP.read_text())
+    assert expected and actual
+    assert expected.group().rstrip(";").split() == actual.group().rstrip('"').split()

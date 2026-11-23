@@ -39,6 +39,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Production already has the legacy 068 trigger. The v2-only CI chain
+-- materialises its table and function but may not have attached the trigger.
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgrelid='hr_bonus_ledger'::regclass
+          AND tgname='trg_hr_bonus_validate' AND NOT tgisinternal
+    ) THEN
+        CREATE TRIGGER trg_hr_bonus_validate
+        BEFORE INSERT OR UPDATE OF practice_id ON hr_bonus_ledger
+        FOR EACH ROW EXECUTE FUNCTION hr_validate_completed_practice();
+    END IF;
+END $$;
+
 -- === ROLLBACK ===
 -- Unresolved bonus claims need to be retained. Refuse a rollback that loses them.
 DO $$ BEGIN
