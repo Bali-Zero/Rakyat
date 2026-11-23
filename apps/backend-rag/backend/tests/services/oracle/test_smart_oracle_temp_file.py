@@ -79,3 +79,41 @@ async def test_smart_oracle_keeps_successful_answer_and_removes_downloaded_file(
 
     assert result == "Synthetic answer"
     assert not pdf_path.exists()
+
+
+def _failing_remove(error: OSError) -> Any:
+    def remove(path: str) -> None:
+        raise error
+
+    return remove
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [PermissionError("synthetic permission"), FileNotFoundError("synthetic missing")],
+)
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [("answer", "Synthetic answer"), ("model failure", "Error processing the document with AI.")],
+)
+async def test_a_file_that_cannot_be_removed_does_not_replace_the_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: OSError,
+    outcome: str,
+    expected: str,
+) -> None:
+    pdf_path = tmp_path / "downloaded.pdf"
+
+    async def generate_content(**_: Any) -> dict[str, str]:
+        if outcome == "model failure":
+            raise RuntimeError("synthetic model failure")
+        return {"text": "Synthetic answer"}
+
+    _patch_oracle_dependencies(monkeypatch, pdf_path, generate_content)
+    monkeypatch.setattr(smart_module.os, "remove", _failing_remove(error))
+
+    result = await smart_module.smart_oracle("Synthetic question", "synthetic.pdf")
+
+    assert result == expected

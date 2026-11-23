@@ -228,8 +228,14 @@ async def smart_oracle(query, best_filename_from_qdrant) -> str:
             logger.error("AI Processing Error: %s", ai_error)
             return "Error processing the document with AI."
         finally:
-            if os.path.exists(pdf_path):
+            # A file that cannot be removed must not replace the answer or the error answer.
+            try:
                 os.remove(pdf_path)
+            except OSError as cleanup_error:
+                logger.warning(
+                    "Could not remove the downloaded document: %s",
+                    type(cleanup_error).__name__,
+                )
     else:
         # Fallback if the file is missing from Drive
         return "Original document not found in Drive storage. Unable to perform deep analysis."
