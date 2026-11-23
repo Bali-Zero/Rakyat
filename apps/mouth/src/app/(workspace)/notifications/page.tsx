@@ -92,7 +92,13 @@ interface Alert {
 type Severity = "critical" | "high" | "medium" | "low";
 
 function severityOf(alertType: string): Severity {
-  if (alertType.includes("critical")) return "critical";
+  if (
+    alertType.includes("critical") ||
+    alertType === "visa_emergency" ||
+    alertType === "visa_expired" ||
+    alertType === "passport_expired"
+  )
+    return "critical";
   if (alertType.includes("warning")) return "high";
   if (alertType === "birthday") return "low";
   return "medium";
@@ -207,6 +213,10 @@ const SYSTEM_STATUS_COPY: Record<
     sentence: "Multiple failures detected — attention required.",
   },
   pending: { tone: "wait", sentence: "Pending alerts backlog — processing." },
+  backlogged: {
+    tone: "wait",
+    sentence: "Pending alerts backlog — processing.",
+  },
 };
 
 /**
@@ -313,7 +323,6 @@ export default function NotificationsDashboardPage() {
 
   const loadDashboard = async () => {
     try {
-      setIsLoading(true);
       const data = await api.crm.request<{
         stats: typeof stats;
         recent_alerts: typeof alerts;
