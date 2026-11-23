@@ -125,7 +125,7 @@ def test_reason_text_carries_the_notes_innocence() -> None:
     reason = next(x.reason for x in _investor(BudgetBand.OVER_500M).ranking if x.visa is VisaType.E28A)
     assert NOTES in reason and reason.startswith("Investor Visa \u2014 ")
     d12_24m = next(x.reason for x in _investor(BudgetBand.OVER_500M).ranking if x.visa is VisaType.D12)
-    assert "Max stay 180 days" in d12_24m  # D12 is 180d non-extendable (ruling 2026-10-19)
+    assert "Max stay 360 days" in d12_24m  # D12 is 180d + one 180d extension (ruling 2026-11-23)
     r_6m = recommend_visa(
         nationality="USA",
         purpose=Purpose.INVESTOR,
@@ -133,4 +133,4 @@ def test_reason_text_carries_the_notes_innocence() -> None:
         budget_band=BudgetBand.OVER_500M,
     )
     d12_6m = next(x.reason for x in r_6m.ranking if x.visa is VisaType.D12)
-    assert "Covers 180 days total." in d12_6m  # other visas keep the computed coverage
+    assert "Covers 360 days total." in d12_6m  # other visas keep the computed coverage

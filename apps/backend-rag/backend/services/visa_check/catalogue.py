@@ -238,9 +238,9 @@ def _build_meta() -> dict[VisaType, VisaMeta]:
             category="Multiple Entry",
             purposes=frozenset({Purpose.INVESTOR}),
             duration_days=180,
-            extensions=(0, 0),  # 180 days per entry, non-extendable (ruling 2026-10-19)
+            extensions=(1, 180),  # one 180-day extension (ruling 2026-11-23)
             min_budget_idr=None,
-            notes="Scouting visa: evaluate market before committing to PT PMA. Up to 180 days per entry (non-extendable).",
+            notes="Scouting visa: evaluate market before committing to PT PMA. Up to 180 days per entry, extendable once for 180 days.",
             seed_source=SEED_NB2,
             duration_source=NB2,
             fit_tags=frozenset({FitTag.PRE_PMA, FitTag.MULTI_ENTRY}),
