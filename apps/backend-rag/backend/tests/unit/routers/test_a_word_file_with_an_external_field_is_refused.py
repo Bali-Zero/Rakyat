@@ -10,6 +10,8 @@ from backend.services.portal.upload_validation import content_matches_extension
 
 _WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _STRICT_WORD_NAMESPACE = "http://purl.oclc.org/ooxml/wordprocessingml/main"
+_MC_NAMESPACE = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_HEADER_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
 
 
 def _synthetic_docx_with_word_part(part_name: str, part_xml: str) -> bytes:
@@ -33,7 +35,41 @@ def _synthetic_docx_with_word_part(part_name: str, part_xml: str) -> bytes:
 
 
 def _word_part(body: str, namespace: str = _WORD_NAMESPACE) -> str:
-    return f'<w:document xmlns:w="{namespace}"><w:body>{body}</w:body></w:document>'
+    return (
+        f'<w:document xmlns:w="{namespace}" xmlns:mc="{_MC_NAMESPACE}" xmlns:x="urn:example">'
+        f"<w:body>{body}</w:body></w:document>"
+    )
+
+
+def _run(inner: str) -> str:
+    return f"<w:r>{inner}</w:r>"
+
+
+def _char(kind: str) -> str:
+    return _run(f'<w:fldChar w:fldCharType="{kind}"/>')
+
+
+def _instr(text: str, tag: str = "instrText") -> str:
+    return _run(f"<w:{tag}>{text}</w:{tag}>")
+
+
+def _docx_with_declared_part(part_name: str, content_type: str, part_xml: str) -> bytes:
+    base = _synthetic_docx_with_word_part("word/document.xml", _word_part("<w:p/>"))
+    updated = BytesIO()
+    with ZipFile(BytesIO(base)) as source, ZipFile(updated, "w") as destination:
+        for info in source.infolist():
+            payload = source.read(info.filename)
+            if info.filename == "[Content_Types].xml":
+                override = f'<Override PartName="/{part_name}" ContentType="{content_type}"/>'
+                payload = payload.replace(b"</Types>", override.encode() + b"</Types>")
+            destination.writestr(info, payload)
+        destination.writestr(part_name, part_xml.encode("utf-8"))
+    return updated.getvalue()
+
+
+def _refused(body: str) -> bool:
+    content = _synthetic_docx_with_word_part("word/document.xml", _word_part(body))
+    return not content_matches_extension(".docx", content)
 
 
 def _complex_field(*instruction_runs: str) -> str:
@@ -181,3 +217,224 @@ def test_a_header_part_with_a_safe_field_passes():
     )
 
     assert content_matches_extension(".docx", content)
+
+
+@pytest.mark.parametrize(
+    "part_name", ["WORD/header1.XML", "headers/header1.xml", "customXml/item9.xml"]
+)
+def test_a_field_in_any_parsed_part_is_refused(part_name: str) -> None:
+    body = '<w:p><w:fldSimple w:instr="DDEAUTO &quot;synthetic&quot;"/></w:p>'
+    content = _synthetic_docx_with_word_part(part_name, _word_part(body))
+
+    assert not content_matches_extension(".docx", content)
+
+
+def test_a_part_declared_as_xml_under_another_extension_is_refused():
+    content = _docx_with_declared_part(
+        "word/header9.bin", _HEADER_TYPE, _word_part('<w:p><w:fldSimple w:instr="PAGE"/></w:p>')
+    )
+
+    assert not content_matches_extension(".docx", content)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '<w:altChunk w:id="chunk"/>',
+        '<w:p><w:subDoc w:id="sub"/></w:p>',
+        "<w:frameset/>",
+        "<w:p><w:frame/></w:p>",
+        _run('<w:fldChar w:fldCharType="begin"><w:fldData>AA==</w:fldData></w:fldChar>')
+        + _instr("ADDIN synthetic")
+        + _char("end"),
+    ],
+)
+def test_imported_content_sub_documents_frames_and_field_data_are_refused(body: str) -> None:
+    assert _refused(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _char("begin")
+        + _char("begin")
+        + _instr('QUOTE "DDEAUTO"')
+        + _char("end")
+        + _instr(' "calc"')
+        + _char("end"),
+        _char("begin")
+        + _instr("INCLUD")
+        + _char("begin")
+        + _instr('QUOTE "ETEXT"')
+        + _char("end")
+        + _instr(' "https://example.invalid/x.docx"')
+        + _char("end"),
+        _char("begin") + '<w:fldSimple w:instr="QUOTE DDEAUTO"/>' + _instr(" x") + _char("end"),
+    ],
+)
+def test_a_field_that_builds_its_name_from_a_nested_field_is_refused(body: str) -> None:
+    assert _refused(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _char("begin")
+        + "<w:del>"
+        + _instr("SAFE ", "delInstrText")
+        + "</w:del>"
+        + _instr('DDEAUTO "synthetic"')
+        + _char("end"),
+        _char("begin")
+        + "<w:ins>"
+        + _instr("SAFE ")
+        + "</w:ins>"
+        + _instr('DDEAUTO "synthetic"')
+        + _char("end"),
+        _char("begin")
+        + "<w:del>"
+        + _instr("SAFE ")
+        + "</w:del>"
+        + _instr('DDEAUTO "synthetic"')
+        + _char("end"),
+        _char("begin")
+        + '<mc:AlternateContent><mc:Choice Requires="x">'
+        + _instr("SAFE ")
+        + "</mc:Choice><mc:Fallback>"
+        + _instr('DDEAUTO "synthetic"')
+        + "</mc:Fallback></mc:AlternateContent>"
+        + _char("end"),
+        _char("begin")
+        + _run("<x:wrap><w:instrText>SAFE </w:instrText></x:wrap>")
+        + _instr('DDEAUTO "synthetic"')
+        + _char("end"),
+        "<w:p>"
+        + _char("begin")
+        + "</w:p><w:tbl><w:tr><w:tc><w:p>"
+        + _instr('DDEAUTO "synthetic"')
+        + _char("end")
+        + "</w:p></w:tc></w:tr></w:tbl>",
+    ],
+)
+def test_a_field_whose_pieces_word_may_keep_or_drop_apart_is_refused(body: str) -> None:
+    assert _refused(body)
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        '"INCLUDETEXT" "https://example.invalid/x.docx"',
+        '\\* INCLUDETEXT "https://example.invalid/x.docx"',
+        'INCLUD\u200bETEXT "https://example.invalid/x.docx"',
+        'LIN\u00adK "synthetic"',
+        "1 INCLUDETEXT",
+    ],
+)
+def test_a_field_whose_name_is_not_plain_letters_is_refused(instruction: str) -> None:
+    assert _refused(_char("begin") + _instr(instruction) + _char("end"))
+    assert _refused(f'<w:fldSimple w:instr="{instruction.replace(chr(34), "&quot;")}"/>')
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _char("begin") + _instr('DDEAUTO "synthetic"'),
+        _char("begin") + _instr("PAGE"),
+        _run('<w:fldChar w:fldCharType="Begin"/>') + _instr("PAGE") + _char("end"),
+        '<w:fldSimple instr="DDEAUTO &quot;synthetic&quot;"/>',
+    ],
+)
+def test_an_open_field_an_unknown_field_character_or_a_bare_instr_is_refused(body: str) -> None:
+    assert _refused(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _complex_field("PAGE \\* MERGEFORMAT"),
+        _complex_field('DATE \\@ "d MMMM yyyy"'),
+        _char("begin") + _char("end"),
+        _char("begin")
+        + _instr("IF ")
+        + _char("begin")
+        + _instr("PAGE")
+        + _char("separate")
+        + _run("<w:t>1</w:t>")
+        + _char("end")
+        + _instr(' = 1 "one" "other"')
+        + _char("separate")
+        + _char("end"),
+        _char("begin")
+        + _instr("= ")
+        + _char("begin")
+        + _instr("PAGE")
+        + _char("end")
+        + _instr(" + 1")
+        + _char("end"),
+        "<w:p>"
+        + _char("begin")
+        + _instr("TOC \\o")
+        + "</w:p><w:p>"
+        + _char("separate")
+        + _run("<w:t>Contents</w:t>")
+        + "</w:p><w:p>"
+        + _char("end")
+        + "</w:p>",
+        "<w:ins>"
+        + _char("begin")
+        + "</w:ins><w:ins>"
+        + _instr("PAGE")
+        + "</w:ins><w:ins>"
+        + _char("separate")
+        + "</w:ins><w:ins>"
+        + _char("end")
+        + "</w:ins>",
+        "<w:del>" + _char("begin") + _instr("PAGE", "delInstrText") + _char("end") + "</w:del>",
+        '<mc:AlternateContent><mc:Choice Requires="x">'
+        + _complex_field("PAGE")
+        + "</mc:Choice><mc:Fallback>"
+        + _complex_field("PAGE")
+        + "</mc:Fallback>"
+        + "</mc:AlternateContent>",
+        '<w:hyperlink w:anchor="top">' + _complex_field("PAGE") + "</w:hyperlink>",
+        _char("begin")
+        + _instr('TOC \\o "1-3" \\h')
+        + '<w:hyperlink w:anchor="_Toc1">'
+        + _char("separate")
+        + _run("<w:t>Introduction</w:t>")
+        + _char("end")
+        + "</w:hyperlink>",
+    ],
+)
+def test_ordinary_fields_tracked_whole_or_in_a_text_box_pass(body: str) -> None:
+    assert not _refused(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _char("begin")
+        + '<mc:AlternateContent><mc:Choice Requires="x">'
+        + _char("end")
+        + "</mc:Choice><mc:Fallback/></mc:AlternateContent>"
+        + _instr('DDEAUTO "synthetic"')
+        + _char("end"),
+        "<w:ins>"
+        + _char("begin")
+        + "</w:ins><w:del>"
+        + _instr("SAFE ", "delInstrText")
+        + "</w:del><w:ins>"
+        + _instr('DDEAUTO "synthetic"')
+        + _char("end")
+        + "</w:ins>",
+        "<w:del>"
+        + _char("begin")
+        + _instr('DDEAUTO "synthetic"', "delInstrText")
+        + _char("end")
+        + "</w:del>",
+    ],
+)
+def test_a_field_closed_in_a_branch_mixed_revisions_or_deleted_whole_is_still_read(
+    body: str,
+) -> None:
+    assert _refused(body)
