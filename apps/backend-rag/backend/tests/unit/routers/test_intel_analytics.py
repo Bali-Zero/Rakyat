@@ -402,6 +402,57 @@ class TestStoreIntel:
         # and re-raised as HTTPException(500), so we check for 500.
         assert exc_info.value.status_code == 500
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user", [{"role": "staff", "email": "member@example.test"}, {}])
+    async def test_store_refuses_a_caller_who_is_not_an_admin(self, _patch_imports, user):
+        client = create_autospec(QdrantClient, instance=True)
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelStoreRequest, store_intel
+
+            request = IntelStoreRequest(
+                collection="visa",
+                id="test-1",
+                document="test doc",
+                embedding=[0.1] * 4,
+                metadata={},
+                full_data={},
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                await store_intel(request, current_user=user)
+
+        assert exc_info.value.status_code == 403
+        client.upsert_documents.assert_not_called()
+
+    def test_store_route_answers_403_to_a_non_admin_and_200_to_an_admin(self, _patch_imports):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from backend.app.dependencies import get_current_user
+        from backend.app.routers.intel_analytics import router
+
+        app = FastAPI()
+        app.include_router(router)
+        body = {
+            "collection": "visa",
+            "id": "test-1",
+            "document": "test doc",
+            "embedding": [0.1] * 4,
+            "metadata": {},
+            "full_data": {},
+        }
+        client = create_autospec(QdrantClient, instance=True)
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            app.dependency_overrides[get_current_user] = lambda: {"role": "staff"}
+            denied = TestClient(app).post("/api/intel/store", json=body)
+            app.dependency_overrides[get_current_user] = lambda: {"role": "admin"}
+            allowed = TestClient(app).post("/api/intel/store", json=body)
+
+        assert denied.status_code == 403
+        assert allowed.status_code == 200
+        client.upsert_documents.assert_awaited_once()
+
 
 # ---------------------------------------------------------------------------
 # /api/intel/critical
