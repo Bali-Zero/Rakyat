@@ -499,3 +499,79 @@ async def test_postponement_moves_the_deadline_and_empty_held_month_is_consumed(
     await _award(env.pool, env.emp_id, 4, 125_000)
     monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 4, 30))
     assert (await _run_month(env, 4))["Fake A"]["bonus_total"] == 125_000
+
+
+@pytest.mark.asyncio
+async def test_archiving_a_fulfilled_itk_cannot_reopen_a_hold_during_payroll_approval(
+    env, monkeypatch
+):
+    """Pause after the real drift read, then attempt a real archive through the document trigger."""
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from backend.app.services.hr import hr_service
+
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 28))
+    pid = await _open_followup(env.pool, env.emp_id, date(2025, 1, 1))
+    await env.pool.execute("UPDATE practices SET client_id=76 WHERE id=$1", pid)
+    doc = await env.pool.fetchval(
+        "INSERT INTO documents(practice_id,client_id,file_id) VALUES($1,76,'example-itk') RETURNING id",
+        pid,
+    )
+    await env.pool.execute(
+        """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,updated_by)
+           VALUES($1,'visa_demo','itk',$2,'test-staff')""",
+        pid,
+        doc,
+    )
+    assert await env.pool.fetchval(
+        "SELECT fulfilled_at IS NOT NULL FROM practice_visa_followups WHERE practice_id=$1", pid
+    )
+    award = await _award(env.pool, env.emp_id, 2, 75_000)
+    period = (await env.svc.calculate_payroll(2, 2025, env.admin))["period_id"]
+    drift_checked, resume = asyncio.Event(), asyncio.Event()
+
+    class PausedConnection:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def __getattr__(self, attr):
+            return getattr(self.conn, attr)
+
+        async def fetchval(self, query, *args):
+            result = await self.conn.fetchval(query, *args)
+            if "COALESCE(ps.bonus_total_idr" in query:
+                assert result is None
+                drift_checked.set()
+                await resume.wait()
+            return result
+
+    class PausedPool:
+        @asynccontextmanager
+        async def acquire(self):
+            async with env.pool.acquire() as conn:
+                yield PausedConnection(conn)
+
+    approving = asyncio.create_task(HRService(PausedPool()).approve_payroll(period, env.admin))
+    try:
+        await asyncio.wait_for(drift_checked.wait(), timeout=5)
+        # env.quick uses a distinct Postgres connection with a 200 ms lock timeout.
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.db_pool.execute(
+                "UPDATE documents SET is_archived=true WHERE id=$1", doc
+            )
+    finally:
+        resume.set()
+        await asyncio.wait_for(approving, timeout=5)
+
+    assert (
+        await env.pool.fetchval("SELECT payroll_period_id FROM hr_bonus_ledger WHERE id=$1", award)
+        == period
+    )
+    await env.pool.execute("UPDATE documents SET is_archived=true WHERE id=$1", doc)
+    assert not await env.pool.fetchval(
+        "SELECT fulfilled_at IS NOT NULL FROM practice_visa_followups WHERE practice_id=$1", pid
+    )
+    assert (await env.svc.mark_payroll_paid(period))[
+        "status"
+    ] == "paid"  # the approved snapshot stays fixed

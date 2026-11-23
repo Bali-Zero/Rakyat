@@ -1151,13 +1151,14 @@ class HRService:
         """
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
-                # Lock order: carry allocation, overdue obligations, month, period. An
-                # upload/postponement clearing one of these obligations waits for this snapshot.
+                # Lock order: carry allocation, due obligations in practice-id order, month,
+                # then period. Archiving a permit can reopen a previously fulfilled obligation,
+                # so protect both directions through the drift check and payout allocation.
                 as_of = business_today()
                 await _lock_bonus_allocations(conn, exclusive=True)
                 await conn.execute(
                     """SELECT practice_id FROM practice_visa_followups
-                       WHERE fulfilled_at IS NULL AND owner_release_at IS NULL AND due_on <= $1
+                       WHERE owner_release_at IS NULL AND due_on <= $1
                        ORDER BY practice_id FOR SHARE""",
                     as_of,
                 )
