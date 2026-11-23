@@ -1037,7 +1037,7 @@ async def _attempt(
     phone = str(thread["counterpart_phone"])
 
     async def _tell(reason: str) -> bool:
-        return await _tell_a_human(phone=phone, reason=reason, thread_id=thread_id)
+        return await _tell_a_human(phone=phone, reason=reason, thread_id=thread_id, pool=pool)
 
     # B2.4 PR-2, named residual V4 (design B2-4-design.md §2 item B): the
     # builder no longer judges (support_verdict is always None now — see
