@@ -131,6 +131,41 @@ async def _log_impersonation(
         logger.warning("impersonation audit log failed: %s", sanitize_for_log(e))
 
 
+VIEW_AS_READ_ONLY_DETAIL = "The portal is read-only while viewing as a client"
+
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# Writes that stay open under view-as, as (METHOD, route template). Keep it
+# tiny: POST /messages/{id}/read answers its normal success shape and writes
+# nothing (the chat page fires it by itself), so it must not turn into a 403.
+VIEW_AS_WRITE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
+    {("POST", "/api/portal/messages/{message_id}/read")}
+)
+
+
+def is_viewing_as_client(client: dict) -> bool:
+    """True when a superuser looks at the portal as a client (?as_client=)."""
+    return bool(client.get("impersonating"))
+
+
+def _refuse_view_as_write(request: Request) -> None:
+    """Raise 403 unless this request is a read (or the one allowlisted write).
+
+    Fails closed: a method or route template that is not a string is refused
+    before any set membership, so an unhashable value cannot raise TypeError.
+    """
+    method = getattr(request, "method", None)
+    if not isinstance(method, str):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
+    if method in SAFE_METHODS:
+        return
+    scope = getattr(request, "scope", None)
+    route = scope.get("route") if isinstance(scope, dict) else None
+    template = getattr(route, "path", None)
+    if not isinstance(template, str) or (method, template) not in VIEW_AS_WRITE_ALLOWLIST:
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
+
+
 async def get_current_client(
     request: Request,
     db_pool: asyncpg.Pool = Depends(get_database_pool),
@@ -218,6 +253,12 @@ async def get_current_client(
                 path=str(request.url.path),
             )
 
+        # The one place view-as is granted is the one place it is made
+        # read-only: every route that resolves its client here (as a
+        # dependency or in its body, under any prefix) is covered. The audit
+        # row above is written first, so a refused attempt is recorded.
+        _refuse_view_as_write(request)
+
         return {
             "client_id": target["id"],
             "user_id": str(user_id) if user_id else user_email,
@@ -286,47 +327,6 @@ async def get_current_client(
             "name": row["full_name"],
             "impersonating": False,
         }
-
-
-VIEW_AS_READ_ONLY_DETAIL = "The portal is read-only while viewing as a client"
-
-
-def is_viewing_as_client(client: dict) -> bool:
-    """True when a superuser looks at the portal as a client (?as_client=)."""
-    return bool(client.get("impersonating"))
-
-
-# Writes that stay open under view-as, as (METHOD, route template). Keep it
-# tiny: POST /messages/{id}/read answers its normal success shape and writes
-# nothing (the chat page fires it by itself), so it must not turn into a 403.
-VIEW_AS_WRITE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
-    {("POST", "/api/portal/messages/{message_id}/read")}
-)
-_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-
-
-async def view_as_write_guard(
-    request: Request,
-    client: dict = Depends(get_current_client),
-) -> None:
-    """Router dependency: a view-as session may read, never write.
-
-    Every non-GET route of this router is refused with 403 while a superuser
-    views the portal as a client, so a route added tomorrow is covered
-    without remembering a per-route check.
-    """
-    if request.method in _SAFE_METHODS or not is_viewing_as_client(client):
-        return
-    route = request.scope.get("route")
-    template = getattr(route, "path", None)
-    if (request.method, template) in VIEW_AS_WRITE_ALLOWLIST:
-        return
-    raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
-
-
-# Registered before the first route below: FastAPI copies router.dependencies
-# into each route when the decorator runs.
-router.dependencies.append(Depends(view_as_write_guard))
 
 
 def get_portal_service(db_pool: asyncpg.Pool = Depends(get_database_pool)) -> PortalService:
