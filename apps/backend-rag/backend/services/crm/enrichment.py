@@ -221,6 +221,7 @@ def get_extractor(ai_client: Any = None) -> AICRMExtractor:
 OLLAMA_BASE_URL = settings.ollama_url
 OLLAMA_MODEL = "qwen3.5:9b"
 OLLAMA_TIMEOUT = 120.0
+OLLAMA_PROBE_TIMEOUT = 5.0
 BATCH_SIZE = 10
 
 
@@ -262,6 +263,8 @@ class BirthplaceEnrichmentService:
     async def call_ollama(self, prompt: str) -> str | None:
         try:
             client = self._get_client(timeout=OLLAMA_TIMEOUT)
+            # Per request: the shared client may have been created by the
+            # short availability probe, whose timeout must not apply here.
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -270,6 +273,7 @@ class BirthplaceEnrichmentService:
                     "stream": False,
                     "options": {"temperature": 0.7, "num_predict": 500},
                 },
+                timeout=OLLAMA_TIMEOUT,
             )
             if response.status_code == 200:
                 return response.json().get("response", "")
@@ -382,8 +386,8 @@ Return ONLY the JSON object, no additional text."""
             "failed": 0,
         }
         try:
-            client = self._get_client(timeout=5.0)
-            response = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
+            client = self._get_client(timeout=OLLAMA_TIMEOUT)
+            response = await client.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=OLLAMA_PROBE_TIMEOUT)
             if response.status_code != 200:
                 logger.error("Ollama is not available")
                 stats["error"] = "Ollama not available"
@@ -425,7 +429,10 @@ Return ONLY the JSON object, no additional text."""
 async def run_birthplace_enrichment_task(db_pool: asyncpg.Pool) -> dict[str, Any]:
     """Task function for autonomous scheduler."""
     service = BirthplaceEnrichmentService(db_pool)
-    return await service.run_batch_enrichment()
+    try:
+        return await service.run_batch_enrichment()
+    finally:
+        await service.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
