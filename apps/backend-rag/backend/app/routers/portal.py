@@ -1397,15 +1397,20 @@ async def update_profile(
             "contact_change_requested": requested,
         }
     except ProfileContactRefused as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except ValueError as e:
         # Client soft-deleted / gone (portal_service filters
         # `deleted_at IS NULL`) -> not-found, not a 500. Consistent
         # with get_dashboard (BUG C).
-        logger.warning(f"Client not found in update_profile for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
+        # Class name only: asyncpg's argument-error text previews the request content.
+        logger.warning(
+            f"Client not found in update_profile for client {sanitize_for_log(client['client_id'])}: {type(e).__name__}"
+        )
         raise HTTPException(status_code=404, detail="Client not found") from e
     except Exception as e:
-        logger.error(f"Failed to update profile for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
+        logger.error(
+            f"Failed to update profile for client {sanitize_for_log(client['client_id'])}: {type(e).__name__}"
+        )
         raise HTTPException(
             status_code=500,
             detail="Failed to update profile",

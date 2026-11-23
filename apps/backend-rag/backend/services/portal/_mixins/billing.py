@@ -38,6 +38,14 @@ class ProfileContactRefused(Exception):
         super().__init__(PROFILE_CONTACT_REFUSED_MESSAGE)
 
 
+def _refuse_unencodable(value: str) -> None:
+    """A value that cannot be encoded as UTF-8 (a lone surrogate) cannot be stored."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ProfileContactRefused() from None
+
+
 class PortalBillingMixin:
     """Client billing (invoices) and profile update."""
 
@@ -304,6 +312,13 @@ class PortalBillingMixin:
             and v is not None
         }
         requested: list[str] = []
+        request_inserted = False
+
+        # A value that cannot be stored (a lone surrogate) is refused here, before
+        # any statement: it can never equal a stored value, so the order of the
+        # checks is unaffected, and asyncpg's argument error never carries it.
+        for value in contact_in.values():
+            _refuse_unencodable(str(value).strip())
 
         async with self.pool.acquire() as conn:
             if safe_fields or contact_in:
@@ -312,13 +327,20 @@ class PortalBillingMixin:
                         # A client never writes phone/whatsapp: a changed usable
                         # number becomes a change request for the consultant.
                         # No lookup of who owns a number happens here, so the
-                        # answer cannot depend on ownership.
-                        requested = await self._request_contact_changes(conn, client_id, contact_in)
+                        # answer cannot depend on ownership. The request, its
+                        # duplicate check and its bell alert share this
+                        # transaction, behind a lock on the client row.
+                        requested, request_inserted = await self._request_contact_changes(
+                            conn, client_id, contact_in, with_address="address" in safe_fields
+                        )
                     if safe_fields:
                         set_parts = []
                         params: list[Any] = []
                         for i, (key, value) in enumerate(safe_fields.items(), start=1):
                             set_parts.append(f"{key} = ${i}")
+                            # An address empty after trim is cleared, not stored as "".
+                            if key == "address" and isinstance(value, str):
+                                value = value.strip() or None
                             params.append(value)
 
                         params.append(client_id)
@@ -346,11 +368,12 @@ class PortalBillingMixin:
                     f"{list(safe_fields.keys())} contact requests: {requested}"
                 )
 
-                # Notify CRM team: insert notification_alerts record (deduped daily)
-                fields_label = ", ".join(
-                    [k.replace("_", " ") for k in safe_fields]
-                    + [f"{k} change requested" for k in requested]
-                )
+            if safe_fields and not request_inserted:
+                # Notify CRM team: insert notification_alerts record (deduped daily).
+                # Built from the updated fields only: a request that was suppressed
+                # as a repeat contributes nothing and never touches an earlier
+                # pending request alert.
+                fields_label = ", ".join(k.replace("_", " ") for k in safe_fields)
                 try:
                     await conn.execute(
                         """
@@ -436,17 +459,26 @@ class PortalBillingMixin:
             return result
 
     async def _request_contact_changes(
-        self, conn: Any, client_id: int, contact_in: dict[str, Any]
-    ) -> list[str]:
+        self, conn: Any, client_id: int, contact_in: dict[str, Any], *, with_address: bool = False
+    ) -> tuple[list[str], bool]:
         """Turn changed contact numbers into ONE client_to_team request row.
 
-        Called inside the profile transaction. A value equal to the stored one
-        (raw or by phone core) is a no-op for that field; a value with no
-        usable core is refused (format only). Nothing here looks up who owns a
-        number, so the outcome never depends on ownership.
+        Called inside the profile transaction. Each field is judged on its own
+        against the stored value of THAT field: equal after trim is a no-op, an
+        over-long or unusable value is refused (format only), the same phone
+        core is a no-op, anything else is a request carrying the value exactly
+        as trimmed. Nothing here looks up who owns a number, so the outcome
+        never depends on ownership.
+
+        The first statement locks the client row, so two overlapping saves of
+        one client serialise: the second reads the first one's committed request
+        and is suppressed as a repeat. Returns (requested fields, whether a
+        request row was inserted by this call). The bell alert for an inserted
+        request is written here, in the same transaction, and is not best-effort.
         """
         row = await conn.fetchrow(
-            "SELECT phone, phone_normalized, whatsapp FROM clients WHERE id = $1",
+            "SELECT phone, phone_normalized, whatsapp, email FROM clients"
+            " WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
             client_id,
         )
 
@@ -457,37 +489,91 @@ class PortalBillingMixin:
                 return None
             return None if v is None else str(v)
 
-        stored = [_val(k) for k in ("phone", "phone_normalized", "whatsapp")]
-        stored_raw = {v.strip() for v in stored if v is not None}
-        stored_cores = {c for c in (phone_core(v) for v in stored) if c is not None}
+        stored_by_field = {
+            "phone": [_val("phone"), _val("phone_normalized")],
+            "whatsapp": [_val("whatsapp")],
+        }
 
         changes: list[tuple[str, str]] = []
         for key, value in contact_in.items():
             raw = str(value).strip()
-            if raw in stored_raw:
+            stored = [v for v in stored_by_field[key] if v is not None]
+            if raw in {v.strip() for v in stored}:
                 continue
+            # (an unencodable value was refused before any statement, see update_profile)
+            if len(raw) > _CONTACT_VALUE_MAX:
+                raise ProfileContactRefused()
             core = phone_core(raw)
             if core is None:
                 raise ProfileContactRefused()
-            if core in stored_cores:
+            if core in {c for c in (phone_core(v) for v in stored) if c is not None}:
                 continue
-            changes.append((key, raw[:_CONTACT_VALUE_MAX]))
+            changes.append((key, raw))
 
         if not changes:
-            return []
+            return [], False
+        requested = [k for k, _ in changes]
         text = "Requested contact change: " + "; ".join(
             f"{_CONTACT_LABELS[k]} \u2192 {v}" for k, v in changes
         )
+
+        # Once: an identical request not yet answered by staff is not filed again.
+        last = await conn.fetchrow(
+            """
+            SELECT pm.content,
+                   EXISTS (
+                       SELECT 1 FROM portal_messages reply
+                       WHERE reply.client_id = pm.client_id
+                         AND reply.direction = 'team_to_client'
+                         AND reply.is_system_generated = FALSE
+                         AND (reply.created_at, reply.id) > (pm.created_at, pm.id)
+                   ) AS answered
+            FROM portal_messages pm
+            WHERE pm.client_id = $1 AND pm.direction = 'client_to_team'
+              AND pm.subject = 'Contact change requested'
+            ORDER BY pm.created_at DESC, pm.id DESC
+            LIMIT 1
+            """,
+            client_id,
+        )
+        if last is not None and last["answered"] is not True and last["content"] == text:
+            return requested, False
+
+        sent_by = _val("email") or f"client-{client_id}"
         await conn.execute(
             """
             INSERT INTO portal_messages
                 (client_id, practice_id, subject, direction, content, sent_by, is_system_generated)
-            VALUES ($1, NULL, 'Contact change requested', 'client_to_team', $2, 'portal', TRUE)
+            VALUES ($1, NULL, 'Contact change requested', 'client_to_team', $2, $3, FALSE)
             """,
             client_id,
             text,
+            sent_by,
         )
-        return [k for k, _ in changes]
+        message = "Client requested a contact change: " + ", ".join(
+            _CONTACT_LABELS[k] for k in requested
+        )
+        if with_address:
+            message += "; also updated: address"
+        # Re-armed exactly as the WhatsApp hand-off alert is: back to unread, the
+        # newest row of the bell. Part of this transaction: if it fails, no
+        # request row remains.
+        await conn.execute(
+            """
+            INSERT INTO notification_alerts
+                (client_id, alert_type, status, message, email_subject)
+            VALUES ($1, 'portal_profile_update', 'pending', $2, $3)
+            ON CONFLICT (client_id, alert_type, created_date) DO UPDATE
+               SET status = 'pending',
+                   message = EXCLUDED.message,
+                   created_at = NOW(),
+                   sent_at = NULL
+            """,
+            client_id,
+            message,
+            "Portal: contact change requested",
+        )
+        return requested, True
 
     async def _get_profile_data(self, conn: Any, client_id: int) -> dict[str, Any]:
         """Fetch profile data from DB (shared between get_profile and update_profile)."""

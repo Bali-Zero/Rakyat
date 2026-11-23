@@ -185,6 +185,82 @@ describe("ProfilePage (WS3 day pass)", () => {
     );
   });
 
+  it('sends address: "" when the stored address is cleared', async () => {
+    mockUpdateProfile.mockClear();
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Profile" }));
+    mockUpdateProfile.mockResolvedValue({ ...PROFILE, address: undefined });
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    });
+
+    expect(mockUpdateProfile).toHaveBeenCalledTimes(1);
+    expect(mockUpdateProfile).toHaveBeenCalledWith({ address: "" });
+  });
+
+  it("makes no request when a stored contact is cleared, even with the address edited", async () => {
+    mockUpdateProfile.mockClear();
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Profile" }));
+    fireEvent.change(screen.getByLabelText("WhatsApp"), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "New street 1" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    });
+
+    expect(mockUpdateProfile).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        "Contact numbers can't be removed here. Ask your consultant.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("WhatsApp")).toBeInTheDocument(); // editor still open
+  });
+
+  it("leaves a never-stored contact blank and sends the address only", async () => {
+    mockUpdateProfile.mockClear();
+    await renderLoaded({ ...PROFILE, phone: undefined, whatsapp: undefined });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Profile" }));
+    mockUpdateProfile.mockResolvedValue(PROFILE);
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "New street 2" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    });
+
+    expect(mockUpdateProfile).toHaveBeenCalledWith({ address: "New street 2" });
+    expect(
+      screen.queryByText(/Contact numbers can't be removed/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not send an unchanged contact", async () => {
+    mockUpdateProfile.mockClear();
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Profile" }));
+    mockUpdateProfile.mockResolvedValue(PROFILE);
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "Elsewhere 3" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    });
+
+    expect(mockUpdateProfile).toHaveBeenCalledWith({ address: "Elsewhere 3" });
+  });
+
   it("drain guard: no hardcoded hex colors anywhere in the page output", async () => {
     const { container } = await renderLoaded();
     expect(container.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);

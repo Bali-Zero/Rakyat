@@ -41,16 +41,22 @@ CREATE TABLE team_members (
     role TEXT,
     active BOOLEAN DEFAULT TRUE
 );
+-- as migration_071_notification_alerts.py:18-35 (created_at, sent_at, the generated created_date,
+-- the daily unique index the alert writers conflict on)
 CREATE TABLE notification_alerts (
-    id SERIAL PRIMARY KEY,
-    client_id INT,
-    alert_type TEXT,
-    status TEXT,
+    id BIGSERIAL PRIMARY KEY,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    alert_type VARCHAR(50) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
     message TEXT,
-    email_subject TEXT,
-    created_date DATE DEFAULT CURRENT_DATE,
-    UNIQUE (client_id, alert_type, created_date)
+    email_subject VARCHAR(500),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at TIMESTAMPTZ,
+    created_date DATE GENERATED ALWAYS AS ((created_at AT TIME ZONE 'UTC')::DATE) STORED
 );
+CREATE UNIQUE INDEX uq_notification_alert_daily
+    ON notification_alerts (client_id, alert_type, created_date);
+-- created_at, read_at and is_system_generated as the real portal_messages table has them
 CREATE TABLE portal_messages (
     id SERIAL PRIMARY KEY,
     client_id INT,
@@ -58,8 +64,10 @@ CREATE TABLE portal_messages (
     subject TEXT,
     direction TEXT,
     content TEXT,
-    sent_by TEXT,
-    is_system_generated BOOLEAN
+    sent_by TEXT NOT NULL,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_system_generated BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE client_preferences (
     client_id INT PRIMARY KEY,
@@ -162,7 +170,7 @@ async def _requests(pool, cid):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT direction, content FROM portal_messages"
-            " WHERE client_id = $1 AND content LIKE 'Requested contact change:%' ORDER BY id",
+            " WHERE client_id = $1 AND subject = 'Contact change requested' ORDER BY id",
             cid,
         )
     return [(r["direction"], r["content"]) for r in rows]
@@ -171,7 +179,7 @@ async def _requests(pool, cid):
 async def _alerts(pool, cid):
     async with pool.acquire() as conn:
         return await conn.fetch(
-            "SELECT message FROM notification_alerts"
+            "SELECT message, status, created_at FROM notification_alerts"
             " WHERE client_id = $1 AND alert_type = 'portal_profile_update'",
             cid,
         )
@@ -332,7 +340,10 @@ async def test_other_fields_are_saved_with_the_request_and_the_alert_is_written(
     )
     alerts = await _alerts(db, a)
     assert len(alerts) == 1
-    assert "address" in alerts[0]["message"] and "phone change requested" in alerts[0]["message"]
+    assert alerts[0]["message"] == (
+        "Client requested a contact change: phone, WhatsApp; also updated: address"
+    )
+    assert alerts[0]["status"] == "pending"
     async with db.acquire() as conn:
         profile_rows = await conn.fetchval(
             "SELECT count(*) FROM portal_messages WHERE client_id = $1"
@@ -340,3 +351,403 @@ async def test_other_fields_are_saved_with_the_request_and_the_alert_is_written(
             a,
         )
     assert profile_rows == 1
+
+
+# --- round 3: a contact change request reaches staff as work, once, with the number as asked -----
+
+
+def _long_form(digits: str, length: int) -> str:
+    """A number whose digits are `digits`, padded with dashes to exactly `length` characters."""
+    return "+" + "-" * (length - 1 - len(digits)) + digits
+
+
+async def _alert_row(pool, cid):
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT id, status, message, created_at FROM notification_alerts"
+            " WHERE client_id = $1 AND alert_type = 'portal_profile_update'",
+            cid,
+        )
+
+
+async def _refused_status(service, cid, **body) -> int:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await _route(service, cid, **body)
+    return exc.value.status_code
+
+
+async def _staff_reply(pool, cid, *, system: bool = False):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO portal_messages (client_id, subject, direction, content, sent_by,"
+            " is_system_generated) VALUES ($1, 'Re', 'team_to_client', 'ok', 'staff@example.test', $2)",
+            cid,
+            system,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_order_unchanged_legacy_value_over_40_is_a_no_op_beside_an_address_change(db, field):
+    legacy = "+62 800 0000 111" + " ext" * 8  # 48 characters, unchanged
+    assert len(legacy) > 45
+    cid = await _client(db, "Zz Alpha", **{field: legacy}, address="Old")
+    service = PortalService(db)
+
+    result = await service.update_profile(
+        cid, {field: legacy, "address": "New street"}, current_user=_user(cid)
+    )
+
+    assert result["contact_change_requested"] == []
+    assert (await _row(db, cid))["address"] == "New street"
+    assert await _requests(db, cid) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_order_41_characters_with_the_stored_digits_is_refused_nothing_written(db, field):
+    cid = await _client(
+        db, "Zz Alpha", phone=_NUM_A, phone_normalized="628000000111", whatsapp=_NUM_A
+    )
+    service = PortalService(db)
+    value = _long_form("628000000111", 41)
+    assert len(value) == 41
+
+    assert await _refused_status(service, cid, **{field: value, "address": "Never"}) == 422
+
+    assert (await _row(db, cid))["address"] is None
+    assert await _requests(db, cid) == [] and await _alert_row(db, cid) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_order_exactly_40_characters_is_a_request_carrying_all_40(db, field):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    value = _long_form("628000000333", 40)
+    assert len(value) == 40
+
+    result = await service.update_profile(cid, {field: f"  {value}  "}, current_user=_user(cid))
+
+    assert result["contact_change_requested"] == [field]
+    ((_, content),) = await _requests(db, cid)
+    assert value in content
+
+
+@pytest.mark.asyncio
+async def test_r1_a_field_is_compared_with_its_own_stored_value_only(db):
+    cid = await _client(
+        db, "Zz Alpha", phone=_NUM_A, phone_normalized="628000000111", whatsapp=_NUM_B
+    )
+    service = PortalService(db)
+
+    r1 = await service.update_profile(cid, {"whatsapp": _NUM_A}, current_user=_user(cid))
+    assert r1["contact_change_requested"] == ["whatsapp"]
+    r2 = await service.update_profile(cid, {"phone": _NUM_B}, current_user=_user(cid))
+    assert r2["contact_change_requested"] == ["phone"]
+    r3 = await service.update_profile(cid, {"phone": "08000000111"}, current_user=_user(cid))
+    assert r3["contact_change_requested"] == []
+    contents = [c for _, c in await _requests(db, cid)]
+    assert contents == [
+        "Requested contact change: WhatsApp → " + _NUM_A,
+        "Requested contact change: phone → " + _NUM_B,
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_r2_a_padded_number_is_stored_trimmed_in_full(db, field):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+
+    await service.update_profile(
+        cid, {field: " " * 20 + _NUM_C + " " * 20}, current_user=_user(cid)
+    )
+
+    ((_, content),) = await _requests(db, cid)
+    assert content.endswith(_NUM_C) and len(_NUM_C) == 16
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_r2_a_41_character_number_after_trim_is_422_and_files_nothing(db, field):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    value = _long_form("628000000333", 41)
+
+    assert await _refused_status(service, cid, **{field: f" {value} "}) == 422
+
+    assert await _requests(db, cid) == [] and await _alert_row(db, cid) is None
+
+
+@pytest.mark.asyncio
+async def test_r3_a_request_is_pending_reply_work_until_staff_answer(db):
+    from backend.services.portal.portal_reply_service import pending_reply_query
+
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    sql, args = pending_reply_query(None)
+
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+
+    async with db.acquire() as conn:
+        assert [r["client_id"] for r in await conn.fetch(sql, *args)] == [cid]
+        sent_by = await conn.fetchval(
+            "SELECT sent_by FROM portal_messages WHERE subject = 'Contact change requested'"
+        )
+        sysflag = await conn.fetchval(
+            "SELECT is_system_generated FROM portal_messages"
+            " WHERE subject = 'Contact change requested'"
+        )
+    assert sent_by == "zz.alpha@example.test" and sysflag is False
+    alert = await _alert_row(db, cid)
+    assert alert["status"] == "pending"
+    assert alert["message"] == "Client requested a contact change: phone"
+    assert not any(ch.isdigit() for ch in alert["message"])
+    await _staff_reply(db, cid)
+    async with db.acquire() as conn:
+        assert await conn.fetch(sql, *args) == []
+
+
+@pytest.mark.asyncio
+async def test_r3_a_client_without_email_is_attributed_to_the_client_id(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, email=None)
+    service = PortalService(db)
+
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+
+    async with db.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT sent_by FROM portal_messages WHERE subject = 'Contact change requested'"
+            )
+            == f"client-{cid}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_r3_a_request_rearms_the_alert_an_address_change_wrote_read(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    await service.update_profile(cid, {"address": "Street 1"}, current_user=_user(cid))
+    before = await _alert_row(db, cid)
+    assert before["status"] == "sent"
+
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+
+    after = await _alert_row(db, cid)
+    assert after["id"] == before["id"]
+    assert after["status"] == "pending"
+    assert after["message"] == "Client requested a contact change: phone"
+    assert after["created_at"] > before["created_at"]
+
+
+@pytest.mark.asyncio
+async def test_r3_a_rearmed_alert_is_first_of_the_bell_and_an_address_save_leaves_it(db):
+    from backend.app.routers.crm_notifications import get_crm_notifications
+
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    await service.update_profile(cid, {"address": "Street 1"}, current_user=_user(cid))
+    others = [await _client(db, f"Zz Other {i}") for i in range(21)]
+    async with db.acquire() as conn:
+        for o in others:
+            await conn.execute(
+                "INSERT INTO notification_alerts (client_id, alert_type, status, message)"
+                " VALUES ($1, 'portal_document_upload', 'pending', 'doc')",
+                o,
+            )
+    admin = {"email": "admin@example.invalid", "role": "admin"}
+
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+    bell = await get_crm_notifications(unread_only=False, limit=20, pool=db, current_user=admin)
+    assert bell[0]["client_id"] == cid and bell[0]["status"] == "pending"
+
+    armed = await _alert_row(db, cid)
+    await service.update_profile(cid, {"address": "Street 2"}, current_user=_user(cid))
+    again = await _alert_row(db, cid)
+    assert (again["created_at"], again["status"], again["message"]) == (
+        armed["created_at"],
+        armed["status"],
+        armed["message"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_r3_a_combined_save_names_the_address_in_the_alert(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+
+    await service.update_profile(
+        cid, {"phone": _NUM_C, "address": "Street 9"}, current_user=_user(cid)
+    )
+
+    assert (await _alert_row(db, cid))["message"] == (
+        "Client requested a contact change: phone; also updated: address"
+    )
+
+
+@pytest.mark.asyncio
+async def test_r4_the_same_request_twice_is_one_row_and_a_different_one_is_a_second(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+
+    first = await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+    second = await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+    assert first["contact_change_requested"] == second["contact_change_requested"] == ["phone"]
+    assert len(await _requests(db, cid)) == 1
+
+    await service.update_profile(cid, {"phone": "+62 800 0000 444"}, current_user=_user(cid))
+    assert len(await _requests(db, cid)) == 2
+
+
+@pytest.mark.asyncio
+async def test_r4_after_a_staff_reply_the_same_request_is_new_work(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+    await _staff_reply(db, cid)
+
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+
+    assert len(await _requests(db, cid)) == 2
+
+
+@pytest.mark.asyncio
+async def test_r4_a_system_message_or_a_read_receipt_is_not_a_staff_reply(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+    await _staff_reply(db, cid, system=True)
+    async with db.acquire() as conn:
+        await conn.execute("UPDATE portal_messages SET read_at = NOW()")
+
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+
+    assert len(await _requests(db, cid)) == 1
+
+
+@pytest.mark.asyncio
+async def test_r4_a_suppressed_repeat_leaves_an_alert_staff_already_read(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+    async with db.acquire() as conn:
+        # what crm_notifications mark-read does
+        await conn.execute("UPDATE notification_alerts SET status = 'sent', sent_at = NOW()")
+    read_alert = await _alert_row(db, cid)
+
+    result = await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+
+    assert result["contact_change_requested"] == ["phone"]
+    assert len(await _requests(db, cid)) == 1
+    alert = await _alert_row(db, cid)
+    assert alert["status"] == "sent" and alert["created_at"] == read_alert["created_at"]
+
+
+@pytest.mark.asyncio
+async def test_r4_a_suppressed_repeat_with_an_address_saves_it_without_a_rearm(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    await service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+    async with db.acquire() as conn:
+        await conn.execute("UPDATE notification_alerts SET status = 'sent', sent_at = NOW()")
+    before = await _alert_row(db, cid)
+
+    await service.update_profile(
+        cid, {"phone": _NUM_C, "address": "Street 3"}, current_user=_user(cid)
+    )
+
+    assert (await _row(db, cid))["address"] == "Street 3"
+    assert len(await _requests(db, cid)) == 1
+    after = await _alert_row(db, cid)
+    assert after["status"] == "sent" and after["created_at"] == before["created_at"]
+    assert after["message"] == before["message"]  # DO NOTHING on the daily conflict
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank", ["", "  "])
+async def test_r5_an_address_empty_after_trim_is_stored_as_null(db, blank):
+    cid = await _client(db, "Zz Alpha", address="Old street")
+    service = PortalService(db)
+
+    await service.update_profile(cid, {"address": blank}, current_user=_user(cid))
+
+    assert (await _row(db, cid))["address"] is None
+
+
+@pytest.mark.asyncio
+async def test_r7_two_overlapping_identical_saves_file_one_request_and_one_pending_alert(db):
+    import asyncio
+
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+    holder = await db.acquire()
+    tx = holder.transaction()
+    await tx.start()
+    try:
+        await holder.fetchval("SELECT id FROM clients WHERE id = $1 FOR UPDATE", cid)
+        saves = [
+            asyncio.create_task(
+                service.update_profile(cid, {"phone": _NUM_C}, current_user=_user(cid))
+            )
+            for _ in range(2)
+        ]
+        await asyncio.sleep(0.5)
+        assert not any(t.done() for t in saves)  # both wait for the client row
+    finally:
+        await tx.commit()
+        await db.release(holder)
+    await asyncio.gather(*saves)
+
+    assert len(await _requests(db, cid)) == 1
+    alert = await _alert_row(db, cid)
+    assert alert["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_r7_a_failing_request_alert_fails_the_save_and_leaves_no_message(db):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+
+    class _AlertFails(_LoggedConn):
+        async def execute(self, query, *args, **kwargs):
+            if "INSERT INTO notification_alerts" in str(query):
+                raise RuntimeError("alert insert failed")
+            return await self._conn.execute(query, *args, **kwargs)
+
+    class _Pool(_LoggedPool):
+        def acquire(self):
+            outer = self
+
+            class _Ctx:
+                async def __aenter__(self_inner):
+                    self_inner._cm = outer._pool.acquire()
+                    return _AlertFails(await self_inner._cm.__aenter__(), outer.log)
+
+                async def __aexit__(self_inner, *exc):
+                    return await self_inner._cm.__aexit__(*exc)
+
+            return _Ctx()
+
+    with pytest.raises(RuntimeError):
+        await PortalService(_Pool(db)).update_profile(
+            cid, {"phone": _NUM_C}, current_user=_user(cid)
+        )
+
+    assert await _requests(db, cid) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_r8_a_lone_surrogate_is_422_and_nothing_is_written(db, field):
+    cid = await _client(db, "Zz Alpha", phone=_NUM_A, whatsapp=_NUM_A)
+    service = PortalService(db)
+
+    assert (
+        await _refused_status(service, cid, **{field: "+62 800 \ud800 0000", "address": "X"}) == 422
+    )
+
+    assert (await _row(db, cid))["address"] is None
+    assert await _requests(db, cid) == [] and await _alert_row(db, cid) is None

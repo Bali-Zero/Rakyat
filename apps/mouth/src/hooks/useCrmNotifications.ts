@@ -73,9 +73,15 @@ export function useCrmNotifications(options: UseCrmNotificationsOptions = {}) {
   } = options;
 
   const queryClient = useQueryClient();
-  // Ids the user marked read; kept for the life of the hook so a poll that
-  // returns the same items does not bring them back as unread.
-  const [readIds, setReadIds] = useState<ReadonlySet<string>>(() => new Set());
+  // Ids the user marked read, with the item's createdAt at that moment; kept
+  // for the life of the hook so a poll that returns the same items does not
+  // bring them back as unread. A portal item counts as read only while its
+  // polled createdAt is the remembered one: a re-armed alert moves created_at
+  // and shows unread again. Expiry items regenerate createdAt on every poll,
+  // so they are remembered by id alone.
+  const [readAcks, setReadAcks] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
 
   // Use expiry alerts + portal upload alerts as notifications
   const query = useQuery({
@@ -148,10 +154,14 @@ export function useCrmNotifications(options: UseCrmNotificationsOptions = {}) {
 
   const notifications = useMemo(
     () =>
-      (query.data || []).map((n) =>
-        n.read || !readIds.has(n.id) ? n : { ...n, read: true },
-      ),
-    [query.data, readIds],
+      (query.data || []).map((n) => {
+        if (n.read) return n;
+        const ack = readAcks.get(n.id);
+        if (ack === undefined) return n;
+        if (n.type === "portal_upload" && ack !== n.createdAt) return n;
+        return { ...n, read: true };
+      }),
+    [query.data, readAcks],
   );
 
   const unreadCount = useMemo(
@@ -159,19 +169,24 @@ export function useCrmNotifications(options: UseCrmNotificationsOptions = {}) {
     [notifications],
   );
 
-  const markAsRead = useCallback((notificationId: string) => {
-    setReadIds((prev) => {
-      if (prev.has(notificationId)) return prev;
-      const next = new Set(prev);
-      next.add(notificationId);
-      return next;
-    });
-  }, []);
+  const markAsRead = useCallback(
+    (notificationId: string) => {
+      const item = (query.data || []).find((n) => n.id === notificationId);
+      const createdAt = item?.createdAt ?? "";
+      setReadAcks((prev) => {
+        if (prev.get(notificationId) === createdAt) return prev;
+        const next = new Map(prev);
+        next.set(notificationId, createdAt);
+        return next;
+      });
+    },
+    [query.data],
+  );
 
   const markAllAsRead = useCallback(() => {
-    setReadIds((prev) => {
-      const next = new Set(prev);
-      for (const n of query.data || []) next.add(n.id);
+    setReadAcks((prev) => {
+      const next = new Map(prev);
+      for (const n of query.data || []) next.set(n.id, n.createdAt);
       return next;
     });
   }, [query.data]);

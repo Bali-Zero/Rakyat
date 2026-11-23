@@ -227,6 +227,7 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<PortalProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showPassportNumber, setShowPassportNumber] = useState(false);
   const [showDateOfBirth, setShowDateOfBirth] = useState(false);
@@ -298,21 +299,39 @@ export default function ProfilePage() {
       whatsapp: profile.whatsapp || "",
       address: profile.address || "",
     });
+    setSaveNotice(null);
     setIsEditing(true);
   };
 
   const handleSave = async () => {
     if (!profile) return;
     // Send only what the user changed: an untouched contact is never
-    // resubmitted, and a cleared field stays omitted.
+    // resubmitted. A stored contact cannot be cleared here (it is a change for
+    // the consultant), and that refusal aborts the whole save; a cleared
+    // address is sent as "" so it is really cleared.
+    const stored = {
+      phone: profile.phone || "",
+      whatsapp: profile.whatsapp || "",
+      address: profile.address || "",
+    };
+    if (
+      (stored.phone && !editData.phone.trim()) ||
+      (stored.whatsapp && !editData.whatsapp.trim())
+    ) {
+      setSaveNotice(
+        "Contact numbers can't be removed here. Ask your consultant.",
+      );
+      return;
+    }
+    setSaveNotice(null);
     const changes: UpdateProfileRequest = {};
-    if (editData.phone && editData.phone !== (profile.phone || "")) {
+    if (editData.phone.trim() && editData.phone !== stored.phone) {
       changes.phone = editData.phone;
     }
-    if (editData.whatsapp && editData.whatsapp !== (profile.whatsapp || "")) {
+    if (editData.whatsapp.trim() && editData.whatsapp !== stored.whatsapp) {
       changes.whatsapp = editData.whatsapp;
     }
-    if (editData.address && editData.address !== (profile.address || "")) {
+    if (editData.address !== stored.address) {
       changes.address = editData.address;
     }
     if (Object.keys(changes).length === 0) {
@@ -822,6 +841,15 @@ export default function ProfilePage() {
               />
             </div>
           </div>
+          {saveNotice && (
+            <p
+              role="alert"
+              className="text-sm"
+              style={{ color: "var(--bz-text-2)" }}
+            >
+              {saveNotice}
+            </p>
+          )}
           <div className="flex gap-2 justify-end">
             <Button
               variant="outline"
