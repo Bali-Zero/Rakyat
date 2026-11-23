@@ -1019,6 +1019,51 @@ class TestJobTitleStaffListAndCreate:
         assert svc_instance.create_partner.await_args.kwargs["assigned_to"] == named_owner
 
 
+class TestPartnerStaffRolesAreTheTeamRoster:
+    """The staff roles admitted to the partner routes are the canonical team roster."""
+
+    @pytest.mark.unit
+    def test_the_partner_staff_roles_are_the_team_roster(self) -> None:
+        from backend.app.utils.service_accounts import TEAM_ROLES
+
+        assert partners_module._INTERNAL_ROLES_ALWAYS_ALLOWED == TEAM_ROLES
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "role", ["Consultant", "Marketing Advisory", "Finance & Client Services Coordinator"]
+    )
+    def test_every_roster_title_reaches_the_partner_routes(self, role) -> None:
+        user = {"role": role, "email": "staff@test.invalid", "permissions": []}
+        assert partners_module._require_team_or_admin(user) is None  # no raise
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("role", ["client", "partner", "user", "", "monitoring", "group_staff"])
+    def test_a_role_outside_the_roster_stays_refused(self, role) -> None:
+        from fastapi import HTTPException
+
+        user = {"role": role, "email": "someone@test.invalid", "permissions": []}
+        with pytest.raises(HTTPException) as exc_info:
+            partners_module._require_team_or_admin(user)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.integration
+    def test_a_roster_title_lists_only_its_own_partners(self, mock_db_pool) -> None:
+        pool, _ = mock_db_pool
+        staff = {
+            "user_id": str(_TEAM_ID),
+            "email": "staff@test.invalid",
+            "role": "Finance & Client Services Coordinator",
+            "permissions": [],
+        }
+        client = TestClient(_make_app(staff, pool), raise_server_exceptions=False)
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.list_partners = AsyncMock(return_value=[])
+            resp = client.get("/api/partners")
+        assert resp.status_code == 200
+        assert svc_instance.list_partners.await_args.kwargs["assigned_to"] == staff["user_id"]
+
+
 class TestCommissions:
     @pytest.mark.integration
     def test_list_commissions_scoped(self, admin_app) -> None:
