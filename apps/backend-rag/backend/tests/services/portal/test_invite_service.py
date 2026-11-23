@@ -132,7 +132,8 @@ async def test_validate_token_returns_valid_invitation_details() -> None:
                 "expires_at": expires_at,
                 "used_at": None,
                 "client_name": "Client Name",
-            }
+            },
+            None,
         ]
     )
     service = InviteService(FakePool(conn))
@@ -146,6 +147,8 @@ async def test_validate_token_returns_valid_invitation_details() -> None:
         "client_name": "Client Name",
         "email": "client@example.com",
     }
+    assert conn.fetchrow_calls[1][1] == (7,)
+    assert conn.fetchval_calls[0][1] == ("client@example.com",)
 
 
 @pytest.mark.asyncio
@@ -737,3 +740,64 @@ async def test_complete_registration_retires_the_live_siblings_of_the_redeemed_i
     assert retire_args == (7, 9)
     mark_used = next(i for i, (q, _) in enumerate(conn.execute_calls) if "SET used_at = NOW()" in q)
     assert conn.execute_calls.index(retire[0]) > mark_used
+
+
+_LIVE_LOGIN = {"id": 55, "active": True, "pin_hash": REAL_PIN_HASH, "role": "client"}
+_REGISTRATION_CASES = [
+    # (invitation address, login row linked to the client, row already holding
+    #  the address, the code /invite/validate answers or None when it is valid)
+    ("Client@Example.com", None, None, None),
+    ("Client@Example.com", None, 77, "email_in_use"),
+    (None, None, None, "address_required"),
+    ("   ", None, None, "address_required"),
+    ("Client@Example.com", {**_LIVE_LOGIN, "role": "group_staff"}, None, "not_registrable"),
+    ("Client@Example.com", _LIVE_LOGIN, None, "already_registered"),
+    ("Client@Example.com", _LIVE_LOGIN, 77, "already_registered"),
+    ("Client@Example.com", {**_LIVE_LOGIN, "active": False}, None, None),
+    ("Client@Example.com", {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, None, None),
+    ("Client@Example.com", {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, 77, "email_in_use"),
+    (None, {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, None, None),
+]
+
+
+def _open_invitation(email: str | None) -> dict:
+    return {
+        "id": 9,
+        "client_id": 7,
+        "email": email,
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        "used_at": None,
+        "client_name": "Client Name",
+    }
+
+
+@pytest.mark.parametrize(("email", "linked", "holder", "code"), _REGISTRATION_CASES)
+@pytest.mark.asyncio
+async def test_an_invitation_is_valid_exactly_when_its_registration_would_succeed(
+    email: str | None, linked: dict | None, holder: int | None, code: str | None
+) -> None:
+    validate_conn = FakeConnection(
+        fetchrow_results=[_open_invitation(email), linked], fetchval_results=[holder]
+    )
+    validated = await InviteService(FakePool(validate_conn)).validate_token("tok")
+
+    register_conn = FakeConnectionWithTransaction(
+        fetchrow_results=[_open_invitation(email), linked, {"id": 56}],
+        fetchval_results=[holder],
+    )
+    service = InviteService(FakePool(register_conn))
+    with patch(
+        "backend.services.common.cache._invalidate_cache",
+        new=AsyncMock(return_value=1),
+    ):
+        if code is None:
+            assert (await service.complete_registration(token="tok", pin="1234"))["success"]
+            assert validated["valid"] is True
+        else:
+            with pytest.raises(ValueError) as refused:
+                await service.complete_registration(token="tok", pin="1234")
+            assert validated == {"error": code, "message": str(refused.value)}
+            assert register_conn.execute_calls == []
+
+    assert validate_conn.fetchrow_calls[1] == register_conn.fetchrow_calls[1]
+    assert validate_conn.fetchval_calls == register_conn.fetchval_calls
