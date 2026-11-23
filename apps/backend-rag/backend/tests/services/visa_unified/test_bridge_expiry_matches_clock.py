@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -78,6 +78,26 @@ def test_clock_preamble_keeps_the_stored_expiry_for_an_unknown_visa_type():
         _clock_context(
             entry_date=today - timedelta(days=5), expiry_date=stored, visa_type="NOT-A-TYPE"
         ),
+        "base",
+    )
+
+    assert f"permitted stay ends {stored.isoformat()} (10 days remaining)" in out
+
+
+@pytest.mark.parametrize(
+    ("entry_date", "visa_type"),
+    [(date.min, VisaType.B1), (date.min, VisaType.D2)]
+    + [(date.max, visa_type) for visa_type in VisaType],
+)
+def test_clock_preamble_keeps_the_stored_expiry_when_the_timeline_cannot_be_computed(
+    entry_date, visa_type
+):
+    with pytest.raises(OverflowError):
+        clock_timeline(visa_type=visa_type, entry_date=entry_date)
+    stored = datetime.now(timezone.utc).date() + timedelta(days=10)
+
+    out = augment_chat_system_prompt(
+        _clock_context(entry_date=entry_date, expiry_date=stored, visa_type=visa_type.value),
         "base",
     )
 

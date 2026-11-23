@@ -131,7 +131,7 @@ def _clock_preamble(context: FunnelContext) -> str:
             expiry_date = clock_timeline(
                 visa_type=VisaType(context.visa_type), entry_date=context.entry_date
             ).expiry_date
-        except ValueError:
+        except (ValueError, OverflowError):
             pass
     facts: list[str] = []
     if context.visa_type:
