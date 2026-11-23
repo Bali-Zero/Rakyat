@@ -23,6 +23,13 @@ class AlertType(str, Enum):
     BIRTHDAY = "birthday"
 
 
+# The alert types the e-mail machinery can build, send, supersede or pause.
+# `notification_alerts` also holds CRM bell rows (portal_*, wa_human_handoff)
+# whose 'pending' means UNREAD and which carry no email_body: every reader or
+# updater of pending rows that feeds the sender filters on this set.
+SENDABLE_ALERT_TYPES: tuple[str, ...] = tuple(t.value for t in AlertType)
+
+
 class AlertStatus(str, Enum):
     """Status of an alert in the system."""
 
