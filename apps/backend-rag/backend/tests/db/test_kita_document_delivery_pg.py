@@ -238,3 +238,39 @@ async def test_concurrent_different_slots_cannot_claim_same_content(pool):
         )
     with pytest.raises(HTTPException, match="Upload every required"):
         await service.complete(pool, 7, STAFF, BackgroundTasks())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", ["title", "slot", "fingerprint", "completion"])
+async def test_direct_writers_cannot_reassign_an_evidenced_practice(pool, evidence):
+    async with pool.acquire() as conn:
+        if evidence == "title":
+            await conn.execute(
+                "INSERT INTO practice_delivery_titles VALUES (7,'visa_c1_tourism',ARRAY['Defined output'])"
+            )
+        elif evidence == "slot":
+            await conn.execute(
+                "INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,waiver_reason,updated_by) VALUES (7,'visa_c1_tourism','conditional','Not included','staff')"
+            )
+        elif evidence == "fingerprint":
+            await conn.execute(
+                "INSERT INTO practice_delivery_fingerprints VALUES (7,repeat('a',64),'visa_c1_tourism','electronic_visa')"
+            )
+        else:
+            await conn.execute(
+                "INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by) VALUES(7,'visa_c1_tourism','staff')"
+            )
+        for update in ("client_id=32", "family_member_id=19", "practice_type_id=2"):
+            with pytest.raises(asyncpg.CheckViolationError) as refused:
+                await conn.execute(f"UPDATE practices SET {update} WHERE id=7")
+            assert refused.value.constraint_name == "practice_delivery_subject_immutable"
+        # Idempotent upstream writes, unrelated state, and legacy imports are unaffected.
+        await conn.execute(
+            "UPDATE practices SET family_member_id=NULL,client_id=31,practice_type_id=1 WHERE id=7"
+        )
+        await conn.execute("UPDATE practices SET status='cancelled' WHERE id=7")
+        await conn.execute(
+            "UPDATE practices SET client_id=32,family_member_id=19,practice_type_id=1 WHERE id=8"
+        )
+        assert await conn.fetchval("SELECT status FROM practices WHERE id=7") == "cancelled"
+        assert await conn.fetchval("SELECT client_id FROM practices WHERE id=8") == 32
