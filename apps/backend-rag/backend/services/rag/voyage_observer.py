@@ -28,6 +28,12 @@ from backend.services.rag.voyage_shadow import PublicSnapshot, _retrieve_by_vect
 _SLOTS = threading.BoundedSemaphore(2)
 _IO_SLOTS = threading.BoundedSemaphore(2)
 _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="voyage-shadow")
+# A cold Qdrant TLS connection plus both provider calls exceeds the old ceiling.
+OBSERVATION_TIMEOUT_SECONDS = 10.0
+# A cold Qdrant TLS connection can take almost one second before the query itself.
+QDRANT_TIMEOUT_SECONDS = 3
+# Voyage embedding and reranking calls need room for observed public-network variance.
+VOYAGE_TIMEOUT_SECONDS = 3.0
 
 
 async def _io(func, *args):
@@ -52,7 +58,10 @@ def _release(manifest, manifest_sha, index_sha):
 def _reader(cfg):
     return closing(
         QdrantClient(
-            url=cfg.qdrant_url, api_key=cfg.qdrant_api_key, timeout=1, check_compatibility=False
+            url=cfg.qdrant_url,
+            api_key=cfg.qdrant_api_key,
+            timeout=QDRANT_TIMEOUT_SECONDS,
+            check_compatibility=False,
         )
     )
 
@@ -61,7 +70,7 @@ def _provider(cfg):
     return httpx.AsyncClient(  # golden-rule-10-exempt: every caller enters this factory result with async with
         base_url=BASE_URL,
         headers={"Authorization": "Bearer " + cfg.voyage_api_key.get_secret_value()},
-        timeout=1.5,
+        timeout=VOYAGE_TIMEOUT_SECONDS,
         follow_redirects=False,
     )
 
@@ -92,7 +101,7 @@ async def observe_legal_search(question, targets, served, top_k, cfg):
         return None
     approved = False
     try:
-        async with asyncio.timeout(3.0):
+        async with asyncio.timeout(OBSERVATION_TIMEOUT_SECONDS):
             release = await _io(
                 _release,
                 cfg.voyage_public_manifest,
