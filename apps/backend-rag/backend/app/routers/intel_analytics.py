@@ -410,7 +410,9 @@ async def get_trends(
 
             try:
                 client = QdrantClient(collection_name=collection_name)
-                stats = client.get_collection_stats()
+                stats = await client.get_stats()
+                if "error" in stats:
+                    raise RuntimeError(stats["error"])
 
                 all_keywords.append(
                     {
@@ -457,7 +459,9 @@ async def get_collection_stats(collection: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=f"Collection not found: {collection}")
 
         client = QdrantClient(collection_name=collection_name)
-        stats = client.get_collection_stats()
+        stats = await client.get_stats()
+        if "error" in stats:
+            raise RuntimeError(stats["error"])
 
         return {
             "collection_name": collection_name,
@@ -465,6 +469,8 @@ async def get_collection_stats(collection: str) -> dict[str, Any]:
             "last_updated": datetime.now(tz=timezone.utc).isoformat(),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Get stats error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to read collection statistics") from e

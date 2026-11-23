@@ -471,37 +471,47 @@ class TestGetCriticalItems:
 class TestGetTrends:
     """Tests for GET /api/intel/trends."""
 
+    @staticmethod
+    def _client(stats):
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.return_value = stats
+        return client
+
     @pytest.mark.asyncio
     async def test_trends_returns_structure(self, _patch_imports):
-        mock_client = MagicMock()
-        mock_client.get_collection_stats.return_value = {"total_documents": 42}
+        client = self._client({"collection_name": "x", "total_documents": 42})
 
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            return_value=mock_client,
-        ):
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_trends
 
             result = await get_trends()
 
         assert "trends" in result
         assert "top_topics" in result
+        assert [t["total_items"] for t in result["trends"]] == [42, 42]
 
     @pytest.mark.asyncio
     async def test_trends_with_category(self, _patch_imports):
-        mock_client = MagicMock()
-        mock_client.get_collection_stats.return_value = {"total_documents": 10}
+        client = self._client({"collection_name": "x", "total_documents": 10})
 
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            return_value=mock_client,
-        ):
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_trends
 
             result = await get_trends(category="visa")
 
-        assert len(result["trends"]) == 1
-        assert result["trends"][0]["total_items"] == 10
+        client.get_stats.assert_awaited_once_with()
+        assert result["trends"] == [{"collection": "visa", "total_items": 10}]
+
+    @pytest.mark.asyncio
+    async def test_trends_skips_a_collection_whose_statistics_failed(self, _patch_imports):
+        client = self._client({"collection_name": "x", "error": "HTTP 503"})
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_trends
+
+            result = await get_trends(category="visa")
+
+        assert result["trends"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -546,26 +556,54 @@ class TestGetCollectionStats:
 
     @pytest.mark.asyncio
     async def test_stats_success(self, _patch_imports):
-        mock_client = MagicMock()
-        mock_client.get_collection_stats.return_value = {"total_documents": 99}
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.return_value = {"collection_name": "bali_intel_visa", "total_documents": 99}
 
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            return_value=mock_client,
-        ):
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_collection_stats
 
             result = await get_collection_stats("visa")
 
+        client.get_stats.assert_awaited_once_with()
         assert result["collection_name"] == "bali_intel_visa"
         assert result["total_documents"] == 99
+        assert set(result) == {"collection_name", "total_documents", "last_updated"}
 
     @pytest.mark.asyncio
-    async def test_stats_unknown_collection(self, _patch_imports):
+    async def test_stats_unknown_collection_is_404(self, _patch_imports):
         from backend.app.routers.intel_analytics import get_collection_stats
 
         with pytest.raises(HTTPException) as exc_info:
             await get_collection_stats("nonexistent")
-        # The inner HTTPException(404) is caught by the outer try/except
-        # and re-raised as HTTPException(500).
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_stats_reported_error_is_500_without_internals(self, _patch_imports):
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.return_value = {
+            "collection_name": "bali_intel_visa",
+            "error": "connect to qdrant.internal:6333 refused",
+        }
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_collection_stats
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_collection_stats("visa")
+
         assert exc_info.value.status_code == 500
+        assert "qdrant.internal" not in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_stats_raised_error_is_500_without_internals(self, _patch_imports):
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.side_effect = RuntimeError("secret-host.internal exploded")
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_collection_stats
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_collection_stats("visa")
+
+        assert exc_info.value.status_code == 500
+        assert "secret-host" not in str(exc_info.value.detail)
