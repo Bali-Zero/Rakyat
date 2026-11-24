@@ -209,11 +209,12 @@ async def test_list_employees_carries_the_flag(env: Env) -> None:
 async def test_my_dashboard_omits_payroll_for_off_payroll_and_keeps_it_for_the_rest(
     env: Env,
 ) -> None:
-    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
+    period = (await env.svc.calculate_payroll(MONTH, YEAR, env.admin))["period_id"]
     off = await env.svc.get_my_dashboard(env.off_id)
     assert off["on_payroll"] is False
     assert "latest_payslip" not in off and "month_bonuses" not in off
     assert "leave_balances" in off
+    await env.svc.approve_payroll(period, env.admin)  # a payslip shows once its period is approved
     on = await env.svc.get_my_dashboard(env.on_id)
     assert on["on_payroll"] is True and on["latest_payslip"] is not None
 
