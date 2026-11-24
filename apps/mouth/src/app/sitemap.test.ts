@@ -37,6 +37,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/blog/articles", () => ({
   getAllArticles: vi.fn(async () => ({ articles: [], total: 0 })),
   getNoIndexSlugs: vi.fn(async () => new Set<string>()),
+  getIndexableArticleLocaleInventory: vi.fn(async () => new Map()),
 }));
 vi.mock("@/lib/kbli-data.server", () => ({
   getAllCodes: vi.fn(() => []),

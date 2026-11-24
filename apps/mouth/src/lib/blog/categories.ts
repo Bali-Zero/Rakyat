@@ -81,11 +81,7 @@ export function backendCategoriesFor(publicCategory: string): string[] {
   return raw.length > 0 ? raw : [publicCategory];
 }
 
-/**
- * Locale suffixes that exist as translated `.mdx` variants. None of them has a
- * public page of its own — verified against the live sitemap 2026-08-11, which
- * carries zero `.it`/`.id`/`.fr`/`.ru` URLs and no `/it/`-style prefix.
- */
+/** Translation file suffixes. Public article variants use the lang query. */
 export const LOCALE_SUFFIXES = Object.freeze(["id", "it", "fr", "ru"] as const);
 const LOCALE_SET = new Set<string>(LOCALE_SUFFIXES);
 

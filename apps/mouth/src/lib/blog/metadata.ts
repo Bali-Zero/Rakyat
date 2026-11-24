@@ -4,6 +4,12 @@
  */
 
 import type { Metadata } from "next";
+import type { Locale } from "@/i18n/types";
+import {
+  articleLanguageAlternates,
+  articleLanguageUrl,
+  articleOgLocales,
+} from "./article-language-urls";
 import { CATEGORY_SEO } from "./category-seo";
 import type { Article, ArticleCategory } from "./types";
 
@@ -91,8 +97,20 @@ const CATEGORY_META: Record<
 /**
  * Generate metadata for an article
  */
-export function generateArticleMetadata(article: Article): Metadata {
-  const articleUrl = `${baseUrl}/${article.category}/${article.slug}`;
+export function generateArticleMetadata(
+  article: Article,
+  locale: Locale = "en",
+  indexableLocales: readonly string[] = [],
+): Metadata {
+  const articleUrl = articleLanguageUrl(article.category, article.slug, locale);
+  const languages =
+    !article.noIndex && indexableLocales.length > 1
+      ? articleLanguageAlternates(
+          article.category,
+          article.slug,
+          indexableLocales,
+        )
+      : undefined;
   const imageUrl = article.coverImage?.startsWith("http")
     ? article.coverImage
     : `${baseUrl}${article.coverImage || "/static/og-image.jpg"}`;
@@ -142,7 +160,7 @@ export function generateArticleMetadata(article: Article): Metadata {
     },
     openGraph: {
       type: "article",
-      locale: "en_US",
+      locale: articleOgLocales[locale],
       url: articleUrl,
       title: metaTitle,
       description: metaDescription,
@@ -170,6 +188,7 @@ export function generateArticleMetadata(article: Article): Metadata {
     },
     alternates: {
       canonical: articleUrl,
+      ...(languages && { languages }),
     },
     robots: article.noIndex
       ? { index: false, follow: false }

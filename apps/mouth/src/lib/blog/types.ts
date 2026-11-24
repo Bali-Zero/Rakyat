@@ -29,6 +29,8 @@ export interface Article {
   id: string;
   slug: string;
   title: string;
+  /** Language of an inherited headline when it differs from the article body. */
+  titleLocale?: Article["locale"];
   subtitle?: string;
   excerpt: string;
   content: string; // MDX content
