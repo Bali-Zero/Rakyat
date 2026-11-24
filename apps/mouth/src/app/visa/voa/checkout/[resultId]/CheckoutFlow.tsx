@@ -5,15 +5,19 @@ import { useRouter } from "next/navigation";
 import { AppFrame, AppWhatsAppCTA, useFunnelApp } from "@balizero/core";
 import { formatIDR } from "@balizero/core/utils";
 import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
-import { readCheckoutHandoff } from "../../checkoutHandoff";
+import {
+  clearCheckoutHandoff,
+  readCheckoutHandoff,
+} from "../../checkoutHandoff";
 import { VOA_PRIMARY_ACTION_STYLE } from "../../voa-action-style";
+import { messageFor } from "../../orders/messages";
+import { isProviderCheckoutUrl } from "../../orders/provider-checkout-url";
 import { useCheckout } from "./useCheckout";
 import type { Applicant } from "../../orders/types";
 
-function isSafeProviderCheckoutUrl(
-  url: string | null | undefined,
-): url is string {
-  if (!url) return false;
+/** An `https:` URL the checkout returned that is NOT on the provider's own hosts. */
+function isOffListHttpsUrl(url: string | null | undefined): boolean {
+  if (!url || isProviderCheckoutUrl(url)) return false;
   try {
     return new URL(url).protocol === "https:";
   } catch {
@@ -53,6 +57,7 @@ export function CheckoutFlow({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [handoffPresent, setHandoffPresent] = useState(false);
+  const [blockedOrderId, setBlockedOrderId] = useState<string | null>(null);
 
   // Checkout attempt: the funnel's money step. Never the applicant's own
   // values — field names only, matching the wizard/visa-match pattern.
@@ -65,9 +70,9 @@ export function CheckoutFlow({
 
   useEffect(() => {
     const handoff = readCheckoutHandoff(resultId);
+    if (handoff.full_name) setFullName(handoff.full_name);
+    if (handoff.passport_number) setPassportNumber(handoff.passport_number);
     if (handoff.full_name && handoff.passport_number) {
-      setFullName(handoff.full_name);
-      setPassportNumber(handoff.passport_number);
       setHandoffPresent(true);
     }
   }, [resultId]);
@@ -80,14 +85,37 @@ export function CheckoutFlow({
   useEffect(() => {
     if (state.step !== "created") return;
     const { order } = state;
+    // The order exists: the traveller values have done their job. Cleared here
+    // and not on first read, so a reload before this point still prefills.
+    clearCheckoutHandoff(resultId);
     if (
       order.order_state === "awaiting_payment" &&
-      isSafeProviderCheckoutUrl(order.checkout_url)
+      isProviderCheckoutUrl(order.checkout_url)
     ) {
       window.location.href = order.checkout_url;
       return;
     }
+    if (
+      order.order_state === "awaiting_payment" &&
+      isOffListHttpsUrl(order.checkout_url)
+    ) {
+      setBlockedOrderId(order.order_id);
+      return;
+    }
     router.replace(`/visa/voa/orders/${order.order_id}`);
+  }, [state, router, resultId]);
+
+  // Back from the provider restores this page from the back-forward cache with
+  // its state still `created`, a submit button that stays disabled. A created
+  // order never stays on this page, so a cache restore goes to its tracker.
+  useEffect(() => {
+    if (state.step !== "created") return;
+    const orderId = state.order.order_id;
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) router.replace(`/visa/voa/orders/${orderId}`);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
   }, [state, router]);
 
   if (!paymentsLive) {
@@ -225,6 +253,25 @@ export function CheckoutFlow({
           >
             {state.message}
           </p>
+        ) : null}
+
+        {blockedOrderId !== null ? (
+          <>
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: "var(--tx-pure)",
+                borderLeft: "3px solid var(--bz-border)",
+                paddingLeft: "0.75rem",
+              }}
+            >
+              {messageFor("PAYMENT_PROVIDER_UNAVAILABLE")}
+            </p>
+            <a href={`/visa/voa/orders/${encodeURIComponent(blockedOrderId)}`}>
+              Open your order
+            </a>
+          </>
         ) : null}
 
         <button
