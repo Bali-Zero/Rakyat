@@ -26,7 +26,6 @@ from backend.services.portal import InviteService
 from backend.services.portal.invite_service import (
     InvitationAddressNotOnRecord,
     comparable_address,
-    invitation_wait_seconds,
 )
 
 logger = get_logger(__name__)
@@ -287,21 +286,6 @@ async def _stored_invite_address(client_id: int, requested: str | None, conn) ->
     return stored
 
 
-async def _refuse_a_flood(client_id: int, conn) -> None:
-    """429 while the client's mailbox is inside the send bounds of `invitation_wait_seconds`."""
-    wait = await invitation_wait_seconds(conn, client_id)
-    if wait:
-        minutes = -(-wait // 60)
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                "An invitation was sent to this client recently. "
-                f"Try again in {minutes} minute{'s' if minutes != 1 else ''}."
-            ),
-            headers={"Retry-After": str(wait)},
-        )
-
-
 # ================================================
 # TEAM-SIDE ENDPOINTS (Require team auth)
 # ================================================
@@ -337,7 +321,6 @@ async def send_invitation(
     async with db_pool.acquire() as conn:
         await _verify_invite_write_access(request.client_id, current_user, conn)
         invite_email = await _stored_invite_address(request.client_id, request.email, conn)
-        await _refuse_a_flood(request.client_id, conn)
 
     try:
         result = await invite_service.create_invitation(
@@ -459,7 +442,6 @@ async def resend_invitation(
     # before the try block so its HTTPException is never rewritten to a 500.
     async with db_pool.acquire() as conn:
         await _verify_invite_write_access(client_id, current_user, conn)
-        await _refuse_a_flood(client_id, conn)
 
     try:
         result = await invite_service.resend_invitation(

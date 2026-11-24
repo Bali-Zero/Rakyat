@@ -82,7 +82,7 @@ class FakeConnection:
 @pytest.mark.asyncio
 async def test_create_invitation_supersedes_only_other_addresses_and_returns_invite() -> None:
     expires_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    conn = FakeConnection(
+    conn = FakeConnectionWithTransaction(
         fetchrow_results=[
             {"id": 7, "full_name": "Client Name", "email": "client@example.com"},
             {"id": 44, "token": "token-abc", "expires_at": expires_at, "created_at": expires_at},
@@ -124,7 +124,7 @@ async def test_create_invitation_supersedes_only_other_addresses_and_returns_inv
 
 @pytest.mark.asyncio
 async def test_create_invitation_rejects_missing_client() -> None:
-    service = InviteService(FakePool(FakeConnection(fetchrow_results=[None])))
+    service = InviteService(FakePool(FakeConnectionWithTransaction(fetchrow_results=[None])))
 
     with pytest.raises(ValueError, match="Client with ID 404 not found"):
         await service.create_invitation(
@@ -146,6 +146,7 @@ async def test_validate_token_returns_valid_invitation_details() -> None:
                 "expires_at": expires_at,
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "client@example.com",
             },
             _state(),
         ]
@@ -179,6 +180,7 @@ async def test_validate_token_reports_used_and_expired_states() -> None:
                         "expires_at": now + timedelta(hours=1),
                         "used_at": now,
                         "client_name": "Client Name",
+                        "client_email": "client@example.com",
                     },
                     _state(),
                     {
@@ -188,6 +190,7 @@ async def test_validate_token_reports_used_and_expired_states() -> None:
                         "expires_at": now - timedelta(seconds=1),
                         "used_at": None,
                         "client_name": "Expired Client",
+                        "client_email": "expired@example.com",
                     },
                     _state(),
                 ]
@@ -293,7 +296,7 @@ class FakeConnectionWithTransaction(FakeConnection):
 
 @pytest.mark.asyncio
 async def test_create_invitation_excludes_archived_clients_by_query() -> None:
-    conn = FakeConnection(fetchrow_results=[None])
+    conn = FakeConnectionWithTransaction(fetchrow_results=[None])
     service = InviteService(FakePool(conn))
 
     with pytest.raises(ValueError, match="Client with ID 501 not found"):
@@ -357,6 +360,7 @@ async def test_complete_registration_rejects_active_existing_account() -> None:
                 "expires_at": now + timedelta(hours=1),
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "victim@example.com",
             },
             _state({"id": 55, "active": True, "pin_hash": REAL_PIN_HASH}),
         ]
@@ -386,6 +390,7 @@ async def test_complete_registration_reactivates_inactive_existing_account() -> 
                 "expires_at": now + timedelta(hours=1),
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "client@example.com",
             },
             _state({"id": 55, "active": False, "pin_hash": REAL_PIN_HASH}),
         ]
@@ -439,6 +444,7 @@ async def test_complete_registration_allows_placeholder_active_account() -> None
                 "expires_at": now + timedelta(hours=1),
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "client@example.com",
             },
             # active=True AND never registered — the provisioned-but-unused row.
             _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}),
@@ -487,6 +493,7 @@ async def test_complete_registration_moves_the_login_email_to_the_invited_addres
                 "expires_at": now + timedelta(hours=1),
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "new-address@example.com",
             },
             # the provisioned row still carries the OLD login email
             _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}),
@@ -528,6 +535,7 @@ async def test_complete_registration_refuses_when_another_account_holds_the_emai
                 "expires_at": now + timedelta(hours=1),
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "taken@example.com",
             },
             # some OTHER team_members row already uses taken@example.com
             _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}, holder=999),
@@ -559,6 +567,7 @@ async def test_existing_account_lookup_is_deterministic_without_role_filter() ->
                 "expires_at": now + timedelta(hours=1),
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "client@example.com",
             },
             _state(),
             {"id": 77},
@@ -623,7 +632,7 @@ async def test_create_invitation_stores_the_digest_and_mails_the_raw_token() -> 
     The client still receives the RAW token: only the stored copy changes.
     """
     expires_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    conn = FakeConnection(
+    conn = FakeConnectionWithTransaction(
         fetchrow_results=[
             {"id": 7, "full_name": "Client Name", "email": "client@example.com"},
             {"id": 44, "expires_at": expires_at, "created_at": expires_at},
@@ -732,6 +741,7 @@ async def test_complete_registration_retires_the_live_siblings_of_the_redeemed_i
                 "expires_at": now + timedelta(hours=1),
                 "used_at": None,
                 "client_name": "Client Name",
+                "client_email": "client@example.com",
             },
             _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}),
         ]
@@ -770,15 +780,15 @@ _REGISTRATION_CASES = [
     #  the address, the refusal registration raises or None when it succeeds)
     ("Client@Example.com", None, None, None),
     ("Client@Example.com", None, 77, "email_in_use"),
-    (None, None, None, "address_required"),
-    ("   ", None, None, "address_required"),
+    (None, None, None, "address_changed"),
+    ("   ", None, None, "address_changed"),
     ("Client@Example.com", _STAFF_LOGIN, None, "not_registrable"),
     ("Client@Example.com", _LIVE_LOGIN, None, "already_registered"),
     ("Client@Example.com", _LIVE_LOGIN, 77, "already_registered"),
     ("Client@Example.com", {**_LIVE_LOGIN, "active": False}, None, None),
     ("Client@Example.com", {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, None, None),
     ("Client@Example.com", {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, 77, "email_in_use"),
-    (None, {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, None, None),
+    (None, {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, None, "address_changed"),
 ]
 
 
@@ -787,6 +797,7 @@ def _open_invitation(email: str | None, **changes: object) -> dict:
         "id": 9,
         "client_id": 7,
         "email": email,
+        "client_email": email,
         "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
         "used_at": None,
         "client_name": "Client Name",
@@ -821,7 +832,12 @@ async def test_an_invitation_is_valid_exactly_when_its_registration_would_succee
         else:
             with pytest.raises(ValueError) as refused:
                 await service.complete_registration(token="tok", pin="1234")
-            if code in _SENSITIVE:
+            if code == "address_changed":
+                # An address that is not the client's on record (a blank one
+                # included) is answered as an expired link at both doors.
+                assert validated == {"error": "expired", "message": "This invitation has expired"}
+                assert str(refused.value) == "Invitation expired"
+            elif code in _SENSITIVE:
                 # The token holder is not authenticated: another login holding
                 # the address, or a staff login, is not theirs to learn, so the
                 # answer is the one an unknown link gets.
@@ -832,8 +848,10 @@ async def test_an_invitation_is_valid_exactly_when_its_registration_would_succee
                 assert validated == {"error": code, "message": str(refused.value)}
             assert register_conn.execute_calls == []
 
-    # Both doors read the registration state with one statement and one set of values.
-    assert validate_conn.fetchrow_calls[1] == register_conn.fetchrow_calls[1]
+    # Both doors read the registration state with one statement and one set of values;
+    # registration refuses an address not on record before it reads that state.
+    if code != "address_changed":
+        assert validate_conn.fetchrow_calls[1] == register_conn.fetchrow_calls[1]
     assert validate_conn.fetchval_calls == register_conn.fetchval_calls == []
 
 

@@ -75,6 +75,7 @@ async def test_invite_redemption_refuses_a_group_staff_row(active: bool) -> None
         "expires_at": datetime(2999, 1, 1, tzinfo=timezone.utc),
         "used_at": None,
         "client_name": "C",
+        "client_email": "s@example.test",
     }
     # The one row the registration reads (invite_service._REGISTRATION_STATE_SQL):
     # a group-staff login linked to the client, never registered (placeholder
