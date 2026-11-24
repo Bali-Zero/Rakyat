@@ -87,3 +87,28 @@ async def test_a_fragment_is_still_shown_to_staff(mock_db_pool, mock_current_use
     result = await _extract("NIB 12345", mock_db_pool, mock_current_user)
 
     assert result.nib == "12345"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "read",
+    [912000000001.0, 9.12000000001e11, 9120000000010.0, True],
+    ids=["float-12-digits", "exponent", "float-that-looks-whole", "bool"],
+)
+async def test_a_float_or_bool_is_never_saved(read: Any, mock_db_pool, mock_current_user) -> None:
+    result = await _extract(read, mock_db_pool, mock_current_user)
+
+    assert result.success is True
+    assert _saved_nibs(mock_db_pool) == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", ["9120000000010", 9120000000010], ids=["string", "int"])
+async def test_a_whole_string_or_int_is_saved_pin(
+    read: Any, mock_db_pool, mock_current_user
+) -> None:
+    await _extract(read, mock_db_pool, mock_current_user)
+
+    assert _saved_nibs(mock_db_pool) == ["9120000000010"]

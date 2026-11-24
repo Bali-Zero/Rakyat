@@ -839,9 +839,13 @@ Rules:
         nib = extracted.get("nib", "")
         nib_to_save: str | None = None
         if nib:
+            # Only text or a whole integer is a faithful read: str() of a float
+            # manufactures digits (912000000001.0 -> "9120000000010"), so a float
+            # (exponent forms included) or a bool is shown but never saved.
+            faithful = isinstance(nib, str) or (isinstance(nib, int) and not isinstance(nib, bool))
             nib_clean = re.sub(r"[^0-9]", "", str(nib))
             nib = nib_clean
-            if len(nib_clean) == 13:
+            if len(nib_clean) == 13 and faithful:
                 nib_to_save = nib_clean
             else:
                 logger.warning(
