@@ -1,10 +1,9 @@
 """DAI-177: an invoice never goes out with a total of 0.
 
 A discount needs a Quoted Price to apply to. The API refuses a discount without a price
-and a discount above the price, on create and on every PATCH that changes either value.
-The invoice step refuses a discount above or equal to the price instead of capping it
-silently. A discount equal to the price stays storable (the gate contract in
-test_quoted_price_gate_pg.py) and is refused when the invoice is issued.
+and a discount at or above the price, on create and on every PATCH that changes either
+value. A row already holding such a discount cannot enter Sending Invoice. The invoice
+step refuses it too instead of capping it silently.
 
 Database, email and Drive are mocked; every value is synthetic.
 """
@@ -19,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.app.routers import crm_practices
+from backend.services.crm.practice_state_machine import DISCOUNT_COVERS_PRICE_DETAIL
 from backend.services.invoicing.entities import ENTITIES
 from backend.services.invoicing.invoice_service import (
     InvoiceAutomationService,
@@ -89,6 +89,23 @@ def test_create_keeps_a_discount_on_the_service_base_price(mock_db_pool, mock_db
     assert _ran(mock_db_conn, "INSERT INTO practices")
 
 
+def test_create_refuses_a_discount_equal_to_the_price(mock_db_pool, mock_db_conn):
+    mock_db_conn.fetchrow = AsyncMock(side_effect=[_type_row(), _inserted_row()])
+    response = _post(
+        mock_db_pool,
+        TAX_LEAD,
+        {
+            "client_id": 42,
+            "practice_type_code": "tax_monthly",
+            "quoted_price": 1470000,
+            "discount_amount": 1470000,
+            "assigned_to": TAX_LEAD["email"],
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert not _ran(mock_db_conn, "INSERT INTO practices")
+
+
 # --- PATCH ------------------------------------------------------------------------
 
 
@@ -122,14 +139,69 @@ def test_patch_can_zero_a_discount_on_a_practice_without_a_price(mock_db_pool, m
     assert response.status_code == 200, response.text
 
 
-def test_patch_discount_equal_to_price_is_left_to_the_invoice_step(mock_db_pool, mock_db_conn):
-    """Same contract as test_a_discount_to_zero_total_still_passes in the PG suite."""
+def test_patch_refuses_a_discount_equal_to_the_price(mock_db_pool, mock_db_conn):
     body = _patch_row(
         mock_db_conn,
         {"quoted_price": 1470000, "discount_amount": 1470000},
         quoted_price=None,
     )
     response = _patch(mock_db_pool, TAX_LEAD, body)
+    assert response.status_code == 400, response.text
+    assert not _ran(mock_db_conn, "UPDATE practices")
+
+
+def test_patch_refuses_a_price_lowered_onto_the_stored_discount(mock_db_pool, mock_db_conn):
+    body = _patch_row(mock_db_conn, {"quoted_price": 1470000}, discount_amount=DISCOUNT)
+    response = _patch(mock_db_pool, TAX_LEAD, body)
+    assert response.status_code == 400, response.text
+    assert not _ran(mock_db_conn, "UPDATE practices")
+
+
+def test_a_stored_full_discount_cannot_enter_sending_invoice(mock_db_pool, mock_db_conn):
+    body = _patch_row(
+        mock_db_conn,
+        {"status": "sending_invoice"},
+        status="waiting_documents",
+        quoted_price=DISCOUNT,
+        discount_amount=DISCOUNT,
+    )
+    response = _patch(mock_db_pool, TAX_LEAD, body)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == DISCOUNT_COVERS_PRICE_DETAIL
+    assert not _ran(mock_db_conn, "UPDATE practices")
+
+
+def test_a_full_discount_committed_concurrently_cannot_slip_in(mock_db_pool, mock_db_conn):
+    mock_db_conn.fetchrow = AsyncMock(
+        side_effect=[
+            _old_row(TAX_LEAD["email"], status="waiting_documents", quoted_price=DISCOUNT),
+            {"status": "waiting_documents", "quoted_price": DISCOUNT, "discount_amount": DISCOUNT},
+            _updated_row(),
+        ]
+    )
+    response = _patch(mock_db_pool, TAX_LEAD, {"status": "sending_invoice"})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == DISCOUNT_COVERS_PRICE_DETAIL
+    assert not _ran(mock_db_conn, "UPDATE practices")
+
+
+def test_a_stored_full_discount_can_be_fixed_in_the_same_move(mock_db_pool, mock_db_conn):
+    mock_db_conn.fetchrow = AsyncMock(
+        side_effect=[
+            _old_row(
+                TAX_LEAD["email"],
+                status="waiting_documents",
+                quoted_price=DISCOUNT,
+                discount_amount=DISCOUNT,
+            ),
+            {"status": "waiting_documents", "quoted_price": DISCOUNT, "discount_amount": DISCOUNT},
+            _updated_row(status="sending_invoice"),
+        ]
+    )
+    with patch.object(crm_practices, "InvoiceAutomationService", return_value=MagicMock()):
+        response = _patch(
+            mock_db_pool, TAX_LEAD, {"status": "sending_invoice", "discount_amount": 100000}
+        )
     assert response.status_code == 200, response.text
     assert _ran(mock_db_conn, "UPDATE practices")
 

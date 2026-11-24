@@ -39,6 +39,7 @@ from backend.services.crm.practice_state_machine import (
     STATES_WITHOUT_SERVICE,
     InvalidTransitionError,
     QuotedPriceRequiredError,
+    discount_covers_price,
     normalize_state,
     validate_quoted_price_for_invoice,
     validate_service_selected,
@@ -866,7 +867,9 @@ async def create_practice(
 
             # A practice cannot be CREATED straight into Sending Invoice without a price either.
             try:
-                validate_quoted_price_for_invoice(practice.status, quoted_price)
+                validate_quoted_price_for_invoice(
+                    practice.status, quoted_price, practice.discount_amount
+                )
             except QuotedPriceRequiredError as e:
                 raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -918,11 +921,11 @@ async def create_practice(
             if practice.discount_amount is not None:
                 if practice.discount_amount > 0 and quoted_price is None:
                     raise HTTPException(status_code=400, detail=DISCOUNT_NEEDS_PRICE_DETAIL)
-                if quoted_price is not None and practice.discount_amount > quoted_price:
+                if discount_covers_price(practice.discount_amount, quoted_price):
                     raise HTTPException(
                         status_code=400,
                         detail=(
-                            f"discount_amount ({practice.discount_amount}) cannot exceed "
+                            f"discount_amount ({practice.discount_amount}) must be lower than "
                             f"quoted_price ({quoted_price})"
                         ),
                     )
@@ -1923,6 +1926,7 @@ async def update_practice(
                         else (
                             old_quoted_price if old_quoted_price is not None else service_base_price
                         ),
+                        update_set.get("discount_amount", old_discount_amount),
                     )
                 except QuotedPriceRequiredError as e:
                     raise HTTPException(status_code=422, detail=str(e)) from e
@@ -2023,11 +2027,11 @@ async def update_practice(
                 if effective_discount:
                     if effective_quoted is None:
                         raise HTTPException(status_code=400, detail=DISCOUNT_NEEDS_PRICE_DETAIL)
-                    if Decimal(effective_discount) > Decimal(effective_quoted):
+                    if discount_covers_price(effective_discount, effective_quoted):
                         raise HTTPException(
                             status_code=400,
                             detail=(
-                                f"discount_amount ({effective_discount}) cannot exceed "
+                                f"discount_amount ({effective_discount}) must be lower than "
                                 f"quoted_price ({effective_quoted})"
                             ),
                         )
@@ -2062,10 +2066,12 @@ async def update_practice(
             async with conn.transaction():
                 if updates.status and normalize_state(updates.status) == "sending_invoice":
                     # The gate above ran on values read before this transaction. Lock the row
-                    # and decide on the LOCKED status and price: a concurrent commit (price
-                    # to 0/NULL, or a move out of sending_invoice) cannot slip a move in.
+                    # and decide on the LOCKED status, price and discount: a concurrent commit
+                    # (price to 0/NULL, a full discount, or a move out of sending_invoice)
+                    # cannot slip a move in.
                     locked = await conn.fetchrow(
-                        "SELECT status, quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                        "SELECT status, quoted_price, discount_amount FROM practices"
+                        " WHERE id = $1 FOR UPDATE",
                         practice_id,
                     )
                     if locked and normalize_state(locked["status"] or "") != "sending_invoice":
@@ -2079,6 +2085,7 @@ async def update_practice(
                                     if locked["quoted_price"] is not None
                                     else service_base_price
                                 ),
+                                update_set.get("discount_amount", locked.get("discount_amount")),
                             )
                         except QuotedPriceRequiredError as e:
                             raise HTTPException(status_code=422, detail=str(e)) from e

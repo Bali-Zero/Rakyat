@@ -43,7 +43,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import {
   QUOTED_PRICE_REQUIRED_TEXT_ID,
-  isQuotedPriceRefusal,
+  invoiceAmountRefusalText,
   needsQuotedPriceBefore,
 } from "@/lib/api/crm/state-machine";
 import { api } from "@/lib/api";
@@ -476,9 +476,7 @@ export default function PratichePage() {
       );
       toast.error(
         "Error",
-        isQuotedPriceRefusal(error)
-          ? QUOTED_PRICE_REQUIRED_TEXT_ID
-          : "Failed to update process status",
+        invoiceAmountRefusalText(error) ?? "Failed to update process status",
       );
     } finally {
       setUpdatingId(null);

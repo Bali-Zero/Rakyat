@@ -5,8 +5,9 @@ Spec rows (the router rows live in db/test_quoted_price_gate_pg.py, on real Post
 Q1  The gate: entering sending_invoice (legacy names included) needs a Quoted Price > 0; None, 0,
     0.0, "0", "", junk, a bool and a negative number all fail; any other status passes
     -> test_gate_truth_table, test_legacy_names_are_gated, test_other_states_never_need_a_price
-Q2  Only the QUOTED price counts: the total after a discount is not looked at
-    -> test_discount_to_zero_total_is_not_the_gates_business
+Q2  DAI-177: a discount at or above the price cannot enter Sending Invoice; a smaller one can
+    -> test_discount_to_zero_total_is_refused_by_the_gate,
+    test_service_update_refuses_a_full_discount, test_batch_update_refuses_a_full_discount
 Q3  EnhancedCRMService.update_practice_status refuses to enter sending_invoice without a price,
     allows it with one, and never gates a practice already there or another target
     -> test_service_update_*
@@ -26,7 +27,9 @@ import pytest
 from backend.services.crm.cache_query import CRMQueryOptimizer
 from backend.services.crm.client_core import EnhancedCRMService
 from backend.services.crm.practice_state_machine import (
+    DISCOUNT_COVERS_PRICE_DETAIL,
     QUOTED_PRICE_REQUIRED_DETAIL,
+    DiscountCoversPriceError,
     QuotedPriceRequiredError,
     has_quoted_price,
     validate_quoted_price_for_invoice,
@@ -79,9 +82,14 @@ def test_other_states_never_need_a_price(state) -> None:
     assert validate_quoted_price_for_invoice(state, 0) is True
 
 
-def test_discount_to_zero_total_is_not_the_gates_business() -> None:
-    # quoted 100, discount 100 -> total 0: the gate looks at the quoted price only.
+def test_discount_to_zero_total_is_refused_by_the_gate() -> None:
     assert validate_quoted_price_for_invoice("sending_invoice", 100) is True
+    assert validate_quoted_price_for_invoice("sending_invoice", 100, 0) is True
+    assert validate_quoted_price_for_invoice("sending_invoice", 100, 99) is True
+    for discount in (100, Decimal("100.00"), 150):
+        with pytest.raises(DiscountCoversPriceError, match=DISCOUNT_COVERS_PRICE_DETAIL):
+            validate_quoted_price_for_invoice("sending_invoice", 100, discount)
+    assert validate_quoted_price_for_invoice("on_process", 100, 100) is True
 
 
 # --- Q3 ---------------------------------------------------------------------------------
@@ -137,6 +145,21 @@ async def test_service_update_does_not_gate_other_targets() -> None:
         {"id": 1, "status": "on_process"},
     )
     assert (await svc.update_practice_status(1, "on_process"))["status"] == "on_process"
+
+
+@pytest.mark.asyncio
+async def test_service_update_refuses_a_full_discount() -> None:
+    svc, conn = _service(
+        {
+            "status": "waiting_documents",
+            "client_id": 1,
+            "quoted_price": Decimal("1000"),
+            "discount_amount": Decimal("1000"),
+        }
+    )
+    with pytest.raises(DiscountCoversPriceError):
+        await svc.update_practice_status(1, "sending_invoice")
+    assert conn.fetchrow.await_count == 1
 
 
 # --- Q4 ---------------------------------------------------------------------------------
@@ -232,3 +255,23 @@ async def test_batch_update_row_price_is_enough_and_other_statuses_are_not_looke
     opt, conn = _batch({"status": "waiting_documents", "quoted_price": None})
     assert await opt.batch_update_practices([{"id": 1, "status": "on_process"}]) == 1
     conn.fetchrow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_batch_update_refuses_a_full_discount() -> None:
+    row = {
+        "status": "waiting_documents",
+        "quoted_price": Decimal("500"),
+        "discount_amount": Decimal("500"),
+    }
+    opt, conn = _batch(row)
+    with pytest.raises(DiscountCoversPriceError):
+        await opt.batch_update_practices([{"id": 1, "status": "sending_invoice"}])
+    conn.execute.assert_not_awaited()
+    opt, conn = _batch(row)
+    assert (
+        await opt.batch_update_practices(
+            [{"id": 1, "status": "sending_invoice", "quoted_price": 900}]
+        )
+        == 1
+    )
