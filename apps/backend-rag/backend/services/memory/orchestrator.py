@@ -581,6 +581,8 @@ class MemoryOrchestrator:
                 facts_saved = 0
                 if self._memory_service and self._memory_service.pool:
                     for fact in facts:
+                        if fact.source != "user":
+                            continue
                         try:
                             success = await self._memory_service.add_fact(
                                 user_id=user_email,
