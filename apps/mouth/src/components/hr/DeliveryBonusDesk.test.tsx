@@ -173,6 +173,140 @@ describe("DeliveryBonusDesk", () => {
     ).toHaveAttribute("aria-valuetext", "3 qualifying services, goal 5");
     expect(screen.getByText(/Dec 2026 payroll/)).toBeVisible();
   });
+  it("inspects a payroll category using only priced amounts from the payroll period", async () => {
+    const data = {
+      ...desk(),
+      next_case: null,
+      totals: {
+        pending: 150000,
+        approved: 100000,
+        paid: 0,
+        awaiting_rate: 5,
+        payroll_locked: 1,
+      },
+    };
+    mocks.request.mockResolvedValue({ sentSub: "employee-a", data });
+    render(<DeliveryBonusDesk />);
+    const approved = await screen.findByRole("button", {
+      name: /Approved.*Rp 100.000/,
+    });
+    fireEvent.click(approved);
+    expect(approved).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Approved · 40% of this payroll total",
+    );
+    fireEvent.click(approved);
+    expect(approved).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(mocks.request).toHaveBeenCalledOnce();
+  });
+
+  it("filters the available recent records by status and WITA award month, then restores all activity", async () => {
+    const sample = desk(),
+      common = sample.recent[0];
+    const recent = [
+      {
+        ...common,
+        practice_id: 61,
+        service: "November approved",
+        status: "approved",
+        earned_at: "2026-10-29T10:00:00Z",
+        awarded_at: "2026-10-31T16:01:00Z",
+      },
+      {
+        ...common,
+        practice_id: 62,
+        service: "October approved",
+        status: "approved",
+        awarded_at: "2026-10-31T15:59:00Z",
+      },
+      {
+        ...common,
+        practice_id: 63,
+        service: "November pending",
+        status: "pending",
+        awarded_at: "2026-11-10T12:00:00Z",
+      },
+    ];
+    mocks.request.mockResolvedValue({
+      sentSub: "employee-a",
+      data: { ...sample, recent, next_case: null },
+    });
+    render(<DeliveryBonusDesk />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Approved.*Rp/ }),
+    );
+    expect(
+      screen.getByRole("link", { name: "November approved" }),
+    ).toHaveAttribute("href", "/process/61");
+    expect(screen.queryByText("October approved")).toBeNull();
+    expect(screen.queryByText("November pending")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Paid.*Rp/ }));
+    expect(
+      screen.getByText("No matching deliveries in recent activity."),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    fireEvent.click(screen.getByText("View 2 earlier deliveries"));
+    expect(
+      screen.getByRole("link", { name: "October approved" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "November pending" }),
+    ).toBeVisible();
+    expect(mocks.request).toHaveBeenCalledOnce();
+  });
+
+  it("counts fulfilled, company-filed and waived requirements from the actual delivery slots", async () => {
+    mocks.request.mockImplementation(async (path: string) => ({
+      sentSub: "employee-a",
+      data: path.endsWith("/delivery")
+        ? {
+            slots: [
+              { key: "visa", label: "Electronic Visa", document_id: 8 },
+              {
+                key: "company",
+                label: "Company file",
+                document_id: null,
+                company_document_id: 9,
+              },
+              {
+                key: "conditional",
+                label: "Conditional letter",
+                document_id: null,
+                waiver_reason: "Not applicable",
+              },
+              { key: "permit", label: "ITK", document_id: null },
+            ],
+          }
+        : desk(),
+    }));
+    render(<DeliveryBonusDesk />);
+    await screen.findByRole("link", { name: "C1 Tourism · ITK" });
+    expect(
+      screen.getByText("Requirements met").parentElement,
+    ).toHaveTextContent("3 / 4");
+    expect(mocks.request).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves an empty delivery pack open for review and shows actual over-target progress", async () => {
+    const data = { ...desk(), milestones: 6, target: 4 };
+    mocks.request.mockImplementation(async (path: string) => ({
+      sentSub: "employee-a",
+      data: path.endsWith("/delivery") ? { slots: [] } : data,
+    }));
+    render(<DeliveryBonusDesk />);
+    const next = await screen.findByRole("region", {
+      name: "Next paid practice",
+    });
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+    expect(next).not.toHaveTextContent("Confirm delivery");
+    expect(next).not.toHaveTextContent("Requirements met");
+    expect(screen.getByText("150%")).toBeVisible();
+    expect(
+      screen.getByRole("progressbar", { name: "Monthly service goal" }),
+    ).toHaveAttribute("aria-valuenow", "4");
+  });
+
   it("opens earlier activity without losing the latest delivery or changing payroll", async () => {
     const sample = desk();
     const earlier = {
