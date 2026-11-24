@@ -34,7 +34,7 @@ import {
   QUOTED_PRICE_REQUIRED_TEXT_ID,
   STATUS_LABELS as STATUS_DROPDOWN_LABELS,
   getAllowedNextStatuses,
-  isQuotedPriceRefusal,
+  invoiceAmountRefusalText,
   needsQuotedPriceBefore,
   needsServiceBefore,
   type PracticeStatus,
@@ -428,9 +428,7 @@ export default function CaseDetailPage() {
     } catch (err) {
       toast.error(
         "Failed to update status",
-        isQuotedPriceRefusal(err)
-          ? QUOTED_PRICE_REQUIRED_TEXT_ID
-          : (err as Error).message,
+        invoiceAmountRefusalText(err) ?? (err as Error).message,
       );
     } finally {
       setIsJumpingStatus(null);
@@ -608,8 +606,9 @@ export default function CaseDetailPage() {
       // Status comes from ApiError.statusCode. The message tests remain only as a
       // fallback for errors that never went through the api client; a bare
       // `message.includes("404")` would also fire on a process id containing 404.
-      if (isQuotedPriceRefusal(err)) {
-        errorMessage = QUOTED_PRICE_REQUIRED_TEXT_ID;
+      const amountRefusal = invoiceAmountRefusalText(err);
+      if (amountRefusal) {
+        errorMessage = amountRefusal;
       } else if (err instanceof Error) {
         const status = err instanceof ApiError ? err.statusCode : undefined;
         if (

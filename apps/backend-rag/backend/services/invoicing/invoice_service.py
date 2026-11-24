@@ -82,7 +82,20 @@ _RESOLUTION_REASONS = frozenset(
         "orphaned_issuer_metadata",
     }
 )
-_PERSISTENCE_REASONS = frozenset({"issuer_conflict", "invalid_persisted_binding", "write_failed"})
+_PERSISTENCE_REASONS = frozenset(
+    {"issuer_conflict", "invalid_persisted_binding", "invoice_amount_changed", "write_failed"}
+)
+_INVOICE_AMOUNT_MESSAGES = {
+    "invoice_discount_exceeds_price": (
+        "invoice_discount_exceeds_price: the discount is above the Quoted Price."
+        " Correct the Quoted Price or the discount, then generate the invoice again."
+    ),
+    "invoice_total_zero": (
+        "invoice_total_zero: the invoice total would be 0."
+        " Correct the Quoted Price or the discount, then generate the invoice again."
+    ),
+}
+INVOICE_AMOUNT_ERROR_CODES = frozenset(_INVOICE_AMOUNT_MESSAGES)
 
 
 class InvoiceIssuerResolutionError(RuntimeError):
@@ -104,6 +117,25 @@ class InvoiceIssuerPersistenceError(RuntimeError):
             else None
         )
         super().__init__(reason)
+
+
+class InvoiceAmountError(ValueError):
+    """The practice's price and discount leave nothing valid to invoice (DAI-177)."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(_INVOICE_AMOUNT_MESSAGES[code])
+
+
+def _invoice_amounts(quoted_value: Any, discount_value: Any) -> tuple[float, float]:
+    """Return (quoted, discount), refusing a total of 0 or below instead of capping it."""
+    quoted = float(quoted_value or 0)
+    discount = max(0.0, float(discount_value or 0))
+    if discount > quoted:
+        raise InvoiceAmountError("invoice_discount_exceeds_price")
+    if discount == quoted:
+        raise InvoiceAmountError("invoice_total_zero")
+    return quoted, discount
 
 
 @dataclass(frozen=True)
@@ -234,6 +266,11 @@ class InvoiceAutomationService:
                 logger.error("Practice %s not found", practice_id)
                 return {"success": False, "error": "Practice not found"}
 
+            # DAI-177: decided before the issuer, the PDF or any email.
+            quoted_price_float, discount_amount_float = _invoice_amounts(
+                practice_data.get("quoted_price"), practice_data.get("discount_amount")
+            )
+
             client_data = await self._fetch_client_data(practice_data["client_id"])
             if not client_data:
                 logger.error(f"Client {practice_data['client_id']} not found")
@@ -267,16 +304,7 @@ class InvoiceAutomationService:
                 # the columns. The generator handles 0 as "no discount" so
                 # the existing visual stays untouched for non-discounted
                 # invoices.
-                discount_value = practice_data.get("discount_amount")
-                discount_amount_float = float(discount_value) if discount_value is not None else 0.0
                 discount_reason_value = practice_data.get("discount_reason")
-                quoted_price_float = float(practice_data.get("quoted_price", 0))
-                # Defensive clamp matches the generator's logic so the email,
-                # PDF, and invoices.amount_idr all converge on the same value.
-                if discount_amount_float < 0:
-                    discount_amount_float = 0.0
-                if discount_amount_float > quoted_price_float:
-                    discount_amount_float = quoted_price_float
                 dpp_float = quoted_price_float - discount_amount_float
                 # K127: optional PPh chosen by the tax team (practices.metadata.pph).
                 # The client transfers DPP - PPh, so that is TOTAL DUE and the email
@@ -482,6 +510,9 @@ class InvoiceAutomationService:
                 "accounting_notified": asya_notified,
             }
 
+        except InvoiceAmountError as error:
+            logger.error("Invoice refused for practice %s: %s", practice_id, error.code)
+            return {"success": False, "error": str(error), "error_code": error.code}
         except InvoiceIssuerResolutionError as error:
             logger.error(
                 "invoice_issuer_resolution_failed",
@@ -924,7 +955,11 @@ class InvoiceAutomationService:
                 discount = float(practice_row.get("discount_amount") or 0)
             except (AttributeError, KeyError, TypeError):
                 discount = 0.0
-            discount = max(0.0, min(discount, quoted))
+            try:
+                quoted, discount = _invoice_amounts(quoted, discount)
+            except InvoiceAmountError as error:
+                # The row changed after the check at the start of the run.
+                raise InvoiceIssuerPersistenceError("invoice_amount_changed") from error
             # amount_idr stores the post-discount total (DPP): gross, with or without
             # PPh. discount_amount_idr mirrors the discount. A PPh the client withholds
             # (K127) goes to pph_expected_idr (migration 238), the accounting contract:
