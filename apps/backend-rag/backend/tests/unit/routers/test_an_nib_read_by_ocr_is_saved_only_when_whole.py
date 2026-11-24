@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.routers.crm_clients_documents import NibExtractRequest, extract_nib
+from backend.app.routers.crm_clients_documents import (
+    NibExtractRequest,
+    _faithful_nib_digits,
+    extract_nib,
+)
 
 
 async def _extract(nib: Any, mock_db_pool, mock_current_user):
@@ -350,3 +354,25 @@ async def test_the_warning_is_a_fixed_text_without_digits(
     assert all(not r.args for r in warnings)
     for record in warnings:
         assert not any(c.isdigit() for c in record.getMessage()), record.getMessage()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_zero_read_answers_none_and_is_not_saved_pin(
+    mock_db_pool, mock_current_user, caplog
+) -> None:
+    module = "backend.app.routers.crm_clients_documents"
+    with caplog.at_level(logging.DEBUG, logger=module):
+        await _assert_refused(0, mock_db_pool, mock_current_user)
+
+    assert [r for r in caplog.records if r.name == module and r.levelno >= logging.WARNING] == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("read", "digits"),
+    [(0, None), (9120000000001, "9120000000001"), (-1, None), (True, None)],
+    ids=["zero", "positive-int", "negative-int", "bool"],
+)
+def test_a_faithful_whole_number_is_positive(read: Any, digits: str | None) -> None:
+    assert _faithful_nib_digits(read) == digits

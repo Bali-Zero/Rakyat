@@ -759,7 +759,7 @@ _NIB_BLOCK = re.compile(r"[0-9](?:[ \-]?[0-9])*\s*")
 def _faithful_nib_digits(read: Any) -> str | None:
     """Digits of an OCR read that IS the document's number, else None.
 
-    Faithful: a non-negative int, or a text made of an optional label (ASCII
+    Faithful: a positive int, or a text made of an optional label (ASCII
     letters, spaces, ":" and an abbreviation dot after a letter) followed by a
     block of ASCII digits with single spaces or hyphens between them. Anything
     that would need the digits to be derived (float, sign, exponent, decimal
@@ -768,7 +768,7 @@ def _faithful_nib_digits(read: Any) -> str | None:
     if isinstance(read, bool):
         return None
     if isinstance(read, int):
-        return str(read) if read >= 0 else None
+        return str(read) if read > 0 else None
     if not isinstance(read, str):
         return None
     first = next((n for n, c in enumerate(read) if "0" <= c <= "9"), None)
