@@ -64,6 +64,23 @@ describe("new Second Home case page", () => {
     expect(panel).toMatch(/\d{2}\.\d{3}\.\d{3} IDR/);
   });
 
+  it("still states the base E33 / E33E facts staff rely on", () => {
+    render(<NewSecondHomeCasePage />);
+    const panel = screen.getByTestId("e33-facts-panel").textContent ?? "";
+    for (const fact of [
+      "strata-title",
+      "No sponsor",
+      "5 years",
+      "Pasal 113",
+      "55–59",
+      "BUMN",
+      "USD 130,000",
+      "USD 1,000,000",
+    ]) {
+      expect(panel).toContain(fact);
+    }
+  });
+
   it("the page source carries no IDR literal and no passive-income phrase", () => {
     const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
     expect(src).not.toMatch(/\bIDR\s*[0-9]/i);

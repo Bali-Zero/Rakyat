@@ -39,6 +39,10 @@ const E33_ENTRY = getPricingSnapshotEntry(
   E33_LIVE_PRICE_CATEGORY,
   E33_LIVE_PRICE_KEY,
 );
+const E33E_ENTRY = getPricingSnapshotEntry(
+  E33_LIVE_PRICE_CATEGORY,
+  E33E_LIVE_PRICE_KEY,
+);
 const E33F_ENTRY = getPricingSnapshotEntry(
   E33_LIVE_PRICE_CATEGORY,
   E33F_OFFSHORE_LIVE_PRICE_KEY,
@@ -199,12 +203,17 @@ export default function NewSecondHomeCasePage() {
         <div className="text-xs text-[var(--foreground-muted)] space-y-1.5">
           <p>
             <strong className="text-[var(--foreground)]">Base E33</strong> —{" "}
-            {COPY.wizard.capital.body} {COPY.wizard.property.why} Validity:{" "}
-            {E33_ENTRY?.validity ?? "see catalogue"}.
+            {COPY.wizard.capital.body} The alternative route is a completed
+            strata-title property (BERSYARAT — completed titles only).{" "}
+            {COPY.wizard.property.why} No sponsor. First grant up to{" "}
+            {E33_ENTRY?.validity ?? "5 years"}; renewal follows Permenkumham
+            22/2023 Pasal 113 cumulative caps.
           </p>
           <p>
-            <strong className="text-[var(--foreground)]">E33E / E33F</strong> —{" "}
-            {COPY.wizard.seniorFunding.why}
+            <strong className="text-[var(--foreground)]">E33E</strong> —
+            retirement KITAS, senior 55+, {E33E_ENTRY?.validity ?? "5 years"}.{" "}
+            {COPY.wizard.seniorFunding.why} Ages 55–59 are handled as a
+            signed-disclosure band.
           </p>
           <p>
             <strong className="text-[var(--foreground)]">E33F</strong> —{" "}
