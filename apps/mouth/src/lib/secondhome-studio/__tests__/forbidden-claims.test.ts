@@ -105,6 +105,27 @@ describe("forbidden-claims sweep — every string in COPY", () => {
   });
 });
 
+describe("forbidden-claims sweep — generalized IDR price literal in COPY", () => {
+  it("no copy string contains any IDR figure of 6+ digits (not only 35M/39M)", () => {
+    const violations = entries.filter((e) =>
+      JSX_PRICE_LITERAL_RE.test(e.value),
+    );
+    expect(
+      violations,
+      `IDR price literal leaked in: ${violations.map((v) => v.path).join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("guilt: the generalized pattern fires on an E33E price that PRICE_LITERAL_PATTERN misses", () => {
+    expect(PRICE_LITERAL_PATTERN.test("IDR 45,000,000 all-inclusive")).toBe(
+      false,
+    );
+    expect(JSX_PRICE_LITERAL_RE.test("IDR 45,000,000 all-inclusive")).toBe(
+      true,
+    );
+  });
+});
+
 describe("guilt fixtures — each pattern actually fires on a known-bad string", () => {
   const guiltCases: Array<{
     pattern: keyof typeof FORBIDDEN_PATTERNS;
@@ -447,6 +468,29 @@ function extractStringLiterals(src: string): string[] {
   return out;
 }
 
+/**
+ * JSX text children (`<p>You can open it at any bank. IDR 45,000,000</p>`)
+ * are not quoted tokens, so `extractStringLiterals` never sees them — and
+ * that is where staff/studio copy normally lives. Comments are stripped
+ * first so commented-out markup is not scanned; the text between `>` or `}`
+ * and the next `<` or `{` (so `{expr}` is excluded, its neighbours are not)
+ * is kept.
+ */
+const COMMENT_RE = /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
+const JSX_TEXT_RE = /[>}]([^<>{}]*[A-Za-z0-9][^<>{}]*)(?=[<{]|$)/g;
+
+function extractJsxText(src: string): string[] {
+  const noComments = src.replace(COMMENT_RE, (c) => " ".repeat(c.length));
+  return Array.from(noComments.matchAll(JSX_TEXT_RE), (m) =>
+    m[1].replace(/\s+/g, " ").trim(),
+  );
+}
+
+/** Everything a reader can see in a source file: quoted literals + JSX text. */
+function extractScannableText(src: string): string[] {
+  return [...extractStringLiterals(src), ...extractJsxText(src)];
+}
+
 const STUDIO_SRC_DIR = join(
   __dirname,
   "..",
@@ -458,16 +502,26 @@ const STUDIO_SRC_DIR = join(
   "studio",
 );
 
-function listTsxFiles(dir: string): string[] {
+const WORKSPACE_SECOND_HOME_DIR = join(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "app",
+  "(workspace)",
+  "second-home",
+);
+
+function listSourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      out.push(...listTsxFiles(full));
+      out.push(...listSourceFiles(full));
     } else if (
       entry.isFile() &&
-      entry.name.endsWith(".tsx") &&
-      !entry.name.endsWith(".test.tsx")
+      /\.tsx?$/.test(entry.name) &&
+      !/\.test\.tsx?$/.test(entry.name)
     ) {
       out.push(full);
     }
@@ -475,7 +529,12 @@ function listTsxFiles(dir: string): string[] {
   return out;
 }
 
-const studioTsxFiles = listTsxFiles(STUDIO_SRC_DIR);
+const studioTsxFiles = listSourceFiles(STUDIO_SRC_DIR);
+/** The public studio AND the staff console's second-home pages (.ts + .tsx). */
+const scannedSourceFiles = [
+  ...studioTsxFiles,
+  ...listSourceFiles(WORKSPACE_SECOND_HOME_DIR),
+];
 
 describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixtures)", () => {
   it("guilt: catches a forbidden phrase inside a real string literal", () => {
@@ -517,18 +576,73 @@ describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixt
   });
 });
 
-describe("source-scan — JSX string literals under app/visa/second-home/studio/ (P2-C13)", () => {
+describe("extractJsxText — JSX text children (guilt + innocence fixtures)", () => {
+  it("guilt: a price written as JSX text is seen and flagged", () => {
+    const src = `export const X = () => (<p className="x">E33E costs IDR 45,000,000</p>);`;
+    expect(
+      extractStringLiterals(src).some((s) => JSX_PRICE_LITERAL_RE.test(s)),
+    ).toBe(false);
+    expect(
+      extractScannableText(src).some((s) => JSX_PRICE_LITERAL_RE.test(s)),
+    ).toBe(true);
+  });
+
+  it("guilt: 'passive income' and 'any bank' as multi-line JSX text are flagged", () => {
+    const src = `const X = () => (\n  <div>\n    <p>\n      USD 3,000/month passive\n      income only. Open it at any bank.\n    </p>\n  </div>\n);`;
+    const text = extractScannableText(src);
+    expect(
+      text.some((s) => FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s)),
+    ).toBe(true);
+    expect(text.some((s) => FORBIDDEN_PATTERNS.anyBank.test(s))).toBe(true);
+  });
+
+  it("guilt: the scratch fixture a scan would meet is flagged, a clean one is not", () => {
+    const dirty = `<strong>E33F</strong> — USD 3,000/month passive income only, IDR 35,000,000`;
+    const clean = `<strong>E33F</strong> — income or allowance of at least USD 3,000/month`;
+    expect(
+      extractScannableText(dirty).some((s) =>
+        FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s),
+      ),
+    ).toBe(true);
+    expect(
+      extractScannableText(clean).some((s) =>
+        FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s),
+      ),
+    ).toBe(false);
+  });
+
+  it("innocence: commented-out markup and {expressions} are not scanned as text", () => {
+    const src = `// <p>any bank</p>\nconst X = () => <p>{price} all-in</p>;`;
+    const text = extractJsxText(src);
+    expect(text.some((s) => FORBIDDEN_PATTERNS.anyBank.test(s))).toBe(false);
+    expect(text).toContain("all-in");
+  });
+});
+
+describe("source-scan — JSX literals and JSX text under app/visa/second-home/studio/ and app/(workspace)/second-home/ (P2-C13)", () => {
   it("scans a non-trivial number of files (guards against an empty/broken walk)", () => {
     expect(studioTsxFiles.length).toBeGreaterThan(5);
   });
 
+  it("the staff new-case page and the other (workspace)/second-home sources are in scope", () => {
+    const rel = scannedSourceFiles.map((f) => f.replace(/\\/g, "/"));
+    expect(
+      rel.some((f) => f.endsWith("(workspace)/second-home/new/page.tsx")),
+    ).toBe(true);
+    expect(
+      rel.some((f) =>
+        f.endsWith("(workspace)/second-home/components/severity.ts"),
+      ),
+    ).toBe(true);
+  });
+
   it.each(Object.entries(FORBIDDEN_PATTERNS))(
-    "no JSX string/template literal in the studio tree matches the %s pattern",
+    "no JSX string/template literal or JSX text in the scanned tree matches the %s pattern",
     (name, pattern) => {
       const violations: string[] = [];
-      for (const file of studioTsxFiles) {
+      for (const file of scannedSourceFiles) {
         const src = readFileSync(file, "utf8");
-        for (const literal of extractStringLiterals(src)) {
+        for (const literal of extractScannableText(src)) {
           if (pattern.test(literal)) {
             violations.push(`${file}: ${JSON.stringify(literal)}`);
           }
@@ -540,9 +654,9 @@ describe("source-scan — JSX string literals under app/visa/second-home/studio/
 
   it("no JSX string/template literal contains a generalized IDR price literal", () => {
     const violations: string[] = [];
-    for (const file of studioTsxFiles) {
+    for (const file of scannedSourceFiles) {
       const src = readFileSync(file, "utf8");
-      for (const literal of extractStringLiterals(src)) {
+      for (const literal of extractScannableText(src)) {
         if (JSX_PRICE_LITERAL_RE.test(literal)) {
           violations.push(`${file}: ${JSON.stringify(literal)}`);
         }
