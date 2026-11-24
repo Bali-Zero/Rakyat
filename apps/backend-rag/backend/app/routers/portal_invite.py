@@ -437,11 +437,31 @@ async def resend_invitation(
             created_by=current_user.get("email", "system"),
         )
 
+        full_invite_url = f"{settings.frontend_portal_url}{result['invite_url']}"
+        email_sent = False
+        email_error = None
+        try:
+            await send_portal_invite_email(
+                to=result["email"],
+                client_name=result["client_name"],
+                invite_url=full_invite_url,
+                db_pool=db_pool,
+                client_id=client_id,
+            )
+            email_sent = True
+            logger.info(f"Invitation email sent (client_id={client_id})")
+        except Exception as email_err:
+            email_error = str(email_err)
+            logger.warning("Failed to send invitation email: %s", email_err)
+
         logger.info(f"Invitation resent for client {client_id} by {current_user.get('email')}")
 
         return {
             "success": True,
-            "message": "Invitation resent successfully",
+            "message": "Invitation resent"
+            + (" and email sent" if email_sent else " (email not sent - check email service)"),
+            "email_sent": email_sent,
+            "email_error": email_error if not email_sent else None,
             "data": _invitation_public_view(result),
         }
 
