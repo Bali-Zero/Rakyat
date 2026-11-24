@@ -728,6 +728,23 @@ async def get_client_ocr_status(
         }
 
 
+# A document records its Drive file in file_id or in one of its two URLs (the
+# workspace sends the id it reads from google_drive_file_url): the same three
+# places, and the same two URL forms, as the ownership registry in documents_proxy.
+_CLIENT_DOCUMENT_OF_FILE_SQL = f"""
+    SELECT 1 FROM documents d
+    WHERE d.id = $1 AND d.client_id = $2
+      AND {admin_document_not_deleted_clause("d")}
+      AND (
+        d.file_id = $3
+        OR substring(d.google_drive_file_url from '/d/([A-Za-z0-9_-]+)') = $3
+        OR substring(d.google_drive_file_url from '[?&]id=([A-Za-z0-9_-]+)') = $3
+        OR substring(d.file_url from '/d/([A-Za-z0-9_-]+)') = $3
+        OR substring(d.file_url from '[?&]id=([A-Za-z0-9_-]+)') = $3
+      )
+"""
+
+
 class ExtractVisaRequest(BaseModel):
     file_id: str = Field(..., min_length=1)  # keeps "" rejected, like the old `if not file_id`
     doc_id: StrictInt | None = None  # strict: lax int would turn `true` into document id 1
@@ -748,6 +765,16 @@ async def extract_visa_data(
     """
     async with pool.acquire() as conn:
         await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
+        # The OCR result is written onto the named document and synced to this
+        # client's visa fields, so the file must be this client's (the guard every
+        # other document write uses) and the document must be this client's live
+        # record of that same file.
+        await assert_drive_file_belongs_to_client(body.file_id, client_id, conn)
+        # 0 is a document id like any other: only an absent doc_id skips the check.
+        if body.doc_id is not None and not await conn.fetchval(
+            _CLIENT_DOCUMENT_OF_FILE_SQL, body.doc_id, client_id, body.file_id
+        ):
+            raise HTTPException(status_code=404, detail="Document not found")
 
     return await _auto_ocr_visa(pool, client_id, body.file_id, body.doc_id)
 

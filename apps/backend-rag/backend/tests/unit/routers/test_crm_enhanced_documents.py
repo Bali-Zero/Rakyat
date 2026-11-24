@@ -1056,6 +1056,10 @@ async def test_extract_visa_data_success(mock_db_pool, mock_current_user):
     with (
         patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
         patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=AsyncMock(),
+        ),
+        patch(
             "backend.app.routers.crm_enhanced_documents._auto_ocr_visa",
             new=AsyncMock(return_value={"success": True, "fields_extracted": ["expiry_date"]}),
         ),
@@ -1137,9 +1141,18 @@ def test_extract_visa_data_accepts_valid_body(
 ):
     """Innocence: a valid file_id, with or without doc_id, reaches
     _auto_ocr_visa with the same arguments the dict body produced."""
+    from backend.app.routers.crm_enhanced_documents import _CLIENT_DOCUMENT_OF_FILE_SQL
+
     ocr = AsyncMock(return_value={"success": True, "extracted": {"visa_type": "KITAS"}})
+    owns = AsyncMock()
+    conn = mock_db_pool._mock_conn
+    conn.fetchval.return_value = 1
     with (
         patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
+        patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=owns,
+        ),
         patch("backend.app.routers.crm_enhanced_documents._auto_ocr_visa", new=ocr),
     ):
         response = extract_visa_client.post("/api/crm/clients/1/extract-visa", json=payload)
@@ -1147,6 +1160,61 @@ def test_extract_visa_data_accepts_valid_body(
     assert response.status_code == 200
     assert response.json()["success"] is True
     ocr.assert_awaited_once_with(mock_db_pool, 1, "drive-file-123", expected_doc_id)
+    owns.assert_awaited_once_with("drive-file-123", 1, conn)
+    if expected_doc_id is None:
+        conn.fetchval.assert_not_awaited()
+    else:
+        conn.fetchval.assert_awaited_once_with(
+            _CLIENT_DOCUMENT_OF_FILE_SQL, expected_doc_id, 1, "drive-file-123"
+        )
+
+
+def test_extract_visa_refuses_a_drive_file_that_is_not_the_clients(extract_visa_client):
+    """Guilt: any file the service account can read was downloaded and OCR'd for
+    the caller, past the ownership guard every other document write uses."""
+    ocr = AsyncMock()
+    refuse = AsyncMock(side_effect=HTTPException(status_code=403, detail="not this client's"))
+    with (
+        patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
+        patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=refuse,
+        ),
+        patch("backend.app.routers.crm_enhanced_documents._auto_ocr_visa", new=ocr),
+    ):
+        response = extract_visa_client.post(
+            "/api/crm/clients/1/extract-visa",
+            json={"file_id": "drive-file-of-client-2", "doc_id": 42},
+        )
+
+    assert response.status_code == 403
+    ocr.assert_not_awaited()
+
+
+@pytest.mark.parametrize("doc_id", [77, 0, -1])
+def test_extract_visa_refuses_a_document_that_is_not_this_clients_record_of_the_file(
+    extract_visa_client, mock_db_pool, doc_id
+):
+    """Guilt: doc_id alone chose the row the OCR overwrote, so another client's
+    document (or another file's) was rewritten and synced onto this client."""
+    ocr = AsyncMock()
+    mock_db_pool._mock_conn.fetchval.return_value = None
+    with (
+        patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
+        patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=AsyncMock(),
+        ),
+        patch("backend.app.routers.crm_enhanced_documents._auto_ocr_visa", new=ocr),
+    ):
+        response = extract_visa_client.post(
+            "/api/crm/clients/1/extract-visa",
+            json={"file_id": "drive-file-123", "doc_id": doc_id},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+    ocr.assert_not_awaited()
 
 
 # ============================================================
