@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.services.garuda_orders.idempotency import scoped_key_sha256
+from backend.tests.services.garuda_portal import test_staff_router_transitions as _staff
 from backend.tests.services.garuda_portal.test_staff_router_transitions import (
     _ADMIN,
     _TEAM_A,
@@ -16,7 +17,13 @@ from backend.tests.services.garuda_portal.test_staff_router_transitions import (
     _seed_team_member,
 )
 
-pytest_plugins = ("backend.tests.services.garuda_portal.test_staff_router_transitions",)
+# The sibling's fixtures, bound in THIS module so they apply to its tests only. Naming the
+# sibling in `pytest_plugins` registered them as a session-wide plugin: its autouse
+# `_jwt_secret` then patched the JWT key under every test collected after this file.
+pool = _staff.pool
+order_repository = _staff.order_repository
+_garuda_public_enabled = _staff._garuda_public_enabled
+_jwt_secret = _staff._jwt_secret
 
 
 @pytest.mark.asyncio
