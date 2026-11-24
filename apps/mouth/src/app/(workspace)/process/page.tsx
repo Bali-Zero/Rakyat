@@ -1094,7 +1094,6 @@ function ProcessBoard({ identity }: { identity: SessionIdentity }) {
                         onClick={() => setCompletedCollapsed((value) => !value)}
                         aria-expanded={!collapsed}
                         aria-controls={`process-column-${stage}-content`}
-                        aria-label={`${label}, ${column.length}, ${collapsed ? "click to expand" : "click to collapse"}`}
                       >
                         {stageHeader}
                         <ChevronDown

@@ -301,7 +301,9 @@ async def test_persist_never_records_a_capped_discount():
 
 @pytest.mark.parametrize("code", ["invoice_total_zero", "invoice_discount_exceeds_price"])
 def test_regenerate_answers_422_for_a_refused_amount(mock_db_pool, mock_db_conn, code):
-    mock_db_conn.fetchrow = AsyncMock(return_value={"status": "sending_invoice"})
+    mock_db_conn.fetchrow = AsyncMock(
+        return_value={"status": "sending_invoice", "assigned_to": TAX_LEAD["email"]}
+    )
     service = MagicMock()
     service.regenerate_invoice = AsyncMock(
         return_value={"success": False, "error": f"{code}: synthetic", "error_code": code}

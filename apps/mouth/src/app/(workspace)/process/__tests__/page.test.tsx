@@ -268,7 +268,8 @@ describe("Cases Page", () => {
       });
 
       const expandCompleted = screen.getByRole("button", {
-        name: /completed.*click to expand/i,
+        name: /^completed\s*\d+/i,
+        expanded: false,
       });
       expandCompleted.click();
 
@@ -312,7 +313,7 @@ describe("Cases Page", () => {
       // Completed column is collapsed by default — open it so the completed
       // fixture (Alice Qeledudu, pt_pma_setup, status=completed) renders.
       screen
-        .getByRole("button", { name: /completed.*click to expand/i })
+        .getByRole("button", { name: /^completed\s*\d+/i, expanded: false })
         .click();
 
       await waitFor(() => {

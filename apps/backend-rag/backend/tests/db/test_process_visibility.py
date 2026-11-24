@@ -57,7 +57,8 @@ async def db(db_tx, monkeypatch):
         CREATE TEMP TABLE practices(id int, client_id int default 20, practice_type_id int default 30,
             assigned_to text, created_by text default 'outsider@example.test', family_member_id int,
             status text default 'on_process', created_at timestamptz default NOW(), payment_status text,
-            client_visible boolean, metadata jsonb default '{}', completion_date date);
+            client_visible boolean, metadata jsonb default '{}', completion_date date, start_date date,
+            quoted_price numeric, discount_amount numeric);
         INSERT INTO practices(id,assigned_to) VALUES (101,' Alpha@Example.Test '),(102,'beta@example.test'),
             (103,'lead@example.test'),(104,'head@example.test'),(105,NULL),(106,'former@example.test'),
             (107,'service@example.test'),(108,'outsider@example.test');
@@ -142,6 +143,7 @@ async def test_department_view_grants_read_only_and_reassignment_takes_effect(db
         detail = (await client.get("/api/crm/practices/101")).json()
         assert detail["id"] == 101
         assert detail["can_edit_process"] is False and detail["can_manage_delivery"] is False
+        assert (await client.post("/api/crm/practices/101/regenerate-invoice")).status_code == 403
         assert (await client.get("/api/crm/practices/101/required-documents")).status_code == 200
         assert (
             await client.get("/api/crm/practices/?assigned_to=beta%40example.test&search=Fixture")
@@ -167,3 +169,9 @@ async def test_department_view_grants_read_only_and_reassignment_takes_effect(db
 async def test_machine_channel_does_not_inherit_staff_grant(db):
     async with http(db, "book@example.test", "admin", "admin_key") as client:
         assert (await client.get("/api/crm/practices/")).json() == []
+
+
+async def test_update_cannot_use_creator_or_admin_role_to_modify_a_hidden_practice(db):
+    async with http(db, "outsider@example.test", "admin") as client:
+        result = await client.patch("/api/crm/practices/102", json={"priority": "urgent"})
+        assert result.status_code == 404

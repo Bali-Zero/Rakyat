@@ -1251,6 +1251,8 @@ async def list_practices(
                 param_index += 1
 
             owners = await process_assignees(conn, current_user)
+            if owners is not None:
+                logger.info("RBAC: Filtering practices by p.assigned_to")
             query_parts.append(assignment_clause(owners, params))
             param_index = len(params) + 1
 
@@ -1596,6 +1598,8 @@ async def get_practice(
             params: list[Any] = [practice_id, sorted(TEAM_ROLES)]
             row = await conn.fetchrow(base_query + assignment_clause(owners, params), *params)
             if not row:
+                if owners is not None:
+                    logger.info("RBAC: Practice %s not visible to caller", practice_id)
                 raise HTTPException(status_code=404, detail="Practice not found")
 
             practice = dict(row)
@@ -1627,13 +1631,13 @@ async def get_practice(
         raise handle_database_error(e)
 
 
-@router.patch("/{practice_id}", dependencies=[Depends(visible_process_target)])
+@router.patch("/{practice_id}")
 async def update_practice(
     request: Request,
     practice_id: int = Path(..., gt=0, description="Practice ID"),
     updates: PracticeUpdate = Body(...),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> Any:
     """
     Update practice information.
@@ -1652,6 +1656,9 @@ async def update_practice(
     user_email = current_user.get("email", "unknown")
     try:
         async with db_pool.acquire() as conn:
+            owners = await process_assignees(conn, current_user)
+            read_params = [practice_id]
+            read_scope = assignment_clause(owners, read_params)
             # Fetch old state for timeline events (status changes)
             old_status: str | None = None
             practice_client_id: int | None = None
@@ -1665,7 +1672,7 @@ async def update_practice(
             old_practice_type_code: str | None = None
             try:
                 old_row = await conn.fetchrow(
-                    """
+                    f"""
                     SELECT p.status, p.client_id, p.client_visible, p.created_by,
                            p.assigned_to, p.start_date, p.completion_date,
                            p.discount_amount, p.metadata, p.quoted_price,
@@ -1674,9 +1681,9 @@ async def update_practice(
                     FROM practices p
                     LEFT JOIN clients c ON p.client_id = c.id
                     LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
-                    WHERE p.id = $1
+                    WHERE p.id = $1{read_scope}
                     """,
-                    practice_id,
+                    *read_params,
                 )
                 if old_row:
                     old_status = old_row["status"]
@@ -1704,7 +1711,7 @@ async def update_practice(
                 # Backward compatibility: client_visible column may not exist yet.
                 if getattr(e, "sqlstate", None) == "42703":
                     old_row = await conn.fetchrow(
-                        """
+                        f"""
                         SELECT p.status, p.client_id, p.created_by, p.assigned_to,
                                p.start_date, p.completion_date, p.quoted_price,
                                c.assigned_to AS client_lead,
@@ -1712,9 +1719,9 @@ async def update_practice(
                         FROM practices p
                         LEFT JOIN clients c ON p.client_id = c.id
                         LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
-                        WHERE p.id = $1
+                        WHERE p.id = $1{read_scope}
                         """,
-                        practice_id,
+                        *read_params,
                     )
                     if old_row:
                         old_status = old_row["status"]
@@ -1727,6 +1734,9 @@ async def update_practice(
                         old_practice_type_code = old_row.get("practice_type_code")
                 else:
                     raise
+
+            if old_row is None:
+                raise HTTPException(status_code=404, detail="Practice not found")
 
             # RBAC: Check ownership or admin status
             user_is_admin = is_crm_admin(current_user)
@@ -1992,11 +2002,13 @@ async def update_practice(
 
             # Column names are from a whitelist (field_mapping), values are parameterized
             # nosemgrep: sqlalchemy-execute-raw-query
+            params.append(practice_id)
+            write_scope = assignment_clause(owners, params, "assigned_to")
             query = f"""
                 WITH updated AS (
                     UPDATE practices
                     SET {update_fields_str}
-                    WHERE id = ${param_index}
+                    WHERE id = ${param_index}{write_scope}
                     RETURNING *
                 )
                 SELECT
@@ -2013,7 +2025,6 @@ async def update_practice(
                 LEFT JOIN clients c ON updated.client_id = c.id
                 LEFT JOIN practice_types pt ON updated.practice_type_id = pt.id
             """
-            params.append(practice_id)
 
             async with conn.transaction():
                 if new_practice_type_code and new_practice_type_code != old_practice_type_code:
@@ -2479,20 +2490,22 @@ async def get_practices_stats(
     db_pool: asyncpg.Pool,
     current_user: dict,
 ) -> dict[str, Any]:
+    if not current_user:
+        logger.debug("get_practices_stats called without user context (internal call)")
     async with db_pool.acquire() as conn:
         owners = await process_assignees(conn, current_user)
     return await _scoped_practices_stats(db_pool=db_pool, owners=owners)
 
 
 @cached(ttl=CACHE_TTL_STATS_SECONDS, prefix="crm_practices_stats")
-async def _scoped_practices_stats(db_pool: asyncpg.Pool, owners: list[str] | None) -> dict[str, Any]:
+async def _scoped_practices_stats(
+    db_pool: asyncpg.Pool, owners: list[str] | None
+) -> dict[str, Any]:
     """Counts by status and type, active cases and revenue within the caller's scope."""
     try:
         async with db_pool.acquire() as conn:
             rbac_params: list[Any] = []
-            rbac_where = assignment_clause(
-                owners, rbac_params, "assigned_to"
-            )
+            rbac_where = assignment_clause(owners, rbac_params, "assigned_to")
             # By status (filtered by user for non-admins)
             by_status_rows = await conn.fetch(
                 f"""
@@ -2602,9 +2615,7 @@ async def _scoped_revenue_growth(db_pool: asyncpg.Pool, owners: list[str] | None
 
         async with db_pool.acquire() as conn:
             params: list[Any] = []
-            rbac_where = assignment_clause(
-                owners, params, "assigned_to"
-            )
+            rbac_where = assignment_clause(owners, params, "assigned_to")
             # Current month.
             cur_start_idx = len(params) + 1
             cur_end_idx = len(params) + 2
@@ -2697,12 +2708,12 @@ async def _scoped_revenue_growth(db_pool: asyncpg.Pool, owners: list[str] | None
         raise handle_database_error(e)
 
 
-@router.post("/{practice_id}/regenerate-invoice", dependencies=[Depends(visible_process_target)])
+@router.post("/{practice_id}/regenerate-invoice")
 async def regenerate_invoice(
     request: Request,
     practice_id: int = Path(..., gt=0, description="Practice ID"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> dict[str, Any]:
     """
     Manually regenerate and resend invoice for a practice.
@@ -2724,13 +2735,21 @@ async def regenerate_invoice(
 
         # Verify practice exists and check status
         async with db_pool.acquire() as conn:
+            params = [practice_id]
+            scope = assignment_clause(await process_assignees(conn, current_user), params)
             practice_row = await conn.fetchrow(
-                "SELECT status FROM practices WHERE id = $1",
-                practice_id,
+                "SELECT p.status, p.created_by, p.assigned_to FROM practices p WHERE p.id = $1"
+                + scope,
+                *params,
             )
-
             if not practice_row:
                 raise HTTPException(status_code=404, detail="Practice not found")
+            if not any(
+                _practice_ownership_flags(
+                    current_user, practice_row.get("created_by"), practice_row.get("assigned_to")
+                )
+            ):
+                raise HTTPException(status_code=403, detail="You cannot regenerate this invoice")
 
             if practice_row["status"] != "sending_invoice":
                 raise HTTPException(

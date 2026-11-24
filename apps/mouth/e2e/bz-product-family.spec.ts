@@ -239,6 +239,12 @@ async function seedSyntheticProcessBoard(page: Page): Promise<void> {
   });
 }
 
+function visualReportPath(view: string) {
+  return process.env.CI
+    ? `playwright-report/${test.info().project.name}-${view}.png`
+    : test.info().outputPath(`${view}.png`);
+}
+
 test.describe("Bali Zero product-family noqata page Page", () => {
   test("Kita mobile shell stays within the viewport", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -278,6 +284,77 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await expectNoBlockingA11y(page);
   });
 
+  test("An employee opens the next required document from their personal bonus card", async ({
+    page,
+  }) => {
+    await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
+    const service = "Visa Extension";
+    await page.route("**/api/hr/me/delivery-desk", (route) =>
+      route.fulfill({
+        json: {
+          team_member_id: "synthetic-operator",
+          on_payroll: true,
+          month: "2026-11-01",
+          target: 8,
+          milestones: 5,
+          holds: [],
+          recent: [],
+          totals: {
+            pending: 150000,
+            approved: 100000,
+            paid: 0,
+            awaiting_rate: 0,
+            payroll_locked: 0,
+          },
+          next_case: {
+            practice_id: 707,
+            service,
+            amount_idr: 50000,
+            already_earned: false,
+          },
+        },
+      }),
+    );
+    await page.route("**/api/crm/practices/707/delivery", (route) =>
+      route.fulfill({
+        json: {
+          status: "on_process",
+          needs_titles: false,
+          slots: [{ key: "itk", label: "ITK", document_id: null }],
+        },
+      }),
+    );
+    await page.route("**/api/crm/practices/707/required-documents", (route) =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route("**/api/crm/practices/707", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPractice,
+          assigned_to: syntheticPortalProfile.email,
+          status: "on_process",
+          payment_status: "paid",
+          can_manage_delivery: true,
+        },
+      }),
+    );
+    await page.goto(`${KITA_ORIGIN}/dashboard`);
+    const card = page.getByRole("region", { name: "My delivery bonuses" });
+    const next = card.getByRole("link", { name: /Visa Extension.*ITK/ });
+    await expect(next).toHaveAttribute("href", "/process/707#final-delivery");
+    for (const [width, view] of [
+      [1280, "desktop"],
+      [390, "mobile"],
+    ] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(next).toBeVisible();
+      await card.screenshot({ path: visualReportPath(`bonus-${view}`) });
+    }
+    await next.click();
+    await expect(page).toHaveURL(/\/process\/707#final-delivery$/);
+    await expect(page.locator("#final-delivery")).toContainText("ITK");
+  });
+
   test("Process keeps a horizontally scannable board and keyboard-accessible cards on mobile", async ({
     page,
   }) => {
@@ -306,7 +383,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await expectNoBlockingA11y(page);
     await page.getByTestId("process-card-708").scrollIntoViewIfNeeded();
     await page.screenshot({
-      path: test.info().outputPath("process-mobile.png"),
+      path: visualReportPath("process-mobile"),
     });
   });
 
@@ -317,7 +394,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await seedSyntheticProcessBoard(page);
     await page.goto(`${KITA_ORIGIN}/process`);
     await page
-      .getByRole("button", { name: /Completed.*click to expand/ })
+      .getByRole("button", { name: /^Completed\s*\d+/, expanded: false })
       .click();
     const face = (id: number) =>
       page.getByTestId(`process-card-${id}`).locator("div[data-department]");
@@ -348,7 +425,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await expectNoHorizontalOverflow(page);
     await expectNoBlockingA11y(page);
     await page.screenshot({
-      path: test.info().outputPath("process-desktop.png"),
+      path: visualReportPath("process-desktop"),
     });
   });
 
