@@ -529,17 +529,11 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await page.goto(`${KITA_ORIGIN}/process/713`);
     const card = page.getByRole("region", { name: "Final delivery" });
     const complete = card.getByRole("button", {
-      name: "Mark practice as completed",
+      name: "Complete practice",
     });
-    await expect(
-      card.getByRole("heading", { name: "Upload final documents" }),
-    ).toBeVisible();
-    await expect(
-      card.getByText(
-        "Upload Renewed ITK — Visit Stay Permit before completing this practice.",
-      ),
-    ).toBeVisible();
-    await expect(card.getByText(/Each file saves automatically/)).toBeVisible();
+    await expect(card.getByText("Renewed ITK", { exact: true })).toBeVisible();
+    await expect(card.getByText("1 document remaining")).toBeVisible();
+    await expect(card.getByText("Click to upload")).toBeVisible();
     await expect(complete).toBeDisabled();
     await expect(card.getByRole("checkbox")).toHaveCount(0);
     const capture = async (width: number, theme: string, name: string) => {
@@ -572,7 +566,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await capture(1280, "operative-light", "delivery-empty-desktop");
     await capture(390, "operative-light", "delivery-empty-mobile");
     await capture(390, "operative-dark", "delivery-empty-dark");
-    await card.getByLabel(`Upload document — ${label}`).setInputFiles({
+    await card.getByLabel("Upload Renewed ITK").setInputFiles({
       name: "renewed-itk.pdf",
       mimeType: "application/pdf",
       buffer: Buffer.from("synthetic permit fixture"),
@@ -588,7 +582,7 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await capture(1280, "operative-light", "delivery-ready-desktop");
     await complete.click();
     await expect(
-      card.getByRole("heading", { name: "Final documents delivered" }),
+      card.getByText("renewed-itk.pdf", { exact: true }),
     ).toBeVisible();
     await expect(complete).toHaveCount(0);
     await expect(
@@ -596,6 +590,123 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     ).toBeVisible();
     expect(uploadCount).toBe(1);
   });
+
+  for (const example of [
+    {
+      name: "C1 new",
+      code: "visa_c1_tourism",
+      file: "E-visa",
+      image: "c1",
+      bonus: "electronic_visa",
+      slots: [
+        { key: "electronic_visa", label: "Electronic Visa" },
+        {
+          key: "document_2",
+          label: "ITK — Visit Stay Permit · after confirmed entry",
+        },
+      ],
+    },
+    {
+      name: "LKPM",
+      code: "tax_lkpm_yearly",
+      file: "LKPM submission proof",
+      image: "lkpm",
+      bonus: null,
+      slots: [
+        { key: "document_1", label: "LKPM report · per commissioned period" },
+        {
+          key: "document_2",
+          label: "OSS filing acknowledgement · per commissioned period",
+        },
+      ],
+    },
+    {
+      name: "Annual tax",
+      code: "tax_annual_reporting",
+      file: "SPT",
+      image: "spt",
+      bonus: null,
+      slots: [
+        { key: "document_1", label: "Filed SPT Tahunan" },
+        { key: "document_2", label: "Bukti Penerimaan Elektronik (BPE)" },
+      ],
+    },
+  ]) {
+    test(`${example.name} opens directly on its named document boxes`, async ({
+      page,
+    }) => {
+      await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
+      await page.route("**/api/auth/profile", (route) =>
+        route.fulfill({
+          json: {
+            ...syntheticPortalProfile,
+            id: "synthetic-operator",
+            role: "consultant",
+          },
+        }),
+      );
+      await page.route(
+        "**/api/crm/practices/invoice-company/suggestion?**",
+        (route) =>
+          route.fulfill({
+            json: {
+              autofill: false,
+              suggested_company_id: null,
+              companies: [],
+            },
+          }),
+      );
+      await page.route("**/api/crm/practices/714", (route) =>
+        route.fulfill({
+          json: {
+            ...syntheticPractice,
+            id: 714,
+            practice_type_code: example.code,
+            practice_type_name: example.name,
+            status: "on_process",
+            payment_status: "paid",
+            can_manage_delivery: true,
+          },
+        }),
+      );
+      await page.route("**/api/crm/practices/714/required-documents", (route) =>
+        route.fulfill({ json: [] }),
+      );
+      await page.route("**/api/crm/practices/714/delivery", (route) =>
+        route.fulfill({
+          json: {
+            status: "on_process",
+            needs_titles: false,
+            bonus_slot: example.bonus,
+            bonus_event: null,
+            slots: example.slots.map((slot) => ({
+              ...slot,
+              document_id: null,
+              file_name: null,
+              condition: null,
+              waiver_reason: null,
+              reusable_document_id: null,
+              issued_on: null,
+            })),
+          },
+        }),
+      );
+      await page.setViewportSize({ width: 1280, height: 1000 });
+      await page.goto(`${KITA_ORIGIN}/process/714`);
+      const card = page.getByRole("region", { name: "Final delivery" });
+      await expect(card.getByText(example.file, { exact: true })).toBeVisible();
+      await expect(card.getByLabel(`Upload ${example.file}`)).toHaveCount(1);
+      await expect(
+        card.getByRole("button", { name: "Complete practice" }),
+      ).toBeDisabled();
+      await card.evaluate((e) =>
+        e.scrollIntoView({ block: "center", behavior: "instant" }),
+      );
+      await card.screenshot({
+        path: visualReportPath(`delivery-${example.image}`),
+      });
+    });
+  }
 
   test("Process keeps a horizontally scannable board and keyboard-accessible cards on mobile", async ({
     page,
