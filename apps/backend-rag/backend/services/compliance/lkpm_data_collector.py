@@ -81,6 +81,8 @@ class LKPMDataCollector:
         jurnal_service: JurnalService | None = None,
     ) -> None:
         self.db_pool = db_pool
+        # A service the collector creates is its own to close; one passed in is the caller's.
+        self._owns_jurnal_service = jurnal_service is None
         self.jurnal_service = jurnal_service or JurnalService()
 
     def collect_from_form(self, submission: LKPMClientSubmission) -> LKPMDraft:
@@ -133,13 +135,18 @@ class LKPMDataCollector:
 
         start_date, end_date = self._quarter_dates(quarter, year)
 
-        # Fetch journal entries
-        entries = await self.jurnal_service.get_all_journal_entries(
-            start_date=start_date,
-            end_date=end_date,
-            api_key=api_key,
-            company_id=company_id,
-        )
+        # Fetch journal entries. The service opens an HTTP client on first use;
+        # the collector lives for one request, so it closes what it opened.
+        try:
+            entries = await self.jurnal_service.get_all_journal_entries(
+                start_date=start_date,
+                end_date=end_date,
+                api_key=api_key,
+                company_id=company_id,
+            )
+        finally:
+            if self._owns_jurnal_service:
+                await self.jurnal_service.close()
 
         # Categorize transactions
         categorized = self.categorize_transactions(entries)
