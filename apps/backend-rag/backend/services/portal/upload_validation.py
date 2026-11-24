@@ -7,6 +7,7 @@ reject active, encrypted, ambiguous, or resource-amplifying payloads before
 any external side effect.
 """
 
+import re
 import struct
 import zlib
 from io import BytesIO
@@ -103,6 +104,78 @@ _DOCX_FORBIDDEN_NAMES: Final = frozenset(
         "word/vbadata.xml",
     }
 )
+_DOCX_FORBIDDEN_FIELD_NAMES: Final = frozenset(
+    {
+        "DDE",
+        "DDEAUTO",
+        "INCLUDE",
+        "INCLUDETEXT",
+        "INCLUDEPICTURE",
+        "LINK",
+        "IMPORT",
+        "DATABASE",
+        "RD",
+    }
+)
+_WORDPROCESSINGML_NAMESPACES: Final = frozenset(
+    {
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "http://purl.oclc.org/ooxml/wordprocessingml/main",
+    }
+)
+# Containers whose content Word always shows, so a field may run through them.
+_DOCX_TRANSPARENT_ELEMENTS: Final = frozenset(
+    {"p", "r", "hyperlink", "smartTag", "customXml", "sdt", "sdtContent", "bdo", "dir"}
+)
+# A view keeps or drops every insertion together, and every deletion together. Content moved
+# away keeps its run and instruction text (only `del` holds delText and delInstrText), so a move
+# away is a kind of its own.
+_DOCX_REVISION_ELEMENTS: Final = {
+    "ins": "ins",
+    "moveTo": "ins",
+    "del": "del",
+    "moveFrom": "moveFrom",
+}
+# Imported content, sub-documents, frames and legacy field data are not read here.
+_DOCX_REFUSED_ELEMENTS: Final = frozenset({"altChunk", "subDoc", "frameset", "frame", "fldData"})
+# Elements whose subtree describes formatting or a field piece, and makes no character.
+_DOCX_PROPERTY_ELEMENTS: Final = frozenset(
+    {"rPr", "sdtPr", "sdtEndPr", "smartTagPr", "customXmlPr", "fldChar"}
+)
+# All an instruction may hold. None of it makes a character Word would read into the code, so
+# the instruction pieces joined with "" are the code Word reads; anything else is refused there.
+_DOCX_INSTRUCTION_ALPHABET: Final = frozenset(
+    {
+        *(_DOCX_TRANSPARENT_ELEMENTS - {"p"}),
+        *_DOCX_REVISION_ELEMENTS,
+        *_DOCX_PROPERTY_ELEMENTS,
+        "instrText",
+        "delInstrText",
+        "fldSimple",
+        "bookmarkStart",
+        "bookmarkEnd",
+        "proofErr",
+        "permStart",
+        "permEnd",
+        "commentRangeStart",
+        "commentRangeEnd",
+        "moveFromRangeStart",
+        "moveFromRangeEnd",
+        "moveToRangeStart",
+        "moveToRangeEnd",
+        "customXmlInsRangeStart",
+        "customXmlInsRangeEnd",
+        "customXmlDelRangeStart",
+        "customXmlDelRangeEnd",
+        "customXmlMoveFromRangeStart",
+        "customXmlMoveFromRangeEnd",
+        "customXmlMoveToRangeStart",
+        "customXmlMoveToRangeEnd",
+        "lastRenderedPageBreak",
+    }
+)
+_FIELD_NAME_RE: Final = re.compile(r"[A-Za-z]+")
+_FIELD_NAME_ENDINGS: Final = frozenset('"\\\u201c\u201d')
 
 
 class DuplicateDocumentError(ValueError):
@@ -466,6 +539,160 @@ def _docx_manifests_are_safe(
     return True
 
 
+class _WordField:
+    __slots__ = ("context", "instruction", "reading_instruction", "simple")
+
+    def __init__(self, context: tuple[object, ...], *, simple: bool = False) -> None:
+        self.context = context
+        self.instruction: list[str] = []
+        self.reading_instruction = not simple
+        self.simple = simple
+
+
+def _word_name(node: ElementTree.Element) -> str | None:
+    tag = node.tag
+    if not isinstance(tag, str) or not tag.startswith("{"):
+        return None
+    namespace, _, local = tag[1:].partition("}")
+    return local if namespace in _WORDPROCESSINGML_NAMESPACES else None
+
+
+def _word_attribute(node: ElementTree.Element, name: str) -> str | None:
+    namespace = node.tag[1:].partition("}")[0]
+    value = node.attrib.get(f"{{{namespace}}}{name}")
+    return node.attrib.get(name) if value is None else value
+
+
+def _field_instruction_is_refused(instruction: str) -> bool:
+    """A field that runs or fetches is refused, and so is one whose name is not plain letters."""
+    text = instruction.lstrip()
+    if not text or text.startswith("="):
+        return False
+    name = _FIELD_NAME_RE.match(text)
+    if name is None:
+        return True
+    rest = text[name.end() :]
+    if rest and not (rest[0].isspace() or rest[0] in _FIELD_NAME_ENDINGS):
+        return True
+    return name.group(0).upper() in _DOCX_FORBIDDEN_FIELD_NAMES
+
+
+def _field_name_is_settled(instruction: str) -> bool:
+    text = instruction.lstrip()
+    name = _FIELD_NAME_RE.match(text)
+    return bool(text) and (name is None or name.end() < len(text))
+
+
+def _docx_part_fields_are_safe(root: ElementTree.Element) -> bool:
+    """Read every field of one part as Word would, or refuse the part.
+
+    A field's instruction is a `fldSimple` `instr`, or the instruction text between a `begin`
+    fldChar and its `separate` or `end`: `instrText` outside a deletion, `delInstrText` inside
+    one, never with a child element. While a field reads its instruction only the closed
+    alphabet above is accepted, so no character Word would add to the code (run text, a tab, a
+    break, a paragraph mark) can sit between the pieces. Word may drop some content (a tracked
+    change of the other view, an `mc:AlternateContent` branch it does not choose, an element it
+    does not know), so every piece of one field must sit in the same such context, and every
+    run inside an open field in that context or deeper: then Word keeps or drops the field
+    whole. A `fldSimple` is in its result for all of its content and closes only itself; a
+    `separate` or `end` closes only the innermost `begin` field, and with none open it refuses.
+    A field nested in an instruction before the name is settled would make the name, and an
+    open field at the end of the part is malformed.
+    """
+    fields: list[_WordField] = []
+    pending: list[tuple[ElementTree.Element | _WordField, tuple[object, ...], bool]] = [
+        (root, (), False)
+    ]
+    while pending:
+        node, context, in_properties = pending.pop()
+        if isinstance(node, _WordField):
+            if not fields or fields[-1] is not node:
+                return False
+            fields.pop()
+            continue
+        name = _word_name(node)
+        if name in _DOCX_REFUSED_ELEMENTS:
+            return False
+        open_field = fields[-1] if fields else None
+        reading = open_field is not None and open_field.reading_instruction
+        if reading and not in_properties and name not in _DOCX_INSTRUCTION_ALPHABET:
+            return False
+        if open_field is not None and name in ("r", "fldSimple"):
+            if context[: len(open_field.context)] != open_field.context:
+                return False
+        kind = _word_attribute(node, "fldCharType") if name == "fldChar" else None
+        if name == "fldChar" and kind not in ("begin", "separate", "end"):
+            return False
+        nested = name == "fldSimple" or kind == "begin"
+        if nested and open_field is not None and reading:
+            if not _field_name_is_settled("".join(open_field.instruction)):
+                return False
+        if name == "fldSimple":
+            instructions = (node.attrib.get(key) for key in node.attrib if key.endswith("instr"))
+            if any(_field_instruction_is_refused(value or "") for value in instructions):
+                return False
+            simple_field = _WordField(context, simple=True)
+            fields.append(simple_field)
+            pending.append((simple_field, context, in_properties))
+        elif kind == "begin":
+            fields.append(_WordField(context))
+        elif kind is not None:
+            if open_field is None or open_field.simple or open_field.context != context:
+                return False
+            instruction = "".join(open_field.instruction)
+            if open_field.reading_instruction and _field_instruction_is_refused(instruction):
+                return False
+            open_field.reading_instruction = False
+            if kind == "end":
+                fields.pop()
+        elif name in ("instrText", "delInstrText") and open_field is not None and reading:
+            deleted = "del" in context
+            if open_field.context != context or len(node) or deleted != (name == "delInstrText"):
+                return False
+            open_field.instruction.append(node.text or "")
+        if name in _DOCX_TRANSPARENT_ELEMENTS:
+            child_context = context
+        elif name in _DOCX_REVISION_ELEMENTS:
+            child_context = (*context, _DOCX_REVISION_ELEMENTS[name])
+        else:
+            child_context = (*context, id(node))
+        child_in_properties = in_properties or name in _DOCX_PROPERTY_ELEMENTS
+        pending.extend((child, child_context, child_in_properties) for child in reversed(node))
+    return not fields
+
+
+def _docx_word_fields_are_safe(xml_roots: dict[str, ElementTree.Element]) -> bool:
+    return all(_docx_part_fields_are_safe(root) for root in xml_roots.values())
+
+
+def _docx_xml_parts_are_parsed(
+    xml_roots: dict[str, ElementTree.Element],
+    names: frozenset[str],
+) -> bool:
+    """A part declared as XML must be named .xml or .rels, so the field scan reads it."""
+    content_types = xml_roots["[Content_Types].xml"]
+    defaults = {
+        node.attrib.get("Extension", "").casefold(): node.attrib.get("ContentType", "")
+        for node in content_types.findall(f"{{{_CONTENT_TYPES_NAMESPACE}}}Default")
+    }
+    overrides = {
+        node.attrib.get("PartName", "").casefold(): node.attrib.get("ContentType", "")
+        for node in content_types.findall(f"{{{_CONTENT_TYPES_NAMESPACE}}}Override")
+    }
+    for name in names:
+        if name.endswith("/") or name.casefold().endswith((".xml", ".rels")):
+            continue
+        content_type = overrides.get(f"/{name}".casefold())
+        if content_type is None:
+            file_name = name.rpartition("/")[2]
+            extension = file_name.rpartition(".")[2] if "." in file_name else ""
+            content_type = defaults.get(extension.casefold(), "")
+        media_type = content_type.split(";")[0].strip().casefold()
+        if media_type.endswith("+xml") or media_type in ("application/xml", "text/xml"):
+            return False
+    return True
+
+
 def _is_safe_docx(content: bytes) -> bool:
     with ZipFile(BytesIO(content)) as archive:
         infos = archive.infolist()
@@ -510,6 +737,10 @@ def _is_safe_docx(content: bytes) -> bool:
             return False
         xml_roots = _parse_docx_xml_members(archive, frozen_names)
         if not _docx_manifests_are_safe(xml_roots, frozen_names):
+            return False
+        if not _docx_xml_parts_are_parsed(xml_roots, frozen_names):
+            return False
+        if not _docx_word_fields_are_safe(xml_roots):
             return False
 
     # python-docx resolves the package relationships and main document part.
