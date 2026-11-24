@@ -135,10 +135,10 @@ async def test_local_receipt_verifies_metadata_without_downloading_media(change)
 )
 def test_local_receipt_recognizes_td3_subtypes_and_mononyms(header, name):
     from backend.services.documents.passport_ocr_receipt import AppleReceipt, ReceiptRejected
-    from backend.services.intake.extract import _mrz_check_digit
+    from backend.utils.passport_normalize import mrz_check_digit
 
     number, birth, expiry = "T00000001", "900101", "350101"
-    lower = f"{number}{_mrz_check_digit(number)}UTO{birth}{_mrz_check_digit(birth)}F{expiry}{_mrz_check_digit(expiry)}"
+    lower = f"{number}{mrz_check_digit(number)}UTO{birth}{mrz_check_digit(birth)}F{expiry}{mrz_check_digit(expiry)}"
     receipt = {
         "document_id": 1,
         "client_id": 1,
@@ -150,3 +150,19 @@ def test_local_receipt_recognizes_td3_subtypes_and_mononyms(header, name):
     assert AppleReceipt.parse(receipt).full_name == name
     with pytest.raises(ReceiptRejected, match="invalid_receipt"):
         AppleReceipt.parse({**receipt, "file_id": "too-short"})
+
+
+def test_operator_receipt_import_is_independent_of_intake_model_configuration():
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['backend.services.intake.extract'] = None; "
+            "from backend.services.documents.passport_ocr_receipt import AppleReceipt",
+        ],
+        check=True,
+        capture_output=True,
+    )

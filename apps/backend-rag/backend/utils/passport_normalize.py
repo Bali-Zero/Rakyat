@@ -192,3 +192,22 @@ def normalize_date(date_str: str | None) -> str | None:
             return None
 
     return None
+
+
+_MRZ_VALUES = {ch: i for i, ch in enumerate("0123456789")}
+_MRZ_VALUES.update({chr(ord("A") + i): 10 + i for i in range(26)})
+_MRZ_VALUES["<"] = 0
+_MRZ_WEIGHTS = (7, 3, 1)
+
+
+def mrz_check_digit(value: str) -> int:
+    """ICAO 9303 MRZ check digit."""
+    total = 0
+    for idx, ch in enumerate(value):
+        total += _MRZ_VALUES.get(ch, 0) * _MRZ_WEIGHTS[idx % len(_MRZ_WEIGHTS)]
+    return total % 10
+
+
+def mrz_check_ok(line: str, start: int, end: int, check_pos: int) -> bool:
+    check = line[check_pos] if len(line) > check_pos else ""
+    return check.isdigit() and mrz_check_digit(line[start:end]) == int(check)

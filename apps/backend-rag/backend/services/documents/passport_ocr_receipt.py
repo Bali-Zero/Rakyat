@@ -11,7 +11,7 @@ from typing import Any
 from backend.services.crm.related_identifiers import sql_canonical
 from backend.services.documents import passport_ocr_jobs as jobs
 from backend.services.documents.passport_ocr_processing import _name_tokens
-from backend.services.intake.extract import _mrz_check_ok
+from backend.utils.passport_normalize import mrz_check_ok
 
 
 class ReceiptRejected(ValueError):
@@ -51,7 +51,7 @@ class AppleReceipt:
             if not isinstance(data[key], str) or not re.fullmatch(pattern, data[key]):
                 raise ReceiptRejected("invalid_receipt")
         line = data["mrz_line2"]
-        if not all(_mrz_check_ok(line, *pos) for pos in ((0, 9, 9), (13, 19, 19), (21, 27, 27))):
+        if not all(mrz_check_ok(line, *pos) for pos in ((0, 9, 9), (13, 19, 19), (21, 27, 27))):
             raise ReceiptRejected("invalid_mrz_checks")
         if not re.fullmatch(r"[A-Z0-9]{5,9}<*", line[:9]) or not re.fullmatch(
             "[A-Z<]{3}", line[10:13]

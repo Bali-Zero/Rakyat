@@ -416,7 +416,7 @@ async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
 
     from backend.services.documents import passport_ocr_jobs as jobs
     from backend.services.documents import passport_ocr_receipt as local
-    from backend.services.intake.extract import _mrz_check_digit
+    from backend.utils.passport_normalize import mrz_check_digit
 
     await _seed(pg_pool)
     await pg_pool.execute(
@@ -425,8 +425,8 @@ async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
     # Recreate the historical state from before the upload trigger existed.
     await pg_pool.execute("DELETE FROM crm_passport_ocr_jobs WHERE document_id=10")
     number = "T00000001"
-    line = number + str(_mrz_check_digit(number)) + "UTO" + "900101"
-    line += str(_mrz_check_digit("900101")) + "F350101" + str(_mrz_check_digit("350101"))
+    line = number + str(mrz_check_digit(number)) + "UTO" + "900101"
+    line += str(mrz_check_digit("900101")) + "F350101" + str(mrz_check_digit("350101"))
     source = {
         "document_id": 10,
         "client_id": 1,
