@@ -88,7 +88,7 @@ describe("CheckoutFlow", () => {
         order_id: "order-1",
         order_state: "awaiting_payment",
         price_idr: 850000,
-        checkout_url: "https://pay.example.com/session/abc",
+        checkout_url: "https://checkout.xendit.co/web/abc",
       }),
     );
 
@@ -151,7 +151,7 @@ describe("CheckoutFlow", () => {
         order_id: "order-1",
         order_state: "awaiting_payment",
         price_idr: 850000,
-        checkout_url: "https://pay.example.com/session/abc",
+        checkout_url: "https://checkout.xendit.co/web/abc",
       }),
     );
 
@@ -234,7 +234,7 @@ describe("CheckoutFlow", () => {
         order_id: "order-1",
         order_state: "awaiting_payment",
         price_idr: 850000,
-        checkout_url: "https://pay.example.com/session/abc",
+        checkout_url: "https://checkout.xendit.co/web/abc",
       }),
     );
 
@@ -244,7 +244,7 @@ describe("CheckoutFlow", () => {
     await fillAndSubmit(user);
 
     await waitFor(() =>
-      expect(window.location.href).toBe("https://pay.example.com/session/abc"),
+      expect(window.location.href).toBe("https://checkout.xendit.co/web/abc"),
     );
     // Never a router.push to a "success"/tracker route while handing off to the
     // provider — the tracker is reached only via the provider's own return trip.
@@ -253,6 +253,38 @@ describe("CheckoutFlow", () => {
     expect(screen.queryByText(/success/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/paid/i)).not.toBeInTheDocument();
   });
+
+  it.each([
+    "https://evil.example/s",
+    "https://checkout.xendit.co.evil.example/web/abc",
+    "https://checkout.xendit.co:8443/web/abc",
+    "https://user@checkout.xendit.co/web/abc",
+  ])(
+    "does not navigate to %s and shows the error state instead",
+    async (offListUrl) => {
+      writeCheckoutHandoff("result-1", {
+        full_name: "Jane Doe",
+        passport_number: "X1234567",
+      });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, {
+          order_id: "order-1",
+          order_state: "awaiting_payment",
+          price_idr: 850000,
+          checkout_url: offListUrl,
+        }),
+      );
+
+      const user = userEvent.setup();
+      render(<CheckoutFlow resultId="result-1" paymentsLive={true} />);
+      await screen.findByText(/Jane Doe/i);
+      await fillAndSubmit(user);
+
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(window.location.href).toBe("");
+      expect(mocks.push).not.toHaveBeenCalled();
+    },
+  );
 
   it("forwards a replayed already-paid order straight to the tracker instead of showing a payment button", async () => {
     writeCheckoutHandoff("result-1", {
@@ -322,7 +354,7 @@ describe("CheckoutFlow", () => {
         order_id: "order-1",
         order_state: "awaiting_payment",
         price_idr: 850000,
-        checkout_url: "https://pay.example.com/session/abc",
+        checkout_url: "https://checkout.xendit.co/web/abc",
       }),
     );
 
