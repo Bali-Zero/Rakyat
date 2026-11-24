@@ -103,25 +103,94 @@ def _events(transport: MemoryTransport) -> list[dict[str, Any]]:
     return [p for p in transport.payloads if "exception" in p or "logentry" in p or "message" in p]
 
 
-def _is_logging_crumb(crumb: dict[str, Any]) -> bool:
-    return crumb.get("type") != "http" and crumb.get("category") not in {"httplib", "httpx", "http"}
+def _is_out_crumb(crumb: dict[str, Any]) -> bool:
+    """Spec amendment A3.1: a breadcrumb is OUT if and only if its type is not "log" (the
+    marker of the logging integration). Never by category, logger name or message text."""
+    return crumb.get("type") != "log"
 
 
-def _promised_fields(events: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    """Only what the spec promises (section 1 and amendment A1): the framework exception
-    event's exception values and message, the logging integration's events (logentry and
-    exception) and the logging breadcrumbs. HTTPX-style breadcrumbs are never read."""
-    parts: list[Any] = []
-    logging_events: list[dict[str, Any]] = []
+def query_leaks(events: list[dict[str, Any]], sentinels: list[str]) -> list[str]:
+    """The oracle (A3.2). Reports where a sentinel shows up in what the spec promises:
+    1. the COMPLETE payload of every logging-integration event (one carrying `logentry`),
+       minus the OUT breadcrumbs only;
+    2. a framework exception event's exception values, `message` and `logentry` only;
+    3. every `type == "log"` breadcrumb, in any event."""
+
+    def hit(value: Any) -> bool:
+        blob = json.dumps(value, default=str)
+        return any(sentinel in blob for sentinel in sentinels)
+
+    found: list[str] = []
     for event in events:
-        values = event.get("exception", {}).get("values", [])
+        crumbs = event.get("breadcrumbs", {}).get("values", [])
         if "logentry" in event:
-            logging_events.append(event)
-            parts += [event["logentry"], values, event.get("message")]
-        elif any(v.get("type") == "HTTPException" for v in values):
-            parts += [values, event.get("message")]
-        parts += [c for c in event.get("breadcrumbs", {}).get("values", []) if _is_logging_crumb(c)]
-    return json.dumps(parts, default=str), logging_events
+            kept = {k: v for k, v in event.items() if k != "breadcrumbs"}
+            kept["breadcrumbs"] = [c for c in crumbs if not _is_out_crumb(c)]
+            if hit(kept):
+                found.append("logging event")
+        elif any(
+            v.get("type") == "HTTPException" for v in event.get("exception", {}).get("values", [])
+        ):
+            for field in ("exception", "message", "logentry"):
+                if field in event and hit(event[field]):
+                    found.append(f"framework event {field}")
+        found += ["log breadcrumb" for c in crumbs if not _is_out_crumb(c) and hit(c)]
+    return found
+
+
+# --- the oracle on planted payloads (A3.3), one case per bullet --------------------------------
+
+PLANT = "zq-planted-sentinel"
+
+
+def _logging_event(**fields: Any) -> dict[str, Any]:
+    return {"logentry": {"message": "clean"}, "logger": "app", **fields}
+
+
+def _crumb(type_: str, category: str) -> dict[str, Any]:
+    return {"type": type_, "category": category, "message": f"carries {PLANT}"}
+
+
+def _with_crumb(crumb: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    return {**event, "breadcrumbs": {"values": [crumb]}}
+
+
+def test_oracle_reports_a_log_breadcrumb_even_with_an_httpx_category() -> None:
+    event = _with_crumb(_crumb("log", "httpx"), {"exception": {"values": []}, "message": "x"})
+    assert query_leaks([event], [PLANT]) == ["log breadcrumb"]
+
+
+def test_oracle_reports_the_sentinel_nested_in_a_logging_events_extra() -> None:
+    event = _logging_event(extra={"a": [{"b": PLANT}]})
+    assert query_leaks([event], [PLANT]) == ["logging event"]
+
+
+def test_oracle_reports_the_sentinel_in_a_logging_events_logger() -> None:
+    assert query_leaks([_logging_event(logger=f"vendor.{PLANT}")], [PLANT]) == ["logging event"]
+
+
+def test_oracle_ignores_an_http_breadcrumb_even_inside_a_logging_event() -> None:
+    plain = {"exception": {"values": []}, "message": "x"}
+    assert query_leaks([_with_crumb(_crumb("http", "httplib"), plain)], [PLANT]) == []
+    assert query_leaks([_with_crumb(_crumb("http", "httplib"), _logging_event())], [PLANT]) == []
+
+
+def test_oracle_ignores_a_framework_event_field_other_than_exception_message_logentry() -> None:
+    framework = {
+        "exception": {"values": [{"type": "HTTPException", "value": "Search failed"}]},
+        "message": "Search failed",
+        "request": {"url": f"http://x/{PLANT}"},
+        "tags": {"t": PLANT},
+    }
+    assert query_leaks([framework], [PLANT]) == []
+    framework["message"] = PLANT
+    assert query_leaks([framework], [PLANT]) == ["framework event message"]
+
+
+def test_oracle_reports_nothing_for_a_clean_payload() -> None:
+    clean = _with_crumb(_crumb("log", "app"), _logging_event())
+    clean["breadcrumbs"]["values"][0]["message"] = "clean"
+    assert query_leaks([clean], [PLANT]) == []
 
 
 @pytest.mark.parametrize(
@@ -150,7 +219,7 @@ def test_the_failing_route_sends_events_and_breadcrumbs_free_of_the_query(
         assert [v["type"] for v in values] == ["HTTPException"], "an exception chain was sent"
         assert "Search failed" in str(values[0]["value"])
 
-    promised, logging_events = _promised_fields(events)
+    logging_events = [e for e in events if "logentry" in e]
     vendor = [
         e
         for e in logging_events
@@ -159,14 +228,13 @@ def test_the_failing_route_sends_events_and_breadcrumbs_free_of_the_query(
     assert vendor, "no genuine logging-integration event (logentry) for the in-scope ERROR record"
     for event in vendor:
         assert "[query]" in json.dumps(event["logentry"]), "the redaction placeholder is missing"
-        assert SENT not in json.dumps([event["logentry"], event.get("exception")])
     crumbs = [c for e in events for c in e.get("breadcrumbs", {}).get("values", [])]
     assert any(
-        _is_logging_crumb(c) and "Received query: query_len=" in str(c.get("message"))
+        not _is_out_crumb(c) and "Received query: query_len=" in str(c.get("message"))
         for c in crumbs
     ), "no logging breadcrumb from the request's INFO lines"
 
-    assert SENT not in promised and COLL not in promised
+    assert query_leaks(events, [SENT, COLL]) == []
 
 
 def test_a_422_sends_no_event_carrying_the_query(transport: MemoryTransport) -> None:
