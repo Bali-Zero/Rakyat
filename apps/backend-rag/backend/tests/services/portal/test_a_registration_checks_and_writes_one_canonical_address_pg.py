@@ -48,7 +48,7 @@ async def test_a_first_login_at_an_address_taken_in_another_case_is_refused(
 ):
     pool = portal_pg_pool
     await _another_clients_login(pool, make_client)
-    client_c = await make_client("Client C")
+    client_c = await make_client("Client C", TAKEN)
     await _legacy_invitation(pool, client_c, f" {TAKEN} ", "legacy-insert-branch")
     before = await _logins(pool)
 
@@ -64,7 +64,7 @@ async def test_a_placeholder_moved_to_an_address_taken_in_another_case_is_refuse
 ):
     pool = portal_pg_pool
     await _another_clients_login(pool, make_client)
-    client_c = await make_client("Client C")
+    client_c = await make_client("Client C", TAKEN)
     await PortalProfileService(pool).ensure_portal_profile(client_c, "c@example.test", "Client C")
     await _legacy_invitation(pool, client_c, f" {TAKEN} ", "legacy-update-branch")
     before = await _logins(pool)
@@ -80,7 +80,7 @@ async def test_a_placeholder_redeemed_at_the_address_it_holds_registers(
     portal_pg_pool, make_client
 ):
     pool = portal_pg_pool
-    client_c = await make_client("Client C")
+    client_c = await make_client("Client C", "c@example.test")
     login = await PortalProfileService(pool).ensure_portal_profile(
         client_c, "c@example.test", "Client C"
     )
@@ -95,10 +95,10 @@ async def test_a_placeholder_redeemed_at_the_address_it_holds_registers(
 @pytest.mark.asyncio
 async def test_an_invitation_with_no_address_creates_no_login(portal_pg_pool, make_client):
     pool = portal_pg_pool
-    client_c = await make_client("Client C")
+    client_c = await make_client("Client C", "c@example.test")
     await _legacy_invitation(pool, client_c, "   ", "blank-insert-branch")
 
-    with pytest.raises(ValueError, match="Invitation address is required"):
+    with pytest.raises(ValueError, match="Invitation expired"):
         await InviteService(pool).complete_registration("blank-insert-branch", "123456")
 
     assert await _logins(pool) == []
@@ -107,10 +107,11 @@ async def test_an_invitation_with_no_address_creates_no_login(portal_pg_pool, ma
 @pytest.mark.asyncio
 async def test_an_invitation_with_no_address_keeps_the_stored_one(portal_pg_pool, make_client):
     pool = portal_pg_pool
-    client_c = await make_client("Client C")
+    client_c = await make_client("Client C", "c@example.test")
     await PortalProfileService(pool).ensure_portal_profile(client_c, "c@example.test", "Client C")
     await _legacy_invitation(pool, client_c, "   ", "blank-update-branch")
 
-    await InviteService(pool).complete_registration("blank-update-branch", "123456")
+    with pytest.raises(ValueError, match="Invitation expired"):
+        await InviteService(pool).complete_registration("blank-update-branch", "123456")
 
     assert await _logins(pool) == [("c@example.test", client_c)]

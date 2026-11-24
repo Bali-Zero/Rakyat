@@ -85,7 +85,7 @@ def _valid(validated: object) -> bool:
 async def test_unicode_space_around_the_address_is_trimmed_once(portal_pg_pool, make_client):
     pool = portal_pg_pool
     await _login(pool, await make_client("Other"), "held@example.test", pin=REAL_PIN)
-    client = await make_client("Client")
+    client = await make_client("Client", "held@example.test")
     await _invite(pool, client, " held@example.test ", "nbsp")
 
     assert await _both(pool, "nbsp") == (None, EMAIL_IN_USE)
@@ -95,9 +95,9 @@ async def test_unicode_space_around_the_address_is_trimmed_once(portal_pg_pool, 
 async def test_an_address_starting_with_v_is_not_mangled(portal_pg_pool, make_client):
     pool = portal_pg_pool
     await _login(pool, await make_client("Other"), "victor@example.test", pin=REAL_PIN)
-    taken = await make_client("Client")
+    taken = await make_client("Client", "victor@example.test")
     await _invite(pool, taken, " victor@example.test ", "taken-v")
-    free = await make_client("Free")
+    free = await make_client("Free", "vera@example.test")
     await _invite(pool, free, "\tvera@example.test\n", "free-v")
 
     assert await _both(pool, "taken-v") == (None, EMAIL_IN_USE)
@@ -121,7 +121,7 @@ async def test_an_address_starting_with_v_is_not_mangled(portal_pg_pool, make_cl
 async def test_letter_case_never_hides_a_held_address(portal_pg_pool, make_client, held, invited):
     pool = portal_pg_pool
     await _login(pool, await make_client("Other"), held, pin=REAL_PIN)
-    client = await make_client("Client")
+    client = await make_client("Client", invited)
     await _invite(pool, client, invited, "case")
 
     assert await _both(pool, "case") == (None, EMAIL_IN_USE)
@@ -131,7 +131,7 @@ async def test_letter_case_never_hides_a_held_address(portal_pg_pool, make_clien
 async def test_without_a_linked_login_any_holder_counts(portal_pg_pool, make_client):
     pool = portal_pg_pool
     await _login(pool, None, "staff.member@example.test", role="staff", pin=REAL_PIN)
-    client = await make_client("Client")
+    client = await make_client("Client", "staff.member@example.test")
     await _invite(pool, client, "staff.member@example.test", "unlinked")
 
     assert await _both(pool, "unlinked") == (None, EMAIL_IN_USE)
@@ -140,7 +140,7 @@ async def test_without_a_linked_login_any_holder_counts(portal_pg_pool, make_cli
 @pytest.mark.asyncio
 async def test_a_client_role_login_is_read_before_a_staff_one(portal_pg_pool, make_client):
     pool = portal_pg_pool
-    client = await make_client("Client")
+    client = await make_client("Client", "portal@example.test")
     await _login(
         pool,
         client,
@@ -161,7 +161,7 @@ async def test_a_client_role_login_is_read_before_a_staff_one(portal_pg_pool, ma
 @pytest.mark.asyncio
 async def test_a_staff_login_alone_is_not_registrable(portal_pg_pool, make_client):
     pool = portal_pg_pool
-    client = await make_client("Client")
+    client = await make_client("Client", "card@example.test")
     await _login(pool, client, "card@example.test", role="group_staff", pin=REAL_PIN)
     await _invite(pool, client, "card@example.test", "staff")
 
@@ -173,7 +173,7 @@ async def test_two_linked_logins_created_together_resolve_to_the_lowest_id(
     portal_pg_pool, make_client
 ):
     pool = portal_pg_pool
-    client = await make_client("Client")
+    client = await make_client("Client", "c@example.test")
     same = "2026-03-01T00:00:00Z"
     await _login(pool, client, "b@example.test", login_id="tm-b", created_at=same)
     await _login(pool, client, "a@example.test", login_id="tm-a", pin=REAL_PIN, created_at=same)
@@ -193,7 +193,7 @@ async def test_the_linked_login_holding_the_address_is_not_another_account(
     portal_pg_pool, make_client
 ):
     pool = portal_pg_pool
-    client = await make_client("Client")
+    client = await make_client("Client", "self@example.test")
     login = await _login(pool, client, "self@example.test")
     await _invite(pool, client, "Self@Example.test", "self")
 
@@ -225,9 +225,9 @@ async def test_token_state_comes_before_every_refusal(portal_pg_pool, make_clien
 @pytest.mark.asyncio
 async def test_the_token_forms(portal_pg_pool, make_client):
     pool = portal_pg_pool
-    digest_client = await make_client("Digest")
+    digest_client = await make_client("Digest", "digest@example.test")
     await _invite(pool, digest_client, "digest@example.test", "digest-token")
-    legacy_client = await make_client("Legacy")
+    legacy_client = await make_client("Legacy", "legacy@example.test")
     await _invite(pool, legacy_client, "legacy@example.test", "legacy-token", raw=True)
     archived = await make_client("Archived", deleted=True)
     await _invite(pool, archived, "archived@example.test", "archived-token")
@@ -246,9 +246,9 @@ async def test_a_raw_row_and_a_digest_row_for_one_token_read_the_digest_row(
     portal_pg_pool, make_client
 ):
     pool = portal_pg_pool
-    legacy_client = await make_client("Legacy")
+    legacy_client = await make_client("Legacy", "legacy@example.test")
     await _invite(pool, legacy_client, "legacy@example.test", "shared-token", raw=True)
-    digest_client = await make_client("Digest")
+    digest_client = await make_client("Digest", "digest@example.test")
     await _invite(pool, digest_client, "digest@example.test", "shared-token")
 
     validated, registered = await _both(pool, "shared-token")
@@ -265,5 +265,5 @@ async def test_a_blank_address_is_required_at_both_doors(portal_pg_pool, make_cl
 
     validated, registered = await _both(pool, "blank")
 
-    assert validated == {"error": "address_required", "message": "Invitation address is required"}
-    assert registered == validated["message"]
+    assert validated == {"error": "expired", "message": "This invitation has expired"}
+    assert registered == "Invitation expired"

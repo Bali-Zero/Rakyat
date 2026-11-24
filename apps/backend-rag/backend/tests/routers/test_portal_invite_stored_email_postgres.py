@@ -19,7 +19,6 @@ from fastapi import HTTPException
 
 from backend.app.routers.portal_invite import (
     SendInviteRequest,
-    resend_invitation,
     send_invitation,
 )
 from backend.services.portal import InviteService
@@ -207,76 +206,3 @@ async def test_the_service_mints_only_for_the_address_on_record(pool) -> None:
             client_id=client_id, email=OTHER, created_by="seed"
         )
     assert await invitation_rows(pool, client_id) == []
-
-
-async def _seed_invitations(pool, client_id: int, ages: list[str]) -> None:
-    async with pool.acquire() as conn:
-        for age in ages:
-            await conn.execute(
-                "INSERT INTO client_invitations "
-                "(client_id, email, token, expires_at, created_by, created_at) "
-                "VALUES ($1, $2, md5(random()::text), NOW() + INTERVAL '1 day', 'seed', "
-                "NOW() - $3::text::interval)",
-                client_id,
-                STORED,
-                age,
-            )
-
-
-async def test_a_second_send_inside_a_minute_is_refused_and_mails_nothing(pool) -> None:
-    client_id = await seed_client(pool, STORED)
-    with patch(
-        "backend.app.routers.portal_invite.send_portal_invite_email", new=AsyncMock()
-    ) as sender:
-        await send(pool, client_id, STORED)
-        with pytest.raises(HTTPException) as exc:
-            await send(pool, client_id, STORED)
-    assert exc.value.status_code == 429
-    assert 0 < int(exc.value.headers["Retry-After"]) <= 60
-    assert "1 minute" in exc.value.detail
-    assert sender.await_count == 1
-    assert await invitation_rows(pool, client_id) == [STORED]
-
-
-async def test_the_eleventh_send_in_a_day_is_refused(pool) -> None:
-    client_id = await seed_client(pool, STORED)
-    await _seed_invitations(pool, client_id, [f"{h} hours" for h in range(2, 12)])
-    with patch(
-        "backend.app.routers.portal_invite.send_portal_invite_email", new=AsyncMock()
-    ) as sender:
-        with pytest.raises(HTTPException) as exc:
-            await send(pool, client_id, STORED)
-    assert exc.value.status_code == 429
-    # The oldest of the ten is 11 hours old: the day reopens in about 13 hours.
-    assert 12 * 3600 < int(exc.value.headers["Retry-After"]) <= 13 * 3600
-    sender.assert_not_awaited()
-    assert len(await invitation_rows(pool, client_id)) == 10
-
-
-async def test_sends_older_than_the_bounds_do_not_count(pool) -> None:
-    client_id = await seed_client(pool, STORED)
-    await _seed_invitations(pool, client_id, ["2 minutes"] + [f"{h} hours" for h in range(25, 40)])
-    with patch(
-        "backend.app.routers.portal_invite.send_portal_invite_email", new=AsyncMock()
-    ) as sender:
-        response = await send(pool, client_id, STORED)
-    assert response["success"] is True
-    sender.assert_awaited_once()
-
-
-async def test_a_resend_inside_a_minute_is_refused(pool) -> None:
-    client_id = await seed_client(pool, STORED)
-    await _seed_invitations(pool, client_id, ["10 seconds"])
-    with patch(
-        "backend.app.routers.portal_invite.send_portal_invite_email", new=AsyncMock()
-    ) as sender:
-        with pytest.raises(HTTPException) as exc:
-            await resend_invitation(
-                client_id,
-                current_user=STAFF,
-                invite_service=InviteService(pool),
-                db_pool=pool,
-            )
-    assert exc.value.status_code == 429
-    sender.assert_not_awaited()
-    assert len(await invitation_rows(pool, client_id)) == 1

@@ -53,7 +53,7 @@ async def test_invitation_stored_with_mixed_case_before_the_fix_still_redeems_lo
     portal_pg_pool, make_client
 ):
     pool = portal_pg_pool
-    client = await make_client("Client A")
+    client = await make_client("Client A", "legacy.mixed@example.test")
     service = InviteService(pool)
     token = "legacy-mixed-case-token"
     from backend.services.portal.invite_service import _hash_token
@@ -79,7 +79,7 @@ async def test_mixed_case_invitation_redeemed_over_a_provisioned_login_keeps_it_
     portal_pg_pool, make_client
 ):
     pool = portal_pg_pool
-    client = await make_client("Client A")
+    client = await make_client("Client A", "legacy.mixed@example.test")
     provisioned = await PortalProfileService(pool).ensure_portal_profile(
         client, "legacy.mixed@example.test", "Client A"
     )

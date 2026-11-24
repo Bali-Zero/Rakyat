@@ -85,7 +85,7 @@ _LEGACY_PLAINTEXT_PREDICATE = (
 _INVITATION_BY_TOKEN_SQL = (
     """
     SELECT i.id, i.client_id, i.email, i.expires_at, i.used_at,
-           c.full_name AS client_name
+           c.full_name AS client_name, c.email AS client_email
     FROM client_invitations i
     JOIN clients c ON c.id = i.client_id AND c.deleted_at IS NULL
     WHERE """
@@ -139,14 +139,6 @@ def _canonical_address(invitation: Any) -> str:
     return (invitation["email"] or "").strip().lower()
 
 
-#: A staff send or resend to one client waits this long after the client's
-#: latest invitation, and stops at this many invitations in a rolling day.
-#: Production measured at most three to one client in 30 minutes
-#: (2026-09-21), so neither bound meets a real resend.
-INVITE_SEND_COOLDOWN_SECONDS = 60
-INVITE_SENDS_PER_DAY = 10
-
-
 class InvitationAddressNotOnRecord(ValueError):
     """The address an invitation would be minted for is not the client's
     address on record at the moment of minting."""
@@ -169,34 +161,14 @@ def comparable_address(text: str | None) -> str:
     return stripped.lower()
 
 
-async def invitation_wait_seconds(conn: Any, client_id: int) -> int | None:
-    """Seconds a new staff send to this client must wait, or None.
+def _invitation_is_on_record(invitation: Any) -> bool:
+    """Whether the invitation's address is still the client's address on record.
 
-    Counts every invitation row of the client, whoever minted it. Earlier
-    live links to the same address stay valid by design (see
-    `create_invitation`); this bound is what keeps their number, and the
-    mail a mailbox receives, small.
+    Both doors ask it: an invitation whose client has since moved to another
+    address, or has none, is answered as expired and can never be redeemed.
     """
-    wait = await conn.fetchval(
-        """
-        WITH recent AS (
-            SELECT created_at FROM client_invitations
-            WHERE client_id = $1 AND created_at > NOW() - INTERVAL '1 day'
-        )
-        SELECT CEIL(GREATEST(
-            CASE WHEN (SELECT COUNT(*) FROM recent) >= $3
-                 THEN EXTRACT(EPOCH FROM (SELECT MIN(created_at) FROM recent)
-                                         + INTERVAL '1 day' - NOW())
-            END,
-            EXTRACT(EPOCH FROM (SELECT MAX(created_at) FROM recent)
-                               + make_interval(secs => $2) - NOW())
-        ))::int
-        """,
-        client_id,
-        INVITE_SEND_COOLDOWN_SECONDS,
-        INVITE_SENDS_PER_DAY,
-    )
-    return wait if wait is not None and wait > 0 else None
+    on_record = comparable_address(invitation["client_email"])
+    return bool(on_record) and comparable_address(invitation["email"]) == on_record
 
 
 async def _registration_state(
@@ -304,83 +276,97 @@ class InviteService:
         expires_at = datetime.now(timezone.utc) + timedelta(hours=INVITE_EXPIRY_HOURS)
 
         async with self.pool.acquire() as conn:
-            # Check if client exists and is not archived — an archived client
-            # must never be (re-)invited into an active portal account.
-            client = await conn.fetchrow(
-                "SELECT id, full_name, email FROM clients WHERE id = $1 AND deleted_at IS NULL",
-                client_id,
-            )
-            if not client:
-                raise ValueError(f"Client with ID {client_id} not found")
+            async with conn.transaction():
+                # Check if client exists and is not archived — an archived client
+                # must never be (re-)invited into an active portal account.
+                #
+                # FOR UPDATE holds the client row until this mint commits: an
+                # address edit either waits for the mint or is read by it. The
+                # mint then waits on nothing else: the retirement below skips a
+                # row another transaction holds, and the insert's foreign-key
+                # check is on this same client. Registration holds an invitation
+                # and then waits for the client, so no lock cycle exists. A row
+                # the retirement skips can be redeemed only while its address is
+                # the one on record (`_invitation_is_on_record`).
+                client = await conn.fetchrow(
+                    "SELECT id, full_name, email FROM clients WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+                    client_id,
+                )
+                if not client:
+                    raise ValueError(f"Client with ID {client_id} not found")
 
-            # Every caller passes the address it read from the client record,
-            # but that read and this one are separate: a record edited in
-            # between would mint a link for the old address. Checked here,
-            # on the row this mint reads, before anything is written.
-            if not client["email"] or comparable_address(client["email"]) != comparable_address(
-                email
-            ):
-                raise InvitationAddressNotOnRecord(
-                    "The invitation address is not the e-mail on the client record"
+                # Every caller passes the address it read from the client record,
+                # but that read and this one are separate: a record edited in
+                # between would mint a link for the old address. Checked here,
+                # on the row this mint reads, before anything is written.
+                if not client["email"] or comparable_address(client["email"]) != comparable_address(
+                    email
+                ):
+                    raise InvitationAddressNotOnRecord(
+                        "The invitation address is not the e-mail on the client record"
+                    )
+
+                # A re-invite to the SAME address must not kill the link already
+                # sitting in that inbox. It used to: every send expired the
+                # previous live invitation, so a client who opened the first mail
+                # of a thread — the oldest, top of the Gmail conversation — met
+                # "This invitation has expired" on a link minutes old. Measured
+                # on production 2026-09-21: 16 invitations superseded unused in
+                # 30 days across 14 clients, one of them three times in 30
+                # minutes. Both mails reach the same mailbox, so a second live
+                # token grants nothing the first did not; `complete_registration`
+                # retires the siblings once one of them is used.
+                #
+                # A live invitation to a DIFFERENT address is still retired: the
+                # consultant changed where the client is reached, and the old
+                # mailbox must not keep a registration credential.
+                await conn.execute(
+                    """
+                UPDATE client_invitations SET expires_at = NOW()
+                WHERE id IN (
+                    SELECT id FROM client_invitations
+                    WHERE client_id = $1 AND used_at IS NULL AND expires_at > NOW()
+                      AND LOWER(email) <> LOWER($2)
+                    FOR UPDATE SKIP LOCKED
+                )
+                """,
+                    client_id,
+                    email,
                 )
 
-            # A re-invite to the SAME address must not kill the link already
-            # sitting in that inbox. It used to: every send expired the
-            # previous live invitation, so a client who opened the first mail
-            # of a thread — the oldest, top of the Gmail conversation — met
-            # "This invitation has expired" on a link minutes old. Measured
-            # on production 2026-09-21: 16 invitations superseded unused in
-            # 30 days across 14 clients, one of them three times in 30
-            # minutes. Both mails reach the same mailbox, so a second live
-            # token grants nothing the first did not; `complete_registration`
-            # retires the siblings once one of them is used.
-            #
-            # A live invitation to a DIFFERENT address is still retired: the
-            # consultant changed where the client is reached, and the old
-            # mailbox must not keep a registration credential.
-            await conn.execute(
-                """
-                UPDATE client_invitations SET expires_at = NOW()
-                WHERE client_id = $1 AND used_at IS NULL AND expires_at > NOW()
-                  AND LOWER(email) <> LOWER($2)
-                """,
-                client_id,
-                email,
-            )
-
-            # Create new invitation
-            invitation = await conn.fetchrow(
-                """
+                # Create new invitation
+                invitation = await conn.fetchrow(
+                    """
                 INSERT INTO client_invitations (client_id, email, token, expires_at, created_by)
                 VALUES ($1, $2, $3, $4, $5)
                 RETURNING id, expires_at, created_at
                 """,
-                client_id,
-                email,
-                _hash_token(token),
-                expires_at,
-                created_by,
-            )
+                    client_id,
+                    email,
+                    _hash_token(token),
+                    expires_at,
+                    created_by,
+                )
 
-            # The address is deliberately NOT interpolated here. This line pre-dates
-            # the outbox: it was written for the human-triggered
-            # `/api/portal/invite/send` endpoint, where a staff member already had
-            # the address on screen. It now also fires UNATTENDED on every paid
-            # GARUDA order, which turns it into a steady stream of client PII into
-            # a persisted log (SYMBIOSIS Law 2 / UU PDP) that no Sentry scrubber
-            # touches — `_before_send` filters events, not log sinks. `client_id`
-            # identifies the row for anyone debugging; the address adds nothing.
-            logger.info("Created invitation for client %s by %s", client_id, created_by)
+                # The address is deliberately NOT interpolated here. This line pre-dates
+                # the outbox: it was written for the human-triggered
+                # `/api/portal/invite/send` endpoint, where a staff member already had
+                # the address on screen. It now also fires UNATTENDED on every paid
+                # GARUDA order, which turns it into a steady stream of client PII into
+                # a persisted log (SYMBIOSIS Law 2 / UU PDP) that no Sentry scrubber
+                # touches — `_before_send` filters events, not log sinks. `client_id`
+                # identifies the row for anyone debugging; the address adds nothing.
+                logger.info("Created invitation for client %s by %s", client_id, created_by)
 
-            return {
-                "invitation_id": invitation["id"],
-                "client_id": client_id,
-                "client_name": client["full_name"],
-                "email": email,
-                "token": token,
-                "expires_at": invitation["expires_at"].isoformat(),
-                "invite_url": INVITE_PATH_TEMPLATE.format(token=token),
-            }
+                return {
+                    "invitation_id": invitation["id"],
+                    "client_id": client_id,
+                    "client_name": client["full_name"],
+                    "email": email,
+                    "token": token,
+                    "expires_at": invitation["expires_at"].isoformat(),
+                    "invite_url": INVITE_PATH_TEMPLATE.format(token=token),
+                }
 
     async def validate_token(self, token: str) -> dict[str, Any] | None:
         """
@@ -430,6 +416,9 @@ class InviteService:
 
         if invitation["expires_at"] < datetime.now(timezone.utc):
             return "expired", {"error": "expired", "message": "This invitation has expired"}
+
+        if not _invitation_is_on_record(invitation):
+            return "address_changed", {"error": "expired", "message": "This invitation has expired"}
 
         refusal = _refusal_of(linked, canonical or "", holder_id)
         if refusal in _ANSWERED_AS_UNKNOWN:
@@ -486,6 +475,9 @@ class InviteService:
                     raise ValueError("Invitation already used")
 
                 if invitation["expires_at"] < datetime.now(timezone.utc):
+                    raise ValueError("Invitation expired")
+
+                if not _invitation_is_on_record(invitation):
                     raise ValueError("Invitation expired")
 
                 # The address the login will hold, in its one canonical spelling:
