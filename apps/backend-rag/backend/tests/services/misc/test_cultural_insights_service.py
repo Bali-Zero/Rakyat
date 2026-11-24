@@ -9,7 +9,7 @@ class _FakeEmbedder:
     def __init__(self) -> None:
         self.queries: list[str] = []
 
-    def generate_query_embedding(self, text: str) -> list[float]:
+    async def generate_query_embedding(self, text: str) -> list[float]:
         self.queries.append(text)
         return [0.1, 0.2, 0.3]
 

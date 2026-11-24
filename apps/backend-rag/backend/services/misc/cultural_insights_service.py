@@ -69,7 +69,7 @@ class CulturalInsightsService:
             doc_id = f"cultural_{metadata.get('topic', 'unknown')}_{content_hash[:8]}"
 
             # Generate embedding
-            embedding = self.embedder.generate_query_embedding(text)
+            embedding = await self.embedder.generate_query_embedding(text)
 
             # Get cultural insights collection
             cultural_db = self.collection_manager.get_collection(self.collection_name)
@@ -88,12 +88,19 @@ class CulturalInsightsService:
                 chroma_metadata["when_to_use"] = ", ".join(chroma_metadata["when_to_use"])
 
             # Upsert (async)
-            await cultural_db.upsert_documents(
+            write_result = await cultural_db.upsert_documents(
                 chunks=[text],
                 embeddings=[embedding],
                 metadatas=[chroma_metadata],
                 ids=[doc_id],
             )
+
+            if isinstance(write_result, dict) and write_result.get("success") is False:
+                logger.error(
+                    "Failed to add cultural insight for topic: %s",
+                    metadata.get("topic", "unknown"),
+                )
+                return False
 
             logger.info(f"✅ Added cultural insight: {metadata.get('topic', 'unknown')}")
             return True
@@ -121,7 +128,7 @@ class CulturalInsightsService:
         """
         try:
             # Generate query embedding
-            query_embedding = self.embedder.generate_query_embedding(query)
+            query_embedding = await self.embedder.generate_query_embedding(query)
 
             # NOTE: Qdrant filtering is limited - we rely on semantic search instead
             # The when_to_use metadata is stored as comma-separated string, but Qdrant
