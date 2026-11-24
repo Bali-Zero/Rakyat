@@ -255,6 +255,14 @@ class CaseCreateBody(BaseModel):
     dependent_code: str | None = None
     principal_case_id: str | None = None
 
+    @field_validator("owner_email", mode="before")
+    @classmethod
+    def _blank_owner_email_is_unassigned(cls, v: object) -> object:
+        # A blank owner is "no owner", never an assigned empty-string owner.
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     @field_validator("dependent_code")
     @classmethod
     def _validate_dependent_code(cls, v: str | None) -> str | None:
