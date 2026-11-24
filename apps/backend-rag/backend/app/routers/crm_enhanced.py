@@ -13,7 +13,6 @@ import base64
 import logging
 import re as regex
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -33,7 +32,6 @@ from backend.core.cache import invalidate_cache
 from backend.services.crm.admin_document_visibility import admin_document_not_team_deleted_clause
 from backend.services.crm.client_attention import build_client_attention, today_wita
 from backend.services.crm.documents import validate_client_document_date
-from backend.services.crm.gender import normalize_gender_lenient
 from backend.services.crm.permit_label import resolve_permit_label
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
@@ -317,148 +315,21 @@ async def _gemini_ocr(image_data: bytes, mime_type: str, prompt: str) -> str:
     return response_text
 
 
-async def _auto_ocr_passport(db_pool: Any, client_id: int, file_id: str) -> dict:
-    """
-    Automatically run OCR on passport image and update client record.
-    Runs in background after document upload.
-    Uses the shared app-level pool passed in to avoid connection churn.
-    """
-    try:
-        # Get client name for verification
-        async with db_pool.acquire() as conn:
-            client = await conn.fetchrow(
-                "SELECT full_name FROM clients WHERE id = $1 AND deleted_at IS NULL", client_id
-            )
-            if not client:
-                return {"success": False, "error": "Client not found"}
-            existing_name = client["full_name"]
+async def _auto_ocr_passport(
+    db_pool: Any, client_id: int, file_id: str, doc_id: int | None = None
+) -> dict:
+    """Process the pending job for this exact CRM document."""
+    from backend.services.documents.passport_ocr_jobs import review_untyped
+    from backend.services.documents.passport_ocr_processing import process_one
 
-        # Download from Drive + OCR (CLI free → API fallback)
-        image_data, mime_type = await _download_drive_file(file_id)
-
-        ocr_prompt = "Extract from this passport: passport_number, expiry_date (YYYY-MM-DD), full_name, gender (M/F), date_of_birth (YYYY-MM-DD), birthplace, nationality, confidence (0-1)."
-
-        response_text = await _gemini_ocr(image_data, mime_type, ocr_prompt)
-        logger.info(
-            "Auto OCR passport response for client %s: %d chars", client_id, len(response_text)
-        )
-
-        # Parse JSON (handles code fences and chain-of-thought)
-        extracted = extract_json_from_llm_response(response_text)
-        if not extracted:
-            logger.error(
-                "Auto OCR JSON parsing failed for client %s (%d chars)",
-                client_id,
-                len(response_text),
-            )
-            return {"success": False, "error": "Could not parse OCR response"}
-
-        # Normalize date formats (DD-MM-YYYY → YYYY-MM-DD)
-        for date_field in ["expiry_date", "date_of_birth"]:
-            if extracted.get(date_field):
-                date_str = extracted[date_field]
-                if regex.match(r"\d{2}-\d{2}-\d{4}", date_str):
-                    parts = date_str.split("-")
-                    extracted[date_field] = f"{parts[2]}-{parts[1]}-{parts[0]}"
-
-        # Normalize gender (MALE/FEMALE → M/F)
-        if "gender" in extracted:
-            extracted["gender"] = normalize_gender_lenient(extracted.get("gender"))
-
-        # Name match verification
-        name_match_ratio = None
-        if extracted.get("full_name") and existing_name:
-            ratio = SequenceMatcher(
-                None,
-                existing_name.upper().replace(",", " ").split(),
-                extracted["full_name"].upper().replace(",", " ").split(),
-            ).ratio()
-            name_match_ratio = ratio
-
-        # Prepare OCR data
-        ocr_data = {
-            "extracted_at": datetime.now(timezone.utc).isoformat(),
-            "auto_triggered": True,
-            "raw_response": extracted,
-            "file_id": file_id,
-            "confidence": extracted.get("confidence", 0.0),
-            "name_match_ratio": name_match_ratio,
-        }
-
-        # Update client record
-        async with db_pool.acquire() as conn:
-            update_parts = ["passport_ocr_data = $1::text::jsonb"]
-            # Use to_jsonb for asyncpg JSONB compatibility (handles Decimal, datetime, UUID)
-            params = [to_jsonb(ocr_data)]
-            param_idx = 2
-
-            if extracted.get("passport_number"):
-                update_parts.append(f"passport_number = ${param_idx}")
-                params.append(extracted["passport_number"])
-                param_idx += 1
-
-            if extracted.get("expiry_date"):
-                try:
-                    expiry = datetime.strptime(extracted["expiry_date"], "%Y-%m-%d").date()
-                    validate_client_document_date(expiry)
-                    update_parts.append(f"passport_expiry = ${param_idx}")
-                    params.append(expiry)
-                    param_idx += 1
-                except ValueError:
-                    logger.debug(
-                        "Skipping invalid passport expiry_date format for client %s", client_id
-                    )
-
-            ocr_gender = normalize_gender_lenient(extracted.get("gender"))
-            if ocr_gender:
-                update_parts.append(f"gender = ${param_idx}")
-                params.append(ocr_gender)
-                param_idx += 1
-
-            if extracted.get("date_of_birth"):
-                try:
-                    dob = datetime.strptime(extracted["date_of_birth"], "%Y-%m-%d").date()
-                    update_parts.append(f"date_of_birth = ${param_idx}")
-                    params.append(dob)
-                    param_idx += 1
-                except ValueError:
-                    logger.debug("Skipping invalid date_of_birth format for client %s", client_id)
-
-            if extracted.get("birthplace"):
-                update_parts.append(f"birthplace = ${param_idx}")
-                params.append(extracted["birthplace"])
-                param_idx += 1
-
-            if extracted.get("nationality"):
-                update_parts.append(f"nationality = ${param_idx}")
-                params.append(extracted["nationality"])
-                param_idx += 1
-
-            params.append(client_id)
-            update_sql = f"""
-                UPDATE clients SET {", ".join(update_parts)}, updated_at = NOW()
-                WHERE id = ${param_idx}
-            """
-            await conn.execute(update_sql, *params)
-
-        # The passport NUMBER used to be interpolated here. It is a UU PDP
-        # identity document field, and a log line is not a private surface:
-        # Sentry's LoggingIntegration turns every `logger.info` into a
-        # breadcrumb, and an unlabelled `": X1234567"` has nothing for the
-        # `_redact_string` hook to anchor on (pinned by
-        # `test_known_gap_an_unlabelled_passport_number_has_no_anchor`).
-        # What the operator actually needs from this line is whether the OCR
-        # found the field, not what it said.
-        logger.info(
-            "Auto OCR completed for client %s (passport_number extracted: %s)",
-            client_id,
-            bool(extracted.get("passport_number")),
-        )
-        return {"success": True, "extracted": extracted}
-
-    except Exception as e:
-        logger.error("Auto OCR failed for client %s: %s", client_id, type(e).__name__)
-        return {"success": False, "error": str(e)}
+    if doc_id is None:
+        return {"success": False, "status": "missing_document"}
+    result = await process_one(db_pool, doc_id=doc_id, client_id=client_id, file_id=file_id)
+    if result["status"] == "not_claimed" and await review_untyped(
+        db_pool, doc_id=doc_id, client_id=client_id, file_id=file_id
+    ):
+        return {"success": False, "status": "review"}
+    return result
 
 
 async def _auto_ocr_visa(

@@ -496,7 +496,9 @@ async def _assert_file_descends_from_owner(
     )
 
 
-async def assert_drive_file_belongs_to_client(file_id: str, client_id: int, conn: Any) -> None:
+async def assert_drive_file_belongs_to_client(
+    file_id: str, client_id: int, conn: Any, *, require_ancestry: bool = False
+) -> None:
     """Write-time guard for `POST .../clients/{client_id}/documents` (+ bulk
     twin) and `PATCH .../clients/{client_id}/documents/{doc_id}`: refuse a
     `file_id` with incompatible ownership. An unambiguous existing registration
@@ -511,7 +513,7 @@ async def assert_drive_file_belongs_to_client(file_id: str, client_id: int, conn
         raise HTTPException(
             status_code=403, detail="Drive file has incompatible registered ownership"
         )
-    if ownership["owned"]:
+    if ownership["owned"] and not require_ancestry:
         return
     await _assert_file_descends_from_owner(
         file_id, conn, owner_sql=_CLIENT_OWNS_FOLDER_SQL, owner_id=client_id

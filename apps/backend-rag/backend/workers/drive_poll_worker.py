@@ -25,6 +25,7 @@ import asyncpg
 
 from backend.services.crm.drive_poll_service import poll_drive_changes
 from backend.workers.crm_kg_maintenance import load_kg_maintenance_config, run_maintenance_loop
+from backend.workers.passport_ocr import run_passport_loop
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,7 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
 
     kg_config = load_kg_maintenance_config()
     kg_task: asyncio.Task[None] | None = None
+    passport_task: asyncio.Task[None] | None = None
     if not config.once:
         # CRM KG maintenance belongs to the long-running worker, not --once. It runs in
         # its own task and the poll loop never awaits it, so a stuck maintenance call
@@ -216,6 +218,10 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
             name="crm-kg-maintenance",
         )
         kg_task.add_done_callback(_log_maintenance_task_end)
+        passport_task = asyncio.create_task(
+            run_passport_loop(config.database_url, stop_event), name="crm-passport-ocr"
+        )
+        passport_task.add_done_callback(_log_maintenance_task_end)
 
     try:
         while not stop_event.is_set():
@@ -232,11 +238,13 @@ async def run_forever(config: DrivePollWorkerConfig) -> int:
                 continue
     finally:
         stop_event.set()
-        if kg_task is not None and not kg_task.done():
-            kg_task.cancel()
+        pending = {task for task in (kg_task, passport_task) if task and not task.done()}
+        if pending:
+            for task in pending:
+                task.cancel()
             # Best effort: wait briefly for the task's cleanup. This does not bound
             # process exit; Fly's kill_timeout does.
-            await asyncio.wait({kg_task}, timeout=10)
+            await asyncio.wait(pending, timeout=10)
 
     return 0
 
@@ -246,7 +254,7 @@ def _log_maintenance_task_end(task: asyncio.Task[None]) -> None:
         return
     exc = task.exception()
     if exc is not None:
-        logger.error("CRM KG maintenance task ended unexpectedly: %r", exc)
+        logger.error("CRM worker task %s ended unexpectedly (%s)", task.get_name(), type(exc).__name__)
 
 
 def main(argv: list[str] | None = None) -> int:

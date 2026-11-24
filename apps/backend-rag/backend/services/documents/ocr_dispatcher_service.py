@@ -60,7 +60,7 @@ async def _kg_link_after_ocr(
         {"success": bool, "extracted": {<fields>}, ...}
 
     """
-    if not _kg_enabled():
+    if doc_type == "passport" or not _kg_enabled():
         return
 
     try:
@@ -134,7 +134,7 @@ async def dispatch_ocr_by_folder(
     db_pool: Any,
     client_id: int,
     file_id: str,
-    folder_name: str,
+    folder_name: str,  # noqa: ARG001 -- retained for existing upload and poll callers
     filename: str,
     doc_id: int | None = None,
     document_type: str | None = None,
@@ -164,24 +164,13 @@ async def dispatch_ocr_by_folder(
     )
 
     fn_lower = filename.lower()
-    folder_lower = folder_name.lower() if folder_name else ""
-    dtype_lower = (document_type or "").lower().replace("_", " ")
+    dtype_lower = (document_type or "").strip().lower().replace("_", " ")
 
     # ─── Tier 1: filename / folder keyword match ─────────────────────────
 
     # Passport detection
-    if "passport" in fn_lower or (folder_lower.startswith("00_") and "passport" in fn_lower):
-        logger.info("OCR dispatch: passport detected for client %s, file %s", client_id, filename)
-        ocr_result = await _auto_ocr_passport(db_pool, client_id, file_id)
-        await _kg_link_after_ocr(
-            db_pool,
-            file_id=file_id,
-            client_id=client_id,
-            doc_type="passport",
-            handler_result=ocr_result,
-            doc_id=doc_id,
-            filename=filename,
-        )
+    if dtype_lower in {"passport", "paspor"} or "passport" in fn_lower or "paspor" in fn_lower:
+        ocr_result = await _auto_ocr_passport(db_pool, client_id, file_id, doc_id)
         return {
             "dispatched": True,
             "handler": "passport",
@@ -305,17 +294,13 @@ async def dispatch_ocr_by_folder(
     # Gemini API). The classifier is robust against filename obfuscation
     # ("IMG_2847.pdf", "scan_001.jpeg", clienti che caricano dal cellulare).
     logger.info(
-        "OCR dispatch: filename '%s' did not match Tier 1 keywords — trying content classifier for client %s",
-        filename,
+        "OCR dispatch: trying content classifier for client %s",
         client_id,
     )
     classification = await _auto_classify_content(file_id)
 
     if "error" in classification:
-        logger.warning(
-            f"OCR dispatch: content classifier failed for file {filename}: "
-            f"{classification['error']}",
-        )
+        logger.warning("OCR dispatch: content classifier failed for client %s", client_id)
         return {"dispatched": False, "tier": "content", "classifier": classification}
 
     detected_type = classification.get("document_type", "unknown")
@@ -325,7 +310,7 @@ async def dispatch_ocr_by_folder(
         logger.info(
             f"OCR dispatch: content classifier returned {detected_type} "
             f"(confidence {confidence:.2f} < {_CONTENT_CONFIDENCE_THRESHOLD}) — "
-            f"no handler triggered for client {client_id}, file {filename}",
+            f"no handler triggered for client {client_id}",
         )
         return {"dispatched": False, "tier": "content", "classifier": classification}
 
@@ -335,7 +320,7 @@ async def dispatch_ocr_by_folder(
     # classifier but produce {"dispatched": False, "classifier": ...} until
     # their handlers ship in Phase 2.
     handler_map = {
-        "passport": ("passport", lambda: _auto_ocr_passport(db_pool, client_id, file_id)),
+        "passport": ("passport", lambda: _auto_ocr_passport(db_pool, client_id, file_id, doc_id)),
         "visa": ("visa", lambda: _auto_ocr_visa(db_pool, client_id, file_id, doc_id)),
         "nib": ("nib", lambda: _auto_ocr_nib(db_pool, client_id, file_id, doc_id)),
         "npwp": ("npwp", lambda: _auto_ocr_npwp(db_pool, client_id, file_id, doc_id)),
@@ -348,17 +333,16 @@ async def dispatch_ocr_by_folder(
         handler_name, handler_call = handler_map[detected_type]
         logger.info(
             f"OCR dispatch: content classifier matched {detected_type} "
-            f"(confidence {confidence:.2f}) for client {client_id}, file {filename} — "
+            f"(confidence {confidence:.2f}) for client {client_id} — "
             f"running {handler_name} handler",
         )
         try:
             result = await handler_call()
         except Exception as e:
             logger.error(
-                "OCR dispatch: handler %s failed after content classification for file %s: %s",
+                "OCR dispatch: handler %s failed after content classification (%s)",
                 handler_name,
-                filename,
-                e,
+                type(e).__name__,
             )
             return {
                 "dispatched": False,

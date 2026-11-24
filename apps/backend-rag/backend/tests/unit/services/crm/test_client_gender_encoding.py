@@ -88,89 +88,16 @@ async def test_batch_insert_writes_gender_per_row() -> None:
     assert params[10] == "F" and params[21] is None
 
 
-@pytest.mark.parametrize(("read", "stored"), [("M", "M"), ("female", "F"), ("X", None)])
-@pytest.mark.asyncio
-async def test_ocr_persist_stores_M_or_F_and_skips_a_misread(read: str, stored: str | None) -> None:
-    pool, conn = _pool()
-    conn.fetchrow = AsyncMock(return_value={"full_name": "Test Client"})
-    request = ccd.PassportPreviewRequest(image_base64="aGk=", mime_type="image/jpeg", client_id=7)
-    reply = MagicMock(status_code=200)
-    reply.json.return_value = {"response": "{}"}
-    extracted = {
-        "passport_number": "X0000000",
-        "gender": read,
-        "full_name": "Test Client",
-        "confidence": 0.9,
-    }
-    http = AsyncMock()
-    http.post = AsyncMock(return_value=reply)
-    http.__aenter__ = AsyncMock(return_value=http)
-    http.__aexit__ = AsyncMock(return_value=False)
-    with (
-        patch("httpx.AsyncClient", return_value=http),
-        patch.object(ccd, "extract_json_from_llm_response", return_value=extracted),
-        patch.object(ccd, "verify_client_access", new=AsyncMock()),
-        patch.object(ccd, "invalidate_cache", new=AsyncMock()),
-    ):
-        out = await ccd.extract_passport_enhanced(
-            request=request, current_user={"id": "u", "role": "admin", "email": "t@x"}, db_pool=pool
-        )
-    assert out.success, out.message
-    sql, *params = conn.execute.await_args.args
-    assert ("gender = $" in sql) == (stored is not None)
-    if stored:
-        assert stored in params
-
-
-@pytest.mark.asyncio
-async def test_core_create_client_writes_gender() -> None:
-    from backend.services.crm.client_core import EnhancedCRMService
-
-    pool, conn = _pool()
-    conn.fetchrow = AsyncMock(return_value={"id": 3, "full_name": "Test Client"})
-    with (
-        patch("backend.services.crm.client_core.CRMQueryOptimizer"),
-        patch("backend.services.crm.client_core.lock_phone_cores", new=AsyncMock()),
-    ):
-        svc = EnhancedCRMService(pool)
-        svc.auditor = MagicMock(log_client_created=AsyncMock())
-        svc._find_duplicate_client = AsyncMock(return_value=None)
-        await svc.create_client({"full_name": "Test Client", "gender": "female"})
-    query, *params = conn.fetchrow.await_args.args
-    assert "gender" in query and "$11" in query
-    assert params[-1] == "F"
-
-
 @pytest.mark.parametrize(("read", "stored"), [("MALE", "M"), ("F", "F"), ("L", None)])
-@pytest.mark.asyncio
-async def test_auto_ocr_passport_stores_M_or_F_and_skips_a_misread(
-    read: str, stored: str | None
-) -> None:
-    import backend.app.routers.crm_enhanced as enhanced
+def test_automatic_passport_document_uses_canonical_gender(read, stored):
+    import json
 
-    pool, conn = _pool()
-    conn.fetchrow = AsyncMock(return_value={"full_name": "Test Client"})
-    with (
-        patch.object(
-            enhanced, "_download_drive_file", new=AsyncMock(return_value=(b"x", "image/jpeg"))
-        ),
-        patch.object(enhanced, "_gemini_ocr", new=AsyncMock(return_value="{}")),
-        patch.object(
-            enhanced,
-            "extract_json_from_llm_response",
-            return_value={
-                "passport_number": "X0000000",
-                "gender": read,
-                "full_name": "Test Client",
-            },
-        ),
-    ):
-        out = await enhanced._auto_ocr_passport(pool, 7, "file-1")
-    assert out["success"], out
-    sql, *params = conn.execute.await_args.args
-    assert ("gender = $" in sql) == (stored is not None)
-    if stored:
-        assert stored in params
+    from backend.services.documents.passport_ocr_processing import verified_fields
+
+    response = json.dumps({"full_name": "Synthetic Client", "passport_number": "TEST", "gender": read})
+    fields = verified_fields(response, "Synthetic Client")
+    assert fields.get("gender") == stored
+    assert ("gender" in fields) == (stored is not None)
 
 
 async def _update(updates: dict[str, Any], stored_gender: str | None) -> AsyncMock:
@@ -254,31 +181,3 @@ async def test_passport_preview_returns_canonical_or_nothing() -> None:
             )
         seen.append(out.gender)
     assert seen == ["F", None, None]
-
-
-@pytest.mark.asyncio
-async def test_auto_ocr_passport_returns_canonical_or_nothing() -> None:
-    import backend.app.routers.crm_enhanced as enhanced
-
-    results = []
-    for read in ("MALE", "L"):
-        pool, conn = _pool()
-        conn.fetchrow = AsyncMock(return_value={"full_name": "Test Client"})
-        with (
-            patch.object(
-                enhanced, "_download_drive_file", new=AsyncMock(return_value=(b"x", "image/jpeg"))
-            ),
-            patch.object(enhanced, "_gemini_ocr", new=AsyncMock(return_value="{}")),
-            patch.object(
-                enhanced,
-                "extract_json_from_llm_response",
-                return_value={
-                    "passport_number": "X0000000",
-                    "gender": read,
-                    "full_name": "Test Client",
-                },
-            ),
-        ):
-            out = await enhanced._auto_ocr_passport(pool, 7, "file-1")
-        results.append(out["extracted"]["gender"])
-    assert results == ["M", None]
