@@ -33,3 +33,24 @@ def test_pasal_pattern_handles_large_near_heading_inputs_linearly() -> None:
         started = time.process_time()
         PASAL_PATTERN.findall(text)
         assert time.process_time() - started < 1.0
+
+
+def test_ocr_headings_with_o_for_zero_stay_their_own_articles() -> None:
+    # A scanned law's text layer reads 0 as O; the heading must still close the article above.
+    text = (
+        "Pasal 199\nKetentuan pertama.\nPasal 2OO\nKetentuan kedua.\nPasal lOO\nKetentuan ketiga."
+    )
+
+    articles = LegalStructureParser().parse(text)["pasal_list"]
+
+    assert [article["number"] for article in articles] == ["199", "2O", "l"]
+    assert "Ketentuan kedua." not in articles[0]["text"]
+    assert "Ketentuan kedua." in articles[1]["text"]
+
+
+def test_capitalised_prose_after_pasal_is_not_a_heading() -> None:
+    text = "Pasal 4\nSetiap orang wajib.\nPasal Ini mulai berlaku.\nPasal lain tetap."
+
+    articles = LegalStructureParser().parse(text)["pasal_list"]
+
+    assert [article["number"] for article in articles] == ["4"]
