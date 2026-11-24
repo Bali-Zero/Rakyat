@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException
 
+from backend.app.deps.process_access import assignment_clause, process_assignees
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
 from backend.app.services.hr.delivery_bonus import get_delivery_bonus, record_delivery_bonus
 from backend.app.services.hr.hr_service import business_today
@@ -45,26 +46,38 @@ _SCOPED = """d.practice_id = p.id AND d.client_id = p.client_id
              AND d.family_member_id IS NOT DISTINCT FROM p.family_member_id"""
 
 
-async def practice(conn: Any, practice_id: int, user: dict, *, lock: bool = False) -> dict:
+def can_manage_delivery(user: dict, assigned_to: str | None) -> bool:
+    role = normalize_role(user.get("role"))
+    return (
+        bool(user.get("email"))
+        and is_human_team_member(role)
+        and (
+            is_crm_admin(user)
+            or (
+                role in OPERATORS and (assigned_to or "").strip().lower() in caller_pool_peers(user)
+            )
+        )
+    )
+
+
+async def practice(
+    conn: Any, practice_id: int, user: dict, *, lock: bool = False, read_only: bool = False
+) -> dict:
+    if not is_human_team_member(user.get("role")) or not user.get("email"):
+        raise HTTPException(403, "Staff access required")
+    params: list[Any] = [practice_id]
+    owners = await process_assignees(conn, user)
     row = await conn.fetchrow(
         """SELECT p.id, p.client_id, p.family_member_id, p.assigned_to, p.client_visible,
                   p.status, p.payment_status, pt.code, pt.name, pt.category
            FROM practices p JOIN practice_types pt ON pt.id = p.practice_type_id
            WHERE p.id = $1 AND (p.family_member_id IS NULL OR EXISTS (
                SELECT 1 FROM client_family_members f WHERE f.id=p.family_member_id AND f.client_id=p.client_id))"""
+        + assignment_clause(owners, params)
         + (" FOR UPDATE OF p" if lock else ""),
-        practice_id,
+        *params,
     )
-    role = normalize_role(user.get("role"))
-    if not is_human_team_member(role) or not user.get("email"):
-        raise HTTPException(403, "Staff access required")
-    if not row or (
-        not is_crm_admin(user)
-        and (
-            role not in OPERATORS
-            or (row["assigned_to"] or "").lower() not in caller_pool_peers(user)
-        )
-    ):
+    if not row or (not read_only and not can_manage_delivery(user, row["assigned_to"])):
         raise HTTPException(404, "Practice not found")
     return dict(row)
 

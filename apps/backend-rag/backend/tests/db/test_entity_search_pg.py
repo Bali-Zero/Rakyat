@@ -25,6 +25,7 @@ from backend.tests.db.test_client_smart_search_pg import (  # noqa: F401  (pool 
 pytestmark = pytest.mark.integration
 
 _PRACTICE_SCHEMA = """
+CREATE TABLE team_members(id int, email text, department text, active boolean, full_name text, name text, role text, created_at timestamptz default now());
 CREATE TABLE practice_types (
     id SERIAL PRIMARY KEY,
     code TEXT NOT NULL,
@@ -66,9 +67,10 @@ async def book(pool: asyncpg.Pool) -> AsyncIterator[dict[str, int]]:  # noqa: F8
 
     async def practice(client: int, kind: int) -> int:
         return await pool.fetchval(
-            "INSERT INTO practices (client_id, practice_type_id) VALUES ($1, $2) RETURNING id",
+            "INSERT INTO practices (client_id, practice_type_id, assigned_to) VALUES ($1, $2, $3) RETURNING id",
             client,
             kind,
+            ADMIN["email"],
         )
 
     ids = {

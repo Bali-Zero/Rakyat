@@ -1,0 +1,80 @@
+.tile,
+.mark {
+  --owner-color: oklch(40% var(--owner-chroma) var(--owner-hue));
+  --face: color-mix(
+    in srgb,
+    var(--owner-color) var(--stage-strength),
+    var(--bz-card)
+  );
+  --edge: color-mix(in srgb, var(--owner-color) 62%, var(--bz-border));
+}
+
+:global([data-theme="light"]) :is(.tile, .mark),
+:global([data-theme="operative-light"]) :is(.tile, .mark) {
+  --owner-color: oklch(79% var(--owner-chroma) var(--owner-hue));
+}
+
+.tile {
+  margin-inline: auto;
+  max-width: 15rem;
+}
+
+.face,
+.mark {
+  background-color: var(--face);
+  border: 1px solid var(--edge);
+  color: var(--bz-text-1);
+}
+
+.face {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.45rem;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 12%;
+  border-radius: 0.25rem;
+  text-align: center;
+}
+
+.face[data-department="tax"] {
+  border-radius: 50%;
+  padding: 16%;
+}
+
+.face[data-department="other"] {
+  aspect-ratio: auto;
+  min-height: 8rem;
+  border-radius: 0.75rem;
+}
+
+.face:focus-within,
+.face:hover {
+  outline: 2px solid var(--edge);
+  outline-offset: 2px;
+}
+
+.mark {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+.mark[data-department="tax"] {
+  border-radius: 50%;
+}
+.mark[data-department="other"] {
+  width: 1.1rem;
+  border-radius: 3px;
+}
+
+@media (forced-colors: active) {
+  .face,
+  .mark {
+    border-color: CanvasText;
+  }
+}

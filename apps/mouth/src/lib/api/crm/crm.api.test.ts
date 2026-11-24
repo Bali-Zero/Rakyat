@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { CrmApi } from "./crm.api";
+import { tokenFor } from "@/lib/auth/session-test-utils";
+import { readSessionIdentity } from "@/lib/auth/session-identity";
 import { ApiClientBase } from "../client";
 import { ApiError } from "../error-handler";
 import type { Practice, Interaction, RenewalAlert } from "./crm.types";
@@ -454,6 +456,40 @@ describe("CrmApi", () => {
         expect(mockClient.request).toHaveBeenCalledWith(
           "/api/crm/practices?status=active&limit=10",
         );
+      });
+
+      it("binds a scoped board response to the bearer actually sent", async () => {
+        localStorage.setItem("auth_token", tokenFor("board-owner"));
+        const session = readSessionIdentity()!;
+        const requestWithCredential = vi.fn().mockResolvedValue({
+          data: [{ id: 77 }],
+          sentSub: session.sub,
+          sentToken: null,
+        });
+        const bound = new CrmApi({
+          ...mockClient,
+          requestWithCredential,
+        } as unknown as ApiClientBase);
+        try {
+          await expect(
+            bound.getPractices({ session, limit: 200 }),
+          ).resolves.toEqual([{ id: 77 }]);
+          expect(requestWithCredential).toHaveBeenCalledWith(
+            "/api/crm/practices?limit=200",
+          );
+          for (const sentSub of [null, "other-member"]) {
+            requestWithCredential.mockResolvedValueOnce({
+              data: [{ id: 78 }],
+              sentSub,
+            });
+            await expect(bound.getPractices({ session })).rejects.toMatchObject(
+              { statusCode: 403 },
+            );
+          }
+          expect(mockClient.request).not.toHaveBeenCalled();
+        } finally {
+          localStorage.removeItem("auth_token");
+        }
       });
 
       it("should send the search text, encoded, with the other filters", async () => {

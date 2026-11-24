@@ -68,7 +68,12 @@ function setup(payment = "paid") {
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
       <FinalDeliveryCard
         practice={
-          { id: 12, client_id: 19, payment_status: payment } as Practice
+          {
+            id: 12,
+            client_id: 19,
+            payment_status: payment,
+            can_manage_delivery: true,
+          } as Practice
         }
         onComplete={complete}
       />

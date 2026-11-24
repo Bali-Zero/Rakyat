@@ -6,13 +6,14 @@ import asyncpg
 from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.dependencies import get_database_pool
+from backend.app.deps.process_access import process_session
 from backend.services.crm import visa_followup
 
 router = APIRouter(prefix="/api/crm/practices", tags=["crm-practices"])
 Practice = Annotated[int, Path(gt=0, le=2**31 - 1)]
 DB = Annotated[asyncpg.Pool, Depends(get_database_pool)]
-Staff = Annotated[dict, Depends(get_current_user)]
+Staff = Annotated[dict, Depends(process_session)]
 
 
 class OfficialNote(BaseModel):

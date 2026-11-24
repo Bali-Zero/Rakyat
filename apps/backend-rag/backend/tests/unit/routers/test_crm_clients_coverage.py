@@ -841,6 +841,26 @@ async def test_get_client_summary_success(mock_db_pool, mock_current_user):
 
 
 @pytest.mark.asyncio
+async def test_shared_client_summary_scopes_practice_linked_entries(mock_db_pool):
+    from backend.app.routers import crm_clients
+
+    conn = mock_db_pool._mock_conn
+    conn.fetchrow.return_value = {"id": 19}
+    conn.fetch.side_effect = [[{"id": 41, "status": "on_process"}], [], []]
+    user = {"email": "member@example.test", "role": "consultant"}
+    with patch.object(crm_clients, "verify_client_access", new=AsyncMock()):
+        result = await crm_clients.get_client_summary(19, mock_db_pool, user)
+
+    practices, interactions, renewals = conn.fetch.await_args_list
+    assert practices.args[1:] == (19, [user["email"]])
+    assert "LOWER(BTRIM(p.assigned_to)) = ANY($2::text[])" in practices.args[0]
+    for related in (interactions, renewals):
+        assert related.args[1:] == (19, [41])
+        assert "practice_id IS NULL OR practice_id = ANY($2::integer[])" in related.args[0]
+    assert result["practices"]["total"] == result["practices"]["active"] == 1
+
+
+@pytest.mark.asyncio
 async def test_get_client_summary_not_found(mock_db_pool, mock_current_user):
     from backend.app.routers.crm_clients import get_client_summary
 

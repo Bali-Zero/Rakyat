@@ -10,16 +10,22 @@ import { describe, expect, it } from "vitest";
  * /kbli-explorer and the portal company page already hold. The 18 labels
  * that remained at 10px (measured at 1adaf23971) joined them.
  *
- * Declared limits: reads page.tsx as text and checks un-prefixed arbitrary
+ * Declared limits: reads the board and its tile and history components as text. It checks un-prefixed arbitrary
  * `text-[9px]` and `text-[10px]` only. It does not render and does not
  * cover process/[id] or process/new.
  */
-const SRC = readFileSync(join(__dirname, "page.tsx"), "utf8");
+const SRC = [
+  join(__dirname, "page.tsx"),
+  join(__dirname, "../../../components/process/ProcessTile.tsx"),
+  join(__dirname, "../../../components/process/GhostCard.tsx"),
+]
+  .map((path) => readFileSync(path, "utf8"))
+  .join("\n");
 const BELOW_FLOOR = /(?<![\w:-])text-\[(?:9|10)px\]/g;
 
 describe("process board holds the 11px floor for its labels", () => {
   it("positive control: page.tsx is read and carries arbitrary px text sizes", () => {
-    expect(SRC).toContain("passate");
+    expect(SRC).toContain("Stage history");
     expect([...SRC.matchAll(/text-\[\d+px\]/g)].length).toBeGreaterThan(0);
   });
 

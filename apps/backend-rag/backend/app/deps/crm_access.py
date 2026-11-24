@@ -104,7 +104,7 @@ def get_crm_user_filter(
 def get_practices_user_filter(
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> list[str] | None:
-    """Return the owner emails (own + client-pool peers) for practice filtering, None for full view."""
+    """Legacy client-expiry/invoice lookup scope. Staff Process reads use process_assignees."""
     if can_view_all_practices(current_user):
         return None
     return sorted(caller_pool_peers(current_user))

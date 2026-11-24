@@ -17,9 +17,10 @@ from pydantic import BaseModel
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool, require_team_member
+from backend.app.deps.process_access import assignment_clause, process_assignees, process_session
 from backend.app.routers.crm_interactions import get_interactions_stats, list_interactions
 from backend.app.routers.crm_practices import get_practices_stats, list_practices
-from backend.app.utils.crm_utils import AvatarUrl, can_view_all_practices
+from backend.app.utils.crm_utils import AvatarUrl
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import get_cache_service
 from backend.core.collection_registry import resolve_collection_name
@@ -96,42 +97,23 @@ async def _get_email_stats(db_pool: asyncpg.Pool, user_id: str) -> dict:
         return {"connected": False, "unread_count": 0}
 
 
-async def _get_critical_deadlines(db_pool: asyncpg.Pool, user_id: str, is_admin: bool) -> int:
-    """
-    Get count of practices with critical deadlines (expiring within 7 days).
-
-    Critical deadlines are practices with expiry_date within 7 days from today.
-    """
+async def _get_critical_deadlines(db_pool: asyncpg.Pool, user: dict) -> int:
+    """Count visible practices expiring within seven days."""
     try:
         async with db_pool.acquire() as conn:
-            # Build query based on user role
-            if is_admin:
-                # Admin sees all practices
-                query = """
-                    SELECT COUNT(*) as count
-                    FROM practices
-                    WHERE expiry_date IS NOT NULL
-                    AND expiry_date > CURRENT_DATE
-                    AND expiry_date <= CURRENT_DATE + INTERVAL '7 days'
-                    AND status NOT IN ('completed', 'cancelled')
-                """
-                result = await conn.fetchrow(query)
-            else:
-                # Team members see only assigned practices
-                query = """
-                    SELECT COUNT(*) as count
-                    FROM practices
-                    WHERE expiry_date IS NOT NULL
-                    AND expiry_date > CURRENT_DATE
-                    AND expiry_date <= CURRENT_DATE + INTERVAL '7 days'
-                    AND status NOT IN ('completed', 'cancelled')
-                    AND assigned_to = $1
-                """
-                result = await conn.fetchrow(query, user_id)
-
+            params: list[Any] = []
+            clause = assignment_clause(await process_assignees(conn, user), params, "assigned_to")
+            result = await conn.fetchrow(
+                """SELECT COUNT(*) AS count FROM practices
+                   WHERE expiry_date > CURRENT_DATE
+                     AND expiry_date <= CURRENT_DATE + INTERVAL '7 days'
+                     AND status NOT IN ('completed', 'cancelled')"""
+                + clause,
+                *params,
+            )
             return result["count"] if result else 0
     except Exception as e:
-        logger.warning("Failed to get critical deadlines for user %s: %s", user_id, e)
+        logger.warning("Failed to get critical deadlines (%s)", type(e).__name__)
         return 0
 
 
@@ -312,7 +294,7 @@ async def _get_new_leads_count(db_pool: asyncpg.Pool) -> int:
 
 @router.get("/summary")
 async def get_dashboard_summary(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """
@@ -322,8 +304,6 @@ async def get_dashboard_summary(
     """
     user_id = _get_user_id(current_user)
     is_admin = _is_admin(current_user)
-    practice_owner = (current_user.get("email") or "").strip().lower() or user_id
-    can_view_practices = can_view_all_practices(current_user)
 
     try:
         # Per-task timeout to prevent one slow query from blocking the entire response
@@ -341,9 +321,8 @@ async def get_dashboard_summary(
         tasks = [
             _with_timeout(
                 get_practices_stats(
-                    user_id=practice_owner,
-                    pool=db_pool,
-                    is_admin=can_view_practices,
+                    db_pool=db_pool,
+                    current_user=current_user,
                 ),
                 DEFAULT_PRACTICE_STATS,
             ),
@@ -352,9 +331,8 @@ async def get_dashboard_summary(
                 list_practices(
                     status="in_progress",
                     limit=5,
-                    user_id=user_id,
-                    pool=db_pool,
-                    assigned_to=None if can_view_practices else practice_owner,
+                    db_pool=db_pool,
+                    current_user=current_user,
                 ),
                 [],
             ),
@@ -371,7 +349,7 @@ async def get_dashboard_summary(
                 _get_email_stats(db_pool, user_id),
                 {"connected": False, "unread_count": 0},
             ),
-            _with_timeout(_get_critical_deadlines(db_pool, practice_owner, can_view_practices), 0),
+            _with_timeout(_get_critical_deadlines(db_pool, current_user), 0),
         ]
 
         # Add admin-only tasks

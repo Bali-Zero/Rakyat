@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { tokenFor } from "../src/lib/auth/session-test-utils";
 import AxeBuilder from "@axe-core/playwright";
 
 const E2E_PORT = process.env.BZ_E2E_PORT ?? "3000";
@@ -12,23 +13,29 @@ const syntheticPortalProfile = {
   role: "admin",
 };
 
-async function seedSyntheticPortalSession(page: Page): Promise<void> {
+async function seedSyntheticPortalSession(
+  page: Page,
+  bearer = "synthetic-ui-test-token",
+): Promise<void> {
   // A real login sets the HttpOnly session cookie as well as localStorage, and
   // proxy.ts gates workspace paths on that cookie server-side (SAETTA W-C R-A):
   // seeding localStorage alone is an anonymous visitor to the server.
   await page.context().addCookies(
     [KITA_ORIGIN, MY_ORIGIN].map((url) => ({
       name: "nz_access_token",
-      value: "synthetic-ui-test-token",
+      value: bearer,
       url,
       httpOnly: true,
       sameSite: "Lax" as const,
     })),
   );
-  await page.addInitScript((profile) => {
-    localStorage.setItem("auth_token", "synthetic-ui-test-token");
-    localStorage.setItem("user_profile", JSON.stringify(profile));
-  }, syntheticPortalProfile);
+  await page.addInitScript(
+    ({ profile, bearer }) => {
+      localStorage.setItem("auth_token", bearer);
+      localStorage.setItem("user_profile", JSON.stringify(profile));
+    },
+    { profile: syntheticPortalProfile, bearer },
+  );
 
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
@@ -161,7 +168,13 @@ async function expectNoBlockingA11y(page: Page): Promise<void> {
 const syntheticPractice = {
   id: 707,
   client_id: 17,
-  client_name: "UI Contract",
+  client_name: "Sample Client",
+  assigned_to: "setup@example.test",
+  assignee_member_id: "operator-setup",
+  assignee_color_index: 1,
+  assignee_name: "Setup Operator",
+  assignee_department: "setup",
+  can_edit_process: true,
   practice_type_code: "visa",
   practice_type_name: "Visa Extension",
   status: "waiting_payment",
@@ -174,17 +187,62 @@ const syntheticPractice = {
 const syntheticUnknownPractice = {
   ...syntheticPractice,
   id: 708,
+  practice_type_name: "SPT Filing",
+  assigned_to: "tax@example.test",
+  assignee_member_id: "operator-tax",
+  assignee_color_index: 2,
+  assignee_name: "Tax Operator",
+  assignee_department: "tax",
   status: "legacy_manual_review",
 };
 
 async function seedSyntheticProcessBoard(page: Page): Promise<void> {
-  await seedSyntheticPortalSession(page);
+  await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
   await page.route("**/api/crm/practices**", async (route) => {
+    const catalog = new URL(route.request().url()).pathname.endsWith(
+      "/types/catalog",
+    );
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify([syntheticPractice, syntheticUnknownPractice]),
+      body: JSON.stringify(
+        catalog
+          ? { categories: [], total_services: 0 }
+          : [
+              syntheticPractice,
+              syntheticUnknownPractice,
+              {
+                ...syntheticPractice,
+                id: 709,
+                client_name: "Sample Company",
+                practice_type_name: "Company Setup",
+                status: "completed",
+                payment_status: "paid",
+              },
+              {
+                ...syntheticUnknownPractice,
+                id: 710,
+                client_name: "Sample Studio",
+                practice_type_name: "Tax Registration",
+                status: "on_process",
+                payment_status: "paid",
+              },
+              {
+                ...syntheticPractice,
+                id: 711,
+                client_name: "Sample Applicant",
+                practice_type_name: "Stay Permit",
+                status: "waiting_documents",
+              },
+            ],
+      ),
     });
   });
+}
+
+function visualReportPath(view: string) {
+  return process.env.CI
+    ? `playwright-report/${test.info().project.name}-${view}.png`
+    : test.info().outputPath(`${view}.png`);
 }
 
 test.describe("Bali Zero product-family noqata page Page", () => {
@@ -226,6 +284,97 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await expectNoBlockingA11y(page);
   });
 
+  test("An employee opens the next required document from their personal bonus card", async ({
+    page,
+  }) => {
+    await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
+    const service = "Visa Extension";
+    await page.route("**/api/auth/profile", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPortalProfile,
+          id: "synthetic-operator",
+          role: "consultant",
+        },
+      }),
+    );
+    await page.route(
+      "**/api/crm/practices/invoice-company/suggestion?**",
+      (route) =>
+        route.fulfill({
+          json: {
+            autofill: false,
+            suggested_company_id: null,
+            companies: [],
+          },
+        }),
+    );
+    await page.route("**/api/hr/me/delivery-desk", (route) =>
+      route.fulfill({
+        json: {
+          team_member_id: "synthetic-operator",
+          on_payroll: true,
+          month: "2026-11-01",
+          target: 8,
+          milestones: 5,
+          holds: [],
+          recent: [],
+          totals: {
+            pending: 150000,
+            approved: 100000,
+            paid: 0,
+            awaiting_rate: 0,
+            payroll_locked: 0,
+          },
+          next_case: {
+            practice_id: 707,
+            service,
+            amount_idr: 50000,
+            already_earned: false,
+          },
+        },
+      }),
+    );
+    await page.route("**/api/crm/practices/707/delivery", (route) =>
+      route.fulfill({
+        json: {
+          status: "on_process",
+          needs_titles: false,
+          slots: [{ key: "itk", label: "ITK", document_id: null }],
+        },
+      }),
+    );
+    await page.route("**/api/crm/practices/707/required-documents", (route) =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route("**/api/crm/practices/707", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPractice,
+          assigned_to: syntheticPortalProfile.email,
+          status: "on_process",
+          payment_status: "paid",
+          can_manage_delivery: true,
+        },
+      }),
+    );
+    await page.goto(`${KITA_ORIGIN}/dashboard`);
+    const card = page.getByRole("region", { name: "My delivery bonuses" });
+    const next = card.getByRole("link", { name: /Visa Extension.*ITK/ });
+    await expect(next).toHaveAttribute("href", "/process/707#final-delivery");
+    for (const [width, view] of [
+      [1280, "desktop"],
+      [390, "mobile"],
+    ] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(next).toBeVisible();
+      await card.screenshot({ path: visualReportPath(`bonus-${view}`) });
+    }
+    await next.click();
+    await expect(page).toHaveURL(/\/process\/707#final-delivery$/);
+    await expect(page.locator("#final-delivery")).toContainText("ITK");
+  });
+
   test("Process keeps a horizontally scannable board and keyboard-accessible cards on mobile", async ({
     page,
   }) => {
@@ -252,6 +401,52 @@ test.describe("Bali Zero product-family noqata page Page", () => {
       "Needs review · Legacy Manual Review",
     );
     await expectNoBlockingA11y(page);
+    await page.getByTestId("process-card-708").scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: visualReportPath("process-mobile"),
+    });
+  });
+
+  test("Process renders square and circular department cards with stable color through completion", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await seedSyntheticProcessBoard(page);
+    await page.goto(`${KITA_ORIGIN}/process`);
+    await page
+      .getByRole("button", { name: /^Completed\s*\d+/, expanded: false })
+      .click();
+    const face = (id: number) =>
+      page.getByTestId(`process-card-${id}`).locator("div[data-department]");
+    for (const id of [707, 708, 709]) {
+      const box = await face(id).boundingBox();
+      expect(box).toBeTruthy();
+      expect(Math.abs(box!.width - box!.height)).toBeLessThanOrEqual(1);
+    }
+    await expect(face(708)).toHaveCSS("border-top-left-radius", "50%");
+    await expect(face(707)).not.toHaveCSS("border-top-left-radius", "50%");
+    const colorOf = async (id: number) =>
+      face(id).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          hue: style.getPropertyValue("--owner-hue"),
+          stage: style.getPropertyValue("--stage-strength"),
+          fill: style.backgroundColor,
+        };
+      });
+    const setup = await colorOf(707),
+      tax = await colorOf(708),
+      complete = await colorOf(709);
+    expect(setup.hue).toBeTruthy();
+    expect(complete.hue).toBe(setup.hue);
+    expect(tax.hue).not.toBe(setup.hue);
+    expect(complete.stage.trim()).toBe("100%");
+    expect(complete.fill).not.toBe(setup.fill);
+    await expectNoHorizontalOverflow(page);
+    await expectNoBlockingA11y(page);
+    await page.screenshot({
+      path: visualReportPath("process-desktop"),
+    });
   });
 
   test("My mobile shell stays within the viewport and labels Messages canonically", async ({

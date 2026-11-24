@@ -133,7 +133,9 @@ class TestGetCriticalDeadlines:
         mock_conn.fetchrow = AsyncMock(return_value={"count": 3})
         mock_pool = _make_pool(mock_conn)
 
-        result = await _get_critical_deadlines(mock_pool, "admin1", is_admin=True)
+        result = await _get_critical_deadlines(
+            mock_pool, {"email": "admin1@example.test", "role": "admin"}
+        )
         assert result == 3
 
     @pytest.mark.asyncio
@@ -144,7 +146,9 @@ class TestGetCriticalDeadlines:
         mock_conn.fetchrow = AsyncMock(return_value={"count": 1})
         mock_pool = _make_pool(mock_conn)
 
-        result = await _get_critical_deadlines(mock_pool, "team1", is_admin=False)
+        result = await _get_critical_deadlines(
+            mock_pool, {"email": "team1@example.test", "role": "team"}
+        )
         assert result == 1
 
     @pytest.mark.asyncio
@@ -154,7 +158,9 @@ class TestGetCriticalDeadlines:
         mock_pool = MagicMock()
         mock_pool.acquire.side_effect = Exception("fail")
 
-        result = await _get_critical_deadlines(mock_pool, "user1", is_admin=False)
+        result = await _get_critical_deadlines(
+            mock_pool, {"email": "user1@example.test", "role": "team"}
+        )
         assert result == 0
 
 

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, field_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.deps.process_access import process_session, require_visible_process
 from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin, verify_client_access
 from backend.app.utils.error_handlers import handle_database_error
@@ -434,7 +435,7 @@ async def get_client_timeline(
 @router.get("/practice/{practice_id}/history")
 async def get_practice_history(
     practice_id: int = Path(..., gt=0, description="Practice ID"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """
@@ -442,14 +443,7 @@ async def get_practice_history(
     """
     try:
         async with db_pool.acquire() as conn:
-            # Check practice exists and RBAC via its client_id
-            check = await conn.fetchrow(
-                "SELECT id, client_id FROM practices WHERE id = $1", practice_id
-            )
-            if not check:
-                raise HTTPException(status_code=404, detail="Practice not found")
-            await verify_client_access(check["client_id"], current_user, conn, allow_assigned=True)
-
+            await require_visible_process(conn, practice_id, current_user)
             rows = await conn.fetch(
                 """
                 SELECT id, client_id, practice_id, conversation_id, interaction_type, channel,
