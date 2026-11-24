@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { tokenFor } from "../src/lib/auth/session-test-utils";
 import AxeBuilder from "@axe-core/playwright";
 
 const E2E_PORT = process.env.BZ_E2E_PORT ?? "3000";
@@ -12,23 +13,29 @@ const syntheticPortalProfile = {
   role: "admin",
 };
 
-async function seedSyntheticPortalSession(page: Page): Promise<void> {
+async function seedSyntheticPortalSession(
+  page: Page,
+  bearer = "synthetic-ui-test-token",
+): Promise<void> {
   // A real login sets the HttpOnly session cookie as well as localStorage, and
   // proxy.ts gates workspace paths on that cookie server-side (SAETTA W-C R-A):
   // seeding localStorage alone is an anonymous visitor to the server.
   await page.context().addCookies(
     [KITA_ORIGIN, MY_ORIGIN].map((url) => ({
       name: "nz_access_token",
-      value: "synthetic-ui-test-token",
+      value: bearer,
       url,
       httpOnly: true,
       sameSite: "Lax" as const,
     })),
   );
-  await page.addInitScript((profile) => {
-    localStorage.setItem("auth_token", "synthetic-ui-test-token");
-    localStorage.setItem("user_profile", JSON.stringify(profile));
-  }, syntheticPortalProfile);
+  await page.addInitScript(
+    ({ profile, bearer }) => {
+      localStorage.setItem("auth_token", bearer);
+      localStorage.setItem("user_profile", JSON.stringify(profile));
+    },
+    { profile: syntheticPortalProfile, bearer },
+  );
 
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
@@ -161,7 +168,13 @@ async function expectNoBlockingA11y(page: Page): Promise<void> {
 const syntheticPractice = {
   id: 707,
   client_id: 17,
-  client_name: "UI Contract",
+  client_name: "Sample Client",
+  assigned_to: "setup@example.test",
+  assignee_member_id: "operator-setup",
+  assignee_color_index: 1,
+  assignee_name: "Setup Operator",
+  assignee_department: "setup",
+  can_edit_process: true,
   practice_type_code: "visa",
   practice_type_name: "Visa Extension",
   status: "waiting_payment",
@@ -174,15 +187,54 @@ const syntheticPractice = {
 const syntheticUnknownPractice = {
   ...syntheticPractice,
   id: 708,
+  practice_type_name: "SPT Filing",
+  assigned_to: "tax@example.test",
+  assignee_member_id: "operator-tax",
+  assignee_color_index: 2,
+  assignee_name: "Tax Operator",
+  assignee_department: "tax",
   status: "legacy_manual_review",
 };
 
 async function seedSyntheticProcessBoard(page: Page): Promise<void> {
-  await seedSyntheticPortalSession(page);
+  await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
   await page.route("**/api/crm/practices**", async (route) => {
+    const catalog = new URL(route.request().url()).pathname.endsWith(
+      "/types/catalog",
+    );
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify([syntheticPractice, syntheticUnknownPractice]),
+      body: JSON.stringify(
+        catalog
+          ? { categories: [], total_services: 0 }
+          : [
+              syntheticPractice,
+              syntheticUnknownPractice,
+              {
+                ...syntheticPractice,
+                id: 709,
+                client_name: "Sample Company",
+                practice_type_name: "Company Setup",
+                status: "completed",
+                payment_status: "paid",
+              },
+              {
+                ...syntheticUnknownPractice,
+                id: 710,
+                client_name: "Sample Studio",
+                practice_type_name: "Tax Registration",
+                status: "on_process",
+                payment_status: "paid",
+              },
+              {
+                ...syntheticPractice,
+                id: 711,
+                client_name: "Sample Applicant",
+                practice_type_name: "Stay Permit",
+                status: "waiting_documents",
+              },
+            ],
+      ),
     });
   });
 }
@@ -252,6 +304,52 @@ test.describe("Bali Zero product-family noqata page Page", () => {
       "Needs review · Legacy Manual Review",
     );
     await expectNoBlockingA11y(page);
+    await page.getByTestId("process-card-708").scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: test.info().outputPath("process-mobile.png"),
+    });
+  });
+
+  test("Process renders square and circular department cards with stable color through completion", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await seedSyntheticProcessBoard(page);
+    await page.goto(`${KITA_ORIGIN}/process`);
+    await page
+      .getByRole("button", { name: /Completed.*click to expand/ })
+      .click();
+    const face = (id: number) =>
+      page.getByTestId(`process-card-${id}`).locator("div[data-department]");
+    for (const id of [707, 708, 709]) {
+      const box = await face(id).boundingBox();
+      expect(box).toBeTruthy();
+      expect(Math.abs(box!.width - box!.height)).toBeLessThanOrEqual(1);
+    }
+    await expect(face(708)).toHaveCSS("border-top-left-radius", "50%");
+    await expect(face(707)).not.toHaveCSS("border-top-left-radius", "50%");
+    const colorOf = async (id: number) =>
+      face(id).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          hue: style.getPropertyValue("--owner-hue"),
+          stage: style.getPropertyValue("--stage-strength"),
+          fill: style.backgroundColor,
+        };
+      });
+    const setup = await colorOf(707),
+      tax = await colorOf(708),
+      complete = await colorOf(709);
+    expect(setup.hue).toBeTruthy();
+    expect(complete.hue).toBe(setup.hue);
+    expect(tax.hue).not.toBe(setup.hue);
+    expect(complete.stage.trim()).toBe("100%");
+    expect(complete.fill).not.toBe(setup.fill);
+    await expectNoHorizontalOverflow(page);
+    await expectNoBlockingA11y(page);
+    await page.screenshot({
+      path: test.info().outputPath("process-desktop.png"),
+    });
   });
 
   test("My mobile shell stays within the viewport and labels Messages canonically", async ({

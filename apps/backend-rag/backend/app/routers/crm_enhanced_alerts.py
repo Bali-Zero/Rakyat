@@ -15,6 +15,7 @@ from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.auth import require_team_member
 from backend.app.deps.crm_access import get_practices_user_filter
+from backend.app.deps.process_access import process_assignees, process_session
 from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import can_view_all_practices, is_crm_admin
 from backend.app.utils.logging_utils import get_logger
@@ -92,9 +93,7 @@ WITH duties AS (
            p.id, pt.name, p.status,
            p.created_at, EXTRACT(DAY FROM (CURRENT_TIMESTAMP - p.created_at))::integer,
            NULL::date, NULL::integer, NULLIF(LOWER(p.assigned_to), ''),
-           COALESCE($2::boolean OR c.assigned_to = ANY($1::text[])
-                    OR p.created_by = ANY($1::text[])
-                    OR LOWER(p.assigned_to) = ANY($1::text[]), FALSE),
+           TRUE,
            (p.created_at + INTERVAL '14 days')::date
       FROM practices p
       JOIN clients c ON c.id = p.client_id
@@ -103,7 +102,9 @@ WITH duties AS (
        AND isfinite(p.created_at)
        AND p.created_at < CURRENT_TIMESTAMP - INTERVAL '14 days'
 ), visible AS (
-    SELECT * FROM duties WHERE ($3::text[] IS NULL OR assigned_to = ANY($3::text[]))
+    SELECT * FROM duties
+     WHERE (kind = 'process' AND ($2::boolean OR assigned_to = ANY($1::text[])))
+        OR (kind = 'passport' AND ($3::text[] IS NULL OR assigned_to = ANY($3::text[])))
 ), filtered AS (
     SELECT * FROM visible
      WHERE ($4::text IS NULL OR assigned_to = $4
@@ -119,9 +120,10 @@ async def get_member_obligations(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     pool: Any = Depends(get_database_pool),
-    current_user: dict = Depends(require_team_member),
+    current_user: dict = Depends(process_session),
 ) -> MemberObligationsOut:
     """Personal duties from CRM records; team overview is a separate read grant."""
+    require_team_member(current_user)
     email = str(current_user.get("email") or "").strip().lower()
     if not email:
         raise HTTPException(status_code=401, detail="Authenticated team identity required")
@@ -136,14 +138,17 @@ async def get_member_obligations(
             status_code=403, detail="Personal obligations are limited to your assignments"
         )
 
-    args = (
-        sorted(peers),
-        full_view,
-        None if scope == "team" else sorted(peers),
-        owner,
-        _ACTIVE_PRACTICE_STATES,
-    )
     async with pool.acquire() as conn:
+        practice_owners = await process_assignees(conn, current_user)
+        if scope == "mine" and practice_owners != []:
+            practice_owners = [email]
+        args = (
+            practice_owners,
+            practice_owners is None,
+            None if scope == "team" else sorted(peers),
+            owner,
+            _ACTIVE_PRACTICE_STATES,
+        )
         counts = await conn.fetchrow(
             _MEMBER_OBLIGATIONS_CTE
             + "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE kind = 'passport') "

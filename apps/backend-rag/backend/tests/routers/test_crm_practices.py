@@ -146,9 +146,7 @@ class TestListPractices:
             ]
         )
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             response = client.get("/api/crm/practices/")
 
         assert response.status_code == 200
@@ -179,9 +177,7 @@ class TestGetPractice:
             }
         )
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             response = client.get("/api/crm/practices/10")
 
         assert response.status_code == 200
@@ -196,6 +192,7 @@ class TestUpdatePractice:
         mock_db_pool,
     ) -> None:
         _pool, conn = mock_db_pool
+        conn.fetchval.return_value = 1  # Visible practice target
         conn.fetchrow = AsyncMock(
             side_effect=[
                 {
@@ -247,6 +244,7 @@ class TestUpdatePractice:
         mock_db_pool,
     ) -> None:
         _pool, conn = mock_db_pool
+        conn.fetchval.return_value = 1  # Visible practice target
         conn.fetchrow = AsyncMock(
             return_value={
                 "status": "inquiry",

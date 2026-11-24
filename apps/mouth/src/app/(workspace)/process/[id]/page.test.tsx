@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   back: vi.fn(),
   push: vi.fn(),
   useParams: vi.fn(),
+  session: vi.fn(),
   getProfile: vi.fn(),
   getPractice: vi.fn(),
   updatePractice: vi.fn(),
@@ -38,6 +39,13 @@ const mocks = vi.hoisted(() => ({
   trackQuickAction: vi.fn(),
 }));
 
+vi.mock("@/lib/auth/session-identity", async (load) => ({
+  ...(await load<typeof import("@/lib/auth/session-identity")>()),
+  useSessionIdentity: mocks.session,
+  acceptResponse: (res: { sentSub: string }, who: { sub: string }) =>
+    res.sentSub === who.sub && who.sub === mocks.session()?.sub,
+}));
+
 vi.mock("next/navigation", () => ({
   useParams: mocks.useParams,
   useRouter: () => ({
@@ -49,6 +57,11 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api", () => ({
   api: {
     getProfile: mocks.getProfile,
+    requestWithCredential: async (path: string) => {
+      const sentSub = mocks.session()?.sub;
+      const data = await mocks.getPractice(Number(path.split("/").pop()));
+      return { data, sentSub };
+    },
     isAdmin: mocks.isAdmin,
     crm: {
       getPractice: mocks.getPractice,
@@ -166,6 +179,8 @@ function makePractice(overrides: Partial<Practice> = {}): Practice {
         at: "2026-01-03T00:00:00.000Z",
       },
     ],
+    can_edit_process: true,
+    can_manage_delivery: true,
     ...overrides,
   };
 }
@@ -185,6 +200,7 @@ async function renderLoaded(practice: Practice = makePractice()) {
 describe("CaseDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.session.mockReturnValue({ sub: "42", epoch: 1 });
     mocks.useParams.mockReturnValue({ id: "42" });
     mocks.getProfile.mockResolvedValue(profile);
     mocks.isAdmin.mockReturnValue(true);
@@ -201,6 +217,40 @@ describe("CaseDetailPage", () => {
     mocks.invalidateClient.mockResolvedValue(undefined);
     vi.spyOn(window, "open").mockImplementation(() => null);
     vi.mocked(window.confirm).mockReturnValue(true);
+  });
+
+  it("shows the process without edit controls for a read-only viewer", async () => {
+    const user = await renderLoaded(
+      makePractice({ can_edit_process: false, can_manage_delivery: false }),
+    );
+    expect(
+      screen.queryByRole("button", { name: /^Edit$/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit notes" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More options" }));
+    expect(
+      screen.queryByRole("button", { name: "Delete process" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("discards a delayed detail response after an account switch", async () => {
+    let finish: (value: Practice) => void = () => {};
+    mocks.getPractice.mockImplementationOnce(
+      () =>
+        new Promise<Practice>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const page = render(<CaseDetailPage />);
+    mocks.session.mockReturnValue({ sub: "84", epoch: 2 });
+    mocks.getPractice.mockRejectedValueOnce(new Error("Practice not found"));
+    page.rerender(<CaseDetailPage />);
+    await screen.findByText("Failed to load process details");
+    finish(makePractice({ notes: "Private fixture note" }));
+    await waitFor(() => expect(mocks.getPractice).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Private fixture note")).not.toBeInTheDocument();
   });
 
   it("shows loading until the practice request settles", async () => {

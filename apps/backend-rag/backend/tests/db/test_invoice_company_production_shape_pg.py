@@ -39,7 +39,10 @@ MIGRATION = (
 )
 USER = {"email": "synthetic.staff@example.invalid", "role": "admin"}
 
+FIXTURE_TAX_NUMBER = "01.234.567.8-901.000"
+
 _SCHEMA_SQL = """
+CREATE TABLE team_members (id SERIAL PRIMARY KEY, email text, department text, active boolean, full_name text, name text, role text, created_at timestamptz default now());
 CREATE TABLE practice_types (
     id SERIAL PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, category TEXT,
     base_price NUMERIC, is_active BOOLEAN NOT NULL DEFAULT true, required_documents JSONB
@@ -126,6 +129,8 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[asyncpg.Pool]:
             return 0
 
         monkeypatch.setattr(crm_practices, "invalidate_cache", no_cache)
+        monkeypatch.setenv("PROCESS_VIEW_GRANTS_JSON", '{"synthetic.staff@example.invalid":"all"}')
+        await created.execute("INSERT INTO team_members (email, active, role) VALUES ($1, true, $2)", USER["email"], USER["role"])
         yield created
     finally:
         if created is not None:
@@ -171,8 +176,7 @@ async def test_historical_filing_keeps_one_internal_process_in_its_wita_month(po
     business = await company(pool, "Synthetic Test Company")
     await link(pool, person, business)
     await pool.execute("""
-        CREATE TABLE team_members (email text, department text, active boolean);
-        INSERT INTO team_members VALUES ('consultant@example.invalid', 'Tax', true);
+        INSERT INTO team_members (email, department, active, role) VALUES ('consultant@example.invalid', 'Tax', true, 'tax consultant');
         CREATE TABLE client_family_members (id bigint, full_name text, relationship text);
         ALTER TABLE practice_types ADD COLUMN description text, ADD COLUMN typical_duration_days integer;
     """)
@@ -192,7 +196,7 @@ async def test_historical_filing_keeps_one_internal_process_in_its_wita_month(po
     assert not await pool.fetchval("SELECT client_visible FROM practices WHERE id=$1", saved.id)
     await pool.execute("UPDATE practices SET created_at='2024-11-10T00:00:00Z' WHERE id=$1", saved.id)
     for month in ("2024-09", "2024-10", "2024-11"):
-        listed = await crm_practices.list_practices(pool=pool, status="completed", month=month)
+        listed = await crm_practices.list_practices(db_pool=pool, current_user={"email": filing.assigned_to, "role": "tax consultant"}, status="completed", month=month)
         assert [r["id"] for r in listed] == ([saved.id] if month == "2024-10" else [])
 
 
@@ -256,7 +260,7 @@ def shows(text: str, needle: str) -> bool:
 @pytest.mark.asyncio
 async def test_production_defaults_practice_bills_the_chosen_company(pool: asyncpg.Pool) -> None:
     person = await client(pool)
-    co = await company(pool, "PT Synthetic Maju", "01.234.567.8-901.000", "Synthetic Office Road 9")
+    co = await company(pool, "PT Synthetic Maju", FIXTURE_TAX_NUMBER, "Synthetic Office Road 9")
     created = await create(pool, person, invoice_company_id=co)
     assert created.invoice_company_id == co
     assert await pool.fetchval(
@@ -264,7 +268,7 @@ async def test_production_defaults_practice_bills_the_chosen_company(pool: async
     )
     text = await pdf_text(pool, created.id)
     assert shows(text, "PT Synthetic Maju")
-    assert shows(text, "NPWP: 01.234.567.8-901.000")
+    assert shows(text, f"NPWP: {FIXTURE_TAX_NUMBER}")
     assert shows(text, "Synthetic Office Road 9")
     assert shows(text, "Attn: Synthetic Person")
     assert not shows(text, "Synthetic Home Street 1")
@@ -309,7 +313,7 @@ async def test_same_npwp_with_other_name_reuses_and_links_second_person(pool: as
         await client(pool, "Synthetic One"),
         await client(pool, "Synthetic Two"),
     )
-    co = await company(pool, "PT Synthetic Lama", "01.234.567.8-901.000")
+    co = await company(pool, "PT Synthetic Lama", FIXTURE_TAX_NUMBER)
     created = await create(
         pool,
         second_person,
@@ -550,7 +554,7 @@ async def test_typed_npwp_that_exists_nowhere_never_reuses_a_company_with_anothe
         pool,
         person,
         invoice_company_name="PT Synthetic Sama",
-        invoice_company_npwp="01.234.567.8-901.000",
+        invoice_company_npwp=FIXTURE_TAX_NUMBER,
     )
     assert created.invoice_company_id != other
     assert await pool.fetchval("SELECT count(*) FROM companies") == 2
@@ -566,14 +570,14 @@ async def test_typed_npwp_that_exists_nowhere_reuses_a_same_name_company_without
         pool,
         person,
         invoice_company_name="pt synthetic polos",
-        invoice_company_npwp="01.234.567.8-901.000",
+        invoice_company_npwp=FIXTURE_TAX_NUMBER,
     )
     assert created.invoice_company_id == bare
     assert (
         await pool.fetchval("SELECT npwp_company FROM companies WHERE id=$1", bare)
-        == "01.234.567.8-901.000"
+        == FIXTURE_TAX_NUMBER
     )
-    assert shows(await pdf_text(pool, created.id), "NPWP: 01.234.567.8-901.000")
+    assert shows(await pdf_text(pool, created.id), f"NPWP: {FIXTURE_TAX_NUMBER}")
     again = await create(
         pool, person, invoice_company_name="Other Name", invoice_company_npwp="012345678901000"
     )
@@ -583,7 +587,7 @@ async def test_typed_npwp_that_exists_nowhere_reuses_a_same_name_company_without
 @pytest.mark.asyncio
 async def test_one_npwp_on_two_companies_is_a_409_not_a_first_pick(pool: asyncpg.Pool) -> None:
     person = await client(pool)
-    a = await company(pool, "PT Synthetic Dua A", "01.234.567.8-901.000")
+    a = await company(pool, "PT Synthetic Dua A", FIXTURE_TAX_NUMBER)
     b = await company(pool, "PT Synthetic Dua B", "012345678901000")
     with pytest.raises(HTTPException) as caught:
         await create(

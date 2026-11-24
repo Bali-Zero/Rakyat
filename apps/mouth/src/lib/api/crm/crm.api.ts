@@ -1,3 +1,7 @@
+import {
+  acceptResponse,
+  type SessionIdentity,
+} from "@/lib/auth/session-identity";
 import type { IApiClient } from "../types/api-client.types";
 import { ApiError } from "../error-handler";
 import type {
@@ -114,6 +118,7 @@ export class CrmApi {
       month?: string;
       search?: string;
       include_history?: boolean;
+      session?: SessionIdentity;
     } = {},
   ): Promise<Practice[]> {
     const queryParams = new URLSearchParams();
@@ -129,6 +134,17 @@ export class CrmApi {
     const queryString = queryParams.toString();
     const url = `/api/crm/practices${queryString ? `?${queryString}` : ""}`;
 
+    if (params.session) {
+      const response =
+        await this.client.requestWithCredential?.<Practice[]>(url);
+      if (!response || !acceptResponse(response, params.session)) {
+        throw new ApiError(
+          "Your session changed. Reload the process board.",
+          403,
+        );
+      }
+      return response.data;
+    }
     return this.client.request<Practice[]>(url);
   }
 

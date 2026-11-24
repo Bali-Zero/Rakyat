@@ -7,7 +7,8 @@ import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, Path
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.dependencies import get_database_pool
+from backend.app.deps.process_access import process_session
 from backend.app.routers.portal import get_current_client
 from backend.services.crm import practice_delivery as delivery
 
@@ -16,7 +17,7 @@ staff = APIRouter(prefix="/api/crm/practices", tags=["crm-practices"])
 portal_router = APIRouter(prefix="/api/portal/process", tags=["portal-process"])
 PracticeId = Annotated[int, Path(gt=0, le=2**31 - 1)]
 Pool = Annotated[asyncpg.Pool, Depends(get_database_pool)]
-Staff = Annotated[dict, Depends(get_current_user)]
+Staff = Annotated[dict, Depends(process_session)]
 Client = Annotated[dict, Depends(get_current_client)]
 SlotKey = Annotated[str, Path(min_length=1, max_length=100)]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=140)]
@@ -51,7 +52,7 @@ class DeliveryTitles(BaseModel):
 @staff.get("/{practice_id}/delivery")
 async def get_delivery(practice_id: PracticeId, user: Staff, pool: Pool) -> dict[str, Any]:
     async with pool.acquire() as conn:
-        p = await delivery.practice(conn, practice_id, user)
+        p = await delivery.practice(conn, practice_id, user, read_only=True)
         return await delivery.state(conn, p, user)
 
 

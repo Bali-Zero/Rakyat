@@ -40,6 +40,11 @@ import {
   needsServiceBefore,
   type PracticeStatus,
 } from "@/lib/api/crm/state-machine";
+import {
+  acceptResponse,
+  useSessionIdentity,
+  type SessionIdentity,
+} from "@/lib/auth/session-identity";
 import { casesMetrics } from "@/lib/metrics/cases-metrics";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
@@ -113,10 +118,36 @@ const STATUS_INFO: Record<string, { label: string; icon: React.ReactNode }> = {
 };
 
 export default function CaseDetailPage() {
-  const router = useRouter();
+  const identity = useSessionIdentity();
   const params = useParams();
+  const caseId = params?.id ? Number(params.id) : null;
+  if (!identity) return null;
+  return (
+    <StaffProcessDetail
+      key={JSON.stringify([identity.sub, identity.epoch, caseId])}
+      identity={identity}
+      caseId={caseId}
+    />
+  );
+}
+
+async function readPractice(id: number, identity: SessionIdentity) {
+  const response = await api.requestWithCredential<Practice>(
+    `/api/crm/practices/${id}`,
+  );
+  if (!acceptResponse(response, identity)) throw new Error("Session changed");
+  return response.data;
+}
+
+function StaffProcessDetail({
+  identity,
+  caseId,
+}: {
+  identity: SessionIdentity;
+  caseId: number | null;
+}) {
+  const router = useRouter();
   const toast = useToast();
-  const caseId = params?.id ? parseInt(params.id as string) : null;
 
   const { options: teamMemberOptions } = useTeamMemberOptions();
   const [practice, setPractice] = useState<Practice | null>(null);
@@ -210,6 +241,7 @@ export default function CaseDetailPage() {
   }, [caseId]);
 
   useEffect(() => {
+    let active = true;
     const loadPractice = async () => {
       if (!caseId) {
         setError("Invalid process ID");
@@ -231,7 +263,8 @@ export default function CaseDetailPage() {
 
       try {
         // ✅ Using dedicated GET endpoint for single practice (efficient: 1 query instead of loading 200 practices)
-        const foundPractice = await api.crm.getPractice(caseId);
+        const foundPractice = await readPractice(caseId, identity);
+        if (!active) return;
         const apiDuration = performance.now() - apiStart;
         casesMetrics.trackApiCall(
           `/api/crm/practices/${caseId}`,
@@ -250,6 +283,7 @@ export default function CaseDetailPage() {
           userEmail.current || undefined,
         );
       } catch (err) {
+        if (!active) return;
         const apiDuration = performance.now() - apiStart;
         casesMetrics.trackApiCall(
           `/api/crm/practices/${caseId}`,
@@ -275,12 +309,15 @@ export default function CaseDetailPage() {
           userEmail.current || undefined,
         );
       } finally {
-        setIsLoading(false);
+        if (active) setIsLoading(false);
       }
     };
 
-    loadPractice();
-  }, [caseId]);
+    void loadPractice();
+    return () => {
+      active = false;
+    };
+  }, [caseId, identity]);
 
   const formatDate = (dateString?: string | null) => {
     if (!dateString) return "Not set";
@@ -691,6 +728,7 @@ export default function CaseDetailPage() {
     );
   }
 
+  const canEdit = practice.can_edit_process === true;
   const statusInfo = STATUS_INFO[practice.status] || {
     label: practice.status,
     icon: <FileText className="w-4 h-4" />,
@@ -816,10 +854,12 @@ export default function CaseDetailPage() {
                 )}
               </div>
             )}
-            <Button variant="outline" size="sm" onClick={handleEditClick}>
-              <Edit className="w-4 h-4 mr-2" />
-              Edit
-            </Button>
+            {canEdit && (
+              <Button variant="outline" size="sm" onClick={handleEditClick}>
+                <Edit className="w-4 h-4 mr-2" />
+                Edit
+              </Button>
+            )}
             <div className="relative" ref={moreMenuRef}>
               <Button
                 variant="outline"
@@ -847,35 +887,42 @@ export default function CaseDetailPage() {
                   </button>
                   {/* WhatsApp/Email/profile actions live in the Client
                       Information card (main content, kita-prune lot 6). */}
-                  <div className="my-1 border-t border-[var(--bz-border)]" />
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_10%,transparent)] transition-colors"
-                    onClick={async () => {
-                      setShowMoreMenu(false);
-                      if (!caseId) return;
-                      const confirmed = window.confirm(
-                        "Delete this process? This action will cancel the process and cannot be undone.",
-                      );
-                      if (!confirmed) return;
-                      try {
-                        const user = await api.getProfile();
-                        await api.crm.deletePractice(caseId, user.email);
-                        await invalidateClient();
-                        sonnerToast.success("Process deleted");
-                        router.push("/process");
-                      } catch (err) {
-                        logger.error(
-                          "Failed to delete process",
-                          { component: "CaseDetail", action: "deleteProcess" },
-                          toError(err),
-                        );
-                        sonnerToast.error("Failed to delete process");
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete process
-                  </button>
+                  {canEdit && (
+                    <>
+                      <div className="my-1 border-t border-[var(--bz-border)]" />
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_10%,transparent)] transition-colors"
+                        onClick={async () => {
+                          setShowMoreMenu(false);
+                          if (!caseId) return;
+                          const confirmed = window.confirm(
+                            "Delete this process? This action will cancel the process and cannot be undone.",
+                          );
+                          if (!confirmed) return;
+                          try {
+                            const user = await api.getProfile();
+                            await api.crm.deletePractice(caseId, user.email);
+                            await invalidateClient();
+                            sonnerToast.success("Process deleted");
+                            router.push("/process");
+                          } catch (err) {
+                            logger.error(
+                              "Failed to delete process",
+                              {
+                                component: "CaseDetail",
+                                action: "deleteProcess",
+                              },
+                              toError(err),
+                            );
+                            sonnerToast.error("Failed to delete process");
+                          }
+                        }}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete process
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -949,6 +996,7 @@ export default function CaseDetailPage() {
                     className="flex flex-col items-center gap-1 flex-shrink-0 group/step"
                     onClick={() => jumpToStatus(step.key)}
                     disabled={
+                      !canEdit ||
                       isCurrent ||
                       !!isJumpingStatus ||
                       stepNeedsPrice ||
@@ -1036,12 +1084,14 @@ export default function CaseDetailPage() {
       })()}
 
       {/* Open inquiry: service still to be chosen (required before Documents) */}
-      {caseId && practice.practice_type_code === OPEN_INQUIRY_TYPE_CODE && (
-        <SelectServiceCard
-          practiceId={caseId}
-          onSaved={(saved) => applyPracticeUpdate(saved, { service: true })}
-        />
-      )}
+      {caseId &&
+        canEdit &&
+        practice.practice_type_code === OPEN_INQUIRY_TYPE_CODE && (
+          <SelectServiceCard
+            practiceId={caseId}
+            onSaved={(saved) => applyPracticeUpdate(saved, { service: true })}
+          />
+        )}
 
       {caseId &&
         (practice.status === "completed" ||
@@ -1054,8 +1104,7 @@ export default function CaseDetailPage() {
               setPractice((previous) =>
                 previous ? { ...previous, status: "completed" } : previous,
               );
-              void api.crm
-                .getPractice(caseId)
+              void readPractice(caseId, identity)
                 .then((updated) => {
                   setPractice((previous) =>
                     previous?.id === updated.id
@@ -1255,6 +1304,7 @@ export default function CaseDetailPage() {
 
           {caseId && (
             <InvoiceCompanyCard
+              readOnly={!canEdit}
               practice={practice}
               onSaved={(patch) =>
                 setPractice((current) =>
@@ -1306,9 +1356,13 @@ export default function CaseDetailPage() {
                 </label>
                 <button
                   onClick={cyclePriority}
-                  disabled={isUpdatingPriority}
-                  title="Click to cycle: normal → high → urgent"
-                  aria-label="Cycle priority"
+                  disabled={!canEdit || isUpdatingPriority}
+                  title={
+                    canEdit
+                      ? "Click to cycle: normal → high → urgent"
+                      : undefined
+                  }
+                  aria-label={canEdit ? "Cycle priority" : "Priority"}
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium transition-colors cursor-pointer ${
                     practice.priority === "urgent"
                       ? "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_25%,transparent)]"
@@ -1389,8 +1443,9 @@ export default function CaseDetailPage() {
                     }}
                     className="font-medium hover:underline text-left transition-colors"
                     style={{ color: "var(--bz-text-1)" }}
-                    title="Click to edit"
-                    aria-label="Edit quoted price"
+                    disabled={!canEdit}
+                    title={canEdit ? "Click to edit" : undefined}
+                    aria-label={canEdit ? "Edit quoted price" : "Quoted price"}
                   >
                     {practice.quoted_price != null ? (
                       <Money value={practice.quoted_price} />
@@ -1447,8 +1502,9 @@ export default function CaseDetailPage() {
                     }}
                     className="font-medium hover:underline text-left transition-colors"
                     style={{ color: "var(--bz-text-1)" }}
-                    title="Click to edit"
-                    aria-label="Edit actual price"
+                    disabled={!canEdit}
+                    title={canEdit ? "Click to edit" : undefined}
+                    aria-label={canEdit ? "Edit actual price" : "Actual price"}
                   >
                     {practice.actual_price != null ? (
                       <Money value={practice.actual_price} />
@@ -1652,7 +1708,7 @@ export default function CaseDetailPage() {
                 <FileText className="w-5 h-5" />
                 Notes
               </h2>
-              {!isEditingNotes && (
+              {canEdit && !isEditingNotes && (
                 <button
                   onClick={() => setIsEditingNotes(true)}
                   className="p-1.5 rounded-lg transition-colors"
@@ -1713,9 +1769,9 @@ export default function CaseDetailPage() {
               </div>
             ) : (
               <div
-                className="cursor-pointer rounded-lg p-3 min-h-[80px] transition-colors"
+                className={`rounded-lg p-3 min-h-[80px] transition-colors ${canEdit ? "cursor-pointer" : ""}`}
                 style={{ background: "var(--bz-base)" }}
-                onClick={() => setIsEditingNotes(true)}
+                onClick={canEdit ? () => setIsEditingNotes(true) : undefined}
               >
                 {practice.notes ? (
                   <p
@@ -1729,7 +1785,7 @@ export default function CaseDetailPage() {
                     className="text-sm italic"
                     style={{ color: "var(--bz-text-2)" }}
                   >
-                    Click to add notes…
+                    {canEdit ? "Click to add notes…" : "No notes"}
                   </p>
                 )}
               </div>
@@ -1745,7 +1801,9 @@ export default function CaseDetailPage() {
               the primary instance for all three. */}
 
           {/* Required Documents */}
-          {caseId && <RequiredDocumentsCard practiceId={caseId} />}
+          {caseId && (
+            <RequiredDocumentsCard practiceId={caseId} readOnly={!canEdit} />
+          )}
 
           {/* Status History */}
           {practice.status_transitions &&
@@ -1846,7 +1904,7 @@ export default function CaseDetailPage() {
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
+      {isEditModalOpen && canEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div
             className="rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto"

@@ -1,42 +1,28 @@
 import type { Practice } from "@/lib/api/crm/crm.types";
 import { COLUMN_COLORS, getStatusColumn } from "./kanban-colors";
 
-interface GhostCardProps {
+export function GhostCard({
+  practice,
+  onClick,
+}: {
   practice: Practice;
   onClick: () => void;
-}
-
-export function GhostCard({ practice, onClick }: GhostCardProps) {
-  const currentColumn = getStatusColumn(practice.status);
-  const colors = COLUMN_COLORS[currentColumn];
-  const isCompleted = currentColumn === "completed";
-
+}) {
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className="rounded-lg p-2.5 cursor-pointer transition-all hover:opacity-50"
-      style={{
-        opacity: 0.35,
-        background: "rgba(255,255,255, 0.02)",
-        border: "1px solid rgba(255,255,255, 0.04)",
-      }}
+      className="block min-h-11 w-full rounded-md px-2 py-2 text-left text-xs text-[var(--bz-text-2)] hover:bg-[var(--bz-card-hover)] focus-visible:outline-2 focus-visible:outline-[var(--bz-focus-ring)]"
     >
-      <p className="text-xs font-medium text-[var(--bz-text-2)]">
-        {practice.practice_type_code?.toUpperCase().replace(/_/g, " ") ||
-          "Process"}
-      </p>
-      <p className="text-[10px] text-[var(--bz-text-2)]/60 mt-0.5">
+      <span className="block truncate font-medium text-[var(--bz-text-1)]">
         {practice.client_name || "Unknown Client"}
-      </p>
-      <div className="flex items-center gap-1 mt-1.5">
-        <span
-          className="w-[5px] h-[5px] rounded-full"
-          style={{ background: colors.textColor }}
-        />
-        <span className="text-[8px] text-[var(--bz-text-2)]/50">
-          {isCompleted ? "completata" : `ora: ${colors.label}`}
-        </span>
-      </div>
-    </div>
+      </span>
+      <span className="block truncate">
+        {practice.practice_type_name ||
+          practice.practice_type_code ||
+          "Process"}{" "}
+        · {COLUMN_COLORS[getStatusColumn(practice.status)].label}
+      </span>
+    </button>
   );
 }

@@ -36,17 +36,13 @@ def _route_source() -> str:
 
 
 def _revenue_growth_func() -> ast.FunctionDef:
-    tree = ast.parse(ROUTER_PATH.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and any(
-            isinstance(d, ast.Call)
-            and any(
-                isinstance(a, ast.Constant) and a.value == "/stats/revenue-growth" for a in d.args
-            )
-            for d in node.decorator_list
-        ):
-            return node
-    raise AssertionError("revenue-growth async handler not found")
+    tree = ast.parse(_route_source())
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)}
+    assert any(
+        isinstance(node, ast.Name) and node.id == "_scoped_revenue_growth"
+        for node in ast.walk(functions["get_practices_revenue_growth"])
+    )
+    return functions["_scoped_revenue_growth"]
 
 
 def test_route_exists() -> None:

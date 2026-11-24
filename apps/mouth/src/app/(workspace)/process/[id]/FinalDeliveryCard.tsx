@@ -123,7 +123,9 @@ function StaffDeliveryCard({
     () => api.crm.getClientCompanies(practice.client_id),
   );
   const writable =
-    data?.status === "on_process" && practice.payment_status === "paid";
+    practice.can_manage_delivery === true &&
+    data?.status === "on_process" &&
+    practice.payment_status === "paid";
   const visaDateSlot = data?.bonus_slot === "electronic_visa";
   const bonusLabel = visaDateSlot ? "Electronic Visa" : "renewed IMK";
   const canDeliver =
@@ -139,7 +141,11 @@ function StaffDeliveryCard({
     companies?.some((company) => String(company.company_id) === companyId);
 
   function repairable(slot?: Slot): boolean {
-    return data?.status === "completed" && slot?.can_repair === true;
+    return (
+      practice.can_manage_delivery === true &&
+      data?.status === "completed" &&
+      slot?.can_repair === true
+    );
   }
 
   async function change(

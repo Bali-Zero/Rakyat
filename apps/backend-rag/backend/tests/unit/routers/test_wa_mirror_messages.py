@@ -232,9 +232,9 @@ def test_member_practice_timeline_requires_assigned_practice(
 
     assert response.status_code == 200
     visibility_query, *visibility_params = mock_db_conn.fetchval.await_args.args
-    assert "p.assigned_to = ANY($2::text[])" in visibility_query
-    assert "p.created_by = ANY($2::text[])" in visibility_query
-    assert "c.assigned_to = ANY($2::text[])" in visibility_query
+    assert "LOWER(BTRIM(p.assigned_to)) = ANY($2::text[])" in visibility_query
+    assert "p.created_by" not in visibility_query
+    assert "c.assigned_to" not in visibility_query
     assert visibility_params == [88, ["member@balizero.com"]]
 
 
