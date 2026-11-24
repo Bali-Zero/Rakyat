@@ -210,3 +210,21 @@ export function usePortalLkpmHistory() {
     staleTime: 5 * 60 * 1000,
   });
 }
+
+/**
+ * The dashboard can only say filings are clear after it has a valid history.
+ * Retained data remains usable during and after a background refetch failure.
+ */
+export function lkpmReadState({
+  data,
+  isError,
+  isFetching,
+}: {
+  data: unknown | undefined;
+  isError: boolean;
+  isFetching: boolean;
+}): "ready" | "error" | "checking" {
+  if (data !== undefined) return "ready";
+  if (isError && !isFetching) return "error";
+  return "checking";
+}

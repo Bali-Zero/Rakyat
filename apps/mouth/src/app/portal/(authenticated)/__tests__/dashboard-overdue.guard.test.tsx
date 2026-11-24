@@ -6,13 +6,24 @@
  * next 30 days. Synthetic data only.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import React from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import PortalHomePage from "../page";
 import {
   collectOverdue,
   daysLate,
+  lkpmReadState,
   usePortalLkpmHistory,
 } from "../_lib/overdue";
 
@@ -404,6 +415,269 @@ describe("LKPM history unreadable is never an all-clear", () => {
     renderPage();
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(await screen.findByText("Upcoming")).toBeInTheDocument();
+  });
+});
+
+describe("LKPM read state transitions", () => {
+  const history = [
+    {
+      ...Q2_FILED,
+      company_id: 401,
+      company_name: "PT Contoh Satu",
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getUserProfile.mockReturnValue({ id: "contoh-a" });
+    mocks.getPortalImpersonation.mockReturnValue(null);
+    mocks.getDashboard.mockResolvedValue({
+      visa: {
+        status: "none",
+        type: null,
+        expiryDate: null,
+        daysRemaining: null,
+      },
+      company: { status: "none", primaryCompanyName: null, totalCompanies: 0 },
+      taxes: { status: "none", nextDeadline: null, daysToDeadline: null },
+      documents: { total: 0, pending: 0 },
+      messages: { unread: 0 },
+      actions: [],
+    });
+    mocks.getTimeline.mockResolvedValue({ entries: [] });
+    mocks.getDashboardSummary.mockResolvedValue({
+      open_actions: [],
+      upcoming_deadlines: [],
+      unread_messages: 0,
+    });
+  });
+
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  it.each([
+    ["pending fetching", undefined, false, true, "checking"],
+    ["pending paused", undefined, false, false, "checking"],
+    ["pending idle", undefined, false, false, "checking"],
+    ["error idle", undefined, true, false, "error"],
+    ["error fetching", undefined, true, true, "checking"],
+    ["success", history, false, false, "ready"],
+    ["error retained", history, true, false, "ready"],
+    ["error fetching retained", history, true, true, "ready"],
+  ])("lkpmReadState: %s", (_case, data, isError, isFetching, expected) => {
+    expect(lkpmReadState({ data, isError, isFetching })).toBe(expected);
+  });
+
+  it("background failure keeps a retained history ready", () => {
+    expect(
+      lkpmReadState({
+        data: history,
+        isError: true,
+        isFetching: false,
+      }),
+    ).toBe("ready");
+  });
+
+  it("checking with other content shows that content and a status line", async () => {
+    mocks.get.mockReturnValue(new Promise(() => {}));
+    mocks.getDashboardSummary.mockResolvedValue({
+      open_actions: [],
+      upcoming_deadlines: [
+        {
+          id: "contoh-upcoming",
+          label: "Upcoming",
+          due_date: "2026-11-20",
+          kind: null,
+        },
+      ],
+      unread_messages: 0,
+    });
+    renderPage();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Checking your filings",
+    );
+    expect(await screen.findByText("Upcoming")).toBeInTheDocument();
+    expect(screen.queryByText(/LKPM Q3 2026/)).not.toBeInTheDocument();
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+  });
+
+  it("Retry held pending replaces the alert and two same-tick clicks join one request", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    mocks.get.mockRejectedValueOnce(new Error("boom"));
+    mocks.get.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    renderPage();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    fireEvent.click(retry);
+    fireEvent.click(retry);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Checking your filings",
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    await act(async () => resolve({ success: true, items: history }));
+    expect(
+      await screen.findByRole("heading", { name: /LKPM Q3 2026/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("offline initial load stays checking and resolves on reconnect", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(["portal", "dashboard"], {
+      visa: {
+        status: "none",
+        type: null,
+        expiryDate: null,
+        daysRemaining: null,
+      },
+      company: { status: "none", primaryCompanyName: null, totalCompanies: 0 },
+      taxes: { status: "none", nextDeadline: null, daysToDeadline: null },
+      documents: { total: 0, pending: 0 },
+      messages: { unread: 0 },
+      actions: [],
+    });
+    client.setQueryData(["portal", "dashboard", "summary"], {
+      open_actions: [],
+      upcoming_deadlines: [],
+      unread_messages: 0,
+    });
+    client.setQueryData(["portal", "timeline", 20], { entries: [] });
+    onlineManager.setOnline(false);
+    mocks.get.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    renderPage(client);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Checking your filings",
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(1));
+    await act(async () => resolve({ success: true, items: [] }));
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+  });
+
+  it("an offline Retry stays checking and resolves on reconnect", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    mocks.get.mockRejectedValueOnce(new Error("boom"));
+    renderPage();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    onlineManager.setOnline(false);
+    mocks.get.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    fireEvent.click(retry);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Checking your filings",
+    );
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(2));
+    await act(async () => resolve({ success: true, items: [] }));
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+  });
+
+  it("a failed background refetch retains history through a further pending refetch", async () => {
+    mocks.get.mockResolvedValueOnce({ success: true, items: history });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    renderPage(client);
+    expect(
+      await screen.findByRole("heading", { name: /LKPM Q3 2026/ }),
+    ).toBeInTheDocument();
+    mocks.get.mockRejectedValueOnce(new Error("background"));
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: ["portal", "dashboard", "lkpm-history"],
+      });
+    });
+    expect(
+      screen.getByRole("heading", { name: /LKPM Q3 2026/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    mocks.get.mockReturnValueOnce(new Promise(() => {}));
+    act(() => {
+      void client.refetchQueries({
+        queryKey: ["portal", "dashboard", "lkpm-history"],
+      });
+    });
+    expect(
+      screen.getByRole("heading", { name: /LKPM Q3 2026/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("an uncached key shows checking, while returning to cached A restores only A", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnMount: false } },
+    });
+    mocks.get.mockResolvedValueOnce({ success: true, items: history });
+    const view = renderPage(client);
+    expect(
+      await screen.findByRole("heading", { name: /LKPM Q3 2026/ }),
+    ).toBeInTheDocument();
+    mocks.getUserProfile.mockReturnValue({ id: "contoh-b" });
+    mocks.get.mockReturnValueOnce(new Promise(() => {}));
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <PortalHomePage />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Checking your filings",
+    );
+    expect(screen.queryByText("All caught up")).not.toBeInTheDocument();
+    mocks.getUserProfile.mockReturnValue({ id: "contoh-a" });
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <PortalHomePage />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: /LKPM Q3 2026/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("returning to cached empty A shows A's all-clear immediately", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnMount: false } },
+    });
+    mocks.get.mockResolvedValueOnce({ success: true, items: [] });
+    const view = renderPage(client);
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    mocks.getUserProfile.mockReturnValue({ id: "contoh-b" });
+    mocks.get.mockReturnValueOnce(new Promise(() => {}));
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <PortalHomePage />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("status");
+    mocks.getUserProfile.mockReturnValue({ id: "contoh-a" });
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <PortalHomePage />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });
 

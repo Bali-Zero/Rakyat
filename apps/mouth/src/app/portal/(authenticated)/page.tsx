@@ -58,6 +58,7 @@ import { DeadlineBadge } from "@balizero/core";
 import { usePortalDateFormat } from "@/lib/format/usePortalDateFormat";
 import {
   collectOverdue,
+  lkpmReadState,
   stillUpcoming,
   usePortalLkpmHistory,
   type OverdueItem,
@@ -332,11 +333,7 @@ export default function PortalHomePage() {
       <HeroCards
         summary={summary}
         lkpm={{
-          status: lkpmQuery.isError
-            ? "error"
-            : lkpmQuery.isSuccess
-              ? "ready"
-              : "loading",
+          status: lkpmReadState(lkpmQuery),
           history: lkpmQuery.data,
           retry: () => {
             void lkpmQuery.refetch();
@@ -664,7 +661,7 @@ function StatusCard({
 // ============================================================================
 
 interface LkpmReadState {
-  status: "loading" | "ready" | "error";
+  status: "checking" | "ready" | "error";
   history: LKPMDraftSummary[] | undefined;
   retry: () => void;
 }
@@ -738,6 +735,9 @@ function HeroCards({
 
   return (
     <section className="space-y-5" aria-label="Your matters">
+      {lkpm.status === "checking" && (
+        <LkpmUnknownNotice status="checking" retry={lkpm.retry} />
+      )}
       {lkpm.status === "error" && (
         <LkpmUnknownNotice status="error" retry={lkpm.retry} />
       )}
@@ -896,10 +896,10 @@ function LkpmUnknownNotice({
   status,
   retry,
 }: {
-  status: "loading" | "error";
+  status: "checking" | "error";
   retry: () => void;
 }) {
-  if (status === "loading") {
+  if (status === "checking") {
     return (
       <p className="text-sm text-[var(--tx-secondary)]" role="status">
         Checking your filings…
