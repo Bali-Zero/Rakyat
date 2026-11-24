@@ -50,6 +50,7 @@ from backend.services.invoicing.client_email_outcome import (
     client_email_outcome,
     regenerated_message,
 )
+from backend.services.invoicing.invoice_service import INVOICE_AMOUNT_ERROR_CODES
 from backend.services.invoicing.pph import PphWithholding, validate_pph
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
 from backend.services.portal.required_slots import mark_required_slot_uploaded
@@ -91,6 +92,7 @@ PRACTICE_CLEARABLE_FIELDS = {
     "client_summary",
 }
 REVENUE_GROWTH_CACHE_NAMESPACE = "crm_practices_revenue_growth"
+DISCOUNT_NEEDS_PRICE_DETAIL = "Fill Quoted Price before adding a discount"
 
 
 async def _attach_invoice_company_name(conn: asyncpg.Connection, practice: dict) -> None:
@@ -914,6 +916,8 @@ async def create_practice(
             # applied which discount when, even if discount_amount is later
             # changed via PATCH.
             if practice.discount_amount is not None:
+                if practice.discount_amount > 0 and quoted_price is None:
+                    raise HTTPException(status_code=400, detail=DISCOUNT_NEEDS_PRICE_DETAIL)
                 if quoted_price is not None and practice.discount_amount > quoted_price:
                     raise HTTPException(
                         status_code=400,
@@ -2001,24 +2005,32 @@ async def update_practice(
             else:
                 update_fields.append("updated_at = NOW()")
 
-            # Discount vs quoted_price sanity (owner Q4=a): if both quoted_price
-            # and discount_amount end up touched in this PATCH, the new discount
-            # must not exceed the new quoted_price. Use the post-update value
-            # for each field (fall back to the value already on the row).
-            if updates.discount_amount is not None:
+            # Discount vs quoted_price sanity (owner Q4=a, DAI-177): any PATCH that
+            # changes the price or the discount is checked on the values the row
+            # will hold afterwards, so lowering the price under a stored discount
+            # is refused too. A PATCH that touches neither is not gated.
+            if (
+                "quoted_price" in update_set
+                or "discount_amount" in update_set
+                or service_base_price is not None
+            ):
+                effective_discount = update_set.get("discount_amount", old_discount_amount)
                 effective_quoted = (
-                    updates.quoted_price if updates.quoted_price is not None else old_quoted_price
+                    update_set["quoted_price"]
+                    if "quoted_price" in update_set
+                    else (old_quoted_price if old_quoted_price is not None else service_base_price)
                 )
-                if effective_quoted is not None and Decimal(updates.discount_amount) > Decimal(
-                    effective_quoted
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"discount_amount ({updates.discount_amount}) cannot exceed "
-                            f"quoted_price ({effective_quoted})"
-                        ),
-                    )
+                if effective_discount:
+                    if effective_quoted is None:
+                        raise HTTPException(status_code=400, detail=DISCOUNT_NEEDS_PRICE_DETAIL)
+                    if Decimal(effective_discount) > Decimal(effective_quoted):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"discount_amount ({effective_discount}) cannot exceed "
+                                f"quoted_price ({effective_quoted})"
+                            ),
+                        )
 
             update_fields_str = ", ".join(update_fields)
 
@@ -2838,6 +2850,9 @@ async def regenerate_invoice(
             practice_id=practice_id,
             triggered_by=user_email,
         )
+
+        if result.get("error_code") in INVOICE_AMOUNT_ERROR_CODES:
+            raise HTTPException(status_code=422, detail=result["error"])
 
         if not result.get("success"):
             raise HTTPException(

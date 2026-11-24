@@ -215,7 +215,11 @@ export const createPracticeSchema = z
       message: "Discount cannot exceed quoted price",
       path: ["discount_amount"],
     },
-  );
+  )
+  .refine((data) => !data.discount_amount || data.quoted_price !== undefined, {
+    message: "Isi Quoted Price dulu sebelum mengisi Discount",
+    path: ["discount_amount"],
+  });
 
 export type CreatePracticeInput = z.input<typeof createPracticeSchema>;
 export type CreatePracticeOutput = z.output<typeof createPracticeSchema>;
