@@ -21,6 +21,7 @@ class EvidenceProvenance(StrEnum):
     MULTI_AGENT_COORDINATOR = "multi_agent_coordinator"
     SPECIALIZED_SERVICE_ROUTER = "specialized_service_router"
     KNOWLEDGE_GRAPH = "knowledge_graph"
+    FAST_ANSWER = "fast_answer"
     REACT_PIPELINE = "react_pipeline"
 
 
@@ -33,6 +34,7 @@ class ProducerOrigin(StrEnum):
     MULTI_AGENT_COORDINATOR = "multi_agent_coordinator"
     SPECIALIZED_SERVICE_ROUTER = "specialized_service_router"
     KNOWLEDGE_GRAPH = "knowledge_graph"
+    FAST_ANSWER = "fast_answer"
     REACT_PIPELINE = "react_pipeline"
     UNKNOWN = "unknown"
 
