@@ -158,3 +158,34 @@ def test_reveal_404_when_client_row_missing(mock_db_pool, mock_db_conn) -> None:
     response = _app(mock_db_pool, _session()).post("/api/portal/profile/reveal")
 
     assert response.status_code == 404
+
+
+def test_reveal_is_refused_when_the_audit_row_cannot_be_written(mock_db_pool, mock_db_conn) -> None:
+    conn = mock_db_conn
+    conn.fetchrow = AsyncMock(return_value={"passport_number": PASSPORT, "date_of_birth": DOB})
+    conn.execute = AsyncMock(side_effect=RuntimeError("relation security_audit_log is unavailable"))
+
+    response = _app(mock_db_pool, _session()).post("/api/portal/profile/reveal")
+
+    assert response.status_code == 500
+    assert PASSPORT not in response.text
+    assert DOB.isoformat() not in response.text
+    assert "security_audit_log" not in response.text
+
+
+def test_reveal_answer_is_unchanged_when_the_audit_row_is_written(
+    mock_db_pool, mock_db_conn
+) -> None:
+    conn = mock_db_conn
+    conn.fetchrow = AsyncMock(return_value={"passport_number": PASSPORT, "date_of_birth": DOB})
+    conn.execute = AsyncMock(return_value="INSERT 0 1")
+
+    response = _app(mock_db_pool, _session()).post("/api/portal/profile/reveal")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "success": True,
+        "data": {"passport_number": PASSPORT, "date_of_birth": DOB.isoformat()},
+    }
+    conn.execute.assert_awaited_once()
+    assert "security_audit_log" in conn.execute.await_args.args[0]

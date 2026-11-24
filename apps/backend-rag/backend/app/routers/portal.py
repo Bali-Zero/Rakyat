@@ -1346,8 +1346,21 @@ async def reveal_profile_identity(
 
         from backend.services.security.audit_service import SecurityAuditService
 
+        # log_event never raises; this wrapper only observes whether its write failed,
+        # because a reveal with no audit row must not be answered.
+        audit_failed = False
+
+        class _AuditWriteProbe:
+            async def execute(self, *args: Any, **kwargs: Any) -> Any:
+                nonlocal audit_failed
+                try:
+                    return await conn.execute(*args, **kwargs)
+                except Exception:
+                    audit_failed = True
+                    raise
+
         await SecurityAuditService().log_event(
-            conn=conn,
+            conn=_AuditWriteProbe(),
             action="portal_identity_reveal",
             user_email=client.get("email"),
             user_id=client.get("user_id"),
@@ -1356,6 +1369,8 @@ async def reveal_profile_identity(
             success=True,
             details={"fields": list(_IDENTITY_FIELDS)},
         )
+        if audit_failed:
+            raise HTTPException(status_code=500, detail="Failed to reveal profile identity")
 
     dob = _coerce_date(row["date_of_birth"])
     return {
