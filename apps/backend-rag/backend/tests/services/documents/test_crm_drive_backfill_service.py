@@ -37,8 +37,9 @@ class _FakeConn:
 
 
 @pytest.mark.asyncio
-async def test_backfill_links_completed_existing_document_without_ocr(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("document_type", ["passport", "\tPASPOR\u00a0"])
+async def test_backfill_keeps_completed_passport_extraction_on_document(
+    monkeypatch: pytest.MonkeyPatch, document_type: str,
 ) -> None:
     from backend.services.documents.crm_drive_backfill_service import run_crm_drive_backfill
 
@@ -50,7 +51,7 @@ async def test_backfill_links_completed_existing_document_without_ocr(
                 "client_id": 42,
                 "file_id": "drive-completed",
                 "file_name": "passport.pdf",
-                "document_type": "passport",
+                "document_type": document_type,
                 "document_category": "immigration",
                 "practice_id": None,
                 "google_drive_file_url": "https://drive/file",
@@ -76,13 +77,10 @@ async def test_backfill_links_completed_existing_document_without_ocr(
         result = await run_crm_drive_backfill(pool, limit=5, dry_run=False)
 
     assert result["processed"] == 1
-    assert result["kg_linked"] == 1
+    assert result["kg_linked"] == 0
     assert result["ocr_dispatched"] == 0
     mock_dispatch.assert_not_called()
-    mock_kg.assert_called_once()
-    assert mock_kg.call_args.kwargs["file_id"] == "drive-completed"
-    assert mock_kg.call_args.kwargs["client_id"] == 42
-    assert mock_kg.call_args.kwargs["extracted_fields"]["passport_number"] == "AB123"
+    mock_kg.assert_not_called()
 
 
 @pytest.mark.asyncio

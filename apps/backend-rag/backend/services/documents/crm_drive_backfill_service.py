@@ -151,6 +151,8 @@ async def _process_candidate(
 
     if not result.get("dispatched"):
         return {"ocr_dispatched": 0, "kg_linked": 0, "skipped": 1}
+    if result.get("handler") == "passport" and not result.get("result", {}).get("success"):
+        return {"ocr_dispatched": 0, "kg_linked": 0, "skipped": 1}
 
     linked = False
     if link_kg and not _dispatcher_links_kg():
@@ -171,6 +173,10 @@ async def _link_candidate_to_kg(
     document_type: str,
     extracted_fields: dict[str, Any] | None = None,
 ) -> bool:
+    from backend.services.documents.ocr_dispatcher_service import is_passport_document_type
+
+    if is_passport_document_type(document_type):
+        return False
     from backend.services.knowledge_graph.document_linker import kg_link_document
 
     result = await kg_link_document(
@@ -291,6 +297,7 @@ LEFT JOIN crm_kg_nodes kg
     AND kg.entity_type = 'crm_document'
     AND kg.deleted_at IS NULL
 WHERE c.deleted_at IS NULL
+  AND NOT crm_passport_ocr_is_passport(d.document_type)
   AND d.client_id IS NOT NULL
   AND d.file_id IS NOT NULL
   AND d.file_id <> ''

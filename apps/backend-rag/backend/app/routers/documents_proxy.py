@@ -277,7 +277,14 @@ async def _assert_folder_ancestry_is_ours(
     raise HTTPException(status_code=403, detail="File is not in a known client folder")
 
 
-def _drive_parent_fetcher(client: httpx.AsyncClient, access_token: str) -> Any:
+def _mark_transient_drive_failure(status: int, retry_unavailable: bool) -> None:
+    if retry_unavailable and (status in (408, 429) or status >= 500):
+        raise HTTPException(status_code=503, detail="Drive ownership lookup unavailable")
+
+
+def _drive_parent_fetcher(
+    client: httpx.AsyncClient, access_token: str, *, retry_unavailable: bool = False
+) -> Any:
     """Return an `async (folder_id) -> list[str]` that asks Drive for a folder's
     parents. Any failure answers "no parents", so the walk fails CLOSED rather
     than treating an API error as permission."""
@@ -292,8 +299,10 @@ def _drive_parent_fetcher(client: httpx.AsyncClient, access_token: str) -> Any:
                 headers={"Authorization": f"Bearer {access_token}"},
             )
         except httpx.HTTPError:
+            _mark_transient_drive_failure(503, retry_unavailable)
             return []
         if response.status_code != 200:
+            _mark_transient_drive_failure(response.status_code, retry_unavailable)
             return []
         return response.json().get("parents") or []
 
@@ -398,6 +407,7 @@ async def _assert_file_descends_from_owner(
     *,
     owner_sql: str,
     owner_id: int,
+    retry_unavailable: bool = False,
 ) -> None:
     """Refuse to authorise `file_id` unless it (or an ancestor folder, within the
     same hop/lookup budget as the read guard) resolves to the folder registered
@@ -440,6 +450,7 @@ async def _assert_file_descends_from_owner(
                 headers={"Authorization": f"Bearer {access_token}"},
             )
         except httpx.HTTPError:
+            _mark_transient_drive_failure(503, retry_unavailable)
             # Same fail-closed posture as `_drive_parent_fetcher`: a transport
             # error is never permission, and must not surface as a raw 500.
             logger.warning(
@@ -450,6 +461,7 @@ async def _assert_file_descends_from_owner(
                 status_code=403, detail="Drive file could not be verified"
             ) from None
         if meta_response.status_code != 200:
+            _mark_transient_drive_failure(meta_response.status_code, retry_unavailable)
             # Same fail-closed posture as `_drive_parent_fetcher`: an API error
             # or a file the service account cannot see is never permission.
             logger.warning(
@@ -463,7 +475,7 @@ async def _assert_file_descends_from_owner(
         if parents and await _owned(parents):
             return
 
-        fetch_parents = _drive_parent_fetcher(client, access_token)
+        fetch_parents = _drive_parent_fetcher(client, access_token, retry_unavailable=retry_unavailable)
         frontier = [p for p in parents if p]
         seen: set[str] = set()
         lookups = 0
@@ -496,7 +508,9 @@ async def _assert_file_descends_from_owner(
     )
 
 
-async def assert_drive_file_belongs_to_client(file_id: str, client_id: int, conn: Any) -> None:
+async def assert_drive_file_belongs_to_client(
+    file_id: str, client_id: int, conn: Any, *, require_ancestry: bool = False
+) -> None:
     """Write-time guard for `POST .../clients/{client_id}/documents` (+ bulk
     twin) and `PATCH .../clients/{client_id}/documents/{doc_id}`: refuse a
     `file_id` with incompatible ownership. An unambiguous existing registration
@@ -511,10 +525,11 @@ async def assert_drive_file_belongs_to_client(file_id: str, client_id: int, conn
         raise HTTPException(
             status_code=403, detail="Drive file has incompatible registered ownership"
         )
-    if ownership["owned"]:
+    if ownership["owned"] and not require_ancestry:
         return
     await _assert_file_descends_from_owner(
-        file_id, conn, owner_sql=_CLIENT_OWNS_FOLDER_SQL, owner_id=client_id
+        file_id, conn, owner_sql=_CLIENT_OWNS_FOLDER_SQL, owner_id=client_id,
+        retry_unavailable=require_ancestry,
     )
 
 

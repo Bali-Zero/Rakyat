@@ -131,6 +131,16 @@ COMPLETION_LOG = {
 }
 
 
+@pytest.mark.asyncio
+async def test_passport_without_document_is_safe_and_does_not_log_raw_ocr(caplog: pytest.LogCaptureFixture) -> None:
+    from backend.app.routers.crm_enhanced import _auto_ocr_passport
+
+    caplog.set_level(logging.DEBUG)
+    result = await _auto_ocr_passport(MagicMock(), 42, "file-1")
+    assert result == {"success": False, "status": "missing_document"}
+    assert _leaks(caplog) == []
+
+
 def _ocr_patches(response_text: str, extracted: dict[str, Any] | None) -> list[Any]:
     return [
         patch(
@@ -157,7 +167,7 @@ async def _run_ocr(name: str, pool: MagicMock, patches: list[Any]) -> dict[str, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", [case[0] for case in OCR_CASES])
+@pytest.mark.parametrize("name", [case[0] for case in OCR_CASES if case[0] != "_auto_ocr_passport"])
 async def test_parse_failure_never_logs_the_raw_response(
     name: str,
     mock_db_pool: MagicMock,
@@ -176,7 +186,7 @@ async def test_parse_failure_never_logs_the_raw_response(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("name", "extracted"), OCR_CASES)
+@pytest.mark.parametrize(("name", "extracted"), [case for case in OCR_CASES if case[0] != "_auto_ocr_passport"])
 async def test_extracted_fields_and_response_never_reach_a_log(
     name: str,
     extracted: dict[str, Any],
@@ -246,6 +256,64 @@ async def test_classifier_logs_only_known_labels(caplog: pytest.LogCaptureFixtur
     assert result["document_type"] == f"{SENTINEL}-type"
     assert _leaks(caplog) == []
     assert any("type=other" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_response, expected", [
+    (
+        '{"full_name":"QQSENTINEL7731 Holder","passport_number":"QQSENTINEL7731-ID",'
+        '"expiry_date":"2030-01-01","date_of_birth":"1990-01-01","gender":"F",'
+        '"birthplace":"QQSENTINEL7731 Place","nationality":"QQSENTINEL7731 Nation",'
+        '"provider_trace":"provider-output-QQSENTINEL7731"}',
+        {"success": True, "status": "completed"},
+    ),
+    ("provider-output-QQSENTINEL7731", {"success": False, "status": "review"}),
+])
+async def test_passport_ocr_processing_never_logs_passport_or_provider_output(
+    caplog: pytest.LogCaptureFixture, provider_response: str, expected: dict[str, object]
+) -> None:
+    """The processing worker must keep successful and rejected OCR payloads out of logs."""
+    from backend.services.documents import passport_ocr_processing as processing
+
+    caplog.set_level(logging.DEBUG)
+    job = {
+        "document_id": 9,
+        "client_id": 7,
+        "file_id": "QQSENTINEL7731-drive-file",
+        "full_name": "QQSENTINEL7731 Holder",
+    }
+    image = b"synthetic-passport"
+    metadata = {
+        "id": job["file_id"],
+        "trashed": False,
+        "mimeType": "image/jpeg",
+        "size": str(len(image)),
+        "modifiedTime": "v1",
+        "parents": ["p1"],
+    }
+    drive = AsyncMock()
+    drive.get_file_metadata.side_effect = [metadata, metadata]
+    drive.download_file_content.return_value = image
+    pool = MagicMock()
+    with (
+        patch.object(processing.jobs, "claim", new=AsyncMock(return_value=job)),
+        patch(
+            "backend.app.routers.documents_proxy.assert_drive_file_belongs_to_client", new=AsyncMock()
+        ),
+        patch.object(processing, "ServiceAccountDriveService", return_value=drive),
+        patch.object(processing, "_image_for_vision", return_value=(b"image", "image/jpeg")),
+        patch(f"{ROUTER}._gemini_ocr", new=AsyncMock(return_value=provider_response)),
+        patch.object(
+            processing.jobs,
+            "finish",
+            new=AsyncMock(return_value=expected["status"]),
+        ),
+    ):
+        result = await processing.process_one(pool, doc_id=9, client_id=7, file_id=job["file_id"])
+
+    assert result["success"] is expected["success"]
+    assert result["status"] == expected["status"]
+    assert _leaks(caplog) == []
 
 
 @pytest.mark.asyncio
@@ -363,7 +431,7 @@ async def test_generated_title_is_never_logged(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("name", "extracted"), OCR_CASES)
+@pytest.mark.parametrize(("name", "extracted"), [case for case in OCR_CASES if case[0] != "_auto_ocr_passport"])
 async def test_a_failure_echoing_a_document_value_is_logged_by_type_only(
     name: str,
     extracted: dict[str, Any],

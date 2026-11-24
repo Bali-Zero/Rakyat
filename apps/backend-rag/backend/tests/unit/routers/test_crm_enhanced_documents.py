@@ -953,6 +953,8 @@ async def test_get_client_ocr_status_success(mock_db_pool, mock_current_user):
     assert result["pending_ocr"] == 1
     assert result["completed_ocr"] == 1
     assert len(result["documents"]) == 2
+    assert "_pending_ocr_count" not in result["documents"][0]
+    assert "_completed_ocr_count" not in result["documents"][0]
 
 
 @pytest.mark.asyncio
@@ -973,6 +975,70 @@ async def test_get_client_ocr_status_empty(mock_db_pool, mock_current_user):
 
     assert result["pending_ocr"] == 0
     assert result["completed_ocr"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_client_ocr_status_preserves_recent_poll_window(mock_db_pool, mock_current_user):
+    from backend.app.routers.crm_enhanced_documents import get_client_ocr_status
+
+    mock_db_pool._mock_conn.fetch.return_value = [
+        {
+            "id": document_id,
+            "document_type": "passport",
+            "file_name": f"passport-{document_id}.pdf",
+            "ocr_status": "completed",
+            "ocr_completed_at": None,
+            "ocr_extracted_data": None,
+        }
+        for document_id in range(1, 11)
+    ]
+
+    with patch(
+        "backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()
+    ):
+        result = await get_client_ocr_status(
+            client_id=1,
+            pool=mock_db_pool,
+            current_user=mock_current_user,
+        )
+
+    assert (result["pending_ocr"], result["completed_ocr"]) == (0, 10)
+    assert len(result["documents"]) == 10
+    call = mock_db_pool._mock_conn.fetch.await_args
+    assert "LIMIT 10" in call.args[0]
+    assert call.args[1:] == (1, None)
+
+
+@pytest.mark.asyncio
+async def test_get_client_ocr_status_filters_exact_historical_document(
+    mock_db_pool, mock_current_user
+):
+    from backend.app.routers.crm_enhanced_documents import get_client_ocr_status
+
+    mock_db_pool._mock_conn.fetch.return_value = [
+        {
+            "id": 7,
+            "document_type": "passport",
+            "file_name": "older-passport.pdf",
+            "ocr_status": "completed",
+            "ocr_completed_at": None,
+            "ocr_extracted_data": None,
+        }
+    ]
+
+    with patch(
+        "backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()
+    ):
+        result = await get_client_ocr_status(
+            client_id=1,
+            pool=mock_db_pool,
+            current_user=mock_current_user,
+            document_id=7,
+        )
+
+    assert (result["pending_ocr"], result["completed_ocr"]) == (0, 1)
+    assert result["documents"][0]["id"] == 7
+    assert mock_db_pool._mock_conn.fetch.await_args.args[1:] == (1, 7)
 
 
 # ============================================================

@@ -1098,133 +1098,39 @@ class TestGeminiOcrPIIGate:
         assert "crm_enhanced._gemini_ocr" in note.call_args.args[0]
 
     @pytest.mark.asyncio
-    async def test_handler_degrades_to_success_false_when_blocked(
-        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
-    ) -> None:
-        """End-to-end at the handler: a blocked cloud fallback degrades to
-        {success: False}, NOT a 500 — and no document goes to the cloud."""
+    async def test_bound_job_defers_when_cloud_and_local_vision_are_unavailable(self, mock_db_pool):
         from backend.app.routers.crm_enhanced import _auto_ocr_passport
+        from backend.services.documents import passport_ocr_processing as processing
 
-        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
+        drive = AsyncMock()
+        drive.get_file_metadata.return_value = {
+            "id": "file-1", "size": "5", "trashed": False, "mimeType": "image/jpeg",
+        }
+        drive.download_file_content.return_value = b"image"
+        job = {"client_id": 42, "file_id": "file-1", "full_name": "Example"}
         with (
-            patch(
-                "backend.app.routers.crm_enhanced._download_drive_file",
-                new=AsyncMock(return_value=(b"\xff\xd8\xff", "image/jpeg")),
-            ),
-            patch(
-                "backend.llm.ollama_client.is_ollama_available",
-                new=AsyncMock(return_value=False),
-            ),
-            patch(
-                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-                return_value=False,
-            ),
+            patch.object(processing.jobs, "claim", AsyncMock(return_value=job)),
+            patch.object(processing, "ServiceAccountDriveService", return_value=drive),
+            patch.object(processing, "_image_for_vision", return_value=(b"image", "image/jpeg")),
+            patch("backend.app.routers.documents_proxy.assert_drive_file_belongs_to_client", AsyncMock()),
+            patch("backend.llm.ollama_client.is_ollama_available", AsyncMock(return_value=False)),
+            patch("backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed", return_value=False),
+            patch.object(processing.jobs, "finish", AsyncMock(return_value="deferred")) as finish,
         ):
-            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
-        assert result["success"] is False
-        assert "PII sovereignty" in result["error"]
+            result = await _auto_ocr_passport(mock_db_pool, 42, "file-1", 5)
+        assert result == {"success": False, "status": "deferred"}
+        finish.assert_awaited_once_with(mock_db_pool, job, reason="ocr_unavailable", retryable=True)
 
 
 class TestAutoOCRPassport:
     @pytest.mark.asyncio
-    async def test_client_not_found(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
+    async def test_document_id_is_required_before_claim(self, mock_db_pool):
         from backend.app.routers.crm_enhanced import _auto_ocr_passport
 
-        mock_db_conn.fetchrow = AsyncMock(return_value=None)
-        result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
-        assert not result["success"]
-
-    @pytest.mark.asyncio
-    async def test_parse_fail(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
-        from backend.app.routers.crm_enhanced import _auto_ocr_passport
-
-        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
-        with (
-            patch(
-                "backend.app.routers.crm_enhanced._download_drive_file",
-                new=AsyncMock(return_value=(b"x", "image/jpeg")),
-            ),
-            patch(
-                "backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="bad")
-            ),
-            patch(
-                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=None
-            ),
-        ):
-            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
-        assert not result["success"]
-
-    @pytest.mark.asyncio
-    async def test_success(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
-        from backend.app.routers.crm_enhanced import _auto_ocr_passport
-
-        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
-        mock_db_conn.execute = AsyncMock()
-        ext = {
-            "passport_number": "P1",
-            "expiry_date": "2028-01-01",
-            "full_name": "X",
-            "gender": "MALE",
-            "date_of_birth": "1990-01-01",
-            "birthplace": "Y",
-            "nationality": "AU",
-            "confidence": 0.9,
-        }
-        with (
-            patch(
-                "backend.app.routers.crm_enhanced._download_drive_file",
-                new=AsyncMock(return_value=(b"x", "image/jpeg")),
-            ),
-            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
-            patch(
-                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
-            ),
-            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
-        ):
-            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
-        assert result["success"]
-
-    @pytest.mark.asyncio
-    async def test_date_normalization(
-        self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
-    ) -> None:
-        from backend.app.routers.crm_enhanced import _auto_ocr_passport
-
-        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
-        mock_db_conn.execute = AsyncMock()
-        ext = {
-            "passport_number": "P1",
-            "expiry_date": "01-06-2028",
-            "full_name": "X",
-            "gender": "F",
-            "date_of_birth": "15-03-1990",
-            "confidence": 0.9,
-        }
-        with (
-            patch(
-                "backend.app.routers.crm_enhanced._download_drive_file",
-                new=AsyncMock(return_value=(b"x", "image/jpeg")),
-            ),
-            patch("backend.app.routers.crm_enhanced._gemini_ocr", new=AsyncMock(return_value="{}")),
-            patch(
-                "backend.app.routers.crm_enhanced.extract_json_from_llm_response", return_value=ext
-            ),
-            patch("backend.app.routers.crm_enhanced.to_jsonb", return_value="{}"),
-        ):
-            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
-        assert result["extracted"]["expiry_date"] == "2028-06-01"
-
-    @pytest.mark.asyncio
-    async def test_exception(self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock) -> None:
-        from backend.app.routers.crm_enhanced import _auto_ocr_passport
-
-        mock_db_conn.fetchrow = AsyncMock(return_value={"full_name": "X"})
-        with patch(
-            "backend.app.routers.crm_enhanced._download_drive_file",
-            new=AsyncMock(side_effect=RuntimeError("err")),
-        ):
-            result = await _auto_ocr_passport(mock_db_pool, 42, "f1")
-        assert not result["success"]
+        with patch("backend.services.documents.passport_ocr_jobs.claim", AsyncMock()) as claim:
+            result = await _auto_ocr_passport(mock_db_pool, 42, "file-1")
+        assert result == {"success": False, "status": "missing_document"}
+        claim.assert_not_awaited()
 
 
 class TestAutoOCRVisa:
