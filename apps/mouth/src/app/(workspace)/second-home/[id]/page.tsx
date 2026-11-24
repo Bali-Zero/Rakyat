@@ -132,6 +132,8 @@ export default function SecondHomeCaseDetailPage() {
           />
           <GuaranteePanel
             guarantee={caseDetail.guarantee}
+            gateOpen={caseDetail.guarantee_gate_open}
+            evidenceComplete={caseDetail.guarantee_evidence_complete}
             hasEntryOrItasDate={Boolean(
               caseDetail.entry_date || caseDetail.itas_date,
             )}
