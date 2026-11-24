@@ -250,6 +250,36 @@ async def _verify_invite_write_access(client_id: int, current_user: dict, conn) 
     await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
 
 
+async def _stored_invite_address(client_id: int, requested: str, conn) -> str:
+    """Return the e-mail on the client record, the only address an invitation may go to.
+
+    The address an invitation is sent to becomes the client's login identity, so it is
+    never taken from the request: a request address that differs from the stored one
+    (trimmed, case-insensitive) is refused, and so is a client with no stored address.
+    """
+    row = await conn.fetchrow(
+        "SELECT email FROM clients WHERE id = $1 AND deleted_at IS NULL", client_id
+    )
+    stored = ((row["email"] if row else None) or "").strip()
+    if not stored:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This client has no e-mail on the client record. "
+                "Add the client's e-mail to the client record first, then send the invitation."
+            ),
+        )
+    if stored.lower() != str(requested).strip().lower():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Invitations are sent only to the e-mail on the client record. "
+                "Update the client's e-mail on the client record first, then send the invitation."
+            ),
+        )
+    return stored
+
+
 # ================================================
 # TEAM-SIDE ENDPOINTS (Require team auth)
 # ================================================
@@ -284,11 +314,12 @@ async def send_invitation(
     # never swallowed by the generic `except Exception` inside it.
     async with db_pool.acquire() as conn:
         await _verify_invite_write_access(request.client_id, current_user, conn)
+        invite_email = await _stored_invite_address(request.client_id, request.email, conn)
 
     try:
         result = await invite_service.create_invitation(
             client_id=request.client_id,
-            email=request.email,
+            email=invite_email,
             created_by=current_user.get("email", "system"),
         )
 
@@ -304,7 +335,7 @@ async def send_invitation(
         email_error = None
         try:
             await send_portal_invite_email(
-                to=str(request.email),
+                to=invite_email,
                 client_name=result["client_name"],
                 invite_url=full_invite_url,
                 db_pool=db_pool,
