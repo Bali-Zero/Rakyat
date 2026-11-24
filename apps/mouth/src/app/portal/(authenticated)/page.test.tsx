@@ -91,6 +91,10 @@ vi.mock("next/navigation", () => ({
 // Mock api
 vi.mock("@/lib/api", () => ({
   api: {
+    // The dashboard also reads the LKPM history and keys it by identity.
+    getUserProfile: () => ({ id: "test-account" }),
+    getPortalImpersonation: () => null,
+    get: async () => ({ success: true, items: [] }),
     portal: {
       getDashboard: mockGetDashboard,
       getDashboardSummary: mockGetDashboardSummary,
