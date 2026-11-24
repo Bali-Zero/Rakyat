@@ -627,10 +627,11 @@ class EditorialDiff(unittest.TestCase):
 
     def test_pure_editorial_rename_and_deletion_are_editorial(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root, base = self._repo(tmp)
-            self._commit(root, "add", (("apps/mouth/src/content/articles/visa/a.mdx", b"a"),))
+            root, _ = self._repo(tmp)
+            base = self._commit(root, "add", (("apps/mouth/src/content/articles/visa/a.mdx", b"a"),))
             self._git(root, "mv", "apps/mouth/src/content/articles/visa/a.mdx", "apps/mouth/src/content/articles/visa/b.mdx")
             self._git(root, "commit", "-qm", "rename")
+            self.assertEqual(st.editorial_diff(base, self._git(root, "rev-parse", "HEAD"), root), "editorial")
             (root / "apps/mouth/src/content/articles/visa/b.mdx").unlink()
             self._git(root, "add", "-A")
             self._git(root, "commit", "-qm", "delete")

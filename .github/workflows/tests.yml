@@ -135,6 +135,7 @@ jobs:
     outputs:
       mode: ${{ steps.classify.outputs.mode }}
       replay: ${{ steps.classify.outputs.replay }}
+      replay_base: ${{ steps.classify.outputs.replay_base }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -173,6 +174,7 @@ jobs:
             git diff --quiet "$HEAD" HEAD -- . "${exclusions[@]}" || exit 0
             git diff --quiet "$trusted" HEAD -- "${paths[@]}" || exit 0
             echo "replay=true" >> "$GITHUB_OUTPUT"
+            echo "replay_base=$BASE" >> "$GITHUB_OUTPUT"
             echo "Hosted PR replay #$REPLAY_PR. Base $BASE, head $HEAD, CI revision $trusted." >> "$GITHUB_STEP_SUMMARY"
           fi
           classifier="$RUNNER_TEMP/base-shard-tests.py"
@@ -855,7 +857,7 @@ jobs:
         # existing at a base commit we CAN read — is allowed to degrade.
         id: trusted
         env:
-          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || needs.changes.outputs.replay_base }}
         run: |
           set -uo pipefail
           TRUSTED_DIR="$RUNNER_TEMP/trusted-partitioner"
