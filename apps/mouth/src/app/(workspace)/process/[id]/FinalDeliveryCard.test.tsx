@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { SWRConfig } from "swr";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Practice } from "@/lib/api/crm/crm.types";
+import { ApiError } from "@/lib/api/error-handler";
 import { FinalDeliveryCard } from "./FinalDeliveryCard";
 import { workDayOf } from "@/lib/format/work-day";
 
@@ -88,6 +89,19 @@ describe("Final delivery", () => {
     requests.sentSub = "staff-a";
     requests.get.mockResolvedValue(initial);
   });
+  it("describes an unconfigured service without offering a futile retry", async () => {
+    requests.get.mockRejectedValue(
+      new ApiError("No delivery requirements configured for this service", 409),
+    );
+    setup();
+    expect(
+      await screen.findByText(
+        "No delivery checklist is configured for this service.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+
   it("records issuance on upload and keeps completion unavailable until the post-entry permit is saved", async () => {
     const [year, month] = workDayOf().split("-").map(Number);
     const printedDate = new Date(Date.UTC(year, month - 1, 0))

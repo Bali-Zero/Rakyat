@@ -12,7 +12,10 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/utils/format-date";
-import type { DeliverySlot } from "@/lib/api/crm/delivery-slot";
+import {
+  isUnconfiguredDelivery,
+  type DeliverySlot,
+} from "@/lib/api/crm/delivery-slot";
 import {
   acceptResponse,
   isSameIdentity,
@@ -71,8 +74,14 @@ function ChecklistContents({ practiceId, identity }: Props) {
         if (!active) return;
         if (acceptResponse(response, identity)) setData(response.data);
         else setError(true);
-      } catch {
-        if (active) setError(true);
+      } catch (cause) {
+        if (!active) return;
+        if (
+          isSameIdentity(readSessionIdentity(), identity) &&
+          isUnconfiguredDelivery(cause)
+        ) {
+          setData({ needs_titles: false, slots: [] });
+        } else setError(true);
       }
     }
     void read();
@@ -106,7 +115,7 @@ function ChecklistContents({ practiceId, identity }: Props) {
         <p className="pb-2 text-[var(--bz-text-2)]">
           {data.needs_titles
             ? "Document names still need to be agreed."
-            : "No delivery checklist available."}
+            : "No delivery checklist is configured for this service."}
         </p>
       ) : (
         <ul className="space-y-2">
@@ -158,12 +167,14 @@ function ChecklistContents({ practiceId, identity }: Props) {
           })}
         </ul>
       )}
-      <Link
-        href={`/process/${practiceId}#final-delivery`}
-        className="mt-1 inline-flex min-h-9 items-center gap-1 font-semibold underline-offset-4 hover:underline focus-visible:underline"
-      >
-        Open delivery <ArrowUpRight aria-hidden className="size-3.5" />
-      </Link>
+      {(data.needs_titles || data.slots.length > 0) && (
+        <Link
+          href={`/process/${practiceId}#final-delivery`}
+          className="mt-1 inline-flex min-h-9 items-center gap-1 font-semibold underline-offset-4 hover:underline focus-visible:underline"
+        >
+          Open delivery <ArrowUpRight aria-hidden className="size-3.5" />
+        </Link>
+      )}
     </div>
   );
 }

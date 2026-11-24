@@ -4,7 +4,10 @@ import { useRef, useState } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import type { Practice } from "@/lib/api/crm/crm.types";
-import type { DeliverySlot as Slot } from "@/lib/api/crm/delivery-slot";
+import {
+  isUnconfiguredDelivery,
+  type DeliverySlot as Slot,
+} from "@/lib/api/crm/delivery-slot";
 import { fileToBase64 } from "@/lib/utils";
 import {
   validStaffText,
@@ -249,13 +252,17 @@ function StaffDeliveryCard({
       aria-label="Final delivery"
     >
       <h2 className="text-xl font-semibold mb-3">Final delivery</h2>
-      {error && (
-        <p role="alert">
-          Unable to load delivery requirements.{" "}
-          <button className={actionStyle} onClick={() => void mutate()}>
-            Retry
-          </button>
-        </p>
+      {isUnconfiguredDelivery(error) ? (
+        <p>No delivery checklist is configured for this service.</p>
+      ) : (
+        error && (
+          <p role="alert">
+            Unable to load delivery requirements.{" "}
+            <button className={actionStyle} onClick={() => void mutate()}>
+              Retry
+            </button>
+          </p>
+        )
       )}
       {!data && !error && <p>Loading delivery requirements…</p>}
       {data && !error && (

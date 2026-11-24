@@ -1,3 +1,17 @@
+import { ApiError } from "../error-handler";
+
+const MISSING_REQUIREMENTS =
+  "No delivery requirements configured for this service";
+
+export function isUnconfiguredDelivery(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 409 &&
+    (error.detail === MISSING_REQUIREMENTS ||
+      error.message === MISSING_REQUIREMENTS)
+  );
+}
+
 export interface DeliverySlot {
   key: string;
   label: string;

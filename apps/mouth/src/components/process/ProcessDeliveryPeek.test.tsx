@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api/error-handler";
 import { ProcessDeliveryPeek } from "./ProcessDeliveryPeek";
 
 const { request, current } = vi.hoisted(() => ({
@@ -69,6 +70,21 @@ describe("ProcessDeliveryPeek", () => {
       "/process/7#final-delivery",
     );
   });
+  it("shows an empty state for services without configured requirements", async () => {
+    request.mockRejectedValue(
+      new ApiError("No delivery requirements configured for this service", 409),
+    );
+    render(<ProcessDeliveryPeek practiceId={7} identity={identity} />);
+    await userEvent.click(screen.getByText("Delivery documents"));
+    expect(
+      await screen.findByText(
+        "No delivery checklist is configured for this service.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open delivery" })).toBeNull();
+  });
+
   it("omits document names when the response belongs to another session", async () => {
     request.mockResolvedValue({
       sentSub: "operator-b",

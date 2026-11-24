@@ -253,6 +253,13 @@ describe("CaseDetailPage", () => {
     expect(screen.queryByText("Private fixture note")).not.toBeInTheDocument();
   });
 
+  it("mounts the delivery destination for legacy completed practices", async () => {
+    await renderLoaded(makePractice({ status: "done" }));
+    expect(
+      screen.getByRole("region", { name: "Final delivery" }),
+    ).toHaveAttribute("id", "final-delivery");
+  });
+
   it("shows loading until the practice request settles", async () => {
     let resolvePractice!: (practice: Practice) => void;
     mocks.getPractice.mockReturnValue(
