@@ -360,6 +360,13 @@ async def synthesize_client_dossier(
     period_end = max(m["message_date"] for m in messages)
 
     conversation_text = _format_conversation(messages)
+    if not conversation_text.strip():
+        logger.info(
+            "client_id=%s: no source text in %s messages, skipping",
+            client_id,
+            len(messages),
+        )
+        return None
     prompt = SYNTHESIZE_PROMPT.format(conversation=conversation_text)
 
     raw = await _call_ollama_json(prompt, model=model)
