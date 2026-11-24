@@ -3,21 +3,22 @@
 import {
   ArrowUpRight,
   CalendarDays,
+  ChartNoAxesCombined,
   ChevronDown,
   CircleAlert,
+  FileCheck2,
+  Flag,
+  History,
+  WalletCards,
   Goal,
   LoaderCircle,
   Pencil,
 } from "lucide-react";
 import Link from "next/link";
-import React, { useEffect, useState } from "react";
-import {
-  CARD,
-  FOCUS,
-  NUMERAL_KPI,
-  SERIF,
-} from "@/components/workspace/r19/tokens";
+import React, { useEffect, useId, useState } from "react";
+import { CARD, FOCUS, SERIF } from "@/components/workspace/r19/tokens";
 import { api } from "@/lib/api";
+import styles from "./DeliveryBonusDesk.module.css";
 import {
   acceptResponse,
   useSessionIdentity,
@@ -80,6 +81,7 @@ type BoundDesk = {
   data: Desk;
   nextFile?: string;
   nextDue?: string;
+  requirements?: { met: number; total: number };
 };
 const money = (amount: number) => `Rp ${amount.toLocaleString("id-ID")}`;
 const baliDate = (value: string, opts: Intl.DateTimeFormatOptions) =>
@@ -87,6 +89,17 @@ const baliDate = (value: string, opts: Intl.DateTimeFormatOptions) =>
     timeZone: "Asia/Makassar",
     ...opts,
   }).format(new Date(value));
+const sectionTitle = "flex items-center gap-2 text-sm font-bold leading-snug";
+const rowLink =
+  "inline-flex min-h-11 items-center gap-2 text-sm leading-snug font-semibold [overflow-wrap:anywhere] underline-offset-4 hover:underline";
+
+const payStages = ["pending", "approved", "paid"] as const;
+type PayStage = (typeof payStages)[number];
+const percentage = new Intl.NumberFormat("en-GB", {
+  style: "percent",
+  maximumFractionDigits: 1,
+});
+
 const statusNames: Record<string, string> = {
   pending: "Pending approval",
   approved: "Approved",
@@ -112,6 +125,8 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
   const [generation, refresh] = useState(0);
   const [goal, setGoal] = useState("");
   const [editing, setEditing] = useState(false);
+  const [selectedStage, selectStage] = useState<PayStage | null>(null);
+  const activityId = useId();
   const [busy, setBusy] = useState(false);
   const [payrollConfirmed, setPayrollConfirmed] = useState(false);
   const [error, setError] = useState(false);
@@ -188,9 +203,17 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
             : {
                 data: res.data,
                 nextDue: openFollowup ? followup.due_on : undefined,
+                requirements:
+                  !pack.data.needs_titles && pack.data.slots.length
+                    ? {
+                        met: pack.data.slots.length - missing.length,
+                        total: pack.data.slots.length,
+                      }
+                    : undefined,
                 nextFile: pack.data.needs_titles
                   ? "Define the agreed documents"
-                  : (needed?.label ?? "Confirm delivery"),
+                  : (needed?.label ??
+                    (pack.data.slots.length ? "Confirm delivery" : undefined)),
               },
         );
       } catch {
@@ -268,46 +291,112 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
   const total = data.totals.pending + data.totals.approved + data.totals.paid;
   const reached = data.target !== null && data.milestones >= data.target;
   const holds = data.holds ?? [];
-  const next = data.next_case;
+  const next = holds.some(
+    (row) => row.practice_id === data.next_case?.practice_id,
+  )
+    ? null
+    : data.next_case;
   const month = baliDate(data.month, { month: "long", year: "numeric" });
+  const recent = selectedStage
+    ? data.recent.filter(
+        (row) =>
+          row.status === selectedStage &&
+          baliDate(row.awarded_at, { month: "long", year: "numeric" }) ===
+            month,
+      )
+    : data.recent;
+  const goalShare = data.target
+    ? Math.min(1, data.milestones / data.target)
+    : 0;
   return (
     <section
       aria-label="My delivery bonuses"
       data-sentry-block=""
-      className={`sentry-block mb-5 text-[var(--bz-text-1)] ${CARD}`}
+      className={`sentry-block ${styles.desk}`}
     >
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-5 py-4 sm:px-6">
-        <h2 className="text-xl tracking-tight" style={SERIF}>
-          My delivery bonuses
-        </h2>
+      <header className={styles.header}>
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-[var(--bz-kita-rail)] text-[var(--nav-fg)]"
+            aria-hidden
+          >
+            <WalletCards size={19} strokeWidth={1.6} />
+          </span>
+          <h2 style={SERIF}>My delivery bonuses</h2>
+        </div>
         <time
+          className="inline-flex items-center gap-2 rounded-full border border-[var(--bz-border)] px-2.5 py-1 text-xs font-semibold text-[var(--bz-text-2)]"
           dateTime={data.month.slice(0, 7)}
-          className="flex items-center gap-2 text-sm text-[var(--bz-text-2)]"
         >
-          <CalendarDays className="size-4" aria-hidden /> {month}
+          <CalendarDays size={14} aria-hidden />
+          {month}
         </time>
       </header>
-      <div className="grid border-y border-[var(--bz-border)] md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div className="min-w-0 bg-[var(--bz-kita-surface-navy)] px-5 py-5 text-[var(--nav-fg)] sm:px-6">
-          <p className="text-sm">Bonuses in this payroll month</p>
-          <p className={`mt-1 break-words ${NUMERAL_KPI}`} style={SERIF}>
+
+      <div className={styles.statement}>
+        <section className={styles.balance} aria-label="Payroll breakdown">
+          <h3 className="flex items-center gap-2 text-xs leading-snug font-bold text-[var(--bz-text-2)]">
+            Bonuses in this payroll month
+          </h3>
+          <p className={styles.money} style={SERIF}>
             {money(total)}
           </p>
-          <dl className="mt-5 flex flex-wrap gap-x-6 gap-y-3 border-t border-white/25 pt-3 sm:gap-x-9">
-            {(["pending", "approved", "paid"] as const).map((key) => (
-              <div key={key}>
-                <dt className="text-xs text-[var(--nav-fg-muted)]">
-                  {statusNames[key]}
-                </dt>
-                <dd className="mt-0.5 text-sm font-semibold tabular-nums">
-                  {money(data.totals[key])}
-                </dd>
-              </div>
+          <div className={styles.distribution} aria-hidden>
+            {payStages.map(
+              (stage) =>
+                data.totals[stage] > 0 && (
+                  <i
+                    key={stage}
+                    data-stage={stage}
+                    data-muted={
+                      selectedStage !== null && selectedStage !== stage
+                    }
+                    style={{ flexGrow: data.totals[stage] }}
+                  />
+                ),
+            )}
+          </div>
+          <div
+            className="grid grid-cols-3 gap-1"
+            role="group"
+            aria-label="Inspect payroll amounts"
+          >
+            {payStages.map((stage) => (
+              <button
+                key={stage}
+                type="button"
+                className={styles.legendButton}
+                aria-pressed={selectedStage === stage}
+                aria-controls={activityId}
+                onClick={() =>
+                  selectStage(selectedStage === stage ? null : stage)
+                }
+              >
+                <span className="flex items-center gap-1.5 text-[11px] leading-snug text-[var(--bz-text-2)]">
+                  <i
+                    className="size-2 shrink-0 rounded-[2px]"
+                    data-stage={stage}
+                    aria-hidden
+                  />
+                  {statusNames[stage]}
+                </span>
+                <strong>{money(data.totals[stage])}</strong>
+              </button>
             ))}
-          </dl>
+          </div>
+          {selectedStage && (
+            <p
+              role="status"
+              className="mt-1.5 text-xs leading-relaxed text-[var(--bz-text-2)]"
+            >
+              {total > 0
+                ? `${statusNames[selectedStage]} · ${percentage.format(data.totals[selectedStage] / total)} of this payroll total`
+                : "No priced bonuses in this payroll month."}
+            </p>
+          )}
           {(data.totals.awaiting_rate > 0 ||
             data.totals.payroll_locked > 0) && (
-            <p className="mt-3 flex flex-wrap gap-x-4 text-xs text-[var(--nav-fg-muted)]">
+            <p className={styles.qualifiers}>
               {data.totals.awaiting_rate > 0 && (
                 <span>{data.totals.awaiting_rate} awaiting a rate</span>
               )}
@@ -318,72 +407,67 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
               )}
             </p>
           )}
-        </div>
-        <div className="flex flex-col justify-center gap-2 px-5 py-4 sm:px-6">
-          <div className="flex items-center gap-4">
+        </section>
+
+        <section className={styles.goal} aria-label="Personal service goal">
+          <h3 className="flex items-center gap-2 text-xs leading-snug font-bold text-[var(--bz-text-2)]">
+            <Flag
+              size={14}
+              className="text-[var(--state-success)]"
+              aria-hidden
+            />
+            Qualifying services this month
+          </h3>
+          <div className="flex items-baseline justify-between gap-2">
+            <p className={styles.goalNumber} style={SERIF}>
+              {data.milestones}
+              {data.target !== null && <span> / {data.target}</span>}
+            </p>
+            {data.target !== null && (
+              <strong className="text-sm font-bold text-[var(--state-success)]">
+                {percentage.format(data.milestones / data.target)}
+              </strong>
+            )}
+          </div>
+          {data.target !== null && (
             <div
-              className="grid size-[78px] shrink-0 place-items-center rounded-full"
-              role={data.target ? "progressbar" : undefined}
-              aria-label={data.target ? "Monthly service goal" : undefined}
-              aria-valuemin={data.target ? 0 : undefined}
-              aria-valuemax={data.target ?? undefined}
-              aria-valuenow={
-                data.target ? Math.min(data.target, data.milestones) : undefined
-              }
-              aria-valuetext={
-                data.target
-                  ? `${data.milestones} qualifying services, goal ${data.target}`
-                  : undefined
-              }
-              style={{
-                background: data.target
-                  ? `conic-gradient(var(--state-success) ${Math.min(100, (data.milestones / data.target) * 100)}%, var(--bz-wash) 0)`
-                  : "var(--bz-wash)",
-              }}
+              className={styles.goalTrack}
+              role="progressbar"
+              aria-label="Monthly service goal"
+              aria-valuemin={0}
+              aria-valuemax={data.target}
+              aria-valuenow={Math.min(data.target, data.milestones)}
+              aria-valuetext={`${data.milestones} qualifying services, goal ${data.target}`}
             >
-              <span
-                aria-hidden={!!data.target}
-                className="grid size-[68px] place-content-center rounded-full bg-[var(--bz-card)] text-center text-[28px] leading-none tabular-nums"
-                style={SERIF}
+              <span style={{ width: percentage.format(goalShare) }} />
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-x-2 text-xs leading-relaxed text-[var(--bz-text-2)]">
+            <p>
+              {data.target !== null
+                ? reached
+                  ? "Monthly goal reached"
+                  : `${data.target - data.milestones} more to reach your goal`
+                : "Choose a monthly service goal"}
+            </p>
+            {!editing && (
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-[var(--bz-copper-text)] underline-offset-4 hover:underline"
+                onClick={() => {
+                  setGoal(String(data.target ?? ""));
+                  setSaveError(false);
+                  setEditing(true);
+                }}
               >
-                {data.milestones}
-                {data.target && (
-                  <small className="mt-0.5 text-xs text-[var(--bz-text-2)]">
-                    of {data.target}
-                  </small>
+                {data.target ? (
+                  <Pencil size={13} aria-hidden />
+                ) : (
+                  <Goal size={14} aria-hidden />
                 )}
-              </span>
-            </div>
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold">
-                Qualifying services this month
-              </h3>
-              <p className="mt-1 text-sm text-[var(--bz-text-2)]">
-                {data.target
-                  ? reached
-                    ? "Monthly goal reached"
-                    : `${data.target - data.milestones} more to reach your goal`
-                  : "Choose a monthly service goal"}
-              </p>
-              {!editing && (
-                <button
-                  type="button"
-                  className={`inline-flex min-h-11 items-center gap-1.5 text-sm font-semibold text-[var(--bz-copper-text)] hover:underline ${FOCUS}`}
-                  onClick={() => {
-                    setGoal(String(data.target ?? ""));
-                    setSaveError(false);
-                    setEditing(true);
-                  }}
-                >
-                  {data.target ? (
-                    <Pencil className="size-3.5" aria-hidden />
-                  ) : (
-                    <Goal className="size-4" aria-hidden />
-                  )}
-                  {data.target ? "Edit personal goal" : "Set a personal goal"}
-                </button>
-              )}
-            </div>
+                {data.target ? "Edit personal goal" : "Set a personal goal"}
+              </button>
+            )}
           </div>
           {editing && (
             <form
@@ -429,30 +513,31 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
               )}
             </form>
           )}
-        </div>
+        </section>
       </div>
+
       {holds.length > 0 && (
-        <section
-          aria-label="Visa bonus payout holds"
-          className="border-b border-[var(--bz-border)] bg-[var(--bz-accent-subtle)] px-5 py-4 sm:px-6"
-        >
-          <h3 className="flex items-center gap-2 text-sm font-semibold">
+        <section aria-label="Visa bonus payout holds" className={styles.holds}>
+          <h3 className={sectionTitle}>
             <CircleAlert
+              size={16}
+              className="text-[var(--state-warning)]"
               aria-hidden
-              className="size-4 text-[var(--state-warning)]"
-            />{" "}
+            />
             Visa bonus payout holds{" "}
-            <span className="tabular-nums">({holds.length})</span>
+            <span className="rounded border border-[var(--bz-border)] px-1.5 text-xs">
+              {holds.length}
+            </span>
           </h3>
           <PermitHold row={holds[0]} />
           {holds.length > 1 && (
-            <details className="group mt-1">
-              <summary className={summaryClass}>
+            <details className={styles.disclosure}>
+              <summary>
                 View {holds.length - 1} more{" "}
-                {holds.length === 2 ? "hold" : "holds"}{" "}
-                <ChevronDown aria-hidden className={chevronClass} />
+                {holds.length === 2 ? "hold" : "holds"}
+                <ChevronDown size={15} aria-hidden />
               </summary>
-              <ul className="divide-y divide-[var(--bz-border)]">
+              <ul>
                 {holds.slice(1).map((row) => (
                   <li key={row.practice_id}>
                     <PermitHold row={row} />
@@ -463,115 +548,161 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
           )}
         </section>
       )}
-      {next && !holds.some((row) => row.practice_id === next.practice_id) && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--bz-border)] px-5 py-3 sm:px-6">
-          <div className="min-w-0">
-            <h3 className="text-xs font-semibold text-[var(--bz-text-2)]">
+
+      <div className={styles.work} data-split={Boolean(next)}>
+        {next && (
+          <section aria-label="Next paid practice" className={styles.next}>
+            <h3 className={sectionTitle}>
+              <FileCheck2 size={16} aria-hidden />
               Next paid practice
             </h3>
-            <Link
-              className={`inline-flex min-h-11 items-center gap-2 font-semibold hover:underline ${FOCUS}`}
-              href={`/process/${next.practice_id}#final-delivery`}
-            >
-              {next.service}
-              {bound.nextFile && ` · ${bound.nextFile}`}{" "}
-              <ArrowUpRight
-                aria-hidden
-                className="size-4 shrink-0 text-[var(--bz-copper-text)]"
-              />
-            </Link>
-            {bound.nextDue && (
-              <p className="text-sm">
-                Permit due{" "}
-                <time dateTime={bound.nextDue}>
-                  {baliDate(bound.nextDue, {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </time>
+            <div className={styles.casefile}>
+              <span className="text-[11px] font-bold tracking-[0.07em] text-[var(--bz-text-2)] uppercase">
+                Practice #{next.practice_id}
+              </span>
+              <Link
+                className={styles.caseLink}
+                href={`/process/${next.practice_id}#final-delivery`}
+              >
+                <span>
+                  {next.service}
+                  {bound.nextFile && ` · ${bound.nextFile}`}
+                </span>
+                <ArrowUpRight aria-hidden size={17} />
+              </Link>
+              {bound.requirements && (
+                <div className="flex items-center justify-between gap-2 border-t border-[var(--bz-border)] pt-1.5 text-xs leading-relaxed text-[var(--bz-text-2)]">
+                  <span>Requirements met</span>
+                  <strong>
+                    {bound.requirements.met} / {bound.requirements.total}
+                  </strong>
+                </div>
+              )}
+              {bound.nextDue && (
+                <p className="mt-1 text-xs leading-relaxed text-[var(--state-warning)]">
+                  Permit due{" "}
+                  <time dateTime={bound.nextDue}>
+                    {baliDate(bound.nextDue, {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </time>
+                </p>
+              )}
+              <p className="mt-1 text-xs leading-relaxed text-[var(--bz-text-2)]">
+                {next.already_earned
+                  ? "Bonus milestone already recorded"
+                  : next.amount_idr === null
+                    ? "Bonus rate to confirm"
+                    : `Potential bonus · ${money(next.amount_idr)}`}
               </p>
-            )}
-          </div>
-          <p className="text-sm text-[var(--bz-text-2)]">
-            {next.already_earned
-              ? "Bonus milestone already recorded"
-              : next.amount_idr === null
-                ? "Bonus rate to confirm"
-                : `Potential bonus · ${money(next.amount_idr)}`}
-          </p>
-        </div>
-      )}
-      <div className="px-5 py-3 sm:px-6">
-        <h3 className="text-xs font-semibold text-[var(--bz-text-2)]">
-          Recent qualifying work
-        </h3>
-        {data.recent.length === 0 ? (
-          <p className="mt-1 text-sm">
-            Your first qualifying delivery will appear here.
-          </p>
-        ) : (
-          <RecentBonus row={data.recent[0]} />
+            </div>
+          </section>
         )}
-        {data.recent.length > 1 && (
-          <details className="group">
-            <summary className={summaryClass}>
-              View {data.recent.length - 1} earlier{" "}
-              {data.recent.length === 2 ? "delivery" : "deliveries"}{" "}
-              <ChevronDown aria-hidden className={chevronClass} />
-            </summary>
-            <ul className="divide-y divide-[var(--bz-border)]">
-              {data.recent.slice(1).map((row) => (
+        <section
+          id={activityId}
+          className={styles.activity}
+          aria-label="Recent qualifying work"
+        >
+          <h3 className={sectionTitle}>
+            <History size={16} aria-hidden />
+            Recent qualifying work
+          </h3>
+          {selectedStage && (
+            <div className="flex flex-wrap items-center justify-between gap-x-3 text-xs">
+              <span>
+                {statusNames[selectedStage]} · {month} payroll
+              </span>
+              <button
+                type="button"
+                className="min-h-11 font-semibold underline underline-offset-4"
+                onClick={() => selectStage(null)}
+              >
+                Show all
+              </button>
+            </div>
+          )}
+          {recent.length === 0 ? (
+            <div className="flex items-center gap-2.5 py-3.5 text-[13px] text-[var(--bz-text-2)]">
+              <ChartNoAxesCombined size={20} strokeWidth={1.5} aria-hidden />
+              <p>
+                {selectedStage
+                  ? "No matching deliveries in recent activity."
+                  : "Your first qualifying delivery will appear here."}
+              </p>
+            </div>
+          ) : (
+            <ul>
+              {(selectedStage ? recent : recent.slice(0, 1)).map((row) => (
                 <li key={row.practice_id}>
                   <RecentBonus row={row} />
                 </li>
               ))}
             </ul>
-          </details>
-        )}
-        {error && (
-          <button
-            className={`mt-2 min-h-11 text-sm underline ${FOCUS}`}
-            type="button"
-            onClick={() => refresh((v) => v + 1)}
-          >
-            Retry loading bonus details
-          </button>
-        )}
+          )}
+          {!selectedStage && recent.length > 1 && (
+            <details className={styles.disclosure}>
+              <summary>
+                View {recent.length - 1} earlier{" "}
+                {recent.length === 2 ? "delivery" : "deliveries"}
+                <ChevronDown size={15} aria-hidden />
+              </summary>
+              <ul>
+                {recent.slice(1).map((row) => (
+                  <li key={row.practice_id}>
+                    <RecentBonus row={row} />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </section>
       </div>
+      {error && (
+        <button
+          className="mx-[var(--pad)] mb-2 inline-flex min-h-11 items-center text-xs font-semibold text-[var(--bz-copper-text)] underline-offset-4 hover:underline"
+          type="button"
+          onClick={() => refresh((v) => v + 1)}
+        >
+          Retry loading bonus details
+        </button>
+      )}
     </section>
   );
 }
 
-const summaryClass = `flex min-h-11 w-fit cursor-pointer list-none items-center gap-2 text-sm font-semibold text-[var(--bz-text-1)] hover:underline [&::-webkit-details-marker]:hidden ${FOCUS}`;
-const chevronClass =
-  "size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none";
-
 function PermitHold({ row }: { row: Hold }) {
   return (
-    <div className="mt-1 pb-1 text-sm">
-      <Link
-        href={`/process/${row.practice_id}#final-delivery`}
-        className={`inline-flex min-h-11 items-center gap-2 font-semibold hover:underline ${FOCUS}`}
-      >
-        Case #{row.practice_id} · {row.service}{" "}
-        <ArrowUpRight className="size-4" aria-hidden />
-      </Link>
-      <p>{holdActions[row.next_action]}</p>
-      <p className="mt-1 text-sm">
-        {row.slot_label || "Required permit"} · Due{" "}
-        <time dateTime={row.due_on}>
-          {baliDate(row.due_on, {
-            day: "numeric",
-            month: "short",
-            year: "numeric",
-          })}
-        </time>
-      </p>
-      <p className="mt-1 text-xs text-[var(--bz-text-2)]">
-        Earliest payroll month ·{" "}
-        {baliDate(row.payout_from_month, { month: "long", year: "numeric" })}
-      </p>
+    <div className={styles.holdRow}>
+      <div>
+        <Link
+          className={rowLink}
+          href={`/process/${row.practice_id}#final-delivery`}
+        >
+          Case #{row.practice_id} · {row.service}
+          <ArrowUpRight size={15} aria-hidden />
+        </Link>
+        <p className="text-xs leading-relaxed text-[var(--bz-text-2)]">
+          {holdActions[row.next_action]}
+        </p>
+      </div>
+      <div className="self-center border-s border-[var(--bz-border)] ps-2.5">
+        <p className="text-xs leading-relaxed font-semibold">
+          {row.slot_label || "Required permit"} · Due{" "}
+          <time dateTime={row.due_on}>
+            {baliDate(row.due_on, {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })}
+          </time>
+        </p>
+        <p className="text-xs leading-relaxed text-[var(--bz-text-2)]">
+          Earliest payroll month ·{" "}
+          {baliDate(row.payout_from_month, { month: "long", year: "numeric" })}
+        </p>
+      </div>
     </div>
   );
 }
@@ -584,33 +715,26 @@ function RecentBonus({ row }: { row: Earned }) {
         ? "Renewed IMK uploaded"
         : "Delivered";
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-1.5">
+    <div className={styles.entry}>
+      <time className={styles.dateStamp} dateTime={row.earned_at}>
+        <span>{baliDate(row.earned_at, { month: "short" })}</span>
+        <strong>{baliDate(row.earned_at, { day: "2-digit" })}</strong>
+      </time>
       <div className="min-w-0">
-        <Link
-          href={`/process/${row.practice_id}`}
-          className={`inline-flex min-h-11 items-center gap-1.5 text-sm font-semibold hover:underline ${FOCUS}`}
-        >
-          {row.service}{" "}
-          <ArrowUpRight
-            className="size-3.5 text-[var(--bz-text-2)]"
-            aria-hidden
-          />
+        <Link href={`/process/${row.practice_id}`} className={rowLink}>
+          {row.service}
+          <ArrowUpRight size={13} aria-hidden />
         </Link>
-        <p className="text-xs text-[var(--bz-text-2)]">
-          {milestone}{" "}
-          {baliDate(row.earned_at, { day: "numeric", month: "short" })} ·{" "}
+        <p className="text-xs leading-relaxed text-[var(--bz-text-2)]">
+          {milestone} ·{" "}
           {baliDate(row.awarded_at, { month: "short", year: "numeric" })}{" "}
           payroll
         </p>
       </div>
-      <div className="text-sm sm:text-right">
-        {row.amount_idr !== null && (
-          <div className="font-semibold tabular-nums">
-            {money(row.amount_idr)}
-          </div>
-        )}
+      <div className={styles.entryMoney}>
+        {row.amount_idr !== null && <strong>{money(row.amount_idr)}</strong>}
         <span className="text-xs text-[var(--bz-text-2)]">
-          {statusNames[row.status]}
+          {statusNames[row.status] ?? row.status}
         </span>
       </div>
     </div>

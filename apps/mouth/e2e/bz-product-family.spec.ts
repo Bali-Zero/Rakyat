@@ -317,8 +317,38 @@ test.describe("Bali Zero product-family noqata page Page", () => {
           month: "2026-11-01",
           target: 8,
           milestones: 5,
-          holds: [],
-          recent: [],
+          holds: [
+            {
+              practice_id: 704,
+              service: "Dependent KITAS",
+              slot_key: "document_3",
+              slot_label: "IMK — Re-entry Permit",
+              due_on: "2026-11-21",
+              payout_from_month: "2026-12-01",
+              next_action: "upload_permit",
+              email_state: "not_sent",
+            },
+          ],
+          recent: [
+            {
+              practice_id: 703,
+              service: "C1 Tourism",
+              event_kind: "electronic_visa_issued",
+              earned_at: "2026-11-18T08:00:00Z",
+              awarded_at: "2026-11-18T08:00:00Z",
+              status: "approved",
+              amount_idr: 100000,
+            },
+            {
+              practice_id: 702,
+              service: "Tax Registration",
+              event_kind: "service_delivered",
+              earned_at: "2026-11-12T08:00:00Z",
+              awarded_at: "2026-11-12T08:00:00Z",
+              status: "pending",
+              amount_idr: 150000,
+            },
+          ],
           totals: {
             pending: 150000,
             approved: 100000,
@@ -370,6 +400,15 @@ test.describe("Bali Zero product-family noqata page Page", () => {
       await expect(next).toBeVisible();
       await card.screenshot({ path: visualReportPath(`bonus-${view}`) });
     }
+    const approved = card.getByRole("button", { name: /Approved/ });
+    await approved.click();
+    await expect(approved).toHaveAttribute("aria-pressed", "true");
+    await expect(card.getByText("C1 Tourism", { exact: true })).toBeVisible();
+    await expect(
+      card.getByText("Tax Registration", { exact: true }),
+    ).toHaveCount(0);
+    await approved.click();
+    await expect(approved).toHaveAttribute("aria-pressed", "false");
     await next.click();
     await expect(page).toHaveURL(/\/process\/707#final-delivery$/);
     await expect(page.locator("#final-delivery")).toContainText("ITK");
