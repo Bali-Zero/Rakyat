@@ -21,6 +21,7 @@ import {
 import { VOA_PRIMARY_ACTION_STYLE } from "../voa-action-style";
 import { NextSteps } from "../NextSteps";
 import { SafeClockHero } from "../SafeClock";
+import { clearCheckoutHandoff } from "../checkoutHandoff";
 import { useVoaLocale } from "../useVoaLocale";
 import {
   SUBMITTED_CHECK_PREFIX,
@@ -595,6 +596,7 @@ function DeleteCheckControl({
           } catch {
             /* ignore sessionStorage errors */
           }
+          clearCheckoutHandoff(resultId);
         }
         onDeleted();
         return;
