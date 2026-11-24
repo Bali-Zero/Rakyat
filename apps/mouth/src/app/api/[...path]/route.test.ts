@@ -1,11 +1,11 @@
 /**
- * Unit tests for the [...path] catch-all proxy — Bug A regression suite.
+ * Unit tests for the [...path] catch-all proxy.
  *
  * Scope:
- *  - POST/PUT/PATCH/DELETE with nz_csrf_token cookie → X-CSRF-Token header promoted
- *  - GET does NOT promote the header
+ *  - mutating requests forward the X-CSRF-Token header the caller sent
+ *  - GET does not add the header
  *  - DELETE with body still works (non-upload mutation regression guard)
- *  - No CSRF cookie present → no header added
+ *  - a CSRF cookie alone does not add the header
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -145,7 +145,7 @@ describe("Portal Champion streaming proxy", () => {
   });
 });
 
-describe("proxy catch-all route — CSRF header promotion (Bug A)", () => {
+describe("proxy catch-all route — CSRF header forwarding", () => {
   const CSRF_TOKEN = "test-csrf-token-abc123";
 
   beforeEach(() => {
@@ -166,7 +166,7 @@ describe("proxy catch-all route — CSRF header promotion (Bug A)", () => {
   // -------------------------------------------------------------------------
   // POST (primary upload path)
   // -------------------------------------------------------------------------
-  it("promotes nz_csrf_token cookie → X-CSRF-Token header on POST", async () => {
+  it("forwards no CSRF header on POST when the caller did not send one", async () => {
     const req = new MockNextRequest(
       "http://localhost/api/portal/documents/upload",
       {
@@ -180,30 +180,33 @@ describe("proxy catch-all route — CSRF header promotion (Bug A)", () => {
     await POST(req as never);
 
     const sentHeaders = capturedHeaders(vi.mocked(global.fetch));
-    expect(sentHeaders.get("X-CSRF-Token")).toBe(CSRF_TOKEN);
+    expect(sentHeaders.get("X-CSRF-Token")).toBeNull();
   });
 
   // -------------------------------------------------------------------------
   // PUT
   // -------------------------------------------------------------------------
-  it("promotes nz_csrf_token cookie → X-CSRF-Token header on PUT", async () => {
+  it("forwards the CSRF header the caller sent on PUT", async () => {
     const req = new MockNextRequest("http://localhost/api/portal/documents/1", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "X-CSRF-Token": "caller-csrf-token",
+      },
       cookies: { nz_csrf_token: CSRF_TOKEN },
     });
 
     await PUT(req as never);
 
     expect(capturedHeaders(vi.mocked(global.fetch)).get("X-CSRF-Token")).toBe(
-      CSRF_TOKEN,
+      "caller-csrf-token",
     );
   });
 
   // -------------------------------------------------------------------------
   // PATCH
   // -------------------------------------------------------------------------
-  it("promotes nz_csrf_token cookie → X-CSRF-Token header on PATCH", async () => {
+  it("forwards no CSRF header on PATCH when the caller did not send one", async () => {
     const req = new MockNextRequest("http://localhost/api/portal/documents/1", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -213,23 +216,24 @@ describe("proxy catch-all route — CSRF header promotion (Bug A)", () => {
     await PATCH(req as never);
 
     expect(capturedHeaders(vi.mocked(global.fetch)).get("X-CSRF-Token")).toBe(
-      CSRF_TOKEN,
+      null,
     );
   });
 
   // -------------------------------------------------------------------------
   // DELETE — non-upload mutation regression guard
   // -------------------------------------------------------------------------
-  it("promotes nz_csrf_token cookie → X-CSRF-Token header on DELETE", async () => {
+  it("forwards the CSRF header the caller sent on DELETE", async () => {
     const req = new MockNextRequest("http://localhost/api/portal/documents/5", {
       method: "DELETE",
+      headers: { "X-CSRF-Token": "delete-csrf-token" },
       cookies: { nz_csrf_token: CSRF_TOKEN },
     });
 
     await DELETE(req as never);
 
     expect(capturedHeaders(vi.mocked(global.fetch)).get("X-CSRF-Token")).toBe(
-      CSRF_TOKEN,
+      "delete-csrf-token",
     );
   });
 
@@ -874,6 +878,7 @@ describe("proxy catch-all route — manual redirect origin guard (RT-06)", () =>
       headers: {
         Authorization: "Bearer active-jwt",
         "Content-Type": "application/json",
+        "X-CSRF-Token": "csrf-val-123",
       },
       cookies: {
         nz_csrf_token: "csrf-val-123",

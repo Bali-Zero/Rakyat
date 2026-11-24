@@ -115,6 +115,14 @@ function tooLargeMessage(): string {
   return `This file is too large to upload (max ${MAX_SIZE_MB_LABEL}). Try a smaller photo, a screenshot, or a scanned PDF.`;
 }
 
+function readCsrfCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const row = document.cookie
+    .split("; ")
+    .find((entry) => entry.startsWith("nz_csrf_token="));
+  return row ? row.slice("nz_csrf_token=".length) : null;
+}
+
 export function useVaultUpload() {
   const [state, setState] = useState<UploadState>({ status: "idle" });
   const retryableUploadRef = useRef<RetryableUpload | null>(null);
@@ -194,6 +202,12 @@ export function useVaultUpload() {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/portal/documents/upload");
     xhr.withCredentials = true;
+    // The backend checks the double-submit CSRF pair on a cookie-authenticated
+    // write, and the proxy no longer copies the cookie into the header.
+    const csrfToken = readCsrfCookie();
+    if (csrfToken) {
+      xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+    }
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
