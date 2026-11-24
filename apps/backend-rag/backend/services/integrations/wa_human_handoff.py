@@ -196,14 +196,24 @@ def match_human_request(text: str | None) -> HumanRequestTurn | None:
 
 # ── Half B: the notification (I/O — NOT pure, unlike match_human_request) ──
 
+# Soft-deleted rows (`deleted_at`, migration 136) are not the client. Live
+# duplicates are ordered exactly as `whatsapp_identity._CLIENT_LOOKUP_SQL`
+# orders them (status priority, then id); a test pins the two together.
 _ASSIGNEE_LOOKUP_SQL = """
 SELECT id, assigned_to
   FROM clients
- WHERE NULLIF(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), '')
-       IN ($1, '62' || $1, '0' || $1)
-    OR NULLIF(regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g'), '')
-       IN ($1, '62' || $1, '0' || $1)
- ORDER BY id
+ WHERE deleted_at IS NULL
+   AND (NULLIF(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), '')
+        IN ($1, '62' || $1, '0' || $1)
+        OR NULLIF(regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g'), '')
+        IN ($1, '62' || $1, '0' || $1))
+ ORDER BY CASE status
+            WHEN 'active' THEN 0
+            WHEN 'lead' THEN 1
+            WHEN 'prospect' THEN 2
+            ELSE 3
+          END,
+          id
  LIMIT 1
 """
 
@@ -277,6 +287,12 @@ ON CONFLICT (client_id, alert_type, created_date) DO UPDATE
 
 _DEFAULT_REASON = "human_request"
 
+# The bot's own give-ups (abstain, discarded answer, terminal failure) are NOT
+# the client asking for a person: callers send ``bot_escalation:<cause>``. The
+# whole string keys the dedup (so each cause has its own window and an abstain
+# never silences a later explicit request); the wording key is the prefix.
+BOT_ESCALATION_REASON = "bot_escalation"
+
 # Both the in-app bell text and the email carry a REASON-specific line — a
 # client who sends a caption-less photo did not ask to speak to a human, and
 # telling the consultant they did is its own small lie (the class this whole
@@ -287,11 +303,20 @@ _DEFAULT_REASON = "human_request"
 _INAPP_MESSAGES: dict[str, str] = {
     _DEFAULT_REASON: "Client asked to speak to a person on WhatsApp",
     "media_attachment_no_caption": "Client sent an attachment with no caption on WhatsApp",
+    BOT_ESCALATION_REASON: "The WhatsApp bot could not settle a thread and needs a person",
 }
 _INAPP_SUBJECT_TEMPLATES: dict[str, str] = {
     _DEFAULT_REASON: "[WA] Client asked for a human — thread {thread_id}",
     "media_attachment_no_caption": "[WA] Client sent an attachment with no caption — thread {thread_id}",
+    BOT_ESCALATION_REASON: "[WA] Bot needs a person on this thread — thread {thread_id}",
 }
+
+
+def _wording_key(reason: str) -> str:
+    """The key of the wording tables for ``reason`` (bot causes share one)."""
+    if reason.split(":", 1)[0] == BOT_ESCALATION_REASON:
+        return BOT_ESCALATION_REASON
+    return reason
 
 
 async def _record_inapp_alert(
@@ -307,8 +332,9 @@ async def _record_inapp_alert(
     find the assignee. An unfamiliar number therefore has no in-app row and is
     carried by the email alone — which is why the email is never conditional.
     """
-    message = _INAPP_MESSAGES.get(reason, _INAPP_MESSAGES[_DEFAULT_REASON])
-    subject = _INAPP_SUBJECT_TEMPLATES.get(reason, _INAPP_SUBJECT_TEMPLATES[_DEFAULT_REASON])
+    key = _wording_key(reason)
+    message = _INAPP_MESSAGES.get(key, _INAPP_MESSAGES[_DEFAULT_REASON])
+    subject = _INAPP_SUBJECT_TEMPLATES.get(key, _INAPP_SUBJECT_TEMPLATES[_DEFAULT_REASON])
     try:
         async with pool.acquire() as conn:
             await conn.execute(
@@ -358,12 +384,16 @@ _EMAIL_INTROS: dict[str, str] = {
     "media_attachment_no_caption": (
         "Klien mengirim lampiran (foto/dokumen/audio/video) tanpa keterangan melalui WhatsApp."
     ),
+    BOT_ESCALATION_REASON: (
+        "Bot WhatsApp tidak dapat menyelesaikan thread ini dan membutuhkan bantuan kolega manusia."
+    ),
 }
 _EMAIL_SUBJECT_TEMPLATES: dict[str, str] = {
     _DEFAULT_REASON: "[WA] Klien minta bicara dengan manusia — thread {thread_id}",
     "media_attachment_no_caption": (
         "[WA] Klien kirim lampiran tanpa keterangan — thread {thread_id}"
     ),
+    BOT_ESCALATION_REASON: "[WA] Bot butuh bantuan manusia — thread {thread_id}",
 }
 
 
@@ -389,12 +419,13 @@ async def notify_human_handoff(
     caller. Default is the original "client asked for a human" wording, so
     the existing human-handoff-turn call site is unchanged.
 
-    Dedup: per-thread 30-minute window, reusing
+    Dedup: per-thread-and-reason 30-minute window, reusing
     ``human_escalation_notifier``'s TTL map under a namespaced key (this
     channel is email, not Telegram — only the mechanism is shared). The key
-    is per-THREAD, not per-reason: a colleague already alerted about this
-    thread in the last 30 minutes does not need a second alert for a
-    different reason on the same thread.
+    carries the REASON: a caption-less attachment alert must not silence a
+    later alert where the client asked for a human, because that one says
+    something the first did not. The default reason keeps the bare
+    ``human_handoff:<thread>`` key it always had.
 
     True means a colleague HAS BEEN REACHED for this thread inside the
     dedup window — either by THIS call (email OR in-app delivered), or by
@@ -426,6 +457,8 @@ async def notify_human_handoff(
     send, same as any other email failure.
     """
     dedup_key = f"human_handoff:{thread_id}"
+    if reason != _DEFAULT_REASON:
+        dedup_key = f"{dedup_key}:{reason}"
     if _already_escalated(dedup_key):
         # A colleague WAS reached — by an earlier call, still inside the
         # dedup window — so this is True, not False (S1, round 3: the
@@ -460,7 +493,7 @@ async def notify_human_handoff(
     )
 
     body_lines = [
-        _EMAIL_INTROS.get(reason, _EMAIL_INTROS[_DEFAULT_REASON]),
+        _EMAIL_INTROS.get(_wording_key(reason), _EMAIL_INTROS[_DEFAULT_REASON]),
         "",
         f"Thread: {thread_id}",
     ]
@@ -470,7 +503,9 @@ async def notify_human_handoff(
     body_lines.append("")
     body_lines.append("Silakan buka thread di konsol operator untuk membaca detailnya.")
 
-    subject = _EMAIL_SUBJECT_TEMPLATES.get(reason, _EMAIL_SUBJECT_TEMPLATES[_DEFAULT_REASON])
+    subject = _EMAIL_SUBJECT_TEMPLATES.get(
+        _wording_key(reason), _EMAIL_SUBJECT_TEMPLATES[_DEFAULT_REASON]
+    )
     try:
         email_sent = await send_internal_email(
             to=to_email,

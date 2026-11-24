@@ -34,7 +34,11 @@ async def conn():
             CREATE TEMP TABLE practices (client_id int, documents jsonb);
             CREATE TEMP TABLE lkpm_receipts (file_drive_id text);
             CREATE TEMP TABLE weekly_cashout (receipt_drive_file_id text);
+            CREATE TEMP TABLE team_members (id text, email text, role text, active boolean,
+                portal_access boolean, linked_client_id int);
             INSERT INTO clients VALUES (1, 'active', NULL, 'shared-root', NULL);
+            INSERT INTO team_members VALUES
+                ('tm-portal-0001', 'person.one@example.test', 'client', true, true, 1);
         """)
         yield db
     finally:
@@ -135,7 +139,9 @@ async def test_portal_hidden_document_denied_before_token(conn, monkeypatch, hid
     token = drive(monkeypatch)
     with pytest.raises(mod.HTTPException) as exc:
         await handler(
-            "fileA0001Z", current_user={"role": "client", "client_id": 1}, db_pool=Pool(conn)
+            "fileA0001Z",
+            current_user={"role": "client", "user_id": "tm-portal-0001", "client_id": 1},
+            db_pool=Pool(conn),
         )
     assert exc.value.status_code == 403
     token.assert_not_awaited()
@@ -149,7 +155,9 @@ async def test_portal_visible_document_and_invoice_allowed(conn, monkeypatch, re
     await conn.execute(f"INSERT INTO {registry}(client_id,{column}) VALUES (1,'fileA0001Z')")
     token = drive(monkeypatch)
     response = await handler(
-        "fileA0001Z", current_user={"role": "client", "client_id": 1}, db_pool=Pool(conn)
+        "fileA0001Z",
+        current_user={"role": "client", "user_id": "tm-portal-0001", "client_id": 1},
+        db_pool=Pool(conn),
     )
     assert response.status_code == 200
     assert response.body == b"synthetic-image"

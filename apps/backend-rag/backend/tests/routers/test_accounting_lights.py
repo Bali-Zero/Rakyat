@@ -418,10 +418,10 @@ def test_each_inbox_transfer_names_the_company_whose_account_received_it(mock_db
     assert [i["company_key"] for i in items] == [
         first.key,
         second.key,
+        "account:999000111",
         "other",
-        "other",
-        "other",
-        "other",
+        f"account:{''.join(c for c in f'9{first.bank_account_number}' if c.isdigit())}",
+        f"account:{''.join(c for c in f'{first.bank_account_number}9' if c.isdigit())}",
     ]
 
 
@@ -876,10 +876,11 @@ def test_candidates_of_equal_confidence_keep_the_order_of_the_pool_rows_given(
 _POOL_SQL_HEAD = (
     "SELECT i.id AS invoice_id, i.practice_id, i.amount_idr, i.generated_at, "
     "COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr, c.full_name AS client_name, "
-    "i.invoice_number, pt.name AS service_name, i.issuer_entity_key "
+    "billed.company_name AS bill_to_company, i.invoice_number, pt.name AS service_name, i.issuer_entity_key "
     "FROM invoices i JOIN practices p ON i.practice_id = p.id "
     "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id "
     "LEFT JOIN clients c ON p.client_id = c.id "
+    "LEFT JOIN companies billed ON billed.id = p.invoice_company_id "
 )
 
 
@@ -890,7 +891,13 @@ def test_each_pool_query_is_pinned_in_full(mock_db_pool) -> None:
     _client(mock_db_pool).get(f"{BASE}/match-candidates/3")
     open_sql, recorded_sql = [" ".join(c.args[0].split()) for c in conn.fetch.await_args_list]
     assert open_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') <> 'paid'"
-    assert recorded_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid'"
+    assert recorded_sql == (
+        _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid' AND NOT EXISTS ( "
+        "SELECT 1 FROM weekly_cashout wc WHERE wc.linked_practice_id=p.id AND wc.direction='in' "
+        "AND wc.type='invoice_payment' AND wc.reversed_by_id IS NULL GROUP BY wc.linked_practice_id "
+        "HAVING bool_or(wc.payment_method='cash') AND sum(wc.amount_idr) >= i.amount_idr "
+        "- COALESCE(i.pph_expected_idr, 0) )"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1013,6 +1020,21 @@ def test_outgoings_passes_the_state_filter_and_refuses_an_unknown_one(mock_db_po
         bad = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "nope"})
     assert ok.status_code == 200 and load.await_args.kwargs == {"limit": 1000, "state": "justified", "month": None}
     assert bad.status_code == 422
+
+
+def test_outgoings_passes_one_company_key_to_the_service(mock_db_pool) -> None:
+    reading = {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
+        resp = _client(mock_db_pool).get(
+            f"{BASE}/outgoings", params={"company_key": DEFAULT_ENTITY_KEY}
+        )
+    assert resp.status_code == 200
+    assert load.await_args.kwargs == {
+        "limit": 1000,
+        "state": "to_justify",
+        "month": None,
+        "company_key": DEFAULT_ENTITY_KEY,
+    }
 
 
 def test_justify_and_undo_are_admin_only(mock_db_pool) -> None:

@@ -373,41 +373,27 @@ export const listCommissions = (
 /** Approve a commission */
 // CRIT-8: was /api/partner-commissions/{id}/approve — corrected to /api/partners/commissions/{id}/approve
 export const approveCommission = (id: string) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/approve`,
-    {},
-  );
+  api.post<void>(`${BASE}/commissions/${id}/approve`, {});
 
 /** Mark a commission as paid */
 // CRIT-8: was /api/partner-commissions/{id}/mark-paid — corrected
 export const markPaid = (id: string, body: MarkPaidBody) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/mark-paid`,
-    body,
-  );
+  api.post<void>(`${BASE}/commissions/${id}/mark-paid`, body);
 
 /** Clawback a commission */
 // CRIT-8: was /api/partner-commissions/{id}/clawback — corrected
 export const clawback = (id: string, body: ClawbackBody) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/clawback`,
-    body,
-  );
+  api.post<{ id: string }>(`${BASE}/commissions/${id}/clawback`, body);
 
 /** Waive a commission */
 // CRIT-8: was /api/partner-commissions/{id}/waive — corrected
 export const waive = (id: string, body: WaiveBody) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/waive`,
-    body,
-  );
+  api.post<void>(`${BASE}/commissions/${id}/waive`, body);
 
-/** Export finance CSV (pending/ready-to-pay commissions) */
+/** Export all finance commission statuses within the requested date range. */
 // CRIT-8: was /api/partners/commissions/export — corrected to /api/partners/finance/export
-export const exportFinanceCsv = (from?: string, to?: string): string => {
-  const params: Record<string, string> = {};
-  if (from) params["from"] = from;
-  if (to) params["to"] = to;
+export const exportFinanceCsv = (from: string, to: string): string => {
+  const params: Record<string, string> = { from, to };
   return `${api.getBaseUrl()}${BASE}/finance/export${qs(params)}`;
 };
 

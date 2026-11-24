@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,7 +12,6 @@ import pytest
 from backend.services.portal.magic_link_service import (
     MAX_LIVE_TOKENS_PER_EMAIL,
     MagicLinkService,
-    _hash_token,
 )
 
 
@@ -31,7 +32,7 @@ def _service_with_conn(conn: AsyncMock) -> MagicLinkService:
 
 def _portal_user(**over: object) -> dict[str, object]:
     return {
-        "id": 7,
+        "id": "tm-0007",
         "email": "client@example.com",
         "full_name": "Client One",
         "name": "Client One",
@@ -64,7 +65,8 @@ async def test_request_mints_token_for_active_portal_client() -> None:
     assert result["token"]  # raw token returned for the email send
     # The INSERT stored the HASH, never the raw token.
     insert_args = conn.execute.call_args.args
-    assert insert_args[2] == _hash_token(result["token"])  # token_hash positional ($2)
+    expected = hashlib.sha256(b"portal-magic-v2\x00" + result["token"].encode("utf-8")).hexdigest()
+    assert insert_args[2] == expected  # token_hash positional ($2)
     assert result["token"] not in insert_args
     assert "linked_client_id IS NOT NULL" in conn.fetchrow.call_args.args[0]
 
@@ -113,6 +115,14 @@ async def test_request_ignores_blank_email() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _b64u(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode("utf-8")).rstrip(b"=").decode("ascii")
+
+
+# A token of the shape mint issues, naming the mocked login ("tm-0007") and its client (42).
+TOKEN = f"{_b64u('tm-0007')}~{_b64u('42')}~raw-token-abc"
+
+
 def _valid_token_row(**over: object) -> dict[str, object]:
     return {
         "id": 99,
@@ -132,7 +142,7 @@ async def test_verify_consumes_token_and_returns_user() -> None:
     conn.execute = AsyncMock()
     service = _service_with_conn(conn)
 
-    user = await service.verify_magic_link("raw-token-abc")
+    user = await service.verify_magic_link(TOKEN)
 
     assert user is not None
     assert user["email"] == "client@example.com"
@@ -153,7 +163,7 @@ async def test_verify_rejects_unknown_token() -> None:
     conn.execute = AsyncMock()
     service = _service_with_conn(conn)
 
-    assert await service.verify_magic_link("nope") is None
+    assert await service.verify_magic_link(TOKEN) is None
     conn.execute.assert_not_awaited()  # nothing consumed
 
 
@@ -165,7 +175,7 @@ async def test_verify_rejects_already_used_token() -> None:
     conn.execute = AsyncMock()
     service = _service_with_conn(conn)
 
-    assert await service.verify_magic_link("raw") is None
+    assert await service.verify_magic_link(TOKEN) is None
     conn.execute.assert_not_awaited()
 
 
@@ -179,7 +189,7 @@ async def test_verify_rejects_expired_token() -> None:
     conn.execute = AsyncMock()
     service = _service_with_conn(conn)
 
-    assert await service.verify_magic_link("raw") is None
+    assert await service.verify_magic_link(TOKEN) is None
     conn.execute.assert_not_awaited()
 
 
@@ -192,7 +202,7 @@ async def test_verify_rejects_when_user_no_longer_eligible() -> None:
     conn.execute = AsyncMock()
     service = _service_with_conn(conn)
 
-    assert await service.verify_magic_link("raw") is None
+    assert await service.verify_magic_link(TOKEN) is None
     # token still consumed (used_at marked) — a revoked link is spent, not reusable
     assert conn.execute.await_count == 1
 

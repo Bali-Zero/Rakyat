@@ -98,7 +98,6 @@ UNRECONCILED: dict[str, str] = {
     # The sheet no longer carries these services, so there is nothing to
     # reconcile against — by design, not by omission.
     "other_create_molina_express": "RETIRED 2026-10-17: removed from the sheet, inactive in practice_types.",
-    "other_driving_license": "RETIRED 2026-10-17: removed from the sheet, inactive in practice_types.",
     "urgent_1_day": "RETIRED 2026-10-17: urgent surcharges removed from the sheet, inactive in practice_types.",
     "urgent_2_days": "RETIRED 2026-10-17: urgent surcharges removed from the sheet, inactive in practice_types.",
     "urgent_3_days": "RETIRED 2026-10-17: urgent surcharges removed from the sheet, inactive in practice_types.",

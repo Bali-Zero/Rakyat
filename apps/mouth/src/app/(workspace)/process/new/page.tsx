@@ -43,6 +43,14 @@ import {
   type InvoiceCompanyAmbiguity,
   type InvoiceCompanyValue,
 } from "../InvoiceCompanyField";
+import {
+  EMPTY_PPH,
+  PphWithholdingField,
+  canSetPph,
+  pphError,
+  pphSelection,
+  type PphValue,
+} from "../PphWithholdingField";
 
 interface ServiceItem {
   code: string;
@@ -109,6 +117,8 @@ export default function NewPracticePage() {
   const [invoiceAmbiguity, setInvoiceAmbiguity] =
     useState<InvoiceCompanyAmbiguity | null>(null);
   const [invoiceLabel, setInvoiceLabel] = useState<string | null>(null);
+  const [pph, setPph] = useState<PphValue>(EMPTY_PPH);
+  const [canEditPph, setCanEditPph] = useState(false);
   const userPickedClient = useRef(false);
 
   useEffect(() => {
@@ -204,6 +214,7 @@ export default function NewPracticePage() {
         const user = await api.getProfile();
         userEmail.current = user.email;
         casesMetrics.trackPageView("new", undefined, user.email);
+        setCanEditPph(canSetPph(api.isAdmin(), user.role));
         // Admin and Board Member see all team members, others see only themselves
         if (canAssignPracticeToAnyone(api.isAdmin(), user.role)) {
           setAssignableMembers(allTeamMembers);
@@ -406,6 +417,11 @@ export default function NewPracticePage() {
       );
       return;
     }
+    const pphProblem = canEditPph ? pphError(pph) : null;
+    if (pphProblem) {
+      toast.error("PPh withholding", pphProblem);
+      return;
+    }
 
     // Service is optional at Inquiry (Ari, 2026-09-11): with no selection the
     // backend opens the process against the `open_inquiry` placeholder and
@@ -520,9 +536,11 @@ export default function NewPracticePage() {
           ? { family_member_id: result.data.family_member_id }
           : {}),
         ...invoiceCompanyParams(invoiceCompany),
+        ...(canEditPph && pphSelection(pph) ? { pph: pphSelection(pph) } : {}),
       } as CreatePracticeParams;
 
       const createdPractice = await api.crm.createPractice(backendData);
+      let referralSaveFailed = false;
 
       if (formData.referrer_id != null && createdPractice?.id) {
         try {
@@ -536,6 +554,7 @@ export default function NewPracticePage() {
             { component: "NewProcess", action: "createReferral" },
             toError(referralErr),
           );
+          referralSaveFailed = true;
         }
       }
       const apiDuration = performance.now() - apiStart;
@@ -557,12 +576,16 @@ export default function NewPracticePage() {
       );
       casesMetrics.endPerformanceMark("case_creation", caseId, user.email);
 
-      toast.success(
-        "Process Created",
-        selectedService
-          ? `${selectedService.name} created successfully.`
-          : "Open inquiry created — pick the service before Waiting Documents.",
-      );
+      if (referralSaveFailed) {
+        toast.warning("Case created, but the partner referral was not saved.");
+      } else {
+        toast.success(
+          "Process Created",
+          selectedService
+            ? `${selectedService.name} created successfully.`
+            : "Open inquiry created — pick the service before Waiting Documents.",
+        );
+      }
       if (preselectedClientId) {
         await invalidatePreselectedClient();
         router.push(`/clients/${preselectedClientId}?tab=process`);
@@ -920,6 +943,22 @@ export default function NewPracticePage() {
                   setInvoiceLabel(name);
                   setInvoiceCompany({ companyId: id, name: "", npwp: "" });
                 }}
+                disabled={isLoading}
+              />
+            </div>
+          )}
+
+          {canEditPph && (
+            <div className="space-y-2">
+              <p className={labelClass}>
+                PPh withholding{" "}
+                <span className="text-[var(--foreground-muted)] font-normal">
+                  (optional)
+                </span>
+              </p>
+              <PphWithholdingField
+                value={pph}
+                onChange={setPph}
                 disabled={isLoading}
               />
             </div>

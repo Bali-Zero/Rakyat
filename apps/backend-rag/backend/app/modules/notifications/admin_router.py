@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.modules.notifications.models import SENDABLE_ALERT_TYPES
 from backend.app.utils.crm_utils import is_crm_admin
 
 logger = logging.getLogger(__name__)
@@ -411,8 +412,10 @@ async def retry_failed_alerts(
                 """
                 SELECT * FROM notification_alerts
                 WHERE id = ANY($1) AND status = 'failed'
+                AND alert_type = ANY($2::text[])
                 """,
                 request.alert_ids,
+                list(SENDABLE_ALERT_TYPES),
             )
         else:
             # Retry all failed alerts from last 7 days
@@ -420,8 +423,10 @@ async def retry_failed_alerts(
                 """
                 SELECT * FROM notification_alerts
                 WHERE status = 'failed'
+                AND alert_type = ANY($1::text[])
                 AND created_at > NOW() - INTERVAL '7 days'
                 """,
+                list(SENDABLE_ALERT_TYPES),
             )
 
         if not rows:
@@ -486,10 +491,12 @@ async def pause_client_notifications(
             SET status = 'suppressed'
             WHERE client_id = $1
             AND status = 'pending'
+            AND alert_type = ANY($3::text[])
             AND created_at > NOW() - $2::interval
             """,
             client_id,
             interval,
+            list(SENDABLE_ALERT_TYPES),
         )
 
     logger.info(

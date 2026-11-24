@@ -19,6 +19,7 @@ Guard conditions (skip silently if any fail):
 from __future__ import annotations
 
 import base64
+import html
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -382,7 +383,8 @@ def _build_html(
     advisor_wa: str | None = None,
 ) -> str:
     """Assemble the welcome HTML email — dark premium design."""
-    advisor_name = advisor_first if advisor_first else "our team"
+    first_name = html.escape(first_name)
+    advisor_name = html.escape(advisor_first if advisor_first else "our team")
     wa_num = (advisor_wa or _BZ_WHATSAPP).lstrip("+")
     cta_label = f"Chat with {advisor_name} on WhatsApp"
 

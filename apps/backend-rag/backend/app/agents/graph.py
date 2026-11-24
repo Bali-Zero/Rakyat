@@ -120,7 +120,7 @@ async def retrieve_node(state: WorkflowState) -> WorkflowState:
     """
     question = state.get("question", "")
     metadata = state.get("metadata") or {}
-    client_id: int | None = metadata.get("client_id") or metadata.get("user_id")
+    client_id: int | None = metadata.get("client_id")
     # Normalize: if it's a string int, cast it
     if isinstance(client_id, str) and client_id.isdigit():
         client_id = int(client_id)

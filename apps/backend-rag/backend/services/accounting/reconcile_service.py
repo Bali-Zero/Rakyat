@@ -31,6 +31,19 @@ logger = logging.getLogger(__name__)
 # Mirrors crm_practices PAYMENT_STATUS_VALUES — keep in sync.
 PAYMENT_STATUS_VALUES = ("unpaid", "partial", "paid")
 
+# Migration 125 binds one invoice to each billed practice. A legacy payment can
+# live on either record. Never subtract it twice when they both carry it.
+INVOICE_BALANCE_SQL = """
+    i.amount_idr - COALESCE(i.pph_expected_idr, 0)
+    - GREATEST(COALESCE(i.paid_amount_idr, 0), COALESCE(p.paid_amount, 0))
+"""
+
+_CASH_APPLIED = """
+    SELECT COALESCE(sum(amount_idr), 0) FROM weekly_cashout
+    WHERE linked_practice_id=$1 AND direction='in' AND type='invoice_payment'
+      AND payment_method='cash' AND reversed_by_id IS NULL
+"""
+
 # The note of a confirmation recorded in historical mode: a payment that arrived in the past,
 # reconciled now. The practice listener sends no email for the change it made.
 HISTORICAL_NOTE = "historical: recorded without notifications"
@@ -147,6 +160,7 @@ async def confirm_payment(
     margin_idr: int = 0,
     movement_date: date | None = None,
     historical: bool = False,
+    prior_recorded_idr: int | None = None,
 ) -> ConfirmResult:
     """Confirm a payment match in one transaction. Returns the audit ids.
 
@@ -216,6 +230,8 @@ async def confirm_payment(
         # case's status is unchanged, and an old payment must not email anyone.
         starts = not historical and new_status == "paid" and prac["status"] == "sending_invoice"
         prior_paid = int(prac["paid_amount"] or 0)
+        if prior_recorded_idr is not None:
+            prior_paid = max(prior_paid, prior_recorded_idr)
         new_paid = prior_paid + amount_applied_idr
 
         # 1b. A given invoice must exist and belong to this practice, before any write.
@@ -257,6 +273,14 @@ async def confirm_payment(
                     )
                 for row in issued:
                     _require_issuer(company, row["issuer_entity_key"], bank_txn_id, row["id"])
+
+            if await conn.fetchval(_CASH_APPLIED, practice_id):
+                balance = await conn.fetchval(
+                    f"SELECT {INVOICE_BALANCE_SQL} FROM invoices i JOIN practices p"
+                    " ON p.id=i.practice_id WHERE p.id=$1", practice_id,
+                )
+                if status_before == "paid" or balance is None or amount_applied_idr > balance:
+                    raise ReconcileError("Cash is already recorded. This payment exceeds the remaining balance.")
 
         # 2. Update practices — SAME columns/path the CRM PATCH writes (superscar #9).
         #    The invoice amount fills actual_price only while it is still NULL. A case that
@@ -309,7 +333,7 @@ async def confirm_payment(
                     ),
                     payment_method = $1,
                     payment_reference = $2,
-                    paid_amount_idr = COALESCE(paid_amount_idr, 0) + $3
+                    paid_amount_idr = GREATEST(COALESCE(paid_amount_idr, 0), $6::bigint) + $3
                 WHERE id = $4
                 """,
                 payment_method,
@@ -317,6 +341,7 @@ async def confirm_payment(
                 amount_applied_idr,
                 invoice_id,
                 movement_date,
+                prior_recorded_idr,
             )
 
         # 4. Mark the bank transaction reconciled + link.
@@ -582,6 +607,13 @@ async def link_recorded(
             practice_id,
         )
         ceiling = Decimal(invoice_amount) + EXACT_TOLERANCE_IDR
+        cash = await conn.fetchval(_CASH_APPLIED, practice_id)
+        if cash:
+            # A bank link accounts for previously recorded non-cash money only.
+            withheld = await conn.fetchval(
+                "SELECT COALESCE(pph_expected_idr, 0) FROM invoices WHERE id=$1", invoice_id
+            )
+            ceiling = Decimal(invoice_amount) - withheld - cash
         if Decimal(bank["amount_idr"]) + Decimal(attached) > ceiling:
             raise ReconcileError(
                 f"bank transaction {bank_txn_id} would exceed the amount of invoice {invoice_id}"

@@ -112,7 +112,7 @@ def test_all_tax_codes_route_to_permata(
     tax_codes = sorted(
         code for code in _golden() if code.startswith("tax") and code != "tax_close_pma_company"
     )
-    assert len(tax_codes) == 27
+    assert len(tax_codes) == 28
     for code in tax_codes:
         resolved = resolve_invoice_entity(code, FIRST_WITA_INSTANT)
         assert resolved is synthetic_registry["permata_bali_nol_konsultan"], code

@@ -1401,6 +1401,18 @@
         "icon_id": "other-cancel",
         "tier_range": null
       },
+      "Driving License": {
+        "category": "other_process",
+        "key": "Driving License",
+        "name": "Driving License",
+        "price": "1.600.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Indonesian driving license (SIM) issuance for foreign nationals.",
+        "icon_id": "other-driving",
+        "tier_range": null
+      },
       "EPO (Exit Permit Only)": {
         "category": "other_process",
         "key": "EPO (Exit Permit Only)",

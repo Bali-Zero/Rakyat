@@ -23,9 +23,8 @@ from typing import Any
 
 import httpx
 
-logger = logging.getLogger(__name__)
-
 GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
+logger = logging.getLogger(__name__)
 
 
 # Golden Rule #10: module-level lazy singleton AsyncClient.
@@ -49,6 +48,17 @@ async def close_ig_graph_sensor_client() -> None:
 
 class IGGraphError(RuntimeError):
     """Raised on Graph API error payloads."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: int | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.error_type = error_type
 
 
 @dataclass(frozen=True)
@@ -102,7 +112,15 @@ class IGGraphSensor:
             raise IGGraphError(page["error"].get("message", "media fetch failed"))
         out: list[IGPostMetrics] = []
         for media in page.get("data", []):
-            metrics = await self._fetch_insights(media["id"], media.get("media_type", ""))
+            try:
+                metrics = await self._fetch_insights(media["id"], media.get("media_type", ""))
+            except IGGraphError as error:
+                if error.code in {4, 17, 32, 613} or (
+                    error.code == 190 and error.error_type == "OAuthException"
+                ):
+                    raise
+                logger.warning("insights error media_id=%s code=%s", media["id"], error.code)
+                continue
             out.append(
                 IGPostMetrics(
                     post_id=media["id"],
@@ -123,8 +141,12 @@ class IGGraphSensor:
             metric_list += ",video_views"
         response = await self._get(f"/{media_id}/insights", metric=metric_list)
         if "error" in response:
-            logger.warning("insights error for %s: %s", media_id, response["error"])
-            return {"likes": 0, "comments": 0, "saves": 0, "reach": 0}
+            error = response["error"]
+            raise IGGraphError(
+                error.get("message", "insights fetch failed"),
+                code=error.get("code"),
+                error_type=error.get("type"),
+            )
         parsed: dict[str, int] = {
             "likes": 0,
             "comments": 0,

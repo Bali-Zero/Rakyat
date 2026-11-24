@@ -1291,6 +1291,17 @@
         "description_en": "Stand-alone processing of IMTA and RPTKA work permit documents, valid for 6 months or less.",
         "icon_id": "other-cancel"
       },
+      "Driving License": {
+        "name": "Driving License",
+        "price": "1.600.000 IDR",
+        "tier_range": null,
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "verified_on": "2026-11-23",
+        "description_en": "Indonesian driving license (SIM) issuance for foreign nationals.",
+        "icon_id": "other-driving"
+      },
       "EPO (Exit Permit Only)": {
         "name": "EPO (Exit Permit Only)",
         "price": "700.000 IDR",

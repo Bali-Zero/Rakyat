@@ -139,7 +139,7 @@ def test_mapping_matches_independent_golden() -> None:
     assert len(PRACTICE_TYPE_ENTITY_KEYS) == 122
     counts = Counter(golden.values())
     assert counts["cimb_bayu_bali_nol"] == 42
-    assert counts["permata_bali_nol_konsultan"] == 27
+    assert counts["permata_bali_nol_konsultan"] == 28
     assert counts["mandiri_bali_nol_impresariat"] == 47
     assert counts["bni_bayu_santero"] == 6
     assert all(code == code.strip().lower() for code in golden), "golden keys must be normalized"

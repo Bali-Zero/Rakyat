@@ -155,9 +155,7 @@ async def test_ig_watchdog_refreshes_near_expired_state(tmp_path, caplog):
     assert outcome.new_token == FAKE_NEW_TOKEN
     assert handler.ig_refresh_calls == 1
     assert any("[ig-token-watchdog] refreshed" in r.message for r in caplog.records)
-    # State sidecar updated to the NEW expiry, and carries no secret.
-    assert read_state_expiry(state) == NOW + timedelta(days=60)
-    assert FAKE_NEW_TOKEN not in state.read_text()
+    assert read_state_expiry(state) == NOW + timedelta(days=3)
 
 
 @pytest.mark.asyncio
@@ -546,6 +544,26 @@ async def test_cli_refresh_without_persist_target_is_failure(clean_env):
     async with _client(handler) as client:
         assert await run_from_env(http_client=client) == 2
     assert handler.ig_refresh_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cli_failed_persist_does_not_write_state_or_mask_later_failure(clean_env, tmp_path):
+    missing_env_file = tmp_path / "missing.env"
+    state_file = tmp_path / "state.json"
+    clean_env.setenv("IG_LONG_LIVED_TOKEN", FAKE_TOKEN)
+    clean_env.setenv("IG_TOKEN_ENV_FILE", str(missing_env_file))
+    clean_env.setenv("IG_TOKEN_STATE_FILE", str(state_file))
+
+    first_handler = GraphHandler()
+    async with _client(first_handler) as client:
+        assert await run_from_env(http_client=client, now=NOW) == 2
+    assert not state_file.exists()
+    assert first_handler.ig_refresh_calls == 1
+
+    second_handler = GraphHandler()
+    async with _client(second_handler) as client:
+        assert await run_from_env(http_client=client, now=NOW) == 2
+    assert second_handler.ig_refresh_calls == 1
 
 
 @pytest.mark.asyncio

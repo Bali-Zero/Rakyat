@@ -76,7 +76,9 @@ def test_a_short_refusal_is_not_mistaken_for_an_answer() -> None:
     "Je suis prêt pour votre prochaine question." is verbatim from the live
     probe — 43 characters, zero content, returned to a real question.
     """
-    assert _abstain_answer_worth_sending(_payload("Je suis prêt pour votre prochaine question.")) == ""
+    assert (
+        _abstain_answer_worth_sending(_payload("Je suis prêt pour votre prochaine question.")) == ""
+    )
     assert _abstain_answer_worth_sending(_payload("")) == ""
     assert _abstain_answer_worth_sending(_payload("   ")) == ""
 
@@ -114,8 +116,7 @@ def test_what_it_returns_is_what_gets_sent() -> None:
     two code paths end up disagreeing about the same message.
     """
     answer = (
-        REAL_ANSWER
-        + "\n\n## SUGGESTED WORKFLOW (from kg, confidence: 70%)\n1. Step.\n"
+        REAL_ANSWER + "\n\n## SUGGESTED WORKFLOW (from kg, confidence: 70%)\n1. Step.\n"
         "IMPORTANT: This is a suggested workflow. "
         "Always verify current requirements with the user."
     )
@@ -137,23 +138,25 @@ def test_an_ungrounded_abstain_is_never_sent_however_fluent() -> None:
     context_length == 0. This asserts the general rule, not those two strings.
     """
     # fluent, on-topic, long — and ungrounded
-    assert _abstain_answer_worth_sending(
-        _payload(REAL_ANSWER, context_length=0, evidence_score=0.0)
-    ) == ""
+    assert (
+        _abstain_answer_worth_sending(_payload(REAL_ANSWER, context_length=0, evidence_score=0.0))
+        == ""
+    )
     # context but no score, and score but no context: both are ungrounded
-    assert _abstain_answer_worth_sending(
-        _payload(REAL_ANSWER, context_length=3, evidence_score=0.0)
-    ) == ""
-    assert _abstain_answer_worth_sending(
-        _payload(REAL_ANSWER, context_length=0, evidence_score=0.5)
-    ) == ""
+    assert (
+        _abstain_answer_worth_sending(_payload(REAL_ANSWER, context_length=3, evidence_score=0.0))
+        == ""
+    )
+    assert (
+        _abstain_answer_worth_sending(_payload(REAL_ANSWER, context_length=0, evidence_score=0.5))
+        == ""
+    )
     # a missing/garbage field is treated as ungrounded, never as permission
-    assert _abstain_answer_worth_sending(
-        {"abstain": True, "answer": REAL_ANSWER}
-    ) == ""
-    assert _abstain_answer_worth_sending(
-        _payload(REAL_ANSWER, context_length="?", evidence_score="?")
-    ) == ""
+    assert _abstain_answer_worth_sending({"abstain": True, "answer": REAL_ANSWER}) == ""
+    assert (
+        _abstain_answer_worth_sending(_payload(REAL_ANSWER, context_length="?", evidence_score="?"))
+        == ""
+    )
 
 
 def test_a_grounded_abstain_is_still_sent() -> None:
@@ -173,18 +176,29 @@ def test_every_language_has_a_note_and_none_promises_a_reply() -> None:
     `abstain_flagged` lives under.
     """
     forbidden = (
-        "will reply", "will answer", "within", "shortly", "asap",
-        "ti risponder", "risponderà", "entro",
-        "akan membalas", "segera",
-        "ответит", "в течение",
-        "відповість", "протягом",
+        "will reply",
+        "will answer",
+        "within",
+        "shortly",
+        "asap",
+        "ti risponder",
+        "risponderà",
+        "entro",
+        "akan membalas",
+        "segera",
+        "ответит",
+        "в течение",
+        "відповість",
+        "протягом",
     )
     for language in PROTOCOL_LANGUAGES:
         note = get_localized_stub("low_confidence_note", language)
         assert note.strip(), f"{language} has no low_confidence_note"
         # the generic unknown-key fallback is itself a refusal — catching it here
         # is what stops a missing translation from apologising to the client
-        assert "cannot fulfill this request" not in note, f"{language} fell back to the refusal stub"
+        assert "cannot fulfill this request" not in note, (
+            f"{language} fell back to the refusal stub"
+        )
         offenders = [f for f in forbidden if f in note.lower()]
         assert not offenders, f"{language} promises a reply: {offenders}"
 
@@ -258,7 +272,7 @@ async def test_generate_bot_reply_sends_the_answer_with_the_note(monkeypatch) ->
     monkeypatch.setenv("WA_INBOX_BOT_AUTOREPLY", "true")
     _mock_rag(monkeypatch, _payload(REAL_ANSWER))
 
-    with patch(f"{BOT}.notify_human_telegram", new=AsyncMock(return_value=True)):
+    with patch(f"{BOT}._tell_a_human", new=AsyncMock(return_value=True)):
         answer = await wa_inbox_bot.generate_bot_reply(_Pool(_ROWS_NEWEST_FIRST), _thread())
 
     assert "PT PMA" in answer, "the answer itself must reach the client"
@@ -272,7 +286,7 @@ async def test_generate_bot_reply_still_stubs_when_there_is_no_answer(monkeypatc
     _mock_rag(monkeypatch, _payload("Je suis prêt pour votre prochaine question."))
     notifier = AsyncMock(return_value=True)
 
-    with patch(f"{BOT}.notify_human_telegram", new=notifier):
+    with patch(f"{BOT}._tell_a_human", new=notifier):
         answer = await wa_inbox_bot.generate_bot_reply(_Pool(_ROWS_NEWEST_FIRST), _thread())
 
     assert "PT PMA" not in answer

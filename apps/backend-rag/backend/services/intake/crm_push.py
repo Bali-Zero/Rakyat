@@ -78,6 +78,28 @@ def _rate_limit_wait_seconds(resp: httpx.Response) -> float:
     return float(min(int(digits), _RATE_LIMIT_WAIT_MAX_SECONDS))
 
 
+def _http_failure_detail(status_code: int) -> str:
+    """The detail of a failed CRM answer: its status and fixed text.
+
+    The body of the answer is never read into a detail or a log line: an error page can quote
+    the uploaded file's name or the server's exception text.
+    """
+    if status_code in (401, 403):
+        reason = "the CRM refused the credential"
+    elif status_code == 429:
+        reason = "the CRM is rate limiting"
+    elif status_code >= 500:
+        reason = "the CRM failed to answer"
+    else:
+        reason = "the CRM rejected the request"
+    return f"HTTP {status_code}: {reason}"
+
+
+def _transport_failure_detail(exc: BaseException) -> str:
+    """The detail of a call that got no answer: the error's type and fixed text, never its text."""
+    return f"{type(exc).__name__}: the CRM could not be reached"
+
+
 def push_enabled() -> bool:
     """Kill-switch — ``INTAKE_CRM_PUSH_ENABLED`` (default ON)."""
     return os.environ.get("INTAKE_CRM_PUSH_ENABLED", "1").strip().lower() not in {
@@ -220,11 +242,7 @@ async def _ensure_client_on_fly(
         logger.warning("intake.crm_push.upsert_rate_limited — retrying once in %.0fs", wait)
         await asyncio.sleep(wait)
     if resp.status_code >= 400:
-        logger.warning(
-            "intake.crm_push.upsert_failed status=%s detail=%s",
-            resp.status_code,
-            resp.text[:160],
-        )
+        logger.warning("intake.crm_push.upsert_failed status=%s", resp.status_code)
         return None
     try:
         data = resp.json()
@@ -351,7 +369,9 @@ async def push_committed_document(
     try:
         raw = await asyncio.to_thread(path.read_bytes)
     except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as exc:
-        return CrmPushResult(ok=False, status="missing_blob", detail=f"{type(exc).__name__}: {exc}")
+        return CrmPushResult(
+            ok=False, status="missing_blob", detail=f"{type(exc).__name__}: blob could not be read"
+        )
 
     max_bytes = _max_push_bytes()
     if len(raw) > max_bytes:
@@ -440,7 +460,7 @@ async def push_committed_document(
             try:
                 resp = await client.post(url, json=payload, headers=headers)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_detail = f"{type(exc).__name__}: {exc}"
+                last_detail = _transport_failure_detail(exc)
                 if attempt == 0:
                     logger.warning(
                         "intake.crm_push.transient client=%s err=%s — retrying once",
@@ -454,7 +474,7 @@ async def push_committed_document(
                 return CrmPushResult(
                     ok=False,
                     status="denied_rbac",
-                    detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                    detail=_http_failure_detail(resp.status_code),
                 )
             if resp.status_code == 429 and attempt == 0:
                 wait = _rate_limit_wait_seconds(resp)
@@ -466,7 +486,7 @@ async def push_committed_document(
                 await asyncio.sleep(wait)
                 continue
             if resp.status_code >= 500:
-                last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                last_detail = _http_failure_detail(resp.status_code)
                 if attempt == 0:
                     logger.warning(
                         "intake.crm_push.5xx client=%s detail=%s — retrying once",
@@ -497,7 +517,7 @@ async def push_committed_document(
                 return CrmPushResult(
                     ok=False,
                     status="rejected",
-                    detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                    detail=_http_failure_detail(resp.status_code),
                 )
 
             # 2xx — response shape: {"success", "document_id", "company_document_id", "file_url", ...}
@@ -530,8 +550,11 @@ async def push_committed_document(
         # Unreachable: the loop always returns. Defensive fallthrough.
         return CrmPushResult(ok=False, status="error", detail=last_detail or "exhausted retries")
     except Exception as exc:  # delivery must never break the approve
-        logger.exception("intake.crm_push.unexpected client=%s", client_id)
-        return CrmPushResult(ok=False, status="error", detail=f"{type(exc).__name__}: {exc}")
+        # The type alone: a traceback ends with the exception's text, which can quote a path.
+        logger.error("intake.crm_push.unexpected client=%s err=%s", client_id, type(exc).__name__)
+        return CrmPushResult(
+            ok=False, status="error", detail=f"{type(exc).__name__}: unexpected delivery error"
+        )
 
 
 async def push_committed_company_document(
@@ -578,7 +601,9 @@ async def push_committed_company_document(
     try:
         raw = await asyncio.to_thread(path.read_bytes)
     except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as exc:
-        return CrmPushResult(ok=False, status="missing_blob", detail=f"{type(exc).__name__}: {exc}")
+        return CrmPushResult(
+            ok=False, status="missing_blob", detail=f"{type(exc).__name__}: blob could not be read"
+        )
 
     max_bytes = _max_push_bytes()
     if len(raw) > max_bytes:
@@ -622,7 +647,7 @@ async def push_committed_company_document(
             try:
                 resp = await client.post(url, json=payload, headers=headers)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_detail = f"{type(exc).__name__}: {exc}"
+                last_detail = _transport_failure_detail(exc)
                 if attempt == 0:
                     logger.warning(
                         "intake.crm_push.company_transient company=%s err=%s — retrying once",
@@ -643,7 +668,7 @@ async def push_committed_company_document(
                 return CrmPushResult(
                     ok=False,
                     status="denied_rbac",
-                    detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                    detail=_http_failure_detail(resp.status_code),
                 )
             if resp.status_code == 429 and attempt == 0:
                 wait = _rate_limit_wait_seconds(resp)
@@ -656,7 +681,7 @@ async def push_committed_company_document(
                 attempt += 1
                 continue
             if resp.status_code >= 500:
-                last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                last_detail = _http_failure_detail(resp.status_code)
                 if attempt == 0:
                     logger.warning(
                         "intake.crm_push.company_5xx company=%s detail=%s — retrying once",
@@ -682,7 +707,7 @@ async def push_committed_company_document(
                 return CrmPushResult(
                     ok=False,
                     status="rejected",
-                    detail=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                    detail=_http_failure_detail(resp.status_code),
                 )
 
             try:
@@ -711,5 +736,11 @@ async def push_committed_company_document(
             )
         return CrmPushResult(ok=False, status="error", detail=last_detail or "exhausted retries")
     except Exception as exc:
-        logger.exception("intake.crm_push.company_unexpected company=%s", company_id)
-        return CrmPushResult(ok=False, status="error", detail=f"{type(exc).__name__}: {exc}")
+        logger.error(
+            "intake.crm_push.company_unexpected company=%s err=%s",
+            company_id,
+            type(exc).__name__,
+        )
+        return CrmPushResult(
+            ok=False, status="error", detail=f"{type(exc).__name__}: unexpected delivery error"
+        )

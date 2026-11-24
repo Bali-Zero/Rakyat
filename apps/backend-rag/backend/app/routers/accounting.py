@@ -29,6 +29,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.accounting import (
     bank_import_service,
+    cash_receipts,
     cashout_import_service,
     cashout_service,
     reconcile_service,
@@ -41,6 +42,7 @@ from backend.services.accounting.bank_pdf_readers import (
 )
 from backend.services.accounting.companies import (
     OTHER_KEY,
+    account_key_for_account,
     company_key_for_account,
     company_key_for_issuer,
     load_companies,
@@ -310,7 +312,15 @@ async def import_bank_statement(
 
 # An invoice is OPEN while its practice's payment status is not `paid`, RECORDED once it is.
 _OPEN_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') <> 'paid'"
-_RECORDED_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') = 'paid'"
+_RECORDED_POOL_SQL = """COALESCE(p.payment_status, 'unpaid') = 'paid'
+    AND NOT EXISTS (
+        SELECT 1 FROM weekly_cashout wc
+        WHERE wc.linked_practice_id=p.id AND wc.direction='in' AND wc.type='invoice_payment'
+          AND wc.reversed_by_id IS NULL
+        GROUP BY wc.linked_practice_id
+        HAVING bool_or(wc.payment_method='cash')
+           AND sum(wc.amount_idr) >= i.amount_idr - COALESCE(i.pph_expected_idr, 0)
+    )"""
 
 
 def _finite_int(value: Any) -> int:
@@ -336,12 +346,13 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
         f"""
         SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
                i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
-               c.full_name AS client_name,
+               c.full_name AS client_name, billed.company_name AS bill_to_company,
                i.invoice_number, pt.name AS service_name, i.issuer_entity_key
         FROM invoices i
         JOIN practices p ON i.practice_id = p.id
         LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
         LEFT JOIN clients c ON p.client_id = c.id
+        LEFT JOIN companies billed ON billed.id = p.invoice_company_id
         WHERE {_RECORDED_POOL_SQL if recorded else _OPEN_POOL_SQL}
         """
     )
@@ -357,6 +368,7 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
             invoice_issued_at=_iso(r["generated_at"]),
             service_name=r.get("service_name"),
             issuer_entity_key=r.get("issuer_entity_key"),
+            bill_to_company=r.get("bill_to_company"),
         )
         for r in rows
     ]
@@ -439,6 +451,48 @@ async def match_candidates(
         }
 
 
+class CashReceiptRequest(BaseModel):
+    company_key: str = Field(min_length=1, max_length=80)
+    invoice_id: int = Field(gt=0)
+    amount_idr: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
+    movement_date: date
+    reference: str | None = Field(default=None, max_length=120)
+    request_id: uuid.UUID
+
+
+@router.get("/cash-invoices")
+async def list_cash_invoices(
+    company_key: str,
+    q: str = Query("", max_length=120),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        try:
+            return {"items": await cash_receipts.cash_invoices(conn, company_key, q)}
+        except ReconcileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/cash-receipts")
+async def record_cash_receipt(
+    payload: CashReceiptRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        try:
+            result = await cash_receipts.record_cash(
+                conn, **payload.model_dump(), confirmed_by=current_user["email"].lower(),
+            )
+        except ReconcileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _invalidate_payment_caches()
+    return result
+
+
 class ConfirmRequest(BaseModel):
     bank_txn_id: int | None = None
     practice_id: int
@@ -497,6 +551,19 @@ async def confirm_reconciliation(
         except ReconcileError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    await _invalidate_payment_caches()
+    return {
+        "practice_id": result.practice_id,
+        "invoice_id": result.invoice_id,
+        "cashout_id": result.cashout_id,
+        "reconciliation_log_id": result.reconciliation_log_id,
+        "status_before": result.status_before,
+        "status_after": result.status_after,
+        "historical": payload.historical,
+    }
+
+
+async def _invalidate_payment_caches() -> None:
     # Same cache keys the CRM uses (superscar #9) — payment_status changed.
     try:
         from backend.core.cache import invalidate_cache
@@ -509,17 +576,6 @@ async def confirm_reconciliation(
         await invalidate_cache(f"zantara:{REVENUE_GROWTH_CACHE_NAMESPACE}:*")
     except Exception as cache_exc:  # cache failure must not fail the write
         logger.warning("accounting confirm cache invalidation failed: %s", cache_exc)
-
-    return {
-        "practice_id": result.practice_id,
-        "invoice_id": result.invoice_id,
-        "cashout_id": result.cashout_id,
-        "reconciliation_log_id": result.reconciliation_log_id,
-        "status_before": result.status_before,
-        "status_after": result.status_after,
-        "historical": payload.historical,
-    }
-
 
 # ── Lights: the reconciliation inbox and the three actions that move no money ───────────
 
@@ -619,8 +675,9 @@ async def reconciliation_inbox(
             "txn_date": r["txn_date"],
             "amount_idr": int(r["amount_idr"]),
             "description": r["description"] or "",
-            # Same rule as the companies strip: an account no company owns is "other".
-            "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
+            "company_key": company_key_for_account(r["account_number"])
+            or account_key_for_account(r["account_number"])
+            or OTHER_KEY,
         }
         for r in rows
     ]
@@ -629,6 +686,7 @@ async def reconciliation_inbox(
 
 @router.get("/outgoings")
 async def outgoings(
+    company_key: str | None = Query(None, min_length=1),
     limit: int = Query(1000, ge=1, le=5000),
     state: Literal["to_justify", "justified", "all"] = Query("to_justify"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
@@ -638,7 +696,13 @@ async def outgoings(
     """Debits newest first, each with its state and justification, bank text read apart."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        return await load_outgoings(conn, limit=limit, state=state, month=month)
+        try:
+            kwargs: dict[str, Any] = {"limit": limit, "state": state, "month": month}
+            if company_key is not None:
+                kwargs["company_key"] = company_key
+            return await load_outgoings(conn, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class JustifyLine(BaseModel):

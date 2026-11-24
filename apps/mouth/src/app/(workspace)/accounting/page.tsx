@@ -35,6 +35,7 @@ import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
 import {
   AccountingMonth,
+  OCTOBER,
   NOVEMBER,
   useAccountingMonth,
 } from "./_components/accountingPeriod";
@@ -43,13 +44,14 @@ import "./control-centre.css";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
 import { OutgoingsView } from "./_components/OutgoingsView";
+import { CashReceiptForm } from "./_components/CashReceiptForm";
 import {
   accountingApi,
   type CashoutRow,
   type CashbookSummary,
 } from "@/lib/api/workspace/accounting.api";
 
-type View = "centre" | "cashout" | "outgoings";
+type View = "centre" | "cashout" | "outgoings" | "cash-receipt";
 
 function BackToCentre({ onClick }: { onClick: () => void }) {
   return (
@@ -155,6 +157,11 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
               </td>
               <td className="px-3 py-2 font-medium">
                 {r.client_name ?? r.counterparty ?? "—"}
+                {r.payment_method === "cash" && (
+                  <span className="block text-xs font-normal text-[var(--bz-text-2)]">
+                    Cash{r.cash_company_name ? ` · ${r.cash_company_name}` : ""}
+                  </span>
+                )}
               </td>
               <td className="px-3 py-2 text-[var(--bz-text-2)]">
                 {r.type === "cashout_worksheet" && (
@@ -196,15 +203,17 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
-  const [archive, setArchive] = useState(false);
+  const [period, setPeriod] = useState<"november" | "october" | "archive">("november");
   const [view, setView] = useState<View>("centre");
+  const month = period === "october" ? OCTOBER.start : period === "november" ? NOVEMBER.start : undefined;
   return (
-    <AccountingMonth.Provider value={archive ? undefined : NOVEMBER.start}>
+    <AccountingMonth.Provider value={month}>
       <AccountingWorkspace
-        key={archive ? "archive" : NOVEMBER.start}
+        key={period}
         view={view}
         setView={setView}
-        onArchive={setArchive}
+        period={period}
+        onPeriod={setPeriod}
       />
     </AccountingMonth.Provider>
   );
@@ -213,11 +222,13 @@ export default function AccountingPage() {
 function AccountingWorkspace({
   view,
   setView,
-  onArchive,
+  period,
+  onPeriod,
 }: {
   view: View;
   setView: (view: View) => void;
-  onArchive: (archive: boolean) => void;
+  period: "november" | "october" | "archive";
+  onPeriod: (period: "november" | "october" | "archive") => void;
 }) {
   const month = useAccountingMonth();
   const { success, error } = useToast();
@@ -308,20 +319,31 @@ function AccountingWorkspace({
         Period
         <select
           className="rounded border border-[var(--bz-border)] bg-[var(--bz-card)] px-2 py-1"
-          value={month ?? "archive"}
-          onChange={(event) => onArchive(event.target.value === "archive")}
+          value={period}
+          onChange={(event) => onPeriod(event.target.value as "november" | "october" | "archive")}
         >
-          <option value={NOVEMBER.start}>November 2026</option>
+          <option value="november">November 2026</option>
+          <option value="october">October 2026</option>
           <option value="archive">All dates (history)</option>
         </select>
       </label>
       {view === "centre" ? (
-        <ReconciliationInbox
-          onConfirmed={handleConfirmed}
-          doneVersion={doneVersion}
-          onOpenCashout={() => setView("cashout")}
-          onOpenOutgoings={() => setView("outgoings")}
-        />
+        <>
+          <div className="px-4 pt-3">
+            <Button variant="outline" onClick={() => setView("cash-receipt")}>Record cash received</Button>
+          </div>
+          <ReconciliationInbox
+            onConfirmed={handleConfirmed}
+            doneVersion={doneVersion}
+            onOpenCashout={() => setView("cashout")}
+            onOpenOutgoings={() => setView("outgoings")}
+          />
+        </>
+      ) : view === "cash-receipt" ? (
+        <div className="space-y-6">
+          <BackToCentre onClick={() => setView("centre")} />
+          <CashReceiptForm onDone={() => { void loadCashout(); setView("cashout"); }} />
+        </div>
       ) : view === "outgoings" ? (
         <div className="space-y-6">
           <BackToCentre onClick={() => setView("centre")} />
@@ -337,6 +359,7 @@ function AccountingWorkspace({
                 Accounting
               </h1>
             </div>
+            <Button variant="outline" onClick={() => setView("cash-receipt")}>Record cash received</Button>
             <div className="flex items-center gap-2">
               <input
                 ref={fileInputRef}

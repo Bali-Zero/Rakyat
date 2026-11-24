@@ -182,6 +182,9 @@ async def test_a1_link_writes_the_bank_row_the_paid_date_one_cashout_row_and_one
         "description": None,
         "counterparty": None,
         "payment_method": "bank_transfer",
+        "cash_request_id": None,
+        "cash_company_key": None,
+        "cash_balance_after_idr": None,
         "receipt_drive_file_id": None,
         "recorded_by": WHO,
         "reversed_by_id": None,
@@ -1438,3 +1441,17 @@ async def test_the_join_neither_adds_nor_drops_a_pool_row(db) -> None:
     )
     assert (len(open_rows), len(recorded_rows)) == (want_open, want_recorded) == (4, 2)
     assert len({r.invoice_id for r in open_rows + recorded_rows}) == 6
+
+
+async def test_recorded_payment_uses_only_the_company_selected_for_that_case(db) -> None:
+    from backend.app.routers.accounting import _fetch_invoice_pool
+
+    conn, _ = db
+    pid, iid = await _typed_practice(conn, "paid", type_name=None, number=None)
+    await conn.execute("INSERT INTO companies (company_name) VALUES ('Unbilled Example')")
+    company = await conn.fetchval(
+        "INSERT INTO companies (company_name) VALUES ('PT Example Workshop') RETURNING id"
+    )
+    await conn.execute("UPDATE practices SET invoice_company_id=$2 WHERE id=$1", pid, company)
+    (invoice,) = await _fetch_invoice_pool(conn, recorded=True)
+    assert (invoice.invoice_id, invoice.bill_to_company) == (iid, "PT Example Workshop")

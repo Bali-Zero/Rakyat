@@ -535,15 +535,17 @@ async def deliver_committed_to_crm(
                 crm_write_key=crm_write_key,
             )
     except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError) as exc:
+        # The text of a database or file error can quote a stored value or a path, so the
+        # log line and the stored detail name the error's type and nothing of its text.
         logger.warning(
             "intake.crm_delivery.db_error proposal=%s err=%s",
             plan.proposal_id,
-            exc,
+            type(exc).__name__,
         )
         push = crm_push.CrmPushResult(
             ok=False,
             status="error",
-            detail=f"{type(exc).__name__}: {exc}",
+            detail=f"{type(exc).__name__}: delivery could not be completed",
         )
 
     crm_info: dict[str, Any] = {
@@ -607,7 +609,7 @@ async def deliver_committed_to_crm(
                 await conn.execute(
                     """
                     UPDATE intake_commit_audit
-                       SET plan = COALESCE(plan, '{}'::jsonb) || $2::jsonb
+                       SET plan = COALESCE(plan, '{}'::jsonb) || $2::text::jsonb
                      WHERE id = $1
                     """,
                     result.audit_id,
@@ -617,7 +619,7 @@ async def deliver_committed_to_crm(
         logger.error(
             "intake.crm_delivery.bookkeeping_failed proposal=%s err=%s",
             plan.proposal_id,
-            exc,
+            type(exc).__name__,
         )
 
     if not push.ok and push.status not in ("disabled", "already_delivered"):

@@ -13,6 +13,7 @@ from typing import Any
 import asyncpg
 
 from backend.services.accounting.period import month_condition
+from backend.services.invoicing.entities import ENTITIES
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ async def list_cashout(
                wc.original_amount, wc.fx_rate, wc.fx_date, wc.pph_withheld_idr,
                wc.bank_fee_idr, wc.linked_practice_id, wc.linked_invoice_id,
                wc.category, wc.description, wc.counterparty, wc.payment_method,
+               to_jsonb(wc)->>'cash_company_key' AS cash_company_key,
                wc.recorded_by, wc.recorded_at, wc.reversed_by_id,
                c.full_name AS client_name, pt.name AS service_name
         FROM weekly_cashout wc
@@ -62,7 +64,12 @@ async def list_cashout(
     params.append(limit)
 
     rows = await conn.fetch("".join(query_parts), *params)
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    for row in result:
+        issuer = ENTITIES.get(row.get("cash_company_key"))
+        if issuer:
+            row["cash_company_name"] = issuer.company_name
+    return result
 
 
 async def list_bank_transactions(

@@ -33,6 +33,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
     previewBankStatement: vi.fn(),
     importBankStatement: vi.fn(),
     getOutgoings: vi.fn(),
+    getCompanies: vi.fn(),
   },
 }));
 
@@ -61,6 +62,9 @@ beforeEach(() => {
     items: [],
     truncated: false,
   });
+  api.getCompanies.mockResolvedValue([
+    { key: "test", company_name: "Test company", bank_name: null, account_number: null, data_through: null, statements: 0, to_reconcile: 0 },
+  ]);
   api.getMatchCandidates.mockImplementation(async (id) => ({
     txn_id: id,
     transfer_amount_idr: 500000,
