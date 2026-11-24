@@ -131,6 +131,20 @@ ACTIVE_PERMIT_STAGES: frozenset[E33Stage] = frozenset(
     {E33Stage.ITAS_ACTIVE, E33Stage.GUARANTEE_PROOF_DUE, E33Stage.ANNUAL_MAINTENANCE}
 )
 
+# Stages in which the Day-90 guarantee proof can still be OWED. The gate is
+# closed on entry to annual_maintenance (only reachable with complete
+# evidence), and a renewal / terminal (epo, status_change) case keeps the stale
+# deadline on the row without any proof being due.
+GUARANTEE_GATE_OPEN_STAGES: frozenset[E33Stage] = frozenset(
+    {E33Stage.ITAS_ACTIVE, E33Stage.GUARANTEE_PROOF_DUE}
+)
+
+
+def guarantee_gate_open(stage: E33Stage, *, evidence_complete: bool) -> bool:
+    """True while the Day-90 proof is still due: an open stage, evidence incomplete."""
+    return stage in GUARANTEE_GATE_OPEN_STAGES and not evidence_complete
+
+
 # ITAP conversion marketing is forbidden until the written letter-006 Q7
 # reply (owner decision 2026-07-23). Flip to True only after that reply.
 E33_ITAP_EVAL_ENABLED: bool = False
@@ -510,6 +524,11 @@ class E33Case:
         anchor = self.guarantee_anchor
         return compute_guarantee_deadline(anchor) if anchor else None
 
+    @property
+    def guarantee_gate_open(self) -> bool:
+        """The Day-90 guarantee proof is still due (open stage, evidence incomplete)."""
+        return guarantee_gate_open(self.stage, evidence_complete=self.guarantee_evidence_complete)
+
     # ── StayGuard hook ───────────────────────────────────────────────────
 
     @property
@@ -661,6 +680,7 @@ __all__ = [
     "E33_ITAP_EVAL_ENABLED",
     "FORBIDDEN_METADATA_KEYS",
     "GUARANTEE_ALERT_DAYS_AFTER",
+    "GUARANTEE_GATE_OPEN_STAGES",
     "GUARANTEE_PROOF_WINDOW_DAYS",
     "RULE_ID_ANNUAL_MAINTENANCE",
     "RULE_ID_GUARANTEE_PROOF",
@@ -679,6 +699,7 @@ __all__ = [
     "UnknownDependentCodeError",
     "compute_guarantee_deadline",
     "guarantee_alert_schedule",
+    "guarantee_gate_open",
     "next_itas_anniversary",
     "severity_for_days_until",
     "validate_dependent_code",

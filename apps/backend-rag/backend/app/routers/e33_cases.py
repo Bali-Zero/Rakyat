@@ -62,8 +62,8 @@ from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.crm.e33_case_repository import E33CaseRepository
 from backend.services.crm.e33_guarantee_scanner import ScanSwitchState, resolve_scan_switch
 from backend.services.crm.e33_lifecycle import (
-    ACTIVE_PERMIT_STAGES,
     E33_ITAP_EVAL_ENABLED,
+    GUARANTEE_GATE_OPEN_STAGES,
     TERMINAL_STAGES,
     VALID_TRANSITIONS,
     CustodyViolationError,
@@ -75,6 +75,7 @@ from backend.services.crm.e33_lifecycle import (
     GuaranteeBasis,
     UnknownDependentCodeError,
     guarantee_alert_schedule,
+    guarantee_gate_open,
     severity_for_days_until,
     validate_dependent_code,
 )
@@ -216,6 +217,7 @@ def _case_summary_dict(case: E33Case, *, client_name: str | None) -> dict[str, A
         if case.guarantee_deadline
         else None,
         "stayguard_eligible": case.stayguard_eligible,
+        "guarantee_gate_open": case.guarantee_gate_open,
         "dependent_code": case.dependent_code,
         "principal_case_id": case.principal_case_id,
         "created_at": case.created_at.isoformat(),
@@ -234,6 +236,12 @@ def _row_to_summary_dict(row: dict[str, Any]) -> dict[str, Any]:
         "owner_email": row.get("owner_email"),
         "guarantee_proof_deadline": deadline.isoformat() if deadline else None,
         "stayguard_eligible": row.get("stayguard_eligible", False),
+        # Same rule as E33Case.guarantee_gate_open: within the open stages the
+        # persisted stayguard_eligible column IS "evidence complete".
+        "guarantee_gate_open": guarantee_gate_open(
+            E33Stage(row["stage"]),
+            evidence_complete=bool(row.get("stayguard_eligible", False)),
+        ),
         "dependent_code": row.get("dependent_code"),
         "principal_case_id": row.get("principal_case_id"),
         "created_at": created_at.isoformat() if created_at else None,
@@ -711,18 +719,19 @@ async def get_summary(
             *rbac_params,
         )
 
-        # "due" must be scoped to the scanner's own active-permit stage set
-        # (itas_active / guarantee_proof_due / annual_maintenance) — a
-        # terminal-stage case with a stale deadline still on the row must
-        # NOT count as "due". Sourced from ACTIVE_PERMIT_STAGES, no string
-        # literals, so the two never drift apart.
+        # "due" counts only OPEN Day-90 gates (GUARANTEE_GATE_OPEN_STAGES, evidence
+        # not complete): annual_maintenance / renewal / terminal cases keep a stale
+        # deadline on the row with nothing owed. Overdue open gates still count
+        # (no lower bound) -- they are the most urgent. Within the open stages the
+        # stayguard_eligible column is exactly "evidence complete".
         due_params = list(rbac_params)
-        active_stage_values = sorted(s.value for s in ACTIVE_PERMIT_STAGES)
-        due_params.append(active_stage_values)
+        open_stage_values = sorted(s.value for s in GUARANTEE_GATE_OPEN_STAGES)
+        due_params.append(open_stage_values)
         due_conditions = [
             "guarantee_proof_deadline IS NOT NULL",
             "guarantee_proof_deadline <= CURRENT_DATE + 30",
             f"stage = ANY(${len(due_params)}::text[])",
+            "NOT stayguard_eligible",
         ]
         if rbac_clause:
             due_conditions.append(rbac_clause)
