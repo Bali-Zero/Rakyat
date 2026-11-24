@@ -14,13 +14,9 @@ from typing import Any
 from backend.app.services.hr.hr_card_models import member_card
 from backend.app.services.hr.hr_overview_logic import bonus_totals
 from backend.app.services.hr.hr_overview_models import MyHrOverview
+from backend.app.services.hr.hr_payslip_status import PAYSLIP_VISIBLE_STATUSES
 
 logger = logging.getLogger(__name__)
-
-# Payroll period statuses from which a payslip is final: the only ones the member's own view shows.
-# A `draft` or `calculated` period can still be recalculated, so its payslip is provisional.
-# The same pair routers/hr.py uses for the payslip list and detail routes.
-_PAYSLIP_VISIBLE_STATUSES = ("approved", "paid")
 
 
 class OverviewReadError(Exception):
@@ -58,7 +54,7 @@ async def compose_member_overview(
         view = view.model_copy(update={"base_salary_idr": None})
         payslips, bonuses = [], []
     elif self_view:
-        payslips = [p for p in payslips if p.get("period_status") in _PAYSLIP_VISIBLE_STATUSES]
+        payslips = [p for p in payslips if p.get("period_status") in PAYSLIP_VISIBLE_STATUSES]
     return MyHrOverview(
         team_member_id=str(member_id),
         card=view,
