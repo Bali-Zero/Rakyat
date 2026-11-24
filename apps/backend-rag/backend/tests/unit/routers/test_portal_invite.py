@@ -305,17 +305,27 @@ async def test_resend_invitation_allows_a_realistic_free_text_role(
     }
 
     async def _resend_invitation(*, client_id: int, created_by: str) -> dict[str, object]:
-        return {"client_id": client_id, "created_by": created_by}
+        return {
+            "client_id": client_id,
+            "client_name": "Test Client",
+            "email": "client@example.com",
+            "invite_url": INVITE_PATH_TEMPLATE.format(token="tok-123"),
+            "token": "tok-123",
+            "created_by": created_by,
+        }
 
     fake_service.resend_invitation = _resend_invitation  # type: ignore[assignment]
 
-    response = await resend_invitation(
-        client_id=1,
-        current_user={"email": "reception@balizero.com", "role": "Reception"},
-        invite_service=fake_service,  # type: ignore[arg-type]
-        db_pool=mock_db_pool,
-    )
-
+    with patch(
+        "backend.app.routers.portal_invite.send_portal_invite_email",
+        new=AsyncMock(),
+    ):
+        response = await resend_invitation(
+            client_id=1,
+            current_user={"email": "reception@balizero.com", "role": "Reception"},
+            invite_service=fake_service,  # type: ignore[arg-type]
+            db_pool=mock_db_pool,
+        )
     assert response["success"] is True
 
 
@@ -431,17 +441,27 @@ async def test_resend_invitation_allows_unassigned_tax_department_member(
     ]
 
     async def _resend_invitation(*, client_id: int, created_by: str) -> dict[str, object]:
-        return {"client_id": client_id, "created_by": created_by}
+        return {
+            "client_id": client_id,
+            "client_name": "Test Client",
+            "email": "client@example.com",
+            "invite_url": INVITE_PATH_TEMPLATE.format(token="tok-123"),
+            "token": "tok-123",
+            "created_by": created_by,
+        }
 
     fake_service.resend_invitation = _resend_invitation  # type: ignore[assignment]
 
-    response = await resend_invitation(
-        client_id=11898,
-        current_user={"email": "kadek.tax@balizero.com", "role": "Tax Manager"},
-        invite_service=fake_service,  # type: ignore[arg-type]
-        db_pool=mock_db_pool,
-    )
-
+    with patch(
+        "backend.app.routers.portal_invite.send_portal_invite_email",
+        new=AsyncMock(),
+    ):
+        response = await resend_invitation(
+            client_id=11898,
+            current_user={"email": "kadek.tax@balizero.com", "role": "Tax Manager"},
+            invite_service=fake_service,  # type: ignore[arg-type]
+            db_pool=mock_db_pool,
+        )
     assert response["success"] is True
 
 

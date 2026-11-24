@@ -19,7 +19,6 @@ from fastapi import HTTPException
 
 from backend.app.routers.portal_invite import (
     SendInviteRequest,
-    resend_invitation,
     send_invitation,
 )
 from backend.services.portal import InviteService

@@ -172,6 +172,16 @@ async def test_send_invitation_response_never_carries_token_or_any_link(
     assert RAW_TOKEN not in repr(response)
 
 
+@pytest.fixture(autouse=True)
+def _mail_sender_is_mocked():
+    """The resend route mails the invitation: nothing in this file may reach Brevo."""
+    with patch(
+        "backend.app.routers.portal_invite.send_portal_invite_email",
+        new=AsyncMock(),
+    ):
+        yield
+
+
 @pytest.mark.asyncio
 async def test_resend_invitation_response_never_carries_token_or_url(
     mock_db_pool: MagicMock,
