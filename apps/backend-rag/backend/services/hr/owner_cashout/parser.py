@@ -49,10 +49,34 @@ def parse_idr(value: Any) -> int:
         return 0
 
 
+# A footer label is made only of these words, and carries at least one of the
+# anchor words. A client name has a word outside the vocabulary, so it stays a client.
+_SUMMARY_VOCABULARY = frozenset({"total", "subtotal", "grand", "final", "fee", "bz", "bs"})
+_SUMMARY_ANCHORS = frozenset({"total", "subtotal", "fee"})
+
+
+def _is_summary_label(name: str) -> bool:
+    """True when the NAME cell is a footer label made only of total/fee words, not a client.
+
+    The label is casefolded, trimmed, its inner whitespace collapsed and a trailing
+    colon dropped, then split into words. It is a summary row when every word is in
+    the vocabulary and at least one word is an anchor (total, subtotal, fee). A client
+    such as "Totalindo Contoh" or "Final Contoh" has a word outside the vocabulary.
+    """
+    label = " ".join(name.casefold().split()).rstrip(":").rstrip()
+    tokens = label.split()
+    return (
+        bool(tokens)
+        and all(t in _SUMMARY_VOCABULARY for t in tokens)
+        and any(t in _SUMMARY_ANCHORS for t in tokens)
+    )
+
+
 def parse_bz_tab(rows: list[list[str]]) -> list[CashoutRow]:
     """Parse a BZ weekly tab. Rows 1-2 are title+header, data starts at row 3.
 
-    Empty rows are visual separators and must be skipped.
+    Empty rows are visual separators and must be skipped; so are summary rows
+    (TOTAL / FEE footers), which are not clients.
     """
     out: list[CashoutRow] = []
     # rows[0] = title, rows[1] = header, data from rows[2]
@@ -62,6 +86,8 @@ def parse_bz_tab(rows: list[list[str]]) -> list[CashoutRow]:
         name = str(padded[0]).strip() if padded[0] else ""
         if not name:
             continue  # separator row
+        if _is_summary_label(name):
+            continue  # TOTAL / FEE footer, not a client
         out.append(
             CashoutRow(
                 entity="BZ",
@@ -89,6 +115,8 @@ def parse_bs_tab(rows: list[list[str]]) -> list[CashoutRow]:
         name = str(padded[0]).strip() if padded[0] else ""
         if not name:
             continue
+        if _is_summary_label(name):
+            continue  # TOTAL / FEE footer, not a client
         out.append(
             CashoutRow(
                 entity="BS",
