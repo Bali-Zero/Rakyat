@@ -278,9 +278,11 @@ PARAGRAF_PATTERN = re.compile(r"^Paragraf\s+(\d+)\s+(.+?)(?=\n|$)", re.IGNORECAS
 
 # Pasal (Article) - CRITICAL UNIT
 # Supports "Pasal 1", "Pasal I", "Pasal 1A"
+# The number must not run into a letter: "Pasal ini" and "Pasal lain" are prose, and the
+# pattern is case-insensitive, so without the boundary they read as articles "i" and "l".
 # Relaxed start anchor to handle OCR artifacts
 PASAL_PATTERN = re.compile(
-    r"(?:^|\n)[^\S\n]*Pasal\s+([IVXLC]+|\d+[A-Z]?)(?:[^\S\n]*\n)*[^\S\n]*(.+?)(?=(?:^|\n)[^\S\n]*Pasal\s+(?:[IVXLC]+|\d+[A-Z]?)|^[^\S\n]*BAB\s+|^Penjelasan|\Z)",
+    r"(?:^|\n)[^\S\n]*Pasal\s+([IVXLC]+|\d+[A-Z]?)(?![A-Za-z])(?:[^\S\n]*\n)*[^\S\n]*(.+?)(?=(?:^|\n)[^\S\n]*Pasal\s+(?:[IVXLC]+|\d+[A-Z]?)(?![A-Za-z])|^[^\S\n]*BAB\s+|^Penjelasan|\Z)",
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 
