@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -36,8 +37,36 @@ async def request_historical(document_id: int) -> int:
         return await enqueue_selected(pool, [document_id])
 
 
+async def import_local_receipt() -> str:
+    from backend.services.documents.passport_ocr_receipt import AppleReceipt, apply_apple_receipt
+
+    raw = sys.stdin.buffer.read(4097)
+    if len(raw) > 4096:
+        raise ValueError("oversized receipt")
+    receipt = AppleReceipt.parse(json.loads(raw))
+    async with asyncpg.create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=1) as pool:
+        return await apply_apple_receipt(pool, receipt)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--document-id", required=True, type=int)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--document-id", type=int)
+    mode.add_argument(
+        "--apple-vision-stdin",
+        action="store_true",
+        help="Import one local receipt from private stdin",
+    )
     args = parser.parse_args()
-    sys.stdout.write(f"new_jobs={asyncio.run(request_historical(args.document_id))}\n")
+    if args.apple_vision_stdin:
+        from backend.services.documents.passport_ocr_receipt import ReceiptRejected
+
+        try:
+            status = asyncio.run(import_local_receipt())
+        except ReceiptRejected as exc:
+            sys.exit(f"receipt_refused={exc}")
+        except Exception as exc:
+            sys.exit(f"receipt_error={type(exc).__name__}")
+        sys.stdout.write(f"receipt_status={status}\n")
+    else:
+        sys.stdout.write(f"new_jobs={asyncio.run(request_historical(args.document_id))}\n")

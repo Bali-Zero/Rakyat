@@ -453,10 +453,7 @@ async def _assert_file_descends_from_owner(
             _mark_transient_drive_failure(503, retry_unavailable)
             # Same fail-closed posture as `_drive_parent_fetcher`: a transport
             # error is never permission, and must not surface as a raw 500.
-            logger.warning(
-                "[PROXY-WRITE] denied: file %s metadata fetch raised a transport error",
-                file_id,
-            )
+            logger.warning("[PROXY-WRITE] denied: file metadata fetch raised a transport error")
             raise HTTPException(
                 status_code=403, detail="Drive file could not be verified"
             ) from None
@@ -465,8 +462,7 @@ async def _assert_file_descends_from_owner(
             # Same fail-closed posture as `_drive_parent_fetcher`: an API error
             # or a file the service account cannot see is never permission.
             logger.warning(
-                "[PROXY-WRITE] denied: file %s metadata fetch returned %s",
-                file_id,
+                "[PROXY-WRITE] denied: file metadata fetch returned %s",
                 meta_response.status_code,
             )
             raise HTTPException(status_code=403, detail="Drive file could not be verified")
@@ -497,8 +493,7 @@ async def _assert_file_descends_from_owner(
                 return
 
     logger.warning(
-        "[PROXY-WRITE] denied: file %s does not descend from owner_id=%s within %d hops",
-        file_id,
+        "[PROXY-WRITE] denied: file does not descend from owner_id=%s within %d hops",
         owner_id,
         _MAX_ANCESTOR_HOPS,
     )

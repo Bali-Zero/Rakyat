@@ -80,3 +80,89 @@ async def test_process_one_returns_not_claimed_without_extraction() -> None:
         result = await processing.process_one(object(), doc_id=9, client_id=7, file_id="f1")
     assert result == {"success": False, "status": "not_claimed"}
     extract.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", [None, "source_sha", "folder", "trashed", "missing_storage_hash"]
+)
+async def test_local_receipt_verifies_metadata_without_downloading_media(change):
+    from backend.app.routers import documents_proxy
+    from backend.services.documents import passport_ocr_receipt as local
+    from backend.services.integrations import service_account_drive_service
+
+    source = local.AppleReceipt(1, 2, "sample-file", "a" * 64, "Sample Holder", "T10000001")
+    meta = {
+        "id": "sample-file",
+        "parents": ["folder-a"],
+        "trashed": False,
+        "mimeType": "image/jpeg",
+        "modifiedTime": "2020-01-01T00:00:00Z",
+        "md5Checksum": "b" * 32,
+        "sha256Checksum": "a" * 64,
+    }
+    after = dict(meta)
+    if change == "source_sha":
+        meta["sha256Checksum"] = after["sha256Checksum"] = "c" * 64
+    if change == "folder":
+        after["parents"] = ["folder-b"]
+    if change == "trashed":
+        meta["trashed"] = after["trashed"] = True
+    service = AsyncMock()
+    service.get_file_metadata.side_effect = [meta, after]
+    conn = object()
+    with (
+        patch.object(
+            service_account_drive_service, "ServiceAccountDriveService", return_value=service
+        ),
+        patch.object(
+            documents_proxy, "assert_drive_file_belongs_to_client", new_callable=AsyncMock
+        ) as owner,
+    ):
+        if change == "missing_storage_hash":
+            await local._verify_drive(conn, source, None)
+        elif change:
+            with pytest.raises(local.ReceiptRejected):
+                await local._verify_drive(conn, source, "b" * 32)
+        else:
+            await local._verify_drive(conn, source, "b" * 32)
+        owner.assert_awaited_once_with("sample-file", 2, conn, require_ancestry=True)
+    service.download_file_content.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "header,name", [("PNUTOHOLDER<<SAMPLE", "SAMPLE HOLDER"), ("P<D<<HOLDER<<", "HOLDER")]
+)
+def test_local_receipt_recognizes_td3_subtypes_and_mononyms(header, name):
+    from backend.services.documents.passport_ocr_receipt import AppleReceipt, ReceiptRejected
+    from backend.utils.passport_normalize import mrz_check_digit
+
+    number, birth, expiry = "T00000001", "900101", "350101"
+    lower = f"{number}{mrz_check_digit(number)}UTO{birth}{mrz_check_digit(birth)}F{expiry}{mrz_check_digit(expiry)}"
+    receipt = {
+        "document_id": 1,
+        "client_id": 1,
+        "file_id": "synthetic-file",
+        "source_sha256": "a" * 64,
+        "mrz_line1": header,
+        "mrz_line2": lower,
+    }
+    assert AppleReceipt.parse(receipt).full_name == name
+    with pytest.raises(ReceiptRejected, match="invalid_receipt"):
+        AppleReceipt.parse({**receipt, "file_id": "too-short"})
+
+
+def test_operator_receipt_import_is_independent_of_intake_model_configuration():
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['backend.services.intake.extract'] = None; "
+            "from backend.services.documents.passport_ocr_receipt import AppleReceipt",
+        ],
+        check=True,
+        capture_output=True,
+    )

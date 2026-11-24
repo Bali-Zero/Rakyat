@@ -405,3 +405,97 @@ async def test_staff_reads_one_result_after_interrupted_upload_and_two_workers(
     assert selected["documents"][0]["ocr_extracted_data"] == payload
     other = await router.get_client_ocr_status(99, pg_pool, owner, document_id=receipt["id"])
     assert other["documents"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_hash", [None, "a" * 64])
+async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
+    pg_pool, monkeypatch, stored_hash
+):
+    from unittest.mock import AsyncMock
+
+    from backend.services.documents import passport_ocr_jobs as jobs
+    from backend.services.documents import passport_ocr_receipt as local
+    from backend.utils.passport_normalize import mrz_check_digit
+
+    await _seed(pg_pool)
+    await pg_pool.execute(
+        "UPDATE documents SET file_id='local-test-file', content_hash=$1 WHERE id=10", stored_hash
+    )
+    # Recreate the historical state from before the upload trigger existed.
+    await pg_pool.execute("DELETE FROM crm_passport_ocr_jobs WHERE document_id=10")
+    number = "T00000001"
+    line = number + str(mrz_check_digit(number)) + "UTO" + "900101"
+    line += str(mrz_check_digit("900101")) + "F350101" + str(mrz_check_digit("350101"))
+    source = {
+        "document_id": 10,
+        "client_id": 1,
+        "file_id": "local-test-file",
+        "source_sha256": "a" * 64,
+        "mrz_line1": "P<UTOCLIENT<<SYNTHETIC",
+        "mrz_line2": line,
+    }
+    with pytest.raises(local.ReceiptRejected, match="invalid_mrz_checks"):
+        local.AppleReceipt.parse(
+            {**source, "mrz_line2": line[:9] + str((int(line[9]) + 1) % 10) + line[10:]}
+        )
+    receipt = local.AppleReceipt.parse(source)
+    await pg_pool.execute("ALTER TABLE clients ADD COLUMN passport_number text")
+    await pg_pool.execute("UPDATE clients SET passport_number=$1 WHERE id=1", number)
+    verify = AsyncMock()
+    monkeypatch.setattr(local, "_verify_drive", verify)
+    master = await pg_pool.fetchval("SELECT to_jsonb(c)::text FROM clients c WHERE id=1")
+    real_finish = jobs.finish
+    monkeypatch.setattr(jobs, "finish", AsyncMock(side_effect=RuntimeError("interrupted")))
+    with pytest.raises(RuntimeError, match="interrupted"):
+        await local.apply_apple_receipt(pg_pool, receipt)
+    assert (
+        await pg_pool.fetchval("SELECT count(*) FROM crm_passport_ocr_jobs WHERE document_id=10")
+        == 0
+    )
+    assert await pg_pool.fetchval("SELECT ocr_status FROM documents WHERE id=10") == "pending"
+
+    at_write, release = asyncio.Event(), asyncio.Event()
+
+    async def parked(*args, **kwargs):
+        at_write.set()
+        await release.wait()
+        return await real_finish(*args, **kwargs)
+
+    monkeypatch.setattr(jobs, "finish", parked)
+    task = asyncio.create_task(local.apply_apple_receipt(pg_pool, receipt))
+    try:
+        await asyncio.wait_for(at_write.wait(), 5)
+        assert await jobs.claim(pg_pool, doc_id=10, client_id=1, file_id="local-test-file") is None
+    finally:
+        release.set()
+    assert await task == "completed"
+    verify.assert_awaited()
+    observation = """SELECT to_jsonb(d)::text AS doc, to_jsonb(j)::text AS job
+        FROM documents d JOIN crm_passport_ocr_jobs j ON j.document_id=d.id WHERE d.id=10"""
+    before = await pg_pool.fetchrow(observation)
+    assert await local.apply_apple_receipt(pg_pool, receipt) == "already_applied"
+    assert await pg_pool.fetchrow(observation) == before
+    assert await pg_pool.fetchval("SELECT to_jsonb(c)::text FROM clients c WHERE id=1") == master
+    assert (
+        await pg_pool.fetchval(
+            "SELECT ocr_extracted_data->>'passport_number' FROM documents WHERE id=10"
+        )
+        == number
+    )
+    await pg_pool.execute("UPDATE documents SET verified_at=now() WHERE id=10")
+    with pytest.raises(local.ReceiptRejected, match="ineligible_document"):
+        await local.apply_apple_receipt(pg_pool, receipt)
+    await pg_pool.execute("UPDATE documents SET verified_at=NULL WHERE id=10")
+    await pg_pool.execute(
+        "INSERT INTO clients (id,status,passport_number) VALUES (2,'active',$1)", number
+    )
+    with pytest.raises(local.ReceiptRejected, match="identity_mismatch"):
+        await local.apply_apple_receipt(pg_pool, receipt)
+    assert await pg_pool.fetchrow(observation) == before
+    await pg_pool.execute(
+        "UPDATE clients SET status='lead', passport_number=$1 WHERE id=2", "T-0000 0001"
+    )
+    with pytest.raises(local.ReceiptRejected, match="identity_mismatch"):
+        await local.apply_apple_receipt(pg_pool, receipt)
+    assert await pg_pool.fetchrow(observation) == before

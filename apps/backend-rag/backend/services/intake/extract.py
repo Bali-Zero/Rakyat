@@ -40,6 +40,7 @@ from backend.services.intake.inference_runtime import (
 )
 from backend.services.intake.model_roles import resolve_model_role
 from backend.utils.passport_normalize import (
+    mrz_check_ok,
     normalize_date,
     normalize_nationality,
     title_case_name,
@@ -647,29 +648,12 @@ def _is_null_or_unreadable_value(value: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _MRZ_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<"
-_MRZ_VALUES = {ch: i for i, ch in enumerate("0123456789")}
-_MRZ_VALUES.update({chr(ord("A") + i): 10 + i for i in range(26)})
-_MRZ_VALUES["<"] = 0
-_MRZ_WEIGHTS = (7, 3, 1)
 
 
 def _normalise_mrz_candidate(line: str) -> str:
     """Return a compact MRZ-ish line, dropping OCR spaces/punctuation."""
     cleaned = line.upper().replace("«", "<").replace("‹", "<").replace(" ", "")
     return "".join(ch for ch in cleaned if ch in _MRZ_CHARS)
-
-
-def _mrz_check_digit(value: str) -> int:
-    """ICAO 9303 MRZ check digit."""
-    total = 0
-    for idx, ch in enumerate(value):
-        total += _MRZ_VALUES.get(ch, 0) * _MRZ_WEIGHTS[idx % len(_MRZ_WEIGHTS)]
-    return total % 10
-
-
-def _mrz_check_ok(line: str, start: int, end: int, check_pos: int) -> bool:
-    check = line[check_pos] if len(line) > check_pos else ""
-    return check.isdigit() and _mrz_check_digit(line[start:end]) == int(check)
 
 
 def _find_td3_mrz_pair(pages: list[str]) -> tuple[str, str, int] | None:
@@ -691,9 +675,9 @@ def _find_td3_mrz_pair(pages: list[str]) -> tuple[str, str, int] | None:
                 l2 = (line2 + ("<" * 44))[:44]
                 valid_checks = sum(
                     (
-                        _mrz_check_ok(l2, 0, 9, 9),
-                        _mrz_check_ok(l2, 13, 19, 19),
-                        _mrz_check_ok(l2, 21, 27, 27),
+                        mrz_check_ok(l2, 0, 9, 9),
+                        mrz_check_ok(l2, 13, 19, 19),
+                        mrz_check_ok(l2, 21, 27, 27),
                     )
                 )
                 # Two independent check digits are enough to trust the pair.
@@ -720,7 +704,7 @@ def _extract_passport_mrz_fields(pages: list[str]) -> dict[str, dict[str, Any]]:
             "source_page": source_page,
         }
 
-    if _mrz_check_ok(line2, 0, 9, 9):
+    if mrz_check_ok(line2, 0, 9, 9):
         passport_no = line2[0:9].replace("<", "").strip()
         if passport_no:
             out["passport_no"] = {
@@ -737,7 +721,7 @@ def _extract_passport_mrz_fields(pages: list[str]) -> dict[str, dict[str, Any]]:
             "source_page": source_page,
         }
 
-    if _mrz_check_ok(line2, 13, 19, 19):
+    if mrz_check_ok(line2, 13, 19, 19):
         dob = normalize_date(line2[13:19])
         if dob:
             out["dob"] = {
@@ -746,7 +730,7 @@ def _extract_passport_mrz_fields(pages: list[str]) -> dict[str, dict[str, Any]]:
                 "source_page": source_page,
             }
 
-    if _mrz_check_ok(line2, 21, 27, 27):
+    if mrz_check_ok(line2, 21, 27, 27):
         expiry = normalize_date(line2[21:27])
         if expiry:
             out["expiry"] = {
