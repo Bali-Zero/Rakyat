@@ -56,7 +56,7 @@ async def pg_pool() -> asyncpg.Pool:
             INSERT INTO documents (id,client_id,document_type,file_id,status,storage_type,ocr_status)
             VALUES (900,99,'paspor','historical-file','active','google_drive','pending');
         """)
-        migration = Path(__file__).parents[3] / "db/migrations_v2/383_crm_passport_ocr_jobs.sql"
+        migration = Path(__file__).parents[3] / "db/migrations_v2/387_crm_passport_ocr_jobs.sql"
         from backend.db.migration_base import split_migration_sql
 
         forward, rollback = split_migration_sql(migration.read_text())
@@ -97,7 +97,7 @@ async def _seed(
 async def test_migration_rollback_preserves_work_and_reverses_an_empty_queue(pg_pool):
     from backend.db.migration_base import split_migration_sql
 
-    migration = Path(__file__).parents[3] / "db/migrations_v2/383_crm_passport_ocr_jobs.sql"
+    migration = Path(__file__).parents[3] / "db/migrations_v2/387_crm_passport_ocr_jobs.sql"
     _, rollback = split_migration_sql(migration.read_text())
     await _seed(pg_pool)
     async with pg_pool.acquire() as conn:

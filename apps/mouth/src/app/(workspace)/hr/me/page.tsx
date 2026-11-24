@@ -9,6 +9,7 @@
  * fetched with THIS identity's bearer and names THIS identity as its owner.
  * Nothing here is logged, cached or persisted.
  */
+import { DeliveryBonusDesk } from "@/components/hr/DeliveryBonusDesk";
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarHeart, Sparkles } from "lucide-react";
 import { DESK_SERIF } from "@balizero/core";
@@ -169,6 +170,7 @@ export default function MyHrPage() {
         )}
       </header>
 
+      <DeliveryBonusDesk />
       {ends !== null && ends >= 0 && ends <= 120 && (
         <div
           className="mb-6 flex items-center gap-3 rounded-2xl px-4 py-3 text-[14px]"

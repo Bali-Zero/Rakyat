@@ -601,10 +601,58 @@ def main() -> int:
         )
     print("[bootstrap] hr_employees legacy table ensured (for Migration 354)")
 
-    # hr_bonus_ledger: same story (legacy migration_068). Migration 357 alters it
-    # with plain ALTERs that must fail loudly when the table is missing. DDL mirrors
-    # migration_068 except that payroll_period_id / bonus_rate_id are bare integers
-    # (their parent tables hr_payroll_periods / hr_bonus_rates are not bootstrapped).
+    # Migration 384 and its payroll writer consume the legacy 068 rate and
+    # payroll-period tables. Materialise both before their foreign keys.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS hr_bonus_rates (
+                    id              SERIAL PRIMARY KEY,
+                    practice_type_code VARCHAR(50) NOT NULL UNIQUE,
+                    amount_idr      BIGINT NOT NULL CHECK (amount_idr >= 0),
+                    effective_from  DATE NOT NULL DEFAULT CURRENT_DATE,
+                    effective_to    DATE,
+                    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+                    notes           TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT ck_hr_bonus_rates_window CHECK (
+                        effective_to IS NULL OR effective_to >= effective_from
+                    )
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS hr_payroll_periods (
+                    id              SERIAL PRIMARY KEY,
+                    payroll_month   SMALLINT NOT NULL CHECK (payroll_month BETWEEN 1 AND 12),
+                    payroll_year    SMALLINT NOT NULL CHECK (payroll_year BETWEEN 2000 AND 2100),
+                    period_start    DATE NOT NULL,
+                    period_end      DATE NOT NULL,
+                    status          VARCHAR(20) NOT NULL DEFAULT 'draft',
+                    locked_at       TIMESTAMPTZ,
+                    created_by      VARCHAR(36) REFERENCES team_members(id) ON DELETE SET NULL,
+                    approved_by     VARCHAR(36) REFERENCES team_members(id) ON DELETE SET NULL,
+                    approved_at     TIMESTAMPTZ,
+                    paid_at         TIMESTAMPTZ,
+                    notes           TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_hr_payroll_period UNIQUE (payroll_month, payroll_year),
+                    CONSTRAINT ck_hr_payroll_dates CHECK (period_end >= period_start),
+                    CONSTRAINT ck_hr_payroll_status CHECK (
+                        status IN ('draft', 'calculated', 'approved', 'paid')
+                    )
+                )
+                """
+            )
+        )
+
+    # Migration 357 alters the legacy bonus ledger; mirror its 068 shape.
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -613,8 +661,8 @@ def main() -> int:
                     id              BIGSERIAL PRIMARY KEY,
                     practice_id     INTEGER NOT NULL REFERENCES practices(id) ON DELETE RESTRICT,
                     employee_id     INTEGER NOT NULL REFERENCES hr_employees(id) ON DELETE RESTRICT,
-                    payroll_period_id INTEGER,
-                    bonus_rate_id   INTEGER,
+                    payroll_period_id INTEGER REFERENCES hr_payroll_periods(id) ON DELETE SET NULL,
+                    bonus_rate_id   INTEGER REFERENCES hr_bonus_rates(id) ON DELETE SET NULL,
                     practice_type_code VARCHAR(50) NOT NULL,
                     amount_idr      BIGINT NOT NULL CHECK (amount_idr >= 0),
                     status          VARCHAR(20) NOT NULL DEFAULT 'pending',

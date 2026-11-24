@@ -38,9 +38,11 @@ from backend.services.crm.practice_state_machine import (
     OPEN_INQUIRY_TYPE_CODE,
     STATES_WITHOUT_SERVICE,
     InvalidTransitionError,
+    PracticeWorkflowActionRequired,
     QuotedPriceRequiredError,
     discount_covers_price,
     normalize_state,
+    require_editable_status,
     validate_quoted_price_for_invoice,
     validate_service_selected,
     validate_transition,
@@ -814,6 +816,10 @@ async def create_practice(
             status_code=400,
             detail=f"practice_type_code is required to create a practice in status '{practice.status}'",
         )
+    try:
+        require_editable_status(practice.status)
+    except PracticeWorkflowActionRequired as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     practice.practice_type_code = practice_type_code
 
     try:
@@ -1683,8 +1689,6 @@ async def update_practice(
             practice_created_by: str | None = None
             practice_assigned_to: str | None = None
             practice_client_lead: str | None = None
-            old_start_date: Any = None
-            old_completion_date: Any = None
             old_discount_amount: Decimal | None = None
             old_metadata: dict | None = None
             old_quoted_price: Decimal | None = None
@@ -1715,8 +1719,6 @@ async def update_practice(
                     practice_created_by = old_row.get("created_by", "")
                     practice_assigned_to = old_row.get("assigned_to", "")
                     practice_client_lead = old_row.get("client_lead", "")
-                    old_start_date = old_row.get("start_date")
-                    old_completion_date = old_row.get("completion_date")
                     old_discount_amount = old_row.get("discount_amount")
                     raw_meta = old_row.get("metadata")
                     if isinstance(raw_meta, str):
@@ -1751,8 +1753,6 @@ async def update_practice(
                         practice_created_by = old_row.get("created_by", "")
                         practice_assigned_to = old_row.get("assigned_to", "")
                         practice_client_lead = old_row.get("client_lead", "")
-                        old_start_date = old_row.get("start_date")
-                        old_completion_date = old_row.get("completion_date")
                         old_quoted_price = old_row.get("quoted_price")
                         old_practice_type_code = old_row.get("practice_type_code")
                 else:
@@ -1780,6 +1780,16 @@ async def update_practice(
             pph_touched = "pph" in updates.model_fields_set
             if pph_touched:
                 _require_pph_role(current_user)
+
+            for field in ("payment_status", "paid_amount"):
+                if field in updates.model_fields_set and getattr(updates, field) is None:
+                    raise HTTPException(status_code=400, detail=f"{field} cannot be null")
+            if {"payment_status", "paid_amount"} & updates.model_fields_set:
+                raise HTTPException(status_code=409, detail="Record the payment in Accounting.")
+            try:
+                require_editable_status(updates.status)
+            except PracticeWorkflowActionRequired as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
 
             # Validate state machine transition if status is being changed
             if updates.status and updates.status != old_status:
@@ -1977,37 +1987,9 @@ async def update_practice(
                 params.append(pph_metadata)
                 param_index += 1
 
-            # Autoset date fields on status transitions (only if not already in DB
-            # and caller did not pass an explicit value). Uses NOW() server-side,
-            # no parameter binding required.
-            if (
-                updates.status == "completed"
-                and "completion_date" not in update_set
-                and old_completion_date is None
-            ):
-                update_fields.append("completion_date = NOW()")
-            if (
-                updates.status == "on_process"
-                and "start_date" not in update_set
-                and old_start_date is None
-            ):
-                update_fields.append("start_date = NOW()")
-
             if not update_fields:
                 raise HTTPException(status_code=400, detail="No fields to update")
-
-            # Cutoff rule: completed after 28th → practice shows as next month
-            today = date.today()
-            if updates.status == "completed" and today.day > 28:
-                if today.month == 12:
-                    next_month_1st = datetime(today.year + 1, 1, 1, tzinfo=timezone.utc)
-                else:
-                    next_month_1st = datetime(today.year, today.month + 1, 1, tzinfo=timezone.utc)
-                update_fields.append(f"updated_at = ${param_index}")
-                params.append(next_month_1st)
-                param_index += 1
-            else:
-                update_fields.append("updated_at = NOW()")
+            update_fields.append("updated_at = NOW()")
 
             # Discount vs quoted_price sanity (owner Q4=a, DAI-177): any PATCH that
             # changes the price or the discount is checked on the values the row
@@ -2064,6 +2046,21 @@ async def update_practice(
             params.append(practice_id)
 
             async with conn.transaction():
+                if new_practice_type_code and new_practice_type_code != old_practice_type_code:
+                    # Serialise with a first delivery upload that may have gone to storage
+                    # while this editor was open. An issued visa keeps its service identity.
+                    await conn.fetchval(
+                        "SELECT id FROM practices WHERE id = $1 FOR UPDATE", practice_id
+                    )
+                    has_delivery = await conn.fetchval(
+                        "SELECT EXISTS(SELECT 1 FROM practice_delivery_slots WHERE practice_id=$1) "
+                        "OR EXISTS(SELECT 1 FROM practice_delivery_titles WHERE practice_id=$1)",
+                        practice_id,
+                    )
+                    if has_delivery:
+                        raise HTTPException(
+                            status_code=409, detail="Service already has delivery records."
+                        )
                 if updates.status and normalize_state(updates.status) == "sending_invoice":
                     # The gate above ran on values read before this transaction. Lock the row
                     # and decide on the LOCKED status, price and discount: a concurrent commit
@@ -2320,31 +2317,6 @@ async def update_practice(
 
             # NOTE: on_process automation handled by PracticeStatusListener (M5)
             # via PG NOTIFY trigger — no need to duplicate here.
-
-            # 🚀 Process Completion Automation: Trigger when status changes to 'completed'
-            if updates.status == "completed" and old_status != "completed":
-                from backend.services.crm.completed_process_service import CompletedProcessService
-
-                completion_service = CompletedProcessService(db_pool)
-                spawn(
-                    completion_service.trigger_on_completed(
-                        practice_id=practice_id,
-                        triggered_by=user_email,
-                    ),
-                )
-                logger.info(
-                    "🚀 Process completion automation triggered for practice %s",
-                    practice_id,
-                )
-
-                # 🎯 HR Bonus Auto-Creation: create bonus ledger entry for assigned team member
-                spawn(
-                    _create_hr_bonus_on_completed(
-                        db_pool,
-                        practice_id,
-                        updated_practice.get("assigned_to"),
-                    ),
-                )
 
             log_success(
                 logger,

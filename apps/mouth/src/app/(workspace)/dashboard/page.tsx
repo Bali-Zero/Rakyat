@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import { DeliveryBonusDesk } from "@/components/hr/DeliveryBonusDesk";
 import { RefreshCw } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/ErrorBoundary";
 import { dashboardQueryKey, useDashboardData } from "@/hooks/useDashboardData";
@@ -126,6 +127,8 @@ export default function DashboardPage() {
             </Link>
           }
         />
+
+        <DeliveryBonusDesk />
 
         {/* Visa Oracle testing campaign (T01-T06) — silent unless the viewer
             is an assigned tester with cases still open today. */}

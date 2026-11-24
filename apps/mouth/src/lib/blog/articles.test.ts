@@ -47,6 +47,7 @@ const {
   getAllArticles,
   getArticleByLocale,
   getAvailableLocales,
+  getIndexableArticleLocales,
   searchArticles,
 } = await import("./articles");
 
@@ -315,6 +316,107 @@ describe("one publication rule for local MDX", () => {
     expect(getAvailableLocales(CATEGORY, SLUG)).toEqual(["en", "it"]);
   });
 
+  it("labels an inherited headline and uses an editorial body headline when one exists", async () => {
+    const base = mdx('seoTitle: "English SEO"\n', "English Title");
+    disk({ [`business/${SLUG}.mdx`]: base, [`business/${SLUG}.it.mdx`]: base });
+    expect(await getArticleByLocale(CATEGORY, SLUG, "it")).toMatchObject({
+      locale: "it",
+      title: "English Title",
+      titleLocale: "en",
+    });
+    const header = base.slice(0, base.lastIndexOf("---") + 3);
+    disk({
+      [`business/${SLUG}.mdx`]: base,
+      [`business/${SLUG}.it.mdx`]:
+        header +
+        '\nimport { InfoCard } from "./components";\n\n# Titolo italiano\n\nContenuto.',
+    });
+    const translated = await getArticleByLocale(CATEGORY, SLUG, "it");
+    expect(translated).toMatchObject({
+      title: "Titolo italiano",
+      seoTitle: "Titolo italiano",
+    });
+    expect(translated?.titleLocale).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "English SEO",
+      "English Title",
+      "English body heading",
+      "English Title",
+      "English SEO",
+      "en",
+    ],
+    [
+      "English body heading",
+      "Titolo SEO",
+      "English Title",
+      "Titolo SEO",
+      "Titolo SEO",
+      undefined,
+    ],
+    [
+      "Titolo italiano",
+      "Titolo SEO",
+      "Titolo nel testo",
+      "Titolo italiano",
+      "Titolo SEO",
+      undefined,
+    ],
+    [
+      "English Title",
+      " English Title ",
+      "English body heading",
+      "English Title",
+      undefined,
+      "en",
+    ],
+  ] as const)(
+    "resolves authored fields across English headline positions (%s, %s)",
+    async (
+      translatedTitle,
+      translatedSeo,
+      body,
+      title,
+      seoTitle,
+      titleLocale,
+    ) => {
+      const englishSeo =
+        seoTitle === undefined ? "" : 'seoTitle: "English SEO"\n';
+      disk({
+        [`business/${SLUG}.mdx`]: mdx(englishSeo, "English Title").replace(
+          "Body.",
+          "# English body heading",
+        ),
+        [`business/${SLUG}.it.mdx`]: mdx(
+          `seoTitle: "${translatedSeo}"\n`,
+          translatedTitle,
+        ).replace("Body.", `# ${body}`),
+      });
+      const article = await getArticleByLocale(CATEGORY, SLUG, "it");
+      expect(article?.title).toBe(title);
+      expect(article?.seoTitle).toBe(seoTitle);
+      expect(article?.titleLocale).toBe(titleLocale);
+    },
+  );
+
+  it("indexes only real, public locale siblings in a partial translation set", async () => {
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("", "English Title"),
+      [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
+      [`business/${SLUG}.fr.mdx`]: mdx("noIndex: true\n"),
+      [`business/${SLUG}.ru.mdx`]: mdx("locale: it\n"),
+      [`business/${SLUG}.id.mdx`]: mdx("status: draft\n"),
+    });
+    expect(getIndexableArticleLocales(CATEGORY, SLUG)).toEqual(["en", "it"]);
+    expect((await getArticleByLocale(CATEGORY, SLUG, "ru"))?.locale).toBe("en");
+    expect((await getArticleByLocale(CATEGORY, SLUG, "fr"))?.noIndex).toBe(
+      true,
+    );
+    expect(getIndexableArticleLocales(CATEGORY, "backend-only")).toEqual([]);
+  });
+
   it("hides every translation of a hidden article", async () => {
     mockFetchOnce({ success: false }, false);
     disk({
@@ -322,6 +424,7 @@ describe("one publication rule for local MDX", () => {
       [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
     });
     expect(await getArticleByLocale(CATEGORY, SLUG, "it")).toBeNull();
+    expect(getIndexableArticleLocales(CATEGORY, SLUG)).toEqual([]);
   });
 
   it("lists and finds only published articles", async () => {

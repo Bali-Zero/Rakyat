@@ -234,3 +234,28 @@ async def test_upload_dedup_not_applied_to_company_attachments():
     except HTTPException as exc:  # a later company step may refuse; never as a duplicate
         assert exc.status_code != 409
     assert _dedup_calls(conn) == []
+
+
+@pytest.mark.asyncio
+async def test_only_verified_repair_slot_excludes_its_unstored_final_record():
+    from backend.app.routers.crm_enhanced_documents import (
+        _active_duplicate_document_id,
+        _no_delivery_repair_slot,
+    )
+
+    assert _no_delivery_repair_slot() is None
+    conn = AsyncMock()
+    await _active_duplicate_document_id(conn, 1, FILE_MD5, practice_id=42)
+    ordinary, *params = conn.fetchval.await_args.args
+    assert "practice_delivery_slots" not in ordinary and params == [1, FILE_MD5, 42, None]
+    await _active_duplicate_document_id(
+        conn, 1, FILE_MD5, practice_id=42, missing_delivery_slot="document_2"
+    )
+    repair, *params = conn.fetchval.await_args.args
+    assert (
+        "NULLIF(d.file_id,'') IS NULL" in repair
+        and "s.document_id=d.id" in repair
+        and "p.status='completed'" in repair
+    )
+    assert "s.practice_id=d.practice_id AND s.slot_key=$5" in repair
+    assert params == [1, FILE_MD5, 42, None, "document_2"]

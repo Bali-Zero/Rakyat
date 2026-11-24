@@ -906,7 +906,7 @@ async def test_update_practice_status_success(crm_service, mock_pool):
     old = {"status": "inquiry", "client_id": 1}
     updated = {
         "id": 10,
-        "status": "on_process",
+        "status": "waiting_documents",
         "client_id": 1,
         "assigned_to": None,
         "actual_price": None,
@@ -914,9 +914,9 @@ async def test_update_practice_status_success(crm_service, mock_pool):
     conn.fetchrow = AsyncMock(side_effect=[old, updated])
 
     with patch.object(service.auditor, "log_practice_status_change", new_callable=AsyncMock):
-        result = await service.update_practice_status(10, "on_process", user_id="user1")
+        result = await service.update_practice_status(10, "waiting_documents", user_id="user1")
 
-    assert result["status"] == "on_process"
+    assert result["status"] == "waiting_documents"
 
 
 @pytest.mark.asyncio
@@ -930,18 +930,15 @@ async def test_update_practice_status_not_found_raises(crm_service, mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_update_practice_status_completed_triggers_hr_bonus(crm_service, mock_pool):
+async def test_direct_completed_status_cannot_create_a_bonus(crm_service, mock_pool):
+    from backend.services.crm.practice_state_machine import PracticeWorkflowActionRequired
+
     service, _ = crm_service
-    pool, conn = mock_pool
-    old = {"status": "on_process", "client_id": 1}
-    updated = {"id": 10, "status": "completed", "client_id": 1, "assigned_to": "agent@balizero.com"}
-    conn.fetchrow = AsyncMock(side_effect=[old, updated])
-
-    with patch.object(service.auditor, "log_practice_status_change", new_callable=AsyncMock):
-        with patch.object(service, "_create_hr_bonus_entry", new_callable=AsyncMock) as mock_bonus:
-            await service.update_practice_status(10, "completed")
-
-    mock_bonus.assert_called_once_with(10, updated)
+    _, conn = mock_pool
+    conn.fetchrow = AsyncMock(return_value={"status": "on_process", "client_id": 1})
+    with pytest.raises(PracticeWorkflowActionRequired, match="Final delivery"):
+        await service.update_practice_status(10, "completed")
+    assert conn.fetchrow.await_count == 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────

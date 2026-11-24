@@ -255,7 +255,7 @@ class TestUpdatePracticeStatusError:
         svc = EnhancedCRMService(pool)
 
         with pytest.raises(DatabaseError):
-            await svc.update_practice_status(1, "completed")
+            await svc.update_practice_status(1, "waiting_documents")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

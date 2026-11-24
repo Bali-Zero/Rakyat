@@ -1,0 +1,95 @@
+-- A delivery bonus belongs to one qualifying event and its original assignee.
+-- Rates may be absent at issue time. Preserve the receipt without putting a
+-- fictional zero in payroll. A superseded document keeps its first receipt.
+CREATE TABLE hr_delivery_bonus_events (
+    practice_id INTEGER PRIMARY KEY REFERENCES practices(id) ON DELETE RESTRICT,
+    employee_id INTEGER REFERENCES hr_employees(id) ON DELETE RESTRICT,
+    original_team_member_id VARCHAR(36) REFERENCES team_members(id) ON DELETE RESTRICT,
+    payroll_ineligible BOOLEAN NOT NULL DEFAULT FALSE,
+    service_code TEXT NOT NULL,
+    event_kind TEXT NOT NULL CHECK (event_kind IN ('electronic_visa_issued', 'service_delivered')),
+    earned_at TIMESTAMPTZ NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    awarded_at TIMESTAMPTZ NOT NULL,
+    bonus_rate_id INTEGER REFERENCES hr_bonus_rates(id) ON DELETE SET NULL,
+    amount_idr BIGINT CHECK (amount_idr >= 0),
+    ledger_id BIGINT UNIQUE REFERENCES hr_bonus_ledger(id) ON DELETE RESTRICT,
+    resolved_by TEXT,
+    CHECK (ledger_id IS NULL OR (employee_id IS NOT NULL AND amount_idr IS NOT NULL)),
+    CHECK (NOT payroll_ineligible OR (employee_id IS NULL AND ledger_id IS NULL AND amount_idr IS NULL))
+);
+CREATE TABLE hr_delivery_goals (
+    employee_id INTEGER NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+    month DATE NOT NULL CHECK (EXTRACT(DAY FROM month) = 1),
+    target INTEGER NOT NULL CHECK (target BETWEEN 1 AND 200),
+    PRIMARY KEY (employee_id, month)
+);
+CREATE INDEX idx_hr_delivery_events_employee ON hr_delivery_bonus_events (employee_id, earned_at DESC);
+
+-- Completion also admits legacy award writers. An explicitly excluded receipt
+-- stays terminal for all practice-linked ledger writes, including later reassignment.
+CREATE FUNCTION hr_refuse_ineligible_delivery_bonus() RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM hr_delivery_bonus_events
+        WHERE practice_id = NEW.practice_id AND payroll_ineligible
+    ) THEN
+        RAISE EXCEPTION 'Original assignee was outside payroll at delivery';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_hr_bonus_delivery_eligibility
+    BEFORE INSERT OR UPDATE OF practice_id, employee_id ON hr_bonus_ledger
+    FOR EACH ROW WHEN (NEW.practice_id IS NOT NULL)
+    EXECUTE FUNCTION hr_refuse_ineligible_delivery_bonus();
+
+CREATE OR REPLACE FUNCTION hr_validate_completed_practice()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.practice_id IS NULL OR EXISTS (
+        SELECT 1 FROM practices WHERE id = NEW.practice_id AND status = 'completed'
+    ) OR EXISTS (
+        SELECT 1 FROM hr_delivery_bonus_events e
+        WHERE e.practice_id = NEW.practice_id AND e.employee_id = NEW.employee_id
+          AND e.service_code = NEW.practice_type_code AND e.event_kind = 'electronic_visa_issued'
+    ) THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'A practice bonus requires completion or a recorded electronic visa issuance';
+END;
+$$ LANGUAGE plpgsql;
+
+-- Production already has the legacy 068 trigger. The v2-only CI chain
+-- materialises its table and function but may not have attached the trigger.
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgrelid='hr_bonus_ledger'::regclass
+          AND tgname='trg_hr_bonus_validate' AND NOT tgisinternal
+    ) THEN
+        CREATE TRIGGER trg_hr_bonus_validate
+        BEFORE INSERT OR UPDATE OF practice_id ON hr_bonus_ledger
+        FOR EACH ROW EXECUTE FUNCTION hr_validate_completed_practice();
+    END IF;
+END $$;
+
+-- === ROLLBACK ===
+-- Unresolved bonus claims need to be retained. Refuse a rollback that loses them.
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM hr_delivery_bonus_events) THEN
+        RAISE EXCEPTION 'Preserve earned bonus events before rolling back this migration';
+    END IF;
+END $$;
+CREATE OR REPLACE FUNCTION hr_validate_completed_practice()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.practice_id IS NULL OR EXISTS (
+        SELECT 1 FROM practices WHERE id = NEW.practice_id AND status = 'completed'
+    ) THEN RETURN NEW; END IF;
+    RAISE EXCEPTION 'Practice must be completed before bonus entry';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER trg_hr_bonus_delivery_eligibility ON hr_bonus_ledger;
+DROP FUNCTION hr_refuse_ineligible_delivery_bonus();
+DROP TABLE hr_delivery_goals;
+DROP TABLE hr_delivery_bonus_events;

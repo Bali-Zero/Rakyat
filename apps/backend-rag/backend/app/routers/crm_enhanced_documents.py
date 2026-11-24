@@ -56,6 +56,11 @@ def _access_not_preverified() -> bool:
     return False
 
 
+def _no_delivery_repair_slot() -> None:
+    # Set only by the authenticated, in-process final-permit repair operation.
+    return None
+
+
 def _team_upload_source() -> str:
     # documents.uploaded_source feeds Champion Round 2 scoring, so HTTP callers
     # can never set it; only an in-process caller that authenticated a portal
@@ -1019,6 +1024,7 @@ async def _active_duplicate_document_id(
     *,
     practice_id: int | None = None,
     family_member_id: int | None = None,
+    missing_delivery_slot: str | None = None,
 ) -> int | None:
     """Id of a document this client already has with the same file content
     attached in the SAME context (practice, family member).
@@ -1031,6 +1037,17 @@ async def _active_duplicate_document_id(
     attachment, not a duplicate. Application-level check; index 074 stays
     non-unique.
     """
+    exclusion = ""
+    repair_args = []
+    if missing_delivery_slot:
+        # A lost pointer is still an active database row. Exempt only that
+        # exact recorded case/slot during authenticated completed-permit repair.
+        exclusion = """ AND NOT (NULLIF(d.file_id,'') IS NULL AND EXISTS (
+            SELECT 1 FROM practice_delivery_slots s
+            JOIN practice_delivery_completions c ON c.practice_id=s.practice_id AND c.service_code=s.service_code
+            JOIN practices p ON p.id=s.practice_id AND p.status='completed'
+            WHERE s.document_id=d.id AND s.practice_id=d.practice_id AND s.slot_key=$5))"""
+        repair_args.append(missing_delivery_slot)
     return await conn.fetchval(
         "SELECT d.id FROM documents d"
         " WHERE d.client_id = $1 AND d.content_hash = $2"
@@ -1038,11 +1055,12 @@ async def _active_duplicate_document_id(
         " AND d.family_member_id IS NOT DISTINCT FROM $4"
         " AND COALESCE(d.is_archived, false) = false"
         f" AND {admin_document_not_deleted_clause('d')}"
-        " ORDER BY d.id LIMIT 1",
+        f"{exclusion} ORDER BY d.id LIMIT 1",
         client_id,
         content_hash,
         practice_id,
         family_member_id,
+        *repair_args,
     )
 
 
@@ -1055,6 +1073,7 @@ async def upload_document_base64(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     access_already_verified: bool = Depends(_access_not_preverified),
     uploaded_source: str = Depends(_team_upload_source),
+    missing_delivery_slot: str | None = Depends(_no_delivery_repair_slot),
 ) -> dict[str, Any]:
     """
     Upload a document via Base64 (for frontend integration).
@@ -1178,6 +1197,17 @@ async def upload_document_base64(
                     content_hash,
                     practice_id=practice_id,
                     family_member_id=data.family_member_id,
+                    missing_delivery_slot=(
+                        missing_delivery_slot
+                        if access_already_verified is True
+                        and source == "team"
+                        and practice_id is not None
+                        and isinstance(missing_delivery_slot, str)
+                        and (data.intake_idempotency_key or "").startswith(
+                            f"case-delivery:{practice_id}:0:{missing_delivery_slot}:"
+                        )
+                        else None
+                    ),
                 )
             if existing_doc_id is not None:
                 raise HTTPException(
