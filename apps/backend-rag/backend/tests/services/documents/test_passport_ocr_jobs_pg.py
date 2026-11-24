@@ -485,3 +485,7 @@ async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
     with pytest.raises(local.ReceiptRejected, match="identity_mismatch"):
         await local.apply_apple_receipt(pg_pool, receipt)
     assert await pg_pool.fetchrow(observation) == before
+    await pg_pool.execute("UPDATE clients SET status='lead', passport_number=$1 WHERE id=2", "T-0000 0001")
+    with pytest.raises(local.ReceiptRejected, match="identity_mismatch"):
+        await local.apply_apple_receipt(pg_pool, receipt)
+    assert await pg_pool.fetchrow(observation) == before

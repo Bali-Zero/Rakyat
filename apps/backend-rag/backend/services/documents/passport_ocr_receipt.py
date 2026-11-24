@@ -116,7 +116,7 @@ async def _verify_drive(conn: Any, receipt: AppleReceipt, stored_hash: str) -> N
         or after.get("sha256Checksum") != receipt.source_sha256
         or after.get("mimeType") not in {"image/jpeg", "image/png", "image/webp", "application/pdf"}
         or not stored_hash
-        or stored_hash not in (after.get("md5Checksum"), receipt.source_sha256)
+        or stored_hash.lower() not in (after.get("md5Checksum"), receipt.source_sha256)
     ):
         raise ReceiptRejected("source_mismatch")
 
@@ -140,13 +140,15 @@ async def apply_apple_receipt(pool: Any, receipt: AppleReceipt) -> str:
         if not doc or (doc["client_id"], doc["file_id"]) != (receipt.client_id, receipt.file_id):
             raise ReceiptRejected("binding_mismatch")
         owners = await conn.fetch(
-            """SELECT id,full_name FROM clients WHERE deleted_at IS NULL AND status='active'
-               AND upper(btrim(passport_number))=$1 FOR SHARE""",
+            """SELECT id,full_name,status FROM clients WHERE deleted_at IS NULL
+               AND upper(regexp_replace(coalesce(passport_number,''),'[^A-Za-z0-9]','','g'))=$1
+               FOR SHARE""",
             receipt.passport_number,
         )
         if (
             len(owners) != 1
             or owners[0]["id"] != receipt.client_id
+            or owners[0]["status"] != "active"
             or _name_tokens(owners[0]["full_name"] or "") != _name_tokens(receipt.full_name)
         ):
             raise ReceiptRejected("identity_mismatch")
