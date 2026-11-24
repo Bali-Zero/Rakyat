@@ -454,10 +454,10 @@ class SurfaceRouter:
                 return _make_kg_decision(latency_ms=0.0)
             return _make_decision(surface, domain, haiku_confidence, layer_used=2, latency_ms=0.0)
         except (TimeoutError, asyncio.TimeoutError):
-            logger.warning("SurfaceRouter: Haiku timeout on query '%s'", query[:60])
+            logger.warning("SurfaceRouter: Haiku timeout (query_len=%d)", len(query))
             raise
         except Exception as exc:
-            logger.warning("SurfaceRouter: Haiku error: %s", exc)
+            logger.warning("SurfaceRouter: Haiku error: %s", type(exc).__name__)
             return None
 
     # ------------------------------------------------------------------

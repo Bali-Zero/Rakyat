@@ -22,6 +22,7 @@ from backend.core.cache import cached
 from backend.core.collection_registry import resolve_collection_name
 from backend.core.qdrant_db import QdrantClient
 from backend.services.routing.query_router import QueryRouter
+from backend.services.search.log_safety import exc_summary
 
 logger = logging.getLogger(__name__)
 
@@ -208,11 +209,14 @@ class KnowledgeService:
             query_embedding = self.embedder.generate_query_embedding(query)
 
             logger.debug(
-                f"Query: '{query[:50]}...', embedding_dim={len(query_embedding)}, provider={self.embedder.provider}",
+                "Query: query_len=%d, embedding_dim=%d, provider=%s",
+                len(query),
+                len(query_embedding),
+                self.embedder.provider,
             )
             logger.debug(
-                "Parameters: collection_override=%s, user_level=%s, limit=%s",
-                collection_override,
+                "Parameters: collection_override_set=%s, user_level=%s, limit=%s",
+                collection_override is not None,
                 user_level,
                 limit,
             )
@@ -223,7 +227,7 @@ class KnowledgeService:
             # Route to appropriate collection
             if collection_override:
                 collection_name = collection_override
-                logger.debug("Using override collection: %s", collection_name)
+                logger.debug("Using override collection")
             elif is_pricing_query:
                 collection_name = "bali_zero_pricing_hybrid"
                 logger.debug("PRICING QUERY DETECTED → Using bali_zero_pricing_hybrid collection")
@@ -233,7 +237,7 @@ class KnowledgeService:
             # Select the appropriate vector DB client
             vector_db = self.collections.get(collection_name)
             if not vector_db:
-                logger.error("Unknown collection: %s, defaulting to visa_oracle", collection_name)
+                logger.error("Unknown collection, defaulting to visa_oracle")
                 vector_db = self.collections["visa_oracle"]
                 collection_name = "visa_oracle"
 
@@ -308,7 +312,7 @@ class KnowledgeService:
             }
 
         except Exception as e:
-            logger.error("Search error: %s", e)
+            logger.error("Search error: %s", exc_summary(e))
             raise
 
     def _init_reranker(self):
@@ -344,7 +348,7 @@ class KnowledgeService:
         # 2. Re-rank
         self._init_reranker()
         if self.reranker.enabled:
-            logger.info(f"🔍 Re-ranking {len(results['results'])} candidates for query: '{query}'")
+            logger.info(f"🔍 Re-ranking {len(results['results'])} candidates")
             reranked_docs = await self.reranker.rerank(query, results["results"], top_k=limit)
             results["results"] = reranked_docs
             results["reranked"] = True
