@@ -49,6 +49,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.intake import crm_delivery as intake_crm_delivery
 from backend.services.intake import writer as intake_writer
+from backend.services.intake.review_scope import review_source_allowlist as _review_source_allowlist
 
 logger = logging.getLogger(__name__)
 
@@ -68,14 +69,6 @@ CLAIM_TTL_MINUTES = 15
 #
 # Override (CSV, e.g. "whatsapp,drive") to re-admit other sources without a code
 # change. An empty/whitespace value falls back to the default allowlist.
-_DEFAULT_REVIEW_SOURCES = ("whatsapp",)
-
-
-def _review_source_allowlist() -> tuple[str, ...]:
-    raw = os.getenv("INTAKE_REVIEW_SOURCES", "")
-    parsed = tuple(s.strip().lower() for s in raw.split(",") if s.strip())
-    return parsed or _DEFAULT_REVIEW_SOURCES
-
 # MIME types a browser can render inline WITHOUT a script-execution surface.
 # Deliberately excludes image/svg+xml (can embed <script>) and text/html.
 _INLINE_SAFE_MIME = frozenset(
@@ -427,7 +420,7 @@ async def list_review_queue(
             JOIN intake_queue q ON q.id = p.queue_id
             WHERE p.status = $1
               AND q.source = ANY($2::text[])
-              AND ($3::boolean OR q.received_by = $4)
+              AND ($3::boolean OR lower(q.received_by) = $4)
             ORDER BY p.created_at ASC, p.id ASC
             """,
             status,

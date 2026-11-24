@@ -36,6 +36,8 @@ from typing import Any
 
 import asyncpg
 
+from backend.services.intake.review_scope import review_source_allowlist
+
 logger = logging.getLogger(__name__)
 
 # Deadlines within this many days count toward gate 3.
@@ -87,7 +89,7 @@ async def _count_documents(conn: asyncpg.Connection, user_email: str) -> int:
     (intake_queue.received_by), the Q1-v1 decision. A doc blocks the receiver if
     it is unclaimed (review_pending) OR claimed by them OR claimed by someone else
     but the lease has expired (reclaimable, F7). A live foreign claim is excluded
-    (F3).
+    (F3). Only sources admitted to the review feed count.
     """
     if _use_mirror():
         return await _count_documents_mirror(conn, user_email)
@@ -99,6 +101,7 @@ async def _count_documents(conn: asyncpg.Connection, user_email: str) -> int:
               JOIN intake_queue q ON q.id = p.queue_id
              WHERE lower(q.received_by) = $1
                AND p.status = ANY($2::text[])
+               AND q.source = ANY($3::text[])
                AND (
                      p.status = 'review_pending'
                   OR p.lease_owner = $1
@@ -107,6 +110,7 @@ async def _count_documents(conn: asyncpg.Connection, user_email: str) -> int:
             """,
             user_email,
             list(_DOC_PENDING_STATUSES),
+            list(review_source_allowlist()),
         )
         or 0
     )
@@ -139,6 +143,7 @@ async def _count_deadlines(conn: asyncpg.Connection, user_email: str) -> int:
               FROM compliance_alerts a
               JOIN clients c ON c.id = a.client_id
              WHERE lower(c.assigned_to) = $1
+               AND c.deleted_at IS NULL
                AND a.status = ANY($2::text[])
                AND a.deadline <= (CURRENT_DATE + ($3 || ' days')::interval)
             """,
