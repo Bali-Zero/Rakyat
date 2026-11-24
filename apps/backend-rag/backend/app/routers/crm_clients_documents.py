@@ -7,6 +7,7 @@ Document soft-delete, NPWP OCR, NIB OCR, Required documents for portal.
 """
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -751,6 +752,46 @@ class NibExtractResponse(BaseModel):
     message: str | None = None
 
 
+_ASCII_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_NIB_BLOCK = re.compile(r"[0-9](?:[ \-]?[0-9])*\s*")
+
+
+def _faithful_nib_digits(read: Any) -> str | None:
+    """Digits of an OCR read that IS the document's number, else None.
+
+    Faithful: a positive int, or a text made of an optional label (ASCII
+    letters, spaces, ":" and an abbreviation dot after a letter) followed by a
+    block of ASCII digits with single spaces or hyphens between them. Anything
+    that would need the digits to be derived (float, sign, exponent, decimal
+    point, other-script digits, trailing text) is not faithful.
+    """
+    if isinstance(read, bool):
+        return None
+    if isinstance(read, int):
+        return str(read) if read > 0 else None
+    if not isinstance(read, str):
+        return None
+    first = next((n for n, c in enumerate(read) if "0" <= c <= "9"), None)
+    if first is None:
+        return None
+    if first > 0 and read[first - 1] == ".":
+        return None
+    label = read[:first].strip()
+    if label:
+        if not any(c in _ASCII_LETTERS for c in label):
+            return None
+        for n, c in enumerate(label):
+            if c in _ASCII_LETTERS or c in " :":
+                continue
+            if c == "." and n > 0 and label[n - 1] in _ASCII_LETTERS:
+                continue
+            return None
+    block = _NIB_BLOCK.fullmatch(read, first)
+    if block is None:
+        return None
+    return re.sub(r"[ \-\s]", "", block.group(0))
+
+
 @router.post("/extract-nib", response_model=NibExtractResponse)
 async def extract_nib(
     request: NibExtractRequest,
@@ -767,7 +808,6 @@ async def extract_nib(
     """
     import base64
     import os
-    import re
 
     import httpx
 
@@ -832,23 +872,31 @@ Rules:
             logger.error("NIB OCR: JSON parsing failed")
             return NibExtractResponse(success=False, message="Could not parse OCR response")
 
-        # Clean NIB (keep only digits)
+        # Clean NIB — ASCII-only projection, as for the NPWP above. A valid NIB is
+        # EXACTLY 13 digits; anything else is an incomplete/garbled OCR read: still
+        # RETURNED for the human to see, but NEVER written to the card — clients.nib
+        # is matched against companies and read by the smart search key.
         nib = extracted.get("nib", "")
+        nib_to_save: str | None = None
         if nib:
-            nib_clean = re.sub(r"\D", "", nib)
-            # Validate 13 digits
-            if len(nib_clean) != 13:
-                logger.warning("NIB OCR: extracted value doesn't have 13 digits")
-                nib = nib_clean
+            # Only a read whose digits are the document's own is shown or saved:
+            # digits derived from a float, a sign, an exponent or a decimal point
+            # would be manufactured, so such a read answers None.
+            digits = _faithful_nib_digits(nib)
+            nib = digits
+            if digits is None:
+                logger.warning("NIB OCR: read not saved (not a plain digit block)")
+            elif len(digits) == 13:
+                nib_to_save = digits
             else:
-                nib = nib_clean
+                logger.warning("NIB OCR: read not saved (not thirteen digits)")
 
-        # Save to DB if extracted successfully
-        if nib:
+        # Save to DB only when the read is a complete, valid NIB
+        if nib_to_save:
             async with db_pool.acquire() as conn:
                 await conn.execute(
                     "UPDATE clients SET nib = $1, updated_at = NOW() WHERE id = $2",
-                    nib,
+                    nib_to_save,
                     request.client_id,
                 )
                 logger.info(f"Saved NIB for client {request.client_id}")
