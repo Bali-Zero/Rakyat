@@ -44,7 +44,8 @@ const FORBIDDEN_PATTERNS: Record<string, RegExp> = {
  *  broader than PRICE_LITERAL_PATTERN below (which only pins the two
  *  known historical values, 35M/39M): any IDR figure with 6+ digits
  *  hardcoded directly into a component would bypass usePricingData. */
-const JSX_PRICE_LITERAL_RE = /\bIDR\s*[0-9][0-9.,]{5,}/i;
+const JSX_PRICE_LITERAL_RE =
+  /\b(?:IDR\s*[0-9][0-9.,]{5,}|[0-9][0-9.,]{5,}\s*IDR)\b/i;
 
 /** No hardcoded IDR price literal anywhere — the figure renders only from
  *  usePricingData. Covers both the pre-repricing (39M) and current (35M)
@@ -476,12 +477,106 @@ function extractStringLiterals(src: string): string[] {
  * and the next `<` or `{` (so `{expr}` is excluded, its neighbours are not)
  * is kept.
  */
-const COMMENT_RE = /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
 const JSX_TEXT_RE = /[>}]([^<>{}]*[A-Za-z0-9][^<>{}]*)(?=[<{]|$)/g;
 
+function stripCommentsOutsideVisibleText(src: string): string {
+  let out = "";
+  let index = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  let inJsxTag = false;
+  let inJsxText = false;
+  let closingJsxTag = false;
+
+  while (index < src.length) {
+    const char = src[index];
+    const next = src[index + 1];
+
+    if (quote) {
+      out += char;
+      if (char === "\\") {
+        out += next ?? "";
+        index += 2;
+        continue;
+      }
+      if (char === quote) quote = null;
+      index += 1;
+      continue;
+    }
+
+    if (inJsxText) {
+      out += char;
+      if (char === "<") {
+        inJsxText = false;
+        inJsxTag = true;
+        closingJsxTag = next === "/";
+      } else if (char === "{") {
+        inJsxText = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      out += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === "<") {
+      inJsxTag = true;
+      closingJsxTag = next === "/";
+      out += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === ">" && inJsxTag) {
+      inJsxTag = false;
+      inJsxText = !closingJsxTag && src[index - 1] !== "/";
+      out += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      const end = src.indexOf("\n", index);
+      const commentEnd = end === -1 ? src.length : end;
+      out += " ".repeat(commentEnd - index);
+      index = commentEnd;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      const end = src.indexOf("*/", index + 2);
+      const commentEnd = end === -1 ? src.length : end + 2;
+      out += src.slice(index, commentEnd).replace(/[^\n]/g, " ");
+      index = commentEnd;
+      continue;
+    }
+
+    out += char;
+    index += 1;
+  }
+
+  return out;
+}
+
+function normalizeJsxStringExpressions(src: string): string {
+  return src.replace(
+    /\{\s*(["'])((?:\\.|(?!\1)[\s\S])*)\1\s*\}/g,
+    (_, _quote: string, value: string) => {
+      const decoded = value.replace(/\\([\\"'])/g, "$1");
+      return decoded;
+    },
+  );
+}
+
 function extractJsxText(src: string): string[] {
-  const noComments = src.replace(COMMENT_RE, (c) => " ".repeat(c.length));
-  return Array.from(noComments.matchAll(JSX_TEXT_RE), (m) =>
+  const visibleSource = normalizeJsxStringExpressions(
+    stripCommentsOutsideVisibleText(src),
+  );
+  return Array.from(visibleSource.matchAll(JSX_TEXT_RE), (m) =>
     m[1].replace(/\s+/g, " ").trim(),
   );
 }
@@ -574,6 +669,28 @@ describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixt
     const literals = extractStringLiterals(src);
     expect(literals).toContain("https://balizero.com/visa/second-home/studio");
   });
+
+  it("guilt: preserves JSX text when an attribute contains a URL", () => {
+    const src = `<a href="https://example.test">Open at any bank. IDR 45,000,000</a>`;
+    const text = extractScannableText(src);
+    expect(text.some((s) => FORBIDDEN_PATTERNS.anyBank.test(s))).toBe(true);
+    expect(text.some((s) => JSX_PRICE_LITERAL_RE.test(s))).toBe(true);
+  });
+
+  it("guilt: normalizes JSX string expressions before matching whitespace", () => {
+    const text = extractScannableText(`<p>passive{" "}income</p>`);
+    expect(
+      text.some((s) => FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s)),
+    ).toBe(true);
+  });
+
+  it.each(["45.000.000 IDR", "45,000,000 IDR"])(
+    "guilt: catches an amount-then-currency JSX price literal: %s",
+    (price) => {
+      const text = extractScannableText(`<p>${price}</p>`);
+      expect(text.some((s) => JSX_PRICE_LITERAL_RE.test(s))).toBe(true);
+    },
+  );
 });
 
 describe("extractJsxText — JSX text children (guilt + innocence fixtures)", () => {

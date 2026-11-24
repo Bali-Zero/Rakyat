@@ -48,6 +48,17 @@ const E33F_ENTRY = getPricingSnapshotEntry(
   E33F_OFFSHORE_LIVE_PRICE_KEY,
 );
 
+const CATALOGUE_DESCRIPTION_UNAVAILABLE =
+  "Catalogue description unavailable — check the E33F catalogue entry before opening this case.";
+const CATALOGUE_VALIDITY_UNAVAILABLE = "catalogue validity unavailable";
+
+function catalogueTextOrUnavailable(
+  value: string | null | undefined,
+  unavailable: string,
+): string {
+  return typeof value === "string" && value.trim() ? value : unavailable;
+}
+
 const DEPENDENT_CODE_OPTIONS: { value: DependentCode; label: string }[] = [
   { value: "E31B", label: "E31B — Spouse" },
   { value: "E31E", label: "E31E — Child" },
@@ -206,19 +217,28 @@ export default function NewSecondHomeCasePage() {
             {COPY.wizard.capital.body} The alternative route is a completed
             strata-title property (BERSYARAT — completed titles only).{" "}
             {COPY.wizard.property.why} No sponsor. First grant up to{" "}
-            {E33_ENTRY?.validity ?? "5 years"}; renewal follows Permenkumham
-            22/2023 Pasal 113 cumulative caps.
+            {catalogueTextOrUnavailable(
+              E33_ENTRY?.validity,
+              CATALOGUE_VALIDITY_UNAVAILABLE,
+            )}
+            ; renewal follows Permenkumham 22/2023 Pasal 113 cumulative caps.
           </p>
           <p>
             <strong className="text-[var(--foreground)]">E33E</strong> —
-            retirement KITAS, senior 55+, {E33E_ENTRY?.validity ?? "5 years"}.{" "}
-            {COPY.wizard.seniorFunding.why} Ages 55–59 are handled as a
+            retirement KITAS, senior 55+,{" "}
+            {catalogueTextOrUnavailable(
+              E33E_ENTRY?.validity,
+              CATALOGUE_VALIDITY_UNAVAILABLE,
+            )}
+            . {COPY.wizard.seniorFunding.why} Ages 55–59 are handled as a
             signed-disclosure band.
           </p>
           <p>
             <strong className="text-[var(--foreground)]">E33F</strong> —{" "}
-            {E33F_ENTRY?.description_en ??
-              COPY.verdict.reasons.seniorIncomeOnlyStrong}
+            {catalogueTextOrUnavailable(
+              E33F_ENTRY?.description_en,
+              CATALOGUE_DESCRIPTION_UNAVAILABLE,
+            )}
           </p>
           <p>
             <strong className="text-[var(--foreground)]">Price</strong> —{" "}
