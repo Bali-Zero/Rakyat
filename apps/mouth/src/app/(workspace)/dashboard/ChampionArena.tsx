@@ -102,8 +102,7 @@ export function ChampionArena({
 
   // Compute Round 2 + Asya Mission bonuses for closed victory view
   // (Rule: September prize-takers only win a Round 2 bonus if their October
-  // rank is at least equal to their September rank — Krishna improved #3 -> #2,
-  // while Surya (#2 -> #5) and Ari (#1 -> #6) get Rp 0).
+  // rank is at least equal to their September rank; the others get Rp 0).
   const r2BonusTotal = entries.reduce(
     (acc, e) => acc + (e.total_prize_idr ?? 0),
     0,
