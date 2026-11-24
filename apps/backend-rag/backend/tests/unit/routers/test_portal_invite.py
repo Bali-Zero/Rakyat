@@ -115,6 +115,7 @@ async def test_send_invitation_sends_email_through_internal_adapter(
         "id": 11898,
         "assigned_to": None,
         "created_by": None,
+        "email": "client@example.com",
     }
     monkeypatch.setattr(
         "backend.app.routers.portal_invite.settings.frontend_portal_url",
@@ -167,6 +168,7 @@ async def test_send_invitation_reports_email_failure(
         "id": 11898,
         "assigned_to": None,
         "created_by": None,
+        "email": "client@example.com",
     }
     monkeypatch.setattr(
         "backend.app.routers.portal_invite.settings.frontend_portal_url",
@@ -334,6 +336,7 @@ async def test_send_invitation_allows_unassigned_tax_department_member(
     mock_db_pool._mock_conn.fetchrow.side_effect = [
         {"department": "tax", "active": True},
         {"id": 11898, "assigned_to": "surya@balizero.com", "created_by": "surya@balizero.com"},
+        {"email": "client@example.com"},
     ]
 
     with patch(
@@ -484,6 +487,7 @@ async def test_mailed_link_uses_the_live_portal_default_and_the_real_path(
         "id": 11898,
         "assigned_to": None,
         "created_by": None,
+        "email": "client@example.com",
     }
 
     with patch(

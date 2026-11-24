@@ -91,6 +91,7 @@ def _client_row(*, assigned_to: str | None, created_by: str | None = None) -> di
         "id": 1,
         "assigned_to": assigned_to,
         "created_by": created_by if created_by is not None else assigned_to,
+        "email": "client@example.com",
     }
 
 
