@@ -323,7 +323,11 @@ class ProactiveComplianceMonitor:
         new_alerts = []
 
         for item_id, item in self.compliance_items.items():
-            severity, days_until = self.calculate_severity(item.deadline)
+            try:
+                severity, days_until = self.calculate_severity(item.deadline)
+            except ValueError:
+                logger.warning("Skipping compliance item with invalid deadline: %s", item_id)
+                continue
 
             # Check if alert already exists for this threshold
             existing_alert = self.alert_generator.find_existing_alert(item_id, severity)

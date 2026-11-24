@@ -10,6 +10,23 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+def parse_deadline_utc(deadline: str) -> datetime:
+    if not isinstance(deadline, str):
+        raise ValueError("Deadline must be an ISO date string")
+
+    if deadline.endswith("Z"):
+        deadline = f"{deadline[:-1]}+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(deadline)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Deadline must be an ISO date string") from error
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 class AlertSeverity(str, Enum):
     """Alert severity levels"""
 
@@ -44,7 +61,7 @@ class SeverityCalculatorService:
         Returns:
             Tuple of (severity, days_until_deadline)
         """
-        deadline_date = datetime.fromisoformat(deadline.replace("Z", ""))
+        deadline_date = parse_deadline_utc(deadline)
         now = datetime.now(tz=timezone.utc)
         days_until = (deadline_date - now).days
 
@@ -66,6 +83,6 @@ class SeverityCalculatorService:
         Returns:
             Days until deadline (negative if overdue)
         """
-        deadline_date = datetime.fromisoformat(deadline.replace("Z", ""))
+        deadline_date = parse_deadline_utc(deadline)
         now = datetime.now(tz=timezone.utc)
         return (deadline_date - now).days
