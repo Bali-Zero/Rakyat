@@ -130,3 +130,20 @@ async def test_crm_invite_without_a_typed_address_uses_the_stored_one(pool) -> N
     response = await send(pool, client_id, None)
     assert response["success"] is True
     assert await invitation_rows(pool, client_id) == [STORED]
+
+
+@pytest.mark.parametrize("with_body", [True, False])
+async def test_crm_invite_without_an_address_anywhere_is_the_same_422(pool, with_body) -> None:
+    client_id = await seed_client(pool, None)
+    with pytest.raises(HTTPException) as exc:
+        await send_portal_invite(
+            client_id,
+            SendInviteRequest(email=None) if with_body else None,
+            current_user=STAFF,
+            invite_service=InviteService(pool),
+            db_pool=pool,
+        )
+    assert exc.value.status_code == 422
+    assert "no e-mail on the client record" in exc.value.detail
+    assert "provide" not in exc.value.detail.lower()
+    assert await invitation_rows(pool, client_id) == []

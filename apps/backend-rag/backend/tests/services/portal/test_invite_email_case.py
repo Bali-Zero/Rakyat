@@ -102,7 +102,7 @@ async def test_mixed_case_invitation_redeemed_over_a_provisioned_login_keeps_it_
 @pytest.mark.asyncio
 async def test_lowercase_invitation_is_unchanged(portal_pg_pool, make_client):
     pool = portal_pg_pool
-    client = await make_client("Client A")
+    client = await make_client("Client A", "plain@example.test")
     service = InviteService(pool)
 
     invite = await service.create_invitation(client, "plain@example.test", "staff@example.test")

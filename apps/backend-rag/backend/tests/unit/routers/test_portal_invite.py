@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -162,7 +163,9 @@ async def test_send_invitation_sends_email_through_internal_adapter(
 async def test_send_invitation_reports_email_failure(
     monkeypatch: pytest.MonkeyPatch,
     mock_db_pool: MagicMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.DEBUG)
     fake_service = FakeInviteService()
     mock_db_pool._mock_conn.fetchrow.return_value = {
         "id": 11898,
@@ -191,7 +194,10 @@ async def test_send_invitation_reports_email_failure(
 
     assert response["success"] is True
     assert response["email_sent"] is False
-    assert response["email_error"] == "brevo unavailable"
+    assert response["email_error"] == "delivery_failed"
+    assert "brevo unavailable" not in str(response)
+    assert "brevo unavailable" not in caplog.text
+    assert "RuntimeError" in caplog.text
     assert "check email service" in response["message"]
 
 

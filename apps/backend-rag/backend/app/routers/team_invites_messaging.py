@@ -23,11 +23,15 @@ from pydantic import BaseModel, EmailStr
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_crm_user_filter
-from backend.app.routers.portal_invite import _stored_invite_address
+from backend.app.routers.portal_invite import (
+    _ONLY_THE_ADDRESS_ON_RECORD,
+    _stored_invite_address,
+)
 from backend.app.utils.crm_utils import verify_client_access
 from backend.app.utils.logging_utils import get_logger
 from backend.app.utils.service_accounts import is_human_team_member
 from backend.services.portal._rbac import ClientContext
+from backend.services.portal.invite_service import InvitationAddressNotOnRecord
 from backend.services.portal.portal_profile_service import PLACEHOLDER_PIN_HASH
 from backend.services.portal.portal_reply_service import get_pending_replies
 
@@ -288,7 +292,8 @@ async def send_portal_invite(
     Send portal invitation to a client from CRM.
 
     The invitation goes only to the e-mail on the client record: a different
-    address in the request is refused with 422.
+    address in the request is refused with 422, and so is a client with no
+    e-mail on the record, whether or not the request names an address.
 
     B1 (SPEC-p0-invite.md, 2026-08-23): this is a fourth invitation-minting
     path — `write=True` requires the caller's email to match the client's
@@ -299,24 +304,10 @@ async def send_portal_invite(
         await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
 
     try:
-        # Get client email if not provided
-        email = request.email if request else None
-
-        if email:
-            async with db_pool.acquire() as conn:
-                email = await _stored_invite_address(client_id, email, conn)
-        else:
-            async with db_pool.acquire() as conn:
-                client = await conn.fetchrow(
-                    "SELECT email FROM clients WHERE id = $1",
-                    client_id,
-                )
-                if not client or not client["email"]:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Client has no email address. Please provide one.",
-                    )
-                email = client["email"]
+        async with db_pool.acquire() as conn:
+            email = await _stored_invite_address(
+                client_id, request.email if request else None, conn
+            )
 
         result = await invite_service.create_invitation(
             client_id=client_id,
@@ -332,6 +323,8 @@ async def send_portal_invite(
             "data": _invitation_public_view(result),
         }
 
+    except InvitationAddressNotOnRecord as e:
+        raise HTTPException(status_code=422, detail=_ONLY_THE_ADDRESS_ON_RECORD) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
