@@ -156,13 +156,17 @@ async def test_gate_counts_deadline_alert_for_live_client(
     pool: asyncpg.Pool,
 ) -> None:
     staff_email = f"synthetic-gate-{uuid.uuid4().hex}@example.test"
-    client_id, alert_id = await _insert_deadline_alert_client(
+    live_fixture = await _insert_deadline_alert_client(
         pool, staff_email=staff_email, deleted=False
+    )
+    deleted_fixture = await _insert_deadline_alert_client(
+        pool, staff_email=staff_email, deleted=True
     )
     try:
         result = await evaluate_gate_status(pool, user_email=staff_email)
     finally:
-        await _delete_deadline_alert_client(pool, client_id=client_id, alert_id=alert_id)
+        for client_id, alert_id in (live_fixture, deleted_fixture):
+            await _delete_deadline_alert_client(pool, client_id=client_id, alert_id=alert_id)
 
     assert result["sections"]["deadlines"]["count"] == 1
 
@@ -198,9 +202,14 @@ async def test_gate_holds_staff_for_pending_whatsapp_proposal_in_review_feed(
     monkeypatch.delenv("INTAKE_GATE_USE_MIRROR", raising=False)
     monkeypatch.delenv("INTAKE_REVIEW_SOURCES", raising=False)
     staff_email = f"synthetic-gate-{uuid.uuid4().hex}@example.test"
-    fixture = await _insert_pending_proposal(
-        pool, source="whatsapp", received_by=staff_email
-    )
+    fixtures = [
+        await _insert_pending_proposal(
+            pool, source="whatsapp", received_by=staff_email
+        ),
+        await _insert_pending_proposal(
+            pool, source="drive", received_by=staff_email
+        ),
+    ]
     try:
         feed = await list_review_queue(
             user={"email": staff_email}, pool=pool, status="review_pending", source=None,
@@ -208,11 +217,40 @@ async def test_gate_holds_staff_for_pending_whatsapp_proposal_in_review_feed(
         )
         result = await evaluate_gate_status(pool, user_email=staff_email)
     finally:
-        await _delete_proposal_fixture(pool, fixture)
+        for fixture in fixtures:
+            await _delete_proposal_fixture(pool, fixture)
 
     assert feed["total"] == 1
     assert result["sections"]["documents"]["count"] == feed["total"]
     assert result["blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_gate_and_feed_normalize_receiver_case_identically(
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("INTAKE_GATE_USE_MIRROR", raising=False)
+    monkeypatch.delenv("INTAKE_REVIEW_SOURCES", raising=False)
+    receiver_email = f"Synthetic-Case-{uuid.uuid4().hex}@example.test"
+    counted_fixture = await _insert_pending_proposal(
+        pool, source="whatsapp", received_by=receiver_email.upper()
+    )
+    other_fixture = await _insert_pending_proposal(
+        pool, source="whatsapp", received_by="another-receiver@example.test"
+    )
+    try:
+        feed = await list_review_queue(
+            user={"email": receiver_email}, pool=pool, status="review_pending", source=None,
+            decision=None, limit=50, offset=0,
+        )
+        result = await evaluate_gate_status(pool, user_email=receiver_email)
+    finally:
+        await _delete_proposal_fixture(pool, counted_fixture)
+        await _delete_proposal_fixture(pool, other_fixture)
+
+    assert result["sections"]["documents"]["count"] == 1
+    assert feed["total"] == 1
+    assert [item["queue_id"] for item in feed["items"]] == [counted_fixture[1]]
 
 
 @pytest.mark.asyncio
@@ -234,6 +272,11 @@ async def test_gate_counts_reclaimable_review_proposals_for_receiver(
         ),
         await _insert_pending_proposal(
             pool, source="whatsapp", received_by=staff_email,
+            status="review_claimed", lease_owner=colleague_email,
+            lease_expires_at="2999-01-01T00:00:00+00:00",
+        ),
+        await _insert_pending_proposal(
+            pool, source="drive", received_by=staff_email,
             status="review_claimed", lease_owner=colleague_email,
             lease_expires_at="2999-01-01T00:00:00+00:00",
         ),
@@ -263,6 +306,9 @@ async def test_admin_gate_counts_only_proposals_received_by_admin(
     fixtures = [
         await _insert_pending_proposal(
             pool, source="whatsapp", received_by=admin_email,
+        ),
+        await _insert_pending_proposal(
+            pool, source="drive", received_by=admin_email,
         ),
         await _insert_pending_proposal(
             pool, source="whatsapp", received_by="other-staff@example.test",

@@ -420,7 +420,7 @@ async def list_review_queue(
             JOIN intake_queue q ON q.id = p.queue_id
             WHERE p.status = $1
               AND q.source = ANY($2::text[])
-              AND ($3::boolean OR q.received_by = $4)
+              AND ($3::boolean OR lower(q.received_by) = $4)
             ORDER BY p.created_at ASC, p.id ASC
             """,
             status,
