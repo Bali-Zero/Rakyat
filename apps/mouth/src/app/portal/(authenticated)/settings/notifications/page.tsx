@@ -22,14 +22,14 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { usePortalProfileWaPhone } from "@/hooks/usePortalProfileWaPhone";
+import { normalizeWaPhone } from "@/lib/wa-phone";
 
 interface PrefsResponse {
   email_enabled: boolean;
   wa_enabled: boolean;
   wa_phone: string | null;
 }
-
-const E164_RE = /^[1-9]\d{6,14}$/;
 
 async function fetchPrefs(): Promise<PrefsResponse> {
   return api.request<PrefsResponse>("/api/portal/notifications/prefs", {
@@ -57,6 +57,7 @@ export default function NotificationsSettingsPage() {
   const [waEnabled, setWaEnabled] = useState(false);
   const [waPhone, setWaPhone] = useState("");
   const [phoneError, setPhoneError] = useState<string | null>(null);
+  const profileWaPhone = usePortalProfileWaPhone();
 
   useEffect(() => {
     if (data) {
@@ -65,6 +66,13 @@ export default function NotificationsSettingsPage() {
       setWaPhone(data.wa_phone ?? "");
     }
   }, [data]);
+
+  // No saved WhatsApp number yet: offer the one from the client's profile.
+  // Never overwrite a saved number or something the client already typed.
+  useEffect(() => {
+    if (!data || data.wa_phone || !profileWaPhone) return;
+    setWaPhone((current) => current || profileWaPhone);
+  }, [data, profileWaPhone]);
 
   const mutation = useMutation({
     mutationFn: savePrefs,
@@ -75,21 +83,25 @@ export default function NotificationsSettingsPage() {
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setPhoneError(null);
-    const phone = waPhone.trim();
+    const typed = waPhone.trim();
+    const phone = normalizeWaPhone(typed);
     if (waEnabled) {
-      if (!phone) {
+      if (!typed) {
         setPhoneError("WhatsApp number required when WA notifications are on");
         return;
       }
-      if (!E164_RE.test(phone)) {
-        setPhoneError("Enter digits only, no leading + (e.g. 628123456789)");
+      if (!phone) {
+        setPhoneError(
+          "Enter a valid number with country code, e.g. +62 890 0000 0000",
+        );
         return;
       }
     }
     mutation.mutate({
       email_enabled: emailEnabled,
       wa_enabled: waEnabled,
-      wa_phone: phone || null,
+      // WA off and an unusable number in the (hidden) field: keep the saved one.
+      wa_phone: phone ?? (typed ? (data?.wa_phone ?? null) : null),
     });
   };
 
@@ -192,15 +204,15 @@ export default function NotificationsSettingsPage() {
         {waEnabled && (
           <div className="space-y-1">
             <label className="text-sm font-medium" htmlFor="wa_phone">
-              WhatsApp number (E.164, no +)
+              WhatsApp number (with country code, +62 is fine)
             </label>
             <input
               id="wa_phone"
               type="tel"
-              inputMode="numeric"
+              inputMode="tel"
               value={waPhone}
               onChange={(e) => setWaPhone(e.target.value)}
-              placeholder="628123456789"
+              placeholder="+62 890 0000 0000"
               className="w-full px-3 py-2 rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bz-copper)]"
               style={{
                 background: "var(--bz-card)",

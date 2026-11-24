@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useNotificationPrefs } from "@/hooks/useNotificationPrefs";
+import { usePortalProfileWaPhone } from "@/hooks/usePortalProfileWaPhone";
 import { Button } from "@/components/ui/button";
+import { normalizeWaPhone } from "@/lib/wa-phone";
 
-const E164_NO_PLUS = /^[1-9]\d{6,14}$/;
+const INVALID_WA_PHONE =
+  "Enter a valid WhatsApp number with country code, e.g. +62 890 0000 0000.";
 
 /**
  * Notification channel preferences (email + WhatsApp).
@@ -26,10 +29,19 @@ export function NotificationSettings() {
   } = useNotificationPrefs();
   const [waPhone, setWaPhone] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const profileWaPhone = usePortalProfileWaPhone();
+  const prefsLoaded = data != null;
 
   useEffect(() => {
     setWaPhone(data?.wa_phone ?? "");
   }, [data?.wa_phone]);
+
+  // No saved WhatsApp number yet: offer the one from the client's profile.
+  // Never overwrite a saved number or something the client already typed.
+  useEffect(() => {
+    if (!prefsLoaded || data?.wa_phone || !profileWaPhone) return;
+    setWaPhone((current) => current || profileWaPhone);
+  }, [prefsLoaded, data?.wa_phone, profileWaPhone]);
 
   const persist = async (payload: NonNullable<typeof data>): Promise<void> => {
     setSaveError(null);
@@ -83,16 +95,21 @@ export function NotificationSettings() {
         checked={data.wa_enabled}
         disabled={isUpdating}
         onChange={(enabled) => {
-          if (enabled && !E164_NO_PLUS.test(waPhone)) {
+          const phone = normalizeWaPhone(waPhone);
+          if (enabled && !waPhone.trim()) {
             setSaveError(
               "Enter a valid WhatsApp number before enabling notifications.",
             );
             return;
           }
+          if (waPhone.trim() && !phone) {
+            setSaveError(INVALID_WA_PHONE);
+            return;
+          }
           void persist({
             ...data,
             wa_enabled: enabled,
-            wa_phone: waPhone || null,
+            wa_phone: phone,
           });
         }}
         label="WhatsApp notifications"
@@ -107,29 +124,29 @@ export function NotificationSettings() {
         <input
           id="wa-phone-input"
           type="tel"
-          inputMode="numeric"
+          inputMode="tel"
           value={waPhone}
           disabled={isUpdating}
           aria-describedby="wa-phone-help"
           onChange={(event) => setWaPhone(event.target.value)}
           onBlur={() => {
-            if (waPhone && !E164_NO_PLUS.test(waPhone)) {
-              setSaveError(
-                "Enter a valid country code and number using digits only.",
-              );
+            const phone = normalizeWaPhone(waPhone);
+            if (waPhone.trim() && !phone) {
+              setSaveError(INVALID_WA_PHONE);
               return;
             }
-            void persist({ ...data, wa_phone: waPhone || null });
+            if (phone) setWaPhone(phone);
+            void persist({ ...data, wa_phone: phone });
           }}
-          placeholder="628123456789"
+          placeholder="+62 890 0000 0000"
           className="w-full px-3 py-2 bg-[var(--bz-card)] rounded border border-[var(--bz-border)] text-sm text-[var(--bz-text-1)] disabled:opacity-60"
         />
         <p
           id="wa-phone-help"
           className="text-[10px] text-[var(--bz-text-3)] mt-1"
         >
-          Add the number before enabling WhatsApp. Use country code + number,
-          digits only and no leading +.
+          Add the number before enabling WhatsApp, with the country code.
+          Formats like +62 890 0000 0000 are fine.
         </p>
       </div>
       {saveError && (
