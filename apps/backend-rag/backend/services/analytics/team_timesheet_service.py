@@ -6,6 +6,8 @@ Timezone: Asia/Makassar (Bali Time, UTC+8)
 
 import asyncio
 import contextlib
+import csv
+import io
 import json
 import logging
 from datetime import datetime, timedelta
@@ -476,18 +478,29 @@ class TeamTimesheetService:
                 end_date.date() if isinstance(end_date, datetime) else end_date,
             )
 
-        # Build CSV
-        csv_lines = ["Email,Date,Clock In,Clock Out,Hours Worked"]
+        # A member still clocked in has no clock_out yet (and edge-case rows
+        # can lack the other columns too, see get_daily_hours): an empty cell,
+        # never a crash. The csv module quotes a comma or a quote in the
+        # e-mail, and a leading formula character is neutralised.
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\n")
+        writer.writerow(["Email", "Date", "Clock In", "Clock Out", "Hours Worked"])
         for row in rows:
-            csv_lines.append(
-                f"{row['email']},"
-                f"{row['work_date'].isoformat()},"
-                f"{row['clock_in_bali'].strftime('%H:%M')},"
-                f"{row['clock_out_bali'].strftime('%H:%M')},"
-                f"{row['hours_worked']}",
+            writer.writerow(
+                [
+                    _csv_text(row["email"]),
+                    row["work_date"].isoformat() if row["work_date"] is not None else "",
+                    row["clock_in_bali"].strftime("%H:%M")
+                    if row["clock_in_bali"] is not None
+                    else "",
+                    row["clock_out_bali"].strftime("%H:%M")
+                    if row["clock_out_bali"] is not None
+                    else "",
+                    row["hours_worked"] if row["hours_worked"] is not None else "",
+                ]
             )
 
-        return "\n".join(csv_lines)
+        return out.getvalue().rstrip("\n")
 
     async def _get_user_current_status(
         self,
@@ -511,6 +524,14 @@ class TeamTimesheetService:
 
 # Singleton instance
 _timesheet_service: TeamTimesheetService | None = None
+
+
+def _csv_text(value: Any) -> str:
+    """A free-text CSV cell a spreadsheet will not run as a formula."""
+    text = "" if value is None else str(value)
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
 
 
 def get_timesheet_service() -> TeamTimesheetService | None:

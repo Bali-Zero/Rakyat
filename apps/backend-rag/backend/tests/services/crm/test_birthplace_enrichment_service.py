@@ -53,7 +53,7 @@ class FakeOllamaClient:
         self.response = response
         self.posts: list[dict[str, object]] = []
 
-    async def post(self, url: str, json: dict[str, object]) -> FakeResponse:
+    async def post(self, url: str, json: dict[str, object], **kwargs: object) -> FakeResponse:
         self.posts.append({"url": url, "json": json})
         if isinstance(self.response, Exception):
             raise self.response
@@ -155,7 +155,7 @@ async def test_enrich_client_persists_enrichment_data() -> None:
 @pytest.mark.asyncio
 async def test_run_batch_enrichment_short_circuits_when_ollama_probe_fails() -> None:
     class ProbeClient:
-        async def get(self, url: str) -> FakeResponse:
+        async def get(self, url: str, **kwargs: object) -> FakeResponse:
             return FakeResponse(503, {})
 
     service = make_service()
