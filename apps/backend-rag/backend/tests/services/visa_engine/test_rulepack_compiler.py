@@ -224,6 +224,62 @@ class TestEligibilityPresenceOnly:
         assert not any(e.code == "ELIGIBILITY_RULE_PRESENCE_ONLY" for e in report.errors)
 
 
+class TestEligibilityPresenceOnlyAcrossBranches:
+    """The guard reads the whole condition tree, not the set of leaf operators."""
+
+    @staticmethod
+    def _flagged(source_record: M.SourceRecord, when: dict, facts: list[str]) -> bool:
+        product_id = uuid.uuid4()
+        product = make_product(
+            product_version_id=product_id, source_refs=[source_record.source_record_id]
+        )
+        rule = make_support_rule(
+            rule_id="rule.branches",
+            product_version_ids=[product_id],
+            source_refs=[source_record.source_record_id],
+            when=when,
+            required_facts=facts,
+        )
+        payload = make_rule_pack_payload(
+            rules=[rule], products=[product], source_records=[source_record]
+        )
+        report = C.compile_rule_pack(make_rule_pack(payload))
+        return any(e.code == "ELIGIBILITY_RULE_PRESENCE_ONLY" for e in report.errors)
+
+    _KNOWN = {"op": "known", "fact": "intent.purposes"}
+    _EQ = {"op": "eq", "fact": "intent.purposes", "value": "TOURISM"}
+
+    def test_any_with_a_presence_branch_is_flagged(self, source_record: M.SourceRecord) -> None:
+        when = {"op": "any", "args": [self._KNOWN, self._EQ]}
+        assert self._flagged(source_record, when, ["intent.purposes"])
+
+    def test_not_of_all_with_a_presence_branch_is_flagged(
+        self, source_record: M.SourceRecord
+    ) -> None:
+        # not(known AND eq) is TRUE whenever the fact is absent.
+        when = {"op": "not", "arg": {"op": "all", "args": [self._KNOWN, self._EQ]}}
+        assert self._flagged(source_record, when, ["intent.purposes"])
+
+    def test_all_of_presence_leaves_is_still_flagged(self, source_record: M.SourceRecord) -> None:
+        when = {"op": "all", "args": [self._KNOWN, {"op": "unknown", "fact": "intent.purposes"}]}
+        assert self._flagged(source_record, when, ["intent.purposes"])
+
+    def test_all_with_a_comparison_is_innocent(self, source_record: M.SourceRecord) -> None:
+        when = {"op": "all", "args": [self._KNOWN, self._EQ]}
+        assert not self._flagged(source_record, when, ["intent.purposes"])
+
+    def test_any_of_comparisons_is_innocent(self, source_record: M.SourceRecord) -> None:
+        when = {
+            "op": "any",
+            "args": [self._EQ, {"op": "neq", "fact": "intent.purposes", "value": "X"}],
+        }
+        assert not self._flagged(source_record, when, ["intent.purposes"])
+
+    def test_not_of_a_comparison_is_innocent(self, source_record: M.SourceRecord) -> None:
+        when = {"op": "not", "arg": self._EQ}
+        assert not self._flagged(source_record, when, ["intent.purposes"])
+
+
 class TestFactLiteralKindMismatch:
     def test_eq_against_set_valued_fact_reported(self, source_record: M.SourceRecord) -> None:
         product_id = uuid.uuid4()
