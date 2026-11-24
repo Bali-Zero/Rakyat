@@ -843,7 +843,13 @@ class TestA55CollectionResolution:
         re-verified by hand before this pin is updated."""
         path = _REPO_ROOT / "backend" / "services" / "search" / "search_service.py"
         lines = path.read_text(encoding="utf-8").splitlines()
-        window = "\n".join(lines[531:539])  # 532-539, 1-indexed
+        # Anchored on the statement, not on absolute line numbers (any edit above shifts them).
+        start = next(
+            i
+            for i, line in enumerate(lines)
+            if "vector_db = self.collection_manager.get_collection(collection_name)" in line
+        )
+        window = "\n".join(lines[start : start + 8])
         assert "get_collection(collection_name)" in window
         assert "if not vector_db" in window
         assert 'get_collection("legal_unified")' in window
