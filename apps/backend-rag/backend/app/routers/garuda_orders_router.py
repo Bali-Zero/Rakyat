@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -297,6 +298,49 @@ async def _require_staff_actor(request: Request, authorization: str | None) -> s
     return actor
 
 
+#: `openapi.yaml#/components/schemas/Applicant`: exactly these four keys, each
+#: a string of (minLength, maxLength) code points; `email` has no minLength
+#: there, and its format below needs one character on each side of the `@`.
+_APPLICANT_LENGTHS: dict[str, tuple[int, int]] = {
+    "full_name": (1, 200),
+    "email": (0, 320),
+    "phone": (3, 32),
+    "passport_number": (1, 64),
+}
+
+#: The contract's `format: email`, read as the "valid email address" of the
+#: HTML standard: the rule the checkout form's `type="email"` field already
+#: applies, so the server refuses no address that form lets a customer send.
+_EMAIL_FORMAT = re.compile(
+    r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
+    r"@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
+)
+
+
+def _applicant(raw: object) -> Applicant:
+    """The request's applicant, held to its frozen contract before anything is
+    reserved: a value of another type used to reach the order INSERT and answer
+    500 with the idempotency key already taken, and an empty or malformed value
+    was stored on a payable order."""
+    if not isinstance(raw, dict) or raw.keys() != _APPLICANT_LENGTHS.keys():
+        raise HTTPException(status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False})
+    for name, (shortest, longest) in _APPLICANT_LENGTHS.items():
+        value = raw[name]
+        if not isinstance(value, str) or not shortest <= len(value) <= longest:
+            raise HTTPException(
+                status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False}
+            )
+    if not _EMAIL_FORMAT.fullmatch(raw["email"]):
+        raise HTTPException(status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False})
+    return Applicant(
+        full_name=raw["full_name"],
+        email=raw["email"],
+        phone=raw["phone"],
+        passport_number=raw["passport_number"],
+    )
+
+
 def _idempotency_key(idempotency_key: str | None) -> str:
     if not idempotency_key or len(idempotency_key) < 16 or len(idempotency_key) > 200:
         raise HTTPException(
@@ -398,17 +442,7 @@ async def create_order_from_check(
         raise HTTPException(
             status_code=404, detail={"code": "RESULT_NOT_FOUND", "retryable": False}
         )
-    try:
-        applicant = Applicant(
-            full_name=applicant_raw["full_name"],
-            email=applicant_raw["email"],
-            phone=applicant_raw["phone"],
-            passport_number=applicant_raw["passport_number"],
-        )
-    except (KeyError, TypeError) as exc:
-        raise HTTPException(
-            status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False}
-        ) from exc
+    applicant = _applicant(applicant_raw)
 
     key_digest = scoped_key_sha256(actor=actor, operation="createOrderFromCheck", raw_key=key)
     payload_digest = canonical_payload_sha256({"result_id": result_id, "applicant": applicant_raw})
