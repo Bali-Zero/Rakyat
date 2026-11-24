@@ -247,7 +247,7 @@ async def fly_book(pool: asyncpg.Pool) -> AsyncIterator[tuple[asyncpg.Pool, list
     """The CRM backend's own ``documents`` table, and the SQL the route sends to it.
 
     Production's table carries content_hash, subfolder and ocr_status, which the upload route
-    reads and writes; the intake book (and CI's bootstrap) has none of them. A TEMP copy on a
+    reads and writes. Older intake books can lack them. A TEMP copy on a
     one-connection pool gives the real route its real INSERT without touching the shared schema.
     """
     fly = await asyncpg.create_pool(DSN, min_size=1, max_size=1)
@@ -255,8 +255,8 @@ async def fly_book(pool: asyncpg.Pool) -> AsyncIterator[tuple[asyncpg.Pool, list
     async with fly.acquire() as conn:
         await conn.execute("CREATE TEMP TABLE documents (LIKE public.documents INCLUDING ALL)")
         await conn.execute(
-            "ALTER TABLE pg_temp.documents ADD COLUMN content_hash text,"
-            " ADD COLUMN subfolder text, ADD COLUMN ocr_status text"
+            "ALTER TABLE pg_temp.documents ADD COLUMN IF NOT EXISTS content_hash varchar(32),"
+            " ADD COLUMN IF NOT EXISTS subfolder varchar(100), ADD COLUMN IF NOT EXISTS ocr_status varchar(20)"
         )
         conn.add_query_logger(lambda q: statements.append(" ".join(q.query.split())))
     yield fly, statements
