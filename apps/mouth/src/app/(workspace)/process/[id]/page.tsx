@@ -1094,7 +1094,7 @@ function StaffProcessDetail({
         )}
 
       {caseId &&
-        (practice.status === "completed" ||
+        (getStatusColumn(practice.status) === "completed" ||
           (getStatusColumn(practice.status) === "on_process" &&
             practice.payment_status === "paid")) && (
           <FinalDeliveryCard
