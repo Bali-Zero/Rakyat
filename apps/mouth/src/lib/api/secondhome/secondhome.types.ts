@@ -127,6 +127,13 @@ export interface CaseSummary {
   /** ISO date, present once the Day-90 anchor (entry/ITAS) is known. */
   guarantee_proof_deadline?: string | null;
   stayguard_eligible: boolean;
+  /**
+   * Server-side rule (`E33Case.guarantee_gate_open`): the Day-90 proof is still
+   * due — stage itas_active / guarantee_proof_due AND evidence not complete.
+   * The deadline stays on the row for the whole life of the case, so the
+   * countdown must be shown only while this is true. No client-side recomputation.
+   */
+  guarantee_gate_open: boolean;
   dependent_code?: string | null;
   principal_case_id?: string | null;
   created_at: string;
