@@ -4,13 +4,14 @@ import { describe, it, expect } from "vitest";
 import { PILL_TONE } from "./r19";
 
 /**
- * The R19 "no red" law for the Portal Champion widget on the kita dashboard.
+ * The R19 "no red" law for the Portal Champion hero (ChampionArena) and the
+ * r19 seam on the kita dashboard.
  *
  * Unlike the GARUDA VOA console (garuda-voa/r19.test.tsx), the dashboard
  * folder is NOT entirely R19 — page.tsx keeps its existing `--state-danger`
- * read for the "living" intel category, unrelated to this widget. So this
- * scanner is scoped to the widget's OWN files by name, not the whole
- * directory: a directory-wide scan here would fail on code this widget never
+ * read for the "living" intel category, unrelated to these files. So this
+ * scanner is scoped to these files by name, not the whole
+ * directory: a directory-wide scan here would fail on code these files never
  * touched, which is the "guard judges substring, not entity" failure mode.
  *
  * `import.meta.url` is not a file URL under this runner's environment, so the
@@ -29,12 +30,8 @@ const DASHBOARD_DIR = (() => {
   );
 })();
 
-/** The widget's own rendered sources — test files excluded on purpose. */
-const WIDGET_FILES = [
-  "r19.tsx",
-  "PortalChallengeWidget.tsx",
-  "ChampionArena.tsx",
-];
+/** The hero's rendered sources and the r19 seam — test files excluded on purpose. */
+const SCANNED_FILES = ["r19.tsx", "ChampionArena.tsx"];
 
 /**
  * The scanner. Two shapes only: a read of the danger token, and a literal
@@ -62,7 +59,7 @@ const FIXTURE = {
   successClass: '  className="border-[var(--state-success)]"',
 };
 
-describe("the widget's no-red scanner", () => {
+describe("the no-red scanner", () => {
   it("is GUILTY on the two shapes that put red back", () => {
     expect(redViolation(FIXTURE.dangerToken)).toBe("reads --state-danger");
     expect(redViolation(FIXTURE.hexInStyle)).toBe("hardcoded hex");
@@ -74,16 +71,16 @@ describe("the widget's no-red scanner", () => {
   });
 });
 
-describe("the Portal Champion widget carries no red", () => {
+describe("the Portal Champion hero and the r19 seam carry no red", () => {
   it("finds its own source files", () => {
-    for (const name of WIDGET_FILES) {
+    for (const name of SCANNED_FILES) {
       expect(existsSync(join(DASHBOARD_DIR, name)), name).toBe(true);
     }
   });
 
   it("has no danger-token read and no hardcoded hex in any of them", () => {
     const offences: string[] = [];
-    for (const name of WIDGET_FILES) {
+    for (const name of SCANNED_FILES) {
       const file = join(DASHBOARD_DIR, name);
       const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {

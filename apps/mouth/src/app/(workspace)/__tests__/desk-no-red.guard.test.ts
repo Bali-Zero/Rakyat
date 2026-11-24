@@ -197,22 +197,21 @@ const COPPER_FILL_RE = new RegExp(
  * cures its last copper fill, never before. `review` earns it in K2b
  * (CURE 4). `notifications` has none today but has not been swept either.
  *
- * `dashboard` is exempt for a reason worth reading before flipping it,
- * because the three copper fills it carries are NOT the same thing and
- * only one is a defect (all in `dashboard/PortalChallengeWidget.tsx`):
- *   :274  a PROGRESS BAR filled copper — a real violation. A metric's
- *         magnitude is not "the viewer is the next actor", and this is a
- *         fill in the plain sense the token's own comment forbids.
- *   :578  a 1.5px copper DOT — the pill's pip. concept-K gives the state
- *         pill a copper pip by name; legitimate.
- *   :756  a 3px copper RULE — the masthead's own mark, the same family as
- *         the 96x4 rule the concept opens every page with; legitimate.
- * So this regex, which cannot tell a 3px rule from a progress bar, WILL
- * over-match two innocent marks the day `dashboard` is added. Whoever
- * flips it must either narrow the entity (a copper fill on a box with
- * height, not on a hairline or a pip) or exempt those two lines
- * explicitly. Flipping it as-is would be cicatrix family #3 in the OVER
- * direction, which is the failure this file's own comments warn about.
+ * `dashboard` is exempt for a reason worth reading before flipping it.
+ * It once carried three copper fills in `dashboard/PortalChallengeWidget.tsx`
+ * (a progress bar, a pill pip and a masthead rule); that widget was retired
+ * and they went with it. The files that remain still carry copper fills of
+ * different kinds: a 3px rule and tinted panels in `ChampionArena.tsx`, a
+ * small dot in `TeamReelMonthlyHub.tsx` and a copper call-to-action fill in
+ * each of the two `VisaOracleTesting*` files. A rule, a pip and a tint are
+ * marks concept-K allows by name; a fill on a control is a different thing.
+ * So this regex, which cannot tell those apart, WILL over-match innocent
+ * marks the day `dashboard` is added. Whoever flips it must either narrow
+ * the entity (a copper fill on a box with height, not on a hairline or a
+ * pip) or exempt the innocent lines explicitly, and judge the call-to-action
+ * fills on their own merits. Flipping it as-is would be cicatrix family #3
+ * in the OVER direction, which is the failure this file's own comments warn
+ * about.
  */
 // K2c adds /notifications and /obligations. Both were checked against this
 // rule before being added, and both are clean of the SHAPES it can see.
