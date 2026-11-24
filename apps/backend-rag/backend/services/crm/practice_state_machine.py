@@ -135,16 +135,24 @@ def validate_service_selected(to_state: str, practice_type_code: str | None) -> 
 
 # Owner decision 2026-11-13: a practice cannot move to Sending Invoice without a Quoted Price.
 # Before this gate the status moved anyway, ``InvoiceAutomationService`` produced no invoice and
-# nobody noticed. Only the QUOTED price counts: a discount that brings the total to 0 is a
-# deliberate owner action (the discount is already capped at the quoted price) and passes.
+# nobody noticed. DAI-177: a discount at or above the price would make the invoice total 0 or
+# negative, so it cannot enter Sending Invoice either.
 QUOTED_PRICE_REQUIRED_DETAIL = "Quoted Price is required before Sending Invoice"
+DISCOUNT_COVERS_PRICE_DETAIL = "Discount must be lower than Quoted Price before Sending Invoice"
 
 
 class QuotedPriceRequiredError(Exception):
     """Raised when a practice would enter Sending Invoice without a Quoted Price (null or 0)."""
 
+    def __init__(self, detail: str = QUOTED_PRICE_REQUIRED_DETAIL) -> None:
+        super().__init__(detail)
+
+
+class DiscountCoversPriceError(QuotedPriceRequiredError):
+    """Raised when a practice would enter Sending Invoice with a discount >= its price."""
+
     def __init__(self) -> None:
-        super().__init__(QUOTED_PRICE_REQUIRED_DETAIL)
+        super().__init__(DISCOUNT_COVERS_PRICE_DETAIL)
 
 
 def has_quoted_price(quoted_price: Any) -> bool:
@@ -157,21 +165,34 @@ def has_quoted_price(quoted_price: Any) -> bool:
         return False
 
 
-def validate_quoted_price_for_invoice(to_state: str | None, quoted_price: Any) -> bool:
-    """
-    Gate: entering ``sending_invoice`` (legacy names included) needs a Quoted Price > 0.
+def discount_covers_price(discount_amount: Any, quoted_price: Any) -> bool:
+    """True when a discount above 0 leaves nothing to invoice. No price is not compared here."""
+    if quoted_price is None or not has_quoted_price(discount_amount):
+        return False
+    return Decimal(str(discount_amount)) >= Decimal(str(quoted_price))
 
-    ``quoted_price`` must be the EFFECTIVE price after the same write (a request that sets the
-    price and the status together passes).
+
+def validate_quoted_price_for_invoice(
+    to_state: str | None, quoted_price: Any, discount_amount: Any = None
+) -> bool:
+    """
+    Gate: entering ``sending_invoice`` (legacy names included) needs a Quoted Price > 0 and,
+    when there is a discount, a discount below that price.
+
+    ``quoted_price`` and ``discount_amount`` must be the EFFECTIVE values after the same write
+    (a request that fixes them and moves the status together passes).
 
     Raises:
         QuotedPriceRequiredError: target is sending_invoice and the price is null or 0
+        DiscountCoversPriceError: target is sending_invoice and the discount is >= the price
     """
     if normalize_state(to_state or "") != "sending_invoice":
         return True
-    if has_quoted_price(quoted_price):
-        return True
-    raise QuotedPriceRequiredError
+    if not has_quoted_price(quoted_price):
+        raise QuotedPriceRequiredError
+    if discount_covers_price(discount_amount, quoted_price):
+        raise DiscountCoversPriceError
+    return True
 
 
 # Legacy state mapping for migration

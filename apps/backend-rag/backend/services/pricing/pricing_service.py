@@ -118,6 +118,10 @@ _TOKEN_ALIASES: dict[str, tuple[str, ...]] = {
     "tka": ("rptka",),
 }
 
+# Rows renamed for display whose key stays, because /api/pricing/service looks a row up by
+# its exact key. The LLM price list prints keys, so these rows print their name instead.
+_KEY_KEPT_AFTER_RENAME = frozenset({"ERP (Exit Re-entry Permit)"})
+
 # A negator drops the single word after it ("non alcoholic", "minuman tanpa alkohol").
 _NEGATORS = frozenset({"non", "tanpa", "senza", "without"})
 
@@ -1057,7 +1061,8 @@ class PricingService:
                     display = _entry_display_price(data)
                     duration = data.get("duration", "")
                     duration_str = f" — {duration}" if duration else ""
-                    lines.append(f"- {name}: {display}{duration_str}")
+                    label = data.get("name", name) if name in _KEY_KEPT_AFTER_RENAME else name
+                    lines.append(f"- {label}: {display}{duration_str}")
                 else:
                     lines.append(f"- {name}: {data}")
         return lines

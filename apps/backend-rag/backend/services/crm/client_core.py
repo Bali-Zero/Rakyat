@@ -1026,8 +1026,8 @@ class EnhancedCRMService:
                 # One transaction: FOR UPDATE keeps a concurrent price write out until the move lands.
                 async with conn.transaction():
                     old = await conn.fetchrow(
-                        "SELECT status, client_id, quoted_price FROM practices WHERE id = $1"
-                        " FOR UPDATE",
+                        "SELECT status, client_id, quoted_price, discount_amount FROM practices"
+                        " WHERE id = $1 FOR UPDATE",
                         practice_id,
                     )
 
@@ -1041,7 +1041,9 @@ class EnhancedCRMService:
                         normalize_state(new_status or "") == "sending_invoice"
                         and normalize_state(old_status or "") != "sending_invoice"
                     ):
-                        validate_quoted_price_for_invoice(new_status, old["quoted_price"])
+                        validate_quoted_price_for_invoice(
+                            new_status, old["quoted_price"], old.get("discount_amount")
+                        )
 
                     row = await conn.fetchrow(
                         """

@@ -37,6 +37,7 @@ _EVIDENCE_PROVENANCE_BY_ORIGIN = {
     ProducerOrigin.MULTI_AGENT_COORDINATOR: EvidenceProvenance.MULTI_AGENT_COORDINATOR,
     ProducerOrigin.SPECIALIZED_SERVICE_ROUTER: EvidenceProvenance.SPECIALIZED_SERVICE_ROUTER,
     ProducerOrigin.KNOWLEDGE_GRAPH: EvidenceProvenance.KNOWLEDGE_GRAPH,
+    ProducerOrigin.FAST_ANSWER: EvidenceProvenance.FAST_ANSWER,
     ProducerOrigin.REACT_PIPELINE: EvidenceProvenance.REACT_PIPELINE,
 }
 _EVIDENCE_IDENTITY_FIELDS = (
@@ -227,6 +228,8 @@ def classify_result_origin(
         "client-journey",
     }:
         return ProducerOrigin.SPECIALIZED_SERVICE_ROUTER, None
+    if route_used == "fast_answer":
+        return ProducerOrigin.FAST_ANSWER, None
     if route_used == "react":
         return ProducerOrigin.REACT_PIPELINE, None
     return ProducerOrigin.UNKNOWN, None

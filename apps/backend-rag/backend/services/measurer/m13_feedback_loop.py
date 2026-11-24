@@ -18,7 +18,13 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from backend.services.measurer.base import ALL_METRIC_NAMES
+
 logger = logging.getLogger(__name__)
+
+# The metric names post_metrics_history may hold: the measurer's canonical
+# names plus the one the readers below also query.
+_KNOWN_METRICS: frozenset[str] = ALL_METRIC_NAMES | {"click_through"}
 
 
 class M13CollectionHorizon(enum.Enum):
@@ -44,18 +50,29 @@ class M13FeedbackLoop:
         metrics: dict[str, float],
         source: str,
     ) -> None:
-        """Insert one row per metric into post_metrics_history."""
+        """Insert one row per known metric into post_metrics_history.
+
+        A name outside _KNOWN_METRICS is skipped and only counted: a name
+        comes from a provider response and is never written or logged as is.
+        """
         sql = """
             INSERT INTO post_metrics_history
                 (post_id, horizon_hours, metric_name, metric_value, source)
             VALUES ($1, $2, $3, $4, $5)
         """
+        known = {n: v for n, v in metrics.items() if isinstance(n, str) and n in _KNOWN_METRICS}
+        if len(known) < len(metrics):
+            logger.warning(
+                "skipped %d unknown metric name(s) for post %s",
+                len(metrics) - len(known),
+                post_id,
+            )
         async with self.db_pool.acquire() as conn:
-            for name, value in metrics.items():
+            for name, value in known.items():
                 await conn.execute(sql, post_id, horizon.value, name, float(value), source)
         logger.debug(
             "collected %d metrics for post %s @ %s",
-            len(metrics),
+            len(known),
             post_id,
             horizon.name,
         )

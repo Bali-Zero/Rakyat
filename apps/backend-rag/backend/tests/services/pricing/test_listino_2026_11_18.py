@@ -34,7 +34,7 @@ _LLMS = _BACKEND.parents[1] / "mouth" / "public" / "llms.txt"
 #: the onshore row's price and verified_on (its other fields stay inside the
 #: digest), and the new row, which is pinned whole by _DISSOLVING_ROW instead.
 _BASE_DIGEST = (
-    "475cd51aa845eb093611bf75ca42cf460ac0a3c49d8b5b60152381a81dbdb3a8"  # pragma: allowlist secret
+    "2a8d0f8c782aea9588c84e2e0c1c85e0b39ae54db9fa8a8d1f5ae89b7c7a66fa"  # pragma: allowlist secret
 )
 
 _DISSOLVING_ROW = {

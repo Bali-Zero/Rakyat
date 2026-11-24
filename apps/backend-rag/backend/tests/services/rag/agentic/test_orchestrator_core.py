@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -7,7 +7,7 @@ from backend.prompts import channel_overlays
 from backend.services.llm_clients.pricing import TokenUsage
 from backend.services.rag.agentic import orchestrator_core
 from backend.services.rag.agentic.orchestrator_core import OrchestratorCore
-from backend.services.rag.agentic.schema import CoreResult
+from backend.services.rag.agentic.schema import AnalyticsReceiptStatus, CoreResult, ProducerOrigin
 from backend.services.tools.definitions import AgentState
 
 
@@ -42,6 +42,96 @@ def make_core() -> OrchestratorCore:
     core.prompt_builder = None
     core.routing_manager = None
     return core
+
+
+def make_fast_path_core() -> OrchestratorCore:
+    core = make_core()
+    core._query_planner = None
+    core._multi_agent_coordinator = None
+    core._specialized_router = None
+    core._kg_auto_expansion = None
+    core.db_pool = object()
+    core.reasoning_engine = SimpleNamespace(tool_map={"vector_search": object()})
+    core.prepare_query_context = AsyncMock(return_value=({"profile": None}, [], {}, "", None))
+    core.query_gates = SimpleNamespace(
+        run_all_gates=lambda **_kwargs: SimpleNamespace(triggered=False)
+    )
+    core.check_faq_cache = AsyncMock(return_value=None)
+    core.check_semantic_cache = AsyncMock(return_value=None)
+    core._inject_curated_qa_grounding = AsyncMock(return_value="")
+    core._try_kg_fast_path = AsyncMock(return_value=None)
+    core._log_query_analytics = AsyncMock(return_value=AnalyticsReceiptStatus.WRITTEN)
+    return core
+
+
+@pytest.mark.asyncio
+async def test_process_query_core_fast_answer_logs_once_and_skips_react() -> None:
+    core = make_fast_path_core()
+    core.routing_manager = SimpleNamespace(route_query=AsyncMock())
+    fast_result = CoreResult(
+        answer="Synthetic fast answer",
+        sources=[{"collection": "legal_test", "title": "Synthetic source"}],
+        model_used="claude-sonnet-5-5",
+        route_used="fast_answer",
+        context_used=80,
+        timings={"total": 0.2},
+    )
+
+    with (
+        patch.object(orchestrator_core, "try_fast_answer", AsyncMock(return_value=fast_result)),
+        patch.object(orchestrator_core, "spawn") as spawn_mock,
+    ):
+        result = await core.process_query_core(
+            query="Synthetic legal question",
+            user_id=None,
+            conversation_history=None,
+            start_time=0.0,
+        )
+
+    assert result is fast_result
+    assert result.producer_origin is ProducerOrigin.FAST_ANSWER
+    assert core._log_query_analytics.await_count == 1
+    core.routing_manager.route_query.assert_not_awaited()
+    spawn_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_query_core_fast_answer_none_runs_react() -> None:
+    core = make_fast_path_core()
+    state = AgentState(query="Synthetic fallback question")
+    state.evidence_score = 0.8
+    core.routing_manager = SimpleNamespace(
+        route_query=AsyncMock(return_value=("flash", False, state))
+    )
+    core.prompt_builder = SimpleNamespace(build_system_prompt=lambda **_kwargs: "Synthetic prompt")
+    core.llm_gateway = SimpleNamespace(create_chat_with_history=lambda **_kwargs: object())
+    core.execute_react_loop = AsyncMock(return_value=(state, "gemini-test", TokenUsage(), 0.1))
+    core._run_grading_gates = AsyncMock()
+    core.metrics_manager = SimpleNamespace(
+        extract_timings_from_state=lambda **_kwargs: {"total": 0.3},
+        extract_collections_from_state=lambda _state: set(),
+        extract_sources_from_state=lambda _state: [],
+        calculate_context_used=lambda _state: 0,
+        record_rag_metrics=MagicMock(),
+        record_token_usage=MagicMock(),
+        log_query_completion=MagicMock(),
+    )
+    core.response_builder = SimpleNamespace(
+        build_core_result=lambda **_kwargs: CoreResult(
+            answer="Synthetic ReAct answer", route_used="react"
+        )
+    )
+
+    with patch.object(orchestrator_core, "try_fast_answer", AsyncMock(return_value=None)):
+        result = await core.process_query_core(
+            query="Synthetic fallback question",
+            user_id=None,
+            conversation_history=None,
+            start_time=0.0,
+        )
+
+    assert result.answer == "Synthetic ReAct answer"
+    core.execute_react_loop.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -34,7 +34,7 @@ import {
   QUOTED_PRICE_REQUIRED_TEXT_ID,
   STATUS_LABELS as STATUS_DROPDOWN_LABELS,
   getAllowedNextStatuses,
-  isQuotedPriceRefusal,
+  invoiceAmountRefusalText,
   managedStageReason,
   needsQuotedPriceBefore,
   needsServiceBefore,
@@ -52,6 +52,16 @@ import { RequiredDocumentsCard } from "./RequiredDocumentsCard";
 import { FinalDeliveryCard } from "./FinalDeliveryCard";
 import { SelectServiceCard } from "./SelectServiceCard";
 import { InvoiceCompanyCard } from "./InvoiceCompanyCard";
+import {
+  EMPTY_PPH,
+  PphWithholdingField,
+  canSetPph,
+  pphChanged,
+  pphError,
+  pphFromMetadata,
+  pphSelection,
+  type PphValue,
+} from "../PphWithholdingField";
 import { mergePracticeUpdate } from "./mergePracticeUpdate";
 import { useTeamMemberOptions } from "@/hooks/useTeamMembers";
 import { useInvalidateClient } from "@/hooks/useClientDetail";
@@ -129,6 +139,8 @@ export default function CaseDetailPage() {
   // transitions (e.g. completed → cancelled, cancelled → inquiry).
   // Hydrated from `api.isAdmin()` after the profile loads.
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canEditPph, setCanEditPph] = useState(false);
+  const [pphDraft, setPphDraft] = useState<PphValue>(EMPTY_PPH);
 
   // Inline notes edit
   const [isEditingNotes, setIsEditingNotes] = useState(false);
@@ -180,6 +192,7 @@ export default function CaseDetailPage() {
         const user = await api.getProfile();
         userEmail.current = user.email;
         setIsAdmin(api.isAdmin());
+        setCanEditPph(canSetPph(api.isAdmin(), user.role));
 
         if (caseId) {
           casesMetrics.trackPageView("detail", caseId, user.email);
@@ -393,9 +406,7 @@ export default function CaseDetailPage() {
     } catch (err) {
       toast.error(
         "Failed to update status",
-        isQuotedPriceRefusal(err)
-          ? QUOTED_PRICE_REQUIRED_TEXT_ID
-          : (err as Error).message,
+        invoiceAmountRefusalText(err) ?? (err as Error).message,
       );
     } finally {
       setIsJumpingStatus(null);
@@ -424,6 +435,7 @@ export default function CaseDetailPage() {
       assigned_to: practice.assigned_to || "",
       start_date: practice.start_date ? practice.start_date.split("T")[0] : "",
     });
+    setPphDraft(pphFromMetadata(practice.metadata));
     setIsEditModalOpen(true);
   };
 
@@ -470,6 +482,20 @@ export default function CaseDetailPage() {
         toast.error("Quoted Price kosong", QUOTED_PRICE_REQUIRED_TEXT_ID);
         setIsSaving(false);
         return;
+      }
+
+      if (canEditPph) {
+        const pphProblem = pphError(pphDraft);
+        if (pphProblem) {
+          toast.error("PPh withholding", pphProblem);
+          setIsSaving(false);
+          return;
+        }
+        // Sent only when it changed: the API refuses the key from other roles
+        // and logs every write.
+        if (pphChanged(pphFromMetadata(practice.metadata), pphDraft)) {
+          updates.pph = pphSelection(pphDraft);
+        }
       }
 
       if (Object.keys(updates).length === 0) {
@@ -562,8 +588,9 @@ export default function CaseDetailPage() {
       // Status comes from ApiError.statusCode. The message tests remain only as a
       // fallback for errors that never went through the api client; a bare
       // `message.includes("404")` would also fire on a process id containing 404.
-      if (isQuotedPriceRefusal(err)) {
-        errorMessage = QUOTED_PRICE_REQUIRED_TEXT_ID;
+      const amountRefusal = invoiceAmountRefusalText(err);
+      if (amountRefusal) {
+        errorMessage = amountRefusal;
       } else if (err instanceof Error) {
         const status = err instanceof ApiError ? err.statusCode : undefined;
         if (
@@ -1965,6 +1992,22 @@ export default function CaseDetailPage() {
                   }}
                 />
               </div>
+
+              {canEditPph && (
+                <div className="space-y-2">
+                  <p
+                    className="text-sm font-medium"
+                    style={{ color: "var(--bz-text-1)" }}
+                  >
+                    PPh withholding
+                  </p>
+                  <PphWithholdingField
+                    value={pphDraft}
+                    onChange={setPphDraft}
+                    disabled={isSaving}
+                  />
+                </div>
+              )}
             </div>
 
             <div

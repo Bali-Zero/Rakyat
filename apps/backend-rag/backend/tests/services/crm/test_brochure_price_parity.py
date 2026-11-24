@@ -398,7 +398,7 @@ EXPECTED_ROWS: dict[str, ExpectedRow] = {
         (),
         1,
         ("other_process", "ERP (Exit Re-entry Permit)"),
-        "ERP (Exit Permit Only — Offshore)",
+        "TSP (Termination Stay Permit)",
     ),
 }
 

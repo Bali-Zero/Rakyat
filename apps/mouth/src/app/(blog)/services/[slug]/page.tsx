@@ -57,7 +57,7 @@ export async function generateMetadata({
     company: {
       title: "PT PMA & Company Setup in Bali 2026 | Bali Zero",
       description:
-        "Need a business license in Indonesia? We handle PT PMA setup, OSS licensing, and NIB permits end-to-end. 5,000+ businesses registered.",
+        "Set up a PT PMA in Bali with a licensed Indonesian team: capital rules, KBLI choice, OSS licensing, notary deed, NPWP and bank account.",
       keywords: [
         "company registration bali",
         "business license indonesia",

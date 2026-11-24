@@ -33,6 +33,14 @@ export interface Practice {
   family_member_relationship?: string;
   invoice_company_id?: number | null;
   invoice_company_name?: string | null;
+  /** Backend JSONB; may arrive as JSON text. Read `pph` with pphFromMetadata. */
+  metadata?: unknown;
+}
+
+/** PPh withholding on a process; the API stores it in `metadata.pph`. */
+export interface PphSelection {
+  type: "PPH23" | "PPH21" | "PPH4_2";
+  rate_percent: number;
 }
 
 export interface InvoiceCompanyChoice {
@@ -1146,6 +1154,7 @@ export interface CreatePracticeParams {
   invoice_company_id?: number; // Company the invoice is addressed to (pick)...
   invoice_company_name?: string; // ...or type: creates/reuses the company and links the client
   invoice_company_npwp?: string;
+  pph?: PphSelection; // Tax team and CRM admins only; omit for no PPh
 }
 
 // ============================================

@@ -115,6 +115,54 @@ FOLDER_PROMPTS = {
 }
 
 
+MODEL_FIELD_TYPES = {
+    "file_name": str,
+    "document_type": str,
+    "company_name": str,
+    "notary_name": str,
+    "deed_number": str,
+    "deed_date": str,
+    "directors": list,
+    "commissioners": list,
+    "authorized_capital": (int, float),
+    "paid_capital": (int, float),
+    "registered_address": str,
+    "kbli_codes": list,
+    "sk_number": str,
+    "company_status": str,
+    "nib_number": str,
+    "issue_date": str,
+    "pma_status": str,
+    "npwp_number": str,
+    "name": str,
+    "kpp_office": str,
+    "registration_date": str,
+}
+
+
+def sanitized_model_doc(doc: dict) -> dict:
+    """Drop known model fields whose types do not match their storage use."""
+    sanitized = {}
+    for field, value in doc.items():
+        expected_type = MODEL_FIELD_TYPES.get(field)
+        valid_number = (
+            expected_type == (int, float)
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        )
+        if expected_type and not (
+            valid_number or (expected_type != (int, float) and isinstance(value, expected_type))
+        ):
+            logger.warning(
+                "Skipping model field %s with unexpected type %s",
+                field,
+                type(value).__name__,
+            )
+            continue
+        sanitized[field] = value
+    return sanitized
+
+
 def call_gemini(prompt: str, timeout: int = 120) -> str | None:
     """Call Gemini CLI in headless mode. Returns raw output."""
     try:
@@ -125,7 +173,11 @@ def call_gemini(prompt: str, timeout: int = 120) -> str | None:
             timeout=timeout,
         )
         if result.returncode != 0:
-            logger.warning(f"Gemini CLI error (rc={result.returncode}): {result.stderr[:200]}")
+            logger.warning(
+                "Gemini CLI error (rc=%s, stderr_len=%s)",
+                result.returncode,
+                len(result.stderr),
+            )
             return None
         return result.stdout.strip()
     except subprocess.TimeoutExpired:
@@ -134,8 +186,8 @@ def call_gemini(prompt: str, timeout: int = 120) -> str | None:
     except FileNotFoundError:
         logger.error("gemini CLI not found — install with: brew install gemini-cli")
         return None
-    except Exception as e:
-        logger.error(f"Gemini CLI error: {e}")
+    except Exception as exc:
+        logger.error("Gemini CLI error: %s", type(exc).__name__)
         return None
 
 
@@ -162,7 +214,7 @@ def parse_json_from_output(text: str) -> list[dict] | None:
         except json.JSONDecodeError:
             pass
 
-    logger.warning(f"Could not parse JSON from Gemini output: {text[:300]}")
+    logger.warning(f"Could not parse JSON from Gemini output ({len(text)} chars)")
     return None
 
 
@@ -176,81 +228,106 @@ async def update_company_docs(
     """Match Gemini results to company_documents and update OCR data."""
     updated = 0
 
-    for doc in docs:
-        file_name = doc.get("file_name", "")
-        if not file_name:
-            continue
+    for i, doc in enumerate(docs):
+        try:
+            if not isinstance(doc, dict):
+                logger.warning(
+                    "Skipping model result with unexpected type %s", type(doc).__name__
+                )
+                continue
+            raw_doc = doc
+            doc = sanitized_model_doc(doc)
+            file_name = doc.get("file_name", "")
+            if not file_name:
+                continue
 
-        # Find matching doc in DB
-        row = await conn.fetchrow(
-            "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND file_name = $2",
-            company_id,
-            file_name,
-        )
-
-        if not row:
-            # Try fuzzy match (file names sometimes differ slightly)
-            row = await conn.fetchrow(
-                "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND file_name ILIKE $2",
+            # Find the one matching doc in DB. The model may change the letter case
+            # of a name and nothing else is guessed: a prefix match wrote one
+            # document's extraction onto another of the same company, and a name
+            # carried by two documents writes neither.
+            rows = await conn.fetch(
+                "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND file_name = $2 LIMIT 2",
                 company_id,
-                f"%{file_name[:30]}%",
+                file_name,
             )
 
-        if not row:
-            logger.info(f"      ? No DB match for: {file_name}")
-            continue
+            if not rows:
+                rows = await conn.fetch(
+                    "SELECT id, document_type FROM company_documents WHERE company_id = $1 AND LOWER(file_name) = LOWER($2) LIMIT 2",
+                    company_id,
+                    file_name,
+                )
 
-        doc_id = row["id"]
-        ocr_json = json.dumps(doc)
+            if len(rows) != 1:
+                logger.info(f"      ? No single DB match: company {company_id}, item {i} of the model's answer")
+                continue
+            row = rows[0]
 
-        if dry_run:
-            logger.info(f"      [DRY] Would save OCR for [{doc_id}] {file_name}")
-        else:
-            await conn.execute(
+            doc_id = row["id"]
+            # The stored extraction is the model's answer as given (a JSON
+            # document); only fields bound as query arguments are type-checked.
+            ocr_json = json.dumps(raw_doc)
+
+            if dry_run:
+                logger.info(f"      [DRY] Would save OCR for document {doc_id}")
+            else:
+                await conn.execute(
                 """UPDATE company_documents
                    SET ocr_status = 'completed',
                        ocr_extracted_data = $1::jsonb,
                        updated_at = NOW()
                    WHERE id = $2""",
-                ocr_json,
-                doc_id,
-            )
-
-        updated += 1
-
-        # Update companies table for key fields
-        if not dry_run and folder_type == "00_AKTA":
-            await update_company_fields(conn, company_id, doc)
-        elif not dry_run and folder_type == "01_NIB":
-            nib = doc.get("nib_number", "").strip()
-            if nib:
-                current = await conn.fetchval("SELECT nib FROM companies WHERE id = $1", company_id)
-                if not current:
-                    await conn.execute(
-                        "UPDATE companies SET nib = $1, updated_at = NOW() WHERE id = $2",
-                        nib,
-                        company_id,
-                    )
-                    logger.info(f"      → companies.nib = {nib}")
-        elif not dry_run and folder_type == "02_NPWP":
-            npwp = doc.get("npwp_number", "").strip()
-            if npwp:
-                current = await conn.fetchval(
-                    "SELECT npwp_company FROM companies WHERE id = $1", company_id
+                    ocr_json,
+                    doc_id,
                 )
-                if not current:
-                    await conn.execute(
-                        "UPDATE companies SET npwp_company = $1, updated_at = NOW() WHERE id = $2",
-                        npwp,
-                        company_id,
+
+            updated += 1
+
+            # Update companies table for key fields
+            if not dry_run and folder_type == "00_AKTA":
+                await update_company_fields(conn, company_id, raw_doc)
+            elif not dry_run and folder_type == "01_NIB":
+                nib = doc.get("nib_number", "").strip()
+                if nib:
+                    current = await conn.fetchval("SELECT nib FROM companies WHERE id = $1", company_id)
+                    if not current:
+                        await conn.execute(
+                        "UPDATE companies SET nib = $1, updated_at = NOW() WHERE id = $2",
+                            nib,
+                            company_id,
+                        )
+                        logger.info(
+                            f"      → companies.nib set for company {company_id} (document {doc_id})"
+                        )
+            elif not dry_run and folder_type == "02_NPWP":
+                npwp = doc.get("npwp_number", "").strip()
+                if npwp:
+                    current = await conn.fetchval(
+                        "SELECT npwp_company FROM companies WHERE id = $1", company_id
                     )
-                    logger.info(f"      → companies.npwp_company = {npwp}")
+                    if not current:
+                        await conn.execute(
+                        "UPDATE companies SET npwp_company = $1, updated_at = NOW() WHERE id = $2",
+                            npwp,
+                            company_id,
+                        )
+                        logger.info(
+                            f"      → companies.npwp_company set for company {company_id} (document {doc_id})"
+                        )
+        except Exception as exc:
+            # A database error can echo a bound value; the run still stops as
+            # before, with the class name only and no chained traceback.
+            raise RuntimeError(
+                f"OCR update failed for company {company_id}, item {i}: {type(exc).__name__}"
+            ) from None
 
     return updated
 
 
 async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: dict) -> None:
     """Update companies table from AKTA OCR data."""
+    original_doc = doc
+    doc = sanitized_model_doc(doc)
     doc_type = doc.get("document_type", "")
 
     if doc_type in ("akta_pendirian", "akta_perubahan"):
@@ -266,7 +343,7 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: 
                     deed_no,
                     company_id,
                 )
-                logger.info(f"      → companies.akta_pendirian_no = {deed_no}")
+                logger.info(f"      → companies.akta_pendirian_no set for company {company_id}")
         if deed_date and deed_date != "YYYY-MM-DD":
             current = await conn.fetchval(
                 "SELECT akta_pendirian_date FROM companies WHERE id = $1", company_id
@@ -281,7 +358,9 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: 
                         d,
                         company_id,
                     )
-                    logger.info(f"      → companies.akta_pendirian_date = {deed_date}")
+                    logger.info(
+                        f"      → companies.akta_pendirian_date set for company {company_id}"
+                    )
                 except ValueError:
                     pass
 
@@ -289,9 +368,12 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: 
         auth_cap = doc.get("authorized_capital", 0)
         paid_cap = doc.get("paid_capital", 0)
         if auth_cap and isinstance(auth_cap, (int, float)) and auth_cap > 0:
+            capital_fields = {"authorized_capital": auth_cap}
+            if "paid_capital" not in original_doc or "paid_capital" in doc:
+                capital_fields["paid_capital"] = paid_cap
             await conn.execute(
                 "UPDATE companies SET custom_fields = custom_fields || $1::jsonb, updated_at = NOW() WHERE id = $2",
-                json.dumps({"authorized_capital": auth_cap, "paid_capital": paid_cap}),
+                json.dumps(capital_fields),
                 company_id,
             )
 
@@ -308,7 +390,7 @@ async def update_company_fields(conn: asyncpg.Connection, company_id: int, doc: 
                     sk_no,
                     company_id,
                 )
-                logger.info(f"      → companies.sk_menhumkam_no = {sk_no}")
+                logger.info(f"      → companies.sk_menhumkam_no set for company {company_id}")
         if sk_date and sk_date != "YYYY-MM-DD":
             current = await conn.fetchval(
                 "SELECT sk_menhumkam_date FROM companies WHERE id = $1", company_id
@@ -411,7 +493,7 @@ async def main(dry_run: bool, batch_size: int, folder: str) -> None:
                     logger.info("    ○ Empty folder")
                     stats["empty"] += 1
                 else:
-                    logger.warning(f"    ✗ Could not parse output: {raw_output[:200]}")
+                    logger.warning(f"    ✗ Could not parse output ({len(raw_output)} chars)")
                     stats["failed"] += 1
                 continue
 

@@ -109,16 +109,22 @@ class PartnersService:
     async def list_partners(
         self,
         *,
-        # CATA-5: actor_user is team_members.id (VARCHAR string ID)
-        actor_user: str,
-        actor_role: str,
+        # CATA-5: scope_to and assigned_to are team_members.id (VARCHAR string IDs)
+        scope_to: str | None,
         assigned_to: str | None = None,
         onboarding_status: str | None = None,
         orphaned: bool = False,
         search: str | None = None,
     ) -> list[Partner]:
-        if actor_role == "team":
-            assigned_to = actor_user  # force scope to own
+        """List partners within the scope the caller decided.
+
+        `scope_to` is required: when it is a team_members.id, only that member's partners
+        are listed, whatever owner filter was named (an unassigned-only request then finds
+        none); when it is None, the request's filters apply as given. The list route decides
+        it with the administrator test; nothing here reads a role.
+        """
+        if scope_to is not None:
+            assigned_to = scope_to
         return await self.repo.list_partners(
             assigned_to=assigned_to,
             onboarding_status=onboarding_status,

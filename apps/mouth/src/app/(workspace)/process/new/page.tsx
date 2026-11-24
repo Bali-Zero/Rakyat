@@ -43,6 +43,14 @@ import {
   type InvoiceCompanyAmbiguity,
   type InvoiceCompanyValue,
 } from "../InvoiceCompanyField";
+import {
+  EMPTY_PPH,
+  PphWithholdingField,
+  canSetPph,
+  pphError,
+  pphSelection,
+  type PphValue,
+} from "../PphWithholdingField";
 
 interface ServiceItem {
   code: string;
@@ -109,6 +117,8 @@ export default function NewPracticePage() {
   const [invoiceAmbiguity, setInvoiceAmbiguity] =
     useState<InvoiceCompanyAmbiguity | null>(null);
   const [invoiceLabel, setInvoiceLabel] = useState<string | null>(null);
+  const [pph, setPph] = useState<PphValue>(EMPTY_PPH);
+  const [canEditPph, setCanEditPph] = useState(false);
   const userPickedClient = useRef(false);
 
   useEffect(() => {
@@ -204,6 +214,7 @@ export default function NewPracticePage() {
         const user = await api.getProfile();
         userEmail.current = user.email;
         casesMetrics.trackPageView("new", undefined, user.email);
+        setCanEditPph(canSetPph(api.isAdmin(), user.role));
         // Admin and Board Member see all team members, others see only themselves
         if (canAssignPracticeToAnyone(api.isAdmin(), user.role)) {
           setAssignableMembers(allTeamMembers);
@@ -406,6 +417,11 @@ export default function NewPracticePage() {
       );
       return;
     }
+    const pphProblem = canEditPph ? pphError(pph) : null;
+    if (pphProblem) {
+      toast.error("PPh withholding", pphProblem);
+      return;
+    }
 
     // Service is optional at Inquiry (Ari, 2026-09-11): with no selection the
     // backend opens the process against the `open_inquiry` placeholder and
@@ -414,6 +430,12 @@ export default function NewPracticePage() {
       client_id: formData.client_id,
       practice_type_code: selectedServiceCode || undefined,
       notes: formData.title,
+      quoted_price: formData.quoted_price
+        ? Number(formData.quoted_price)
+        : undefined,
+      discount_amount: formData.discount_amount
+        ? Number(formData.discount_amount)
+        : undefined,
       family_member_id: formData.family_member_id
         ? Number(formData.family_member_id)
         : undefined,
@@ -520,6 +542,7 @@ export default function NewPracticePage() {
           ? { family_member_id: result.data.family_member_id }
           : {}),
         ...invoiceCompanyParams(invoiceCompany),
+        ...(canEditPph && pphSelection(pph) ? { pph: pphSelection(pph) } : {}),
       } as CreatePracticeParams;
 
       const createdPractice = await api.crm.createPractice(backendData);
@@ -926,6 +949,22 @@ export default function NewPracticePage() {
                   setInvoiceLabel(name);
                   setInvoiceCompany({ companyId: id, name: "", npwp: "" });
                 }}
+                disabled={isLoading}
+              />
+            </div>
+          )}
+
+          {canEditPph && (
+            <div className="space-y-2">
+              <p className={labelClass}>
+                PPh withholding{" "}
+                <span className="text-[var(--foreground-muted)] font-normal">
+                  (optional)
+                </span>
+              </p>
+              <PphWithholdingField
+                value={pph}
+                onChange={setPph}
                 disabled={isLoading}
               />
             </div>

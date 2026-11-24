@@ -32,6 +32,7 @@ from backend.services.common.background import spawn
 from backend.services.llm_clients.pricing import TokenUsage
 from backend.services.rag.agentic._memory_identity import is_non_personal_memory_identity
 from backend.services.rag.agentic.entity_extractor import EntityExtractionService
+from backend.services.rag.agentic.fast_answer import try_fast_answer
 from backend.services.rag.agentic.llm_gateway import LLMGateway
 from backend.services.rag.agentic.memory_handler import MemoryHandler
 from backend.services.rag.agentic.orchestrator_context import OrchestratorContextManager
@@ -1203,11 +1204,14 @@ class OrchestratorCore:
         if not claim_analytics():
             raise RuntimeError("finalization analytics capability already consumed or invalid")
 
-        # ReAct already awaited the canonical repository call. Its receipt is
-        # accepted only from the private ReAct producer context, never public
+        # ReAct and fast-answer already awaited the canonical repository call. Their receipt is
+        # accepted only from the matching private producer context, never public
         # model fields or another producer. A missing/impossible scheduled
         # state is fail-visible and never triggers a second write.
-        if context.producer_origin is ProducerOrigin.REACT_PIPELINE:
+        if context.producer_origin in {
+            ProducerOrigin.REACT_PIPELINE,
+            ProducerOrigin.FAST_ANSWER,
+        }:
             if isinstance(
                 context.analytics_receipt, AnalyticsReceiptStatus
             ) and context.analytics_receipt in {
@@ -1591,6 +1595,49 @@ class OrchestratorCore:
             return FinalizationContext(
                 result=kg_fast_result,
                 producer_origin=ProducerOrigin.KNOWLEDGE_GRAPH,
+            )
+
+        vector_tool = (
+            getattr(getattr(self, "reasoning_engine", None), "tool_map", None) or {}
+        ).get("vector_search")
+        fast_result = await try_fast_answer(
+            query=query,
+            conversation_history=optimized_history,
+            vector_tool=vector_tool,
+            start_time=start_time,
+            channel=channel,
+            agent_role=agent_role,
+            profile=user_context.get("profile") or profile,
+        )
+        if fast_result:
+            _apply_e33_claim_guard(fast_result)
+            collections_used = {
+                str(source["collection"])
+                for source in fast_result.sources
+                if isinstance(source, dict) and source.get("collection")
+            }
+            # Estimated only; complete_async records real usage in llm_cost_events.
+            token_usage = TokenUsage(
+                prompt_tokens=max(1, fast_result.context_used // 4),
+                completion_tokens=max(1, len(fast_result.answer) // 4),
+                model=fast_result.model_used or "unknown",
+            )
+            analytics_receipt = await self._log_query_analytics(
+                query=query,
+                user_id=user_id,
+                session_id=session_id,
+                collections_used=collections_used,
+                sources=fast_result.sources,
+                model_used=fast_result.model_used or "unknown",
+                token_usage=token_usage,
+                timings=fast_result.timings,
+                response_generated=bool(fast_result.answer) and not fast_result.abstain,
+                response_text=fast_result.answer,
+            )
+            return FinalizationContext(
+                result=fast_result,
+                producer_origin=ProducerOrigin.FAST_ANSWER,
+                analytics_receipt=analytics_receipt,
             )
 
         # 4. Route query (intent classification + tier selection)

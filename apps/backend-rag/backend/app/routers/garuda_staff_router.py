@@ -397,7 +397,7 @@ async def assign_practice(
     assigned_to_raw = body.get("assigned_to")
     if assigned_to_raw is not None and not isinstance(assigned_to_raw, str):
         raise HTTPException(status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False})
-    assigned_to = assigned_to_raw.strip().lower() if assigned_to_raw else None
+    assigned_to = assigned_to_raw.strip().lower() if assigned_to_raw is not None else None
 
     # Round-2 disposition item F: same idempotency.reserve/complete pair as
     # transitionPractice — assignPractice previously only validated the

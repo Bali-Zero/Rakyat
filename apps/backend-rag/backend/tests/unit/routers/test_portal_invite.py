@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -115,6 +116,7 @@ async def test_send_invitation_sends_email_through_internal_adapter(
         "id": 11898,
         "assigned_to": None,
         "created_by": None,
+        "email": "client@example.com",
     }
     monkeypatch.setattr(
         "backend.app.routers.portal_invite.settings.frontend_portal_url",
@@ -161,12 +163,15 @@ async def test_send_invitation_sends_email_through_internal_adapter(
 async def test_send_invitation_reports_email_failure(
     monkeypatch: pytest.MonkeyPatch,
     mock_db_pool: MagicMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.DEBUG)
     fake_service = FakeInviteService()
     mock_db_pool._mock_conn.fetchrow.return_value = {
         "id": 11898,
         "assigned_to": None,
         "created_by": None,
+        "email": "client@example.com",
     }
     monkeypatch.setattr(
         "backend.app.routers.portal_invite.settings.frontend_portal_url",
@@ -189,7 +194,10 @@ async def test_send_invitation_reports_email_failure(
 
     assert response["success"] is True
     assert response["email_sent"] is False
-    assert response["email_error"] == "brevo unavailable"
+    assert response["email_error"] == "delivery_failed"
+    assert "brevo unavailable" not in str(response)
+    assert "brevo unavailable" not in caplog.text
+    assert "RuntimeError" in caplog.text
     assert "check email service" in response["message"]
 
 
@@ -303,17 +311,27 @@ async def test_resend_invitation_allows_a_realistic_free_text_role(
     }
 
     async def _resend_invitation(*, client_id: int, created_by: str) -> dict[str, object]:
-        return {"client_id": client_id, "created_by": created_by}
+        return {
+            "client_id": client_id,
+            "client_name": "Test Client",
+            "email": "client@example.com",
+            "invite_url": INVITE_PATH_TEMPLATE.format(token="tok-123"),
+            "token": "tok-123",
+            "created_by": created_by,
+        }
 
     fake_service.resend_invitation = _resend_invitation  # type: ignore[assignment]
 
-    response = await resend_invitation(
-        client_id=1,
-        current_user={"email": "reception@balizero.com", "role": "Reception"},
-        invite_service=fake_service,  # type: ignore[arg-type]
-        db_pool=mock_db_pool,
-    )
-
+    with patch(
+        "backend.app.routers.portal_invite.send_portal_invite_email",
+        new=AsyncMock(),
+    ):
+        response = await resend_invitation(
+            client_id=1,
+            current_user={"email": "reception@balizero.com", "role": "Reception"},
+            invite_service=fake_service,  # type: ignore[arg-type]
+            db_pool=mock_db_pool,
+        )
     assert response["success"] is True
 
 
@@ -334,6 +352,7 @@ async def test_send_invitation_allows_unassigned_tax_department_member(
     mock_db_pool._mock_conn.fetchrow.side_effect = [
         {"department": "tax", "active": True},
         {"id": 11898, "assigned_to": "surya@balizero.com", "created_by": "surya@balizero.com"},
+        {"email": "client@example.com"},
     ]
 
     with patch(
@@ -428,17 +447,27 @@ async def test_resend_invitation_allows_unassigned_tax_department_member(
     ]
 
     async def _resend_invitation(*, client_id: int, created_by: str) -> dict[str, object]:
-        return {"client_id": client_id, "created_by": created_by}
+        return {
+            "client_id": client_id,
+            "client_name": "Test Client",
+            "email": "client@example.com",
+            "invite_url": INVITE_PATH_TEMPLATE.format(token="tok-123"),
+            "token": "tok-123",
+            "created_by": created_by,
+        }
 
     fake_service.resend_invitation = _resend_invitation  # type: ignore[assignment]
 
-    response = await resend_invitation(
-        client_id=11898,
-        current_user={"email": "kadek.tax@balizero.com", "role": "Tax Manager"},
-        invite_service=fake_service,  # type: ignore[arg-type]
-        db_pool=mock_db_pool,
-    )
-
+    with patch(
+        "backend.app.routers.portal_invite.send_portal_invite_email",
+        new=AsyncMock(),
+    ):
+        response = await resend_invitation(
+            client_id=11898,
+            current_user={"email": "kadek.tax@balizero.com", "role": "Tax Manager"},
+            invite_service=fake_service,  # type: ignore[arg-type]
+            db_pool=mock_db_pool,
+        )
     assert response["success"] is True
 
 
@@ -484,6 +513,7 @@ async def test_mailed_link_uses_the_live_portal_default_and_the_real_path(
         "id": 11898,
         "assigned_to": None,
         "created_by": None,
+        "email": "client@example.com",
     }
 
     with patch(

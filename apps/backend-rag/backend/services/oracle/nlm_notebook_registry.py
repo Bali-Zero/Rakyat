@@ -286,7 +286,9 @@ def check_ingestion_freshness(
         return verdict
 
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
+        verdict["status"] = "stale"
+        verdict["reason"] = "timestamp has no timezone"
+        return verdict
 
     age = datetime.now(tz=timezone.utc) - ts
     age_hours = age.total_seconds() / 3600
@@ -295,6 +297,11 @@ def check_ingestion_freshness(
     if last_status != "ok":
         verdict["status"] = "stale"
         verdict["reason"] = f"last canary status={last_status}"
+        return verdict
+
+    if age_hours < -0.05:
+        verdict["status"] = "stale"
+        verdict["reason"] = "last canary timestamp is in the future"
         return verdict
 
     if age_hours > threshold:

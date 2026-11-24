@@ -11,6 +11,7 @@ import type {
   InvoiceCompanyParams,
   InvoiceCompanyMatch,
   InvoiceCompanySuggestion,
+  PphSelection,
   RenewalAlert,
   ClientSummary,
   ClientProfile,
@@ -472,6 +473,7 @@ export class CrmApi {
       assigned_to: string | null;
       notes: string;
       start_date: string | null;
+      pph: PphSelection | null; // null clears it; tax team and CRM admins only
     }> &
       InvoiceCompanyParams,
   ): Promise<Practice> {

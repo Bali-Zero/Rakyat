@@ -54,6 +54,7 @@ from backend.services.crm.related_names import (
 from backend.services.crm.related_subjects import REGISTRY_ACTOR, prepare_identifiers
 from backend.services.monitoring.activity_logger import activity_logger
 from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
+from backend.tests.fixtures.registry_privacy import INTERPRETER_ATTRIBUTES
 
 MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
 MIGRATION_NAMES = MIGRATIONS / "365_related_subject_names.sql"
@@ -1166,9 +1167,31 @@ def _forbidden(data, *, answer_words: bool) -> set[str]:
     return tokens
 
 
+# The numbers the interpreter measures about a log call (clock, thread, process, line) are not
+# derived from any body, and a request leaf made of digits, such as the name "12345", can turn up
+# in them by chance. They are the only attributes left out; `extra=` cannot carry their names,
+# because logging refuses to overwrite an attribute the record already has.
 def _record_text(record: logging.LogRecord) -> str:
     rendered = logging.Formatter().format(record)
-    return rendered + " " + " ".join(str(v) for v in record.__dict__.values())
+    scanned = (v for k, v in record.__dict__.items() if k not in INTERPRETER_ATTRIBUTES)
+    return rendered + " " + " ".join(str(v) for v in scanned)
+
+
+def test_record_text_skips_the_measured_numbers_and_keeps_every_other():
+    record = logging.LogRecord("probe", logging.INFO, __file__, 12345, "plain message", None, None)
+    record.created, record.msecs, record.relativeCreated = 1795712345.12345, 123.45, 12345.5
+    record.thread = record.process = 12345
+    assert "12345" not in _record_text(record)
+
+    in_message = logging.LogRecord("probe", logging.INFO, __file__, 1, "name %s", ("12345",), None)
+    assert "12345" in _record_text(in_message)
+    logger = logging.getLogger("probe.record_text")
+    extra = logger.makeRecord(
+        "probe", logging.INFO, __file__, 1, "m", None, None, extra={"n": "12345"}
+    )
+    assert "12345" in _record_text(extra)
+    with pytest.raises(KeyError):
+        logger.makeRecord("probe", logging.INFO, __file__, 1, "m", None, None, extra={"thread": 1})
 
 
 # The probe world: every subject a case can reach. Registration names are built on the probe

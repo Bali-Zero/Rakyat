@@ -321,7 +321,8 @@ class CRMQueryOptimizer:
                 # Entering Sending Invoice needs a Quoted Price: this batch's own, else the row's.
                 if normalize_state(str(update.get("status") or "")) == "sending_invoice":
                     row = await conn.fetchrow(
-                        "SELECT status, quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                        "SELECT status, quoted_price, discount_amount FROM practices"
+                        " WHERE id = $1 FOR UPDATE",
                         practice_id,
                     )
                     if (
@@ -333,6 +334,7 @@ class CRMQueryOptimizer:
                             update["quoted_price"]
                             if "quoted_price" in update
                             else row["quoted_price"],
+                            row.get("discount_amount"),
                         )
                 fields = []
                 values = []

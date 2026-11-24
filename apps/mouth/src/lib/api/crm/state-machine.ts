@@ -92,6 +92,12 @@ export const QUOTED_PRICE_REQUIRED_DETAIL =
 export const QUOTED_PRICE_REQUIRED_TEXT_ID =
   "Isi Quoted Price dulu sebelum Sending Invoice";
 
+/** DAI-177: the backend's 422 when a discount at or above the price enters Sending Invoice. */
+export const DISCOUNT_COVERS_PRICE_DETAIL =
+  "Discount must be lower than Quoted Price before Sending Invoice";
+export const DISCOUNT_COVERS_PRICE_TEXT_ID =
+  "Discount harus lebih kecil dari Quoted Price sebelum Sending Invoice";
+
 /** True when `value` is a number (or numeric string) greater than zero. */
 export function hasQuotedPrice(value: unknown): boolean {
   if (value === null || value === undefined || typeof value === "boolean") {
@@ -141,6 +147,18 @@ export function isQuotedPriceRefusal(error: unknown): boolean {
     (text) =>
       typeof text === "string" && text.includes(QUOTED_PRICE_REQUIRED_DETAIL),
   );
+}
+
+/** The Indonesian reason for a backend price or discount refusal, else null. */
+export function invoiceAmountRefusalText(error: unknown): string | null {
+  if (isQuotedPriceRefusal(error)) return QUOTED_PRICE_REQUIRED_TEXT_ID;
+  if (!error || typeof error !== "object") return null;
+  const { detail, message } = error as { detail?: unknown; message?: unknown };
+  const isDiscountRefusal = [detail, message].some(
+    (text) =>
+      typeof text === "string" && text.includes(DISCOUNT_COVERS_PRICE_DETAIL),
+  );
+  return isDiscountRefusal ? DISCOUNT_COVERS_PRICE_TEXT_ID : null;
 }
 
 /**

@@ -56,16 +56,14 @@ def _clean_ack_state(monkeypatch):
     specifically about exercising C3/C4 behavior, so tests opt IN to the
     real production default (off) only where that default is itself under
     test (see test_ack_disabled_by_default_flag_off). Also stubs
-    ``notify_human_telegram`` (Telegram) to a deterministic AsyncMock — the
+    ``_tell_a_human`` (the bot's alert helper) to a deterministic AsyncMock — the
     real function raises cleanly with no token configured, but a test must
     never depend on THAT being true in every environment; individual tests
     override/inspect this mock via `monkeypatch` when they need to."""
     whatsapp_ack._reset_for_testing()
     monkeypatch.delenv("WHATSAPP_ACK_ENABLED", raising=False)
     monkeypatch.setenv("WA_OUTBOX_MANNERS_ENABLED", "true")
-    monkeypatch.setattr(
-        _wa_inbox_bot_module, "notify_human_telegram", AsyncMock(return_value=True)
-    )
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", AsyncMock(return_value=True))
     yield
     whatsapp_ack._reset_for_testing()
 
@@ -107,9 +105,7 @@ async def test_ack_sent_on_non_trivial_question_within_window() -> None:
     kwargs = svc.send_message.await_args.kwargs
     assert kwargs["phone"] == "628111"
     assert kwargs["text"] == whatsapp_ack.ack_text("en")
-    assert any(
-        "ack_sent_at = NOW()" in s and a == (1, claim_token) for s, a in conn.executed
-    )
+    assert any("ack_sent_at = NOW()" in s and a == (1, claim_token) for s, a in conn.executed)
 
 
 @pytest.mark.asyncio
@@ -369,7 +365,7 @@ async def test_apology_skipped_when_window_closed_but_a_human_is_still_told(
     (unavoidable) AND no human alert (avoidable). `_tell_a_human` must
     still fire even though nothing can be sent to the client."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", notify_spy)
     thread = _closed_window_thread()
     conn = ScriptedConn(fetchval_results=[False])  # human_handling_now only
     svc = _wa_service()
@@ -422,10 +418,10 @@ async def test_apology_disabled_when_terminal_apology_flag_off(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_apology_tells_a_human_on_the_way_out(monkeypatch) -> None:
     """GUILT: the apology's promise ("flagged for our team") must be made
-    TRUE — `_tell_a_human` (Telegram) fires with the right phone/reason,
+    TRUE — `_tell_a_human` fires with the right phone/reason,
     exactly once per row, before the client-facing send."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", notify_spy)
     thread = _open_window_thread()
     conn = ScriptedConn(fetchval_results=[False, False, None, _NON_TRIVIAL_TEXT])
     svc = _wa_service()
@@ -437,7 +433,7 @@ async def test_apology_tells_a_human_on_the_way_out(monkeypatch) -> None:
     notify_spy.assert_awaited_once()
     kwargs = notify_spy.await_args.kwargs
     assert kwargs["phone"] == "628111"
-    assert kwargs["thread_ref"] == "7"
+    assert kwargs["thread_id"] == 7
     assert "bot_generation_exhausted" in kwargs["reason"]
 
 
@@ -555,7 +551,7 @@ async def test_apology_suppressed_when_a_newer_row_of_the_same_thread_is_still_p
     it is deliberately decoupled from the client-facing suppression (see
     the call-site comment in `_maybe_send_apology`)."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", notify_spy)
     thread = _open_window_thread()
     conn = ScriptedConn(fetchval_results=[False, True])  # human_handling_now, has_live_successor
     svc = _wa_service()
@@ -578,20 +574,31 @@ async def test_apology_fires_exactly_once_for_a_fully_failed_burst_and_it_is_the
     whole burst, and it is the last row's — not three, which is what
     removing `_coalesce_thread_bursts` would otherwise produce."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", notify_spy)
     thread = _open_window_thread(thread_id=7)
     conn = ScriptedConn(
         fetchval_results=[
-            False, True,  # row 1: human_handling_now, has_live_successor (row 2 still pending)
-            False, True,  # row 2: human_handling_now, has_live_successor (row 3 still pending)
-            False, False, None, _NON_TRIVIAL_TEXT,  # row 3: no successor left -> sends
+            False,
+            True,  # row 1: human_handling_now, has_live_successor (row 2 still pending)
+            False,
+            True,  # row 2: human_handling_now, has_live_successor (row 3 still pending)
+            False,
+            False,
+            None,
+            _NON_TRIVIAL_TEXT,  # row 3: no successor left -> sends
         ]
     )
     svc = _wa_service()
 
-    await wa_outbox_worker._maybe_send_apology(conn, 1, thread, svc, reason="bot_generation_exhausted")
-    await wa_outbox_worker._maybe_send_apology(conn, 2, thread, svc, reason="bot_generation_exhausted")
-    await wa_outbox_worker._maybe_send_apology(conn, 3, thread, svc, reason="bot_generation_exhausted")
+    await wa_outbox_worker._maybe_send_apology(
+        conn, 1, thread, svc, reason="bot_generation_exhausted"
+    )
+    await wa_outbox_worker._maybe_send_apology(
+        conn, 2, thread, svc, reason="bot_generation_exhausted"
+    )
+    await wa_outbox_worker._maybe_send_apology(
+        conn, 3, thread, svc, reason="bot_generation_exhausted"
+    )
 
     svc.send_message.assert_awaited_once()
     assert svc.send_message.await_args.kwargs["text"] == wa_outbox_worker._apology_text("en")
@@ -757,18 +764,14 @@ async def test_silent_standing_conditions_get_no_apology_and_no_telegram(
     the Gemini-cut PR inverted that contract by firing the apology for
     EVERY standing condition, including these two."""
     notify_spy = AsyncMock(return_value=True)
-    monkeypatch.setattr(_wa_inbox_bot_module, "notify_human_telegram", notify_spy)
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", notify_spy)
 
     for reason in ("autoreply_disabled", "no_customer_message"):
         monkeypatch.setenv("WA_GENERATION_PROVIDER", "codex")
         monkeypatch.setattr(
             wa_outbox_worker.wa_codex_leg,
             "attempt",
-            AsyncMock(
-                return_value=wa_outbox_worker.wa_codex_leg.CodexLegResult(
-                    reason=reason
-                )
-            ),
+            AsyncMock(return_value=wa_outbox_worker.wa_codex_leg.CodexLegResult(reason=reason)),
         )
         gemini_spy = AsyncMock(return_value="gemini reply")
         conn = _terminal_conn_open_window(84 if reason == "autoreply_disabled" else 85)
@@ -783,3 +786,75 @@ async def test_silent_standing_conditions_get_no_apology_and_no_telegram(
         svc.send_message.assert_not_awaited()
         notify_spy.assert_not_awaited()
         notify_spy.reset_mock()
+
+
+# ── the real worker path hands the pool it holds to the human alert ────────
+
+
+@pytest.mark.asyncio
+async def test_terminal_generation_failure_gives_the_human_alert_the_pool(monkeypatch) -> None:
+    """GUILT (gate round 1): ``_process_claimed_row`` holds the pool but the
+    apology used to call ``_tell_a_human`` without it, so consultant resolution
+    and the kita bell were skipped. Drives ``process_outbox_once`` end to end
+    and asserts the helper receives that very pool."""
+    notify_spy = AsyncMock(return_value=True)
+    monkeypatch.setattr(_wa_inbox_bot_module, "_tell_a_human", notify_spy)
+    candidate = _candidate(
+        20,
+        thread_id=7,
+        message_id=2000,
+        needs_generation=True,
+        attempts=wa_outbox_worker.MAX_ATTEMPTS - 1,
+    )
+    conn = ScriptedConn(
+        fetchrow_results=[_open_window_thread(thread_id=7), {"id": 20}, {"id": 20}],
+        fetchval_results=[True, "hi", False, False, None, _NON_TRIVIAL_TEXT],
+        fetch_results=[[candidate], []],
+    )
+    pool = _make_pool(conn)
+
+    async def _bot_raises(_thread: Any) -> str:
+        raise RuntimeError("RAG unreachable")
+
+    result = await wa_outbox_worker.process_outbox_once(pool, _wa_service(), _bot_raises)
+
+    assert result == "failed"
+    notify_spy.assert_awaited_once()
+    assert notify_spy.await_args.kwargs["pool"] is pool
+
+
+@pytest.mark.asyncio
+async def test_terminal_send_failure_gives_the_apology_the_pool(monkeypatch) -> None:
+    """GUILT: the Graph-send-exhausted branch of the real worker path passes
+    the pool it holds on to the apology (and so to the human alert)."""
+    apology_spy = AsyncMock()
+    monkeypatch.setattr(wa_outbox_worker, "_maybe_send_apology", apology_spy)
+    candidate = _candidate(
+        5,
+        thread_id=7,
+        message_id=500,
+        needs_generation=False,
+        attempts=wa_outbox_worker.MAX_ATTEMPTS - 1,
+    )
+    conn = ScriptedConn(
+        fetchrow_results=[
+            _thread_row(human_handling=True),
+            {"body": "last try"},
+            {"id": 5},
+            {"id": 5},
+        ],
+        fetchval_results=[True, True],
+        fetch_results=[[candidate]],
+    )
+    pool = _make_pool(conn)
+    svc = _wa_service(raise_exc=RuntimeError("graph 500"))
+
+    async def _bot_gen(_thread: Any) -> str:
+        return "unused"
+
+    result = await wa_outbox_worker.process_outbox_once(pool, svc, _bot_gen)
+
+    assert result == "failed"
+    apology_spy.assert_awaited_once()
+    assert apology_spy.await_args.kwargs["reason"] == "graph_send_exhausted"
+    assert apology_spy.await_args.kwargs["pool"] is pool

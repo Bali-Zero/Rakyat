@@ -31,6 +31,7 @@ import sys
 
 import asyncpg
 
+from backend.services.measurer.ig_token_watchdog import _RedactTokenFilter
 from backend.services.measurer.orchestrator import MeasurerOrchestrator
 from backend.services.measurer.scheduler import MeasurementScheduler
 from backend.services.war_room.repository import WarRoomRepository
@@ -43,6 +44,11 @@ def _configure_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(filter_, _RedactTokenFilter) for filter_ in handler.filters):
+            handler.addFilter(_RedactTokenFilter())
 
 
 def _resolve_graph_base() -> str | None:

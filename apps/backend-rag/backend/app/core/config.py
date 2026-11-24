@@ -155,6 +155,14 @@ class Settings(BaseSettings):
     # quota fallback — a third-party endpoint with no DPA = PII hole. Flip via
     # OPENROUTER_ENABLED=true only with Zero's explicit authorization.
     openrouter_enabled: bool = False
+    fast_answer_enabled: bool = Field(
+        default=False,
+        description="Enable the single-search Claude answer path",
+    )
+    fast_answer_model: str = Field(
+        default="claude-sonnet-5-5",
+        description="Claude model used by the fast answer path",
+    )
 
     # Autonomous outbound WhatsApp to real clients (client_value_predictor
     # nurturing). Case OS R3: a machine talking to a client with no human in
