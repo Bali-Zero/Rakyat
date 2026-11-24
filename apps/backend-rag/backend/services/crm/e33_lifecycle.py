@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from backend.services.compliance.predictive_engine import ComplianceForecast
 from backend.services.compliance.priority_scorer import calculate_priority
@@ -336,6 +337,17 @@ ANNUAL_MAINTENANCE_ALERT_DAYS_BEFORE: int = 60
 # Severity mapping aligned with AlertSeverity (info > 60d, warning ≤ 60d,
 # urgent ≤ 30d, critical ≤ 7d or overdue). Values are the strings
 # AlertsEngine._urgency_to_severity passes through unchanged.
+# Entry and ITAS activation happen on a calendar day in Bali, whatever the server clock's zone.
+_BALI_TZ = ZoneInfo("Asia/Makassar")
+
+
+def _bali_day(at: datetime) -> date:
+    """The calendar day in Bali of an event instant; a naive instant is read as UTC."""
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.astimezone(_BALI_TZ).date()
+
+
 _SEVERITY_INFO = "info"
 _SEVERITY_WARNING = "warning"
 _SEVERITY_URGENT = "urgent"
@@ -464,7 +476,7 @@ class E33Case:
         """Move the case to a new stage, recording history and key dates.
 
         ``occurred_on`` pins the legal date of ENTRY / ITAS_ACTIVE events
-        (defaults to ``at.date()``) — it anchors the Day-90 computation.
+        (defaults to the day of ``at`` in Bali) — it anchors the Day-90 computation.
         """
         validate_transition(self.stage, to_stage, itap_eval_enabled=itap_eval_enabled)
         transition = StageTransition(
@@ -473,9 +485,9 @@ class E33Case:
         self.history.append(transition)
         self.stage = to_stage
         if to_stage == E33Stage.ENTRY:
-            self.entry_date = occurred_on or at.date()
+            self.entry_date = occurred_on or _bali_day(at)
         elif to_stage == E33Stage.ITAS_ACTIVE:
-            self.itas_date = occurred_on or at.date()
+            self.itas_date = occurred_on or _bali_day(at)
         logger.info("E33 case %s: %s → %s", self.case_id, transition.from_stage, to_stage.value)
         return transition
 
