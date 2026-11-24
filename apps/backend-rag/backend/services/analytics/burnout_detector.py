@@ -15,6 +15,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _minutes(session) -> float:
+    """A session's duration in minutes; a NULL duration counts as 0."""
+    return session["duration_minutes"] or 0
+
+
+def _conversations(session) -> int:
+    """A session's conversation count; a NULL count counts as 0."""
+    return session["conversations_count"] or 0
+
+
 class BurnoutDetectorService:
     """
     Service for detecting burnout signals.
@@ -80,10 +90,11 @@ class BurnoutDetectorService:
             warnings = []
             risk_score = 0
 
-            # Check 1: Increasing hours trend
-            recent_hours = sum(s["duration_minutes"] for s in user_sess[-5:]) / 60
-            older_hours = sum(s["duration_minutes"] for s in user_sess[:5]) / 60
-            if recent_hours > older_hours * 1.3:
+            # Check 1: Increasing hours trend. A NULL duration counts as 0, and
+            # with no hours in the older window there is no trend to compare.
+            recent_hours = sum(_minutes(s) for s in user_sess[-5:]) / 60
+            older_hours = sum(_minutes(s) for s in user_sess[:5]) / 60
+            if older_hours > 0 and recent_hours > older_hours * 1.3:
                 warnings.append("📈 Work hours increasing (+30%)")
                 risk_score += 25
 
@@ -100,13 +111,14 @@ class BurnoutDetectorService:
                 risk_score += 15
 
             # Check 4: Declining efficiency
-            if len(user_sess) >= 6:
-                recent_conv_per_hour = sum(s["conversations_count"] for s in user_sess[-3:]) / (
-                    sum(s["duration_minutes"] for s in user_sess[-3:]) / 60
+            # (skipped when either window logged no time: no rate to compare)
+            recent_hours_3 = sum(_minutes(s) for s in user_sess[-3:]) / 60
+            older_hours_3 = sum(_minutes(s) for s in user_sess[:3]) / 60
+            if len(user_sess) >= 6 and recent_hours_3 > 0 and older_hours_3 > 0:
+                recent_conv_per_hour = (
+                    sum(_conversations(s) for s in user_sess[-3:]) / recent_hours_3
                 )
-                older_conv_per_hour = sum(s["conversations_count"] for s in user_sess[:3]) / (
-                    sum(s["duration_minutes"] for s in user_sess[:3]) / 60
-                )
+                older_conv_per_hour = sum(_conversations(s) for s in user_sess[:3]) / older_hours_3
                 if recent_conv_per_hour < older_conv_per_hour * 0.7:
                     warnings.append("📉 Conversation efficiency dropped -30%")
                     risk_score += 20
