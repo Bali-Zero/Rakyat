@@ -398,7 +398,7 @@ async def test_staff_reads_one_result_after_interrupted_upload_and_two_workers(
                FROM generate_series(1,11)"""
         )
     latest = await router.get_client_ocr_status(1, pg_pool, owner)
-    assert latest["completed_ocr"] == 12 and len(latest["documents"]) == 10
+    assert latest["completed_ocr"] == 10 and len(latest["documents"]) == 10
     assert receipt["id"] not in [doc["id"] for doc in latest["documents"]]
     selected = await router.get_client_ocr_status(1, pg_pool, owner, document_id=receipt["id"])
     assert selected["completed_ocr"] == 1

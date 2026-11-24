@@ -697,21 +697,13 @@ async def get_client_ocr_status(
         await verify_client_access(client_id, current_user, conn, allow_assigned=True)
         docs = await conn.fetch(
             f"""
-            SELECT id, document_type, file_name, ocr_status, ocr_completed_at,
-                   ocr_extracted_data,
-                   COUNT(*) FILTER (WHERE ocr_status IN ('pending', 'processing')) OVER ()
-                       AS _pending_ocr_count,
-                   COUNT(*) FILTER (WHERE ocr_status = 'completed') OVER ()
-                       AS _completed_ocr_count
-            FROM (
-                SELECT id, document_type, file_name, crm_passport_ocr_staff_status(d) AS ocr_status,
-                       ocr_completed_at, ocr_extracted_data, updated_at
-                FROM documents d
-                WHERE client_id = $1 AND ocr_status IS NOT NULL
-                  AND ($2::bigint IS NULL OR id = $2)
-                  AND {admin_document_not_deleted_clause()}
-            ) AS staff_documents
-            ORDER BY updated_at DESC
+            SELECT id, document_type, file_name, crm_passport_ocr_staff_status(d) AS ocr_status,
+                   ocr_completed_at, ocr_extracted_data
+            FROM documents d
+            WHERE client_id = $1 AND ocr_status IS NOT NULL
+              AND ($2::bigint IS NULL OR id = $2)
+              AND {admin_document_not_deleted_clause()}
+            ORDER BY updated_at DESC, id DESC
             LIMIT 10
             """,
             client_id,
@@ -719,11 +711,9 @@ async def get_client_ocr_status(
         )
 
         documents = [dict(row) for row in docs]
-        pending = 0
-        completed = 0
+        pending = sum(row["ocr_status"] in ("pending", "processing") for row in documents)
+        completed = sum(row["ocr_status"] == "completed" for row in documents)
         for document in documents:
-            pending = document.pop("_pending_ocr_count", pending)
-            completed = document.pop("_completed_ocr_count", completed)
             payload = document.get("ocr_extracted_data")
             if isinstance(payload, str):
                 try:
