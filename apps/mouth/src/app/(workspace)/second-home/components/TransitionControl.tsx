@@ -56,6 +56,14 @@ export function TransitionControl({
   const annualMaintenanceGated =
     currentStage === "guarantee_proof_due" && !guaranteeEvidenceComplete;
 
+  // The stage actually submitted: the chosen one only while it is still
+  // offered and enabled (a refetch may drop it from the server list).
+  const effectiveTo =
+    (offeredStages as string[]).includes(toStage) &&
+    !(toStage === "annual_maintenance" && annualMaintenanceGated)
+      ? toStage
+      : "";
+
   if (offeredStages.length === 0) {
     return (
       <div className="rounded-xl border border-[var(--bz-border)] bg-[var(--bz-card)] p-4">
@@ -70,18 +78,21 @@ export function TransitionControl({
     );
   }
 
+  const needsOccurredOn =
+    effectiveTo === "entry" || effectiveTo === "itas_active";
+
   const handleAdvance = async (e: FormEvent) => {
     e.preventDefault();
-    if (!toStage) return;
+    if (!effectiveTo) return;
     try {
       await advance.mutateAsync({
-        to_stage: toStage as E33Stage,
+        to_stage: effectiveTo as E33Stage,
         note: note || undefined,
-        occurred_on: occurredOn || undefined,
+        occurred_on: needsOccurredOn ? occurredOn || undefined : undefined,
       });
       toast.success(
         "Stage Advanced",
-        `Case moved to ${STAGE_LABELS[toStage as E33Stage]}.`,
+        `Case moved to ${STAGE_LABELS[effectiveTo as E33Stage]}.`,
       );
       setToStage("");
       setNote("");
@@ -102,8 +113,6 @@ export function TransitionControl({
     }
   };
 
-  const needsOccurredOn = toStage === "entry" || toStage === "itas_active";
-
   return (
     <form
       onSubmit={handleAdvance}
@@ -114,7 +123,7 @@ export function TransitionControl({
       </h3>
       <div className="space-y-2">
         <select
-          value={toStage}
+          value={effectiveTo}
           onChange={(e) => setToStage(e.target.value)}
           className="w-full px-3 py-2 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-base)] text-[var(--bz-text-1)] focus:outline-none focus:ring-2 focus:ring-[var(--bz-accent)]/50"
         >
@@ -145,7 +154,7 @@ export function TransitionControl({
         {needsOccurredOn && (
           <div>
             <label className="text-xs text-[var(--bz-text-2)] block mb-1">
-              {toStage === "entry" ? "Entry date" : "ITAS activation date"}{" "}
+              {effectiveTo === "entry" ? "Entry date" : "ITAS activation date"}{" "}
               <span className="text-[var(--bz-text-2)]">
                 (defaults to today if left blank — anchors the Day-90 gate)
               </span>
@@ -168,11 +177,7 @@ export function TransitionControl({
       </div>
       <Button
         type="submit"
-        disabled={
-          !toStage ||
-          advance.isPending ||
-          (toStage === "annual_maintenance" && annualMaintenanceGated)
-        }
+        disabled={!effectiveTo || advance.isPending}
         className="w-full gap-2 bg-[var(--bz-accent)] text-[var(--accent-foreground)] hover:bg-[var(--bz-accent)]/90"
       >
         {advance.isPending ? (
