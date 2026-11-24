@@ -10,6 +10,7 @@ import { workDayOf } from "@/lib/format/work-day";
 const requests = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  companies: vi.fn(),
   sentSub: "staff-a",
   identity: { sub: "staff-a", epoch: 1 },
 }));
@@ -22,6 +23,7 @@ vi.mock("@/lib/auth/session-identity", () => ({
 }));
 vi.mock("@/lib/api", () => ({
   api: {
+    crm: { getClientCompanies: requests.companies },
     requestWithCredential: async (
       path: string,
       opts?: { method?: string; body?: string },
@@ -63,7 +65,7 @@ const initial = {
   slots: requiredSlots,
 };
 
-function setup(payment = "paid") {
+function setup(payment = "paid", canManageDelivery = true) {
   const complete = vi.fn();
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
@@ -73,7 +75,7 @@ function setup(payment = "paid") {
             id: 12,
             client_id: 19,
             payment_status: payment,
-            can_manage_delivery: true,
+            can_manage_delivery: canManageDelivery,
           } as Practice
         }
         onComplete={complete}
@@ -100,6 +102,154 @@ describe("Final delivery", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+
+  it("guides a VOA extension from the named missing permit to a saved document and completion", async () => {
+    const permit = slot("document_1", "Renewed ITK — Visit Stay Permit");
+    const pack = { ...initial, bonus_slot: null, slots: [permit] };
+    requests.get.mockResolvedValue(pack);
+    let finishUpload!: (value: unknown) => void;
+    requests.post.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve;
+        }),
+    );
+    const { user, complete } = setup();
+    expect(await screen.findByText("Renewed ITK")).toBeVisible();
+    const button = screen.getByRole("button", {
+      name: "Complete practice",
+    });
+    expect(button).toBeDisabled();
+    expect(screen.getByText("1 document remaining")).toBeVisible();
+    expect(screen.getByText("PDF, JPG, PNG, DOCX · Max 3 MB")).toBeVisible();
+    expect(requests.companies).not.toHaveBeenCalled();
+    await user.upload(
+      screen.getByLabelText("Upload Renewed ITK"),
+      new File(["permit"], "renewed-itk.pdf", { type: "application/pdf" }),
+    );
+    expect(await screen.findByText("Saving…")).toBeVisible();
+    expect(button).toBeDisabled();
+    const ready = {
+      ...pack,
+      slots: [{ ...permit, document_id: 73, file_name: "renewed-itk.pdf" }],
+    };
+    finishUpload(ready);
+    expect(await screen.findByText("renewed-itk.pdf")).toBeVisible();
+    expect(await screen.findByText("Ready to complete")).toBeVisible();
+    expect(button).toBeEnabled();
+    expect(requests.post).toHaveBeenCalledTimes(1);
+    expect(requests.post).toHaveBeenCalledWith(
+      base + "/slots/document_1",
+      expect.objectContaining({ file_name: "renewed-itk.pdf" }),
+    );
+    requests.post.mockResolvedValueOnce({ ...ready, status: "completed" });
+    await user.click(button);
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect(requests.post).toHaveBeenLastCalledWith(base + "/complete");
+  });
+
+  it("keeps company filing optional and explains the upload blocker when company mode is selected", async () => {
+    const pack = {
+      ...initial,
+      bonus_slot: null,
+      slots: [slot("document_1", "Issued certificate")],
+    };
+    requests.get.mockResolvedValue(pack);
+    requests.companies.mockResolvedValue([
+      { company_id: 5, company_name: "Fixture Company" },
+    ]);
+    const { user } = setup();
+    const file = await screen.findByLabelText("Upload Issued certificate");
+    expect(file).toBeEnabled();
+    await user.click(screen.getByText("Company filing (optional)"));
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Save uploads under a linked company",
+      }),
+    );
+    expect(file).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Select the company in Company filing to enable upload.",
+      ),
+    ).toBeVisible();
+    await screen.findByRole("option", { name: "Fixture Company" });
+    await user.selectOptions(screen.getByRole("combobox"), "5");
+    expect(file).toBeEnabled();
+    expect(requests.post).not.toHaveBeenCalled();
+  });
+
+  it("explains view-only access without instructing a viewer to upload", async () => {
+    requests.get.mockResolvedValue({
+      ...initial,
+      bonus_slot: null,
+      slots: [slot("document_1", "Renewed ITK")],
+    });
+    setup("paid", false);
+    expect(await screen.findByText("View-only access")).toBeVisible();
+    expect(screen.getByText("Renewed ITK")).toBeVisible();
+    expect(screen.getByText("Awaiting document")).toBeVisible();
+    expect(screen.queryByLabelText("Upload Renewed ITK")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Complete practice" }),
+    ).toBeNull();
+  });
+
+  it("names LKPM submission proof first and uploads against its original requirement key", async () => {
+    const report = slot("document_1", "LKPM report · per commissioned period");
+    const proof = slot(
+      "document_2",
+      "OSS filing acknowledgement · per commissioned period",
+    );
+    const pack = { ...initial, bonus_slot: null, slots: [report, proof] };
+    requests.get.mockResolvedValue(pack);
+    requests.post.mockResolvedValue({
+      ...pack,
+      slots: [
+        report,
+        { ...proof, document_id: 61, file_name: "lkpm-receipt.pdf" },
+      ],
+    });
+    const { user } = setup();
+    const file = await screen.findByLabelText("Upload LKPM submission proof");
+    expect(
+      screen
+        .getAllByLabelText(/^Upload /)
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(["Upload LKPM submission proof", "Upload LKPM report"]);
+    await user.upload(
+      file,
+      new File(["receipt"], "lkpm-receipt.pdf", { type: "application/pdf" }),
+    );
+    await screen.findByText("lkpm-receipt.pdf");
+    expect(requests.post).toHaveBeenCalledWith(
+      base + "/slots/document_2",
+      expect.objectContaining({ file_name: "lkpm-receipt.pdf" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Complete practice" }),
+    ).toBeDisabled();
+  });
+
+  it("uses SPT for annual filing and preserves a specifically agreed custom document name", async () => {
+    requests.get.mockResolvedValue({
+      ...initial,
+      bonus_slot: null,
+      slots: [
+        slot("document_1", "Filed SPT Tahunan"),
+        slot("document_2", "Bukti Penerimaan Elektronik (BPE)"),
+        slot("custom_1", "Lease — Signed amendment · Final"),
+      ],
+    });
+    setup();
+    expect(await screen.findByLabelText("Upload SPT")).toBeEnabled();
+    expect(
+      screen.getByLabelText("Upload BPE — SPT submission receipt"),
+    ).toBeEnabled();
+    expect(
+      screen.getByLabelText("Upload Lease — Signed amendment · Final"),
+    ).toBeEnabled();
   });
 
   it("records issuance on upload and keeps completion unavailable until the post-entry permit is saved", async () => {
@@ -133,23 +283,21 @@ describe("Final delivery", () => {
       .mockResolvedValueOnce({ ...ready, status: "completed" });
     const { complete, user } = setup();
     const deliver = await screen.findByRole("button", {
-      name: "Deliver and complete",
+      name: "Complete practice",
     });
     expect(deliver).toBeDisabled();
     const date = screen.getByLabelText("Electronic Visa issue date");
     expect(date).toHaveValue("");
-    expect(screen.getByLabelText("Upload Electronic Visa")).toBeDisabled();
+    expect(screen.getByLabelText("Upload E-visa")).toBeDisabled();
     fireEvent.change(date, { target: { value: "2999-12-01" } });
-    expect(screen.getByLabelText("Upload Electronic Visa")).toBeDisabled();
+    expect(screen.getByLabelText("Upload E-visa")).toBeDisabled();
     expect(requests.post).not.toHaveBeenCalled();
     fireEvent.change(date, { target: { value: printedDate } });
     await user.upload(
-      screen.getByLabelText("Upload Electronic Visa"),
+      screen.getByLabelText("Upload E-visa"),
       new File(["issued"], "visa.pdf", { type: "application/pdf" }),
     );
-    await screen.findByText(
-      "Bonus recorded on the Electronic Visa upload. Remaining documents do not earn another bonus.",
-    );
+    await screen.findByText("Bonus recorded");
     expect(requests.post).toHaveBeenCalledWith(
       base + "/slots/electronic_visa",
       {
@@ -161,7 +309,7 @@ describe("Final delivery", () => {
     );
     expect(deliver).toBeDisabled();
     await user.upload(
-      screen.getByLabelText("Upload ITK — Visit Stay Permit"),
+      screen.getByLabelText("Upload ITK"),
       new File(["stay"], "stay.pdf", { type: "application/pdf" }),
     );
     await waitFor(() => expect(deliver).toBeEnabled());
@@ -193,7 +341,7 @@ describe("Final delivery", () => {
     expect(await screen.findByText("2026-02-20")).toBeVisible();
     expect(screen.queryByLabelText("Electronic Visa issue date")).toBeNull();
     await user.upload(
-      screen.getByLabelText("Replace Electronic Visa"),
+      screen.getByLabelText("Replace E-visa"),
       new File(["corrected"], "visa.pdf", { type: "application/pdf" }),
     );
     await waitFor(() => expect(requests.post).toHaveBeenCalledOnce());
@@ -202,10 +350,10 @@ describe("Final delivery", () => {
 
   it("cannot revise or deliver from an unsettled practice", async () => {
     setup("partial");
-    await screen.findByText("Electronic Visa");
-    expect(screen.queryByLabelText("Upload Electronic Visa")).toBeNull();
+    await screen.findByText("E-visa");
+    expect(screen.queryByLabelText("Upload E-visa")).toBeNull();
     expect(
-      screen.queryByRole("button", { name: "Deliver and complete" }),
+      screen.queryByRole("button", { name: "Complete practice" }),
     ).toBeNull();
   });
   it("keeps a conditional requirement open until the server accepts its documented waiver", async () => {
@@ -224,7 +372,7 @@ describe("Final delivery", () => {
     });
     const { user } = setup();
     const deliver = await screen.findByRole("button", {
-      name: "Deliver and complete",
+      name: "Complete practice",
     });
     expect(deliver).toBeDisabled();
     await user.click(
@@ -302,7 +450,7 @@ describe("Final delivery", () => {
       name: "Confirm the existing permit covers both documents",
     });
     expect(
-      screen.getByRole("button", { name: "Deliver and complete" }),
+      screen.getByRole("button", { name: "Complete practice" }),
     ).toBeDisabled();
     await user.click(button);
     expect(requests.post).toHaveBeenCalledWith(base + "/slots/itas/reuse", {
@@ -310,7 +458,7 @@ describe("Final delivery", () => {
     });
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Deliver and complete" }),
+        screen.getByRole("button", { name: "Complete practice" }),
       ).toBeEnabled(),
     );
   });
@@ -347,9 +495,9 @@ describe("Final delivery", () => {
     const { user, complete } = setup();
     const input = await screen.findByLabelText("Restore ITK");
     expect(
-      screen.queryByRole("button", { name: "Deliver and complete" }),
+      screen.queryByRole("button", { name: "Complete practice" }),
     ).toBeNull();
-    expect(screen.queryByLabelText("Replace Electronic Visa")).toBeNull();
+    expect(screen.queryByLabelText("Replace E-visa")).toBeNull();
     await user.upload(
       input,
       new File(["%PDF-1.7"], "ITK.pdf", { type: "application/pdf" }),
@@ -592,9 +740,7 @@ describe("Final delivery", () => {
       file,
       new File(["permit"], "imk.pdf", { type: "application/pdf" }),
     );
-    expect(
-      await screen.findByText(/Bonus recorded on the renewed IMK upload/),
-    ).toBeVisible();
+    expect(await screen.findByText(/Bonus recorded/)).toBeVisible();
     expect(requests.post.mock.calls[0][1]).not.toHaveProperty("issued_on");
   });
 });

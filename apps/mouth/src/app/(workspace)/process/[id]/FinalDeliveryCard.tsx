@@ -1,11 +1,14 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { CheckCircle2, ChevronDown, Loader2, UploadCloud } from "lucide-react";
+import styles from "./FinalDeliveryCard.module.css";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import {
   isUnconfiguredDelivery,
+  deliveryDocumentTitle,
   type DeliverySlot as Slot,
 } from "@/lib/api/crm/delivery-slot";
 import { fileToBase64 } from "@/lib/utils";
@@ -43,8 +46,6 @@ interface Delivery {
   slots: Slot[];
 }
 
-const cardStyle =
-  "mb-6 rounded-xl border border-[var(--bz-border)] bg-[var(--bz-card)] p-5";
 const actionStyle =
   "text-sm font-semibold text-[var(--bz-accent)] underline disabled:opacity-50";
 
@@ -68,6 +69,7 @@ function StaffDeliveryCard({
   identity,
 }: DeliveryCardProps & { identity: SessionIdentity }) {
   const url = `/api/crm/practices/${practice.id}/delivery`;
+  const controlId = useId();
   async function boundRequest<T>(
     path: string,
     body?: unknown,
@@ -96,6 +98,7 @@ function StaffDeliveryCard({
     { shouldRetryOnError: false },
   );
   const [working, setWorking] = useState(false);
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [issueDate, setIssueDate] = useState("");
   const today = workDayOf();
   const validIssueDate =
@@ -119,14 +122,16 @@ function StaffDeliveryCard({
     data?.status === "on_process" &&
     practice.payment_status === "paid";
   const visaDateSlot = data?.bonus_slot === "electronic_visa";
-  const bonusLabel = visaDateSlot ? "Electronic Visa" : "renewed IMK";
+  const missingSlots =
+    data?.slots.filter(
+      (slot) =>
+        slot.document_id == null && !(slot.condition && slot.waiver_reason),
+    ) ?? [];
   const canDeliver =
     writable &&
     !data.needs_titles &&
     data.slots.length > 0 &&
-    data.slots.every(
-      (s) => s.document_id != null || Boolean(s.condition && s.waiver_reason),
-    );
+    missingSlots.length === 0;
   const canUpload =
     !writable ||
     !chooseCompany ||
@@ -187,6 +192,7 @@ function StaffDeliveryCard({
   }
 
   function attach(slot: Slot, file: File) {
+    if (pending.current) return;
     if (needsIssueDate(slot) && !validIssueDate) {
       setFailure(
         "Enter the issue date printed on the Electronic Visa, up to today in Bali.",
@@ -203,6 +209,7 @@ function StaffDeliveryCard({
       );
       return;
     }
+    setUploadingKey(slot.key);
     void change(
       async () =>
         post<Delivery>(
@@ -223,7 +230,7 @@ function StaffDeliveryCard({
           ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
           : "Document saved.",
       slot,
-    );
+    ).finally(() => setUploadingKey(null));
   }
 
   async function followupAction(action: FollowupAction, note: string) {
@@ -245,82 +252,43 @@ function StaffDeliveryCard({
     );
   }
 
+  const displayedSlots = [...(data?.slots ?? [])].sort(
+    (a, b) =>
+      Number(deliveryDocumentTitle(b) === "LKPM submission proof") -
+      Number(deliveryDocumentTitle(a) === "LKPM submission proof"),
+  );
+
   return (
     <section
       id="final-delivery"
-      className={cardStyle}
+      className={styles.card}
       aria-label="Final delivery"
     >
-      <h2 className="text-xl font-semibold mb-3">Final delivery</h2>
+      <h2 className="sr-only">Final delivery</h2>
       {isUnconfiguredDelivery(error) ? (
         <p>No delivery checklist is configured for this service.</p>
-      ) : (
-        error && (
-          <p role="alert">
-            Unable to load delivery requirements.{" "}
-            <button className={actionStyle} onClick={() => void mutate()}>
-              Retry
-            </button>
-          </p>
-        )
-      )}
-      {!data && !error && <p>Loading delivery requirements…</p>}
+      ) : error ? (
+        <p role="alert">
+          Unable to load delivery requirements.{" "}
+          <button className={actionStyle} onClick={() => void mutate()}>
+            Retry
+          </button>
+        </p>
+      ) : null}
+      {!data && !error && <p role="status">Loading documents…</p>}
       {data && !error && (
         <>
-          {data.bonus_slot && (
-            <p className="mb-3 text-sm" role="status">
-              {data.bonus_status === "ineligible"
-                ? "The qualifying upload is recorded. The assignee is ineligible for a payroll bonus."
-                : data.bonus_event
-                  ? `Bonus recorded on the ${bonusLabel} upload. Remaining documents do not earn another bonus.`
-                  : `The bonus accrues when you upload the ${bonusLabel}.${visaDateSlot ? " Enter the printed issue date for the document record." : ""}`}
-            </p>
-          )}
-          {writable && !practice.family_member_id && (
-            <div className="mb-3 text-sm">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={chooseCompany}
-                  disabled={working}
-                  onChange={(e) => {
-                    setChooseCompany(e.target.checked);
-                    setCompanyId("");
-                  }}
-                />{" "}
-                File this upload under a linked company
-              </label>
-              {chooseCompany && (
-                <label className="block mt-1">
-                  Company whose document is being delivered
-                  <select
-                    className="block border rounded p-1"
-                    disabled={working}
-                    value={companyId}
-                    onChange={(e) => setCompanyId(e.target.value)}
-                  >
-                    <option value="">Select a company</option>
-                    {companies?.map((c) => (
-                      <option key={c.company_id} value={c.company_id}>
-                        {c.company_name}
-                      </option>
-                    ))}
-                  </select>
-                  {companyError && (
-                    <span role="alert">Unable to load linked companies.</span>
-                  )}
-                </label>
-              )}
-            </div>
+          {practice.can_manage_delivery === false && (
+            <p className={styles.hint}>View-only access</p>
           )}
           {writable && data.needs_titles && (
             <form
-              className="mb-3"
-              onSubmit={(e) => {
-                e.preventDefault();
+              className={styles.custom}
+              onSubmit={(event) => {
+                event.preventDefault();
                 const values = titles
                   .split("\n")
-                  .map((t) => t.trim())
+                  .map((title) => title.trim())
                   .filter(Boolean);
                 if (values.length)
                   void change(
@@ -333,10 +301,9 @@ function StaffDeliveryCard({
                 Agreed final documents, one title per line
                 <textarea
                   required
-                  value={titles}
-                  onChange={(e) => setTitles(e.target.value)}
                   disabled={working}
-                  className="block w-full rounded border p-2"
+                  value={titles}
+                  onChange={(event) => setTitles(event.target.value)}
                 />
               </label>
               <button
@@ -348,82 +315,148 @@ function StaffDeliveryCard({
             </form>
           )}
           {!data.needs_titles && (
-            <ul className="space-y-2">
-              {data.slots.map((slot) => (
-                <li
-                  key={slot.key}
-                  className="rounded-lg border border-[var(--bz-border)] p-3"
-                >
-                  <div className="font-semibold">{slot.label}</div>
-                  {slot.condition && (
-                    <p className="text-sm text-[var(--bz-text-2)]">
-                      {slot.condition}
-                    </p>
-                  )}
-                  <p className="text-sm break-words">
-                    {slot.file_name ||
-                      (slot.waiver_reason
-                        ? `Not applicable — ${slot.waiver_reason}`
-                        : "Awaiting file")}
-                  </p>
-                  {data.visa_followup?.slot_key === slot.key && (
-                    <VisaPermitFollowup
-                      practiceId={practice.id}
-                      value={data.visa_followup}
-                      busy={working}
-                      writable={Boolean(writable)}
-                      act={followupAction}
-                    />
-                  )}
-                  {visaDateSlot &&
-                    slot.key === data.bonus_slot &&
-                    slot.issued_on && (
-                      <p className="text-sm">
-                        Electronic Visa issue date ·{" "}
-                        <time dateTime={slot.issued_on}>{slot.issued_on}</time>
-                      </p>
-                    )}
-                  {writable && needsIssueDate(slot) && (
-                    <label className="block my-1 text-sm">
-                      Electronic Visa issue date
-                      <input
-                        type="date"
-                        required
-                        max={today}
-                        value={issueDate}
-                        disabled={working}
-                        onChange={(e) => setIssueDate(e.currentTarget.value)}
-                        className="block rounded border p-1"
-                      />
-                    </label>
-                  )}
-                  {(writable || repairable(slot)) && (
-                    <>
-                      <label className="block text-sm my-1">
-                        {repairable(slot)
-                          ? "Restore"
-                          : slot.document_id == null
-                            ? "Upload"
-                            : "Replace"}{" "}
-                        {slot.label}
+            <ul className={styles.slots}>
+              {displayedSlots.map((slot) => {
+                const title = deliveryDocumentTitle(slot);
+                const editable = writable || repairable(slot);
+                const saved = slot.document_id != null;
+                const waived = Boolean(slot.condition && slot.waiver_reason);
+                const disabled =
+                  working ||
+                  !canUpload ||
+                  (needsIssueDate(slot) && !validIssueDate);
+                const action = repairable(slot)
+                  ? "Restore"
+                  : saved
+                    ? "Replace"
+                    : "Upload";
+                const timing = slot.label.split(" · ").slice(1).join(" · ");
+                return (
+                  <li
+                    key={slot.key}
+                    className={styles.slot}
+                    aria-busy={uploadingKey === slot.key}
+                  >
+                    <label
+                      className={styles.fileBox}
+                      data-ready={saved || waived}
+                      data-disabled={editable && disabled}
+                      data-editable={editable}
+                    >
+                      {uploadingKey === slot.key ? (
+                        <Loader2
+                          className="motion-safe:animate-spin"
+                          size={24}
+                          aria-hidden
+                        />
+                      ) : saved || waived ? (
+                        <CheckCircle2 size={24} aria-hidden />
+                      ) : (
+                        <UploadCloud size={24} aria-hidden />
+                      )}
+                      <strong>{title}</strong>
+                      <span className={styles.fileName}>
+                        {saved
+                          ? slot.file_name || "File saved"
+                          : waived
+                            ? "Not applicable"
+                            : uploadingKey === slot.key
+                              ? "Saving…"
+                              : editable
+                                ? "Click to upload"
+                                : "Awaiting document"}
+                      </span>
+                      {editable && (
                         <input
-                          className="block max-w-full text-sm"
+                          className="sr-only"
                           type="file"
                           accept={UPLOAD_ACCEPT}
-                          disabled={
-                            working ||
-                            !canUpload ||
-                            (needsIssueDate(slot) && !validIssueDate)
-                          }
-                          onChange={(e) => {
-                            const f = e.currentTarget.files?.[0];
-                            e.currentTarget.value = "";
-                            if (f) attach(slot, f);
+                          aria-label={`${action} ${title}`}
+                          aria-describedby={`${controlId}-format-${slot.key}`}
+                          disabled={disabled}
+                          onChange={(event) => {
+                            const file = event.currentTarget.files?.[0];
+                            event.currentTarget.value = "";
+                            if (file) attach(slot, file);
                           }}
                         />
-                      </label>
-                      {slot.reusable_document_id != null &&
-                        !slot.document_id && (
+                      )}
+                      {saved && editable && (
+                        <span className={styles.replace} aria-hidden>
+                          Click to replace
+                        </span>
+                      )}
+                    </label>
+                    <div className={styles.slotDetails}>
+                      {editable && (
+                        <p
+                          id={`${controlId}-format-${slot.key}`}
+                          className={styles.hint}
+                        >
+                          PDF, JPG, PNG, DOCX · Max {BASE64_UPLOAD_MAX_LABEL}
+                        </p>
+                      )}
+                      {(slot.condition || timing) && (
+                        <p className={styles.hint}>
+                          {slot.condition || timing}
+                        </p>
+                      )}
+                      {waived && (
+                        <p className={styles.hint}>{slot.waiver_reason}</p>
+                      )}
+                      {slot.key === data.bonus_slot &&
+                        data.bonus_event &&
+                        data.bonus_status !== "ineligible" && (
+                          <p className={styles.saved}>Bonus recorded</p>
+                        )}
+                      {slot.key === data.bonus_slot && slot.issued_on && (
+                        <p className={styles.hint}>
+                          Issued{" "}
+                          <time dateTime={slot.issued_on}>
+                            {slot.issued_on}
+                          </time>
+                        </p>
+                      )}
+                      {writable && needsIssueDate(slot) && (
+                        <div className={styles.issueDate}>
+                          <label htmlFor={`${controlId}-issue-date`}>
+                            Electronic Visa issue date
+                          </label>
+                          <input
+                            id={`${controlId}-issue-date`}
+                            type="date"
+                            required
+                            max={today}
+                            value={issueDate}
+                            disabled={working}
+                            onChange={(event) =>
+                              setIssueDate(event.target.value)
+                            }
+                          />
+                          {!validIssueDate && (
+                            <p className={styles.hint}>
+                              Enter the issue date to enable upload.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {editable && chooseCompany && !canUpload && (
+                        <p className={styles.hint}>
+                          Select the company in Company filing to enable upload.
+                        </p>
+                      )}
+                      {data.visa_followup?.slot_key === slot.key && (
+                        <VisaPermitFollowup
+                          practiceId={practice.id}
+                          value={data.visa_followup}
+                          busy={working}
+                          writable={Boolean(writable)}
+                          act={followupAction}
+                        />
+                      )}
+                      {editable &&
+                        slot.reusable_document_id != null &&
+                        !saved && (
                           <button
                             type="button"
                             className={actionStyle}
@@ -445,31 +478,33 @@ function StaffDeliveryCard({
                         )}
                       {writable &&
                         slot.condition &&
-                        !slot.document_id &&
-                        !slot.waiver_reason &&
+                        !saved &&
+                        !waived &&
                         (waiveKey === slot.key ? (
                           <form
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              if (!validStaffText(waiver, 500)) return;
-                              void change(
-                                () =>
-                                  post<Delivery>(
-                                    `${url}/slots/${encodeURIComponent(slot.key)}/waive`,
-                                    { reason: waiver.trim() },
-                                  ),
-                                "Requirement updated.",
-                              );
+                            className={styles.custom}
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              if (validStaffText(waiver, 500))
+                                void change(
+                                  () =>
+                                    post<Delivery>(
+                                      `${url}/slots/${encodeURIComponent(slot.key)}/waive`,
+                                      { reason: waiver.trim() },
+                                    ),
+                                  "Requirement updated.",
+                                );
                             }}
                           >
-                            <label className="block text-sm">
+                            <label>
                               Reason this requirement does not apply
                               <input
-                                className="block w-full rounded border p-1"
                                 required
                                 disabled={working}
                                 value={waiver}
-                                onChange={(e) => setWaiver(e.target.value)}
+                                onChange={(event) =>
+                                  setWaiver(event.target.value)
+                                }
                               />
                             </label>
                             <button
@@ -481,6 +516,7 @@ function StaffDeliveryCard({
                           </form>
                         ) : (
                           <button
+                            type="button"
                             className={actionStyle}
                             disabled={working}
                             onClick={() => {
@@ -491,35 +527,91 @@ function StaffDeliveryCard({
                             Mark as not applicable
                           </button>
                         ))}
-                    </>
-                  )}
-                </li>
-              ))}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
+          {writable && !practice.family_member_id && (
+            <details className={styles.company}>
+              <summary>
+                Company filing (optional){chooseCompany && " · enabled"}
+                <ChevronDown size={14} aria-hidden />
+              </summary>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={chooseCompany}
+                  disabled={working}
+                  onChange={(event) => {
+                    setChooseCompany(event.target.checked);
+                    setCompanyId("");
+                  }}
+                />
+                Save uploads under a linked company
+              </label>
+              {chooseCompany && (
+                <label>
+                  Company for these documents
+                  <select
+                    value={companyId}
+                    disabled={working}
+                    onChange={(event) => setCompanyId(event.target.value)}
+                  >
+                    <option value="">Select a company</option>
+                    {companies?.map((company) => (
+                      <option
+                        key={company.company_id}
+                        value={String(company.company_id)}
+                      >
+                        {company.company_name}
+                      </option>
+                    ))}
+                  </select>
+                  {companyError && (
+                    <span role="alert">Unable to load linked companies.</span>
+                  )}
+                </label>
+              )}
+            </details>
+          )}
           {writable && (
-            <button
-              className="mt-4 rounded-lg bg-[var(--bz-accent)] px-4 py-2 font-semibold text-[var(--bz-base)] disabled:opacity-50"
-              disabled={working || !canDeliver}
-              onClick={() =>
-                void change(
-                  () => post<Delivery>(`${url}/complete`),
-                  "Final documents delivered. Practice completed.",
-                )
-              }
-            >
-              Deliver and complete
-            </button>
+            <footer className={styles.footer}>
+              <p className={styles.hint}>
+                {working
+                  ? "Saving changes…"
+                  : canDeliver
+                    ? "Ready to complete"
+                    : data.needs_titles
+                      ? "Name the required documents first."
+                      : missingSlots.length
+                        ? `${missingSlots.length} document${missingSlots.length === 1 ? "" : "s"} remaining`
+                        : "Define the required documents first."}
+              </p>
+              <button
+                className={styles.completeButton}
+                disabled={working || !canDeliver}
+                onClick={() =>
+                  void change(
+                    () => post<Delivery>(`${url}/complete`),
+                    "Final documents delivered. Practice completed.",
+                  )
+                }
+              >
+                Complete practice
+              </button>
+            </footer>
           )}
         </>
       )}
       {feedback && (
-        <p role="status" className="mt-2 text-sm">
+        <p role="status" className={styles.feedback}>
           {feedback}
         </p>
       )}
       {failure && (
-        <p role="alert" className="mt-2 text-sm text-[var(--state-danger)]">
+        <p role="alert" className={styles.failure}>
           {failure}
         </p>
       )}

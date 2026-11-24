@@ -762,7 +762,7 @@ function StaffProcessDetail({
               breadcrumb duplicated the same /clients/{id} navigation). */}
         </div>
 
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-2 flex-wrap">
               <h1
@@ -980,7 +980,7 @@ function StaffProcessDetail({
           return false;
         });
         return (
-          <div className="mb-6 flex items-center gap-0">
+          <div className="mb-6 flex max-w-full items-center gap-0 overflow-x-auto py-1">
             {STEPS.map((step, idx) => {
               const isDone = idx < currentIdx;
               const isCurrent = idx === currentIdx;
