@@ -75,6 +75,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/compliance/obligations", tags=["compliance-obligations"])
 
+# clients.id is an INTEGER: a larger client_id never names a client, and asyncpg
+# refuses to bind it (DataError, an unhandled 500), so it is refused up front.
+_CLIENT_ID_MAX = 2_147_483_647
+
 _NEEDS_MANUAL_CLASSIFICATION_MSG = (
     "profile_from_rows could not map this client's company_type to a known type "
     "(PT PMA / PT PMDN / CV / KP3A / KPPA / FOREIGN_PLATFORM) and defaulted to OTHER. "
@@ -147,7 +151,7 @@ class ObligationListOut(BaseModel):
 
 
 class GenerateBody(BaseModel):
-    client_id: int
+    client_id: int = Field(..., ge=1, le=_CLIENT_ID_MAX)
     horizon_days: int = Field(90, ge=1, le=730)
 
 
@@ -196,7 +200,7 @@ class CompleteOut(ApproveOut):
 # --------------------------------------------------------------------------- #
 @router.get("")
 async def list_obligations(
-    client_id: int | None = Query(None),
+    client_id: int | None = Query(None, ge=1, le=_CLIENT_ID_MAX),
     status_filter: str | None = Query(
         "proposed",
         alias="status",
@@ -300,7 +304,7 @@ def _profile_out(
 
 @router.get("/profile/{client_id}")
 async def get_client_profile(
-    client_id: int = Path(..., ge=1),
+    client_id: int = Path(..., ge=1, le=_CLIENT_ID_MAX),
     user: dict[str, Any] = Depends(get_current_user),
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> ProfileOut:
@@ -372,7 +376,7 @@ def _validated_patch(body: dict[str, Any]) -> dict[str, Any]:
 
 @router.patch("/profile/{client_id}")
 async def patch_client_profile(
-    client_id: int = Path(..., ge=1),
+    client_id: int = Path(..., ge=1, le=_CLIENT_ID_MAX),
     body: dict[str, Any] = Body(...),
     user: dict[str, Any] = Depends(get_current_user),
     pool: asyncpg.Pool = Depends(get_database_pool),
