@@ -278,7 +278,7 @@ async def test_gate_counts_reclaimable_review_proposals_for_receiver(
         await _insert_pending_proposal(
             pool, source="drive", received_by=staff_email,
             status="review_claimed", lease_owner=colleague_email,
-            lease_expires_at="2999-01-01T00:00:00+00:00",
+            lease_expires_at="2000-01-01T00:00:00+00:00",
         ),
         await _insert_pending_proposal(
             pool, source="whatsapp", received_by=staff_email,
