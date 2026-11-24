@@ -282,7 +282,8 @@ class TestSemanticSearch:
         mock_search_service,
         mock_request,
     ):
-        """Test that HTTPException is passed through without modification"""
+        """An HTTPException below the route keeps its status; its text is replaced by the
+        route's fixed one (a lower layer's detail can quote the query), and it is not chained."""
         mock_request.app.state.search_service = mock_search_service
         mock_search_service.search.side_effect = HTTPException(
             status_code=400,
@@ -299,7 +300,8 @@ class TestSemanticSearch:
                 await semantic_search(query, mock_request)
 
             assert exc_info.value.status_code == 400
-            assert exc_info.value.detail == "Bad request"
+            assert exc_info.value.detail == "Search failed"
+            assert exc_info.value.__cause__ is None and exc_info.value.__context__ is None
 
     @pytest.mark.asyncio
     async def test_semantic_search_tier_enum_conversion(self, mock_search_service, mock_request):

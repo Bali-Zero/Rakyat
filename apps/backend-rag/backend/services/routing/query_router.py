@@ -660,7 +660,7 @@ class QueryRouter:
         Returns:
             Collection name from 9 available collections
         """
-        logger.info("🔍 [QueryRouter] Query: %s", query)
+        logger.info("🔍 [QueryRouter] Query: query_len=%d", len(query))
 
         # Check priority overrides first
         override = self._check_priority_overrides(query)
@@ -676,6 +676,8 @@ class QueryRouter:
         detected_keywords = {}
         for domain in active_scores:
             detected_keywords[domain] = self.keyword_matcher.get_matched_keywords(query, domain)
+        # Allowed to log: these are the matched entries of the fixed keyword vocabulary in
+        # keyword_matcher.py, never a slice of the user's text.
         logger.info("🎯 [QueryRouter] Detected keywords: %s", detected_keywords)
         logger.info("📊 [QueryRouter] Domain scores: %s", active_scores)
 
