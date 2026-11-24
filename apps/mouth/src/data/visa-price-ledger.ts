@@ -129,7 +129,7 @@ export const VISA_LEDGER_SPEC: ChapterSpec[] = [
         kind: "matrix",
         id: "multi",
         name: "Multiple-entry visas",
-        columns: ["1 year", "2 years", "5 years"],
+        columns: ["1 year", "2 years", "5 years", "Extension"],
         rows: [
           {
             name: "D1 Tourism",
@@ -137,6 +137,7 @@ export const VISA_LEDGER_SPEC: ChapterSpec[] = [
               "D1 Tourism (1 Year)",
               "D1 Tourism (2 Years)",
               "D1 Tourism (5 Years)",
+              null,
             ],
           },
           {
@@ -145,6 +146,7 @@ export const VISA_LEDGER_SPEC: ChapterSpec[] = [
               "D2 Business (1 Year)",
               "D2 Business (2 Years)",
               "D2 Business (5 Years)",
+              null,
             ],
           },
           {
@@ -153,6 +155,7 @@ export const VISA_LEDGER_SPEC: ChapterSpec[] = [
               "D12 Business Investigation (1 Year)",
               "D12 Business Investigation (2 Years)",
               null,
+              "D12 Extension",
             ],
           },
         ],

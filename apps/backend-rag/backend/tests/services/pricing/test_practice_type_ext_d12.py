@@ -21,7 +21,7 @@ _SNAPSHOT = _BACKEND.parents[1] / "mouth" / "data" / "bali-zero-prices.json"
 _MIGRATION = _BACKEND / "db" / "migrations_v2" / "380_practice_types_ext_d12.sql"
 
 _CODE = "ext_d12"
-_KEY = "D12 Business Investigation Extension"
+_KEY = "D12 Extension"
 _ROW = {
     "name": "D12 Business Investigation — Extension",
     "price": "3.750.000 IDR",

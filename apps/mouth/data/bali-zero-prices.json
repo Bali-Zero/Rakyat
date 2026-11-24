@@ -291,9 +291,9 @@
         "icon_id": "visa-investigation",
         "tier_range": null
       },
-      "D12 Business Investigation Extension": {
+      "D12 Extension": {
         "category": "multiple_entry_visas",
-        "key": "D12 Business Investigation Extension",
+        "key": "D12 Extension",
         "name": "D12 Business Investigation — Extension",
         "price": "3.750.000 IDR",
         "duration": "180 days",

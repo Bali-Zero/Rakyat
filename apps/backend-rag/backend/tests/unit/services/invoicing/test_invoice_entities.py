@@ -135,8 +135,8 @@ class _NullOffset(tzinfo):
 def test_mapping_matches_independent_golden() -> None:
     golden = _load_json_no_duplicate_keys(FIXTURES / "invoice_code_entity_golden.json")
     assert golden == PRACTICE_TYPE_ENTITY_KEYS
-    assert len(golden) == 122
-    assert len(PRACTICE_TYPE_ENTITY_KEYS) == 122
+    assert len(golden) == 123
+    assert len(PRACTICE_TYPE_ENTITY_KEYS) == 123
     counts = Counter(golden.values())
     assert counts["cimb_bayu_bali_nol"] == 42
     assert counts["permata_bali_nol_konsultan"] == 28
