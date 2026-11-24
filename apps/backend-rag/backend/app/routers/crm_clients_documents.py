@@ -832,23 +832,29 @@ Rules:
             logger.error("NIB OCR: JSON parsing failed")
             return NibExtractResponse(success=False, message="Could not parse OCR response")
 
-        # Clean NIB (keep only digits)
+        # Clean NIB — ASCII-only projection, as for the NPWP above. A valid NIB is
+        # EXACTLY 13 digits; anything else is an incomplete/garbled OCR read: still
+        # RETURNED for the human to see, but NEVER written to the card — clients.nib
+        # is matched against companies and read by the smart search key.
         nib = extracted.get("nib", "")
+        nib_to_save: str | None = None
         if nib:
-            nib_clean = re.sub(r"\D", "", nib)
-            # Validate 13 digits
-            if len(nib_clean) != 13:
-                logger.warning("NIB OCR: extracted value doesn't have 13 digits")
-                nib = nib_clean
+            nib_clean = re.sub(r"[^0-9]", "", str(nib))
+            nib = nib_clean
+            if len(nib_clean) == 13:
+                nib_to_save = nib_clean
             else:
-                nib = nib_clean
+                logger.warning(
+                    "NIB OCR: incomplete read (%d digits) — returned but NOT saved",
+                    len(nib_clean),
+                )
 
-        # Save to DB if extracted successfully
-        if nib:
+        # Save to DB only when the read is a complete, valid NIB
+        if nib_to_save:
             async with db_pool.acquire() as conn:
                 await conn.execute(
                     "UPDATE clients SET nib = $1, updated_at = NOW() WHERE id = $2",
-                    nib,
+                    nib_to_save,
                     request.client_id,
                 )
                 logger.info(f"Saved NIB for client {request.client_id}")
