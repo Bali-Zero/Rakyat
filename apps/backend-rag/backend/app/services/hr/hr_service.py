@@ -18,6 +18,7 @@ import asyncpg
 
 from backend.app.services.hr.hr_leave_routing import SETUP_TEAM_EMAILS, TAX_TEAM_EMAILS
 from backend.app.services.hr.hr_overview_logic import aggregate_attendance, unambiguous_email
+from backend.app.services.hr.hr_payslip_status import PAYSLIP_VISIBLE_STATUSES
 from backend.app.utils.hr_utils import (
     calculate_bpjs,
     calculate_pph21_monthly,
@@ -1771,7 +1772,8 @@ class HRService:
         """Personal dashboard for a team member.
 
         A person whose card says `on_payroll = false` gets `on_payroll: false` and no payroll
-        data at all (no payslip, no bonus totals); their leave balances stay.
+        data at all (no payslip, no bonus totals); their leave balances stay. `latest_payslip` is
+        the newest payslip of a period that is approved or paid, or None while there is none.
         """
         today = business_today()
         async with self.db_pool.acquire() as conn:
@@ -1793,17 +1795,20 @@ class HRService:
                 today.year,
             )
 
-            # Latest payslip
+            # Latest FINAL payslip: a period still in draft or calculated can be recalculated,
+            # so its payslip is not the member's take-home yet.
             latest_payslip = await conn.fetchrow(
                 """
                 SELECT ps.*, pp.payroll_month, pp.payroll_year
                 FROM hr_payslips ps
                 JOIN hr_payroll_periods pp ON pp.id = ps.payroll_period_id
                 WHERE ps.employee_id = $1
+                  AND pp.status = ANY($2::text[])
                 ORDER BY pp.payroll_year DESC, pp.payroll_month DESC
                 LIMIT 1
             """,
                 employee_id,
+                list(PAYSLIP_VISIBLE_STATUSES),
             )
 
             # Leave balance

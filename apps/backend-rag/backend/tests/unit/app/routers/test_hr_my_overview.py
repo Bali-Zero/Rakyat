@@ -40,7 +40,7 @@ PAYSLIP = {
     "thr_idr": 0,
     "notes": "HR note that must not leave",
     "employee_email": "fake.member@balizero.com",
-    "period_status": "draft",
+    "period_status": "approved",
 }
 ROWS: dict[str, Any] = {
     "payslips": [PAYSLIP],
