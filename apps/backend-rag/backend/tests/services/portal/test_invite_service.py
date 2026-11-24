@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +12,19 @@ from backend.services.portal.portal_profile_service import PLACEHOLDER_PIN_HASH
 # registration once. The distinction between this and PLACEHOLDER_PIN_HASH is
 # the whole point of the guard below.
 REAL_PIN_HASH = "$2b$12$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123"
+
+
+def _state(linked: dict | None = None, holder: int | None = None) -> dict:
+    """The one row the registration-state statement returns: the login linked
+    to the client (all NULL when none) and another login holding the address."""
+    linked = linked or {}
+    return {
+        "linked_id": linked.get("id"),
+        "linked_active": linked.get("active"),
+        "linked_pin_hash": linked.get("pin_hash"),
+        "linked_role": linked.get("role"),
+        "holder_id": holder,
+    }
 
 
 class AcquireContext:
@@ -132,7 +146,8 @@ async def test_validate_token_returns_valid_invitation_details() -> None:
                 "expires_at": expires_at,
                 "used_at": None,
                 "client_name": "Client Name",
-            }
+            },
+            _state(),
         ]
     )
     service = InviteService(FakePool(conn))
@@ -146,6 +161,8 @@ async def test_validate_token_returns_valid_invitation_details() -> None:
         "client_name": "Client Name",
         "email": "client@example.com",
     }
+    assert conn.fetchrow_calls[1][1] == (7, "client@example.com")
+    assert conn.fetchval_calls == []
 
 
 @pytest.mark.asyncio
@@ -163,6 +180,7 @@ async def test_validate_token_reports_used_and_expired_states() -> None:
                         "used_at": now,
                         "client_name": "Client Name",
                     },
+                    _state(),
                     {
                         "id": 5,
                         "client_id": 8,
@@ -171,6 +189,7 @@ async def test_validate_token_reports_used_and_expired_states() -> None:
                         "used_at": None,
                         "client_name": "Expired Client",
                     },
+                    _state(),
                 ]
             )
         )
@@ -339,7 +358,7 @@ async def test_complete_registration_rejects_active_existing_account() -> None:
                 "used_at": None,
                 "client_name": "Client Name",
             },
-            {"id": 55, "active": True, "pin_hash": REAL_PIN_HASH},
+            _state({"id": 55, "active": True, "pin_hash": REAL_PIN_HASH}),
         ]
     )
     service = InviteService(FakePool(conn))
@@ -368,7 +387,7 @@ async def test_complete_registration_reactivates_inactive_existing_account() -> 
                 "used_at": None,
                 "client_name": "Client Name",
             },
-            {"id": 55, "active": False, "pin_hash": REAL_PIN_HASH},
+            _state({"id": 55, "active": False, "pin_hash": REAL_PIN_HASH}),
         ]
     )
     service = InviteService(FakePool(conn))
@@ -422,7 +441,7 @@ async def test_complete_registration_allows_placeholder_active_account() -> None
                 "client_name": "Client Name",
             },
             # active=True AND never registered — the provisioned-but-unused row.
-            {"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH},
+            _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}),
         ]
     )
     service = InviteService(FakePool(conn))
@@ -470,7 +489,7 @@ async def test_complete_registration_moves_the_login_email_to_the_invited_addres
                 "client_name": "Client Name",
             },
             # the provisioned row still carries the OLD login email
-            {"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH},
+            _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}),
         ]
     )
     service = InviteService(FakePool(conn))
@@ -485,10 +504,12 @@ async def test_complete_registration_moves_the_login_email_to_the_invited_addres
     update_query, update_args = conn.execute_calls[0]
     assert "email = COALESCE($3, email)" in update_query
     assert update_args[2] == "new-address@example.com"
-    # and the collision check ran against that same address
-    conflict_query, conflict_args = conn.fetchval_calls[0]
-    assert "LOWER(email) = LOWER($1)" in conflict_query
-    assert conflict_args == ("new-address@example.com", 55)
+    # and the collision check ran against that same address, every login but
+    # the linked one counting as another
+    state_query, state_args = conn.fetchrow_calls[1]
+    assert "LOWER(email) = LOWER($2)" in state_query
+    assert "id IS DISTINCT FROM l.id" in state_query
+    assert state_args == (7, "new-address@example.com")
 
 
 @pytest.mark.asyncio
@@ -508,10 +529,9 @@ async def test_complete_registration_refuses_when_another_account_holds_the_emai
                 "used_at": None,
                 "client_name": "Client Name",
             },
-            {"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH},
+            # some OTHER team_members row already uses taken@example.com
+            _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}, holder=999),
         ],
-        # some OTHER team_members row already uses taken@example.com
-        fetchval_results=[999],
     )
     service = InviteService(FakePool(conn))
 
@@ -540,7 +560,7 @@ async def test_existing_account_lookup_is_deterministic_without_role_filter() ->
                 "used_at": None,
                 "client_name": "Client Name",
             },
-            None,
+            _state(),
             {"id": 77},
         ]
     )
@@ -561,7 +581,7 @@ async def test_existing_account_lookup_is_deterministic_without_role_filter() ->
     # `team_members.email UNIQUE` — a 500 on a path that works today.
     assert "role = 'client'" not in lookup_query.replace("(role = 'client') DESC", "")
     # ...but it must be deterministic: a client row wins when several share the link.
-    assert "ORDER BY (role = 'client') DESC" in lookup_query
+    assert "ORDER BY (role = 'client') DESC, created_at, id" in lookup_query
 
 
 @pytest.mark.asyncio
@@ -570,7 +590,7 @@ async def test_validate_token_excludes_archived_clients() -> None:
     invariant the minting paths enforce. Leaving it unfiltered let an archived
     client's outstanding token still resolve, disclosing full_name/email/
     client_id to whoever held the link before failing confusingly at complete."""
-    conn = FakeConnection(fetchrow_results=[None])
+    conn = FakeConnection(fetchrow_results=[None, _state()])
     service = InviteService(FakePool(conn))
 
     assert await service.validate_token("tok-archived") is None
@@ -581,6 +601,8 @@ async def test_validate_token_excludes_archived_clients() -> None:
         hashlib.sha256(b"tok-archived").hexdigest(),
         "tok-archived",
     )
+    # The registration state still runs, with nothing to look up.
+    assert conn.fetchrow_calls[1][1] == (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -637,7 +659,7 @@ async def test_create_invitation_stores_the_digest_and_mails_the_raw_token() -> 
 
 @pytest.mark.asyncio
 async def test_validate_token_matches_on_the_digest() -> None:
-    conn = FakeConnection(fetchrow_results=[None])
+    conn = FakeConnection(fetchrow_results=[None, _state()])
     service = InviteService(FakePool(conn))
 
     assert await service.validate_token(_RAW) is None
@@ -711,7 +733,7 @@ async def test_complete_registration_retires_the_live_siblings_of_the_redeemed_i
                 "used_at": None,
                 "client_name": "Client Name",
             },
-            {"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH},
+            _state({"id": 55, "active": True, "pin_hash": PLACEHOLDER_PIN_HASH}),
         ]
     )
     service = InviteService(FakePool(conn))
@@ -737,3 +759,172 @@ async def test_complete_registration_retires_the_live_siblings_of_the_redeemed_i
     assert retire_args == (7, 9)
     mark_used = next(i for i, (q, _) in enumerate(conn.execute_calls) if "SET used_at = NOW()" in q)
     assert conn.execute_calls.index(retire[0]) > mark_used
+
+
+_LIVE_LOGIN = {"id": 55, "active": True, "pin_hash": REAL_PIN_HASH, "role": "client"}
+_STAFF_LOGIN = {**_LIVE_LOGIN, "role": "group_staff"}
+#: Refusals the link holder must not be able to tell from an unknown link.
+_SENSITIVE = ("email_in_use", "not_registrable")
+_REGISTRATION_CASES = [
+    # (invitation address, login row linked to the client, row already holding
+    #  the address, the refusal registration raises or None when it succeeds)
+    ("Client@Example.com", None, None, None),
+    ("Client@Example.com", None, 77, "email_in_use"),
+    (None, None, None, "address_required"),
+    ("   ", None, None, "address_required"),
+    ("Client@Example.com", _STAFF_LOGIN, None, "not_registrable"),
+    ("Client@Example.com", _LIVE_LOGIN, None, "already_registered"),
+    ("Client@Example.com", _LIVE_LOGIN, 77, "already_registered"),
+    ("Client@Example.com", {**_LIVE_LOGIN, "active": False}, None, None),
+    ("Client@Example.com", {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, None, None),
+    ("Client@Example.com", {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, 77, "email_in_use"),
+    (None, {**_LIVE_LOGIN, "pin_hash": PLACEHOLDER_PIN_HASH}, None, None),
+]
+
+
+def _open_invitation(email: str | None, **changes: object) -> dict:
+    row = {
+        "id": 9,
+        "client_id": 7,
+        "email": email,
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        "used_at": None,
+        "client_name": "Client Name",
+    }
+    row.update(changes)
+    return row
+
+
+async def _validate(invitation: dict | None, state: dict) -> tuple[object, FakeConnection]:
+    conn = FakeConnection(fetchrow_results=[invitation, state])
+    return await InviteService(FakePool(conn)).validate_token("tok"), conn
+
+
+@pytest.mark.parametrize(("email", "linked", "holder", "code"), _REGISTRATION_CASES)
+@pytest.mark.asyncio
+async def test_an_invitation_is_valid_exactly_when_its_registration_would_succeed(
+    email: str | None, linked: dict | None, holder: int | None, code: str | None
+) -> None:
+    validated, validate_conn = await _validate(_open_invitation(email), _state(linked, holder))
+
+    register_conn = FakeConnectionWithTransaction(
+        fetchrow_results=[_open_invitation(email), _state(linked, holder), {"id": 56}],
+    )
+    service = InviteService(FakePool(register_conn))
+    with patch(
+        "backend.services.common.cache._invalidate_cache",
+        new=AsyncMock(return_value=1),
+    ):
+        if code is None:
+            assert (await service.complete_registration(token="tok", pin="1234"))["success"]
+            assert validated["valid"] is True
+        else:
+            with pytest.raises(ValueError) as refused:
+                await service.complete_registration(token="tok", pin="1234")
+            if code in _SENSITIVE:
+                # The token holder is not authenticated: another login holding
+                # the address, or a staff login, is not theirs to learn, so the
+                # answer is the one an unknown link gets.
+                unknown, _ = await _validate(None, _state())
+                assert validated is None
+                assert validated == unknown
+            else:
+                assert validated == {"error": code, "message": str(refused.value)}
+            assert register_conn.execute_calls == []
+
+    # Both doors read the registration state with one statement and one set of values.
+    assert validate_conn.fetchrow_calls[1] == register_conn.fetchrow_calls[1]
+    assert validate_conn.fetchval_calls == register_conn.fetchval_calls == []
+
+
+@pytest.mark.parametrize(("email", "linked", "holder", "code"), _REGISTRATION_CASES)
+@pytest.mark.asyncio
+async def test_the_public_invitation_answer_names_no_other_account_or_staff_login(
+    email: str | None, linked: dict | None, holder: int | None, code: str | None
+) -> None:
+    validated, _ = await _validate(_open_invitation(email), _state(linked, holder))
+
+    if code in _SENSITIVE:
+        assert validated is None
+        return
+    assert validated.get("error") not in _SENSITIVE
+    words = " ".join(str(value) for value in validated.values()).lower()
+    for disclosure in ("another account", "already uses", "cannot be registered", "staff"):
+        assert disclosure not in words
+
+
+def _every_outcome() -> list:
+    now = datetime.now(timezone.utc)
+    used, expired = {"used_at": now}, {"expires_at": now - timedelta(seconds=1)}
+    cases = [
+        pytest.param(None, _state(), "invalid_token", id="unknown"),
+        pytest.param(
+            _open_invitation("a@example.test", **used), _state(), "already_used", id="used"
+        ),
+        pytest.param(
+            _open_invitation("a@example.test", **expired), _state(), "expired", id="expired"
+        ),
+        pytest.param(
+            _open_invitation("a@example.test", **used, **expired),
+            _state(),
+            "already_used",
+            id="used-and-expired",
+        ),
+        pytest.param(
+            _open_invitation("a@example.test", **used),
+            _state(_STAFF_LOGIN),
+            "already_used",
+            id="staff-and-used",
+        ),
+        pytest.param(
+            _open_invitation("a@example.test", **expired),
+            _state(None, 77),
+            "expired",
+            id="held-and-expired",
+        ),
+    ]
+    for number, (email, linked, holder, code) in enumerate(_REGISTRATION_CASES):
+        cases.append(
+            pytest.param(
+                _open_invitation(email), _state(linked, holder), code or "valid", id=f"case{number}"
+            )
+        )
+    return cases
+
+
+@pytest.mark.parametrize(("invitation", "state", "outcome"), _every_outcome())
+@pytest.mark.asyncio
+async def test_every_token_costs_the_same_two_statements(
+    invitation: dict | None, state: dict, outcome: str
+) -> None:
+    """Query work must not tell the outcomes apart: an unknown link, a used or
+    an expired one, a refusal and a registrable invitation all run the token
+    lookup and then the registration state, and nothing else."""
+    answer, conn = await _validate(invitation, state)
+
+    assert [q.split("FROM", 1)[1].split()[0] for q, _ in conn.fetchrow_calls] == [
+        "client_invitations",
+        "(SELECT",
+    ]
+    assert conn.fetchval_calls == conn.fetch_calls == conn.execute_calls == []
+    if invitation is None:
+        assert conn.fetchrow_calls[1][1] == (None, None)
+    if outcome in ("already_used", "expired"):
+        assert answer["error"] == outcome
+
+
+@pytest.mark.parametrize(("invitation", "state", "outcome"), _every_outcome())
+@pytest.mark.asyncio
+async def test_every_outcome_writes_one_log_line_of_one_shape(
+    caplog: pytest.LogCaptureFixture, invitation: dict | None, state: dict, outcome: str
+) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    await _validate(invitation, state)
+
+    lines = [r for r in caplog.records if r.name == "backend.services.portal.invite_service"]
+    assert len(lines) == 1
+    assert lines[0].levelno == logging.INFO
+    assert lines[0].msg == "invitation validate: %s %s..."
+    assert lines[0].args[0] == outcome
+    assert "tok" not in lines[0].getMessage().split(": ", 1)[1].split()[1]

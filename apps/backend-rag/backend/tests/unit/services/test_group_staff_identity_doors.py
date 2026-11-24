@@ -62,6 +62,7 @@ def test_is_group_staff_is_normalised() -> None:
 @pytest.mark.parametrize("active", [True, False])
 @pytest.mark.asyncio
 async def test_invite_redemption_refuses_a_group_staff_row(active: bool) -> None:
+    from backend.services.portal import invite_service
     from backend.services.portal.invite_service import (
         PLACEHOLDER_PIN_HASH,
         InviteService,
@@ -75,11 +76,25 @@ async def test_invite_redemption_refuses_a_group_staff_row(active: bool) -> None
         "used_at": None,
         "client_name": "C",
     }
-    member = {"id": "tm-1", "active": active, "pin_hash": PLACEHOLDER_PIN_HASH, "role": "group_staff"}
-    conn = _Conn([invitation, member])
+    # The one row the registration reads (invite_service._REGISTRATION_STATE_SQL):
+    # a group-staff login linked to the client, never registered (placeholder
+    # PIN), and no other login holding the address. Every other clause of
+    # _refusal_of would let this row register; only the group-staff one refuses.
+    state = {
+        "linked_id": "tm-1",
+        "linked_active": active,
+        "linked_pin_hash": PLACEHOLDER_PIN_HASH,
+        "linked_role": "group_staff",
+        "holder_id": None,
+    }
+    conn = _Conn([invitation, state])
     with pytest.raises(ValueError, match="cannot be registered"):
         await InviteService(_pool(conn)).complete_registration("tok", "1234")
+    # Which statement served the state row; a change of the row's shape still
+    # surfaces first as a KeyError in _registration_state.
+    assert conn.sql[1] == invite_service._REGISTRATION_STATE_SQL
     assert not any("UPDATE team_members" in s for s in conn.sql)
+    assert not any("INSERT INTO team_members" in s for s in conn.sql)
 
 
 @pytest.mark.asyncio
