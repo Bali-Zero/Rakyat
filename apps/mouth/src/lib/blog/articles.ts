@@ -887,64 +887,50 @@ export async function getArticleByLocale(
   if (!isArticleTranslationLocale(locale) || !isArticleFileSlug(slug)) {
     return getArticleBySlug(category, slug);
   }
-  // Read the reviewed English metadata once. Translation files can
-  // retain one English field while the other contains the editor's localized
-  // alternative; use that alternative rather than presenting an English H1 or
-  // HTML title to a localized reader.
   const basePath = findMdxFile(category, slug);
-  if (!basePath) return getArticleBySlug(category, slug);
-  const base = readMdxFile(basePath);
-  // A local translation cannot outlive its unpublished, unreadable, or absent
-  // English owner. This also prevents orphan files acquiring their own URL.
-  if (!base || !isPublishedFrontmatter(base.data)) return null;
-  const baseFrontmatter = base.data;
-  const baseNoIndex = Boolean(base.data.noIndex);
-  const baseFolder = path.basename(path.dirname(basePath));
-  if (!isArticleFolderName(baseFolder)) return getArticleBySlug(category, slug);
-  const canonicalCategory = normalizeCategory(baseFolder);
+  const base = basePath ? readMdxFile(basePath) : null;
+  if (basePath && (!base || !isPublishedFrontmatter(base.data))) return null;
 
-  // Only the folder selected for the English route may supply its sibling.
-  // This matches findMdxFile precedence when folders share a public category.
-  const localePath = articleLocaleMdxPath(baseFolder, slug, locale);
-  if (!fs.existsSync(localePath)) return getArticleBySlug(category, slug);
-  const parsed = readMdxFile(localePath);
-  if (!parsed || !isPublishedLocaleFrontmatter(parsed.data, locale)) {
-    return getArticleBySlug(category, slug);
+  // An English file owns its sibling's folder. Legacy translation-only links
+  // can still be read directly, but never create an English alternate.
+  const folders = basePath
+    ? [path.basename(path.dirname(basePath))]
+    : CATEGORY_FOLDERS[normalizeCategory(category)] || [category];
+  let translation;
+  for (const folder of folders) {
+    if (!isArticleFolderName(folder)) continue;
+    const file = articleLocaleMdxPath(folder, slug, locale);
+    if (!fs.existsSync(file)) continue;
+    const parsed = readMdxFile(file);
+    if (parsed && isPublishedLocaleFrontmatter(parsed.data, locale)) {
+      translation = { ...parsed, folder };
+      break;
+    }
   }
-  const frontmatter = parsed.data;
-  const content = parsed.content;
-  const baseTitle = baseFrontmatter?.title;
-  const baseSeoTitle = baseFrontmatter?.seoTitle;
-  const titleIsInherited =
-    typeof frontmatter.title === "string" &&
-    typeof baseTitle === "string" &&
-    frontmatter.title === baseTitle;
-  const seoTitleIsInherited =
-    typeof frontmatter.seoTitle === "string" &&
-    typeof baseSeoTitle === "string" &&
-    frontmatter.seoTitle === baseSeoTitle;
+  if (!translation) return getArticleBySlug(category, slug);
+  const { data: frontmatter, content, folder } = translation;
+  const canonicalCategory = normalizeCategory(folder);
+  const baseHeadlines = new Set(
+    [
+      base?.data.title,
+      base?.data.seoTitle,
+      base && translatedBodyHeadline(base.content),
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim()),
+  );
+  function localized(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const headline = value.trim();
+    return headline && !baseHeadlines.has(headline) ? headline : undefined;
+  }
+  const localizedSeoTitle = localized(frontmatter.seoTitle);
   const localizedTitle =
-    typeof frontmatter.title === "string" && !titleIsInherited
-      ? frontmatter.title
-      : undefined;
-  const localizedSeoTitle =
-    typeof frontmatter.seoTitle === "string" && !seoTitleIsInherited
-      ? frontmatter.seoTitle
-      : undefined;
-  const bodyHeadline =
-    titleIsInherited && seoTitleIsInherited
-      ? translatedBodyHeadline(content)
-      : undefined;
-  const title =
-    bodyHeadline ??
-    (titleIsInherited && localizedSeoTitle
-      ? localizedSeoTitle
-      : frontmatter.title || "Untitled");
-  const seoTitle =
-    bodyHeadline ??
-    (seoTitleIsInherited && localizedTitle
-      ? localizedTitle
-      : frontmatter.seoTitle);
+    localized(frontmatter.title) ??
+    localizedSeoTitle ??
+    localized(translatedBodyHeadline(content));
+  const title = localizedTitle ?? base?.data.title ?? "Untitled";
+  const seoTitle = localizedSeoTitle ?? localizedTitle ?? base?.data.seoTitle;
 
   const author =
     typeof frontmatter.author === "object"
@@ -961,11 +947,7 @@ export async function getArticleByLocale(
     id: frontmatter.id || slug,
     slug,
     title,
-    ...(titleIsInherited &&
-      !bodyHeadline &&
-      !localizedSeoTitle && {
-        titleLocale: baseFrontmatter.locale || "en",
-      }),
+    ...(!localizedTitle && base && { titleLocale: base.data.locale || "en" }),
     subtitle: frontmatter.subtitle,
     excerpt: frontmatter.excerpt
       ? cleanExcerpt(frontmatter.excerpt)
@@ -1010,7 +992,7 @@ export async function getArticleByLocale(
     locale:
       (frontmatter.locale as "en" | "id" | "it" | "ru" | "fr") ||
       (locale as "en" | "id" | "it" | "ru" | "fr"),
-    noIndex: Boolean(frontmatter.noIndex) || baseNoIndex,
+    noIndex: Boolean(frontmatter.noIndex) || Boolean(base?.data.noIndex),
   };
 }
 

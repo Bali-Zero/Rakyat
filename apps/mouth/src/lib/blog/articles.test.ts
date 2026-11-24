@@ -339,6 +339,68 @@ describe("one publication rule for local MDX", () => {
     expect(translated?.titleLocale).toBeUndefined();
   });
 
+  it.each([
+    [
+      "English SEO",
+      "English Title",
+      "English body heading",
+      "English Title",
+      "English SEO",
+      "en",
+    ],
+    [
+      "English body heading",
+      "Titolo SEO",
+      "English Title",
+      "Titolo SEO",
+      "Titolo SEO",
+      undefined,
+    ],
+    [
+      "Titolo italiano",
+      "Titolo SEO",
+      "Titolo nel testo",
+      "Titolo italiano",
+      "Titolo SEO",
+      undefined,
+    ],
+    [
+      "English Title",
+      " English Title ",
+      "English body heading",
+      "English Title",
+      undefined,
+      "en",
+    ],
+  ] as const)(
+    "resolves authored fields across English headline positions (%s, %s)",
+    async (
+      translatedTitle,
+      translatedSeo,
+      body,
+      title,
+      seoTitle,
+      titleLocale,
+    ) => {
+      const englishSeo =
+        seoTitle === undefined ? "" : 'seoTitle: "English SEO"\n';
+      disk({
+        [`business/${SLUG}.mdx`]: mdx(englishSeo, "English Title").replace(
+          "Body.",
+          "# English body heading",
+        ),
+        [`business/${SLUG}.it.mdx`]: mdx(
+          `seoTitle: "${translatedSeo}"\n`,
+          translatedTitle,
+        ).replace("Body.", `# ${body}`),
+      });
+      const article = await getArticleByLocale(CATEGORY, SLUG, "it");
+      expect(article?.title).toBe(title);
+      expect(article?.seoTitle).toBe(seoTitle);
+      expect(article?.titleLocale).toBe(titleLocale);
+    },
+  );
+
   it("indexes only real, public locale siblings in a partial translation set", async () => {
     disk({
       [`business/${SLUG}.mdx`]: mdx("", "English Title"),

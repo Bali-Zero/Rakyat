@@ -26,7 +26,7 @@ const FOLDER = path.join(ROOT, "src/content/articles/lifestyle");
 fs.mkdirSync(FOLDER, { recursive: true });
 vi.spyOn(process, "cwd").mockReturnValue(ROOT);
 
-const { getArticleByLocale, getArticleBySlug } =
+const { getArticleByLocale, getArticleBySlug, getIndexableArticleLocales } =
   await import("@/lib/blog/articles");
 const { generateArticleMetadata } = await import("@/lib/blog/metadata");
 
@@ -178,6 +178,7 @@ describe("what does not change", () => {
 
       expect(article?.title).toBe(`Judul it ${slug}`);
       expect(article?.noIndex).toBe(expected);
+      expect(getIndexableArticleLocales("living", slug)).toEqual([]);
     },
   );
 
