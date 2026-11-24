@@ -23,6 +23,7 @@ from pydantic import BaseModel, EmailStr
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_crm_user_filter
+from backend.app.routers.portal_invite import _stored_invite_address
 from backend.app.utils.crm_utils import verify_client_access
 from backend.app.utils.logging_utils import get_logger
 from backend.app.utils.service_accounts import is_human_team_member
@@ -286,7 +287,8 @@ async def send_portal_invite(
     """
     Send portal invitation to a client from CRM.
 
-    If email not provided, uses client's email from the clients table.
+    The invitation goes only to the e-mail on the client record: a different
+    address in the request is refused with 422.
 
     B1 (SPEC-p0-invite.md, 2026-08-23): this is a fourth invitation-minting
     path — `write=True` requires the caller's email to match the client's
@@ -300,7 +302,10 @@ async def send_portal_invite(
         # Get client email if not provided
         email = request.email if request else None
 
-        if not email:
+        if email:
+            async with db_pool.acquire() as conn:
+                email = await _stored_invite_address(client_id, email, conn)
+        else:
             async with db_pool.acquire() as conn:
                 client = await conn.fetchrow(
                     "SELECT email FROM clients WHERE id = $1",
