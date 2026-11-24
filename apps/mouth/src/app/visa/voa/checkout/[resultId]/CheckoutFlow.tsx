@@ -105,6 +105,19 @@ export function CheckoutFlow({
     router.replace(`/visa/voa/orders/${order.order_id}`);
   }, [state, router, resultId]);
 
+  // Back from the provider restores this page from the back-forward cache with
+  // its state still `created`, a submit button that stays disabled. A created
+  // order never stays on this page, so a cache restore goes to its tracker.
+  useEffect(() => {
+    if (state.step !== "created") return;
+    const orderId = state.order.order_id;
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) router.replace(`/visa/voa/orders/${orderId}`);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [state, router]);
+
   if (!paymentsLive) {
     return <PaymentActivatingPanel resultId={resultId} tracker={tracker} />;
   }
