@@ -143,6 +143,7 @@ async def _count_deadlines(conn: asyncpg.Connection, user_email: str) -> int:
               FROM compliance_alerts a
               JOIN clients c ON c.id = a.client_id
              WHERE lower(c.assigned_to) = $1
+               AND c.deleted_at IS NULL
                AND a.status = ANY($2::text[])
                AND a.deadline <= (CURRENT_DATE + ($3 || ' days')::interval)
             """,

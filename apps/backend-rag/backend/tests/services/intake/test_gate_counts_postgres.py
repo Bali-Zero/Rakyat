@@ -7,7 +7,7 @@ import json
 import os
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import asyncpg
 import pytest
@@ -95,6 +95,76 @@ async def _delete_proposal_fixture(pool: asyncpg.Pool, fixture: tuple[int, int])
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM intake_queue WHERE id = $1", queue_id)
         await conn.execute("DELETE FROM document_instances WHERE id = $1", instance_id)
+
+
+async def _insert_deadline_alert_client(
+    pool: asyncpg.Pool, *, staff_email: str, deleted: bool
+) -> tuple[int, str]:
+    client_name = f"Synthetic Gate Client {uuid.uuid4().hex}"
+    alert_id = f"synthetic-gate-alert-{uuid.uuid4().hex}"
+    async with pool.acquire() as conn:
+        client_id = await conn.fetchval(
+            """
+            INSERT INTO clients (full_name, assigned_to, deleted_at)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            """,
+            client_name,
+            staff_email,
+            datetime.now() if deleted else None,
+        )
+        await conn.execute(
+            """
+            INSERT INTO compliance_alerts
+                (alert_id, client_id, category, severity, status, deadline, days_until, dedup_key)
+            VALUES ($1, $2, 'visa_expiry', 'urgent', 'pending', $3, 1, $4)
+            """,
+            alert_id,
+            client_id,
+            date.today() + timedelta(days=1),
+            f"synthetic-gate:{client_id}:{alert_id}",
+        )
+    return client_id, alert_id
+
+
+async def _delete_deadline_alert_client(
+    pool: asyncpg.Pool, *, client_id: int, alert_id: str
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM compliance_alerts WHERE alert_id = $1", alert_id)
+        await conn.execute("DELETE FROM clients WHERE id = $1", client_id)
+
+
+@pytest.mark.asyncio
+async def test_gate_does_not_count_deadline_alert_for_soft_deleted_client(
+    pool: asyncpg.Pool,
+) -> None:
+    staff_email = f"synthetic-gate-{uuid.uuid4().hex}@example.test"
+    client_id, alert_id = await _insert_deadline_alert_client(
+        pool, staff_email=staff_email, deleted=True
+    )
+    try:
+        result = await evaluate_gate_status(pool, user_email=staff_email)
+    finally:
+        await _delete_deadline_alert_client(pool, client_id=client_id, alert_id=alert_id)
+
+    assert result["sections"]["deadlines"]["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_gate_counts_deadline_alert_for_live_client(
+    pool: asyncpg.Pool,
+) -> None:
+    staff_email = f"synthetic-gate-{uuid.uuid4().hex}@example.test"
+    client_id, alert_id = await _insert_deadline_alert_client(
+        pool, staff_email=staff_email, deleted=False
+    )
+    try:
+        result = await evaluate_gate_status(pool, user_email=staff_email)
+    finally:
+        await _delete_deadline_alert_client(pool, client_id=client_id, alert_id=alert_id)
+
+    assert result["sections"]["deadlines"]["count"] == 1
 
 
 @pytest.mark.asyncio
