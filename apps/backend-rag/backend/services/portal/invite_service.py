@@ -14,6 +14,8 @@ from typing import Any
 
 import asyncpg
 import bcrypt
+from pydantic.networks import validate_email
+from pydantic_core import PydanticCustomError
 
 from backend.app.utils.logging_utils import get_logger
 from backend.app.utils.service_accounts import is_group_staff
@@ -137,6 +139,66 @@ def _canonical_address(invitation: Any) -> str:
     return (invitation["email"] or "").strip().lower()
 
 
+#: A staff send or resend to one client waits this long after the client's
+#: latest invitation, and stops at this many invitations in a rolling day.
+#: Production measured at most three to one client in 30 minutes
+#: (2026-09-21), so neither bound meets a real resend.
+INVITE_SEND_COOLDOWN_SECONDS = 60
+INVITE_SENDS_PER_DAY = 10
+
+
+class InvitationAddressNotOnRecord(ValueError):
+    """The address an invitation would be minted for is not the client's
+    address on record at the moment of minting."""
+
+
+def comparable_address(text: str | None) -> str:
+    """The form in which two spellings of one mailbox compare equal.
+
+    A request address arrives through pydantic's EmailStr, which turns an
+    IDNA domain into Unicode, composes Unicode (NFC) and lowercases the
+    domain. A stored address is given the same treatment, then both are
+    lowercased whole. A stored value that does not parse as an address is
+    compared trimmed and lowercased, so it can never match a valid request.
+    """
+    stripped = (text or "").strip()
+    try:
+        stripped = validate_email(stripped)[1]
+    except PydanticCustomError:
+        pass
+    return stripped.lower()
+
+
+async def invitation_wait_seconds(conn: Any, client_id: int) -> int | None:
+    """Seconds a new staff send to this client must wait, or None.
+
+    Counts every invitation row of the client, whoever minted it. Earlier
+    live links to the same address stay valid by design (see
+    `create_invitation`); this bound is what keeps their number, and the
+    mail a mailbox receives, small.
+    """
+    wait = await conn.fetchval(
+        """
+        WITH recent AS (
+            SELECT created_at FROM client_invitations
+            WHERE client_id = $1 AND created_at > NOW() - INTERVAL '1 day'
+        )
+        SELECT CEIL(GREATEST(
+            CASE WHEN (SELECT COUNT(*) FROM recent) >= $3
+                 THEN EXTRACT(EPOCH FROM (SELECT MIN(created_at) FROM recent)
+                                         + INTERVAL '1 day' - NOW())
+            END,
+            EXTRACT(EPOCH FROM (SELECT MAX(created_at) FROM recent)
+                               + make_interval(secs => $2) - NOW())
+        ))::int
+        """,
+        client_id,
+        INVITE_SEND_COOLDOWN_SECONDS,
+        INVITE_SENDS_PER_DAY,
+    )
+    return wait if wait is not None and wait > 0 else None
+
+
 async def _registration_state(
     conn: Any, client_id: int | None, canonical: str | None
 ) -> tuple[dict[str, Any] | None, int | None]:
@@ -250,6 +312,17 @@ class InviteService:
             )
             if not client:
                 raise ValueError(f"Client with ID {client_id} not found")
+
+            # Every caller passes the address it read from the client record,
+            # but that read and this one are separate: a record edited in
+            # between would mint a link for the old address. Checked here,
+            # on the row this mint reads, before anything is written.
+            if not client["email"] or comparable_address(client["email"]) != comparable_address(
+                email
+            ):
+                raise InvitationAddressNotOnRecord(
+                    "The invitation address is not the e-mail on the client record"
+                )
 
             # A re-invite to the SAME address must not kill the link already
             # sitting in that inbox. It used to: every send expired the

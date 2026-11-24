@@ -6,6 +6,7 @@ mocked.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, patch
 
 from backend.app.routers.portal_invite import resend_invitation
@@ -43,11 +44,13 @@ async def test_resend_sends_the_invitation_email_to_the_stored_address(pool) -> 
     assert await invitation_rows(pool, client_id) == [STORED]
 
 
-async def test_resend_reports_an_email_failure_honestly(pool) -> None:
+async def test_resend_reports_an_email_failure_without_its_text(pool, caplog) -> None:
     client_id = await seed_client(pool, STORED)
+    diagnostic = f"550 mailbox {STORED} rejected by relay-internal-7"
+    caplog.set_level(logging.DEBUG)
     with patch(
         "backend.app.routers.portal_invite.send_portal_invite_email",
-        new=AsyncMock(side_effect=RuntimeError("brevo unavailable")),
+        new=AsyncMock(side_effect=RuntimeError(diagnostic)),
     ):
         response = await resend_invitation(
             client_id,
@@ -57,5 +60,8 @@ async def test_resend_reports_an_email_failure_honestly(pool) -> None:
         )
     assert response["success"] is True
     assert response["email_sent"] is False
-    assert response["email_error"] == "brevo unavailable"
+    assert response["email_error"] == "delivery_failed"
     assert "check email service" in response["message"]
+    assert diagnostic not in str(response)
+    assert "relay-internal-7" not in caplog.text
+    assert "RuntimeError" in caplog.text

@@ -23,6 +23,11 @@ from backend.app.utils.crm_utils import is_active_tax_department_member, verify_
 from backend.app.utils.logging_utils import get_logger
 from backend.app.utils.service_accounts import is_human_team_member
 from backend.services.portal import InviteService
+from backend.services.portal.invite_service import (
+    InvitationAddressNotOnRecord,
+    comparable_address,
+    invitation_wait_seconds,
+)
 
 logger = get_logger(__name__)
 
@@ -250,34 +255,51 @@ async def _verify_invite_write_access(client_id: int, current_user: dict, conn) 
     await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
 
 
-async def _stored_invite_address(client_id: int, requested: str, conn) -> str:
+_NO_ADDRESS_ON_RECORD = (
+    "This client has no e-mail on the client record. "
+    "Add the client's e-mail to the client record first, then send the invitation."
+)
+_ONLY_THE_ADDRESS_ON_RECORD = (
+    "Invitations are sent only to the e-mail on the client record. "
+    "Update the client's e-mail on the client record first, then send the invitation."
+)
+#: What a failed delivery reports. The sender's exception text can carry the
+#: recipient or provider internals, so neither the answer nor the log repeats it.
+_DELIVERY_FAILED = "delivery_failed"
+
+
+async def _stored_invite_address(client_id: int, requested: str | None, conn) -> str:
     """Return the e-mail on the client record, the only address an invitation may go to.
 
     The address an invitation is sent to becomes the client's login identity, so it is
-    never taken from the request: a request address that differs from the stored one
-    (trimmed, case-insensitive) is refused, and so is a client with no stored address.
+    never taken from the request: a request address that is not the stored one, compared
+    as `comparable_address` spells both, is refused, and so is a client with no stored
+    address. With no request address the stored one is used.
     """
     row = await conn.fetchrow(
         "SELECT email FROM clients WHERE id = $1 AND deleted_at IS NULL", client_id
     )
     stored = ((row["email"] if row else None) or "").strip()
     if not stored:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "This client has no e-mail on the client record. "
-                "Add the client's e-mail to the client record first, then send the invitation."
-            ),
-        )
-    if stored.lower() != str(requested).strip().lower():
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Invitations are sent only to the e-mail on the client record. "
-                "Update the client's e-mail on the client record first, then send the invitation."
-            ),
-        )
+        raise HTTPException(status_code=422, detail=_NO_ADDRESS_ON_RECORD)
+    if requested is not None and comparable_address(stored) != comparable_address(str(requested)):
+        raise HTTPException(status_code=422, detail=_ONLY_THE_ADDRESS_ON_RECORD)
     return stored
+
+
+async def _refuse_a_flood(client_id: int, conn) -> None:
+    """429 while the client's mailbox is inside the send bounds of `invitation_wait_seconds`."""
+    wait = await invitation_wait_seconds(conn, client_id)
+    if wait:
+        minutes = -(-wait // 60)
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "An invitation was sent to this client recently. "
+                f"Try again in {minutes} minute{'s' if minutes != 1 else ''}."
+            ),
+            headers={"Retry-After": str(wait)},
+        )
 
 
 # ================================================
@@ -315,6 +337,7 @@ async def send_invitation(
     async with db_pool.acquire() as conn:
         await _verify_invite_write_access(request.client_id, current_user, conn)
         invite_email = await _stored_invite_address(request.client_id, request.email, conn)
+        await _refuse_a_flood(request.client_id, conn)
 
     try:
         result = await invite_service.create_invitation(
@@ -344,8 +367,12 @@ async def send_invitation(
             email_sent = True
             logger.info(f"Invitation email sent (client_id={request.client_id})")
         except Exception as email_err:
-            email_error = str(email_err)
-            logger.warning("Failed to send invitation email: %s", email_err)
+            email_error = _DELIVERY_FAILED
+            logger.warning(
+                "Invitation email not sent (client_id=%s, error=%s)",
+                request.client_id,
+                type(email_err).__name__,
+            )
 
         logger.info(
             f"Invitation created for client {request.client_id} by {current_user.get('email')}",
@@ -363,6 +390,8 @@ async def send_invitation(
             "data": _invitation_public_view(result),
         }
 
+    except InvitationAddressNotOnRecord as e:
+        raise HTTPException(status_code=422, detail=_ONLY_THE_ADDRESS_ON_RECORD) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -430,6 +459,7 @@ async def resend_invitation(
     # before the try block so its HTTPException is never rewritten to a 500.
     async with db_pool.acquire() as conn:
         await _verify_invite_write_access(client_id, current_user, conn)
+        await _refuse_a_flood(client_id, conn)
 
     try:
         result = await invite_service.resend_invitation(
@@ -451,8 +481,12 @@ async def resend_invitation(
             email_sent = True
             logger.info(f"Invitation email sent (client_id={client_id})")
         except Exception as email_err:
-            email_error = str(email_err)
-            logger.warning("Failed to send invitation email: %s", email_err)
+            email_error = _DELIVERY_FAILED
+            logger.warning(
+                "Invitation email not sent (client_id=%s, error=%s)",
+                client_id,
+                type(email_err).__name__,
+            )
 
         logger.info(f"Invitation resent for client {client_id} by {current_user.get('email')}")
 
@@ -465,6 +499,8 @@ async def resend_invitation(
             "data": _invitation_public_view(result),
         }
 
+    except InvitationAddressNotOnRecord as e:
+        raise HTTPException(status_code=422, detail=_ONLY_THE_ADDRESS_ON_RECORD) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

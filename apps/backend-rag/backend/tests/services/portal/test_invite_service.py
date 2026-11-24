@@ -84,7 +84,7 @@ async def test_create_invitation_supersedes_only_other_addresses_and_returns_inv
     expires_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     conn = FakeConnection(
         fetchrow_results=[
-            {"id": 7, "full_name": "Client Name", "email": "old@example.com"},
+            {"id": 7, "full_name": "Client Name", "email": "client@example.com"},
             {"id": 44, "token": "token-abc", "expires_at": expires_at, "created_at": expires_at},
         ],
     )
@@ -625,7 +625,7 @@ async def test_create_invitation_stores_the_digest_and_mails_the_raw_token() -> 
     expires_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     conn = FakeConnection(
         fetchrow_results=[
-            {"id": 7, "full_name": "Client Name", "email": "old@example.com"},
+            {"id": 7, "full_name": "Client Name", "email": "client@example.com"},
             {"id": 44, "expires_at": expires_at, "created_at": expires_at},
         ],
     )
