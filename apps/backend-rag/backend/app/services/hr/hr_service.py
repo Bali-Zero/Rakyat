@@ -64,6 +64,10 @@ class OffPayrollError(Exception):
     """The employee's card says `on_payroll = false`: no payroll item may be created for them."""
 
 
+class SelfApprovalError(ValueError):
+    """The approver is the person the bonus is for: a bonus needs a second pair of eyes."""
+
+
 #: SQL predicate over `hr_employees AS e`: true unless the card holds the JSON boolean
 #: `false` at `profile.on_payroll` (STAFF_CARD.md C12). Works on a non-object profile too.
 ON_PAYROLL_SQL = "((e.profile -> 'on_payroll') IS DISTINCT FROM 'false'::jsonb)"
@@ -661,14 +665,17 @@ class HRService:
             return [dict(r) for r in rows]
 
     async def approve_bonus(self, bonus_id: int, approved_by: str) -> dict[str, Any]:
-        """Approve a pending bonus, unless its payroll month is already approved or paid or its
-        employee is outside the payroll set (OffPayrollError)."""
+        """Approve a pending bonus, unless its payroll month is already approved or paid, its
+        employee is outside the payroll set (OffPayrollError) or the approver is the employee
+        it is for (SelfApprovalError, a ValueError)."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 await _lock_bonus_allocations(conn, exclusive=False)
                 cur = await conn.fetchrow(
                     """
                     SELECT status, employee_id, deferred_from,
+                           (SELECT b.team_member_id FROM hr_employees b
+                             WHERE b.id = hr_bonus_ledger.employee_id) AS beneficiary,
                            EXTRACT(MONTH FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS m,
                            EXTRACT(YEAR FROM (awarded_at AT TIME ZONE 'Asia/Makassar'))::int AS y
                     FROM hr_bonus_ledger WHERE id = $1 FOR UPDATE
@@ -690,6 +697,10 @@ class HRService:
                 if in_set is not True:
                     msg = "This person is not on payroll"
                     raise OffPayrollError(msg)
+                beneficiary = cur.get("beneficiary")  # the login the bonus is for, if it has a card
+                if beneficiary is not None and str(beneficiary) == str(approved_by):
+                    msg = "A bonus needs an approver other than the person it is for"
+                    raise SelfApprovalError(msg)
                 row = await conn.fetchrow(
                     """
                     UPDATE hr_bonus_ledger
