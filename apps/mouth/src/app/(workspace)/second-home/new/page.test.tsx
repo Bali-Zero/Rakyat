@@ -1,9 +1,21 @@
 import React from "react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  E33E_LIVE_PRICE_KEY,
+  E33F_OFFSHORE_LIVE_PRICE_KEY,
+  E33_LIVE_PRICE_CATEGORY,
+  E33_LIVE_PRICE_KEY,
+} from "@/lib/secondhome-studio/pricing-key";
+import { getPricingSnapshotEntry } from "@/lib/pricing-snapshot";
+import {
+  HISTORICAL_PRICE_RE,
+  PRICE_LITERAL_RE,
+  visibleSourceText,
+} from "@/test/visible-source-text";
 import NewSecondHomeCasePage from "./page";
 
 const { mockMutateAsync, mockGetProfile, mockPush } = vi.hoisted(() => ({
@@ -12,17 +24,47 @@ const { mockMutateAsync, mockGetProfile, mockPush } = vi.hoisted(() => ({
   mockPush: vi.fn(),
 }));
 
-const { snapshotEntries } = vi.hoisted(() => ({
-  snapshotEntries: {
-    "E33 Second Home (5 Years)": { validity: "5 years" },
-    "E33E Second Home Senior (5 Years)": { validity: "5 years" },
-    "E33F Second Home Senior (1 Year, Offshore)": {
-      description_en:
-        "Income or allowance of USD 3,000 per month; 1 year. A sponsor (penjamin) is required." as
-          string | null | undefined,
-    },
-  },
-}));
+const catalogue = JSON.parse(
+  readFileSync(
+    join(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      "data",
+      "bali-zero-prices.json",
+    ),
+    "utf8",
+  ),
+) as {
+  services_by_category: Record<string, Record<string, Record<string, unknown>>>;
+};
+const catalogueEntries =
+  catalogue.services_by_category[E33_LIVE_PRICE_CATEGORY];
+const e33Catalogue = catalogueEntries[E33_LIVE_PRICE_KEY];
+const e33eCatalogue = catalogueEntries[E33E_LIVE_PRICE_KEY];
+const e33fCatalogue = catalogueEntries[E33F_OFFSHORE_LIVE_PRICE_KEY];
+const e33Entry = getPricingSnapshotEntry(
+  E33_LIVE_PRICE_CATEGORY,
+  E33_LIVE_PRICE_KEY,
+);
+const e33eEntry = getPricingSnapshotEntry(
+  E33_LIVE_PRICE_CATEGORY,
+  E33E_LIVE_PRICE_KEY,
+);
+const e33fEntry = getPricingSnapshotEntry(
+  E33_LIVE_PRICE_CATEGORY,
+  E33F_OFFSHORE_LIVE_PRICE_KEY,
+);
+
+/** The expected value, asserted non-empty first so a catalogue change cannot pass vacuously. */
+const expectedText = (value: unknown): string => {
+  expect(typeof value).toBe("string");
+  expect(String(value).trim()).not.toBe("");
+  return String(value);
+};
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -41,16 +83,6 @@ vi.mock("@/hooks/useSecondHome", () => ({
     mutateAsync: mockMutateAsync,
     isPending: false,
   }),
-}));
-vi.mock("@/lib/pricing-snapshot", () => ({
-  getPricingSnapshotEntry: (_category: string, key: string) =>
-    snapshotEntries[key as keyof typeof snapshotEntries],
-  getExactSnapshotPrice: (_category: string, key: string) =>
-    key === "E33 Second Home (5 Years)"
-      ? "35.000.000 IDR"
-      : key === "E33E Second Home Senior (5 Years)"
-        ? "35.000.000 IDR"
-        : null,
 }));
 vi.mock("../components/ClientPicker", () => ({
   ClientPicker: ({
@@ -72,21 +104,16 @@ describe("new Second Home case page", () => {
     vi.clearAllMocks();
     mockGetProfile.mockResolvedValue({});
     mockMutateAsync.mockResolvedValue({ case_id: "E33-2026-synthetic" });
-    snapshotEntries["E33 Second Home (5 Years)"].validity = "5 years";
-    snapshotEntries["E33E Second Home Senior (5 Years)"].validity = "5 years";
-    snapshotEntries[
-      "E33F Second Home Senior (1 Year, Offshore)"
-    ].description_en =
-      "Income or allowance of USD 3,000 per month; 1 year. A sponsor (penjamin) is required.";
   });
 
   it("states the catalogue facts for E33F: income or allowance, USD 3,000, 1 year, sponsor", () => {
     render(<NewSecondHomeCasePage />);
     const panel = screen.getByTestId("e33-facts-panel").textContent ?? "";
-    expect(panel).toMatch(/income or allowance/i);
-    expect(panel).toContain("USD 3,000");
-    expect(panel).toMatch(/1 year/i);
-    expect(panel).toMatch(/sponsor \(penjamin\) is required/i);
+    expect(panel).toContain(expectedText(e33fCatalogue.description_en));
+    expect(panel).toContain(expectedText(e33Catalogue.validity));
+    expect(panel).toContain(expectedText(e33eCatalogue.validity));
+    expect(panel).toContain(expectedText(e33Catalogue.price));
+    expect(panel).toContain(expectedText(e33eCatalogue.price));
     expect(panel).not.toMatch(/passive\s+income/i);
     // prices come from the catalogue snapshot, in its own format
     expect(panel).toMatch(/\d{2}\.\d{3}\.\d{3} IDR/);
@@ -100,29 +127,90 @@ describe("new Second Home case page", () => {
   ])(
     "shows the E33F catalogue-description unavailable state when description_en is %s",
     (_caseName, description) => {
-      snapshotEntries[
-        "E33F Second Home Senior (1 Year, Offshore)"
-      ].description_en = description as string | null | undefined;
-      render(<NewSecondHomeCasePage />);
-      const panel = screen.getByTestId("e33-facts-panel");
-      expect(panel).toHaveTextContent(
-        "Catalogue description unavailable — check the E33F catalogue entry before opening this case.",
-      );
-      expect(panel).not.toHaveTextContent(
-        "The income-only route needs a senior-income declaration.",
-      );
+      const entry = e33fEntry as unknown as Record<string, unknown>;
+      const had = Object.prototype.hasOwnProperty.call(entry, "description_en");
+      const original = entry.description_en;
+      try {
+        entry.description_en = description;
+        render(<NewSecondHomeCasePage />);
+        const panel = screen.getByTestId("e33-facts-panel");
+        expect(panel).toHaveTextContent(
+          "Catalogue description unavailable — check the E33F catalogue entry before opening this case.",
+        );
+        expect(panel).not.toHaveTextContent(
+          "The income-only route needs a senior-income declaration.",
+        );
+      } finally {
+        if (had) entry.description_en = original;
+        else delete entry.description_en;
+      }
     },
   );
 
   it("renders a present E33F catalogue description verbatim", () => {
-    const description = "Pinned E33F catalogue description.";
-    snapshotEntries[
-      "E33F Second Home Senior (1 Year, Offshore)"
-    ].description_en = description;
     render(<NewSecondHomeCasePage />);
     expect(screen.getByTestId("e33-facts-panel")).toHaveTextContent(
-      description,
+      expectedText(e33fCatalogue.description_en),
     );
+  });
+
+  it.each([
+    ["E33", e33Entry, e33Catalogue, e33eCatalogue],
+    ["E33E", e33eEntry, e33eCatalogue, e33Catalogue],
+  ])(
+    "shows validity unavailable for %s only when validity is absent",
+    (_name, liveEntry, expected, otherExpected) => {
+      expectedText(expected.validity);
+      const otherValidity = expectedText(otherExpected.validity);
+      const entry = liveEntry as unknown as Record<string, unknown>;
+      const had = Object.prototype.hasOwnProperty.call(entry, "validity");
+      const original = entry.validity;
+      for (const value of [undefined, null, "", "   "]) {
+        try {
+          if (value === undefined) delete entry.validity;
+          else entry.validity = value;
+          cleanup();
+          render(<NewSecondHomeCasePage />);
+          const panel = screen.getByTestId("e33-facts-panel");
+          expect(panel.getElementsByTagName("p")).toHaveLength(4);
+          expect(
+            panel.textContent?.match(/catalogue validity unavailable/g),
+          ).toHaveLength(1);
+          expect(panel).toHaveTextContent(otherValidity);
+        } finally {
+          if (had) entry.validity = original;
+          else delete entry.validity;
+        }
+      }
+    },
+  );
+
+  it("shows validity unavailable when the E33 catalogue entry is absent", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/pricing-snapshot", async () => {
+      const actual = await vi.importActual<
+        typeof import("@/lib/pricing-snapshot")
+      >("@/lib/pricing-snapshot");
+      return {
+        ...actual,
+        getPricingSnapshotEntry: (category: string, key: string) =>
+          category === E33_LIVE_PRICE_CATEGORY && key === E33_LIVE_PRICE_KEY
+            ? undefined
+            : actual.getPricingSnapshotEntry(category, key),
+      };
+    });
+    try {
+      const { default: FreshPage } = await import("./page");
+      render(<FreshPage />);
+      const panel = screen.getByTestId("e33-facts-panel");
+      expect(
+        panel.textContent?.match(/catalogue validity unavailable/g),
+      ).toHaveLength(1);
+      expect(panel).toHaveTextContent(expectedText(e33eCatalogue.validity));
+    } finally {
+      vi.doUnmock("@/lib/pricing-snapshot");
+      vi.resetModules();
+    }
   });
 
   it("still states the base E33 / E33E facts staff rely on", () => {
@@ -131,7 +219,7 @@ describe("new Second Home case page", () => {
     for (const fact of [
       "strata-title",
       "No sponsor",
-      "5 years",
+      expectedText(e33Catalogue.validity),
       "Pasal 113",
       "55–59",
       "BUMN",
@@ -142,10 +230,17 @@ describe("new Second Home case page", () => {
     }
   });
 
-  it("the page source carries no IDR literal and no passive-income phrase", () => {
+  it("the page source carries no price literal or passive-income phrase", () => {
     const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
-    expect(src).not.toMatch(/\bIDR\s*[0-9]/i);
-    expect(src).not.toMatch(/passive\s+income/i);
+    const text = visibleSourceText(src, "page.tsx");
+    expect(text.some((value) => PRICE_LITERAL_RE.test(value))).toBe(false);
+    expect(text.some((value) => HISTORICAL_PRICE_RE.test(value))).toBe(false);
+    expect(text.some((value) => /passive\s+income/i.test(value))).toBe(false);
+    expect(
+      visibleSourceText("<p>35.000.000 IDR</p>").some((value) =>
+        PRICE_LITERAL_RE.test(value),
+      ),
+    ).toBe(true);
   });
 
   it("posts no owner_email when the owner is blank", async () => {

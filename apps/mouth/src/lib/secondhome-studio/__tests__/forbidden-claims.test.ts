@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { COPY } from "../copy";
+import {
+  HISTORICAL_PRICE_RE,
+  PRICE_LITERAL_RE,
+  visibleSourceText,
+} from "@/test/visible-source-text";
 
 /**
  * The e33_claim_guard forbidden-pattern list, verbatim from
@@ -39,19 +44,6 @@ const FORBIDDEN_PATTERNS: Record<string, RegExp> = {
   youreThere: /you'?re\s+there|you\s+are\s+there/i,
   passiveIncomeBasis: /passive\s+income/i,
 };
-
-/** Generalized IDR price-literal check for the JSX source-scan (P2-C13) —
- *  broader than PRICE_LITERAL_PATTERN below (which only pins the two
- *  known historical values, 35M/39M): any IDR figure with 6+ digits
- *  hardcoded directly into a component would bypass usePricingData. */
-const JSX_PRICE_LITERAL_RE =
-  /\b(?:IDR\s*[0-9][0-9.,]{5,}|[0-9][0-9.,]{5,}\s*IDR)\b/i;
-
-/** No hardcoded IDR price literal anywhere — the figure renders only from
- *  usePricingData. Covers both the pre-repricing (39M) and current (35M)
- *  values so a future reprice can't silently reintroduce a stale one. */
-const PRICE_LITERAL_PATTERN =
-  /35[,.]?000[,.]?000|39[,.]?000[,.]?000|\b39M\b|\b35M\b/i;
 
 interface CopyEntry {
   path: string;
@@ -96,9 +88,7 @@ describe("forbidden-claims sweep — every string in COPY", () => {
   );
 
   it("no copy string contains a hardcoded price literal (35M/39M in any form)", () => {
-    const violations = entries.filter((e) =>
-      PRICE_LITERAL_PATTERN.test(e.value),
-    );
+    const violations = entries.filter((e) => HISTORICAL_PRICE_RE.test(e.value));
     expect(
       violations,
       `price literal leaked in: ${violations.map((v) => v.path).join(", ")}`,
@@ -106,24 +96,20 @@ describe("forbidden-claims sweep — every string in COPY", () => {
   });
 });
 
-describe("forbidden-claims sweep — generalized IDR price literal in COPY", () => {
-  it("no copy string contains any IDR figure of 6+ digits (not only 35M/39M)", () => {
-    const violations = entries.filter((e) =>
-      JSX_PRICE_LITERAL_RE.test(e.value),
-    );
+describe("forbidden-claims sweep — price literals in COPY", () => {
+  it("no copy string contains a currency price literal", () => {
+    const violations = entries.filter((e) => PRICE_LITERAL_RE.test(e.value));
     expect(
       violations,
       `IDR price literal leaked in: ${violations.map((v) => v.path).join(", ")}`,
     ).toEqual([]);
   });
 
-  it("guilt: the generalized pattern fires on an E33E price that PRICE_LITERAL_PATTERN misses", () => {
-    expect(PRICE_LITERAL_PATTERN.test("IDR 45,000,000 all-inclusive")).toBe(
+  it("guilt: the currency pattern fires on an E33E price the historical pattern misses", () => {
+    expect(HISTORICAL_PRICE_RE.test("IDR 45,000,000 all-inclusive")).toBe(
       false,
     );
-    expect(JSX_PRICE_LITERAL_RE.test("IDR 45,000,000 all-inclusive")).toBe(
-      true,
-    );
+    expect(PRICE_LITERAL_RE.test("IDR 45,000,000 all-inclusive")).toBe(true);
   });
 });
 
@@ -211,10 +197,10 @@ describe("guilt fixtures — each pattern actually fires on a known-bad string",
   });
 
   it("the price-literal pattern fires on known-bad price strings", () => {
-    expect(PRICE_LITERAL_PATTERN.test("IDR 35,000,000")).toBe(true);
-    expect(PRICE_LITERAL_PATTERN.test("IDR 39.000.000")).toBe(true);
-    expect(PRICE_LITERAL_PATTERN.test("only 39M")).toBe(true);
-    expect(PRICE_LITERAL_PATTERN.test("just 35M all-in")).toBe(true);
+    expect(HISTORICAL_PRICE_RE.test("IDR 35,000,000")).toBe(true);
+    expect(HISTORICAL_PRICE_RE.test("IDR 39.000.000")).toBe(true);
+    expect(HISTORICAL_PRICE_RE.test("only 39M")).toBe(true);
+    expect(HISTORICAL_PRICE_RE.test("just 35M all-in")).toBe(true);
   });
 });
 
@@ -348,7 +334,7 @@ describe("positive pins — required phrasing is actually present", () => {
   it("dependents are described as priced in the free fit memo, never with a figure", () => {
     const dependentsNote = COPY.wizard.family.dependentsNote.toLowerCase();
     expect(dependentsNote).toContain("fit memo");
-    expect(PRICE_LITERAL_PATTERN.test(dependentsNote)).toBe(false);
+    expect(HISTORICAL_PRICE_RE.test(dependentsNote)).toBe(false);
   });
 
   it("save-plan bar carries the deck's link warning and clear-plan action string", () => {
@@ -437,154 +423,7 @@ describe("terminology delta — 'fit-check result' only, never assessment/certif
   });
 });
 
-/**
- * P2-C13 (Codex) — the sweep above only ever walked `COPY`'s object tree,
- * so a forbidden claim hardcoded DIRECTLY into a component's JSX (a
- * literal string never routed through `getCopy`) was invisible to it.
- * This half source-scans every non-test `.tsx` file under
- * `app/visa/second-home/studio/` for string/template-literal content and
- * runs the SAME `FORBIDDEN_PATTERNS` (plus a generalized IDR price-literal
- * check) over what it finds.
- *
- * `extractStringLiterals` is a small hand-rolled tokenizer (comments vs.
- * string/template literals), not a full JS parser — "pragmatic regex is
- * fine" per the fix mandate. It is comment-aware in BOTH directions: a
- * `//`/`/* *\/` comment is matched and discarded as one token (so a quoted
- * phrase INSIDE a comment is never mistaken for a real string literal),
- * and a string literal containing `//` (e.g. a `https://...` URL) is
- * matched as a single string token because the tokenizer decides by the
- * character at the CURRENT scan position, not by the first `//` anywhere
- * in the line — verified directly below with both cases.
- */
-const STRING_TOKEN_RE =
-  /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g;
-
-function extractStringLiterals(src: string): string[] {
-  const out: string[] = [];
-  for (const match of src.matchAll(STRING_TOKEN_RE)) {
-    const token = match[0];
-    if (token.startsWith("//") || token.startsWith("/*")) continue;
-    out.push(token.slice(1, -1));
-  }
-  return out;
-}
-
-/**
- * JSX text children (`<p>You can open it at any bank. IDR 45,000,000</p>`)
- * are not quoted tokens, so `extractStringLiterals` never sees them — and
- * that is where staff/studio copy normally lives. Comments are stripped
- * first so commented-out markup is not scanned; the text between `>` or `}`
- * and the next `<` or `{` (so `{expr}` is excluded, its neighbours are not)
- * is kept.
- */
-const JSX_TEXT_RE = /[>}]([^<>{}]*[A-Za-z0-9][^<>{}]*)(?=[<{]|$)/g;
-
-function stripCommentsOutsideVisibleText(src: string): string {
-  let out = "";
-  let index = 0;
-  let quote: "'" | '"' | "`" | null = null;
-  let inJsxTag = false;
-  let inJsxText = false;
-  let closingJsxTag = false;
-
-  while (index < src.length) {
-    const char = src[index];
-    const next = src[index + 1];
-
-    if (quote) {
-      out += char;
-      if (char === "\\") {
-        out += next ?? "";
-        index += 2;
-        continue;
-      }
-      if (char === quote) quote = null;
-      index += 1;
-      continue;
-    }
-
-    if (inJsxText) {
-      out += char;
-      if (char === "<") {
-        inJsxText = false;
-        inJsxTag = true;
-        closingJsxTag = next === "/";
-      } else if (char === "{") {
-        inJsxText = false;
-      }
-      index += 1;
-      continue;
-    }
-
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-      out += char;
-      index += 1;
-      continue;
-    }
-
-    if (char === "<") {
-      inJsxTag = true;
-      closingJsxTag = next === "/";
-      out += char;
-      index += 1;
-      continue;
-    }
-
-    if (char === ">" && inJsxTag) {
-      inJsxTag = false;
-      inJsxText = !closingJsxTag && src[index - 1] !== "/";
-      out += char;
-      index += 1;
-      continue;
-    }
-
-    if (char === "/" && next === "/") {
-      const end = src.indexOf("\n", index);
-      const commentEnd = end === -1 ? src.length : end;
-      out += " ".repeat(commentEnd - index);
-      index = commentEnd;
-      continue;
-    }
-
-    if (char === "/" && next === "*") {
-      const end = src.indexOf("*/", index + 2);
-      const commentEnd = end === -1 ? src.length : end + 2;
-      out += src.slice(index, commentEnd).replace(/[^\n]/g, " ");
-      index = commentEnd;
-      continue;
-    }
-
-    out += char;
-    index += 1;
-  }
-
-  return out;
-}
-
-function normalizeJsxStringExpressions(src: string): string {
-  return src.replace(
-    /\{\s*(["'])((?:\\.|(?!\1)[\s\S])*)\1\s*\}/g,
-    (_, _quote: string, value: string) => {
-      const decoded = value.replace(/\\([\\"'])/g, "$1");
-      return decoded;
-    },
-  );
-}
-
-function extractJsxText(src: string): string[] {
-  const visibleSource = normalizeJsxStringExpressions(
-    stripCommentsOutsideVisibleText(src),
-  );
-  return Array.from(visibleSource.matchAll(JSX_TEXT_RE), (m) =>
-    m[1].replace(/\s+/g, " ").trim(),
-  );
-}
-
-/** Everything a reader can see in a source file: quoted literals + JSX text. */
-function extractScannableText(src: string): string[] {
-  return [...extractStringLiterals(src), ...extractJsxText(src)];
-}
+/** Source text is extracted by the TypeScript parser, not a hand-rolled lexer. */
 
 const STUDIO_SRC_DIR = join(
   __dirname,
@@ -631,10 +470,27 @@ const scannedSourceFiles = [
   ...listSourceFiles(WORKSPACE_SECOND_HOME_DIR),
 ];
 
-describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixtures)", () => {
+const SOURCE_PRICE_PATTERNS = [PRICE_LITERAL_RE, HISTORICAL_PRICE_RE];
+
+function sourceViolations(
+  files: Array<{ file: string; source: string }>,
+  patterns: RegExp[],
+): string[] {
+  const violations: string[] = [];
+  for (const { file, source } of files) {
+    for (const text of visibleSourceText(source, file)) {
+      if (patterns.some((pattern) => pattern.test(text))) {
+        violations.push(`${file}: ${JSON.stringify(text)}`);
+      }
+    }
+  }
+  return violations;
+}
+
+describe("visibleSourceText — parser fixtures", () => {
   it("guilt: catches a forbidden phrase inside a real string literal", () => {
     const src = `const x = "You can open the account at any bank.";`;
-    const hit = extractStringLiterals(src).some((s) =>
+    const hit = visibleSourceText(src).some((s) =>
       FORBIDDEN_PATTERNS.anyBank.test(s),
     );
     expect(hit).toBe(true);
@@ -642,15 +498,13 @@ describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixt
 
   it("guilt: catches a generalized IDR price literal beyond 35M/39M", () => {
     const src = `const x = "IDR 42,500,000 total.";`;
-    const hit = extractStringLiterals(src).some((s) =>
-      JSX_PRICE_LITERAL_RE.test(s),
-    );
+    const hit = visibleSourceText(src).some((s) => PRICE_LITERAL_RE.test(s));
     expect(hit).toBe(true);
   });
 
   it("innocence: a forbidden-looking phrase INSIDE a // line comment is not extracted as a string", () => {
     const src = `// any bank works here, this is only a comment\nconst x = "USD 130,000";`;
-    const hit = extractStringLiterals(src).some((s) =>
+    const hit = visibleSourceText(src).some((s) =>
       FORBIDDEN_PATTERNS.anyBank.test(s),
     );
     expect(hit).toBe(false);
@@ -658,7 +512,7 @@ describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixt
 
   it("innocence: a forbidden-looking phrase INSIDE a /* */ block comment is not extracted as a string", () => {
     const src = `/**\n * any bank — historical note only\n */\nconst x = "USD 130,000";`;
-    const hit = extractStringLiterals(src).some((s) =>
+    const hit = visibleSourceText(src).some((s) =>
       FORBIDDEN_PATTERNS.anyBank.test(s),
     );
     expect(hit).toBe(false);
@@ -666,19 +520,19 @@ describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixt
 
   it("a string literal containing '//' (a URL) is extracted whole, not truncated at the comment-like slashes", () => {
     const src = `const x = "https://balizero.com/visa/second-home/studio";`;
-    const literals = extractStringLiterals(src);
+    const literals = visibleSourceText(src);
     expect(literals).toContain("https://balizero.com/visa/second-home/studio");
   });
 
   it("guilt: preserves JSX text when an attribute contains a URL", () => {
     const src = `<a href="https://example.test">Open at any bank. IDR 45,000,000</a>`;
-    const text = extractScannableText(src);
+    const text = visibleSourceText(src);
     expect(text.some((s) => FORBIDDEN_PATTERNS.anyBank.test(s))).toBe(true);
-    expect(text.some((s) => JSX_PRICE_LITERAL_RE.test(s))).toBe(true);
+    expect(text.some((s) => PRICE_LITERAL_RE.test(s))).toBe(true);
   });
 
   it("guilt: normalizes JSX string expressions before matching whitespace", () => {
-    const text = extractScannableText(`<p>passive{" "}income</p>`);
+    const text = visibleSourceText(`<p>passive{" "}income</p>`);
     expect(
       text.some((s) => FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s)),
     ).toBe(true);
@@ -687,26 +541,23 @@ describe("extractStringLiterals — the tokenizer itself (guilt + innocence fixt
   it.each(["45.000.000 IDR", "45,000,000 IDR"])(
     "guilt: catches an amount-then-currency JSX price literal: %s",
     (price) => {
-      const text = extractScannableText(`<p>${price}</p>`);
-      expect(text.some((s) => JSX_PRICE_LITERAL_RE.test(s))).toBe(true);
+      const text = visibleSourceText(`<p>${price}</p>`);
+      expect(text.some((s) => PRICE_LITERAL_RE.test(s))).toBe(true);
     },
   );
 });
 
-describe("extractJsxText — JSX text children (guilt + innocence fixtures)", () => {
+describe("visibleSourceText — JSX text children", () => {
   it("guilt: a price written as JSX text is seen and flagged", () => {
     const src = `export const X = () => (<p className="x">E33E costs IDR 45,000,000</p>);`;
-    expect(
-      extractStringLiterals(src).some((s) => JSX_PRICE_LITERAL_RE.test(s)),
-    ).toBe(false);
-    expect(
-      extractScannableText(src).some((s) => JSX_PRICE_LITERAL_RE.test(s)),
-    ).toBe(true);
+    expect(visibleSourceText(src).some((s) => PRICE_LITERAL_RE.test(s))).toBe(
+      true,
+    );
   });
 
   it("guilt: 'passive income' and 'any bank' as multi-line JSX text are flagged", () => {
     const src = `const X = () => (\n  <div>\n    <p>\n      USD 3,000/month passive\n      income only. Open it at any bank.\n    </p>\n  </div>\n);`;
-    const text = extractScannableText(src);
+    const text = visibleSourceText(src);
     expect(
       text.some((s) => FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s)),
     ).toBe(true);
@@ -714,15 +565,15 @@ describe("extractJsxText — JSX text children (guilt + innocence fixtures)", ()
   });
 
   it("guilt: the scratch fixture a scan would meet is flagged, a clean one is not", () => {
-    const dirty = `<strong>E33F</strong> — USD 3,000/month passive income only, IDR 35,000,000`;
-    const clean = `<strong>E33F</strong> — income or allowance of at least USD 3,000/month`;
+    const dirty = `<p><strong>E33F</strong> — USD 3,000/month passive income only, IDR 35,000,000</p>`;
+    const clean = `<p><strong>E33F</strong> — income or allowance of at least USD 3,000/month</p>`;
     expect(
-      extractScannableText(dirty).some((s) =>
+      visibleSourceText(dirty).some((s) =>
         FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s),
       ),
     ).toBe(true);
     expect(
-      extractScannableText(clean).some((s) =>
+      visibleSourceText(clean).some((s) =>
         FORBIDDEN_PATTERNS.passiveIncomeBasis.test(s),
       ),
     ).toBe(false);
@@ -730,7 +581,7 @@ describe("extractJsxText — JSX text children (guilt + innocence fixtures)", ()
 
   it("innocence: commented-out markup and {expressions} are not scanned as text", () => {
     const src = `// <p>any bank</p>\nconst X = () => <p>{price} all-in</p>;`;
-    const text = extractJsxText(src);
+    const text = visibleSourceText(src);
     expect(text.some((s) => FORBIDDEN_PATTERNS.anyBank.test(s))).toBe(false);
     expect(text).toContain("all-in");
   });
@@ -756,29 +607,37 @@ describe("source-scan — JSX literals and JSX text under app/visa/second-home/s
   it.each(Object.entries(FORBIDDEN_PATTERNS))(
     "no JSX string/template literal or JSX text in the scanned tree matches the %s pattern",
     (name, pattern) => {
-      const violations: string[] = [];
-      for (const file of scannedSourceFiles) {
-        const src = readFileSync(file, "utf8");
-        for (const literal of extractScannableText(src)) {
-          if (pattern.test(literal)) {
-            violations.push(`${file}: ${JSON.stringify(literal)}`);
-          }
-        }
-      }
+      const violations = sourceViolations(
+        scannedSourceFiles.map((file) => ({
+          file,
+          source: readFileSync(file, "utf8"),
+        })),
+        [pattern],
+      );
       expect(violations, violations.join("\n")).toEqual([]);
     },
   );
 
-  it("no JSX string/template literal contains a generalized IDR price literal", () => {
-    const violations: string[] = [];
-    for (const file of scannedSourceFiles) {
-      const src = readFileSync(file, "utf8");
-      for (const literal of extractScannableText(src)) {
-        if (JSX_PRICE_LITERAL_RE.test(literal)) {
-          violations.push(`${file}: ${JSON.stringify(literal)}`);
-        }
-      }
-    }
+  it("applies the historical-price pattern through the same source sweep", () => {
+    expect(
+      sourceViolations(
+        [
+          { file: "fixture.tsx", source: "<p>39.000.000</p>" },
+          { file: "fixture.tsx", source: "<p>35M</p>" },
+        ],
+        SOURCE_PRICE_PATTERNS,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("no visible source text contains a price literal", () => {
+    const violations = sourceViolations(
+      scannedSourceFiles.map((file) => ({
+        file,
+        source: readFileSync(file, "utf8"),
+      })),
+      SOURCE_PRICE_PATTERNS,
+    );
     expect(violations, violations.join("\n")).toEqual([]);
   });
 });
