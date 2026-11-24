@@ -83,8 +83,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // 4. Blog articles (from local MDX content, excluding noIndex articles)
   try {
-    const [{ articles }, noIndexSlugs, localeInventory] = await Promise.all([
-      getAllArticles({ limit: 10000 }),
+    // The listing fetch has a deadline. Synchronous MDX scans on the same
+    // event loop must wait until the backend has supplied its English URLs.
+    const { articles } = await getAllArticles({ limit: 10000 });
+    const [noIndexSlugs, localeInventory] = await Promise.all([
       getNoIndexSlugs(),
       getIndexableArticleLocaleInventory(),
     ]);

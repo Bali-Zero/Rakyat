@@ -135,6 +135,35 @@ function staticVisaOracleRoutes(): string[] {
   return staticRoutesUnder(VISA_ORACLE_DIR, "/visa-oracle");
 }
 
+it("waits for the backend article listing before starting synchronous MDX scans", async () => {
+  const {
+    getAllArticles,
+    getNoIndexSlugs,
+    getIndexableArticleLocaleInventory,
+  } = await import("@/lib/blog/articles");
+  const scans = [
+    vi.mocked(getNoIndexSlugs),
+    vi.mocked(getIndexableArticleLocaleInventory),
+  ];
+  for (const scan of scans) scan.mockClear();
+
+  let finishListing!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finishListing = resolve;
+  });
+  vi.mocked(getAllArticles).mockImplementationOnce(async () => {
+    await pending;
+    return { articles: [], total: 0 };
+  });
+
+  const result = sitemap();
+  const scansWhileFetching = scans.map((scan) => scan.mock.calls.length);
+  finishListing();
+  await result;
+  expect(scansWhileFetching).toEqual([0, 0]);
+  for (const scan of scans) expect(scan).toHaveBeenCalledTimes(1);
+});
+
 describe("sitemap — visa funnel findability", () => {
   it("has a route tree to check (the probe can produce a positive)", () => {
     // Guard against the empty-set failure mode: a walk that finds nothing
