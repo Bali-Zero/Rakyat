@@ -79,6 +79,8 @@ interface ArticleWithFAQJsonLdProps {
   title: string;
   description: string;
   slug: string;
+  canonicalUrl?: string;
+  locale?: string;
   category: string;
   publishedAt: string;
   updatedAt?: string;
@@ -95,6 +97,8 @@ export function ArticleWithFAQJsonLd({
   title,
   description,
   slug,
+  canonicalUrl,
+  locale = "en-US",
   category,
   publishedAt,
   updatedAt,
@@ -106,7 +110,7 @@ export function ArticleWithFAQJsonLd({
   answerSnippet,
   entityMentions,
 }: Readonly<ArticleWithFAQJsonLdProps>) {
-  const articleUrl = `${baseUrl}/${category}/${slug}`;
+  const articleUrl = canonicalUrl ?? `${baseUrl}/${category}/${slug}`;
   const imageUrl = image?.startsWith("http")
     ? image
     : `${baseUrl}${image || "/static/og-image.jpg"}`;
@@ -134,7 +138,7 @@ export function ArticleWithFAQJsonLd({
         dateModified: updatedAt || publishedAt,
         lastReviewed: updatedAt || publishedAt,
         reviewedBy: { "@id": `${baseUrl}/#organization` },
-        inLanguage: "en-US",
+        inLanguage: locale,
         breadcrumb: { "@id": `${baseUrl}/#breadcrumb` },
       },
       {
@@ -158,7 +162,7 @@ export function ArticleWithFAQJsonLd({
         keywords: tags?.join(", "),
         wordCount: readingTime ? readingTime * 200 : undefined,
         articleSection: category,
-        inLanguage: "en-US",
+        inLanguage: locale,
         isAccessibleForFree: true,
         speakable: {
           "@type": "SpeakableSpecification",
@@ -197,6 +201,8 @@ interface EnhancedArticleJsonLdProps {
   title: string;
   description: string;
   slug: string;
+  canonicalUrl?: string;
+  locale?: string;
   category: string;
   publishedAt: string;
   updatedAt?: string;
@@ -212,6 +218,8 @@ export function EnhancedArticleJsonLd({
   title,
   description,
   slug,
+  canonicalUrl,
+  locale = "en-US",
   category,
   publishedAt,
   updatedAt,
@@ -221,7 +229,7 @@ export function EnhancedArticleJsonLd({
   answerSnippet,
   entityMentions,
 }: Readonly<EnhancedArticleJsonLdProps>) {
-  const articleUrl = `${baseUrl}/${category}/${slug}`;
+  const articleUrl = canonicalUrl ?? `${baseUrl}/${category}/${slug}`;
   const imageUrl = image?.startsWith("http")
     ? image
     : `${baseUrl}${image || "/static/og-image.jpg"}`;
@@ -248,7 +256,7 @@ export function EnhancedArticleJsonLd({
         dateModified: updatedAt || publishedAt,
         lastReviewed: updatedAt || publishedAt,
         reviewedBy: { "@id": `${baseUrl}/#organization` },
-        inLanguage: "en-US",
+        inLanguage: locale,
       },
       {
         "@type": ["Article", "NewsArticle"],
@@ -271,7 +279,7 @@ export function EnhancedArticleJsonLd({
         keywords: tags?.join(", "),
         wordCount: readingTime ? readingTime * 200 : undefined,
         articleSection: category,
-        inLanguage: "en-US",
+        inLanguage: locale,
         isAccessibleForFree: true,
         speakable: {
           "@type": "SpeakableSpecification",

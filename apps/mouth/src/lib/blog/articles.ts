@@ -249,6 +249,22 @@ export function extractBodyExcerpt(body: string): string {
   return "";
 }
 
+/** A translation's first, plain Markdown H1 is an editorial headline, not text to infer. */
+function translatedBodyHeadline(content: string): string | undefined {
+  const firstLine = content
+    .split("\n")
+    .find((line) => line.trim() !== "")
+    ?.trim();
+  const match = firstLine?.match(/^#\s+(.+)$/);
+  const headline = match?.[1]?.trim();
+  // Keep this intentionally narrow: no JSX, links, interpolation, or Markdown
+  // decoration is promoted into the document title.
+  if (!headline || headline.length > 180 || /[<>{}\[\]`*_]/.test(headline)) {
+    return undefined;
+  }
+  return headline;
+}
+
 /** Default cover images per normalized category (files that actually exist in public/static/blog/) */
 const CATEGORY_COVER_DEFAULTS: Record<string, string> = {
   visas: "/static/blog/kitas-guide.jpg",
@@ -562,7 +578,21 @@ const CATEGORY_FOLDERS: Record<ArticleCategory, string[]> = {
   trends: ["emerging_trends", "tech", "social_media"],
 };
 
-async function getAllMdxSlugs(): Promise<
+/** Enumerate each content folder once, including its translation files. */
+function articleFilesByFolder(): Map<ArticleFolderName, Set<string>> {
+  const folders = new Map<ArticleFolderName, Set<string>>();
+  for (const folder of ARTICLE_FOLDER_NAMES) {
+    const dir = articleFolderPath(folder);
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      folders.set(folder, new Set(fs.readdirSync(dir)));
+    }
+  }
+  return folders;
+}
+
+async function getAllMdxSlugs(
+  filesByFolder = articleFilesByFolder(),
+): Promise<
   { folderCategory: string; category: ArticleCategory; slug: string }[]
 > {
   const slugs: {
@@ -571,28 +601,10 @@ async function getAllMdxSlugs(): Promise<
     slug: string;
   }[] = [];
 
-  if (!fs.existsSync(ARTICLES_PATH)) return slugs;
-
-  const categories = ARTICLE_FOLDER_NAMES.filter((item) => {
-    const itemPath = articleFolderPath(item);
-    return fs.existsSync(itemPath) && fs.statSync(itemPath).isDirectory();
-  });
-
-  for (const folderCategory of categories) {
-    const categoryPath = articleFolderPath(folderCategory);
-    const files = fs
-      .readdirSync(categoryPath)
-      .filter(
-        (file) =>
-          file.endsWith(".mdx") &&
-          !file.endsWith(".id.mdx") &&
-          !file.endsWith(".it.mdx") &&
-          !file.endsWith(".ru.mdx") &&
-          !file.endsWith(".fr.mdx") &&
-          !file.includes(".sync-conflict-"),
-      );
-
+  for (const [folderCategory, files] of filesByFolder) {
     for (const file of files) {
+      if (!file.endsWith(".mdx") || !isArticleFileSlug(file.slice(0, -4)))
+        continue;
       slugs.push({
         folderCategory,
         category: normalizeCategory(folderCategory),
@@ -643,19 +655,6 @@ export function isArticleHidden(category: string, slug: string): boolean {
   if (!filePath) return false;
   const parsed = readMdxFile(filePath);
   return !parsed || !isPublishedFrontmatter(parsed.data);
-}
-
-/**
- * Whether the English file of this article asks to stay out of search. The
- * English file governs its translations: when it is hidden they are hidden,
- * and when it is kept out of search so are they. A translation is written
- * once and the English flag can be set later, so the flag is read here and
- * not expected in every translation file.
- */
-function isEnglishArticleNoIndex(category: string, slug: string): boolean {
-  const filePath = findMdxFile(category, slug);
-  if (!filePath) return false;
-  return Boolean(readMdxFile(filePath)?.data.noIndex);
 }
 
 /**
@@ -779,7 +778,7 @@ async function getMdxArticleBySlug(
 
   return {
     id: frontmatter.id || slug,
-    slug: frontmatter.slug || slug,
+    slug,
     title: frontmatter.title || "Untitled",
     subtitle: frontmatter.subtitle,
     excerpt: frontmatter.excerpt
@@ -788,14 +787,14 @@ async function getMdxArticleBySlug(
     content: content,
     coverImage: resolveCoverImage(
       frontmatter.coverImage || frontmatter.image?.src,
-      normalizeCategory(frontmatter.category || category),
+      normalizeCategory(category),
     ),
     cardImage:
       frontmatter.cardImage ||
       deriveCardImage(frontmatter.coverImage || frontmatter.image?.src),
     coverImageAlt:
       frontmatter.coverImageAlt || frontmatter.image?.alt || frontmatter.title,
-    category: normalizeCategory(frontmatter.category || category),
+    category: normalizeCategory(category),
     tags: normalizeTags(frontmatter.tags),
     author,
     createdAt: new Date(frontmatter.publishedAt || Date.now()),
@@ -890,94 +889,126 @@ export async function getArticleByLocale(
   if (!isArticleTranslationLocale(locale) || !isArticleFileSlug(slug)) {
     return getArticleBySlug(category, slug);
   }
-  // A hidden English article hides its translations too.
-  if (isArticleHidden(category, slug)) return null;
+  // Read the reviewed English metadata once. Translation files occasionally
+  // retain one English field while the other contains the editor's localized
+  // alternative; use that alternative rather than presenting an English H1 or
+  // HTML title to a localized reader.
+  const basePath = findMdxFile(category, slug);
+  if (!basePath) return getArticleBySlug(category, slug);
+  const base = readMdxFile(basePath);
+  // A local translation cannot outlive its unpublished, unreadable, or absent
+  // English owner. This also prevents orphan files acquiring their own URL.
+  if (!base || !isPublishedFrontmatter(base.data)) return null;
+  const baseFrontmatter = base.data;
+  const baseNoIndex = Boolean(base.data.noIndex);
+  const baseFolder = path.basename(path.dirname(basePath));
+  if (!isArticleFolderName(baseFolder)) return getArticleBySlug(category, slug);
+  const canonicalCategory = normalizeCategory(baseFolder);
 
-  // Try locale-specific MDX file
-  const normalizedCategory = normalizeCategory(category);
-  const possibleFolders = CATEGORY_FOLDERS[normalizedCategory] || [category];
-
-  for (const folder of possibleFolders) {
-    if (!isArticleFolderName(folder)) continue;
-    const localePath = articleLocaleMdxPath(folder, slug, locale);
-    if (fs.existsSync(localePath)) {
-      // Skip unreadable and unpublished locale files.
-      const parsed = readMdxFile(localePath);
-      if (!parsed || !isPublishedFrontmatter(parsed.data)) continue;
-      const frontmatter = parsed.data;
-      const content = parsed.content;
-
-      const author =
-        typeof frontmatter.author === "object"
-          ? frontmatter.author
-          : {
-              id: "zantara-ai",
-              name: "Zantara AI",
-              avatar: "/static/zantara-avatar.png",
-              role: "AI Research Assistant",
-              isAI: true,
-            };
-
-      return {
-        id: frontmatter.id || slug,
-        slug: frontmatter.slug || slug,
-        title: frontmatter.title || "Untitled",
-        subtitle: frontmatter.subtitle,
-        excerpt: frontmatter.excerpt
-          ? cleanExcerpt(frontmatter.excerpt)
-          : extractBodyExcerpt(content),
-        content,
-        coverImage: resolveCoverImage(
-          frontmatter.coverImage || frontmatter.image?.src,
-          normalizeCategory(frontmatter.category || category),
-        ),
-        cardImage:
-          frontmatter.cardImage ||
-          deriveCardImage(frontmatter.coverImage || frontmatter.image?.src),
-        coverImageAlt:
-          frontmatter.coverImageAlt ||
-          frontmatter.image?.alt ||
-          frontmatter.title,
-        category: normalizeCategory(frontmatter.category || category),
-        tags: normalizeTags(frontmatter.tags),
-        author,
-        createdAt: new Date(frontmatter.publishedAt || Date.now()),
-        updatedAt: new Date(
-          frontmatter.updatedAt || frontmatter.publishedAt || Date.now(),
-        ),
-        publishedAt: frontmatter.publishedAt
-          ? new Date(frontmatter.publishedAt)
-          : undefined,
-        status: frontmatter.status || "published",
-        featured: frontmatter.featured || false,
-        trending: frontmatter.trending || false,
-        seoTitle: frontmatter.seoTitle,
-        seoDescription: frontmatter.seoDescription,
-        readingTime:
-          frontmatter.readingTime ||
-          Math.ceil(content.split(/\s+/).length / 200),
-        viewCount: frontmatter.viewCount || 0,
-        shareCount: frontmatter.shareCount || 0,
-        likeCount: frontmatter.likeCount || 0,
-        commentCount: frontmatter.commentCount || 0,
-        aiGenerated: frontmatter.aiGenerated || false,
-        aiConfidenceScore: frontmatter.aiConfidenceScore,
-        aiOptimization: frontmatter.aiOptimization || undefined,
-        faq: frontmatter.faq || undefined,
-        contentStructure: frontmatter.contentStructure || undefined,
-        relatedArticleIds: frontmatter.relatedArticles || [],
-        locale:
-          (frontmatter.locale as "en" | "id" | "it" | "ru" | "fr") ||
-          (locale as "en" | "id" | "it" | "ru" | "fr"),
-        noIndex:
-          Boolean(frontmatter.noIndex) ||
-          isEnglishArticleNoIndex(category, slug),
-      };
-    }
+  // Only the folder selected for the English route may supply its sibling.
+  // This matches findMdxFile precedence when folders share a public category.
+  const localePath = articleLocaleMdxPath(baseFolder, slug, locale);
+  if (!fs.existsSync(localePath)) return getArticleBySlug(category, slug);
+  const parsed = readMdxFile(localePath);
+  if (!parsed || !isPublishedLocaleFrontmatter(parsed.data, locale)) {
+    return getArticleBySlug(category, slug);
   }
+  const frontmatter = parsed.data;
+  const content = parsed.content;
+  const baseTitle = baseFrontmatter?.title;
+  const baseSeoTitle = baseFrontmatter?.seoTitle;
+  const titleIsInherited =
+    typeof frontmatter.title === "string" &&
+    typeof baseTitle === "string" &&
+    frontmatter.title === baseTitle;
+  const seoTitleIsInherited =
+    typeof frontmatter.seoTitle === "string" &&
+    typeof baseSeoTitle === "string" &&
+    frontmatter.seoTitle === baseSeoTitle;
+  const localizedTitle =
+    typeof frontmatter.title === "string" && !titleIsInherited
+      ? frontmatter.title
+      : undefined;
+  const localizedSeoTitle =
+    typeof frontmatter.seoTitle === "string" && !seoTitleIsInherited
+      ? frontmatter.seoTitle
+      : undefined;
+  const bodyHeadline =
+    titleIsInherited && seoTitleIsInherited
+      ? translatedBodyHeadline(content)
+      : undefined;
+  const title =
+    bodyHeadline ??
+    (titleIsInherited && localizedSeoTitle
+      ? localizedSeoTitle
+      : frontmatter.title || "Untitled");
+  const seoTitle =
+    bodyHeadline ??
+    (seoTitleIsInherited && localizedTitle
+      ? localizedTitle
+      : frontmatter.seoTitle);
 
-  // Fallback to English
-  return getArticleBySlug(category, slug);
+  const author =
+    typeof frontmatter.author === "object"
+      ? frontmatter.author
+      : {
+          id: "zantara-ai",
+          name: "Zantara AI",
+          avatar: "/static/zantara-avatar.png",
+          role: "AI Research Assistant",
+          isAI: true,
+        };
+
+  return {
+    id: frontmatter.id || slug,
+    slug,
+    title,
+    subtitle: frontmatter.subtitle,
+    excerpt: frontmatter.excerpt
+      ? cleanExcerpt(frontmatter.excerpt)
+      : extractBodyExcerpt(content),
+    content,
+    coverImage: resolveCoverImage(
+      frontmatter.coverImage || frontmatter.image?.src,
+      canonicalCategory,
+    ),
+    cardImage:
+      frontmatter.cardImage ||
+      deriveCardImage(frontmatter.coverImage || frontmatter.image?.src),
+    coverImageAlt:
+      frontmatter.coverImageAlt || frontmatter.image?.alt || frontmatter.title,
+    category: canonicalCategory,
+    tags: normalizeTags(frontmatter.tags),
+    author,
+    createdAt: new Date(frontmatter.publishedAt || Date.now()),
+    updatedAt: new Date(
+      frontmatter.updatedAt || frontmatter.publishedAt || Date.now(),
+    ),
+    publishedAt: frontmatter.publishedAt
+      ? new Date(frontmatter.publishedAt)
+      : undefined,
+    status: frontmatter.status || "published",
+    featured: frontmatter.featured || false,
+    trending: frontmatter.trending || false,
+    seoTitle,
+    seoDescription: frontmatter.seoDescription,
+    readingTime:
+      frontmatter.readingTime || Math.ceil(content.split(/\s+/).length / 200),
+    viewCount: frontmatter.viewCount || 0,
+    shareCount: frontmatter.shareCount || 0,
+    likeCount: frontmatter.likeCount || 0,
+    commentCount: frontmatter.commentCount || 0,
+    aiGenerated: frontmatter.aiGenerated || false,
+    aiConfidenceScore: frontmatter.aiConfidenceScore,
+    aiOptimization: frontmatter.aiOptimization || undefined,
+    faq: frontmatter.faq || undefined,
+    contentStructure: frontmatter.contentStructure || undefined,
+    relatedArticleIds: frontmatter.relatedArticles || [],
+    locale:
+      (frontmatter.locale as "en" | "id" | "it" | "ru" | "fr") ||
+      (locale as "en" | "id" | "it" | "ru" | "fr"),
+    noIndex: Boolean(frontmatter.noIndex) || baseNoIndex,
+  };
 }
 
 /**
@@ -1004,6 +1035,118 @@ export function getAvailableLocales(category: string, slug: string): string[] {
   }
 
   return locales;
+}
+
+type IndexableLocalArticle = {
+  folder: ArticleFolderName;
+  category: ArticleCategory;
+};
+
+function isPublishedLocaleFrontmatter(
+  data: Record<string, any>,
+  locale: ArticleTranslationLocale,
+): boolean {
+  return (
+    isPublishedFrontmatter(data) && (!data.locale || data.locale === locale)
+  );
+}
+
+/**
+ * Resolve the reviewed English file that owns this public route. This is kept
+ * deliberately local and route-scoped: SSR language metadata must never need
+ * to enumerate the corpus to answer for one article.
+ */
+function getIndexableLocalArticle(
+  category: string,
+  slug: string,
+): IndexableLocalArticle | null {
+  const filePath = findMdxFile(category, slug);
+  if (!filePath) return null;
+
+  const parsed = readMdxFile(filePath);
+  if (!parsed || !isPublishedFrontmatter(parsed.data) || parsed.data.noIndex) {
+    return null;
+  }
+  if (parsed.data.locale && parsed.data.locale !== "en") return null;
+  const folder = path.basename(path.dirname(filePath));
+  if (!isArticleFolderName(folder)) return null;
+  const canonicalCategory = normalizeCategory(folder);
+  if (normalizeCategory(category) !== canonicalCategory) return null;
+  return { folder, category: canonicalCategory };
+}
+
+function indexableLocalesForLocalArticle(
+  slug: string,
+  base: IndexableLocalArticle,
+  files?: ReadonlySet<string>,
+): string[] {
+  const locales = ["en"];
+  for (const locale of ARTICLE_TRANSLATION_LOCALES) {
+    const file = articleLocaleMdxPath(base.folder, slug, locale);
+    if (files ? !files.has(`${slug}.${locale}.mdx`) : !fs.existsSync(file))
+      continue;
+    const parsed = readMdxFile(file);
+    if (
+      !parsed ||
+      !isPublishedLocaleFrontmatter(parsed.data, locale) ||
+      parsed.data.noIndex
+    ) {
+      continue;
+    }
+    locales.push(locale);
+  }
+  return locales;
+}
+
+/**
+ * Public, indexable local variants for one canonical article route. Backend
+ * articles intentionally return no variants: their English URL is handled by
+ * the caller without making a filesystem inventory scan.
+ */
+export function getIndexableArticleLocales(
+  category: string,
+  slug: string,
+): string[] {
+  if (!isArticleFileSlug(slug)) return [];
+  const base = getIndexableLocalArticle(category, slug);
+  return base ? indexableLocalesForLocalArticle(slug, base) : [];
+}
+
+export type IndexableArticleLocaleInventory = ReadonlyMap<
+  string,
+  readonly string[]
+>;
+
+function articleLocaleInventoryKey(category: string, slug: string): string {
+  return `${category}/${slug}`;
+}
+
+const getIndexableArticleLocaleInventoryCached = unstable_cache(
+  async (): Promise<[string, string[]][]> => {
+    const inventory = new Map<string, readonly string[]>();
+    const seen = new Set<string>();
+    const folders = articleFilesByFolder();
+    for (const { category, slug } of await getAllMdxSlugs(folders)) {
+      const key = articleLocaleInventoryKey(category, slug);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const base = getIndexableLocalArticle(category, slug);
+      if (base) {
+        inventory.set(
+          articleLocaleInventoryKey(base.category, slug),
+          indexableLocalesForLocalArticle(slug, base, folders.get(base.folder)),
+        );
+      }
+    }
+    return Array.from(inventory, ([key, locales]) => [key, [...locales]]);
+  },
+  ["indexable-article-locale-inventory-v1"],
+  { revalidate: 60 },
+);
+
+/** One cached full-corpus snapshot for bulk consumers such as the sitemap. */
+export async function getIndexableArticleLocaleInventory(): Promise<IndexableArticleLocaleInventory> {
+  return new Map(await getIndexableArticleLocaleInventoryCached());
 }
 
 /**

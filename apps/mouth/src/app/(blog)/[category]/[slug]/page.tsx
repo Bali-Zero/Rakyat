@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { cache, type ReactNode } from "react";
 import { notFound, permanentRedirect } from "next/navigation";
 import {
   getArticleBySlug,
   getArticleByLocale,
-  getAvailableLocales,
+  getIndexableArticleLocales,
   resolveCategoryAlias,
 } from "@/lib/blog/articles";
 import { resolveContentLocale } from "@/i18n/content-locale";
+import { LOCALES, LOCALE_NAMES } from "@/i18n/types";
+import { articleLanguageUrl } from "@/lib/blog/article-language-urls";
 import { ContentLangSync } from "@/i18n/ContentLangSync";
 import { generateArticleMetadata } from "@/lib/blog/metadata";
 import { CATEGORY_SEO } from "@/lib/blog/category-seo";
@@ -31,6 +33,14 @@ interface PageProps {
   }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
+
+// Metadata and the rendered page resolve the same article within a request.
+const readArticle = cache((category: string, slug: string, lang?: string) =>
+  lang
+    ? getArticleByLocale(category, slug, lang)
+    : getArticleBySlug(category, slug),
+);
+const indexableLocales = cache(getIndexableArticleLocales);
 
 // Static file paths that should NOT be handled by this route
 // 'images' included for backward compatibility (old URLs should 404, not render broken page)
@@ -93,16 +103,14 @@ export async function generateMetadata({
   }
 
   try {
-    const article = lang
-      ? await getArticleByLocale(category, slug, lang)
-      : await getArticleBySlug(category, slug);
+    const article = await readArticle(category, slug, lang);
 
     if (article) {
-      const baseMetadata = generateArticleMetadata(article);
-
-      return {
-        ...baseMetadata,
-      };
+      return generateArticleMetadata(
+        article,
+        resolveContentLocale(lang, [article.locale]),
+        article.noIndex ? [] : indexableLocales(category, slug),
+      );
     }
   } catch (err) {
     logger.error(
@@ -150,9 +158,7 @@ export default async function ArticlePage({ params, searchParams }: PageProps) {
   }
 
   // Fetch article (locale-aware) for JSON-LD injection AND SSR content
-  const article = lang
-    ? await getArticleByLocale(category, slug, lang)
-    : await getArticleBySlug(category, slug);
+  const article = await readArticle(category, slug, lang);
 
   // No article in backend NOR local MDX: hard 404 (D12 soft-404 fix).
   // getArticleBySlug/getArticleByLocale return null both for "not found";
@@ -174,16 +180,22 @@ export default async function ArticlePage({ params, searchParams }: PageProps) {
     permanentRedirect(`/${canonical}/${slug}${langSuffix}`);
   }
 
+  const contentLocale = resolveContentLocale(lang, [article.locale]);
+  const articleUrl = articleLanguageUrl(category, slug, contentLocale);
+  const locales = article.noIndex ? [] : indexableLocales(category, slug);
+
   const breadcrumbItems = [
     { name: "Home", url: "/" },
     { name: CATEGORY_LABELS[category] || category, url: `/${category}` },
-    ...(article ? [{ name: article.title, url: `/${category}/${slug}` }] : []),
+    { name: article.title, url: articleUrl },
   ];
 
   const articleProps = article
     ? {
         title: article.title,
         description: article.seoDescription || article.excerpt,
+        canonicalUrl: articleUrl,
+        locale: contentLocale,
         slug: article.slug,
         category: article.category,
         publishedAt: (article.publishedAt || article.createdAt).toISOString(),
@@ -204,47 +216,23 @@ export default async function ArticlePage({ params, searchParams }: PageProps) {
   // 'useState')` during SSR under React 19 — that uncaught throw used to unwind
   // the whole article subtree, dropping even the .rumah-putih page chrome from
   // the SSR HTML. See MDXContentRSC for the full rationale.
-  let initialArticle: SerializedArticleForClient | null = null;
+  const initialArticle: SerializedArticleForClient = {
+    ...article,
+    createdAt: article.createdAt.toISOString(),
+    updatedAt: article.updatedAt.toISOString(),
+    publishedAt: article.publishedAt?.toISOString() ?? null,
+  };
   let mdxBody: ReactNode = null;
-  if (article) {
-    const cleanContent = stripImports(article.content);
-    try {
-      // Awaited (NOT bare JSX) so a compile failure is actually caught here and
-      // degrades to the client-fetch fallback instead of crashing the page.
-      mdxBody = await renderMDXBody(cleanContent);
-      // Serialize dates to strings for the client component. mdxSource is no
-      // longer needed for SSR (the body is server-rendered and passed as a
-      // prop); ArticleClient keeps its own client-side fallback path for
-      // articles it fetches in the browser.
-      initialArticle = {
-        ...article,
-        createdAt: article.createdAt.toISOString(),
-        updatedAt: article.updatedAt.toISOString(),
-        publishedAt: article.publishedAt
-          ? article.publishedAt.toISOString()
-          : null,
-      };
-    } catch (err) {
-      logger.error(
-        "MDX server render failed in SSR, falling back to client fetch",
-        {},
-        err instanceof Error ? err : new Error(String(err)),
-      );
-      // initialArticle/mdxBody stay null — ArticleClient will fetch via API
-      // and render the body client-side (in a real browser, React-19-safe).
-      initialArticle = null;
-      mdxBody = null;
-    }
+  try {
+    mdxBody = await renderMDXBody(stripImports(article.content));
+  } catch (err) {
+    // The markdown fallback must receive the same localized article as the head.
+    logger.error(
+      "Article MDX rendering failed, using markdown",
+      {},
+      err instanceof Error ? err : new Error(String(err)),
+    );
   }
-
-  // The language this page's BODY is actually in. `?lang=xx` is a request,
-  // not an outcome: getArticleByLocale falls back to English when no
-  // `{slug}.{locale}.mdx` exists, so asking the same question it asks —
-  // getAvailableLocales — is what keeps the declaration true.
-  const contentLocale = resolveContentLocale(
-    lang,
-    getAvailableLocales(category, slug),
-  );
 
   return (
     <>
@@ -259,6 +247,30 @@ export default async function ArticlePage({ params, searchParams }: PageProps) {
         <EnhancedArticleJsonLd {...articleProps} />
       ) : null}
       <ArticleClient
+        key={articleUrl}
+        languageLinks={
+          locales.length > 1 && (
+            <nav
+              aria-label="Article languages"
+              className="flex flex-wrap gap-x-4 gap-y-2 mb-4 text-sm"
+            >
+              {LOCALES.filter((locale) => locales.includes(locale)).map(
+                (locale) => (
+                  <a
+                    key={locale}
+                    href={articleLanguageUrl(category, slug, locale)}
+                    hrefLang={locale}
+                    lang={locale}
+                    aria-current={locale === contentLocale ? "page" : undefined}
+                    className="underline underline-offset-4"
+                  >
+                    {LOCALE_NAMES[locale]}
+                  </a>
+                ),
+              )}
+            </nav>
+          )
+        }
         category={category}
         slug={slug}
         initialArticle={initialArticle}

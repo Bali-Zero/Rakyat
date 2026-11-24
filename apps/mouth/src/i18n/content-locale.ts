@@ -22,8 +22,7 @@ export const LANG_OWNER_CONTENT = "content";
 /**
  * The locale the server actually SERVED, which is not the locale that was
  * asked for: an unknown code, or a known one with no translation on disk,
- * both come back as English. Mirrors `getArticleByLocale`'s fallback — pass
- * it the same `getAvailableLocales(category, slug)` list the resolver walks.
+ * both come back as English. Article pages pass the locale from the resolved article.
  */
 export function resolveContentLocale(
   requested: string | undefined | null,
@@ -36,21 +35,5 @@ export function resolveContentLocale(
   return requested as Locale;
 }
 
-/*
- * DELIBERATELY NOT HERE: a pre-paint inline script that would stamp the
- * language into the very first parse of the document. It was written, then
- * dropped — it needs `dangerouslySetInnerHTML` on a string whose input traces
- * back to `searchParams.lang`, and its behaviour inside an RSC page (React 19
- * hoists some <script> tags) was never verified empirically. The correctness
- * fix does not depend on it: ContentLangSync already makes the right value
- * win. What the script would have bought is only EARLINESS — parse-time
- * instead of hydration-time — which is not worth an unverified construct on a
- * security-sensitive surface.
- *
- * The residual it would NOT have fixed either way: the server-rendered HTML
- * still carries the root layout's `lang="en"` attribute, because `<html>`
- * lives in the root layout and reading the request there (`headers()`) would
- * opt the ENTIRE site out of static rendering. A crawler that does not run JS
- * still sees `en`. The real cure is path-based locale routing (`/fr/...`),
- * which also fixes hreflang and the sitemap — tracked in PENDING-ARMS.
- */
+// The shared layout labels the site chrome in English. Article headings and bodies
+// carry their own server-rendered lang, before ContentLangSync runs in the browser.

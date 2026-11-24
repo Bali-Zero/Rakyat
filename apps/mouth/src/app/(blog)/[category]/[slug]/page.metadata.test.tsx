@@ -1,17 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getArticleByLocale, getArticleBySlug } from "@/lib/blog/articles";
+import { renderToString } from "react-dom/server";
+import {
+  getArticleByLocale,
+  getArticleBySlug,
+  getIndexableArticleLocales,
+} from "@/lib/blog/articles";
 import { CATEGORY_MAP } from "@/lib/blog/categories";
 import { generateArticleMetadata } from "@/lib/blog/metadata";
 import type { Article, ArticleCategory } from "@/lib/blog/types";
-import { generateMetadata } from "./page";
+import ArticlePage, { generateMetadata } from "./page";
 import { generateMetadata as categoryMetadata } from "../layout";
 
 vi.mock("@/lib/blog/articles", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/blog/articles")>()),
   getArticleBySlug: vi.fn(),
   getArticleByLocale: vi.fn(),
+  getIndexableArticleLocales: vi.fn(),
 }));
-vi.mock("./ArticleClient", () => ({ ArticleClient: () => null }));
+vi.mock("./ArticleClient", () => ({
+  ArticleClient: ({ languageLinks }: { languageLinks?: unknown }) =>
+    languageLinks ?? null,
+}));
 vi.mock("@/components/blog/MDXContentRSC", () => ({ renderMDXBody: vi.fn() }));
 vi.mock("next/navigation", async (importOriginal) =>
   importOriginal<typeof import("next/navigation")>(),
@@ -59,9 +68,56 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getArticleBySlug).mockResolvedValue(article);
   vi.mocked(getArticleByLocale).mockResolvedValue(article);
+  // Keep synthetic-slug tests isolated from the real Magazine corpus. The
+  // metadata fixture exercises one English URL unless a test opts into a
+  // translated inventory explicitly.
+  vi.mocked(getIndexableArticleLocales).mockReturnValue(["en"]);
 });
 
 describe("article metadata category validation", () => {
+  it("uses actual bare and query-string language hrefs for a translated canonical page", async () => {
+    const translated = { ...article, locale: "id" as const };
+    vi.mocked(getArticleByLocale).mockResolvedValue(translated);
+    vi.mocked(getIndexableArticleLocales).mockReturnValue(["en", "id"]);
+
+    const result = await metadata("living", "id");
+    expect(result.alternates).toEqual({
+      canonical:
+        "https://balizero.com/living/bali-digital-nomad-complete-guide?lang=id",
+      languages: {
+        en: "https://balizero.com/living/bali-digital-nomad-complete-guide",
+        id: "https://balizero.com/living/bali-digital-nomad-complete-guide?lang=id",
+        "x-default":
+          "https://balizero.com/living/bali-digital-nomad-complete-guide",
+      },
+    });
+  });
+
+  it("server-renders the production language switcher and omits it for the English fallback", async () => {
+    const translated = { ...article, locale: "id" as const };
+    vi.mocked(getArticleByLocale).mockResolvedValue(translated);
+    vi.mocked(getIndexableArticleLocales).mockReturnValue(["en", "id"]);
+    const translatedPage = await ArticlePage({
+      params: Promise.resolve({ category: "living", slug: article.slug }),
+      searchParams: Promise.resolve({ lang: "id" }),
+    });
+    const translatedHtml = renderToString(translatedPage);
+    expect(translatedHtml).toContain(
+      'href="https://balizero.com/living/bali-digital-nomad-complete-guide"',
+    );
+    expect(translatedHtml).toContain(
+      'href="https://balizero.com/living/bali-digital-nomad-complete-guide?lang=id"',
+    );
+
+    vi.mocked(getArticleBySlug).mockResolvedValue(article);
+    vi.mocked(getIndexableArticleLocales).mockReturnValue(["en"]);
+    const fallbackPage = await ArticlePage({
+      params: Promise.resolve({ category: "living", slug: article.slug }),
+      searchParams: Promise.resolve({}),
+    });
+    expect(renderToString(fallbackPage)).not.toContain("Article languages");
+  });
+
   // /blog/<real living slug> reproduced the defect: the parent renders its
   // not-found boundary, while the child's fallback lookup finds a real article
   // and overrides the parent's noindex metadata with index + googlebot.

@@ -47,6 +47,7 @@ const {
   getAllArticles,
   getArticleByLocale,
   getAvailableLocales,
+  getIndexableArticleLocales,
   searchArticles,
 } = await import("./articles");
 
@@ -315,6 +316,22 @@ describe("one publication rule for local MDX", () => {
     expect(getAvailableLocales(CATEGORY, SLUG)).toEqual(["en", "it"]);
   });
 
+  it("indexes only real, public locale siblings in a partial translation set", async () => {
+    disk({
+      [`business/${SLUG}.mdx`]: mdx("", "English Title"),
+      [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
+      [`business/${SLUG}.fr.mdx`]: mdx("noIndex: true\n"),
+      [`business/${SLUG}.ru.mdx`]: mdx("locale: it\n"),
+      [`business/${SLUG}.id.mdx`]: mdx("status: draft\n"),
+    });
+    expect(getIndexableArticleLocales(CATEGORY, SLUG)).toEqual(["en", "it"]);
+    expect((await getArticleByLocale(CATEGORY, SLUG, "ru"))?.locale).toBe("en");
+    expect((await getArticleByLocale(CATEGORY, SLUG, "fr"))?.noIndex).toBe(
+      true,
+    );
+    expect(getIndexableArticleLocales(CATEGORY, "backend-only")).toEqual([]);
+  });
+
   it("hides every translation of a hidden article", async () => {
     mockFetchOnce({ success: false }, false);
     disk({
@@ -322,6 +339,7 @@ describe("one publication rule for local MDX", () => {
       [`business/${SLUG}.it.mdx`]: mdx("", "Titolo"),
     });
     expect(await getArticleByLocale(CATEGORY, SLUG, "it")).toBeNull();
+    expect(getIndexableArticleLocales(CATEGORY, SLUG)).toEqual([]);
   });
 
   it("lists and finds only published articles", async () => {

@@ -68,6 +68,7 @@ interface ArticleClientProps {
    * (ReactMarkdown / client MDXContent), which is safe in a real browser.
    */
   mdxBody?: React.ReactNode;
+  languageLinks?: React.ReactNode;
 }
 
 // Strip JSX components from content for markdown fallback
@@ -121,6 +122,7 @@ export function ArticleClient({
   slug,
   initialArticle,
   mdxBody,
+  languageLinks,
 }: ArticleClientProps) {
   const [article, setArticle] = React.useState<ArticleWithMDX | null>(() => {
     if (!initialArticle) return null;
@@ -274,6 +276,7 @@ export function ArticleClient({
       {/* Hero */}
       <section className="relative pt-8 pb-12 md:pt-12 md:pb-16">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          {languageLinks}
           {/* Back link */}
           <Link
             href="/news"
@@ -300,7 +303,10 @@ export function ArticleClient({
           </div>
 
           {/* Title */}
-          <h1 className="font-serif text-3xl md:text-5xl font-medium tracking-tight text-[var(--r19-ink)] mb-4 leading-tight animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100">
+          <h1
+            lang={article.locale}
+            className="font-serif text-3xl md:text-5xl font-medium tracking-tight text-[var(--r19-ink)] mb-4 leading-tight animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
+          >
             {article.title}
           </h1>
 
@@ -370,7 +376,7 @@ export function ArticleClient({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
             {/* Main content - wider now */}
-            <article className="lg:col-span-8">
+            <article lang={article.locale} className="lg:col-span-8">
               {/* Article content with 30% larger text (prose-xl = 1.25rem vs prose-lg = 1.125rem) */}
               <div
                 className="prose prose-invert prose-xl max-w-none"
