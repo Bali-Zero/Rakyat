@@ -209,3 +209,15 @@ LEGACY_STATE_MAP: dict[str, str] = {
 def normalize_state(state: str) -> str:
     """Map legacy state names to current 5-state model."""
     return LEGACY_STATE_MAP.get(state, state)
+
+
+class PracticeWorkflowActionRequired(ValueError):
+    """A generic practice edit tried to perform an accounting or delivery action."""
+
+
+def require_editable_status(status: str | None) -> None:
+    stage = normalize_state(status or "")
+    if stage == "on_process":
+        raise PracticeWorkflowActionRequired("Confirm full payment in Accounting to start work.")
+    if stage == "completed":
+        raise PracticeWorkflowActionRequired("Use Final delivery to complete this practice.")

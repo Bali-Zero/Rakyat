@@ -1572,13 +1572,13 @@ class TestUpdatePractice:
         }
         mock_db_conn.fetchrow = AsyncMock(return_value=old_row)
 
-        updates = PracticeUpdate(status="completed")
+        updates = PracticeUpdate(status="sending_invoice")
 
         with (
             patch("backend.app.routers.crm_practices.is_crm_admin", return_value=True),
             patch(
                 "backend.app.routers.crm_practices.validate_transition",
-                side_effect=InvalidTransitionError("inquiry", "completed", "bad"),
+                side_effect=InvalidTransitionError("inquiry", "sending_invoice", "bad"),
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:

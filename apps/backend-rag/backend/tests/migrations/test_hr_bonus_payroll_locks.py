@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from backend.app.services.hr.hr_service import (
     BonusPeriodLockedError,
@@ -25,6 +27,7 @@ from backend.app.services.hr.hr_service import (
 )
 from backend.db.migration_base import split_migration_sql
 from backend.migrations.migration_068_hr_payroll import UPGRADE_SQL
+from backend.tests.migrations.hr_bonus_fixture import install_delivery_payroll_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -61,7 +64,7 @@ async def _pool(timeout: str | None) -> asyncpg.Pool:
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def env() -> AsyncIterator[Env]:
     admin = await asyncpg.connect(_dsn())
     pools: list[asyncpg.Pool] = []
@@ -77,6 +80,7 @@ async def env() -> AsyncIterator[Env]:
         await admin.execute(UPGRADE_SQL)
         await admin.execute(split_migration_sql(MIGRATION_354.read_text(encoding="utf-8"))[0])
         await admin.execute(split_migration_sql(MIGRATION.read_text(encoding="utf-8"))[0])
+        await install_delivery_payroll_migrations(admin)
         await admin.execute(
             "INSERT INTO team_members (id, full_name, email, role) VALUES "
             "('tm-admin','Fake Admin','fake.admin@example.com','admin'),"
@@ -339,3 +343,372 @@ async def test_rate_upsert_without_effective_from_stores_today(env: Env) -> None
         }
     )
     assert (kept["effective_from"], kept["effective_to"]) == (date(2026, 3, 1), date(2026, 12, 31))
+
+
+async def _open_followup(pool, emp_id, started_on, code="visa_demo", slot="itk"):
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            pid = await conn.fetchval(
+                "INSERT INTO practices(status) VALUES('on_process') RETURNING id"
+            )
+            await conn.execute(
+                """INSERT INTO hr_delivery_bonus_events
+                   (practice_id,employee_id,service_code,event_kind,earned_at,awarded_at)
+                   VALUES($1,$2,$3,'electronic_visa_issued',now(),now())""",
+                pid,
+                emp_id,
+                code,
+            )
+            await conn.execute(
+                """INSERT INTO practice_visa_followups
+                     (practice_id,service_code,slot_key,started_on,due_on,allow_postpone)
+                   VALUES($1,$2,$3,$4,$4::date+30,true)""",
+                pid,
+                code,
+                slot,
+                started_on,
+            )
+    return pid
+
+
+async def _award(pool, emp_id, month, amount, status="approved"):
+    return await pool.fetchval(
+        """INSERT INTO hr_bonus_ledger(employee_id,practice_type_code,amount_idr,status,source,reason,awarded_at)
+           VALUES ($1,'manual',$2,$3,'manual','fixture',$4) RETURNING id""",
+        emp_id,
+        amount,
+        status,
+        datetime(2025, month, 5, 10, tzinfo=timezone.utc),
+    )
+
+
+async def _run_month(env, month):
+    result = await env.svc.calculate_payroll(month, 2025, env.admin)
+    await env.svc.approve_payroll(result["period_id"], env.admin)
+    await env.svc.mark_payroll_paid(result["period_id"])
+    return {r["employee_name"]: r for r in result["payslips"]}
+
+
+@pytest.mark.asyncio
+async def test_one_overdue_case_holds_one_month_and_carries_each_bonus_once(env, monkeypatch):
+    from datetime import date
+
+    from backend.app.services.hr import hr_service
+
+    consultant = env.emp_id
+    colleague = await env.pool.fetchval("SELECT id FROM hr_employees WHERE team_member_id='tm-b'")
+    pid = await _open_followup(env.pool, consultant, date(2025, 1, 1))
+    await _award(env.pool, consultant, 1, 100_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 1, 31))
+    assert (await _run_month(env, 1))["Fake A"]["bonus_total"] == 100_000
+    assert not await env.pool.fetchval("SELECT count(*) FROM hr_visa_bonus_hold_periods")
+    feb = await _award(env.pool, consultant, 2, 155_000)
+    feb_pending = await _award(env.pool, consultant, 2, 45_000, "pending")
+    await _award(env.pool, colleague, 2, 75_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 28))
+    february = await _run_month(env, 2)
+    assert february["Fake A"]["base_salary"] == 5_000_000 and february["Fake A"]["bonus_total"] == 0
+    assert february["Fake B"]["bonus_total"] == 75_000
+    assert (
+        await env.pool.fetchval("SELECT status FROM hr_bonus_ledger WHERE id=$1", feb) == "approved"
+    )
+    assert await env.pool.fetchval("SELECT count(*) FROM hr_bonus_deferral_causes") == 2
+    await env.svc.approve_bonus(feb_pending, env.admin)
+    # Even confirmed receipt at day 60 leaves February's deferred payment outstanding.
+    await env.pool.execute(
+        """UPDATE practice_visa_followups SET email_state='sent', email_sent_at=now(),
+               email_receipt_confirmed_at=now(),email_receipt_confirmed_by=$2,email_receipt_reference=$3
+           WHERE practice_id=$1""",
+        pid,
+        env.admin,
+        "fixture-mail-receipt",
+    )
+    assert (
+        await env.pool.fetchval(
+            "SELECT count(*) FROM hr_visa_bonus_obligations WHERE practice_id=$1", pid
+        )
+        == 1
+    )
+    await _award(env.pool, consultant, 3, 95_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 3, 31))
+    assert (await _run_month(env, 3))["Fake A"]["bonus_total"] == 95_000
+    assert (
+        await env.pool.fetchval("SELECT status FROM hr_bonus_ledger WHERE id=$1", feb) == "approved"
+    )
+    await env.pool.execute(
+        "UPDATE practice_visa_followups SET fulfilled_at=now() WHERE practice_id=$1", pid
+    )
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 4, 30))
+    assert (await _run_month(env, 4))["Fake A"]["bonus_total"] == 200_000
+    assert (
+        await env.pool.fetchval(
+            "SELECT count(*) FROM hr_bonus_ledger WHERE id=ANY($1::bigint[]) AND status='paid'",
+            [feb, feb_pending],
+        )
+        == 2
+    )
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 5, 31))
+    assert (await _run_month(env, 5))["Fake A"]["bonus_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_overlapping_holds_release_only_when_all_contributing_cases_clear(env, monkeypatch):
+    from datetime import date
+
+    from backend.app.services.hr import hr_service
+
+    first = await _open_followup(env.pool, env.emp_id, date(2025, 1, 6))
+    second = await _open_followup(env.pool, env.emp_id, date(2025, 1, 8))
+    await _award(env.pool, env.emp_id, 2, 230_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 28))
+    assert (await _run_month(env, 2))["Fake A"]["bonus_total"] == 0
+    await env.pool.execute(
+        "UPDATE practice_visa_followups SET fulfilled_at=now() WHERE practice_id=$1", first
+    )
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 3, 31))
+    assert (await _run_month(env, 3))["Fake A"]["bonus_total"] == 0
+    await env.pool.execute(
+        "UPDATE practice_visa_followups SET fulfilled_at=now() WHERE practice_id=$1", second
+    )
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 4, 30))
+    assert (await _run_month(env, 4))["Fake A"]["bonus_total"] == 230_000
+
+
+@pytest.mark.asyncio
+async def test_due_between_calculation_and_approval_requires_recalculation(env, monkeypatch):
+    from datetime import date
+
+    from backend.app.services.hr import hr_service
+
+    await _open_followup(env.pool, env.emp_id, date(2025, 1, 25))
+    await _award(env.pool, env.emp_id, 2, 111_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 23))
+    period = (await env.svc.calculate_payroll(2, 2025, env.admin))["period_id"]
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 24))
+    with pytest.raises(PayrollBonusesChangedError):
+        await env.svc.approve_payroll(period, env.admin)
+    assert (await _run_month(env, 2))["Fake A"]["bonus_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_postponement_moves_the_deadline_and_empty_held_month_is_consumed(env, monkeypatch):
+    from datetime import date
+
+    from backend.app.services.hr import hr_service
+
+    pid = await _open_followup(env.pool, env.emp_id, date(2025, 1, 7))
+    await env.pool.execute(
+        """UPDATE practice_visa_followups SET due_on=started_on+60,
+                  postponed_at=(started_on+31)::timestamp AT TIME ZONE 'Asia/Makassar',
+                  postponed_by='test-staff',postponement_note='No arrival'
+           WHERE practice_id=$1""",
+        pid,
+    )
+    await _award(env.pool, env.emp_id, 2, 70_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 28))
+    assert (await _run_month(env, 2))["Fake A"]["bonus_total"] == 70_000
+    assert not await env.pool.fetchval("SELECT count(*) FROM hr_visa_bonus_hold_periods")
+    # The extended deadline expires during March when the consultant has no award.
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 3, 31))
+    assert (await _run_month(env, 3))["Fake A"]["bonus_total"] == 0
+    assert await env.pool.fetchval("SELECT count(*) FROM hr_visa_bonus_hold_periods") == 1
+    await _award(env.pool, env.emp_id, 4, 125_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 4, 30))
+    assert (await _run_month(env, 4))["Fake A"]["bonus_total"] == 125_000
+
+
+@asynccontextmanager
+async def _pause_approval_after_drift(env, period):
+    """Hold the real approval transaction between its amount check and payout reservation."""
+    drift_checked, resume = asyncio.Event(), asyncio.Event()
+
+    class PausedConnection:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def __getattr__(self, attr):
+            return getattr(self.conn, attr)
+
+        async def fetchval(self, query, *args):
+            result = await self.conn.fetchval(query, *args)
+            if "COALESCE(ps.bonus_total_idr" in query:
+                assert result is None
+                drift_checked.set()
+                await resume.wait()
+            return result
+
+    class PausedPool:
+        @asynccontextmanager
+        async def acquire(self):
+            async with env.pool.acquire() as conn:
+                yield PausedConnection(conn)
+
+    approving = asyncio.create_task(HRService(PausedPool()).approve_payroll(period, env.admin))
+    try:
+        await asyncio.wait_for(drift_checked.wait(), timeout=5)
+        yield
+    finally:
+        resume.set()
+        await asyncio.wait_for(approving, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_archiving_a_fulfilled_itk_cannot_reopen_a_hold_during_payroll_approval(
+    env, monkeypatch
+):
+    """Pause after the real drift read, then attempt a real archive through the document trigger."""
+    from backend.app.services.hr import hr_service
+
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 28))
+    pid = await _open_followup(env.pool, env.emp_id, date(2025, 1, 1))
+    await env.pool.execute("UPDATE practices SET client_id=76 WHERE id=$1", pid)
+    doc = await env.pool.fetchval(
+        "INSERT INTO documents(practice_id,client_id,file_id) VALUES($1,76,'example-itk') RETURNING id",
+        pid,
+    )
+    await env.pool.execute(
+        """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,updated_by)
+           VALUES($1,'visa_demo','itk',$2,'test-staff')""",
+        pid,
+        doc,
+    )
+    assert await env.pool.fetchval(
+        "SELECT fulfilled_at IS NOT NULL FROM practice_visa_followups WHERE practice_id=$1", pid
+    )
+    award = await _award(env.pool, env.emp_id, 2, 75_000)
+    period = (await env.svc.calculate_payroll(2, 2025, env.admin))["period_id"]
+    async with _pause_approval_after_drift(env, period):
+        # env.quick uses a distinct Postgres connection with a 200 ms lock timeout.
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.db_pool.execute(
+                "UPDATE documents SET is_archived=true WHERE id=$1", doc
+            )
+
+    assert (
+        await env.pool.fetchval("SELECT payroll_period_id FROM hr_bonus_ledger WHERE id=$1", award)
+        == period
+    )
+    await env.pool.execute("UPDATE documents SET is_archived=true WHERE id=$1", doc)
+    assert not await env.pool.fetchval(
+        "SELECT fulfilled_at IS NOT NULL FROM practice_visa_followups WHERE practice_id=$1", pid
+    )
+    assert (await env.svc.mark_payroll_paid(period))[
+        "status"
+    ] == "paid"  # the approved snapshot stays fixed
+
+
+async def _upload_genuine_itk(env, practice_id):
+    async with env.pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("UPDATE practices SET client_id=77 WHERE id=$1", practice_id)
+            doc_id = await conn.fetchval(
+                "INSERT INTO documents(practice_id,client_id,file_id) VALUES($1,77,'accepted-itk') RETURNING id",
+                practice_id,
+            )
+            await conn.execute(
+                """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,updated_by)
+                   VALUES($1,'visa_demo','itk',$2,'test-staff')""",
+                practice_id,
+                doc_id,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "should_hold", [False, True], ids=["released-carry", "new-single-month-hold"]
+)
+async def test_opening_an_earlier_period_serializes_with_later_period_reservation(
+    env, monkeypatch, should_hold
+):
+    from backend.app.services.hr import hr_service
+
+    if should_hold:
+        # April is the first open payroll eligible for this March-due case.
+        await _open_followup(env.pool, env.emp_id, date(2025, 2, 1))
+        award = await _award(env.pool, env.emp_id, 4, 75_000)
+        expected_april = 0
+    else:
+        # February deferred this earning. No March payroll exists, so April can reserve it.
+        case = await _open_followup(env.pool, env.emp_id, date(2025, 1, 1))
+        award = await _award(env.pool, env.emp_id, 2, 75_000)
+        monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 28))
+        assert (await _run_month(env, 2))["Fake A"]["bonus_total"] == 0
+        await _upload_genuine_itk(env, case)
+        expected_april = 75_000
+
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 4, 30))
+    april = await env.svc.calculate_payroll(4, 2025, env.admin)
+    period = april["period_id"]
+    async with _pause_approval_after_drift(env, period):
+        # March opening here would change the result of the subsequent SELECTs on READ COMMITTED.
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.calculate_payroll(3, 2025, env.admin)
+        assert not await env.pool.fetchval(
+            "SELECT id FROM hr_payroll_periods WHERE payroll_year=2025 AND payroll_month=3"
+        )
+
+    await env.svc.mark_payroll_paid(period)
+    assert (
+        await env.pool.fetchval(
+            "SELECT bonus_total_idr FROM hr_payslips WHERE employee_id=$1 AND payroll_period_id=$2",
+            env.emp_id,
+            period,
+        )
+        == expected_april
+    )
+    row = await env.pool.fetchrow(
+        "SELECT status,payroll_period_id FROM hr_bonus_ledger WHERE id=$1", award
+    )
+    assert (row["status"], row["payroll_period_id"]) == (
+        ("approved", None) if should_hold else ("paid", period)
+    )
+    assert (await _run_month(env, 3))["Fake A"]["bonus_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_postponing_after_binding_does_not_release_that_award_before_the_permit(
+    env, monkeypatch
+):
+    from backend.app.services.hr import hr_service
+
+    case = await _open_followup(env.pool, env.emp_id, date(2025, 1, 15))
+    award = await _award(env.pool, env.emp_id, 2, 155_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 2, 15))
+    assert (await _run_month(env, 2))["Fake A"]["bonus_total"] == 0
+    await env.pool.execute(
+        """UPDATE practice_visa_followups SET due_on=started_on+60,
+                  postponed_at=(started_on+32)::timestamp AT TIME ZONE 'Asia/Makassar',
+                  postponed_by='test-staff',postponement_note='No entry'
+           WHERE practice_id=$1""",
+        case,
+    )
+    await _award(env.pool, env.emp_id, 3, 40_000)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 3, 1))
+    assert (await _run_month(env, 3))["Fake A"]["bonus_total"] == 40_000  # March's own work only
+    assert (
+        await env.pool.fetchval("SELECT status FROM hr_bonus_ledger WHERE id=$1", award)
+        == "approved"
+    )
+    # Even a genuinely confirmed client message cannot clear the bound financial cause.
+    await env.pool.execute(
+        """UPDATE practice_visa_followups SET email_state='sent', email_sent_at=now(),
+                  email_receipt_confirmed_at=now(),email_receipt_confirmed_by='test-owner',
+                  email_receipt_reference='verified-fixture-receipt' WHERE practice_id=$1""",
+        case,
+    )
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 3, 16))
+    april = await env.svc.calculate_payroll(4, 2025, env.admin)
+    assert next(p for p in april["payslips"] if p["employee_name"] == "Fake A")["bonus_total"] == 0
+    assert (
+        await env.pool.fetchval(
+            "SELECT count(*) FROM hr_bonus_deferral_causes WHERE bonus_id=$1", award
+        )
+        == 1
+    )
+    await _upload_genuine_itk(env, case)
+    monkeypatch.setattr(hr_service, "business_today", lambda: date(2025, 4, 30))
+    assert (await _run_month(env, 4))["Fake A"]["bonus_total"] == 155_000
+    assert (
+        await env.pool.fetchval("SELECT status FROM hr_bonus_ledger WHERE id=$1", award) == "paid"
+    )
+    assert (await _run_month(env, 5))["Fake A"]["bonus_total"] == 0

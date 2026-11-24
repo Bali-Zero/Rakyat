@@ -68,13 +68,13 @@ export function VaultFileGrid({
   }
 
   const handleDelete = async (f: VaultFile) => {
-    if (!onDelete) return;
-    await onDelete(f);
+    if (!onDelete || f.can_remove === false) return;
+    if ((await onDelete(f)) === false) return;
     setUndoable((prev) => ({ ...prev, [f.id]: f }));
   };
 
   const handleRestore = async (f: VaultFile) => {
-    if (onRestore) await onRestore(f);
+    if (onRestore && (await onRestore(f)) === false) return;
     setUndoable((prev) => {
       const next = { ...prev };
       delete next[f.id];
@@ -158,7 +158,7 @@ export function VaultFileGrid({
                 ) : (
                   <span />
                 )}
-                {onDelete && (
+                {onDelete && f.can_remove !== false && (
                   <button
                     onClick={() => handleDelete(f)}
                     disabled={pendingId === f.id}

@@ -16,6 +16,7 @@ import { useState, use } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useProcessTimeline } from "@/hooks/useProcessTimeline";
+import { DeliveredDocuments } from "@/components/portal/process/DeliveredDocuments";
 import { ProcessTimeline } from "@/components/portal/process/ProcessTimeline";
 import { StepDetailDrawer } from "@/components/portal/process/StepDetailDrawer";
 import { TimelineSkeleton } from "@/components/portal/process/TimelineSkeleton";
@@ -96,6 +97,7 @@ export default function PracticeDetailPage({ params }: Props) {
                 <BlockedStateCTA practiceId={practiceId} />
               </div>
             )}
+            <DeliveredDocuments practiceId={practiceId} />
             <ProcessTimeline steps={data.steps} onSelect={setSelected} />
           </>
         )}

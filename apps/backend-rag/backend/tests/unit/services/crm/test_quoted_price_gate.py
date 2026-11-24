@@ -142,9 +142,9 @@ async def test_service_update_does_not_gate_a_practice_already_in_the_status() -
 async def test_service_update_does_not_gate_other_targets() -> None:
     svc, _conn = _service(
         {"status": "sending_invoice", "client_id": 1, "quoted_price": None},
-        {"id": 1, "status": "on_process"},
+        {"id": 1, "status": "waiting_documents"},
     )
-    assert (await svc.update_practice_status(1, "on_process"))["status"] == "on_process"
+    assert (await svc.update_practice_status(1, "waiting_documents"))["status"] == "waiting_documents"
 
 
 @pytest.mark.asyncio
@@ -253,7 +253,7 @@ async def test_batch_update_row_price_is_enough_and_other_statuses_are_not_looke
     opt, conn = _batch({"status": "waiting_documents", "quoted_price": Decimal("500")})
     assert await opt.batch_update_practices([{"id": 1, "status": "sending_invoice"}]) == 1
     opt, conn = _batch({"status": "waiting_documents", "quoted_price": None})
-    assert await opt.batch_update_practices([{"id": 1, "status": "on_process"}]) == 1
+    assert await opt.batch_update_practices([{"id": 1, "status": "inquiry"}]) == 1
     conn.fetchrow.assert_not_awaited()
 
 

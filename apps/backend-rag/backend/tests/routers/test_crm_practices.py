@@ -207,7 +207,7 @@ class TestUpdatePractice:
                     "client_lead": "test@balizero.com",
                 },
                 {
-                    **_practice_row(status="on_process"),
+                    **_practice_row(status="waiting_documents"),
                     "client_name": "Alice Example",
                     "client_email": "alice@example.com",
                     "client_phone": "+628400022000",
@@ -234,10 +234,10 @@ class TestUpdatePractice:
             ),
             patch("backend.app.routers.crm_practices.spawn", MagicMock()),
         ):
-            response = client.patch("/api/crm/practices/10", json={"status": "on_process"})
+            response = client.patch("/api/crm/practices/10", json={"status": "waiting_documents"})
 
         assert response.status_code == 200
-        assert response.json()["status"] == "on_process"
+        assert response.json()["status"] == "waiting_documents"
         assert response.json()["practice_type_code"] == "kitas_investor"
 
     @pytest.mark.integration
@@ -261,10 +261,10 @@ class TestUpdatePractice:
             patch("backend.app.routers.crm_practices.is_crm_admin", return_value=True),
             patch(
                 "backend.app.routers.crm_practices.validate_transition",
-                side_effect=InvalidTransitionError("inquiry", "completed"),
+                side_effect=InvalidTransitionError("inquiry", "sending_invoice"),
             ),
         ):
-            response = client.patch("/api/crm/practices/10", json={"status": "completed"})
+            response = client.patch("/api/crm/practices/10", json={"status": "sending_invoice"})
 
         assert response.status_code == 400
         assert "Invalid status transition" in response.json()["detail"]
@@ -293,6 +293,6 @@ class TestUpdatePractice:
             patch("backend.app.routers.crm_practices.is_crm_admin", return_value=True),
             patch("backend.app.routers.crm_practices.validate_transition", return_value=None),
         ):
-            response = client.patch("/api/crm/practices/10", json={"status": "on_process"})
+            response = client.patch("/api/crm/practices/10", json={"status": "waiting_documents"})
 
         assert response.status_code == 404

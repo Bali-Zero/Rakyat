@@ -145,12 +145,13 @@ describe("process board: Quoted Price gate", () => {
       practice({ quoted_price: undefined }),
     ]);
     await openMenuFor("Synthetic Alpha");
-    const onProcess = screen.getByRole("button", { name: /On Process/ });
-    expect(onProcess).toBeEnabled();
-    await userEvent.setup().click(onProcess);
+    const inquiry = screen.getByRole("button", { name: /^Inquiry$/ });
+    expect(inquiry).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^On Process$/ })).toBeNull();
+    await userEvent.setup().click(inquiry);
     await waitFor(() =>
       expect(mocks.updatePractice).toHaveBeenCalledWith(1, {
-        status: "on_process",
+        status: "inquiry",
       }),
     );
   });
@@ -192,7 +193,7 @@ describe("process board: Quoted Price gate", () => {
     await openMenuFor("Synthetic Alpha");
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: /On Process/ }));
+      .click(screen.getByRole("button", { name: /^Inquiry$/ }));
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
         "Error",

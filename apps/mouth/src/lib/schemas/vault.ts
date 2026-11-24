@@ -108,6 +108,7 @@ export const VaultFile = z.object({
 
   // Derived boolean: `status in ("verified", "issued") AND file_url is not null`.
   downloadable: z.boolean(),
+  can_remove: z.boolean().optional(),
 
   // `.isoformat()` of DB `created_at` (NOT NULL, defaults to NOW()).
   created_at: z.string(),

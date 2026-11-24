@@ -12,6 +12,10 @@ vi.mock("@/hooks/useProcessTimeline", () => ({
     mockUseProcessTimeline(practiceId),
 }));
 
+vi.mock("@/lib/api", () => ({
+  api: { get: vi.fn().mockResolvedValue({ documents: [] }) },
+}));
+
 vi.mock("@/lib/logger", () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));

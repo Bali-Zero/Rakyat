@@ -46,6 +46,7 @@ pytestmark = pytest.mark.skipif(
 _TABLES = """
 CREATE TABLE practice_types (id serial PRIMARY KEY, name text);
 CREATE TABLE practices (id serial PRIMARY KEY, practice_type_id integer);
+CREATE TABLE practice_delivery_slots(practice_id int,document_id int);
 CREATE TABLE documents (
     id serial PRIMARY KEY,
     client_id integer NOT NULL,

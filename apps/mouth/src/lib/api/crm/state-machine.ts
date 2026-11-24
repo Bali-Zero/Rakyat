@@ -195,3 +195,21 @@ export function getAllowedNextStatuses(
   }
   return next;
 }
+
+/** These stages are entered by Accounting reconciliation and final document delivery. */
+export function managedStageReason(status: string): string | null {
+  if (
+    [
+      "on_process",
+      "in_progress",
+      "submitted_to_gov",
+      "approved",
+      "active",
+    ].includes(status)
+  ) {
+    return "Started by Accounting after full settlement";
+  }
+  if (status === "completed" || status === "done")
+    return "Complete from Final delivery";
+  return null;
+}

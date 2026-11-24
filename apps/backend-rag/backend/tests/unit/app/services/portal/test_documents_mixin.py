@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from backend.services.pii.violation_store import hash_subject
 from backend.services.portal.portal_service import PortalService
@@ -102,6 +103,7 @@ async def test_get_documents_shapes_client_visible_rows() -> None:
             "practice_id": 3,
             "practice_name": "KITAS",
             "document_purpose": "Passport for KITAS renewal",
+            "can_remove": True,
         },
     ]
 
@@ -127,6 +129,7 @@ async def test_get_documents_shapes_client_visible_rows() -> None:
             "practice_id": 3,
             "practice_name": "KITAS",
             "downloadable": True,
+            "can_remove": True,
             "created_at": created_at.isoformat(),
             "purpose": "Passport for KITAS renewal",
         },
@@ -1819,3 +1822,18 @@ async def test_oauth_missing_client_root_is_persisted_under_creation_lock(monkey
     assert operations[1][1] == ("client-root", 42)
     assert "pg_advisory_unlock" in operations[2][0]
     assert drive.upload_file_to_folder.await_args.kwargs["folder_id"] == "profile-folder"
+
+
+@pytest.mark.asyncio
+async def test_portal_final_delivery_is_locked_and_refuses_client_soft_delete():
+    service, conn = _make_service_with_fetchrow(row=None)
+    conn.fetchrow.side_effect = [{"id": 19}, None]
+    with pytest.raises(HTTPException) as error:
+        await service.soft_delete_document(
+            1, 19, current_user={"client_id": 1, "email": "client@example.test"}
+        )
+    assert error.value.status_code == 409
+    lock, write = conn.fetchrow.await_args_list
+    assert "FOR UPDATE" in lock.args[0] and lock.args[1:] == (19, 1)
+    assert "NOT EXISTS (SELECT 1 FROM practice_delivery_slots" in write.args[0]
+    conn.execute.assert_not_awaited()
