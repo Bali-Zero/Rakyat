@@ -136,6 +136,9 @@ DELETED_AT_GUARD_REGISTRY = frozenset(
     {
         "_get_latest_visible_visa_document",
         "_get_profile_data",
+        # The row-locking read of update_profile's contact-change helper (profile round 3,
+        # spec R7). Not a new lock-out: it is reached only from update_profile, already here.
+        "_request_contact_changes",
         "download_document",
         "get_company_detail",
         "get_dashboard",

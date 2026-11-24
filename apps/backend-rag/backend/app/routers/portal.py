@@ -15,6 +15,7 @@ All endpoints require client authentication (role='client').
 Created: 2025-12-30
 """
 
+from collections.abc import Callable, Coroutine
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote
@@ -22,7 +23,9 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from backend.app.core.config import settings
@@ -1370,16 +1373,41 @@ class UpdateProfileRequest(BaseModel):
     phone: str | None = None
     whatsapp: str | None = None
     address: str | None = None
-    language: str | None = None
 
 
-@router.patch("/profile")
+class _NoEchoProfileRoute(APIRoute):
+    """FastAPI's default 422 echoes the submitted value (`input`, `ctx`, `url`); on the profile
+    route that value can be a contact number. A validation error is answered with `loc`, `msg`
+    and `type` only; any other exception propagates unchanged."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original(request)
+            except RequestValidationError as exc:
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "detail": [
+                            {"loc": list(err["loc"]), "msg": str(err["msg"]), "type": err["type"]}
+                            for err in exc.errors()
+                        ]
+                    },
+                )
+
+        return handler
+
+
 async def update_profile(
     request: UpdateProfileRequest,
     client: dict = Depends(get_current_client),
     portal_service: PortalService = Depends(get_portal_service),
 ) -> dict[str, Any]:
-    """Update client profile. Only phone, whatsapp, address, and language can be changed."""
+    """Update client profile. Address is saved; phone/whatsapp become change requests."""
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
     try:
         fields = {k: v for k, v in request.model_dump().items() if v is not None}
         result = await portal_service.update_profile(
@@ -1389,16 +1417,36 @@ async def update_profile(
         )
         if fields:
             await invalidate_cache("zantara:crm_clients_stats:*")
-        return {"success": True, "data": _mask_identity(result)}
+        requested = (result.pop("contact_change_requested", None) or []) if result else []
+        return {
+            "success": True,
+            "data": _mask_identity(result),
+            "contact_change_requested": requested,
+        }
+    except ProfileContactRefused as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except ValueError as e:
         # Client soft-deleted / gone (portal_service filters
         # `deleted_at IS NULL`) -> not-found, not a 500. Consistent
         # with get_dashboard (BUG C).
-        logger.warning(f"Client not found in update_profile for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
+        # Class name only: asyncpg's argument-error text previews the request content.
+        logger.warning(
+            f"Client not found in update_profile for client {sanitize_for_log(client['client_id'])}: {type(e).__name__}"
+        )
         raise HTTPException(status_code=404, detail="Client not found") from e
     except Exception as e:
-        logger.error(f"Failed to update profile for client {sanitize_for_log(client['client_id'])}: {sanitize_for_log(e)}")
+        logger.error(
+            f"Failed to update profile for client {sanitize_for_log(client['client_id'])}: {type(e).__name__}"
+        )
         raise HTTPException(
             status_code=500,
             detail="Failed to update profile",
         ) from e
+
+
+router.add_api_route(
+    "/profile",
+    update_profile,
+    methods=["PATCH"],
+    route_class_override=_NoEchoProfileRoute,
+)
