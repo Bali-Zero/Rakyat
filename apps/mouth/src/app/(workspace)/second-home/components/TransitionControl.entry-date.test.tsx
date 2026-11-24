@@ -97,20 +97,25 @@ describe("TransitionControl entry / ITAS date", () => {
     );
   });
 
-  it("requires the date: a cleared field cannot be submitted", async () => {
-    const user = userEvent.setup();
-    const { container } = render(
-      <TransitionControl {...props({ allowedNextStages: ["entry"] })} />,
-    );
-    await user.selectOptions(select(), "entry");
-    const input = dateInput(container);
-    expect(input.required).toBe(true);
-    fireEvent.change(input, { target: { value: "" } });
-    expect(input.value).toBe("");
-    expect(advanceBtn().disabled).toBe(true);
-    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
-    expect(mockMutateAsync).not.toHaveBeenCalled();
-  });
+  it.each(["entry", "itas_active"] as E33Stage[])(
+    "requires the date for %s: a cleared field shows an alert and cannot be submitted",
+    async (stage) => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <TransitionControl {...props({ allowedNextStages: [stage] })} />,
+      );
+      await user.selectOptions(select(), stage);
+      const input = dateInput(container);
+      expect(input.required).toBe(true);
+      expect(screen.queryByRole("alert")).toBeNull();
+      fireEvent.change(input, { target: { value: "" } });
+      expect(input.value).toBe("");
+      expect(advanceBtn().disabled).toBe(true);
+      expect(screen.getByRole("alert").textContent).toMatch(/required/i);
+      fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+      expect(mockMutateAsync).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses a date in the future", async () => {
     const user = userEvent.setup();

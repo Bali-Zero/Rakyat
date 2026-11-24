@@ -189,12 +189,14 @@ export function TransitionControl({
               onChange={(e) => setOccurredOn(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-base)] text-[var(--bz-text-1)] focus:outline-none focus:ring-2 focus:ring-[var(--bz-accent)]/50"
             />
-            {dateInFuture && (
+            {dateInvalid && (
               <p
                 role="alert"
                 className="text-xs text-[var(--state-danger)] mt-1"
               >
-                The date cannot be in the future.
+                {dateInFuture
+                  ? "The date cannot be in the future."
+                  : "The date is required."}
               </p>
             )}
           </div>
