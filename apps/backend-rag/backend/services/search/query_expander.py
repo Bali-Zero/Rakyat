@@ -87,7 +87,7 @@ class QueryExpander:
             logger.warning("Gemini query expansion timed out (%.1fs)", timeout_s)
             return None
         except Exception as e:
-            logger.warning("Gemini query expansion failed: %s", e)
+            logger.warning("Gemini query expansion failed: %s", type(e).__name__)
             return None
 
     @staticmethod
@@ -131,7 +131,7 @@ class QueryExpander:
         # Skip LLM expansion for short/simple queries
         word_count = len(query.split())
         if word_count <= 4:
-            logger.debug("Query too short for LLM expansion (%d words): %s", word_count, query[:50])
+            logger.debug("Query too short for LLM expansion (%d words)", word_count)
             return result_queries
 
         # Call Gemini for multi-query expansion
@@ -152,14 +152,18 @@ class QueryExpander:
                     if alt_str and alt_str.lower() != query.lower():
                         result_queries.append(alt_str)
                 logger.info(
-                    "Multi-query expansion: '%s' → %d queries",
-                    query[:40],
+                    "Multi-query expansion: query_len=%d → %d queries",
+                    len(query),
                     len(result_queries),
                 )
             else:
                 logger.warning("Gemini returned non-array: %s", type(alternatives).__name__)
         except json.JSONDecodeError as e:
-            logger.warning("Failed to parse expansion JSON: %s | response: %s", e, response[:100])
+            logger.warning(
+                "Failed to parse expansion JSON: %s | response_len=%d",
+                type(e).__name__,
+                len(response),
+            )
 
         return result_queries
 
@@ -207,7 +211,7 @@ class QueryExpander:
                 parts.append(indonesian)
 
             expanded = " ".join(parts)
-            logger.info("Query translated: '%s' → %d chars", query[:30], len(expanded))
+            logger.info("Query translated: query_len=%d → %d chars", len(query), len(expanded))
             return expanded
         except json.JSONDecodeError:
             return base
