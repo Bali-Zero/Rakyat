@@ -97,3 +97,63 @@ class TestResolvedBlockIdCharacterClass:
     def test_valid_resolved_block_id_passes(self, transition_id: str) -> None:
         fields = validate_transition_body(transition_id, {"resolved_block_id": "valid_block-id0099001"})
         assert fields["resolved_block_id"] == "valid_block-id0099001"
+
+
+class TestIdsAreMatchedWhole:
+    """A Python `$` also matches before a final newline and the database's `$` does not:
+    an id ending in a newline is refused here, never stored unchecked or sent to a CHECK
+    that answers 500."""
+
+    @pytest.mark.parametrize("transition_id", ["PR-04", "PR-06"])
+    def test_evidence_id_ending_in_a_newline_is_422(self, transition_id: str) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            validate_transition_body(transition_id, {"evidence_id": "valid_evidence-id0001\n"})
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["code"] == "INVALID_REQUEST"
+
+    def test_reject_evidence_id_ending_in_a_newline_is_422(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            validate_transition_body(
+                "PR-07",
+                {"evidence_id": "valid_evidence-id0001\n", "customer_reason_key": _VALID_REASON},
+            )
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["code"] == "INVALID_REQUEST"
+
+    @pytest.mark.parametrize("transition_id", ["PR-09", "PR-10"])
+    def test_resolved_block_id_ending_in_a_newline_is_422(self, transition_id: str) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            validate_transition_body(
+                transition_id, {"resolved_block_id": "valid_block-id0099001\n"}
+            )
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["code"] == "INVALID_REQUEST"
+
+    def test_artifact_id_ending_in_a_newline_is_422(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            validate_transition_body(
+                "PR-11",
+                {"artifact_id": "valid_artifact-id00001\n", "artifact_digest": "a" * 64},
+            )
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["code"] == "INVALID_REQUEST"
+
+
+class TestArtifactDigestIsLowercaseHex:
+    @pytest.mark.parametrize(
+        "digest", ["g" * 64, "A" * 64, "a" * 63 + "\n", "a" * 63 + " ", "a" * 64 + "\n", "a" * 65]
+    )
+    def test_a_digest_that_is_not_lowercase_hex_is_422(self, digest: str) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            validate_transition_body(
+                "PR-11", {"artifact_id": "valid_artifact-id00001", "artifact_digest": digest}
+            )
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["code"] == "INVALID_REQUEST"
+
+    @pytest.mark.parametrize("digest", ["0123456789abcdef" * 4, "f" * 64])
+    def test_a_lowercase_hex_digest_passes(self, digest: str) -> None:
+        fields = validate_transition_body(
+            "PR-11", {"artifact_id": "valid_artifact-id00001", "artifact_digest": digest}
+        )
+        assert fields["artifact_digest"] == digest
