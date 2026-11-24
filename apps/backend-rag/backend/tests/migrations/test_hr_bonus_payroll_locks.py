@@ -712,3 +712,22 @@ async def test_postponing_after_binding_does_not_release_that_award_before_the_p
         await env.pool.fetchval("SELECT status FROM hr_bonus_ledger WHERE id=$1", award) == "paid"
     )
     assert (await _run_month(env, 5))["Fake A"]["bonus_total"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close", ["approve", "paid"])
+async def test_recalculating_a_closed_month_raises_the_period_lock_text_the_route_maps(
+    env: Env, close: str
+) -> None:
+    """The calculate route maps these two trigger texts to a 409: keep them in step."""
+    await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
+    period_id = await _period_id(env.pool)
+    await env.svc.approve_payroll(period_id, env.admin)
+    if close == "paid":
+        await env.svc.mark_payroll_paid(period_id)
+    with pytest.raises(asyncpg.exceptions.RaiseError) as raised:
+        await env.svc.calculate_payroll(MONTH, YEAR, env.admin)
+    assert any(
+        text in str(raised.value)
+        for text in ("is paid and immutable", "only allows transition to paid")
+    )

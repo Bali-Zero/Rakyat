@@ -636,6 +636,10 @@ def _require_payroll_writer(current_user: dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail="Payroll write access required")
 
 
+# Texts of hr_enforce_period_lock (migration 068) for a period that is paid or approved.
+_PERIOD_LOCK_TEXTS = ("is paid and immutable", "only allows transition to paid")
+
+
 @router.post("/payroll/calculate")
 async def calculate_payroll(
     data: PayrollCalculateRequest,
@@ -645,11 +649,17 @@ async def calculate_payroll(
     """Calculate payroll for a month (admin only)."""
     _require_payroll_writer(current_user)
     service = _get_hr_service(db_pool)
-    result = await service.calculate_payroll(
-        data.month,
-        data.year,
-        _get_user_id(current_user),
-    )
+    try:
+        result = await service.calculate_payroll(
+            data.month,
+            data.year,
+            _get_user_id(current_user),
+        )
+    except asyncpg.exceptions.RaiseError as e:
+        # hr_enforce_period_lock refuses to reopen an approved or paid period
+        if not any(text in str(e) for text in _PERIOD_LOCK_TEXTS):
+            raise
+        raise HTTPException(status_code=409, detail="This payroll period is closed") from None
     await invalidate_cache("zantara:hr_payroll:*")
     return {"success": True, **result}
 
@@ -664,6 +674,10 @@ async def list_payroll_periods(
     service = _get_hr_service(db_pool)
     periods = await service.list_payroll_periods()
     return {"periods": periods, "count": len(periods)}
+
+
+# Period statuses from which a payslip is visible to someone other than an HR admin.
+_PAYSLIP_VISIBLE_STATUSES = ("approved", "paid")
 
 
 @router.get("/payslips")
@@ -683,6 +697,8 @@ async def list_payslips(
             return {"payslips": [], "count": 0}
 
     payslips = await service.get_payslips(employee_id, period_id)
+    if not is_hr_admin(current_user):  # a payslip is the member's only once its period is approved
+        payslips = [p for p in payslips if p.get("period_status") in _PAYSLIP_VISIBLE_STATUSES]
     return {"payslips": payslips, "count": len(payslips)}
 
 
@@ -700,6 +716,8 @@ async def get_payslip_detail(
 
     # Check access
     if not is_hr_admin(current_user):
+        if detail.get("period_status") not in _PAYSLIP_VISIBLE_STATUSES:
+            raise HTTPException(status_code=404, detail="Payslip not found")
         my_id = await _get_my_employee_id(service, current_user)
         if detail.get("employee_id") != my_id:
             raise HTTPException(status_code=403, detail="Access denied")
