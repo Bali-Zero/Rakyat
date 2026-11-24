@@ -316,6 +316,29 @@ describe("one publication rule for local MDX", () => {
     expect(getAvailableLocales(CATEGORY, SLUG)).toEqual(["en", "it"]);
   });
 
+  it("labels an inherited headline and uses an editorial body headline when one exists", async () => {
+    const base = mdx('seoTitle: "English SEO"\n', "English Title");
+    disk({ [`business/${SLUG}.mdx`]: base, [`business/${SLUG}.it.mdx`]: base });
+    expect(await getArticleByLocale(CATEGORY, SLUG, "it")).toMatchObject({
+      locale: "it",
+      title: "English Title",
+      titleLocale: "en",
+    });
+    const header = base.slice(0, base.lastIndexOf("---") + 3);
+    disk({
+      [`business/${SLUG}.mdx`]: base,
+      [`business/${SLUG}.it.mdx`]:
+        header +
+        '\nimport { InfoCard } from "./components";\n\n# Titolo italiano\n\nContenuto.',
+    });
+    const translated = await getArticleByLocale(CATEGORY, SLUG, "it");
+    expect(translated).toMatchObject({
+      title: "Titolo italiano",
+      seoTitle: "Titolo italiano",
+    });
+    expect(translated?.titleLocale).toBeUndefined();
+  });
+
   it("indexes only real, public locale siblings in a partial translation set", async () => {
     disk({
       [`business/${SLUG}.mdx`]: mdx("", "English Title"),

@@ -25,7 +25,7 @@ function eligibleFile(file: string, locale: string): boolean {
   try {
     const { data } = matter(fs.readFileSync(file, "utf8"), {});
     return (
-      (!Object.hasOwn(data, "status") || data.status === "published") &&
+      (data.status === undefined || data.status === "published") &&
       !data.noIndex &&
       (!data.locale || data.locale === locale)
     );
@@ -36,19 +36,18 @@ function eligibleFile(file: string, locale: string): boolean {
 
 function expectedMagazineUrls() {
   const expected = new Map<string, Record<string, string>>();
+  const articlePaths = new Set<string>();
   for (const folder of fs.readdirSync(ARTICLES, { withFileTypes: true })) {
     if (!folder.isDirectory()) continue;
     const dir = path.join(ARTICLES, folder.name);
     const names = new Set(fs.readdirSync(dir));
     for (const name of names) {
-      if (
-        !/^[a-z0-9][a-z0-9-]*\.mdx$/.test(name) ||
-        !eligibleFile(path.join(dir, name), "en")
-      )
-        continue;
+      if (!/^[a-z0-9][a-z0-9-]*\.mdx$/.test(name)) continue;
       const slug = name.slice(0, -4);
-      if (slug === "test-article") continue;
       const bare = `${BASE_URL}/${normalizeCategory(folder.name)}/${slug}`;
+      articlePaths.add(bare);
+      if (slug === "test-article" || !eligibleFile(path.join(dir, name), "en"))
+        continue;
       const languages: Record<string, string> = { en: bare };
       for (const locale of LANGUAGES) {
         const filename = `${slug}.${locale}.mdx`;
@@ -66,7 +65,7 @@ function expectedMagazineUrls() {
       for (const url of Object.values(languages)) expected.set(url, alternates);
     }
   }
-  return expected;
+  return { expected, articlePaths };
 }
 
 const { default: sitemap } = await import("./sitemap");
@@ -75,7 +74,7 @@ it("serializes exactly the indexable article URLs and their reciprocal alternate
   const xml = resolveSitemap(await sitemap());
   const doc = new DOMParser().parseFromString(xml, "application/xml");
   expect(doc.querySelector("parsererror")).toBeNull();
-  const expected = expectedMagazineUrls();
+  const { expected, articlePaths } = expectedMagazineUrls();
   const seen = new Set<string>();
   const errors: string[] = [];
   const sitemapNS = "http://www.sitemaps.org/schemas/sitemap/0.9";
@@ -88,12 +87,7 @@ it("serializes exactly the indexable article URLs and their reciprocal alternate
     seen.add(url);
     const links = Array.from(row.getElementsByTagNameNS(xhtmlNS, "link"));
     if (!expected.has(url)) {
-      if (
-        /^https:\/\/balizero\.com\/(visas|business|taxes|property|living|trends)\//.test(
-          url,
-        ) ||
-        links.length
-      ) {
+      if (articlePaths.has(url) || url.includes("?lang=") || links.length) {
         errors.push("unexpected article " + url);
       }
       continue;

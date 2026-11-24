@@ -18,6 +18,7 @@ import {
   normalizeCategory,
 } from "./categories";
 import { isPublishedFrontmatter } from "./publication";
+import { stripImports } from "./strip-imports";
 
 // gray-matter caches by content string when called without options, so a file with broken YAML
 // throws on the first parse and returns empty data from the cache on the second. An options object
@@ -251,10 +252,7 @@ export function extractBodyExcerpt(body: string): string {
 
 /** A translation's first, plain Markdown H1 is an editorial headline, not text to infer. */
 function translatedBodyHeadline(content: string): string | undefined {
-  const firstLine = content
-    .split("\n")
-    .find((line) => line.trim() !== "")
-    ?.trim();
+  const [firstLine] = stripImports(content).split("\n", 1);
   const match = firstLine?.match(/^#\s+(.+)$/);
   const headline = match?.[1]?.trim();
   // Keep this intentionally narrow: no JSX, links, interpolation, or Markdown
@@ -889,7 +887,7 @@ export async function getArticleByLocale(
   if (!isArticleTranslationLocale(locale) || !isArticleFileSlug(slug)) {
     return getArticleBySlug(category, slug);
   }
-  // Read the reviewed English metadata once. Translation files occasionally
+  // Read the reviewed English metadata once. Translation files can
   // retain one English field while the other contains the editor's localized
   // alternative; use that alternative rather than presenting an English H1 or
   // HTML title to a localized reader.
@@ -963,6 +961,11 @@ export async function getArticleByLocale(
     id: frontmatter.id || slug,
     slug,
     title,
+    ...(titleIsInherited &&
+      !bodyHeadline &&
+      !localizedSeoTitle && {
+        titleLocale: baseFrontmatter.locale || "en",
+      }),
     subtitle: frontmatter.subtitle,
     excerpt: frontmatter.excerpt
       ? cleanExcerpt(frontmatter.excerpt)
@@ -1121,6 +1124,9 @@ function articleLocaleInventoryKey(category: string, slug: string): string {
   return `${category}/${slug}`;
 }
 
+// A Vercel deployment has an immutable MDX corpus. Key persistent cache
+// entries by its commit so a new release cannot inherit the old inventory.
+const corpusRevision = process.env.VERCEL_GIT_COMMIT_SHA;
 const getIndexableArticleLocaleInventoryCached = unstable_cache(
   async (): Promise<[string, string[]][]> => {
     const inventory = new Map<string, readonly string[]>();
@@ -1140,8 +1146,8 @@ const getIndexableArticleLocaleInventoryCached = unstable_cache(
     }
     return Array.from(inventory, ([key, locales]) => [key, [...locales]]);
   },
-  ["indexable-article-locale-inventory-v1"],
-  { revalidate: 60 },
+  ["indexable-article-locale-inventory-v1", corpusRevision || "local"],
+  { revalidate: corpusRevision ? false : 60 },
 );
 
 /** One cached full-corpus snapshot for bulk consumers such as the sitemap. */

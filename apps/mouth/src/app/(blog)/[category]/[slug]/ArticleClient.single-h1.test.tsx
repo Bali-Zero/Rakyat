@@ -75,6 +75,18 @@ function article(
 const h1Count = (html: string) => (html.match(/<h1[\s>]/g) ?? []).length;
 
 describe("article template renders a single <h1>", () => {
+  it("labels an inherited English headline separately from the translated body", () => {
+    const html = renderToString(
+      <ArticleClient
+        category="business"
+        slug="synthetic-guard"
+        initialArticle={article({ locale: "it", titleLocale: "en" })}
+      />,
+    );
+    expect(html).toMatch(/<h1[^>]*lang="en"/);
+    expect(html).toMatch(/<article[^>]*lang="it"/);
+  });
+
   it("SSR MDX body: a body `# title` does not add a second <h1>", async () => {
     const { content } = await compileMDX({
       source: BODY,

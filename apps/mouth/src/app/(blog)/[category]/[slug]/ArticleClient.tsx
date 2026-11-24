@@ -304,7 +304,7 @@ export function ArticleClient({
 
           {/* Title */}
           <h1
-            lang={article.locale}
+            lang={article.titleLocale ?? article.locale}
             className="font-serif text-3xl md:text-5xl font-medium tracking-tight text-[var(--r19-ink)] mb-4 leading-tight animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
           >
             {article.title}
