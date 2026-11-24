@@ -557,11 +557,6 @@ class MemoryOrchestrator:
 
                 if not raw_facts:
                     logger.debug('No facts extracted for %s', redact_identifier_for_log(user_email))
-                    return MemoryProcessResult(
-                        facts_extracted=0,
-                        facts_saved=0,
-                        processing_time_ms=(time.time() - start_time) * 1000,
-                    )
 
                 # Convert to MemoryFact objects
                 facts = []
