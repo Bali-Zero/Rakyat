@@ -126,6 +126,9 @@ describe("TransitionControl", () => {
         'input[type="date"]',
       ) as HTMLInputElement;
       expect(date).not.toBeNull();
+      // The field is prefilled with today; a real date field is overwritten
+      // by typing, user-event appends to it, so clear it first.
+      await user.clear(date);
       await user.type(date, "2026-03-04");
       await user.click(advanceBtn());
       expect(mockMutateAsync).toHaveBeenCalledWith(
