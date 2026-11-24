@@ -40,7 +40,7 @@ def test_confirmation_preview_truncates_long_args_and_counts_extra_args() -> Non
     long_value = "x" * 80
     preview = ToolAuthorizer._build_confirmation_preview(
         ROLE_VISA_SPECIALIST,
-        "image_generation",
+        "generate_image",
         {
             "prompt": long_value,
             "style": "documentary",
@@ -53,4 +53,4 @@ def test_confirmation_preview_truncates_long_args_and_counts_extra_args() -> Non
     assert long_value not in preview
     assert "prompt=" in preview
     assert "(+1 more)" in preview
-    assert "image_generation" in preview
+    assert "generate_image" in preview

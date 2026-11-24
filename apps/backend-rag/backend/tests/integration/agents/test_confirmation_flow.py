@@ -47,7 +47,7 @@ class _MockImageGenerationTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "image_generation"
+        return "generate_image"
 
     @property
     def description(self) -> str:
@@ -78,7 +78,7 @@ class _FakeRedisManager:
 @pytest.fixture
 def tool_and_map() -> tuple[_MockImageGenerationTool, dict[str, BaseTool]]:
     tool = _MockImageGenerationTool()
-    return tool, {"image_generation": tool}
+    return tool, {"generate_image": tool}
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ class TestConfirmationFlowIntegration:
 
         result, duration = await execute_tool(
             tool_map=tool_map,
-            tool_name="image_generation",
+            tool_name="generate_image",
             arguments={"prompt": "a KITAS card"},
             user_id="damar@balizero.com",
             tool_execution_counter=None,
@@ -190,7 +190,7 @@ class TestConfirmationFlowIntegration:
 
         result, _ = await execute_tool(
             tool_map=tool_map,
-            tool_name="image_generation",
+            tool_name="generate_image",
             arguments={"prompt": "a KITAS card"},
             user_id="damar@balizero.com",
             tool_execution_counter=None,
@@ -216,7 +216,7 @@ class TestConfirmationFlowIntegration:
 
         result, _ = await execute_tool(
             tool_map=tool_map,
-            tool_name="image_generation",
+            tool_name="generate_image",
             arguments={"prompt": "test"},
             user_id="damar@balizero.com",
             tool_execution_counter=None,
@@ -240,7 +240,7 @@ class TestConfirmationFlowIntegration:
 
         result, _ = await execute_tool(
             tool_map=tool_map,
-            tool_name="image_generation",
+            tool_name="generate_image",
             arguments={"prompt": "test"},
             user_id="zero@balizero.com",
             tool_execution_counter=None,
@@ -264,7 +264,7 @@ class TestConfirmationFlowIntegration:
 
         result, _ = await execute_tool(
             tool_map=tool_map,
-            tool_name="image_generation",
+            tool_name="generate_image",
             arguments={"prompt": "test"},
             user_id="anon@x",
             tool_execution_counter=None,
