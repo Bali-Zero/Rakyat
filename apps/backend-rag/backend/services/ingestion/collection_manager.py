@@ -362,15 +362,22 @@ class CollectionManager:
                     metadatas=metadatas or [],
                     ids=ids or [],
                 )
-                # Record freshness timestamp on successful ingest
-                now = time.time()
-                self._collection_last_updated[collection_name] = now
-                try:
-                    from backend.app.metrics import metrics_collector
+                if not isinstance(result, dict) or "success" not in result or result["success"]:
+                    # Record freshness timestamp on successful ingest
+                    now = time.time()
+                    self._collection_last_updated[collection_name] = now
+                    try:
+                        from backend.app.metrics import metrics_collector
 
-                    metrics_collector.set_collection_last_updated(collection_name, now)
-                except Exception:
-                    pass
+                        metrics_collector.set_collection_last_updated(collection_name, now)
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(
+                        "Ingest for collection %s reported a failed write after adding %s documents",
+                        collection_name,
+                        result.get("documents_added", 0),
+                    )
                 return result
             finally:
                 lock.release()
