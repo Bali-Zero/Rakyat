@@ -676,6 +676,10 @@ async def list_payroll_periods(
     return {"periods": periods, "count": len(periods)}
 
 
+# Period statuses from which a payslip is visible to someone other than an HR admin.
+_PAYSLIP_VISIBLE_STATUSES = ("approved", "paid")
+
+
 @router.get("/payslips")
 async def list_payslips(
     employee_id: int | None = Query(None),
@@ -693,6 +697,8 @@ async def list_payslips(
             return {"payslips": [], "count": 0}
 
     payslips = await service.get_payslips(employee_id, period_id)
+    if not is_hr_admin(current_user):  # a payslip is the member's only once its period is approved
+        payslips = [p for p in payslips if p.get("period_status") in _PAYSLIP_VISIBLE_STATUSES]
     return {"payslips": payslips, "count": len(payslips)}
 
 
@@ -710,6 +716,8 @@ async def get_payslip_detail(
 
     # Check access
     if not is_hr_admin(current_user):
+        if detail.get("period_status") not in _PAYSLIP_VISIBLE_STATUSES:
+            raise HTTPException(status_code=404, detail="Payslip not found")
         my_id = await _get_my_employee_id(service, current_user)
         if detail.get("employee_id") != my_id:
             raise HTTPException(status_code=403, detail="Access denied")

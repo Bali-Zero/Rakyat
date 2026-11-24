@@ -73,3 +73,68 @@ def test_an_unrelated_service_error_is_not_turned_into_a_409(make_client):
     )
     with pytest.raises(asyncpg.exceptions.RaiseError):
         make_client(ADMIN, svc).post("/api/hr/payroll/calculate", json=CALC)
+
+
+# ─── payslips of a period that is not yet approved ───────────────────────
+
+
+def _slip(slip_id: int, status: str, employee_id: int = 7) -> dict[str, Any]:
+    return {"id": slip_id, "employee_id": employee_id, "period_status": status}
+
+
+def _payslip_service(slips: list[dict[str, Any]]) -> AsyncMock:
+    svc = AsyncMock()
+    svc.get_employee_by_email = AsyncMock(return_value={"id": 7})
+    svc.is_on_payroll = AsyncMock(return_value=True)
+    svc.get_payslips = AsyncMock(return_value=slips)
+    by_id = {s["id"]: s for s in slips}
+    svc.get_payslip_detail = AsyncMock(side_effect=lambda i: by_id.get(i))
+    return svc
+
+
+FOUR = [_slip(1, "draft"), _slip(2, "calculated"), _slip(3, "approved"), _slip(4, "paid")]
+
+
+def test_a_member_list_leaves_out_payslips_of_unapproved_periods(make_client):
+    body = make_client(MEMBER, _payslip_service(FOUR)).get("/api/hr/payslips").json()
+    assert [s["id"] for s in body["payslips"]] == [3, 4]
+    assert body["count"] == 2
+
+
+def test_an_hr_admin_list_has_all_four(make_client):
+    body = make_client(ADMIN, _payslip_service(FOUR)).get("/api/hr/payslips").json()
+    assert [s["id"] for s in body["payslips"]] == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("slip_id", [1, 2])
+def test_a_member_reading_an_unapproved_payslip_gets_the_not_found_of_a_missing_one(
+    make_client, slip_id
+):
+    client = make_client(MEMBER, _payslip_service(FOUR))
+    missing = client.get("/api/hr/payslips/999")
+    res = client.get(f"/api/hr/payslips/{slip_id}")
+    assert res.status_code == 404
+    assert (res.status_code, res.json()) == (missing.status_code, missing.json())
+
+
+def test_a_member_cannot_tell_a_colleagues_unapproved_payslip_from_a_missing_one(make_client):
+    svc = _payslip_service([_slip(5, "draft", employee_id=8)])
+    client = make_client(MEMBER, svc)
+    assert client.get("/api/hr/payslips/5").json() == client.get("/api/hr/payslips/999").json()
+
+
+@pytest.mark.parametrize("slip_id", [3, 4])
+def test_a_member_still_reads_payslips_of_approved_and_paid_periods(make_client, slip_id):
+    res = make_client(MEMBER, _payslip_service(FOUR)).get(f"/api/hr/payslips/{slip_id}")
+    assert res.status_code == 200 and res.json()["id"] == slip_id
+
+
+@pytest.mark.parametrize("slip_id", [1, 2, 3, 4])
+def test_an_hr_admin_reads_all_four_payslips(make_client, slip_id):
+    res = make_client(ADMIN, _payslip_service(FOUR)).get(f"/api/hr/payslips/{slip_id}")
+    assert res.status_code == 200
+
+
+def test_a_member_still_gets_403_for_a_colleagues_approved_payslip(make_client):
+    svc = _payslip_service([_slip(6, "approved", employee_id=8)])
+    assert make_client(MEMBER, svc).get("/api/hr/payslips/6").status_code == 403
