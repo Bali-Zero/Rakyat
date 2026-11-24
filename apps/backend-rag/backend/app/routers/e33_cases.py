@@ -164,6 +164,46 @@ async def _fetch_client_name_and_owner_conn(
     return row["full_name"], row["assigned_to"]
 
 
+async def _fetch_dependent_links(
+    conn: asyncpg.Connection, principal_case_id: str, current_user: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Dependents of a principal, read from the cases that point at it.
+
+    The source of truth is ``e33_cases.principal_case_id`` (set by ``create_case``); the
+    ``dependents`` JSONB column and ``E33Case.dependents`` are kept for compatibility but
+    nothing writes them, so the API never serves them. Same access rule as ``list_cases``:
+    a non-admin only sees dependents whose client is assigned to them (or a pool peer).
+    """
+    params: list[Any] = [principal_case_id]
+    access = ""
+    if not is_crm_admin(current_user):
+        access = "AND LOWER(clients.assigned_to) = ANY($2::text[])"
+        params.append(sorted(caller_pool_peers(current_user)))
+    rows = await conn.fetch(
+        f"""
+        SELECT e33_cases.case_id, e33_cases.client_id, e33_cases.dependent_code,
+               e33_cases.stage, clients.full_name AS client_name
+        FROM e33_cases
+        JOIN clients ON clients.id = e33_cases.client_id
+        WHERE e33_cases.principal_case_id = $1 {access}
+        ORDER BY e33_cases.created_at, e33_cases.case_id
+        """,
+        *params,
+    )
+    return [
+        {
+            "case_id": r["case_id"],
+            "code": r["dependent_code"],
+            "client_id": r["client_id"],
+            "client_name": r["client_name"],
+            "stage": r["stage"],
+            # No stored source for the relationship; the dependent code is what is known.
+            "relationship": None,
+        }
+        for r in rows
+    ]
+
+
 def _case_summary_dict(case: E33Case, *, client_name: str | None) -> dict[str, Any]:
     return {
         "case_id": case.case_id,
@@ -226,13 +266,19 @@ def _guarantee_dict(case: E33Case, *, today: date) -> dict[str, Any] | None:
     }
 
 
-def _case_detail_dict(case: E33Case, *, client_name: str | None, today: date) -> dict[str, Any]:
+def _case_detail_dict(
+    case: E33Case,
+    *,
+    client_name: str | None,
+    today: date,
+    dependents: list[dict[str, Any]],
+) -> dict[str, Any]:
     detail = _case_summary_dict(case, client_name=client_name)
     detail.update(
         {
             "entry_date": case.entry_date.isoformat() if case.entry_date else None,
             "itas_date": case.itas_date.isoformat() if case.itas_date else None,
-            "dependents": _to_jsonable(case.dependents),
+            "dependents": dependents,
             "evidence": _to_jsonable(case.evidence),
             "stage_history": _to_jsonable(case.history),
             "allowed_next_stages": _allowed_next_stages(case.stage),
@@ -427,7 +473,8 @@ async def create_case(
             detail="Could not mint a unique E33 case id after 2 attempts",
         ) from last_error
 
-    return _case_detail_dict(case, client_name=client_name, today=today)
+    # A case that was just created has no dependents yet.
+    return _case_detail_dict(case, client_name=client_name, today=today, dependents=[])
 
 
 @router.get("/cases")
@@ -493,7 +540,11 @@ async def get_case(
     client_name, assigned_to = await _fetch_client_name_and_owner(db_pool, case.client_id)
     _assert_client_access(current_user, assigned_to)
 
-    return _case_detail_dict(case, client_name=client_name, today=date.today())
+    async with db_pool.acquire() as conn:
+        dependents = await _fetch_dependent_links(conn, case.case_id, current_user)
+    return _case_detail_dict(
+        case, client_name=client_name, today=date.today(), dependents=dependents
+    )
 
 
 @router.post("/cases/{case_id}/advance")
@@ -568,8 +619,11 @@ async def advance_case(
                 ) from exc
 
             await repo.save(case)
+            dependents = await _fetch_dependent_links(conn, case.case_id, current_user)
 
-    return _case_detail_dict(case, client_name=client_name, today=date.today())
+    return _case_detail_dict(
+        case, client_name=client_name, today=date.today(), dependents=dependents
+    )
 
 
 @router.post("/cases/{case_id}/evidence")
@@ -629,8 +683,11 @@ async def add_evidence(
 
             case.add_evidence(evidence)
             await repo.save(case)
+            dependents = await _fetch_dependent_links(conn, case.case_id, current_user)
 
-    return _case_detail_dict(case, client_name=client_name, today=date.today())
+    return _case_detail_dict(
+        case, client_name=client_name, today=date.today(), dependents=dependents
+    )
 
 
 @router.get("/summary")
