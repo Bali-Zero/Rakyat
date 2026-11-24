@@ -66,7 +66,21 @@ def transport(monkeypatch: pytest.MonkeyPatch):
 
 
 class _FailingService:
+    def __init__(self, httpx_crumb: bool = False) -> None:
+        self.httpx_crumb = httpx_crumb
+
     async def search(self, **kwargs: Any) -> Any:
+        if self.httpx_crumb:
+            # An HTTPX-kind breadcrumb carrying the sentinel (the vector store's request path).
+            # Spec amendment A1 puts breadcrumbs of non-logging integrations OUT of scope: the
+            # test below must neither depend on them nor assert anything about them.
+            sentry_sdk.add_breadcrumb(
+                type="http",
+                category="httplib",
+                data={
+                    "url": f"http://vector.invalid/collections/{kwargs['collection_override']}/points/search"
+                },
+            )
         try:
             raise ValueError(f"vendor quoted {kwargs['query']} / {kwargs['collection_override']}")
         except ValueError:
@@ -89,12 +103,36 @@ def _events(transport: MemoryTransport) -> list[dict[str, Any]]:
     return [p for p in transport.payloads if "exception" in p or "logentry" in p or "message" in p]
 
 
+def _is_logging_crumb(crumb: dict[str, Any]) -> bool:
+    return crumb.get("type") != "http" and crumb.get("category") not in {"httplib", "httpx", "http"}
+
+
+def _promised_fields(events: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    """Only what the spec promises (section 1 and amendment A1): the framework exception
+    event's exception values and message, the logging integration's events (logentry and
+    exception) and the logging breadcrumbs. HTTPX-style breadcrumbs are never read."""
+    parts: list[Any] = []
+    logging_events: list[dict[str, Any]] = []
+    for event in events:
+        values = event.get("exception", {}).get("values", [])
+        if "logentry" in event:
+            logging_events.append(event)
+            parts += [event["logentry"], values, event.get("message")]
+        elif any(v.get("type") == "HTTPException" for v in values):
+            parts += [values, event.get("message")]
+        parts += [c for c in event.get("breadcrumbs", {}).get("values", []) if _is_logging_crumb(c)]
+    return json.dumps(parts, default=str), logging_events
+
+
+@pytest.mark.parametrize(
+    "httpx_crumb", [False, True], ids=["plain", "httpx-breadcrumb-out-of-scope"]
+)
 def test_the_failing_route_sends_events_and_breadcrumbs_free_of_the_query(
-    transport: MemoryTransport, caplog: pytest.LogCaptureFixture
+    transport: MemoryTransport, caplog: pytest.LogCaptureFixture, httpx_crumb: bool
 ) -> None:
     query = f"{SENT} kueri tentang visa dan pajak untuk perusahaan sintetis"
     with caplog.at_level(logging.DEBUG):
-        resp = _client(_FailingService()).post(
+        resp = _client(_FailingService(httpx_crumb)).post(
             "/api/search", json={"query": query, "collection": COLL, "level": 3, "limit": 3}
         )
     assert resp.status_code == 500 and resp.json()["detail"] == "Search failed"
@@ -110,17 +148,25 @@ def test_the_failing_route_sends_events_and_breadcrumbs_free_of_the_query(
     for event in framework:
         values = event["exception"]["values"]
         assert [v["type"] for v in values] == ["HTTPException"], "an exception chain was sent"
-        assert values[0]["value"] == "Search failed" or "Search failed" in str(values[0]["value"])
+        assert "Search failed" in str(values[0]["value"])
 
-    logging_events = [e for e in events if "vendor call failed" in json.dumps(e)]
-    assert logging_events, "no logging-integration event for the in-scope ERROR record"
-    breadcrumbs = [crumb for e in events for crumb in e.get("breadcrumbs", {}).get("values", [])]
-    assert any("Received query: query_len=" in str(c.get("message")) for c in breadcrumbs), (
-        "no logging breadcrumb from the request's INFO lines"
-    )
+    promised, logging_events = _promised_fields(events)
+    vendor = [
+        e
+        for e in logging_events
+        if e.get("logger") == FOREIGN.name and "vendor call failed" in json.dumps(e["logentry"])
+    ]
+    assert vendor, "no genuine logging-integration event (logentry) for the in-scope ERROR record"
+    for event in vendor:
+        assert "[query]" in json.dumps(event["logentry"]), "the redaction placeholder is missing"
+        assert SENT not in json.dumps([event["logentry"], event.get("exception")])
+    crumbs = [c for e in events for c in e.get("breadcrumbs", {}).get("values", [])]
+    assert any(
+        _is_logging_crumb(c) and "Received query: query_len=" in str(c.get("message"))
+        for c in crumbs
+    ), "no logging breadcrumb from the request's INFO lines"
 
-    blob = json.dumps(transport.payloads)
-    assert SENT not in blob and COLL not in blob
+    assert SENT not in promised and COLL not in promised
 
 
 def test_a_422_sends_no_event_carrying_the_query(transport: MemoryTransport) -> None:
