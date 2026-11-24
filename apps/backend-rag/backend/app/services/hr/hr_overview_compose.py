@@ -17,6 +17,11 @@ from backend.app.services.hr.hr_overview_models import MyHrOverview
 
 logger = logging.getLogger(__name__)
 
+# Payroll period statuses from which a payslip is final: the only ones the member's own view shows.
+# A `draft` or `calculated` period can still be recalculated, so its payslip is provisional.
+# The same pair routers/hr.py uses for the payslip list and detail routes.
+_PAYSLIP_VISIBLE_STATUSES = ("approved", "paid")
+
 
 class OverviewReadError(Exception):
     """The rows behind the overview could not be read. Carries no driver text."""
@@ -34,6 +39,10 @@ async def compose_member_overview(
     `on_payroll = false` that view carries no personal payroll: no payslips, no bonuses, no
     salary on the card; `card.on_payroll` is the explicit false. An HR viewer of the same
     person (`self_view=False`) sees exactly what they saw before.
+
+    The member's own view also leaves out a payslip whose payroll period is not yet `approved`
+    or `paid` (or whose status is unknown): until then the accountant can still recalculate it,
+    so it is not the member's final take-home.
     """
     card = await service.get_card_for_member(member_id)
     if not card:
@@ -48,6 +57,8 @@ async def compose_member_overview(
     if self_view and not view.on_payroll:
         view = view.model_copy(update={"base_salary_idr": None})
         payslips, bonuses = [], []
+    elif self_view:
+        payslips = [p for p in payslips if p.get("period_status") in _PAYSLIP_VISIBLE_STATUSES]
     return MyHrOverview(
         team_member_id=str(member_id),
         card=view,
