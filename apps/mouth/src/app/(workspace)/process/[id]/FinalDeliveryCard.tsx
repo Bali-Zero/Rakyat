@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import type { Practice } from "@/lib/api/crm/crm.types";
+import type { DeliverySlot as Slot } from "@/lib/api/crm/delivery-slot";
 import { fileToBase64 } from "@/lib/utils";
 import {
   validStaffText,
@@ -24,18 +25,6 @@ import {
   BASE64_UPLOAD_MAX_LABEL,
 } from "@/lib/upload/base64UploadLimit";
 import { UPLOAD_ACCEPT, isAllowedUploadMime } from "@/lib/vault/uploadLimits";
-
-interface Slot {
-  key: string;
-  label: string;
-  condition: string | null;
-  document_id: number | null;
-  file_name: string | null;
-  waiver_reason: string | null;
-  can_repair?: boolean;
-  reusable_document_id: number | null;
-  issued_on: string | null;
-}
 
 interface Delivery {
   status: string;

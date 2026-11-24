@@ -1,12 +1,29 @@
-import type { CSSProperties, MouseEvent } from "react";
-import { Ellipsis, Flag, Loader2 } from "lucide-react";
+import type { CSSProperties, MouseEvent, ReactNode } from "react";
+import {
+  ArrowUpRight,
+  Check,
+  CircleDollarSign,
+  Ellipsis,
+  FileStack,
+  Flag,
+  Loader2,
+  ReceiptText,
+  UserRound,
+} from "lucide-react";
+import { Money } from "@balizero/core";
 import type { Practice } from "@/lib/api/crm/crm.types";
+import { WORK_DAY_TIME_ZONE, workDayOf } from "@/lib/format/work-day";
+import { initialsOf } from "@/lib/team-initials";
 import {
   assigneeLabel,
   departmentLabel,
   processAppearance,
 } from "./process-appearance";
-import { COLUMN_COLORS, getStatusColumn } from "./kanban-colors";
+import {
+  COLUMN_COLORS,
+  getStatusColumn,
+  type CaseStatus,
+} from "./kanban-colors";
 import styles from "./ProcessTile.module.css";
 
 export function AssigneeMark({ practice }: { practice: Practice }) {
@@ -30,16 +47,66 @@ type ProcessTileProps = {
   openClient: () => void;
   openMenu: (event: MouseEvent, practice: Practice) => void;
   onContextMenu: (event: MouseEvent, practice: Practice) => void;
+  deliveryPeek?: ReactNode;
 };
 
-function expiryNotice(value: string | null | undefined) {
+const dateFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: WORK_DAY_TIME_ZONE,
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+function displayDate(value: string | null | undefined) {
   if (!value) return null;
-  const days = Math.ceil((new Date(value).getTime() - Date.now()) / 86_400_000);
-  if (days < 0) return `Expired ${Math.abs(days)}d ago`;
-  if (days === 0) return "Expires today";
-  if (days <= 30) return `Expires in ${days}d`;
-  return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return <time dateTime={value}>{dateFormatter.format(date)}</time>;
 }
+
+function daysToExpiry(value: string | null | undefined) {
+  if (!value) return null;
+  const due = new Date(value);
+  if (!Number.isFinite(due.getTime())) return null;
+  return (Date.parse(workDayOf(due)) - Date.parse(workDayOf())) / 86_400_000;
+}
+
+function amountOf(value: number | string | null | undefined) {
+  if (value == null || (typeof value === "string" && !value.trim()))
+    return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+function caseFact(practice: Practice, stage: CaseStatus, dueIn: number | null) {
+  const done = stage === "completed" && displayDate(practice.completion_date);
+  if (done) return { label: "Completed", value: done };
+  if (dueIn !== null && dueIn <= 30) {
+    return {
+      label: dueIn < 0 ? "Expired" : "Expires",
+      value: displayDate(practice.expiry_date),
+    };
+  }
+  const received = amountOf(practice.paid_amount);
+  if (received !== null && received > 0)
+    return { label: "Received", value: <Money value={received} compact /> };
+  const fee = amountOf(practice.actual_price);
+  if (fee !== null)
+    return { label: "Service fee", value: <Money value={fee} compact /> };
+  const quote = amountOf(practice.quoted_price);
+  if (quote !== null)
+    return { label: "Quoted", value: <Money value={quote} compact /> };
+  const start = displayDate(practice.start_date);
+  if (start) return { label: "Started", value: start };
+  const created = displayDate(practice.created_at);
+  return created ? { label: "Opened", value: created } : null;
+}
+
+const paymentLabels: Record<string, string> = {
+  paid: "Paid",
+  partial: "Part paid",
+  unpaid: "Unpaid",
+};
 
 export function ProcessTile({
   practice,
@@ -48,6 +115,7 @@ export function ProcessTile({
   openProcess,
   openMenu,
   onContextMenu,
+  deliveryPeek,
 }: ProcessTileProps) {
   const department = departmentLabel(practice);
   const owner = assigneeLabel(practice);
@@ -68,13 +136,13 @@ export function ProcessTile({
         ? rawStatus
         : null;
   const urgent = practice.priority === "urgent" || practice.priority === "high";
-  const expiry = expiryNotice(practice.expiry_date);
-  const payment =
-    practice.payment_status === "unpaid"
-      ? "Unpaid"
-      : practice.payment_status === "partial"
-        ? "Part paid"
-        : null;
+  const dueIn = daysToExpiry(practice.expiry_date);
+  const fact = caseFact(practice, column, dueIn);
+  const payment = paymentLabels[practice.payment_status];
+  const updated =
+    practice.updated_at !== practice.created_at &&
+    displayDate(practice.updated_at);
+  const Stamp = department === "Tax" ? ReceiptText : FileStack;
   return (
     <article
       className={styles.tile}
@@ -83,81 +151,131 @@ export function ProcessTile({
       onContextMenu={(event) => onContextMenu(event, practice)}
       style={processAppearance(practice) as CSSProperties}
     >
-      <div className={styles.face} data-department={department.toLowerCase()}>
+      <div
+        className={styles.face}
+        data-department={department.toLowerCase()}
+        data-complete={column === "completed"}
+      >
         <button
           type="button"
           disabled={updating}
-          className="absolute inset-0 z-[1] rounded-[inherit] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--bz-focus-ring)]"
+          className={styles.open}
           aria-label={`Open process ${practice.id}: ${service}`}
           title={`${client} · ${service} · ${COLUMN_COLORS[column].label}`}
           onClick={openProcess}
         />
-        <span className="text-[11px] font-semibold tracking-wider uppercase tabular-nums">
-          {department} · #{practice.id}
-        </span>
-        <span
-          className="line-clamp-2 break-words w-full text-base leading-tight font-semibold tracking-tight"
-          title={service}
-        >
-          {service}
-        </span>
-        {practice.client_id ? (
-          <button
-            className="relative z-[2] max-w-full truncate text-sm underline-offset-4 hover:underline focus-visible:underline"
-            type="button"
-            onClick={openClient}
-            aria-label={`${client}, open client profile`}
-            title={client}
-          >
-            {client}
-          </button>
-        ) : (
-          <span className="max-w-full truncate text-sm">{client}</span>
-        )}
-        {practice.family_member_name && (
-          <span
-            className="max-w-full truncate text-[11px] font-medium"
-            title={practice.family_member_name}
-          >
-            For {practice.family_member_name}
+        <div className={styles.identity}>
+          <span className={styles.stamp}>
+            <Stamp size={15} aria-hidden />
           </span>
-        )}
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-2 text-xs font-semibold text-[var(--bz-text-1)]">
-          <AssigneeMark practice={practice} />
-          <span className="truncate" title={owner}>
-            {owner}
-          </span>
-        </p>
-        <button
-          type="button"
-          disabled={updating}
-          onClick={(event) => openMenu(event, practice)}
-          className="grid min-h-11 min-w-11 place-items-center rounded-md text-[var(--bz-text-2)] hover:bg-[var(--bz-card-hover)] focus-visible:outline-2 focus-visible:outline-[var(--bz-focus-ring)]"
-          title="More options"
-          aria-label="More options"
-        >
-          {updating ? (
-            <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+          <span>{department}</span>
+          <span className={styles.recordId}>#{practice.id}</span>
+          <ArrowUpRight className={styles.openArrow} size={15} aria-hidden />
+        </div>
+        <div className={styles.subject}>
+          <h3 className={styles.service} title={service}>
+            {service}
+          </h3>
+          {practice.client_id ? (
+            <button
+              className={styles.client}
+              type="button"
+              onClick={openClient}
+              aria-label={`${client}, open client profile`}
+              title={client}
+            >
+              <UserRound size={13} aria-hidden />
+              <span>{client}</span>
+            </button>
           ) : (
-            <Ellipsis aria-hidden="true" className="size-4" />
+            <span className={styles.client}>{client}</span>
           )}
-        </button>
+        </div>
+        {fact && (
+          <dl className={styles.fact}>
+            <dt>{fact.label}</dt>
+            <dd>{fact.value}</dd>
+          </dl>
+        )}
       </div>
-      {(urgent || expiry || payment || subStatus) && (
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-snug text-[var(--bz-text-2)]">
-          {urgent && (
-            <span className="inline-flex items-center gap-1 font-semibold capitalize text-[var(--bz-text-1)]">
-              <Flag aria-hidden="true" className="size-3" />
-              {practice.priority}
+      <div className={styles.foot}>
+        <div className={styles.ownerRow}>
+          <span className={styles.avatar} aria-hidden>
+            {owner === "Unassigned" ? (
+              <UserRound size={14} />
+            ) : (
+              initialsOf(owner)
+            )}
+          </span>
+          <div className={styles.ownerInfo}>
+            <span className={styles.owner} title={owner}>
+              {owner}
             </span>
-          )}
-          {expiry && <span>{expiry}</span>}
-          {payment && <span>{payment}</span>}
-          {subStatus && <span>{subStatus}</span>}
-        </p>
-      )}
+            {updated && (
+              <span className={styles.updated}>Updated {updated}</span>
+            )}
+          </div>
+          <button
+            type="button"
+            disabled={updating}
+            onClick={(event) => openMenu(event, practice)}
+            className={styles.menu}
+            title="More options"
+            aria-label="More options"
+          >
+            {updating ? (
+              <Loader2
+                aria-hidden
+                size={17}
+                className="motion-safe:animate-spin"
+              />
+            ) : (
+              <Ellipsis aria-hidden size={17} />
+            )}
+          </button>
+        </div>
+        {(payment ||
+          urgent ||
+          subStatus ||
+          practice.family_member_name ||
+          (dueIn !== null && dueIn <= 30)) && (
+          <div className={styles.signals}>
+            {payment && (
+              <span
+                className={styles.signal}
+                data-state={practice.payment_status}
+              >
+                {practice.payment_status === "paid" ? (
+                  <Check size={12} aria-hidden />
+                ) : (
+                  <CircleDollarSign size={12} aria-hidden />
+                )}
+                {payment}
+              </span>
+            )}
+            {urgent && (
+              <span className={styles.signal} data-state="urgent">
+                <Flag size={12} aria-hidden />{" "}
+                {practice.priority === "urgent" ? "Urgent" : "High priority"}
+              </span>
+            )}
+            {subStatus && <span>{subStatus}</span>}
+            {dueIn !== null && dueIn <= 30 && (
+              <span>
+                {dueIn < 0
+                  ? `Expired ${-dueIn}d ago`
+                  : dueIn === 0
+                    ? "Expires today"
+                    : `Expires in ${dueIn}d`}
+              </span>
+            )}
+            {practice.family_member_name && (
+              <span>For {practice.family_member_name}</span>
+            )}
+          </div>
+        )}
+        {deliveryPeek}
+      </div>
     </article>
   );
 }

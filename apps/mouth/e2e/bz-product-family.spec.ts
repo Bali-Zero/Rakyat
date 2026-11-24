@@ -180,8 +180,10 @@ const syntheticPractice = {
   status: "waiting_payment",
   priority: "normal",
   payment_status: "unpaid",
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-02T00:00:00.000Z",
+  quoted_price: 2500000,
+  start_date: "2026-11-10",
+  created_at: "2026-11-08T00:00:00.000Z",
+  updated_at: "2026-11-18T00:00:00.000Z",
 };
 
 const syntheticUnknownPractice = {
@@ -217,6 +219,8 @@ async function seedSyntheticProcessBoard(page: Page): Promise<void> {
                 practice_type_name: "Company Setup",
                 status: "completed",
                 payment_status: "paid",
+                paid_amount: 9500000,
+                completion_date: "2026-11-18",
               },
               {
                 ...syntheticUnknownPractice,
@@ -225,6 +229,8 @@ async function seedSyntheticProcessBoard(page: Page): Promise<void> {
                 practice_type_name: "Tax Registration",
                 status: "on_process",
                 payment_status: "paid",
+                paid_amount: 3750000,
+                priority: "high",
               },
               {
                 ...syntheticPractice,
@@ -232,6 +238,19 @@ async function seedSyntheticProcessBoard(page: Page): Promise<void> {
                 client_name: "Sample Applicant",
                 practice_type_name: "Stay Permit",
                 status: "waiting_documents",
+              },
+              {
+                ...syntheticPractice,
+                id: 712,
+                practice_type_name: "Work KITAS Renewal",
+                client_name: "Sample Business",
+                assignee_member_id: "operator-support",
+                assignee_color_index: 4,
+                assignee_name: "Case Officer",
+                status: "on_process",
+                payment_status: "paid",
+                paid_amount: 12000000,
+                priority: "urgent",
               },
             ],
       ),
@@ -447,6 +466,39 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await page.screenshot({
       path: visualReportPath("process-desktop"),
     });
+    const pack = page.getByTestId("process-card-710");
+    let reads = 0;
+    await page.route("**/api/crm/practices/710/delivery", (route) => {
+      reads++;
+      return route.fulfill({
+        json: {
+          needs_titles: false,
+          slots: [
+            {
+              key: "document_1",
+              label: "Tax registration certificate",
+              document_id: 85,
+              condition: null,
+              waiver_reason: null,
+            },
+            {
+              key: "document_2",
+              label: "Registration confirmation",
+              document_id: null,
+              condition: null,
+              waiver_reason: null,
+            },
+          ],
+        },
+      });
+    });
+    await pack.getByText("Delivery documents", { exact: true }).click();
+    await expect(pack.getByText("Tax registration certificate")).toBeVisible();
+    await expect(pack.getByText("Missing", { exact: true })).toBeVisible();
+    expect(reads).toBe(1);
+    await expect(
+      pack.getByRole("link", { name: "Open delivery" }),
+    ).toHaveAttribute("href", "/process/710#final-delivery");
   });
 
   test("My mobile shell stays within the viewport and labels Messages canonically", async ({

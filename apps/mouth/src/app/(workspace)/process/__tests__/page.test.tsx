@@ -32,6 +32,7 @@ import type { Practice } from "@/lib/api/crm/crm.types";
 
 // Mock dependencies
 const mockPush = vi.fn();
+const toastError = vi.fn();
 const mockRouter = {
   push: mockPush,
   back: vi.fn(),
@@ -58,11 +59,16 @@ vi.mock("@/lib/analytics");
 vi.mock("@/components/ui/toast", () => ({
   useToast: () => ({
     success: vi.fn(),
-    error: vi.fn(),
+    error: toastError,
     warning: vi.fn(),
     info: vi.fn(),
   }),
 }));
+
+async function openCaseActions(user: ReturnType<typeof userEvent.setup>) {
+  const card = await screen.findByTestId("process-card-1");
+  await user.click(within(card).getByRole("button", { name: "More options" }));
+}
 
 // Mock data
 const mockPractices: Practice[] = [
@@ -924,96 +930,47 @@ describe("Cases Page", () => {
   });
 
   describe("Status Change", () => {
-    it("should open context menu on card menu click", async () => {
+    it("opens the permitted workflow actions for the selected case", async () => {
       const user = userEvent.setup();
       render(<PratichePage />);
+      await openCaseActions(user);
 
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
-      });
-
-      // Find and click the menu button on first card
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter(
-          (btn) =>
-            btn.getAttribute("aria-label")?.includes("menu") ||
-            btn.className.includes("menu"),
-        );
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        await waitFor(() => {
-          expect(screen.getByText("Update Status")).toBeInTheDocument();
-          expect(screen.getByText("Inquiry")).toBeInTheDocument();
-          expect(screen.getByText("Sending Invoice")).toBeInTheDocument();
-        });
-      }
+      expect(screen.getByText("Update Status")).toBeVisible();
+      expect(screen.getByRole("button", { name: /^Inquiry$/i })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /^Sending Invoice/i }),
+      ).toBeDisabled();
+      expect(
+        screen.queryByRole("button", { name: /^On Process$/i }),
+      ).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Completed$/i })).toBeNull();
     });
 
-    it("should update case status when status option clicked", async () => {
+    it("updates the selected case to an operator-managed status", async () => {
       const user = userEvent.setup();
-      (api.crm.updatePractice as any) = vi.fn().mockResolvedValue({});
-
-      render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
+      api.crm.updatePractice = vi.fn().mockResolvedValue({
+        ...mockPractices[0],
+        status: "waiting_documents",
       });
-
-      // Open context menu
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        // Click on "On Process" status
-        const onProcessOption = screen.getByText("On Process");
-        await user.click(onProcessOption);
-
-        await waitFor(() => {
-          expect(api.crm.updatePractice).toHaveBeenCalledWith(1, {
-            status: "on_process",
-          });
-          expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
-            1,
-            "inquiry",
-            "on_process",
-          );
-        });
-      }
+      render(<PratichePage />);
+      await openCaseActions(user);
+      await user.click(
+        screen.getByRole("button", { name: "Waiting Documents" }),
+      );
+      await waitFor(() =>
+        expect(api.crm.updatePractice).toHaveBeenCalledWith(1, {
+          status: "waiting_documents",
+        }),
+      );
     });
 
-    it("should close context menu on outside click", async () => {
+    it("closes the context menu on outside click", async () => {
       const user = userEvent.setup();
       render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
-      });
-
-      // Open context menu
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        await waitFor(() => {
-          expect(screen.getByText("Update Status")).toBeInTheDocument();
-        });
-
-        // Click outside
-        await user.click(document.body);
-
-        await waitFor(() => {
-          expect(screen.queryByText("Update Status")).not.toBeInTheDocument();
-        });
-      }
+      await openCaseActions(user);
+      expect(screen.getByText("Update Status")).toBeVisible();
+      await user.click(document.body);
+      expect(screen.queryByText("Update Status")).not.toBeInTheDocument();
     });
   });
 
@@ -1198,34 +1155,24 @@ describe("Cases Page", () => {
       );
     });
 
-    it("should track case status changes", async () => {
+    it("tracks the previous and new statuses after a successful case update", async () => {
       const user = userEvent.setup();
-      (api.crm.updatePractice as any) = vi.fn().mockResolvedValue({});
-
-      render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
+      api.crm.updatePractice = vi.fn().mockResolvedValue({
+        ...mockPractices[0],
+        status: "waiting_documents",
       });
-
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        const onProcessOption = screen.getByText("On Process");
-        await user.click(onProcessOption);
-
-        await waitFor(() => {
-          expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
-            1,
-            "inquiry",
-            "on_process",
-          );
-        });
-      }
+      render(<PratichePage />);
+      await openCaseActions(user);
+      await user.click(
+        screen.getByRole("button", { name: "Waiting Documents" }),
+      );
+      await waitFor(() =>
+        expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
+          1,
+          "inquiry",
+          "waiting_documents",
+        ),
+      );
     });
   });
 
@@ -1244,35 +1191,23 @@ describe("Cases Page", () => {
       });
     });
 
-    it("should handle status update failure gracefully", async () => {
+    it("reports a failed status update and leaves the original status intact", async () => {
       const user = userEvent.setup();
-      (api.crm.updatePractice as any) = vi
+      api.crm.updatePractice = vi
         .fn()
         .mockRejectedValue(new Error("Update failed"));
-
       render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
-      });
-
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        const inProgressOption = screen.getByText("In Progress");
-        await user.click(inProgressOption);
-
-        await waitFor(() => {
-          expect(console.error).toHaveBeenCalledWith(
-            "Failed to update status:",
-            expect.any(Error),
-          );
-        });
-      }
+      await openCaseActions(user);
+      await user.click(
+        screen.getByRole("button", { name: "Waiting Documents" }),
+      );
+      await waitFor(() =>
+        expect(toastError).toHaveBeenCalledWith(
+          "Error",
+          "Failed to update process status",
+        ),
+      );
+      expect(screen.getByRole("button", { name: "Inquiry" })).toBeDisabled();
     });
   });
 

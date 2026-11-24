@@ -17,6 +17,10 @@ import {
 } from "@balizero/core";
 import {
   FolderKanban,
+  FileStack,
+  MessageSquare,
+  ReceiptText,
+  BriefcaseBusiness,
   Filter,
   Plus,
   LayoutGrid,
@@ -52,6 +56,7 @@ import {
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 import { ApiError } from "@/lib/api/error-handler";
+import { ProcessDeliveryPeek } from "@/components/process/ProcessDeliveryPeek";
 import { ProcessTile, AssigneeMark } from "@/components/process/ProcessTile";
 import { assigneeLabel } from "@/components/process/process-appearance";
 import { MonthPillTabs } from "@/components/process/MonthPillTabs";
@@ -79,6 +84,14 @@ import {
   loadViewMode,
   saveViewMode,
 } from "@/lib/utils/view-mode-storage";
+
+const stageIcons = {
+  inquiry: MessageSquare,
+  waiting_documents: FileStack,
+  sending_invoice: ReceiptText,
+  on_process: BriefcaseBusiness,
+  completed: CheckCircle2,
+};
 
 // SIMPLIFIED WORKFLOW (Feb 2026) - 5 Steps:
 // inquiry → waiting_documents → sending_invoice → on_process → completed
@@ -1057,7 +1070,7 @@ function ProcessBoard({ identity }: { identity: SessionIdentity }) {
             role="region"
             aria-label="Process board"
             tabIndex={0}
-            className="grid min-w-0 grid-flow-col auto-cols-[minmax(13rem,78%)] gap-5 overflow-x-auto overscroll-x-contain snap-x snap-proximity pb-4 sm:auto-cols-[minmax(13rem,1fr)]"
+            className="grid min-w-0 grid-flow-col auto-cols-[minmax(13rem,78%)] gap-4 overflow-x-auto overscroll-x-contain snap-x snap-proximity pb-4 sm:auto-cols-[minmax(13rem,1fr)]"
           >
             {COLUMN_ORDER.map((stage) => {
               const column = practicesByStatus[stage];
@@ -1072,10 +1085,16 @@ function ProcessBoard({ identity }: { identity: SessionIdentity }) {
                   ),
               );
               const label = COLUMN_COLORS[stage].label;
+              const StageIcon = stageIcons[stage];
               const stageHeader = (
                 <>
+                  <StageIcon
+                    className="size-4 shrink-0 text-[var(--bz-text-2)]"
+                    strokeWidth={1.6}
+                    aria-hidden
+                  />
                   <span className="min-w-0 truncate">{label}</span>
-                  <span className="ml-auto text-xs font-medium tabular-nums text-[var(--bz-text-2)]">
+                  <span className="ml-auto grid min-w-6 place-items-center rounded-full border border-[var(--bz-border)] bg-[var(--bz-card)] px-1.5 py-0.5 text-xs font-semibold tabular-nums text-[var(--bz-text-1)]">
                     {column.length}
                   </span>
                 </>
@@ -1084,7 +1103,7 @@ function ProcessBoard({ identity }: { identity: SessionIdentity }) {
                 <section
                   key={stage}
                   aria-label={label}
-                  className="min-w-0 snap-start border-t-2 border-[var(--bz-border)]"
+                  className="min-w-0 snap-start border-t border-[var(--bz-border)]"
                 >
                   {completed ? (
                     <h2>
@@ -1123,6 +1142,16 @@ function ProcessBoard({ identity }: { identity: SessionIdentity }) {
                               key={practice.id}
                               practice={practice}
                               updating={updatingId === practice.id}
+                              deliveryPeek={
+                                stage === "completed" ||
+                                (stage === "on_process" &&
+                                  practice.payment_status === "paid") ? (
+                                  <ProcessDeliveryPeek
+                                    practiceId={practice.id}
+                                    identity={identity}
+                                  />
+                                ) : undefined
+                              }
                               openProcess={() =>
                                 router.push(`/process/${practice.id}`)
                               }
