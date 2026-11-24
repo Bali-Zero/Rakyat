@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { AppFrame, AppWhatsAppCTA, useFunnelApp } from "@balizero/core";
 import { formatIDR } from "@balizero/core/utils";
 import { buildWhatsAppLink } from "@/lib/whatsapp-utm";
-import { readCheckoutHandoff } from "../../checkoutHandoff";
+import {
+  clearCheckoutHandoff,
+  readCheckoutHandoff,
+} from "../../checkoutHandoff";
 import { VOA_PRIMARY_ACTION_STYLE } from "../../voa-action-style";
 import { messageFor } from "../../orders/messages";
 import { isProviderCheckoutUrl } from "../../orders/provider-checkout-url";
@@ -82,6 +85,9 @@ export function CheckoutFlow({
   useEffect(() => {
     if (state.step !== "created") return;
     const { order } = state;
+    // The order exists: the traveller values have done their job. Cleared here
+    // and not on first read, so a reload before this point still prefills.
+    clearCheckoutHandoff(resultId);
     if (
       order.order_state === "awaiting_payment" &&
       isProviderCheckoutUrl(order.checkout_url)
@@ -97,7 +103,7 @@ export function CheckoutFlow({
       return;
     }
     router.replace(`/visa/voa/orders/${order.order_id}`);
-  }, [state, router]);
+  }, [state, router, resultId]);
 
   if (!paymentsLive) {
     return <PaymentActivatingPanel resultId={resultId} tracker={tracker} />;

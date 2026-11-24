@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { formatIDR } from "@balizero/core/utils";
 import { CheckoutFlow } from "./CheckoutFlow";
-import { writeCheckoutHandoff } from "../../checkoutHandoff";
+import {
+  readCheckoutHandoff,
+  writeCheckoutHandoff,
+} from "../../checkoutHandoff";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
@@ -283,6 +286,61 @@ describe("CheckoutFlow", () => {
       expect(await screen.findByRole("alert")).toBeInTheDocument();
       expect(window.location.href).toBe("");
       expect(mocks.push).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the handoff across a reload until the order exists", async () => {
+    writeCheckoutHandoff("result-1", {
+      full_name: "Jane Doe",
+      passport_number: "X1234567",
+    });
+    const first = render(
+      <CheckoutFlow resultId="result-1" paymentsLive={true} />,
+    );
+    await screen.findByText(/Jane Doe/i);
+    expect(readCheckoutHandoff("result-1").passport_number).toBe("X1234567");
+
+    first.unmount();
+    render(<CheckoutFlow resultId="result-1" paymentsLive={true} />);
+    expect(await screen.findByText(/Jane Doe/i)).toBeInTheDocument();
+    expect(screen.getByText(/X1234567/)).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "the provider hand-off",
+      "https://checkout.xendit.co/web/abc",
+      "awaiting_payment",
+    ],
+    ["the tracker hand-off", null, "paid"],
+  ])(
+    "removes the traveller handoff from sessionStorage once the order exists (%s)",
+    async (_label, checkoutUrl, orderState) => {
+      writeCheckoutHandoff("result-1", {
+        full_name: "Jane Doe",
+        passport_number: "X1234567",
+      });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, {
+          order_id: "order-1",
+          order_state: orderState,
+          price_idr: 850000,
+          checkout_url: checkoutUrl,
+        }),
+      );
+
+      const user = userEvent.setup();
+      render(<CheckoutFlow resultId="result-1" paymentsLive={true} />);
+      await screen.findByText(/Jane Doe/i);
+      await fillAndSubmit(user);
+
+      await waitFor(() =>
+        expect(readCheckoutHandoff("result-1")).toEqual({
+          full_name: undefined,
+          passport_number: undefined,
+        }),
+      );
+      expect(window.sessionStorage.length).toBe(0);
     },
   );
 
