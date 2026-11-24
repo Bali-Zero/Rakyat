@@ -47,6 +47,7 @@ _TABLES = """
 CREATE TABLE clients (
     id integer PRIMARY KEY,
     full_name text,
+    email text,
     deleted_at timestamptz
 );
 CREATE TABLE client_invitations (
@@ -94,7 +95,9 @@ async def pool() -> AsyncGenerator[asyncpg.Pool, None]:
             try:
                 await db_pool.execute(_TABLES)
                 await db_pool.execute(
-                    "INSERT INTO clients (id, full_name) VALUES ($1, 'Person One')", CLIENT
+                    "INSERT INTO clients (id, full_name, email) VALUES ($1, 'Person One', $2)",
+                    CLIENT,
+                    INVITED,
                 )
                 await db_pool.execute(
                     "INSERT INTO client_invitations (client_id, email, token, expires_at) "

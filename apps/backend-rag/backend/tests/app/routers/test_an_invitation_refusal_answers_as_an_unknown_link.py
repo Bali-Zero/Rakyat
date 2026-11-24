@@ -68,6 +68,7 @@ def _invitation() -> dict:
         "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
         "used_at": None,
         "client_name": "Client Name",
+        "client_email": "client@example.test",
     }
 
 

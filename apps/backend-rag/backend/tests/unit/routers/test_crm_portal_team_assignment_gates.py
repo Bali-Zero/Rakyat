@@ -58,6 +58,7 @@ ADMIN_EMAIL = "admin@example.test"  # backend.app.utils.crm_utils.CRM_EXTRA_ADMI
 def _client_row(*, assigned_to: str | None, created_by: str | None = None) -> dict[str, object]:
     return {
         "id": 1,
+        "email": "synthetic-client@example.com",
         "assigned_to": assigned_to,
         "created_by": created_by if created_by is not None else assigned_to,
     }
