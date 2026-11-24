@@ -134,12 +134,106 @@ describe("DeliveryBonusDesk", () => {
       expect(
         await screen.findByRole("link", { name: "Case #47 · C1 Tourism" }),
       ).toHaveAttribute("href", "/process/47#final-delivery");
-      expect(screen.getByText(expectedAction)).toHaveTextContent("2026-11-28");
+      expect(screen.getByText(expectedAction)).toHaveTextContent(
+        "ITK due 28 Nov 2026",
+      );
+      expect(screen.getByText("28 Nov 2026")).toHaveAttribute(
+        "datetime",
+        "2026-11-28",
+      );
       expect(
-        screen.getByText("Earliest payroll month · 2026-12"),
+        screen.getByText("Earliest payroll month · December 2026"),
       ).toBeVisible();
       expect(screen.getByText(/Renewed IMK uploaded/)).toBeVisible();
       expect(screen.queryByRole("button", { name: /send/i })).toBeNull();
     },
   );
+  it("keeps unpriced and held cases out of the payroll amount and separates the goal month", async () => {
+    const sample = desk();
+    const data = {
+      ...sample,
+      next_case: null,
+      totals: {
+        pending: 100000,
+        approved: 240000,
+        paid: 68000,
+        awaiting_rate: 1,
+        payroll_locked: 2,
+      },
+    };
+    mocks.request.mockResolvedValue({ sentSub: "employee-a", data });
+    render(<DeliveryBonusDesk />);
+    expect(await screen.findByText("Rp 408.000")).toBeVisible();
+    expect(screen.getByText("2 awaiting payroll review")).toBeVisible();
+    expect(
+      screen.getByRole("progressbar", { name: "Monthly service goal" }),
+    ).toHaveAttribute("aria-valuetext", "3 qualifying services, goal 5");
+    expect(screen.getByText(/Dec 2026 payroll/)).toBeVisible();
+  });
+  it("opens earlier activity without losing the latest delivery or changing payroll", async () => {
+    const sample = desk();
+    const earlier = {
+      ...sample.recent[0],
+      practice_id: 48,
+      service: "Synthetic filing",
+      amount_idr: null,
+      status: "awaiting_rate",
+    };
+    mocks.request.mockResolvedValue({
+      sentSub: "employee-a",
+      data: { ...sample, recent: [sample.recent[0], earlier], next_case: null },
+    });
+    render(<DeliveryBonusDesk />);
+    expect(
+      await screen.findByRole("link", { name: "C1 Tourism" }),
+    ).toBeVisible();
+    expect(screen.getByText("Synthetic filing")).not.toBeVisible();
+    fireEvent.click(screen.getByText("View 1 earlier delivery"));
+    expect(
+      screen.getByRole("link", { name: "Synthetic filing" }),
+    ).toHaveAttribute("href", "/process/48");
+    expect(screen.getByText("Rate to confirm")).toBeVisible();
+    fireEvent.click(screen.getByText("View 1 earlier delivery"));
+    expect(screen.getByText("Synthetic filing")).not.toBeVisible();
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+  });
+  it("handles zero delivery activity and a goal save failure without fabricating earnings", async () => {
+    const data = {
+      ...desk(),
+      next_case: null,
+      milestones: 0,
+      target: null,
+      recent: [],
+      totals: {
+        pending: 0,
+        approved: 0,
+        paid: 0,
+        awaiting_rate: 0,
+        payroll_locked: 0,
+      },
+    };
+    mocks.request.mockImplementation(async (url: string) => {
+      if (url.endsWith("/delivery-goal")) throw new Error("temporary failure");
+      return { sentSub: "employee-a", data };
+    });
+    render(<DeliveryBonusDesk />);
+    expect(
+      await screen.findByText(
+        "Your first qualifying delivery will appear here.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Set a personal goal" }),
+    );
+    fireEvent.change(screen.getByRole("spinbutton"), {
+      target: { value: "3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your goal could not be saved",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+  });
 });
