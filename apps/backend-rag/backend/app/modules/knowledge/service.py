@@ -227,7 +227,7 @@ class KnowledgeService:
             # Route to appropriate collection
             if collection_override:
                 collection_name = collection_override
-                logger.debug("Using override collection: %s", collection_name)
+                logger.debug("Using override collection")
             elif is_pricing_query:
                 collection_name = "bali_zero_pricing_hybrid"
                 logger.debug("PRICING QUERY DETECTED → Using bali_zero_pricing_hybrid collection")
@@ -237,7 +237,7 @@ class KnowledgeService:
             # Select the appropriate vector DB client
             vector_db = self.collections.get(collection_name)
             if not vector_db:
-                logger.error("Unknown collection: %s, defaulting to visa_oracle", collection_name)
+                logger.error("Unknown collection, defaulting to visa_oracle")
                 vector_db = self.collections["visa_oracle"]
                 collection_name = "visa_oracle"
 
