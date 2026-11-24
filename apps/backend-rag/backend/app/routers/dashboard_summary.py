@@ -19,7 +19,7 @@ from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool, require_team_member
 from backend.app.routers.crm_interactions import get_interactions_stats, list_interactions
 from backend.app.routers.crm_practices import get_practices_stats, list_practices
-from backend.app.utils.crm_utils import AvatarUrl
+from backend.app.utils.crm_utils import AvatarUrl, can_view_all_practices
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import get_cache_service
 from backend.core.collection_registry import resolve_collection_name
@@ -322,6 +322,8 @@ async def get_dashboard_summary(
     """
     user_id = _get_user_id(current_user)
     is_admin = _is_admin(current_user)
+    practice_owner = (current_user.get("email") or "").strip().lower() or user_id
+    can_view_practices = can_view_all_practices(current_user)
 
     try:
         # Per-task timeout to prevent one slow query from blocking the entire response
@@ -338,7 +340,11 @@ async def get_dashboard_summary(
         # RBAC: non-admins see only their own assigned practices/stats
         tasks = [
             _with_timeout(
-                get_practices_stats(user_id=user_id, pool=db_pool, is_admin=is_admin),
+                get_practices_stats(
+                    user_id=practice_owner,
+                    pool=db_pool,
+                    is_admin=can_view_practices,
+                ),
                 DEFAULT_PRACTICE_STATS,
             ),
             _with_timeout(get_interactions_stats(user_id, db_pool), DEFAULT_INTERACTION_STATS),
@@ -348,7 +354,7 @@ async def get_dashboard_summary(
                     limit=5,
                     user_id=user_id,
                     pool=db_pool,
-                    assigned_to=None if is_admin else user_id,
+                    assigned_to=None if can_view_practices else practice_owner,
                 ),
                 [],
             ),
@@ -365,7 +371,7 @@ async def get_dashboard_summary(
                 _get_email_stats(db_pool, user_id),
                 {"connected": False, "unread_count": 0},
             ),
-            _with_timeout(_get_critical_deadlines(db_pool, user_id, is_admin), 0),
+            _with_timeout(_get_critical_deadlines(db_pool, practice_owner, can_view_practices), 0),
         ]
 
         # Add admin-only tasks

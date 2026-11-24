@@ -7,7 +7,7 @@ Why this matters (team-lead review, 2026-08-25): `app.dependency_overrides`
 is FastAPI's TEST mechanism -- one unscoped, process-wide dict, not scoped
 per-test. `backend/tests/unit/routers/test_dashboard_coverage.py` already
 calls `app.dependency_overrides.clear()` UNCONDITIONALLY in its teardown,
-against the SAME `main_cloud.app` object production code shares. That call
+against the SAME API-process app object production code shares. That call
 is harmless today only because that test file never triggers
 `initialize_services`, so it never has anything of this module's to clear
 -- but a production wiring entry placed in `dependency_overrides` would be

@@ -170,12 +170,13 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(
         name="crm_related_registry_read", process_groups=_API, tags=("crm-related-registry",)
     ),
+    RouterEntry(
+        name="crm_related_link_reviews", process_groups=_API, tags=("crm-related-registry",)
+    ),
     RouterEntry(name="crm_shared_memory", process_groups=_API, tags=("crm",)),
     RouterEntry(name="crm_tax_pilot", process_groups=_API, tags=("crm", "pilot", "tax")),
     # ── Conversations / Memory ──
-    RouterEntry(name="collective_memory", process_groups=_RAG, tags=("memory",)),
     RouterEntry(name="conversations", process_groups=_RAG, tags=("memory",)),
-    RouterEntry(name="episodic_memory", process_groups=_RAG, tags=("memory",)),
     # ── Dashboard ──
     RouterEntry(name="dashboard", process_groups=_RAG, tags=("dashboard",)),
     RouterEntry(name="dashboard_featured_articles", process_groups=_RAG, tags=("dashboard",)),
@@ -309,9 +310,7 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     # ── Image Generation ──
     RouterEntry(name="image_generation", process_groups=_API, tags=("media",)),
     # ── Ingestion ──
-    RouterEntry(name="ingest", process_groups=_RAG, tags=("ingest",)),
     RouterEntry(name="legal_ingest", process_groups=_RAG, tags=("ingest",)),
-    RouterEntry(name="oracle_ingest", process_groups=_RAG, tags=("ingest",)),
     # ── Instagram ──
     RouterEntry(name="instagram_chat", attr="router", process_groups=_API, tags=("channels",)),
     RouterEntry(
@@ -362,8 +361,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="media", process_groups=_API, tags=("media",)),
     # ── Messaging ──
     RouterEntry(name="messaging_identity", process_groups=_API, tags=("channels",)),
-    # ── Monitoring ──
-    RouterEntry(name="monitoring_rag", process_groups=_RAG, tags=("monitoring",)),
     # ── Naga (Deep Research) ──
     RouterEntry(name="naga", process_groups=_RAG, tags=("research",)),
     # ── Newsletter ──
@@ -401,8 +398,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="portal_notifications", process_groups=_API, tags=("portal",)),
     RouterEntry(name="portal_notification_prefs", process_groups=_API, tags=("portal",)),
     RouterEntry(name="portal_process_timeline", process_groups=_API, tags=("portal",)),
-    # ── Preview ──
-    RouterEntry(name="preview", process_groups=_API, tags=("blog",)),
     # ── Prime ──
     RouterEntry(name="prime", process_groups=_API, tags=("prime",)),
     RouterEntry(name="prime_v2", process_groups=_API, tags=("prime",)),
@@ -419,14 +414,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     RouterEntry(name="team_activity", process_groups=_API, tags=("team",)),
     RouterEntry(name="team_analytics", process_groups=_API, tags=("team",)),
     RouterEntry(name="team_drive", process_groups=_API, tags=("team", "integrations")),
-    # ── Telegram ──
-    # telegram_webhook removed 2026-08-18 (Zero ruled REMOVE): structurally dead
-    # since inception — the `api` process it was mounted on runs
-    # initialize_services_light(), which sets app.state.channel_router = None
-    # by design, so Depends(get_channel_router) 503'd on every request. The live
-    # Telegram channel is Pro OpenClaw (CLAUDE.md §12), not this Fly-side surface.
-    # See .claude/skills/modus/PENDING-ARMS.md (closed lines) for the measurement.
-    RouterEntry(name="telegram", process_groups=_API, tags=("channels",)),
     # ── Twitter / X ──
     # Re-enabled 2026-04-29 (P0-6 zero-crash audit). Was previously DISABLED
     # 2026-04-03 ("CRC broken, OAuth incomplete"); the CRC handshake was
@@ -461,11 +448,6 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
     # ── WebSocket ──
     RouterEntry(name="websocket", process_groups=_API, tags=("channels",)),
     # ── WhatsApp ──
-    RouterEntry(
-        name="wa_actions",
-        process_groups=_API,
-        tags=("channels", "crm", "wa-copilot"),
-    ),
     RouterEntry(
         name="wa_broker",
         process_groups=_API,
@@ -555,22 +537,22 @@ ROUTER_MANIFEST: tuple[RouterEntry, ...] = (
 _ORDER_FULL = """
 auth health nusantara_health olympus:internal_router handlers debug debug:v1_router agent
 lam_memory agents autonomous_agents autonomous_execution autonomous_lab agentic_rag
-kg_agentic conversations session collective_memory episodic_memory experience skill
+kg_agentic conversations session experience skill
 metabolic_health federation feedback funnel lead_capture visa_check funnel_email garuda_voa
 garuda_voa_public garuda_orders_router garuda_portal_auth garuda_documents_router
 garuda_staff_router garuda_assignment_targets crm_clients intake_review
 crm_clients_documents crm_company crm_enhanced crm_enhanced_documents crm_guardian_drive
 crm_enhanced_alerts crm_intelligence accounting crm_interactions crm_notifications
-crm_practices crm_related_subjects crm_related_registry_read crm_shared_memory crm_tax_pilot
-crm_analytics team_invites_messaging partners channel_health channels omnichannel
+crm_practices crm_related_subjects crm_related_registry_read crm_related_link_reviews
+crm_shared_memory crm_tax_pilot crm_analytics team_invites_messaging partners channel_health channels omnichannel
 workspace_inbox observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout
 hr_people intake_gate notifications notifications_admin cron_notifiers portal portal_admin
 portal_billing portal_dashboard portal_drive portal_family portal_invite portal_matters
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
-wr2_publish workspace_analytics research_control ingest legal_ingest oracle_ingest naga
-oracle_universal kbli_notebook kbli_notebook_chat preview websocket telegram twitter
-twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
+wr2_publish workspace_analytics research_control legal_ingest naga
+oracle_universal kbli_notebook kbli_notebook_chat websocket twitter
+twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages
 wa_broker wa_inbox wa_package instagram_chat instagram_chat:webhook_router intel_lake intel
 intel_scraper intel_analytics intel_observability webhooks messaging_identity zoho_email
 google_drive documents_proxy team_drive sheets admin_crm_kg admin_drive_auth
@@ -578,7 +560,7 @@ admin_drive_health admin_email_health admin_pii admin_rate_limit admin_drive_ref
 admin_drive_setup admin_self_healing admin_zoho_auth frontend_metrics llm_costs newsletter
 blog_ask article_composer asset_upload news performance prime prime_v2 dynamic_pricing dream
 identity knowledge knowledge_visa knowledge_activity team team_activity team_analytics media
-voice image_generation query_analytics workflow_analytics workflow_queue monitoring_rag
+voice image_generation query_analytics workflow_analytics workflow_queue
 admin_conversation_cleanup admin_practice_auto_create admin_logs admin_team_activity
 dashboard dashboard_featured_articles dashboard_summary cell_status event_bus bridge
 guardian visa_oracle visa_oracle_evaluate visa_oracle_testing
@@ -591,15 +573,16 @@ funnel_email garuda_voa garuda_voa_public garuda_orders_router garuda_portal_aut
 garuda_documents_router garuda_staff_router garuda_assignment_targets experience skill
 metabolic_health crm_clients_documents crm_company crm_enhanced_documents
 crm_enhanced_alerts crm_guardian_drive crm_intelligence crm_interactions crm_notifications
-crm_related_subjects crm_related_registry_read crm_shared_memory crm_tax_pilot crm_analytics
+crm_related_subjects crm_related_registry_read crm_related_link_reviews crm_shared_memory
+crm_tax_pilot crm_analytics
 team_invites_messaging partners channel_health channels omnichannel workspace_inbox
 observed_shell hr hr_late_reply hr_my_late_incident hr_owner_cashout hr_people intake_gate
 notifications notifications_admin cron_notifiers portal portal_admin portal_billing
 portal_dashboard portal_drive portal_family portal_invite portal_matters
 portal_notifications portal_notification_prefs portal_process_timeline compliance_alerts
 compliance_obligations tax_calendar_public e33_cases lkpm analytics war_room_dashboard
-wr2_publish workspace_analytics research_control preview websocket telegram twitter
-twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages wa_actions
+wr2_publish workspace_analytics research_control websocket twitter
+twitter:webhook_router whatsapp_chat whatsapp_conversations wa_mirror_messages
 wa_broker wa_inbox instagram_chat instagram_chat:webhook_router webhooks messaging_identity
 zoho_email google_drive documents_proxy dynamic_pricing team_drive sheets admin_crm_kg
 admin_drive_auth admin_drive_health admin_email_health admin_pii admin_rate_limit
@@ -614,11 +597,11 @@ guardian knowledge_activity visa_oracle visa_oracle_evaluate visa_oracle_testing
 _ORDER_RAG = """
 health handlers admin_rate_limit admin_self_healing agent lam_memory agents
 autonomous_agents autonomous_execution agentic_rag kg_agentic conversations
-collective_memory episodic_memory crm_clients intake_review crm_enhanced crm_practices
-ingest legal_ingest oracle_ingest naga oracle_universal intel intel_scraper intel_analytics
+crm_clients intake_review crm_enhanced crm_practices
+legal_ingest naga oracle_universal intel intel_scraper intel_analytics
 intel_lake intel_observability kbli_notebook kbli_notebook_chat blog_ask news
 dynamic_pricing dream identity knowledge knowledge_visa voice whatsapp_chat wa_package
-dashboard dashboard_featured_articles dashboard_summary monitoring_rag
+dashboard dashboard_featured_articles dashboard_summary
 """.split()
 
 _ORDERS: dict[str, list[str]] = {"full": _ORDER_FULL, "api": _ORDER_API, "rag": _ORDER_RAG}

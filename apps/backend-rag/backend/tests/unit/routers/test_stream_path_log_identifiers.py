@@ -11,6 +11,7 @@ from fastapi import Request
 
 from backend.app.routers import agentic_rag as agentic
 from backend.app.routers.agentic_rag import AgenticQueryRequest, WorkspaceQueryRequest
+from backend.services.agents.team_agent_config import AgentRole
 from backend.services.rag.agentic import orchestrator_streaming_core as core_module
 from backend.services.rag.agentic.orchestrator_streaming import OrchestratorStreamingManager
 from backend.services.rag.agentic.orchestrator_streaming_core import OrchestratorStreamingCore
@@ -266,7 +267,14 @@ async def test_workspace_stream_fatal_logs_type_correlation_and_frames(caplog) -
 
     orchestrator = AsyncMock()
     orchestrator.stream_query = MagicMock(return_value=events())
-    role = SimpleNamespace(role_id="synthetic_role", client_scope="synthetic_scope")
+    # A real role: the route copies it to stamp the desk role of the session.
+    role = AgentRole(
+        role_id="synthetic_role",
+        display_name="Synthetic",
+        language="en",
+        system_context="synthetic",
+        client_scope="synthetic_scope",
+    )
     with (
         caplog.at_level(logging.INFO),
         patch.object(agentic, "get_agent_role", return_value=role),
@@ -403,7 +411,9 @@ async def test_crm_precall_failure_logs_type_only(caplog) -> None:
     core = _Core()
     core.reasoning_engine.tool_map = {"crm_query": _ExplodingTool()}
     with patch.object(OrchestratorStreamingCore, "_mark_react_stream_unfinalized"):
-        await _drive_core(core, caplog, query="how many clients", agent_role=SimpleNamespace())
+        await _drive_core(
+            core, caplog, query="how many clients", agent_role=SimpleNamespace(desk_role="member")
+        )
     assert "[CRM Pre-call] Failed: RuntimeError" in caplog.text
     assert CANARY_TEXT not in _dump(caplog)
 

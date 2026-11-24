@@ -372,9 +372,7 @@ async def test_empty_history_is_not_v4s_problem(monkeypatch: pytest.MonkeyPatch)
             "thread_epoch": 3,
         }
     )
-    stubs = _wire_stubs(
-        monkeypatch, wire=empty_history_wire, consume_text=_envelope(answer="ok")
-    )
+    stubs = _wire_stubs(monkeypatch, wire=empty_history_wire, consume_text=_envelope(answer="ok"))
     await _run()
     stubs.offer_job.assert_awaited_once()
 
@@ -595,3 +593,39 @@ async def test_unsupported_stub_logs_a_real_judge_not_absent(
     matching = [m for m in hits if "support verdict" in m]
     assert any("codex:gpt-5.6-terra" in m for m in matching)
     assert not any("judge=absent" in m for m in matching)
+
+
+# ── the human alert gets the database the leg already holds ──────────────
+
+
+@pytest.mark.asyncio
+async def test_the_leg_hands_its_pool_to_the_human_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guilt: the leg's `tell_a_human` closure called the helper without the
+    pool, so the handoff could not find the client's consultant or raise the
+    bell and every alert went to the fixed recipient."""
+    stubs = _wire_stubs(monkeypatch, consume_text=_envelope(answer="the real answer"))
+
+    async def _finalize_that_tells(**kwargs: Any) -> FinalizeResult:
+        await kwargs["tell_a_human"]("rag_abstain")
+        return FinalizeResult(outcome=FinalizeOutcome.SEND, text="localized abstention text")
+
+    monkeypatch.setattr(
+        wa_codex_leg, "finalize_wa_answer", AsyncMock(side_effect=_finalize_that_tells)
+    )
+    pool = _FakePool()
+
+    await wa_codex_leg.attempt(
+        pool,  # type: ignore[arg-type]
+        outbox_id=42,
+        thread_id=7,
+        message_id=4200,
+        claim_token=uuid.uuid4(),
+        outbox_expected_status="generating",
+        thread=_thread(),
+    )
+
+    stubs.tell.assert_awaited_once()
+    kwargs = stubs.tell.await_args.kwargs
+    assert kwargs["pool"] is pool
+    assert kwargs["thread_id"] == 7
+    assert kwargs["reason"] == "rag_abstain"

@@ -581,6 +581,18 @@ def test_a_pardon_entry_without_a_usable_path_pardons_nothing():
     assert lint._valid_entry({k: v for k, v in good.items()}) is False  # no path key at all
 
 
+
+# The redactor's own corpus lives in tests/test_redact_for_external.py. The workflow that runs
+# this file names its test files one by one, and that list is not changed here, so every test of
+# that corpus is also collected under this file: it runs wherever this file runs.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
+import test_redact_for_external as _redactor_corpus  # noqa: E402
+
+for _name in dir(_redactor_corpus):
+    if _name.startswith("test_"):
+        assert _name not in globals(), f"test name used twice: {_name}"
+        globals()[_name] = getattr(_redactor_corpus, _name)
+
 if __name__ == "__main__":
     if "--bench" in sys.argv:
         raise SystemExit(_run_bench())
@@ -1242,3 +1254,193 @@ def test_pardon_growth_file_absent_at_base_means_everything_is_growth(tmp_path, 
         "the registry absent at a resolvable base ref means the base line was "
         "empty, so every currently-pardoned path is growth"
     )
+
+
+# ─────────────────────────────────────────── a hash inside an unquoted value
+# In a shell line and in YAML a hash starts a comment only after whitespace, so
+# a hash inside an unquoted value is part of the value. The bare rule used to
+# stop at it and send the tail of the credential as it was. These live in this
+# file because it is the corpus the gating workflow names; the values are joined
+# at run time so that no credential-looking literal is committed.
+
+
+def _bare_assignment(separator: str, value: str) -> str:
+    return "UPSTREAM_" + "TOKEN" + separator + value
+
+
+def test_redaction_bare_assignment_with_hash_in_value_redacts_the_entire_value():
+    value = "aaaa" + "#" + "bbbb"
+    out = redact(_bare_assignment("=", value))
+
+    assert value not in out
+    assert "aaaa" not in out
+    assert "bbbb" not in out
+
+
+def test_redaction_bare_assignment_with_short_prefix_before_hash_redacts_the_entire_value():
+    value = "aa" + "#" + "bbbb"
+    out = redact(_bare_assignment("=", value))
+
+    assert value not in out
+    assert "aa" not in out
+    assert "bbbb" not in out
+
+
+def test_redaction_bare_yaml_assignment_with_hash_in_value_redacts_the_entire_value():
+    value = "aaaa" + "#" + "bbbb"
+    out = redact(_bare_assignment(": ", value))
+
+    assert value not in out
+    assert "aaaa" not in out
+    assert "bbbb" not in out
+
+
+def test_redaction_bare_assignment_keeps_comment_after_whitespace():
+    value = "aaaa" + "#" + "bbbb"
+    comment = "# synthetic explanation"
+    out = redact(_bare_assignment("=", value) + " " + comment)
+
+    assert value not in out
+    assert out.endswith(comment)
+
+
+def test_redaction_empty_bare_assignment_with_comment_is_unchanged():
+    line = _bare_assignment("=", "") + " # synthetic explanation"
+
+    assert redact(line) == line
+
+
+def test_redaction_quoted_value_with_a_hash_is_redacted_as_before():
+    value = "aaaa" + "#" + "bbbb"
+    out = redact(_bare_assignment("=", '"' + value + '"'))
+
+    assert out == _bare_assignment("=", '"<REDACTED:secret>"')
+
+
+def test_redaction_leaves_an_ordinary_name_with_a_hash_untouched():
+    line = "UPSTREAM_LABEL=" + "aaaa" + "#" + "bbbb"
+
+    assert redact(line) == line
+
+
+def test_named_assignment_quoted_suffixed_credential_word_redacts():
+    value = "synthetic" + "quoted" + "value"
+    out = redact('DB_PASSWORD_PROD = "' + value + '"')
+
+    assert value not in out
+
+
+def test_named_assignment_bare_suffixed_credential_word_redacts():
+    value = "synthetic" + "bare" + "value"
+    out = redact("SERVICE_TOKEN_V2: " + value)
+
+    assert value not in out
+
+
+def test_named_assignment_quoted_mapping_suffixed_credential_word_redacts():
+    value = "synthetic" + "mapping" + "value"
+    out = redact('{"SECRET_KEY_BASE": "' + value + '"}')
+
+    assert value not in out
+
+
+def test_named_assignment_quoted_fragment_name_keeps_value():
+    line = 'TYPEKEYBOARD_PROD = "syntheticquotedvalue"'
+
+    assert redact(line) == line
+
+
+def test_named_assignment_bare_fragment_name_keeps_value():
+    line = "SERVICE_TOKENIZER_V2: syntheticbarevalue"
+
+    assert redact(line) == line
+
+
+def test_named_assignment_quoted_mapping_fragment_name_keeps_value():
+    line = '{"SECRETARY_BASE": "syntheticmappingvalue"}'  # pragma: allowlist secret
+
+    assert redact(line) == line
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["API_TOKEN_STAGING", "SERVICE_KEY_1", "SECRET_KEY_BASE_PROD", "signing_secret_b"],
+)
+def test_named_assignment_environment_version_and_ordinal_suffixes_redact(name):
+    value = "synthetic" + "suffixed" + "value"
+    out = redact(name + ' = "' + value + '"')
+
+    assert value not in out
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'key_id = "kid-synthetic-0001"',
+        'token_type = "bearer-like"',
+        'token_url = "https://example.test/oauth/token"',
+        "token_usage: response.usage_metadata",
+        '{"key_path": "config/keys/public.pem"}',
+        'DB_PASSWORD_PROD_HOST = "db.example.test"',  # pragma: allowlist secret
+    ],
+)
+def test_named_assignment_descriptor_suffix_keeps_value(line):
+    # The name describes something ABOUT a credential: its value is what the
+    # reader of the code needs, and redacting it protects nothing.
+    assert redact(line) == line
+
+
+@pytest.mark.parametrize(
+    ("line", "kept"),
+    [
+        ("mail person.one@example.test now", "mail  now"),
+        ("x<person.one@example.test>", "x<>"),
+        ("a.b+c-d%e@sub.example.test,", ","),
+        ("to=person.one@example.test", "to="),
+        (".person@example.test", "."),
+        ("person.one@example.test%2Cperson.two@example.test", ""),
+        ("a@example.test-b@example.test", ""),
+        ("@example.test", "@example.test"),
+    ],
+)
+def test_redaction_strips_the_addresses_it_always_did(line, kept):
+    assert redact(line).replace("<REDACTED:email>", "") == kept
+
+
+def test_redaction_stays_linear_on_a_long_run_without_a_separator():
+    import time
+
+    # One long line of address and scheme characters with no "@" and no "://".
+    # Reading it again from every word boundary took the address rule and the
+    # connection-string rule more than a minute at this size; reading it once
+    # per run takes well under a second, so the bound leaves room on both sides
+    # for a slow or busy machine.
+    text = "a." * 100_000
+
+    started = time.perf_counter()
+    out = redact(text)
+    elapsed = time.perf_counter() - started
+
+    assert out == text
+    assert elapsed < 20.0
+
+
+@pytest.mark.parametrize("unit", ["a-", "a+b.", "x1.y2-", "a.b://", "a://b:", "a@b.", "-a@b.c"])
+def test_redaction_leaves_a_run_without_an_address_or_credentials_unchanged(unit):
+    text = unit * 500
+
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ["", "DATABASE_URL=", "url: ", "jdbc:", "a.b.", "9-", "x+", '"'],
+)
+def test_redaction_strips_dsn_credentials_after_any_run_prefix(prefix):
+    user, word = "person", "synthetic" + "word"
+    line = prefix + "postgresql+asyncpg://" + user + ":" + word + "@db.example.test:5432/app"
+
+    out = redact(line)
+
+    assert word not in out
+    assert out.endswith("@db.example.test:5432/app")

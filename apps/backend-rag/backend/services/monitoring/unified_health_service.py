@@ -9,6 +9,7 @@ Centralizes all health check functionality:
 This service provides a single source of truth for system health.
 """
 
+import asyncio
 import logging
 import time
 from dataclasses import asdict, dataclass
@@ -46,6 +47,10 @@ class SystemMetrics:
     disk_usage: float
     uptime: float
     timestamp: float
+
+
+# The health call must answer even when the database does not: the connect is bounded.
+DATABASE_CONNECT_TIMEOUT_SECONDS = 5.0
 
 
 class UnifiedHealthService:
@@ -102,9 +107,14 @@ class UnifiedHealthService:
                     timestamp=time.time(),
                 )
 
-            conn = await asyncpg.connect(settings.database_url)
-            await conn.execute("SELECT 1")
-            await conn.close()
+            conn = await asyncio.wait_for(
+                asyncpg.connect(settings.database_url),
+                timeout=DATABASE_CONNECT_TIMEOUT_SECONDS,
+            )
+            try:
+                await conn.execute("SELECT 1")
+            finally:
+                await conn.close()
 
             latency = (time.time() - start) * 1000
             self.service_registry.register("database", ServiceStatus.HEALTHY)
@@ -361,7 +371,11 @@ class UnifiedHealthService:
         registry_status = self.service_registry.get_status()
 
         # Calculate overall health
-        all_ok = all(r.status == "ok" for _, r in results)
+        # A dependency that is not configured says nothing either way; with nothing
+        # checked at all the answer stays unknown.
+        all_ok = any(r.status == "ok" for _, r in results) and all(
+            r.status in {"ok", "skipped"} for _, r in results
+        )
         has_warnings = any(r.status == "warning" for _, r in results)
         has_errors = any(r.status == "error" for _, r in results)
 

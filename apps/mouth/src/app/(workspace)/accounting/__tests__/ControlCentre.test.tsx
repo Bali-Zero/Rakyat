@@ -69,6 +69,7 @@ const rows = () => [
     txn_date: "2026-11-16",
     amount_idr: 12500000,
     description: "CONTOH TRANSFER ONE",
+    payer_name: "CONTOH PEMBAYAR",
     light: "green",
     open_candidates: 1,
     suggestion: openCandidate,
@@ -194,15 +195,20 @@ beforeEach(() => {
   });
 });
 
-const renderCentre = (onOpenCashout = vi.fn(), onConfirmed = vi.fn()) => {
+const renderCentre = (
+  onOpenCashout = vi.fn(),
+  onConfirmed = vi.fn(),
+  onOpenOutgoings = vi.fn(),
+) => {
   render(
     <ReconciliationInbox
       onConfirmed={onConfirmed}
       doneVersion={0}
       onOpenCashout={onOpenCashout}
+      onOpenOutgoings={onOpenOutgoings}
     />,
   );
-  return { onOpenCashout, onConfirmed };
+  return { onOpenCashout, onConfirmed, onOpenOutgoings };
 };
 const ready = async () => screen.findByText("CONTOH TRANSFER ONE");
 const tab = (key: string) => screen.getByTestId(`cc-tab-${key}`);
@@ -320,13 +326,14 @@ describe("Accounting control centre", () => {
     );
   });
 
-  it("keeps Money out inert", async () => {
-    renderCentre();
+  it("Money out opens the outgoings view and changes nothing here", async () => {
+    const { onOpenOutgoings, onOpenCashout } = renderCentre();
     await ready();
     await screen.findByTestId("cc-count-done");
     const moneyOut = screen.getByTestId("cc-money-out");
-    expect(moneyOut.tagName).toBe("SPAN");
-    expect(moneyOut).toHaveAttribute("aria-disabled", "true");
+    expect(moneyOut.tagName).toBe("BUTTON");
+    expect(moneyOut).not.toHaveAttribute("role");
+    expect(moneyOut).toHaveTextContent(/^Money out$/);
     const requestsBefore =
       api.getReconciliationInbox.mock.calls.length +
       api.getMatchCandidates.mock.calls.length +
@@ -341,6 +348,8 @@ describe("Accounting control centre", () => {
 
     fireEvent.click(moneyOut);
 
+    expect(onOpenOutgoings).toHaveBeenCalledTimes(1);
+    expect(onOpenCashout).not.toHaveBeenCalled();
     expect(tab("confirm")).toHaveAttribute("aria-selected", "true");
     expect(tab("done")).toHaveAttribute("aria-selected", "false");
     expect(screen.queryByTestId("cc-done")).toBeNull();
@@ -392,7 +401,11 @@ describe("Accounting control centre", () => {
   });
 
   it("leaves the Done view when a later load says the route is unavailable", async () => {
-    const props = { onConfirmed: vi.fn(), onOpenCashout: vi.fn() };
+    const props = {
+      onConfirmed: vi.fn(),
+      onOpenCashout: vi.fn(),
+      onOpenOutgoings: vi.fn(),
+    };
     const { rerender } = render(
       <ReconciliationInbox {...props} doneVersion={0} />,
     );
@@ -444,6 +457,27 @@ describe("Accounting control centre", () => {
           element.classList.contains("text-xl"),
       ),
     ).toBe(false);
+  });
+
+  it("names the payer first when the bank line carries one, the memo under it", async () => {
+    renderCentre();
+    await ready();
+    const named = screen.getByTestId("inbox-row-1");
+    expect(within(named).getByText("CONTOH PEMBAYAR")).toHaveClass(
+      "truncate",
+      "text-sm",
+      "font-medium",
+    );
+    expect(within(named).getByText("CONTOH TRANSFER ONE")).toHaveClass(
+      "truncate",
+      "text-xs",
+    );
+    fireEvent.click(tab("nomatch"));
+    const unnamed = screen.getByTestId("inbox-row-4");
+    expect(within(unnamed).getByText("CONTOH TRANSFER FOUR")).toHaveClass(
+      "line-clamp-2",
+      "font-medium",
+    );
   });
 
   it("marks only the opened row", async () => {
@@ -623,11 +657,11 @@ describe("Accounting control centre", () => {
       within(screen.getByTestId("cc-cand-12")).getByRole("radio"),
     );
     expect(
-      screen.getByRole("button", { name: "Link, no money moved" }),
+      screen.getByRole("button", { name: "Link payment" }),
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("cc-foot")).getByText(
-        "Linking moves no money. You can reopen this transfer any time from Done today.",
+        "Linking adds this transfer to the cash-out and dates the invoice; the case does not change. You can reopen this transfer any time from Done today.",
       ),
     ).toBeInTheDocument();
     fireEvent.click(
@@ -638,7 +672,7 @@ describe("Accounting control centre", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("cc-foot")).getByText(
-        "Confirming records this payment on the practice, the invoice and the cashout. It cannot be undone from this page.",
+        "Confirming records this payment on the practice, the invoice and the cashout. You can undo it today from Done today. Paid in full, a case waiting for payment moves to On Process.",
       ),
     ).toBeInTheDocument();
   });
@@ -1045,7 +1079,7 @@ describe("Accounting control centre", () => {
     renderCentre(onOpenCashout);
     await ready();
     const card = screen.getByTestId("cc-cashout-card");
-    expect(card).toHaveTextContent("Cash-out this week");
+    expect(card).toHaveTextContent("Cash-out register");
     expect(card).not.toHaveTextContent("Rp");
     fireEvent.click(within(card).getByRole("button", { name: "Open" }));
     expect(onOpenCashout).toHaveBeenCalledTimes(1);

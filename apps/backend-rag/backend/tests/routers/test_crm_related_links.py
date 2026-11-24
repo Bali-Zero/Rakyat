@@ -101,6 +101,8 @@ CLIENTS_SCHEMA = """
 CREATE TABLE clients (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     full_name text NOT NULL,
+    passport_number varchar(100),
+    date_of_birth date,
     deleted_at timestamptz
 );
 CREATE TABLE client_family_members (
@@ -189,6 +191,7 @@ async def pool(writes):
                 "365_related_subject_names.sql",
                 "367_related_subject_links.sql",
                 "370_related_subject_detachments.sql",
+                "372_related_subject_link_reviews.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -548,6 +551,7 @@ async def test_l1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "related_subject_documents",
             "related_subject_names",
             "related_subject_detachments",
+            "related_subject_link_reviews",
         }
         assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
 
@@ -1275,6 +1279,9 @@ LINK_FIELDS = {
     "created_at",
     "files",
     "from_subject_id",
+    "review",
+    "suggested_relation",
+    "suggestion_basis",
 }
 
 
@@ -1283,7 +1290,7 @@ def _ids(resp):
 
 
 @pytest.mark.asyncio
-async def test_l11_the_detail_carries_links_with_exactly_eight_fields_in_order(
+async def test_l11_the_detail_carries_links_with_exactly_eleven_fields_in_order(
     admin, conn, clients
 ):
     sid = await seed_subject(conn, "person", "ZzL11 Person", [("passport", P1)])
@@ -1473,7 +1480,7 @@ async def test_l12_a_populated_list_page_runs_at_most_four_selects(conn, clients
 
 
 @pytest.mark.asyncio
-async def test_l12_the_detail_runs_at_most_seven_selects(conn, clients):
+async def test_l12_the_detail_runs_at_most_nine_selects(conn, clients):
     sid = await seed_subject(conn, "person", "ZzL12 Person", [("passport", P1)])
     await _seed_document(conn, sid, 1)
     await seed_link(conn, sid, LIVE1)
@@ -1481,8 +1488,8 @@ async def test_l12_the_detail_runs_at_most_seven_selects(conn, clients):
     detail = await related_registry_read.get_subject(counting, sid)
     assert detail["links_total"] == 1 and len(detail["documents"]) == 1
     assert (
-        counting.statements == 7
-    )  # subject, identifiers, documents, sightings, names, links, detachments
+        counting.statements == 9
+    )  # subject, identifiers, documents, sightings, names, links, reviews, suggestions, detachments
     bare = await seed_subject(conn, "person", None, [("passport", P2)])
     counting = _CountingConn(conn)
     await related_registry_read.get_subject(counting, bare)
@@ -1512,7 +1519,7 @@ FORBIDDEN_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|TRUNCATE|MERGE|ALTER|DROP|C
 GUARDED_NAME = "CASE WHEN c.id IS NOT NULL AND c.deleted_at IS NULL THEN c.full_name END"
 
 
-def test_l12_static_census_is_eleven_plain_selects_and_the_guarded_name():
+def test_l12_static_census_is_thirteen_plain_selects_and_the_guarded_name():
     service = related_registry_read
     for sql in _sql_constants(service):
         assert not FORBIDDEN_SQL.search(sql), sql[:60]
@@ -1522,7 +1529,7 @@ def test_l12_static_census_is_eleven_plain_selects_and_the_guarded_name():
         for attr, value in vars(service).items()
         if attr.endswith("_SQL") and attr not in FRAGMENTS
     }
-    assert len(statements) == 11
+    assert len(statements) == 13
     for attr, sql in statements.items():
         assert sql.lstrip().upper().startswith("SELECT"), attr
         # no read statement selects the producer's evidence or the registry actor, but the one
@@ -1534,8 +1541,13 @@ def test_l12_static_census_is_eleven_plain_selects_and_the_guarded_name():
     assert GUARDED_NAME in links_sql
     assert links_sql.replace(GUARDED_NAME, "").count("full_name") == 0
     assert "LEFT JOIN clients c ON c.id = l.client_id" in links_sql
+    # slice 4F: the suggestion statement COMPARES the client name (after its FROM clients) and its
+    # select list holds booleans only: the name is never selected
+    suggestions = statements["_SUGGESTIONS_SQL"]
+    assert "full_name" not in suggestions.split("FROM clients c")[0]
+    assert suggestions.count("c.full_name") == 1
     for attr, sql in statements.items():
-        if attr != "_LINKS_SQL":
+        if attr not in {"_LINKS_SQL", "_SUGGESTIONS_SQL"}:
             assert "full_name" not in sql, attr
 
 
@@ -1633,6 +1645,7 @@ ALLOWED_NAMING_THE_TABLE = {
     "app/routers/crm_related_subjects.py",
     "services/crm/related_registry_read.py",
     "app/routers/crm_related_registry_read.py",
+    "services/crm/related_link_reviews.py",
 }
 
 
@@ -1810,9 +1823,36 @@ def _forbidden(data, *, answer_words: bool) -> set[str]:
     return tokens
 
 
+# LogRecord attributes whose digits the runtime measures (clock, thread, process), never a body:
+# scanned never, as the audit columns of UNSCANNED_AUDIT_TYPES. A body's 5-digit number turned up
+# by chance in relativeCreated (CI, b_files_above_limit with files=10001). `extra=` cannot carry
+# these names: logging refuses to overwrite an attribute the record already has.
+UNSCANNED_RECORD_ATTRIBUTES = frozenset(
+    {"created", "msecs", "relativeCreated", "thread", "process"}
+)
+
+
 def _record_text(record: logging.LogRecord) -> str:
     rendered = logging.Formatter().format(record)
-    return rendered + " " + " ".join(str(v) for v in record.__dict__.values())
+    scanned = (v for k, v in record.__dict__.items() if k not in UNSCANNED_RECORD_ATTRIBUTES)
+    return rendered + " " + " ".join(str(v) for v in scanned)
+
+
+def test_record_text_skips_the_measured_attributes_and_keeps_every_other():
+    record = logging.LogRecord("probe", logging.INFO, __file__, 1, "plain message", None, None)
+    record.created, record.msecs, record.relativeCreated = 1795700000.10001, 100.01, 10001.5
+    record.thread = record.process = 10001
+    assert "10001" not in _record_text(record)
+
+    in_message = logging.LogRecord("probe", logging.INFO, __file__, 1, "files %s", (10001,), None)
+    assert "10001" in _record_text(in_message)
+    logger = logging.getLogger("probe.record_text")
+    extra = logger.makeRecord(
+        "probe", logging.INFO, __file__, 1, "m", None, None, extra={"n": 10001}
+    )
+    assert "10001" in _record_text(extra)
+    with pytest.raises(KeyError):
+        logger.makeRecord("probe", logging.INFO, __file__, 1, "m", None, None, extra={"thread": 1})
 
 
 def _forms(leaf: str) -> set[str]:

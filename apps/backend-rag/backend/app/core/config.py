@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -99,6 +99,11 @@ class Settings(BaseSettings):
         None  # Set via TAVILY_API_KEY env var (for Tavily AI Search - preferred)
     )
     embedding_model: str = "text-embedding-3-small"
+    voyage_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    voyage_public_index_sha256: str | None = None
+    voyage_shadow_observe: bool = False
+    voyage_public_manifest: str | None = None
+    voyage_public_manifest_sha256: str | None = None
     embedding_dimensions: int = 1536  # Matches migrated collections
 
     @field_validator("openai_api_key", mode="before")
@@ -823,17 +828,6 @@ class Settings(BaseSettings):
             "validation for every recipient (default)."
         ),
     )
-    whatsapp_openclaw_bridge_url: str | None = Field(
-        default=None,
-        description=(
-            "HTTPS URL for the local OpenClaw WhatsApp reply bridge. "
-            "Set via WHATSAPP_OPENCLAW_BRIDGE_URL env var."
-        ),
-    )
-    whatsapp_openclaw_agent: str = Field(
-        default="wa",
-        description="OpenClaw agent id for WhatsApp replies. Set via WHATSAPP_OPENCLAW_AGENT env var.",
-    )
     whatsapp_openclaw_model: str = Field(
         default="openai/gpt-5.5",
         description=(
@@ -859,28 +853,6 @@ class Settings(BaseSettings):
         description=(
             "Autonomy mode sent to the OpenClaw WhatsApp bridge. "
             "Set via WHATSAPP_OPENCLAW_AUTONOMY_MODE env var."
-        ),
-    )
-    whatsapp_openclaw_timeout_seconds: float = Field(
-        default=90.0,
-        description=(
-            "Timeout for WhatsApp -> OpenClaw bridge calls. "
-            "Set via WHATSAPP_OPENCLAW_TIMEOUT_SECONDS env var."
-        ),
-    )
-    whatsapp_openclaw_bridge_secret: str | None = Field(
-        default=None,
-        description=(
-            "Shared secret for the WhatsApp OpenClaw bridge. "
-            "Set via WHATSAPP_OPENCLAW_BRIDGE_SECRET env var."
-        ),
-    )
-    whatsapp_openclaw_send_stored_context: bool = Field(
-        default=False,
-        description=(
-            "Send the stored conversation history and client profile to the OpenClaw "
-            "WhatsApp bridge. Off by default: those come from the conversations row. "
-            "Set via WHATSAPP_OPENCLAW_SEND_STORED_CONTEXT env var."
         ),
     )
     openclaw_webhook_secret: str | None = Field(
@@ -1333,10 +1305,6 @@ class Settings(BaseSettings):
     # ========================================
     # EXTERNAL SERVICE URLS
     # ========================================
-    indexnow_api_url: str = Field(
-        default="https://api.indexnow.org/indexnow",
-        description="IndexNow API URL for search engine indexing. Set via INDEXNOW_API_URL env var",
-    )
     google_indexing_api_url: str = Field(
         default="https://indexing.googleapis.com/v3/urlNotifications:publish",
         description="Google Indexing API URL for search console notifications. Set via GOOGLE_INDEXING_API_URL env var",

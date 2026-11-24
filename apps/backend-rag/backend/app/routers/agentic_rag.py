@@ -11,10 +11,12 @@ Experiments:
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 import traceback
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -662,14 +664,20 @@ async def query_agentic_rag(
         # Langfuse POC: wrap the heavy orchestrator call. Anthropic SDK calls
         # made inside are auto-traced via OpenInference instrumentation, so
         # this span becomes the parent of the full LLM chain.
-        result = await _process_query_traced(
-            orchestrator=orchestrator,
-            query_kwargs=query_kwargs,
-            authenticated_user_id=authenticated_user_id,
+        from backend.services.rag.agentic.voyage_scope import canary_request
+
+        with canary_request(
+            request.query, enabled=settings.voyage_shadow_observe, current_user=current_user,
             session_id=request.session_id,
-            query_id=query_id,
-            ab_variants=ab_variants,
-        )
+        ) as voyage_witness:
+            result = await _process_query_traced(
+                orchestrator=orchestrator,
+                query_kwargs=query_kwargs,
+                authenticated_user_id=authenticated_user_id,
+                session_id=request.session_id,
+                query_id=query_id,
+                ab_variants=ab_variants,
+            )
 
         # Calculate response time
         response_time = time.time() - query_start_time
@@ -723,6 +731,12 @@ async def query_agentic_rag(
             debug_info={
                 "model": result.model_used,
                 "cache_hit": result.cache_hit,
+                **({"voyage_shadow": {
+                    **voyage_witness,
+                    "worker_build_sha": os.getenv("GIT_SHA", "unknown"),
+                    "request_id": query_id,
+                    "probe_nonce_sha256": hashlib.sha256(request.session_id.encode()).hexdigest(),
+                }} if voyage_witness and result.cache_hit is False else {}),
                 "ab_config": {
                     "hybrid": hybrid_config,
                     # HONESTY FIX (2026-07-18): `rerank_config` is the A/B
@@ -1411,6 +1425,9 @@ async def stream_workspace_agent(
             status_code=403,
             detail="User is not registered as a team agent",
         )
+    # The role of this desk session rides on a copy of the principal made for this
+    # request: the registry's object is shared by every request and is never changed.
+    agent_role = replace(agent_role, desk_role=str(current_user.get("role") or ""))
 
     # 3) Build agent context server-side (no client metadata trusted)
     agent_context = build_agent_context(email=user_email, full_name=user_email)

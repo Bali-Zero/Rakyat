@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useSessionState } from "@/hooks/useSessionState";
 import { logger } from "@/lib/logger";
+import { firstDayOfMonth, workDayOf } from "@/lib/format/work-day";
 import {
   Users,
   Clock,
@@ -58,9 +59,7 @@ export default function AdminPage() {
   const [teamStatus, setTeamStatus] = useState<TeamMember[]>([]);
   const [dailyHours, setDailyHours] = useState<DailyHours[]>([]);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split("T")[0],
-  );
+  const [selectedDate, setSelectedDate] = useState<string>(() => workDayOf());
 
   const loadTeamStatus = useCallback(async () => {
     try {
@@ -121,10 +120,9 @@ export default function AdminPage() {
 
   const handleExport = async () => {
     try {
-      const today = new Date();
-      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const startDate = startOfMonth.toISOString().split("T")[0];
-      const endDate = today.toISOString().split("T")[0];
+      // The month so far, in the team's own days: see lib/format/work-day.
+      const endDate = workDayOf();
+      const startDate = firstDayOfMonth(endDate);
 
       const blob = await api.exportTimesheet(startDate, endDate);
       const url = window.URL.createObjectURL(blob);

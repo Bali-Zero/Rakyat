@@ -35,7 +35,7 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.services.crm.partners.commission_engine import CommissionEngine
@@ -88,6 +88,26 @@ class PartnerCreate(BaseModel):
     terms_version: str | None = None
 
 
+# Every partner has a value in these: the columns that hold one for every row, the
+# language its mails are written in, and the versions of what it consented to.
+_PARTNER_FIELDS_NEVER_EMPTIED = (
+    "full_name",
+    "email",
+    "entity_type",
+    "preferred_language",
+    "tax_withholding_category",
+    "payment_currency",
+    "default_commission_type",
+    "default_commission_value",
+    "pdp_consent_version",
+    "terms_version",
+)
+
+_MAX_PERCENTAGE = Decimal("100")
+# partners.default_commission_value is NUMERIC(14,4).
+_MAX_COMMISSION_VALUE = Decimal("9999999999.9999")
+
+
 class PartnerUpdate(BaseModel):
     full_name: str | None = None
     email: EmailStr | None = None
@@ -113,6 +133,36 @@ class PartnerUpdate(BaseModel):
     default_commission_value: Decimal | None = None
     pdp_consent_version: str | None = None
     terms_version: str | None = None
+
+    @model_validator(mode="after")
+    def _a_field_every_partner_has_is_not_emptied(self) -> PartnerUpdate:
+        """A field sent as null is emptied; these may be changed, never emptied."""
+        emptied = [
+            name
+            for name in _PARTNER_FIELDS_NEVER_EMPTIED
+            if name in self.model_fields_set and getattr(self, name) is None
+        ]
+        if emptied:
+            raise ValueError(f"cannot be empty: {', '.join(emptied)}")
+        return self
+
+    @model_validator(mode="after")
+    def _bound_commission_value(self) -> PartnerUpdate:
+        value = self.default_commission_value
+        if value is None:
+            return self
+        if value < 0:
+            raise ValueError("default_commission_value must not be negative")
+        # A percentage tops out at 100. When the kind is not part of this
+        # request, the bound is the largest value the column holds.
+        ceiling = (
+            _MAX_PERCENTAGE
+            if self.default_commission_type == "percentage"
+            else _MAX_COMMISSION_VALUE
+        )
+        if value > ceiling:
+            raise ValueError(f"default_commission_value must be at most {ceiling}")
+        return self
 
 
 class ReassignRequest(BaseModel):
@@ -235,6 +285,12 @@ def _require_finance(user: dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail="finance.mark_paid permission required")
 
 
+def _escape_csv_formula(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return f"'{value}"
+    return value
+
+
 def _sterilize_client_for_partner(full_name: str) -> str:
     """'Mario Rossi' → 'Mario R.' — hide client surname from partner-role user."""
     parts = full_name.strip().split()
@@ -300,12 +356,12 @@ async def create_partner(
             svc = PartnersService(conn)
             data = body.model_dump(exclude_none=True)
             assigned_to = data.pop("assigned_to", None)
-            # Team role: always scope to self (ignore any supplied assigned_to)
+            # A non-admin staff member always owns the partner they create, whatever
+            # their job title and whatever owner the request names; an admin may name
+            # any owner or none.
             # CATA-5: user["user_id"] is already a string (team_members.id VARCHAR) — no UUID wrapping
-            if user.get("role") == "team":
+            if not _is_admin_user(user):
                 assigned_to = str(user["user_id"])
-            elif assigned_to is None and user.get("role") == "admin":
-                assigned_to = None  # explicit None allowed for admin
             elif assigned_to is not None:
                 # CATA-5: assigned_to is already str (team_members.id VARCHAR); keep as-is
                 assigned_to = str(assigned_to)  # harmless cast for defensive safety
@@ -346,12 +402,15 @@ async def list_partners(
     Python; v1.1 should push pagination to SQL for large datasets.
     """
     _require_team_or_admin(user)  # CATA-2: partner role cannot list all partners
+    # The owner scope is decided once, here, by the administrator test: a non-admin staff
+    # member lists only the partners assigned to them, whatever their job title and whatever
+    # owner filter they name; an administrator keeps the filter they name, or none.
+    # CATA-5: team_members.id is a string — no UUID wrapping
+    scope_to = None if _is_admin_user(user) else str(user["user_id"])
     async with pool.acquire() as conn:
         svc = PartnersService(conn)
-        # CATA-5: actor_user is team_members.id string — no UUID wrapping
         all_partners = await svc.list_partners(
-            actor_user=str(user["user_id"]),
-            actor_role=user.get("role", "team"),
+            scope_to=scope_to,
             assigned_to=assigned_to,
             onboarding_status=onboarding_status,
             orphaned=orphaned,
@@ -531,7 +590,7 @@ async def finance_export(
             ]
         )
         for r in rows:
-            writer.writerow([r[k] for k in r.keys()])
+            writer.writerow([_escape_csv_formula(r[k]) for k in r.keys()])
         return Response(
             content=buf.getvalue(),
             media_type="text/csv",
@@ -574,14 +633,17 @@ async def update_partner(
     try:
         async with pool.acquire() as conn:
             svc = PartnersService(conn)
-            fields = body.model_dump(exclude_none=True, exclude_unset=True)
-            # CATA-5: actor_user is team_members.id string — no UUID wrapping
-            await svc.update_partner(
-                partner_id,
-                actor_user=str(user["user_id"]),
-                actor_role=user.get("role", "team"),
-                **fields,
-            )
+            # A field that was not sent is left as it is; one sent as null is emptied.
+            fields = body.model_dump(exclude_unset=True)
+            # The change and its audit row are written together or not at all.
+            async with conn.transaction():
+                # CATA-5: actor_user is team_members.id string — no UUID wrapping
+                await svc.update_partner(
+                    partner_id,
+                    actor_user=str(user["user_id"]),
+                    actor_role=user.get("role", "team"),
+                    **fields,
+                )
             partner = await svc.repo.get_partner(partner_id)
             return _partner_to_dict(partner)
     except HTTPException:
@@ -735,7 +797,7 @@ async def create_referral(
 
     Access rules:
     - partner role: always blocked (403).
-    - team role: must own this partner (assigned_to == user_id) AND must
+    - non-admin staff (any role title): must own this partner (assigned_to == user_id) AND must
       own the referenced practice's client (client.assigned_to == user_id
       or fallback: practice exists — soft guard, team-or-admin is primary).
     - admin role: unrestricted.
@@ -750,14 +812,14 @@ async def create_referral(
             if partner is None:
                 raise HTTPException(status_code=404, detail="partner not found")
             # CATA-5: partner.assigned_to is a string (team_members.id VARCHAR)
-            if user["role"] == "team" and partner.assigned_to != str(user["user_id"]):
+            if not _is_admin_user(user) and partner.assigned_to != str(user["user_id"]):
                 raise HTTPException(
                     status_code=403,
                     detail="team members may only create referrals for partners they own",
                 )
 
             # Practice ownership check: team member must own the referenced practice's client.
-            if user["role"] == "team":
+            if not _is_admin_user(user):
                 practice_row = await conn.fetchrow(
                     "SELECT id, client_id FROM practices WHERE id = $1",
                     body.practice_id,
@@ -874,6 +936,7 @@ async def list_partner_audit_log(
     pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> Any:
     """List the audit log for a partner. Admin or team-owner only."""
+    _require_team_or_admin(user)  # internal view: partner role never reads it
     try:
         async with pool.acquire() as conn:
             svc = PartnersService(conn)

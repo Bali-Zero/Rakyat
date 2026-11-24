@@ -29,6 +29,35 @@ class _Sample(BaseModel):
     confidence: float = Field(default=0.0)
 
 
+def test_validate_against_schema_returns_decoded_object_for_dict_schema():
+    from backend.llm.claude_oauth_langchain import _validate_against_schema
+
+    parsed = _validate_against_schema(
+        '{"intent": "synthetic"}',
+        {"type": "object"},
+    )
+
+    assert parsed == {"intent": "synthetic"}
+
+
+def test_validate_against_schema_raises_decode_error_for_dict_schema_without_object():
+    from backend.llm.claude_oauth_langchain import _validate_against_schema
+
+    with pytest.raises(json.JSONDecodeError):
+        _validate_against_schema("not a JSON object", {"type": "object"})
+
+
+def test_validate_against_schema_keeps_model_validation_behaviour():
+    from backend.llm.claude_oauth_langchain import _validate_against_schema
+
+    valid = _validate_against_schema('{"intent": "synthetic"}', _Sample)
+
+    assert isinstance(valid, _Sample)
+    assert valid.intent == "synthetic"
+    with pytest.raises(ValidationError):
+        _validate_against_schema('{"confidence": 0.5}', _Sample)
+
+
 def _make_model_with_response(text: str):
     """Patch ``complete_async`` so building the wrapper is hermetic."""
     from unittest.mock import AsyncMock, patch

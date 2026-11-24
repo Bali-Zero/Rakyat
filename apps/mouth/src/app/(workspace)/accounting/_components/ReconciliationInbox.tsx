@@ -1,5 +1,6 @@
 "use client";
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
@@ -64,11 +65,14 @@ export function ReconciliationInbox({
   onConfirmed,
   doneVersion,
   onOpenCashout,
+  onOpenOutgoings,
 }: {
   onConfirmed: () => void;
   doneVersion: number;
   onOpenCashout: () => void;
+  onOpenOutgoings: () => void;
 }) {
+  const month = useAccountingMonth();
   const { error, success } = useToast();
   const [items, setItems] = useState<ReconciliationInboxItem[]>([]);
   const [loadStatus, setLoadStatus] = useState<"loading" | "ok" | "failed">(
@@ -133,7 +137,10 @@ export function ReconciliationInbox({
     const token = ++loadReq.current;
     setLoadStatus("loading");
     try {
-      const rows = await accountingApi.getReconciliationInbox(INBOX_LIMIT);
+      const rows = await accountingApi.getReconciliationInbox(
+        INBOX_LIMIT,
+        month,
+      );
       if (loadReq.current !== token) return;
       setItems(rows);
       setLoadStatus("ok");
@@ -143,7 +150,7 @@ export function ReconciliationInbox({
       error("Failed to load reconciliation inbox", "Please try again");
       logger.error("accounting inbox load failed", {}, err as Error);
     }
-  }, [error]);
+  }, [error, month]);
 
   useEffect(() => {
     void load();
@@ -420,6 +427,29 @@ export function ReconciliationInbox({
     </p>
   );
 
+  // Owner rule (b): a confirmation of today taken back. Same lock and refresh as a reopen.
+  const [undoError, setUndoError] = useState<{
+    txnId: number;
+    message: string;
+  } | null>(null);
+  const undoConfirmation = (txnId: number) =>
+    lock.runWrite(async () => {
+      setUndoError(null);
+      try {
+        await accountingApi.undoConfirmation(txnId);
+        success("Confirmation undone");
+        void load();
+        void companies.reload();
+        onConfirmed();
+      } catch (err) {
+        const detail =
+          (err instanceof Error && err.message) || "Please try again";
+        setUndoError({ txnId, message: detail });
+        error("Undo failed", detail);
+        logger.error(`accounting undo failed txn=${txnId}`, {}, err as Error);
+      }
+    });
+
   const linkedIgnored = (
     <LinkedIgnoredSection
       version={version}
@@ -509,6 +539,7 @@ export function ReconciliationInbox({
           done={done}
           doneUnavailable={unavailable}
           onSelect={setSelectedTab}
+          onOpenMoneyOut={onOpenOutgoings}
         />
       )}
       {view !== "dayone" && (
@@ -544,6 +575,11 @@ export function ReconciliationInbox({
         onRetryDone={() => void retryDone()}
         onShowDone={() => setSelectedTab("done")}
         onUpload={() => document.getElementById(BANK_FILE_INPUT_ID)?.click()}
+        undo={{
+          onUndo: (id) => void undoConfirmation(id),
+          locked: lock.locked,
+          error: undoError,
+        }}
       />
       <ReconciliationMore onOpenCashout={onOpenCashout} />
       {modal && (

@@ -14,6 +14,7 @@ All thresholds are configurable constants — never hardcoded in business logic.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -402,7 +403,6 @@ RENEWAL_RULES: dict[str, RenewalRule] = {
 RULE_PRIORITY_ORDER: tuple[str, ...] = (
     "kitap_investor_upgrade",
     "kitas_impresariat_new_application",
-    "kitas_working_extend",
     "kitas_remote_worker_extend",
     # Senior second-home routes come BEFORE the generic E33 rule: "e33" and
     # "second home" are substrings of every senior string, so the generic rule
@@ -415,12 +415,27 @@ RULE_PRIORITY_ORDER: tuple[str, ...] = (
     "kitas_retirement_extend",
     "kitas_spouse_extend",
     "kitas_dependent_extend",
+    # "working" occurs inside remote, dependent, spouse and retirement visa names,
+    # so the narrower rules are asked first.
+    "kitas_working_extend",
     "imta_annual_renewal",
     "visa_voa_extension",
     "visa_tourist_extension",
     "passport_renewal",
     "generic_visa_renewal",
 )
+
+
+def _pattern_matches(pattern: str, visa_type: str) -> bool:
+    """Whether a pattern occurs in a visa type; both arrive lower-cased.
+
+    A pattern is a substring, with one exception: a pattern that ends in a digit is a visa
+    index code, and the same letters followed by a longer number are another code ("c1" is
+    not "c10" or "c18"). Such a pattern does not match when a digit follows it.
+    """
+    if pattern and pattern[-1].isdigit():
+        return re.search(re.escape(pattern) + r"(?!\d)", visa_type) is not None
+    return pattern in visa_type
 
 
 def match_rule(
@@ -433,7 +448,8 @@ def match_rule(
     Checks rules in RULE_PRIORITY_ORDER.
     Returns the first rule where:
       - document_type is in rule.document_types
-      - visa_type matches at least one pattern (case-insensitive substring)
+      - visa_type matches at least one pattern (case-insensitive substring; a pattern
+        that ends in a digit is not matched inside a longer number)
         OR the rule has wildcard pattern ("*")
 
     Falls back to "generic_visa_renewal" if nothing matches.
@@ -459,7 +475,7 @@ def match_rule(
             return rule
 
         # Pattern match (substring, case-insensitive)
-        if any(p.lower() in vt_lower for p in rule.visa_type_patterns):
+        if any(_pattern_matches(p.lower(), vt_lower) for p in rule.visa_type_patterns):
             return rule
 
     return RENEWAL_RULES["generic_visa_renewal"]

@@ -33,6 +33,7 @@ Stdlib only — this runs in CI.
 
 from __future__ import annotations
 
+import bisect
 import re
 
 # Value shapes that are credentials wherever they appear. Ordered longest-first
@@ -52,14 +53,52 @@ _SECRET_LITERALS: list[re.Pattern[str]] = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
 ]
 
-# A name ENDING in a credential word, whether assigned or used as a mapping
-# key: the name itself says it is a credential, so the value goes regardless
-# of its shape. The two shapes are matched by the pattern below rather than
-# quoted here — see test_named_assignment_* for each as a real line.
+# The other GitHub token kinds (oauth, user-to-server, server-to-server,
+# refresh), Stripe live secret keys, Google OAuth access tokens and Meta access
+# tokens. Each is a prefix plus a minimum run of token characters, so a word that
+# merely starts with the same letters is left alone. They run on the OUTPUT of
+# every rule above (_redact_late_token_families), so they can only hide more:
+# whatever those rules hid is already gone when these read the text. Placed among
+# the shapes above they changed what those shapes read: a key that starts like a
+# token lost the name its value is found by, and a token cut out of a longer
+# credential (a JWT, an address) left the rest of it behind.
+_LATE_TOKEN_FAMILIES: list[re.Pattern[str]] = [
+    re.compile(r"\bgh[ousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bsk_live_[A-Za-z0-9]{16,}"),
+    re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bEAA[A-Za-z0-9]{20,}"),
+]
+
+# A name says its value is a credential when it ENDS in a credential word, or
+# when that word is a whole underscore-separated segment followed only by
+# suffixes that leave it the same kind of thing: an environment, a role among
+# several copies, a version or an ordinal. Any other suffix describes something
+# ABOUT a credential (its id, type, path, hash, usage count), and redacting
+# those values blinds the reader of the code without protecting anything: a
+# measurement over this repository found about fifty such lines for each real
+# one. The vocabulary is extended here, in one place.
+_CREDENTIAL_WORD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN)"
+_CREDENTIAL_SUFFIX = (
+    r"(?:PROD|PRODUCTION|STAGING|STAGE|STG|DEV|DEVELOPMENT|TEST|TESTING|LIVE|SANDBOX"
+    r"|LOCAL|PREVIEW|BASE|MAIN|PRIMARY|SECONDARY|BACKUP|OLD|NEW|CURRENT|PREVIOUS|NEXT"
+    r"|V?\d+|[A-Z])"
+)
+_CREDENTIAL_NAME = (
+    r"(?:[A-Za-z_]?[A-Za-z0-9_]*" + _CREDENTIAL_WORD + r"\b"
+    r"|(?:[A-Za-z_][A-Za-z0-9_]*_)?"
+    + _CREDENTIAL_WORD
+    + r"(?:_"
+    + _CREDENTIAL_SUFFIX
+    + r")+\b)"
+)
+
+# The shapes are matched by the patterns below rather than quoted here — see
+# test_named_assignment_* for each as a real line.
 _NAMED_ASSIGNMENT = re.compile(
     r"""(?ix)
-    (?P<name>\b[A-Za-z_]?[A-Za-z0-9_]*
-        (?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN)\b)
+    (?P<name>\b"""
+    + _CREDENTIAL_NAME
+    + r""")
     (?P<sep>\s*[:=]\s*)
     (?P<quote>['"])
     (?P<value>[^'"\n]{4,})
@@ -68,16 +107,18 @@ _NAMED_ASSIGNMENT = re.compile(
 )
 
 # The unquoted form — `AWS_SECRET_ACCESS_KEY: wJalr...` in YAML, `TOKEN=abc` in
-# a shell line. The quoted rule above silently did not cover it, so a live
+# a shell line. A hash remains part of the value until whitespace starts a
+# comment. The quoted rule above silently did not cover it, so a live
 # credential went to a third-party endpoint byte-for-byte. Found by an
 # adversarial reviewer on 2026-09-20 with a real AWS key shape; it is the worst
 # class of bug this module can have, because the module IS the §4 boundary.
 _NAMED_ASSIGNMENT_BARE = re.compile(
     r"""(?ix)
-    (?P<name>\b[A-Za-z_]?[A-Za-z0-9_]*
-        (?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN)\b)
+    (?P<name>\b"""
+    + _CREDENTIAL_NAME
+    + r""")
     (?P<sep>\s*[:=]\s*)
-    (?P<value>[^\s'"#][^\s#]{3,})
+    (?P<value>[^\s'"#][^\s]{3,})
     """
 )
 
@@ -92,8 +133,9 @@ _NAMED_ASSIGNMENT_BARE = re.compile(
 _QUOTED_KEY_ASSIGNMENT = re.compile(
     r"""(?ix)
     (?P<open>['"])
-    (?P<name>[A-Za-z_]?[A-Za-z0-9_]*
-        (?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|DSN))
+    (?P<name>"""
+    + _CREDENTIAL_NAME
+    + r""")
     (?P=open)
     (?P<sep>\s*:\s*)
     (?P<quote>['"])
@@ -102,10 +144,105 @@ _QUOTED_KEY_ASSIGNMENT = re.compile(
     """
 )
 
-_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+# The NAME of a credential assignment, as the assignment rules above read it: a
+# credential name before `:` or `=`, or a quoted credential key before `:`. The
+# late token families leave such a name whole: its value is already redacted by
+# then, and a key that merely starts like a token (a test fixture, a token-shaped
+# prefix) keeps the name a reader needs.
+_CREDENTIAL_NAME_SITE = re.compile(
+    r"""(?ix)
+    \b(?P<name>"""
+    + _CREDENTIAL_NAME
+    + r""")(?=\s*[:=])
+    | (?P<open>['"])(?P<qname>"""
+    + _CREDENTIAL_NAME
+    + r""")(?P=open)(?=\s*:)
+    """
+)
+
+# An address is `\b<local>@<domain>`: a local part that starts at a word boundary
+# and runs up to the "@", then a domain ending in a dot and letters. Written as
+# one pattern, the search started at every word boundary of a long dotted line
+# and scanned to its end each time, with no "@" in sight: quadratic. The same
+# addresses are found here from the "@" signs instead, each local part walked
+# once, so a line is read a fixed number of times whatever it holds.
+_EMAIL_LOCAL_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
+)
+_EMAIL_LOCAL_START = re.compile(r"\b[A-Za-z0-9._%+\-]")
+_EMAIL_DOMAIN = re.compile(r"[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+
+
+def _redact_emails(text: str) -> str:
+    done = 0  # end of the previous address: the next one cannot start before it
+    at = text.find("@")
+    if at == -1:
+        return text
+    out: list[str] = []
+    while at != -1:
+        start = at
+        while start > done and text[start - 1] in _EMAIL_LOCAL_CHARS:
+            start -= 1
+        first = _EMAIL_LOCAL_START.search(text, start, at) if start < at else None
+        domain = _EMAIL_DOMAIN.match(text, at + 1) if first else None
+        if first and domain:
+            out.append(text[done : first.start()])
+            out.append("<REDACTED:email>")
+            done = domain.end()
+            at = text.find("@", done)
+        else:
+            at = text.find("@", at + 1)
+    out.append(text[done:])
+    return "".join(out)
+
 
 # A DSN carries user:password@host. Keep the scheme and the host; drop the middle.
-_DSN_CREDENTIALS = re.compile(r"\b(?P<scheme>[a-z][a-z0-9+.\-]*://)[^\s/@:]+:[^\s/@]+@")
+#
+# The scheme is read once per run of scheme characters, from the start of the
+# run. The rule it replaces, a scheme starting at any word boundary before a
+# lowercase letter, tried every such letter of a long dotted run and scanned to
+# the end of the run each time. Every start inside one run leads to the same
+# "://" and the same credentials, so one attempt decides the same thing: the two
+# conditions below say that the run holds at least one of those starts (its
+# first character, or a letter after one of its "+", "." or "-").
+_DSN_CREDENTIALS = re.compile(
+    r"(?<![a-z0-9+.\-])"
+    r"(?:\b(?=[a-z])|(?=[a-z0-9+.\-]*?[+.\-][a-z]))"
+    r"(?P<scheme>[a-z0-9+.\-]*://)[^\s/@:]+:[^\s/@]+@"
+)
+
+
+def _redact_late_token_families(text: str) -> str:
+    """Apply _LATE_TOKEN_FAMILIES in order, never inside a credential name.
+
+    A token that starts inside a name is left as it is; one that runs into a
+    name is redacted up to where the name starts, when that part is still a
+    token of its family.
+    """
+    for pattern in _LATE_TOKEN_FAMILIES:
+        if pattern.search(text) is None:
+            continue
+        names = [
+            m.span("name") if m["name"] is not None else m.span("qname")
+            for m in _CREDENTIAL_NAME_SITE.finditer(text)
+        ]
+        starts = [start for start, _ in names]
+
+        def outside_names(
+            m: re.Match[str], pattern=pattern, names=names, starts=starts
+        ) -> str:
+            i = bisect.bisect_right(starts, m.start()) - 1
+            if i >= 0 and m.start() < names[i][1]:
+                return m.group(0)
+            if i + 1 < len(names) and names[i + 1][0] < m.end():
+                cut = pattern.match(m.string, m.start(), names[i + 1][0])
+                if cut is None:
+                    return m.group(0)
+                return "<REDACTED:secret>" + m.string[cut.end() : m.end()]
+            return "<REDACTED:secret>"
+
+        text = pattern.sub(outside_names, text)
+    return text
 
 
 def redact(text: str) -> str:
@@ -127,7 +264,9 @@ def redact(text: str) -> str:
     out = _NAMED_ASSIGNMENT_BARE.sub(
         lambda m: f"{m['name']}{m['sep']}<REDACTED:secret>", out
     )
-    out = _EMAIL.sub("<REDACTED:email>", out)
+    out = _redact_emails(out)
+    # Last, on the output of every rule above: these can only hide more.
+    out = _redact_late_token_families(out)
     return out
 
 

@@ -334,7 +334,7 @@ class GitHubPublisher:
             "commit_url": result["commit"]["html_url"],
         }
 
-    async def _create_branch_ref(self, branch: str, from_sha: str) -> None:
+    async def _create_branch_ref(self, branch: str, from_sha: str) -> bool:
         """
         Create a new branch ref pointing at ``from_sha``.
 
@@ -345,6 +345,11 @@ class GitHubPublisher:
         Args:
             branch: New branch name (without ``refs/heads/`` prefix).
             from_sha: Commit SHA the new branch should point at.
+
+        Returns:
+            ``True`` when this call created the ref. ``False`` when a ref of
+            that name was already there: it points where its creator left
+            it, which need not be ``from_sha``.
 
         Raises:
             GitHubPublisherError: If the branch ref cannot be created.
@@ -357,15 +362,17 @@ class GitHubPublisher:
             json={"ref": f"refs/heads/{branch}", "sha": from_sha},
             timeout=30.0,
         )
-        # 201 Created on success. 422 means the ref already exists — reuse it.
+        # 201 Created on success. 422 means the ref already exists: the caller
+        # decides what that is worth.
         if response.status_code == 422 and "already exists" in response.text:
-            logger.warning("Branch '%s' already exists, reusing it", branch)
-            return
+            logger.warning("Branch '%s' already exists", branch)
+            return False
         if response.status_code != 201:
             logger.error("Failed to create branch ref '%s': %s", branch, response.text)
             raise GitHubPublisherError(
                 f"Failed to create branch ref '{branch}': {response.text}",
             )
+        return True
 
     async def _create_pull_request(
         self,
@@ -512,6 +519,139 @@ class GitHubPublisher:
     def _fingerprint_marker(publication_fingerprint: str) -> str:
         return f"Publication-Fingerprint: {publication_fingerprint}"
 
+    def _pull_request_text(self, message: str, publication_fingerprint: str) -> tuple[str, str]:
+        """Title and body of a publication pull request; the body carries the marker."""
+        title = message.split("\n", 1)[0]
+        body = (
+            f"{message}\n\n"
+            f"{self._fingerprint_marker(publication_fingerprint)}\n\n"
+            "Auto-opened by Article Composer (News Room publish). "
+            "Merged by pro.rakyat_editorial_merger once its required checks pass."
+        )
+        return title, body
+
+    async def _existing_publication(
+        self,
+        *,
+        head_branch: str,
+        base_branch: str,
+        publication_fingerprint: str,
+    ) -> dict[str, Any] | None:
+        """What GitHub holds for one keyed publication, verified. Opens and creates nothing.
+
+        ``None`` when there is neither a pull request nor a branch. Otherwise
+        ``{"commit_sha", "pull_request"}``: a commit whose message carries this
+        bundle's marker, and the pull request for it (``None`` for a branch
+        nobody has opened yet). Something that exists without the marker is
+        refused, and so is anything that cannot be read: only a 404 on the
+        branch ref means "absent".
+        """
+        marker = self._fingerprint_marker(publication_fingerprint)
+        existing_pr = await self._find_pull_request(head_branch, base_branch)
+        if existing_pr:
+            if marker not in str(existing_pr.get("body") or ""):
+                raise GitHubPublisherError(
+                    "Existing publication pull request fingerprint does not match"
+                )
+            if existing_pr.get("state") == "closed" and not existing_pr.get("merged_at"):
+                raise GitHubPublisherError(
+                    "Publication pull request was closed without merge; manual review required"
+                )
+            # The body is what its opener wrote; the head is what the pull request
+            # holds. It is read by sha, never by branch name, so a merged pull
+            # request whose branch was deleted still verifies.
+            head_sha = existing_pr.get("commit_sha")
+            if not head_sha or marker not in await self._get_commit_message(str(head_sha)):
+                raise GitHubPublisherError(
+                    "Existing publication pull request head does not match its fingerprint"
+                )
+            return {"commit_sha": str(head_sha), "pull_request": existing_pr}
+
+        branch_sha = await self._get_branch_commit_sha(head_branch)
+        if not branch_sha:
+            return None
+        if marker not in await self._get_commit_message(branch_sha):
+            raise GitHubPublisherError("Existing publication branch fingerprint does not match")
+        return {"commit_sha": branch_sha, "pull_request": None}
+
+    async def _open_publication_pull_request(
+        self,
+        *,
+        head_branch: str,
+        base_branch: str,
+        message: str,
+        publication_fingerprint: str,
+        commit_sha: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Open the pull request of a keyed head; say whether this call opened it.
+
+        Another call with the same bundle can open it first. When the creation
+        fails, what exists is read ONCE more: a verified pull request is the
+        answer, anything else leaves the creation's own error. Never a loop.
+        """
+        title, body = self._pull_request_text(message, publication_fingerprint)
+        try:
+            pull_request = await self._create_pull_request(
+                head_branch=head_branch,
+                base_branch=base_branch,
+                title=title,
+                body=body,
+            )
+        except GitHubPublisherError as creation_error:
+            try:
+                existing = await self._existing_publication(
+                    head_branch=head_branch,
+                    base_branch=base_branch,
+                    publication_fingerprint=publication_fingerprint,
+                )
+            except GitHubPublisherError as unverified:
+                raise creation_error from unverified
+            if existing is None or existing["pull_request"] is None:
+                raise
+            return existing, False
+        return {"commit_sha": commit_sha, "pull_request": pull_request}, True
+
+    @staticmethod
+    def _resumed_answer(
+        publication: dict[str, Any],
+        *,
+        head_branch: str,
+        files_count: int,
+    ) -> dict[str, Any]:
+        """The answer for a publication this call found: its verified head, its pull request."""
+        pull_request = publication["pull_request"]
+        return {
+            "success": True,
+            "commit_sha": publication["commit_sha"],
+            "files_count": files_count,
+            "branch": head_branch,
+            "pull_request_url": pull_request.get("html_url"),
+            "pull_request_number": pull_request.get("number"),
+            "auto_merge_enabled": False,
+            "idempotent": True,
+        }
+
+    async def _answer_with_existing(
+        self,
+        existing: dict[str, Any],
+        *,
+        head_branch: str,
+        base_branch: str,
+        message: str,
+        files_count: int,
+        publication_fingerprint: str,
+    ) -> dict[str, Any]:
+        """Answer with a verified publication, opening its pull request if it has none."""
+        if existing["pull_request"] is None:
+            existing, _ = await self._open_publication_pull_request(
+                head_branch=head_branch,
+                base_branch=base_branch,
+                message=message,
+                publication_fingerprint=publication_fingerprint,
+                commit_sha=existing["commit_sha"],
+            )
+        return self._resumed_answer(existing, head_branch=head_branch, files_count=files_count)
+
     async def _resume_publication_pull_request(
         self,
         *,
@@ -523,60 +663,21 @@ class GitHubPublisher:
     ) -> dict[str, Any] | None:
         """Resume an existing idempotent PR/branch after a process interruption."""
 
-        existing_pr = await self._find_pull_request(head_branch, base_branch)
-        if existing_pr:
-            if self._fingerprint_marker(publication_fingerprint) not in str(
-                existing_pr.get("body") or ""
-            ):
-                raise GitHubPublisherError(
-                    "Existing publication pull request fingerprint does not match"
-                )
-            if existing_pr.get("state") == "closed" and not existing_pr.get("merged_at"):
-                raise GitHubPublisherError(
-                    "Publication pull request was closed without merge; manual review required"
-                )
-            return {
-                "success": True,
-                "commit_sha": existing_pr.get("commit_sha"),
-                "files_count": files_count,
-                "branch": head_branch,
-                "pull_request_url": existing_pr.get("html_url"),
-                "pull_request_number": existing_pr.get("number"),
-                "auto_merge_enabled": False,
-                "idempotent": True,
-            }
-
-        branch_sha = await self._get_branch_commit_sha(head_branch)
-        if not branch_sha:
-            return None
-        commit_message = await self._get_commit_message(branch_sha)
-        if self._fingerprint_marker(publication_fingerprint) not in commit_message:
-            raise GitHubPublisherError(
-                "Existing publication branch fingerprint does not match"
-            )
-        pr_title = message.split("\n", 1)[0]
-        pr_body = (
-            f"{message}\n\n"
-            f"{self._fingerprint_marker(publication_fingerprint)}\n\n"
-            "Auto-opened by Article Composer (News Room publish). "
-            "Merged by pro.rakyat_editorial_merger once its required checks pass."
-        )
-        pr = await self._create_pull_request(
+        existing = await self._existing_publication(
             head_branch=head_branch,
             base_branch=base_branch,
-            title=pr_title,
-            body=pr_body,
+            publication_fingerprint=publication_fingerprint,
         )
-        return {
-            "success": True,
-            "commit_sha": branch_sha,
-            "files_count": files_count,
-            "branch": head_branch,
-            "pull_request_url": pr["html_url"],
-            "pull_request_number": pr["number"],
-            "auto_merge_enabled": False,
-            "idempotent": True,
-        }
+        if existing is None:
+            return None
+        return await self._answer_with_existing(
+            existing,
+            head_branch=head_branch,
+            base_branch=base_branch,
+            message=message,
+            files_count=files_count,
+            publication_fingerprint=publication_fingerprint,
+        )
 
     async def create_commit_with_files(
         self,
@@ -612,6 +713,8 @@ class GitHubPublisher:
             pull_request: If True, publish via branch + PR.
             pr_branch_prefix: Prefix for the temporary PR branch name.
             idempotency_key: Stable publication identity used to resume one PR.
+                With it, a success names a publication whose commit carries
+                this bundle's fingerprint, and ``commit_sha`` is that commit.
             must_not_exist_paths: Paths that must be absent from the exact base
                 commit used for this operation.
             json_object_updates: Object fields to update after reading the JSON
@@ -856,35 +959,55 @@ class GitHubPublisher:
             # PR into `branch`, which pro.rakyat_editorial_merger merges.
             pr_branch = deterministic_branch or f"{pr_branch_prefix}/{new_commit_sha[:12]}"
             logger.debug("Step 6/6 (PR): creating branch '%s' + pull request", pr_branch)
-            await self._create_branch_ref(pr_branch, new_commit_sha)
-            pr_title = message.split("\n", 1)[0]
-            pr_body = (
-                f"{message}\n\n"
-                f"{self._fingerprint_marker(publication_fingerprint)}\n\n"
-                "Auto-opened by Article Composer (News Room publish). "
-                "Merged by pro.rakyat_editorial_merger once its required checks pass."
-            )
-            try:
+            created = await self._create_branch_ref(pr_branch, new_commit_sha)
+            if deterministic_branch and created is not True:
+                # The keyed branch was there before this call, so it holds another
+                # call's commit. This call's own commit is left without a ref, and
+                # the answer comes from what the branch holds, once verified.
+                # Anything but an exact True comes here: an answer nobody gave
+                # is not "I created it".
+                existing = await self._existing_publication(
+                    head_branch=deterministic_branch,
+                    base_branch=branch,
+                    publication_fingerprint=publication_fingerprint,
+                )
+                if existing is None:
+                    raise GitHubPublisherError(
+                        "Publication branch disappeared before it could be verified"
+                    )
+                return await self._answer_with_existing(
+                    existing,
+                    head_branch=deterministic_branch,
+                    base_branch=branch,
+                    message=message,
+                    files_count=len(files),
+                    publication_fingerprint=publication_fingerprint,
+                )
+            if deterministic_branch:
+                # This call created the branch, so its head is this call's commit.
+                publication, opened_here = await self._open_publication_pull_request(
+                    head_branch=deterministic_branch,
+                    base_branch=branch,
+                    message=message,
+                    publication_fingerprint=publication_fingerprint,
+                    commit_sha=new_commit_sha,
+                )
+                if not opened_here:
+                    return self._resumed_answer(
+                        publication,
+                        head_branch=deterministic_branch,
+                        files_count=len(files),
+                    )
+                pr = publication["pull_request"]
+            else:
+                # Unkeyed: the branch is named after the commit itself, nothing to verify.
+                pr_title, pr_body = self._pull_request_text(message, publication_fingerprint)
                 pr = await self._create_pull_request(
                     head_branch=pr_branch,
                     base_branch=branch,
                     title=pr_title,
                     body=pr_body,
                 )
-            except GitHubPublisherError:
-                # A simultaneous retry can win the deterministic branch/PR
-                # race. Reconcile against GitHub before surfacing a failure.
-                if deterministic_branch:
-                    resumed = await self._resume_publication_pull_request(
-                        head_branch=deterministic_branch,
-                        base_branch=branch,
-                        message=message,
-                        files_count=len(files),
-                        publication_fingerprint=publication_fingerprint,
-                    )
-                    if resumed is not None:
-                        return resumed
-                raise
 
             elapsed_ms = (time.time() - start_time) * 1000
             logger.info(

@@ -569,7 +569,8 @@ class ZohoEmailService:
         if not folder_id:
             raise ValueError("folder_id is required for Zoho Mail API")
 
-        # Step 1: Get metadata from list endpoint (Zoho doesn't have single message metadata endpoint)
+        # Step 1: Get metadata from the list endpoint, which answers the newest
+        # messages of the folder and carries the thread of each.
         list_response = await self._request(
             user_id,
             "GET",
@@ -584,6 +585,12 @@ class ZohoEmailService:
             if str(e.get("messageId")) == str(message_id):
                 email = e
                 break
+
+        if not email:
+            # The mailbox lists older messages too (`list_emails` pages through the
+            # folder), and the list above answers only its newest: ask for this one
+            # message by its own address.
+            email = await self._message_details(user_id, folder_id, message_id)
 
         if not email:
             raise ValueError(f"Email {message_id} not found in folder {folder_id}")
@@ -622,6 +629,39 @@ class ZohoEmailService:
             "date": email.get("receivedTime") or email.get("sentDateInGMT"),
             "attachments": self._parse_attachments(email.get("attachments", [])),
         }
+
+    async def _message_details(
+        self,
+        user_id: str,
+        folder_id: str,
+        message_id: str,
+    ) -> dict[str, Any] | None:
+        """
+        The metadata of one message, read by its own address.
+
+        `GET /folders/{folderId}/messages/{messageId}/details` (Zoho Mail API,
+        "Get meta data of an email") answers one object with the keys of a list
+        entry, without the thread. Both ids are numbers in that API: anything else
+        is not sent, since here they come from the request and go into the path.
+
+        Returns None when Zoho has no such message or does not answer with it;
+        the request helper has already logged the status and the error code.
+        """
+        if not (str(folder_id).isdigit() and str(message_id).isdigit()):
+            return None
+        try:
+            response = await self._request(
+                user_id,
+                "GET",
+                f"/folders/{folder_id}/messages/{message_id}/details",
+            )
+        except ValueError:
+            return None
+        data = response.get("data")
+        if not isinstance(data, dict) or str(data.get("messageId")) != str(message_id):
+            return None
+        logger.info("[Email] Opened a message beyond the newest of its folder by its details")
+        return data
 
     async def get_message_content(
         self,
@@ -1252,8 +1292,7 @@ class ZohoEmailService:
         file_size_mb = len(content) / (1024 * 1024)
 
         logger.info(
-            "[Email] Upload request user=%s filename_ext=%s filename_len=%d "
-            "size=%.2fMB type=%s",
+            "[Email] Upload request user=%s filename_ext=%s filename_len=%d size=%.2fMB type=%s",
             user_id,
             _safe_filename_ext(filename),
             _safe_filename_len(filename),

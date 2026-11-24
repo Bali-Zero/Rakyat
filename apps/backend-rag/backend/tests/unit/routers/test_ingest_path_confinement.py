@@ -21,7 +21,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-import backend.app.routers.ingest as ingest_mod
 import backend.app.routers.legal_ingest as legal_mod
 from backend.app.utils.ingest_paths import (
     ALLOWED_ROOTS_ENV,
@@ -46,9 +45,8 @@ def sandbox(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- wiring
 
 
-def test_both_routers_bind_the_same_validator():
-    """A guard imported under a different name in each module is two guards."""
-    assert ingest_mod.resolve_ingest_path is resolve_ingest_path
+def test_legal_ingest_binds_the_shared_validator():
+    """A guard imported under a different name in a router is a second guard."""
     assert legal_mod.resolve_ingest_path is resolve_ingest_path
 
 
@@ -152,115 +150,6 @@ def test_a_relative_path_landing_inside_the_root_resolves(sandbox, monkeypatch):
     assert resolve_ingest_path("./book.pdf") == (sandbox / "book.pdf").resolve()
 
 
-# ------------------------------------------------------ POST /api/ingest/file
-
-
-async def test_ingest_file_refuses_a_traversal_and_never_reaches_the_service(sandbox):
-    request = MagicMock(file_path=str(sandbox / "../secret.pdf"))
-    with patch.object(ingest_mod, "IngestionService") as service_cls:
-        with pytest.raises(HTTPException) as excinfo:
-            await ingest_mod.ingest_local_file(request=request, current_user=ADMIN)
-    assert excinfo.value.status_code == 400
-    service_cls.assert_not_called()
-
-
-async def test_ingest_file_accepts_a_file_inside_the_root(sandbox):
-    request = MagicMock(
-        file_path=str(sandbox / "book.pdf"),
-        title=None,
-        author=None,
-        language="en",
-        tier_override=None,
-    )
-    service = MagicMock()
-    service.ingest_book = AsyncMock(
-        return_value={
-            "success": True,
-            "book_title": "t",
-            "book_author": "a",
-            "tier": "A",
-            "chunks_created": 1,
-            "message": "ok",
-        },
-    )
-    with patch.object(ingest_mod, "IngestionService", return_value=service):
-        await ingest_mod.ingest_local_file(request=request, current_user=ADMIN)
-    # the service must receive the RESOLVED value, not the raw request field
-    assert service.ingest_book.await_args.kwargs["file_path"] == str(
-        (sandbox / "book.pdf").resolve(),
-    )
-
-
-# ----------------------------------------------------- POST /api/ingest/batch
-
-
-async def test_batch_refuses_a_traversal_directory(sandbox):
-    request = MagicMock(
-        directory_path=str(sandbox / ".."),
-        file_patterns=["*.pdf"],
-        skip_existing=True,
-    )
-    with patch.object(ingest_mod, "IngestionService") as service_cls:
-        with pytest.raises(HTTPException) as excinfo:
-            await ingest_mod.batch_ingest(
-                request=request,
-                _background_tasks=MagicMock(),
-                current_user=ADMIN,
-            )
-    assert excinfo.value.status_code == 400
-    service_cls.assert_not_called()
-
-
-async def test_batch_refuses_a_glob_pattern_that_escapes_the_root(sandbox):
-    """The alerts name `directory_path`; `file_patterns` is a second way out."""
-    pattern = "../*.pdf"
-    # non-vacuity: the glob really does reach the secret outside the root
-    matched = [p.resolve() for p in sandbox.glob(pattern)]
-    assert (sandbox.parent / "secret.pdf").resolve() in matched
-
-    request = MagicMock(
-        directory_path=str(sandbox),
-        file_patterns=[pattern],
-        skip_existing=True,
-    )
-    with patch.object(ingest_mod, "IngestionService") as service_cls:
-        with pytest.raises(HTTPException) as excinfo:
-            await ingest_mod.batch_ingest(
-                request=request,
-                _background_tasks=MagicMock(),
-                current_user=ADMIN,
-            )
-    assert excinfo.value.status_code == 400
-    service_cls.assert_not_called()
-
-
-async def test_batch_accepts_patterns_that_stay_inside_the_root(sandbox):
-    service = MagicMock()
-    service.ingest_book = AsyncMock(
-        return_value={
-            "success": True,
-            "book_title": "t",
-            "book_author": "a",
-            "tier": "A",
-            "chunks_created": 1,
-            "message": "ok",
-        },
-    )
-    request = MagicMock(
-        directory_path=str(sandbox),
-        file_patterns=["*.pdf"],
-        skip_existing=True,
-    )
-    with patch.object(ingest_mod, "IngestionService", return_value=service):
-        response = await ingest_mod.batch_ingest(
-            request=request,
-            _background_tasks=MagicMock(),
-            current_user=ADMIN,
-        )
-    assert response.total_books == 1
-    assert service.ingest_book.await_args.args[0] == str((sandbox / "book.pdf").resolve())
-
-
 # ----------------------------------------------------- POST /api/legal/ingest
 
 
@@ -301,13 +190,12 @@ async def test_legal_ingest_accepts_a_file_inside_the_root(sandbox):
     )
 
 
-# ---------------------------------------------------- POST /api/ingest/upload
+# ------------------------------------- resolve_within_root (POST /api/legal/upload)
 #
-# No CodeQL alert names this route. It is nonetheless the worst of the four: the caller
-# controls the path AND the bytes, starlette does not sanitise `UploadFile.filename`
-# (measured on starlette 1.3.1 — it decodes the Content-Disposition value and hands it
-# over), and the `.pdf`/`.epub` extension check stops neither escape because both still
-# end in `.pdf`.
+# The caller controls the path AND the bytes: starlette does not sanitise
+# `UploadFile.filename` (measured on starlette 1.3.1 — it decodes the
+# Content-Disposition value and hands it over), and the `.pdf`/`.epub` extension check
+# stops neither escape because both still end in `.pdf`.
 
 
 @pytest.mark.parametrize(
@@ -348,26 +236,6 @@ def test_upload_ordinary_filenames_still_work(tmp_path):
     base.mkdir()
     for good in ("book.pdf", "Peraturan 2026 (final).pdf", "sub/deep.epub"):
         assert resolve_within_root(base, good) == (base / good).resolve()
-
-
-async def test_upload_route_refuses_a_traversal_filename_and_writes_nothing(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.chdir(tmp_path)  # `temp_dir` is the relative Path("data/temp")
-    escape = tmp_path / "pwned.pdf"
-    upload = MagicMock()
-    upload.filename = "../../pwned.pdf"
-    upload.read = AsyncMock(return_value=b"payload")
-
-    with patch.object(ingest_mod, "IngestionService") as service_cls:
-        with pytest.raises(HTTPException) as excinfo:
-            await ingest_mod.upload_and_ingest(file=upload, current_user=ADMIN)
-
-    assert excinfo.value.status_code == 400
-    service_cls.assert_not_called()
-    # the point of the guard: the bytes never landed
-    assert not escape.exists()
 
 
 # --------------------------------------------------------------------- scope pin

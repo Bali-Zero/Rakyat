@@ -134,9 +134,9 @@ class LegalStructureParser:
         # Find end of Konsiderans (start of Batang Tubuh)
         # Usually marked by "MEMUTUSKAN:" or first "BAB" or first "Pasal"
         end_markers = [
-            r"^MEMUTUSKAN:",
-            r"^BAB\s+",
-            r"^Pasal\s+\d+",
+            r"^[^\S\n]*MEMUTUSKAN:",
+            r"^[^\S\n]*BAB\s+",
+            r"^[^\S\n]*Pasal\s+\d+",
         ]
 
         for marker in end_markers:
@@ -166,8 +166,11 @@ class LegalStructureParser:
                 break
 
         if konsiderans_end is None:
-            # If no end marker, take first 2000 chars
-            konsiderans_end = konsiderans_start + 2000
+            # No end marker: the body starts at the first article after the
+            # preamble start, or at the start of the text when there is none,
+            # so that no article is skipped.
+            pasal_match = PASAL_PATTERN.search(text[konsiderans_start:])
+            konsiderans_end = (konsiderans_start + pasal_match.start()) if pasal_match else 0
 
         konsiderans_text = text[konsiderans_start:konsiderans_end].strip()
         return konsiderans_text, konsiderans_end

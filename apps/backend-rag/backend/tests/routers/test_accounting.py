@@ -149,6 +149,16 @@ class TestMatchCandidates:
         assert resp.status_code == 403
 
 
+def test_manual_cash_routes_require_accounting_access(mock_db_pool, outsider_user) -> None:
+    client = TestClient(_build_app(mock_db_pool, outsider_user), raise_server_exceptions=False)
+    assert client.get("/api/crm/accounting/cash-invoices", params={"company_key": "issuer"}).status_code == 403
+    payload = {
+        "company_key": "issuer", "invoice_id": 1, "amount_idr": 50000,
+        "movement_date": "2026-10-05", "request_id": "00000000-0000-4000-8000-000000000001",
+    }
+    assert client.post("/api/crm/accounting/cash-receipts", json=payload).status_code == 403
+
+
 class TestConfirm:
     def test_outsider_denied(self, mock_db_pool, outsider_user) -> None:
         client = TestClient(_build_app(mock_db_pool, outsider_user), raise_server_exceptions=False)

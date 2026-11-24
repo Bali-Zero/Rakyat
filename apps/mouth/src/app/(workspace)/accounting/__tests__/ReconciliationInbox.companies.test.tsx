@@ -119,6 +119,7 @@ const renderInbox = () =>
       onConfirmed={vi.fn()}
       doneVersion={0}
       onOpenCashout={vi.fn()}
+      onOpenOutgoings={vi.fn()}
     />,
   );
 const card = (key: string) => screen.getByTestId(`cc-company-${key}`);
@@ -127,7 +128,7 @@ describe("the companies strip", () => {
   it("asks for the whole waiting list, not the newest page", async () => {
     renderInbox();
     await screen.findByTestId("cc-companies");
-    expect(api.getReconciliationInbox).toHaveBeenCalledWith(1000);
+    expect(api.getReconciliationInbox).toHaveBeenCalledWith(1000, undefined);
   });
 
   it("lists every company with bank, account and how far its data reaches", async () => {

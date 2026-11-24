@@ -62,6 +62,7 @@ from backend.services.compliance.alerts_engine import AlertsEngine
 from backend.services.compliance.revenue_estimator import estimate_renewal_revenue
 from backend.services.integrations.telegram_bot_service import telegram_bot
 from backend.services.integrations.whatsapp_service import whatsapp_service
+from backend.services.notifications.email_audit import raise_if_not_delivered
 from backend.services.notifications.email_http import get_email_client
 from backend.services.pricing.pricing_service import PricingService
 
@@ -193,6 +194,9 @@ class HttpEmailServiceAdapter:
             headers={"X-API-Key": api_key, "Content-Type": "application/json"},
         )
         response.raise_for_status()
+        # A 200 whose body says the mail was not sent is a failed send: the dispatcher
+        # must not record a delivery for it.
+        raise_if_not_delivered(response)
         return response.json()
 
 

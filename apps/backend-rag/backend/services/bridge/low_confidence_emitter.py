@@ -87,4 +87,5 @@ async def maybe_emit_low_confidence(
                 confidence,
             )
     except Exception as e:
+        _low_confidence_dedup.pop(key, None)
         logger.error("Failed to emit rag.low_confidence event: %s", e)

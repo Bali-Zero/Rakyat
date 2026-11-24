@@ -1,11 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ClientCompanyLink } from "@/lib/api/crm/crm.types";
 import { MICRO_LABEL } from "@/components/workspace/r19";
-import { FilesBrowserPanel } from "./FilesBrowserPanel";
+import {
+  FilesBrowserPanel,
+  type FilesBrowserActions,
+} from "./FilesBrowserPanel";
 
 // "Tax Documents" on the Tax tab: the tax folders of the client and of each
 // linked company, read live from Drive and shown with Drive's own folder
@@ -119,10 +122,12 @@ function TaxFolderBlock({
   label,
   subject,
   state,
+  actions,
 }: {
   label: string;
   subject: "client" | "company";
   state: Resolved;
+  actions?: FilesBrowserActions;
 }) {
   return (
     <div data-testid="tax-folder-block">
@@ -154,6 +159,7 @@ function TaxFolderBlock({
             folderId={state.folderId}
             title={state.rootName}
             rootName={state.rootName}
+            actions={actions}
           />
         </>
       )}
@@ -161,38 +167,96 @@ function TaxFolderBlock({
   );
 }
 
-function PersonalBlock({ folderId }: { folderId?: string | null }) {
+function PersonalBlock({
+  folderId,
+  actions,
+}: {
+  folderId?: string | null;
+  actions?: FilesBrowserActions;
+}) {
   const state = useResolved(folderId || null, () =>
     resolvePersonal(folderId as string),
   );
-  return <TaxFolderBlock label="Personal" subject="client" state={state} />;
+  return (
+    <TaxFolderBlock
+      label="Personal"
+      subject="client"
+      state={state}
+      actions={actions}
+    />
+  );
 }
 
-function CompanyBlock({ link }: { link: ClientCompanyLink }) {
+function CompanyBlock({
+  link,
+  actions,
+}: {
+  link: ClientCompanyLink;
+  actions?: FilesBrowserActions;
+}) {
   const state = useResolved(String(link.company_id), () =>
     resolveCompany(link.company_id),
   );
   return (
-    <TaxFolderBlock label={link.company_name} subject="company" state={state} />
+    <TaxFolderBlock
+      label={link.company_name}
+      subject="company"
+      state={state}
+      actions={actions}
+    />
   );
 }
 
 export function TaxDocumentsSection({
   clientFolderId,
   companyLinks,
+  clientId,
+  canManage = false,
+  onMutated,
 }: {
   clientFolderId?: string | null;
   companyLinks?: readonly ClientCompanyLink[];
+  /** Client ID owning the Drive folders; required together with `canManage` to enable writes. */
+  clientId?: number;
+  /** True when the viewer is an admin or a team member associated with this client profile. */
+  canManage?: boolean;
+  /** Optional parent profile refresher invoked after rename, replace, or delete succeeds. */
+  onMutated?: () => Promise<void> | void;
 }) {
   // One block per company, even if the profile lists it under several roles.
   const companies = (companyLinks ?? []).filter(
     (l, i, all) => all.findIndex((x) => x.company_id === l.company_id) === i,
   );
+  const actions = useMemo<FilesBrowserActions | undefined>(() => {
+    if (!canManage || !clientId) return undefined;
+    return {
+      onUpload: (folderId, file) =>
+        api.crm.uploadClientTaxDocument(clientId, folderId, file),
+      onRename: async (file, newName) => {
+        await api.crm.renameClientTaxDocument(clientId, file.id, newName);
+        void onMutated?.();
+      },
+      onReplace: async (file, replacement, newName) => {
+        await api.crm.replaceClientTaxDocument(
+          clientId,
+          file.id,
+          replacement,
+          newName,
+        );
+        void onMutated?.();
+      },
+      onDelete: async (file) => {
+        await api.crm.deleteClientTaxDocument(clientId, file.id);
+        void onMutated?.();
+      },
+    };
+  }, [canManage, clientId, onMutated]);
+
   return (
     <div className="space-y-6 py-4">
-      <PersonalBlock folderId={clientFolderId} />
+      <PersonalBlock folderId={clientFolderId} actions={actions} />
       {companies.map((l) => (
-        <CompanyBlock key={l.company_id} link={l} />
+        <CompanyBlock key={l.company_id} link={l} actions={actions} />
       ))}
     </div>
   );

@@ -16,6 +16,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { AuthApi } from "./auth.api";
 import { ApiClientBase } from "../client";
+import { ApiError } from "../error-handler";
 import type { BackendLoginResponse } from "./auth.types";
 
 describe("AuthApi", () => {
@@ -107,6 +108,22 @@ describe("AuthApi", () => {
         component: "AuthApi",
         action: "login_denied",
         code: 403,
+      });
+      expect(mockLoggerError).not.toHaveBeenCalled();
+    });
+
+    it("records a denial the API client raises as ApiError at info level", async () => {
+      const denied = new ApiError("Invalid credentials", 401);
+      mockRequest.mockRejectedValueOnce(denied);
+
+      await expect(
+        authApi.login("synthetic.wrong-pin@example.test", "0000"),
+      ).rejects.toBe(denied);
+
+      expect(mockLoggerInfo).toHaveBeenCalledWith("Login denied", {
+        component: "AuthApi",
+        action: "login_denied",
+        code: 401,
       });
       expect(mockLoggerError).not.toHaveBeenCalled();
     });

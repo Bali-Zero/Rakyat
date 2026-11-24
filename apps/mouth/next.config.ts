@@ -82,7 +82,7 @@ const nextConfig: NextConfig = {
       "./public/static/**",
       "./public/files/**",
       "./public/audio/**",
-      "./public/videos/**",
+      "./public/video/**",
       "./public/kbli-navigator/**",
       "./coverage/**",
       "./test-results/**",
@@ -206,6 +206,19 @@ const nextConfig: NextConfig = {
         // filenames carry no content hash, so `immutable` means REPLACING a
         // face requires a new filename, not a new byte stream.
         source: "/:path*.:ext(woff2|woff|ttf|otf)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        // Living Web loops (Linea 7): every file under /video/living carries
+        // the first 8 hex of its sha256 in its name, so a URL never changes
+        // content and the CDN and browser can keep it for good. Other files in
+        // /video are NOT hashed and keep the default policy.
+        source: "/video/living/:file*",
         headers: [
           {
             key: "Cache-Control",

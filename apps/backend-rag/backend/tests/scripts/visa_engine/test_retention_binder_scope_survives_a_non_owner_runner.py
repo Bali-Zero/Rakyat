@@ -357,7 +357,11 @@ async def test_an_unguarded_create_or_replace_really_would_abort_the_deploy(
     finally:
         await connection.close()
 
-    assert "must be owner of function" in str(raised.value)
+    # The ownership refusal, told apart from "permission denied for schema public"
+    # (the same SQLSTATE) without reading the server's language: of the two, only
+    # the ownership refusal names the function.
+    assert raised.value.sqlstate == "42501"
+    assert "bind_visa_decision_retention_policy" in str(raised.value)
 
 
 async def test_289_really_does_apply_when_the_runner_can_own_the_binders(

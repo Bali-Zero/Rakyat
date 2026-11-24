@@ -7,15 +7,18 @@ services/test_accounting_lights_actions_integration.py. All values invented.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
+import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 
 import backend.app.routers.accounting as accounting_module
 from backend.services.accounting.reconcile_service import ActionResult, ReconcileError
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 from backend.tests.routers.test_accounting import _build_app  # noqa: F401  (shared app builder)
 
 BASE = "/api/crm/accounting"
@@ -27,6 +30,10 @@ ACTIONS = [
     ("/ignore-transaction", {"bank_txn_id": 1, "reason": "bukan klien"}),
     ("/reopen-transaction", {"bank_txn_id": 1}),
 ]
+
+
+# The account of the default company: its transfers are matched against invoices with no issuer.
+DEFAULT_ACCOUNT = ENTITIES[DEFAULT_ENTITY_KEY].bank_account_number
 
 
 def _client(mock_db_pool, user=ADMIN) -> TestClient:
@@ -45,7 +52,11 @@ def _inv(invoice_id: int, name: str, amount: int = 4_000_000, gen=datetime(2026,
 
 
 def _tx(
-    txn_id: int, amount: int, memo: str | None, day=date(2026, 6, 25), account: str | None = None
+    txn_id: int,
+    amount: int,
+    memo: str | None,
+    day=date(2026, 6, 25),
+    account: str | None = DEFAULT_ACCOUNT,
 ) -> dict:
     return {
         "id": txn_id,
@@ -256,6 +267,50 @@ def _inbox_conn(mock_db_pool, txns, open_pool, recorded_pool) -> None:
     conn.fetch = AsyncMock(side_effect=[txns, open_pool, recorded_pool])
 
 
+def test_inbox_names_the_payer_the_bank_line_carries(mock_db_pool) -> None:
+    txns = [
+        _tx(2, 4_000_000, "20260101CENAIDJA010O0000000001 BFS FR CENAIDJA UN CONTOH  KLIEN"),
+        _tx(1, 4_000_000, "EMPN BILLING REFUND 820260101000001"),
+    ]
+    _inbox_conn(mock_db_pool, txns, [], [])
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert [i["payer_name"] for i in items] == ["CONTOH KLIEN", ""]
+
+
+def test_a_long_run_of_spaces_does_not_stall_the_inbox(mock_db_pool) -> None:
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, "INCOMING SKN x/y/A" + " " * 16000 + "!")], [], [])
+    started = time.perf_counter()
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert time.perf_counter() - started < 1.0
+    assert items[0]["payer_name"] == ""
+
+
+def test_the_payer_bound_leaves_matching_on_a_long_line_as_it_was(mock_db_pool) -> None:
+    line = "BFS FR CENAIDJA UN CONTOH KLIEN" + " " * 256 + "UNRELATED " * 20
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, line)], [_inv(11, "Contoh Klien")], [])
+    item = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()[0]
+    assert (item["light"], item["open_strong"], item["suggestion"]) == ("yellow", 0, None)
+    assert item["description"] == line
+
+
+def test_a_payment_code_in_the_name_slot_is_not_shown_as_the_payer(mock_db_pool) -> None:
+    code = "20261120SAHMIDJA010O0000000001 PY80000001 26112 BFS        FR SAHMIDJA UN PY80000001 261"
+    named = "20261120CENAIDJA010O0000000002 BFS        FR CENAIDJA UN CONTOH PEMBAYAR"
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, code), _tx(2, 5_000_000, named)], [], [])
+    items = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()
+    assert {i["txn_id"]: i["payer_name"] for i in items} == {1: "", 2: "CONTOH PEMBAYAR"}
+    assert {i["txn_id"]: i["description"] for i in items} == {1: code, 2: named}
+
+
+def test_a_line_as_long_as_the_longest_real_one_names_its_whole_payer(mock_db_pool) -> None:
+    tail = " BFS FR CENAIDJA UN CONTOH PEMBAYAR"
+    line = "20260101CENAIDJA010O0000000001" + " " * (112 - 30 - len(tail)) + tail
+    assert len(line) == 112
+    _inbox_conn(mock_db_pool, [_tx(1, 4_000_000, line)], [], [])
+    item = _client(mock_db_pool).get(f"{BASE}/reconciliation-inbox").json()[0]
+    assert item["payer_name"] == "CONTOH PEMBAYAR"
+
+
 def test_inbox_shape_and_each_light(mock_db_pool) -> None:
     txns = [
         _tx(4, 4_000_000, "TRF CONTOH KLIEN"),  # one strong open, none recorded -> green
@@ -277,6 +332,7 @@ def test_inbox_shape_and_each_light(mock_db_pool) -> None:
             "txn_date",
             "amount_idr",
             "description",
+            "payer_name",
             "company_key",
             "light",
             "open_candidates",
@@ -362,10 +418,10 @@ def test_each_inbox_transfer_names_the_company_whose_account_received_it(mock_db
     assert [i["company_key"] for i in items] == [
         first.key,
         second.key,
+        "account:999000111",
         "other",
-        "other",
-        "other",
-        "other",
+        f"account:{''.join(c for c in f'9{first.bank_account_number}' if c.isdigit())}",
+        f"account:{''.join(c for c in f'{first.bank_account_number}9' if c.isdigit())}",
     ]
 
 
@@ -397,6 +453,7 @@ def test_match_candidates_keeps_its_fields_and_gains_recorded_candidates(mock_db
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -436,6 +493,7 @@ def test_match_candidates_recorded_list_is_empty_when_nothing_is_recorded(mock_d
             "txn_date": date(2026, 6, 25),
             "amount_idr": 5,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "",
         }
     )
@@ -608,6 +666,7 @@ def test_a_non_finite_invoice_amount_is_zero_in_the_inbox_and_in_match_candidate
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -690,6 +749,7 @@ def test_the_cents_of_an_invoice_amount_are_truncated_in_the_classifier_and_in_m
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -717,6 +777,7 @@ def test_identity_keys_are_in_every_candidate_of_both_routes_and_in_the_suggesti
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "TRF Contoh Klien",
         }
     )
@@ -745,6 +806,7 @@ def test_null_sources_yield_three_nulls_and_values_pass_through(mock_db_pool) ->
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "",
         }
     )
@@ -773,6 +835,7 @@ def test_a_row_without_the_new_columns_still_yields_nulls(mock_db_pool) -> None:
             "txn_date": date(2026, 6, 25),
             "amount_idr": 4_000_000,
             "direction": "credit",
+            "account_number": DEFAULT_ACCOUNT,
             "description": "",
         }
     )
@@ -787,6 +850,7 @@ def _txn_row() -> dict:
         "txn_date": date(2026, 6, 25),
         "amount_idr": 4_000_000,
         "direction": "credit",
+        "account_number": DEFAULT_ACCOUNT,
         "description": "",
     }
 
@@ -812,10 +876,11 @@ def test_candidates_of_equal_confidence_keep_the_order_of_the_pool_rows_given(
 _POOL_SQL_HEAD = (
     "SELECT i.id AS invoice_id, i.practice_id, i.amount_idr, i.generated_at, "
     "COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr, c.full_name AS client_name, "
-    "i.invoice_number, pt.name AS service_name "
+    "billed.company_name AS bill_to_company, i.invoice_number, pt.name AS service_name, i.issuer_entity_key "
     "FROM invoices i JOIN practices p ON i.practice_id = p.id "
     "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id "
     "LEFT JOIN clients c ON p.client_id = c.id "
+    "LEFT JOIN companies billed ON billed.id = p.invoice_company_id "
 )
 
 
@@ -826,7 +891,13 @@ def test_each_pool_query_is_pinned_in_full(mock_db_pool) -> None:
     _client(mock_db_pool).get(f"{BASE}/match-candidates/3")
     open_sql, recorded_sql = [" ".join(c.args[0].split()) for c in conn.fetch.await_args_list]
     assert open_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') <> 'paid'"
-    assert recorded_sql == _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid'"
+    assert recorded_sql == (
+        _POOL_SQL_HEAD + "WHERE COALESCE(p.payment_status, 'unpaid') = 'paid' AND NOT EXISTS ( "
+        "SELECT 1 FROM weekly_cashout wc WHERE wc.linked_practice_id=p.id AND wc.direction='in' "
+        "AND wc.type='invoice_payment' AND wc.reversed_by_id IS NULL GROUP BY wc.linked_practice_id "
+        "HAVING bool_or(wc.payment_method='cash') AND sum(wc.amount_idr) >= i.amount_idr "
+        "- COALESCE(i.pph_expected_idr, 0) )"
+    )
 
 
 @pytest.mark.parametrize(
@@ -857,3 +928,197 @@ def test_the_matcher_carries_each_identity_value_from_the_pool_row_to_the_candid
         open_invoices=[inv],
     )
     assert getattr(cand, field) == value
+
+
+# ── outgoings (owner 2026-11-21: the debits are justified too) ───────────────────────────
+
+
+def test_outgoings_is_admin_only(mock_db_pool) -> None:
+    resp = _client(mock_db_pool, OUTSIDER).get(f"{BASE}/outgoings")
+    assert resp.status_code == 403
+    _pool, conn = mock_db_pool
+    conn.fetch.assert_not_called()
+
+
+def test_outgoings_returns_the_service_reading_with_the_limit(mock_db_pool) -> None:
+    reading = {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
+        resp = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"limit": 50})
+    assert resp.status_code == 200
+    assert resp.json() == reading
+    assert load.await_args.kwargs == {"limit": 50, "state": "to_justify", "month": None}
+
+
+@pytest.mark.parametrize("limit", [0, 5001])
+def test_outgoings_refuses_a_limit_out_of_range(mock_db_pool, limit) -> None:
+    resp = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"limit": limit})
+    assert resp.status_code == 422
+
+
+# ── owner rule (b): undo a confirmation of today ─────────────────────────────────────────
+
+
+def test_undo_is_admin_only(mock_db_pool) -> None:
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", AsyncMock()) as u:
+        resp = _client(mock_db_pool, OUTSIDER).post(
+            f"{BASE}/undo-confirmation", json={"bank_txn_id": 1}
+        )
+    assert resp.status_code == 403
+    assert not u.called
+
+
+def test_undo_passes_the_id_and_the_lowercased_identity(mock_db_pool) -> None:
+    undo = AsyncMock(return_value=ActionResult(1, "unmatched", 12))
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", undo):
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": 1})
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "bank_txn_id": 1,
+        "reconciled_status": "unmatched",
+        "reconciliation_log_id": 12,
+    }
+    assert undo.await_args.kwargs == {"bank_txn_id": 1, "undone_by": "admin@example.test"}
+
+
+def test_undo_refusal_is_422_with_the_services_text(mock_db_pool) -> None:
+    boom = AsyncMock(side_effect=ReconcileError("bank transaction 1 is not confirmed"))
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", boom):
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": 1})
+    assert (resp.status_code, resp.json()) == (
+        422,
+        {"detail": "bank transaction 1 is not confirmed"},
+    )
+
+
+def test_undo_unexpected_failure_is_500_fixed_text(mock_db_pool, caplog) -> None:
+    boom = AsyncMock(side_effect=_DriverError(f"duplicate key value {_SENTINEL} (id)=(5)"))
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch.object(accounting_module.reconcile_service, "undo_confirmation", boom),
+    ):
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": 1})
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "reconciliation action could not be completed"}
+    assert _SENTINEL not in resp.text and _SENTINEL not in caplog.text
+
+
+@pytest.mark.parametrize("bad", _BAD_IDS, ids=repr)
+def test_undo_id_that_is_not_a_json_integer_is_422(mock_db_pool, bad) -> None:
+    with patch.object(accounting_module.reconcile_service, "undo_confirmation", AsyncMock()) as u:
+        resp = _client(mock_db_pool).post(f"{BASE}/undo-confirmation", json={"bank_txn_id": bad})
+    assert resp.status_code == 422
+    assert not u.called
+
+
+# ── owner 2026-11-22: justify a debit ────────────────────────────────────────────────────
+
+
+def test_outgoings_passes_the_state_filter_and_refuses_an_unknown_one(mock_db_pool) -> None:
+    reading = {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
+        ok = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "justified"})
+        bad = _client(mock_db_pool).get(f"{BASE}/outgoings", params={"state": "nope"})
+    assert ok.status_code == 200 and load.await_args.kwargs == {"limit": 1000, "state": "justified", "month": None}
+    assert bad.status_code == 422
+
+
+def test_outgoings_passes_one_company_key_to_the_service(mock_db_pool) -> None:
+    reading = {"items": [], "by_kind": [], "n": 0, "total_idr": 0}
+    with patch.object(accounting_module, "load_outgoings", AsyncMock(return_value=reading)) as load:
+        resp = _client(mock_db_pool).get(
+            f"{BASE}/outgoings", params={"company_key": DEFAULT_ENTITY_KEY}
+        )
+    assert resp.status_code == 200
+    assert load.await_args.kwargs == {
+        "limit": 1000,
+        "state": "to_justify",
+        "month": None,
+        "company_key": DEFAULT_ENTITY_KEY,
+    }
+
+
+def test_justify_and_undo_are_admin_only(mock_db_pool) -> None:
+    client = _client(mock_db_pool, OUTSIDER)
+    assert client.post(f"{BASE}/outgoings/1/justify", json={"category": "tax"}).status_code == 403
+    assert client.post(f"{BASE}/outgoings/1/undo").status_code == 403
+
+
+def test_justify_maps_the_services_refusal_to_its_status(mock_db_pool) -> None:
+    from backend.services.accounting.outgoing_justify import OutgoingError
+
+    boom = AsyncMock(side_effect=OutgoingError(409, "this debit is already justified: undo it first"))
+    with patch.object(accounting_module, "justify_outgoing", boom):
+        resp = _client(mock_db_pool).post(f"{BASE}/outgoings/1/justify", json={"category": "tax"})
+    assert (resp.status_code, resp.json()) == (
+        409,
+        {"detail": "this debit is already justified: undo it first"},
+    )
+
+
+# ── owner 2026-11-22: justify all PNBP in one go ─────────────────────────────────────────
+
+BATCH = "3f2b6c1e-0000-4000-8000-000000000001"
+
+
+def test_pnbp_batch_and_its_undo_are_admin_only(mock_db_pool) -> None:
+    client = _client(mock_db_pool, OUTSIDER)
+    with patch.object(accounting_module, "justify_pnbp_batch", AsyncMock()) as j:
+        assert client.post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [1]}).status_code == 403
+        assert client.post(f"{BASE}/outgoings/batches/{BATCH}/undo").status_code == 403
+    assert not j.called
+
+
+def test_pnbp_batch_passes_the_ids_and_the_lowercased_identity(mock_db_pool) -> None:
+    done = {"batch_id": BATCH, "n": 2, "total_idr": 6_000_000, "state": "justified"}
+    with patch.object(accounting_module, "justify_pnbp_batch", AsyncMock(return_value=done)) as j:
+        resp = _client(mock_db_pool).post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [4, 7]})
+    assert (resp.status_code, resp.json()) == (200, done)
+    assert j.await_args.kwargs == {"txn_ids": [4, 7], "justified_by": "admin@example.test"}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"txn_ids": []},
+        {"txn_ids": [1] * 501},
+        {"txn_ids": [0]},
+        {"txn_ids": [9_223_372_036_854_775_808]},  # beyond PostgreSQL bigint (gate r1 on #605)
+        *({"txn_ids": [bad]} for bad in _BAD_IDS),  # true is not 1 (gate r1 on #605)
+    ],
+    ids=repr,
+)
+def test_pnbp_batch_refuses_a_malformed_list(mock_db_pool, body) -> None:
+    with patch.object(accounting_module, "justify_pnbp_batch", AsyncMock()) as j:
+        resp = _client(mock_db_pool).post(f"{BASE}/outgoings/pnbp-batch", json=body)
+    assert resp.status_code == 422
+    assert not j.called
+
+
+def test_pnbp_batch_maps_the_refusal_and_the_race_to_409(mock_db_pool) -> None:
+    from backend.services.accounting.outgoing_justify import OutgoingError
+
+    text = "an e-billing code on more than one debit is justified by hand"
+    refused = AsyncMock(side_effect=OutgoingError(409, text))
+    raced = AsyncMock(side_effect=asyncpg.UniqueViolationError("dup"))
+    client = _client(mock_db_pool)
+    with patch.object(accounting_module, "justify_pnbp_batch", refused):
+        resp = client.post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [1]})
+    assert (resp.status_code, resp.json()) == (409, {"detail": text})
+    with patch.object(accounting_module, "justify_pnbp_batch", raced):
+        resp = client.post(f"{BASE}/outgoings/pnbp-batch", json={"txn_ids": [1]})
+    assert (resp.status_code, resp.json()) == (
+        409,
+        {"detail": "a debit is already justified: reload the list"},
+    )
+
+
+def test_batch_undo_passes_the_uuid_and_refuses_one_that_is_not(mock_db_pool) -> None:
+    done = {"batch_id": BATCH, "n": 2, "state": "to_justify"}
+    with patch.object(accounting_module, "undo_batch", AsyncMock(return_value=done)) as u:
+        ok = _client(mock_db_pool).post(f"{BASE}/outgoings/batches/{BATCH}/undo")
+        bad = _client(mock_db_pool).post(f"{BASE}/outgoings/batches/not-a-uuid/undo")
+    assert (ok.status_code, ok.json()) == (200, done)
+    assert str(u.await_args.kwargs["batch_id"]) == BATCH
+    assert u.await_args.kwargs["undone_by"] == "admin@example.test"
+    assert bad.status_code == 422 and u.await_count == 1

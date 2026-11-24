@@ -24,6 +24,8 @@ from backend.app.agents.state import WorkflowState
 
 logger = logging.getLogger(__name__)
 
+CONTEXT_WINDOW_CHARACTERS = 1000
+
 
 # ============================================================================
 # Service Dependencies (Injected at runtime)
@@ -87,6 +89,24 @@ async def _load_conversation_history(client_id: int | None, limit: int = 10) -> 
         return []
 
 
+def _build_conversation_history_block(conversation_history: list[str]) -> str:
+    """Return the newest history messages that fit the generation context window."""
+    if not conversation_history:
+        return ""
+
+    header = "=== Conversation History ===\n"
+    selected_messages: list[str] = []
+    block_length = len(header)
+    for message in reversed(conversation_history):
+        message_length = len(message) + (1 if selected_messages else 0)
+        if selected_messages and block_length + message_length > CONTEXT_WINDOW_CHARACTERS:
+            break
+        selected_messages.append(message)
+        block_length += message_length
+
+    return header + "\n".join(reversed(selected_messages))
+
+
 # ============================================================================
 # Node Implementations (Real Service Integration)
 # ============================================================================
@@ -100,7 +120,7 @@ async def retrieve_node(state: WorkflowState) -> WorkflowState:
     """
     question = state.get("question", "")
     metadata = state.get("metadata") or {}
-    client_id: int | None = metadata.get("client_id") or metadata.get("user_id")
+    client_id: int | None = metadata.get("client_id")
     # Normalize: if it's a string int, cast it
     if isinstance(client_id, str) and client_id.isdigit():
         client_id = int(client_id)
@@ -127,7 +147,7 @@ async def retrieve_node(state: WorkflowState) -> WorkflowState:
             ]
             mock_scores = [0.95, 0.87, 0.72]
             if conversation_history:
-                history_block = "=== Conversation History ===\n" + "\n".join(conversation_history)
+                history_block = _build_conversation_history_block(conversation_history)
                 mock_documents = [history_block, *mock_documents]
                 mock_scores = [1.0, *mock_scores]
             execution_path = state.get("execution_path", [])
@@ -179,7 +199,7 @@ async def retrieve_node(state: WorkflowState) -> WorkflowState:
 
         # Prepend conversation history as context documents (score 1.0 = always keep)
         if conversation_history:
-            history_block = "=== Conversation History ===\n" + "\n".join(conversation_history)
+            history_block = _build_conversation_history_block(conversation_history)
             documents = [history_block, *documents]
             scores = [1.0, *scores]
 
@@ -405,7 +425,7 @@ This is a mock answer. Real generation requires LLMGateway to be initialized.
         # Construct generation prompt with RAG context
         context = "\n\n---\n\n".join(
             [
-                f"Context {i + 1}:\n{doc[:1000]}"  # Limit context length
+                f"Context {i + 1}:\n{doc[:CONTEXT_WINDOW_CHARACTERS]}"  # Limit context length
                 for i, doc in enumerate(filtered_docs[:5])  # Max 5 docs
             ],
         )
@@ -500,17 +520,27 @@ async def check_hallucination_node(state: WorkflowState) -> WorkflowState:
     filtered_docs = state.get("filtered_documents", [])
     retries = state.get("reflection_retries", 0)
 
-    state["execution_path"] = [*state.get("execution_path", []), "check_hallucination"]
+    execution_path = state.get("execution_path", [])
+    last_execution_path_entry = execution_path[-1] if execution_path else None
+    state["execution_path"] = [*execution_path, "check_hallucination"]
 
     # Skip reflection if no generation or max retries reached
-    if not generation or retries >= MAX_REFLECTION_RETRIES:
+    if (
+        not generation
+        or retries >= MAX_REFLECTION_RETRIES
+        or last_execution_path_entry == "generate_error"
+    ):
         state["hallucination_check"] = "skipped"
         return state
 
     # Check if generation references content from documents
     doc_texts = " ".join(
-        (d.get("content", d.get("text", ""))[:200] if isinstance(d, dict) else str(d)[:200])
-        for d in filtered_docs
+        (
+            d.get("content", d.get("text", ""))[:CONTEXT_WINDOW_CHARACTERS]
+            if isinstance(d, dict)
+            else str(d)[:CONTEXT_WINDOW_CHARACTERS]
+        )
+        for d in filtered_docs[:5]
     )
 
     if not doc_texts:

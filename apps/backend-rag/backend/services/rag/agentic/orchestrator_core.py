@@ -30,6 +30,7 @@ from backend.prompts.channel_overlays import apply_channel_overlay
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.common.background import spawn
 from backend.services.llm_clients.pricing import TokenUsage
+from backend.services.rag.agentic._memory_identity import is_non_personal_memory_identity
 from backend.services.rag.agentic.entity_extractor import EntityExtractionService
 from backend.services.rag.agentic.llm_gateway import LLMGateway
 from backend.services.rag.agentic.memory_handler import MemoryHandler
@@ -112,6 +113,23 @@ _E33_CLAIM_GUARD_ENFORCE = os.getenv("E33_CLAIM_GUARD_ENFORCE", "false").lower()
     "1",
     "yes",
 )
+
+
+def _kg_expansion_allowed(user_id: str | None) -> bool:
+    """Whether this turn may feed KG auto-expansion at all.
+
+    Expansion stages entities in the SHARED knowledge graph. Two of its inputs
+    can carry the asker's own words: the raw query (its fallback when a turn
+    has no source chunks) and tool output that echoes the query back, such as
+    the KG tool's "no entity found for <term>", which arrives as a source
+    chunk. For an identity that stands for many people (the anonymous blog
+    visitor, ``anonymous``, the WA mirror) either one turns one person's words
+    into staged global facts that can reach everyone else after promotion.
+    Found by the cross-family gates on Rakyat #542 and #545 (2026-11-21).
+    A shared identity's turn therefore stages nothing; personal identities
+    keep today's behaviour.
+    """
+    return not is_non_personal_memory_identity(user_id)
 
 
 def _apply_e33_claim_guard(result: CoreResult) -> None:
@@ -210,6 +228,19 @@ _MULTI_AGENT_COORDINATOR_ENABLED = os.getenv(
 
 
 _FinalizationAnalyticsClaim = Callable[[], bool]
+
+
+def _workflow_prose_in_answer(channel: str | None) -> bool:
+    """Whether the KG workflow prose may be appended to ``result.answer``.
+
+    Red-team 2026-11-20: 6 of 36 public blog answers ended with the internal
+    "## SUGGESTED WORKFLOW (from <subgraph>, confidence: N%)" scaffold. The
+    AskZantara widget renders the answer as plain text (whitespace-pre-wrap), so
+    visitors saw raw markdown and an internal label. The blog channel therefore
+    never gets the prose; the structured ``workflow`` field is unchanged and every
+    other channel (and ``channel=None``) keeps the append exactly as before.
+    """
+    return channel != "blog"
 
 
 class OrchestratorCore:
@@ -1543,11 +1574,17 @@ class OrchestratorCore:
                 )
 
         # 3b.6. R5 Phase 5: KG fast-path — entity/relationship queries bypass Qdrant ReAct loop
-        kg_fast_result = await self._try_kg_fast_path(
-            query=query,
-            user_context=user_context,
-            extracted_entities=extracted_entities,
-            start_time=start_time,
+        # The fast-path answer IS the workflow prose, so a channel that must not
+        # show that prose (the public blog widget) skips it and gets a normal answer.
+        kg_fast_result = (
+            await self._try_kg_fast_path(
+                query=query,
+                user_context=user_context,
+                extracted_entities=extracted_entities,
+                start_time=start_time,
+            )
+            if _workflow_prose_in_answer(channel)
+            else None
         )
         if kg_fast_result:
             logger.info("✅ [R5 KG] Fast-path returned answer (skipping ReAct loop)")
@@ -1756,12 +1793,12 @@ class OrchestratorCore:
         # streaming path emits the workflow as metadata unconditionally and
         # before reading any score, and `whatsapp_chat.py` sends `result.answer`
         # without honouring `abstain` at all.
-        if langgraph_workflow and not result.abstain:
+        if langgraph_workflow and not result.abstain and _workflow_prose_in_answer(channel):
             workflow_text = self._format_workflow_for_prompt(langgraph_workflow)
             result.answer = result.answer.rstrip() + "\n\n" + workflow_text
             logger.info('KG LangGraph workflow included in response')
         elif langgraph_workflow:
-            logger.info('KG LangGraph workflow prose withheld for abstention; structured workflow still returned')
+            logger.info('KG LangGraph workflow prose withheld (abstention or blog channel); structured workflow still returned')
 
         # 13. R5 Phase 6: NLM Enrichment merge removed — nlm_task/nlm_domain always None
         evidence_score = getattr(state, "evidence_score", None)
@@ -1769,7 +1806,12 @@ class OrchestratorCore:
         # 14. [GraphRAG v6] KG Auto-Expansion (fire-and-forget)
         # Extract from SOURCE CHUNKS, not from LLM response — avoids feedback loop.
         evidence_score_val = getattr(state, "evidence_score", evidence_score)
-        if self._kg_auto_expansion and evidence_score_val and evidence_score_val > 0.6:
+        if (
+            self._kg_auto_expansion
+            and _kg_expansion_allowed(user_id)
+            and evidence_score_val
+            and evidence_score_val > 0.6
+        ):
             # Collect source chunk texts from tool results
             source_chunks_text = self._extract_source_chunks_text(state)
             source_chunk_ids = [

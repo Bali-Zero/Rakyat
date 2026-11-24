@@ -455,6 +455,7 @@ async def _maybe_send_apology(
     whatsapp_service: Any,
     *,
     reason: str = "terminal_failure",
+    pool: asyncpg.Pool | None = None,
 ) -> None:
     """Best-effort apology when a row is permanently failed after exhausting
     retries (item C4) — tells the client the conversation was flagged for
@@ -549,6 +550,7 @@ async def _maybe_send_apology(
             phone=thread["counterpart_phone"],
             reason=f"terminal_apology:{reason}",
             thread_id=thread["thread_id"],
+            pool=pool,
         )
 
         # Successor suppression (2026-09-15, B2.5 successor): a newer row of
@@ -1227,6 +1229,7 @@ async def _process_claimed_row(
                     await _maybe_send_apology(
                         conn, outbox_id, thread, whatsapp_service,
                         reason="bot_standing_condition" if standing else "bot_generation_exhausted",
+                        pool=pool,
                     )
                 return "failed"
 
@@ -1458,7 +1461,7 @@ async def _process_claimed_row(
             # swallowed by _maybe_send_apology and never masks the failure
             # already recorded above.
             await _maybe_send_apology(
-                conn, outbox_id, thread, whatsapp_service, reason="graph_send_exhausted"
+                conn, outbox_id, thread, whatsapp_service, reason="graph_send_exhausted", pool=pool
             )
             return "failed"
 

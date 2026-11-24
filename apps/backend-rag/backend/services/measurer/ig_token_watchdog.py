@@ -508,14 +508,6 @@ async def run_watchdog(
         logger.error("[ig-token-watchdog] refresh FAILED: %s", exc)
         return WatchdogOutcome(action="error", status=status, error=str(exc))
 
-    if family == "instagram" and state_file:
-        try:
-            write_state_expiry(state_file, refreshed.expires_at, refreshed_at=now)
-        except OSError as exc:
-            # State is an optimization for the gate, not the token itself —
-            # log loudly but do not fail the refresh over it.
-            logger.warning("[ig-token-watchdog] state write failed: %s", exc)
-
     logger.info(
         "[ig-token-watchdog] refreshed, new expiry=%s",
         refreshed.expires_at.date().isoformat(),
@@ -630,6 +622,7 @@ async def run_from_env(
     not be given a fixed clock, and that is precisely where a test rotted: see
     the note on `test_cli_fresh_state_exits_zero_without_network`.
     """
+    now = now or datetime.now(timezone.utc)
     resolved = _resolve_token_from_env()
     if resolved is None:
         logger.error(
@@ -705,6 +698,14 @@ async def run_from_env(
     except IGTokenWatchdogError as exc:
         logger.error("[ig-token-watchdog] persist FAILED: %s", exc)
         return 2
+    if family == "instagram" and state_file:
+        assert outcome.new_expires_at is not None
+        try:
+            write_state_expiry(state_file, outcome.new_expires_at, refreshed_at=now)
+        except OSError as exc:
+            # State is an optimization for the gate, not the token itself —
+            # log loudly but do not fail the refresh over it.
+            logger.warning("[ig-token-watchdog] state write failed: %s", exc)
     return 0
 
 

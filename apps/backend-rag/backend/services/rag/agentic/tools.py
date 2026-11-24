@@ -20,7 +20,7 @@ The LLM decides which collection to search based on the tool description.
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -245,6 +245,20 @@ class VectorSearchTool(BaseTool):
                 reverse=True,
             )
             chunks = all_chunks[:top_k]
+
+            if _settings.voyage_shadow_observe:
+                from backend.services.rag.agentic.voyage_scope import (
+                    accepts_query,
+                    record_observation,
+                )
+
+                if accepts_query(query):
+                    from backend.services.rag.voyage_observer import observe_legal_search
+
+                    summary = await observe_legal_search(
+                        query, target_collections, chunks, top_k, _settings
+                    )
+                    record_observation(query, summary)
 
             if not chunks:
                 set_span_status("ok")
@@ -1039,6 +1053,32 @@ class WebSearchTool(BaseTool):
                 )
 
 
+_TIMESHEET_NO_IDENTITY = "Timesheet actions need a signed-in team member"
+_TIMESHEET_NOT_YOURS = "A timesheet action can only be done for yourself"
+
+
+def _timesheet_caller(trusted: dict[str, Any]) -> str | None:
+    """The address of the person the executor's trusted arguments name, or None.
+
+    A desk session names its signed-in user. With no desk user, a trusted WhatsApp team
+    profile names its sender. Nothing else names anyone: ``_user_id`` is the transport's
+    principal (on the WhatsApp path, the bot's), and the creator profile carries no
+    address. No one acts for someone else here, an admin included.
+    """
+    desk_user = trusted.get("_desk_user")
+    if desk_user is not None:
+        email = desk_user.get("email") if isinstance(desk_user, dict) else None
+        if not isinstance(email, str) or "@" not in email.strip():
+            return None
+        return email.strip().lower()
+    profile = trusted.get("_caller_profile")
+    if isinstance(profile, dict) and str(profile.get("role") or "").strip().lower() == "team":
+        email = profile.get("email")
+        if isinstance(email, str) and "@" in email.strip():
+            return email.strip().lower()
+    return None
+
+
 class TimeSheetTool(BaseTool):
     """Tool for team timesheet management (clock-in, clock-out, status)"""
 
@@ -1055,7 +1095,8 @@ class TimeSheetTool(BaseTool):
         """Description."""
         return (
             "Manage work timesheet. Use this to clock in, clock out, or check work status. "
-            "REQUIRED: User email address."
+            "REQUIRED: User email address. It acts only for the signed-in user, so the "
+            "email must be that user's own address. "
             "Actions: clock_in, clock_out, status"
         )
 
@@ -1091,6 +1132,13 @@ class TimeSheetTool(BaseTool):
 
     async def execute(self, action: str, email: str, **kwargs) -> str:
         try:
+            caller = _timesheet_caller(kwargs)
+            if caller is None:
+                return json.dumps({"error": _TIMESHEET_NO_IDENTITY})
+            if not isinstance(email, str) or email.strip().lower() != caller:
+                return json.dumps({"error": _TIMESHEET_NOT_YOURS})
+            email = caller
+
             from backend.services.analytics.team_timesheet_service import get_timesheet_service
 
             service = get_timesheet_service()
@@ -1153,6 +1201,87 @@ def _clamp_crm_days_ahead(days_ahead: Any) -> int:
     except (TypeError, ValueError):
         return _CRM_DEFAULT_DAYS_AHEAD
     return max(1, min(n, _CRM_MAX_DAYS_AHEAD))
+
+
+_CRM_NO_IDENTITY = "CRM access needs a signed-in team member"
+
+
+class _CrmScope(NamedTuple):
+    """Whose rows one crm_query call may read. ``None`` owners are the whole book."""
+
+    desk: bool  # True: the desk's rule. False: the WhatsApp rule.
+    client_owners: list[str] | None
+    practice_owners: list[str] | None
+
+
+def _crm_scope_of(trusted: dict[str, Any]) -> _CrmScope | None:
+    """The scope of the caller the executor's trusted arguments name, or None to refuse.
+
+    A desk user (the e-mail and role of the signed-in session) is given what the desk's
+    own filters give that same dict. With no desk user, a trusted WhatsApp profile is
+    given the scope of the sibling WhatsApp tools. Anything else is refused: ``_user_id``
+    alone names nobody's book.
+    """
+    desk_user = trusted.get("_desk_user")
+    if desk_user is not None:
+        if not isinstance(desk_user, dict):
+            return None
+        email = desk_user.get("email")
+        role = desk_user.get("role")
+        if not isinstance(email, str) or "@" not in email.strip():
+            return None
+        # Lazy: the desk's dependencies import the application's auth layer.
+        from backend.app.deps.crm_access import get_crm_user_filter, get_practices_user_filter
+
+        user = {"email": email.strip(), "role": role if isinstance(role, str) else None}
+        return _CrmScope(True, get_crm_user_filter(user), get_practices_user_filter(user))
+
+    profile = trusted.get("_caller_profile")
+    if isinstance(profile, dict):
+        from backend.services.rag.agentic.team_crm_tools import (
+            _scope_peers,
+            resolve_team_crm_scope,
+        )
+
+        scope = resolve_team_crm_scope(profile)
+        if scope is None:
+            return None
+        if scope.is_admin:
+            return _CrmScope(False, None, None)
+        if not scope.email:
+            return None
+        peers = sorted(_scope_peers(scope))
+        return _CrmScope(False, peers, peers)
+    return None
+
+
+def _crm_client_filter(scope: _CrmScope, params: list[Any], alias: str = "") -> str:
+    """SQL that keeps a client row inside ``scope``; its owners are appended to ``params``."""
+    col = f"{alias}." if alias else ""
+    sql = f"{col}deleted_at IS NULL"
+    if scope.client_owners is not None:
+        params.append(scope.client_owners)
+        owners = f"${len(params)}::text[]"
+        if scope.desk:
+            sql += f" AND ({col}assigned_to = ANY({owners}) OR {col}tax_consultant = ANY({owners}))"
+        else:
+            sql += f" AND LOWER({col}assigned_to) = ANY({owners})"
+    return sql
+
+
+def _crm_practice_filter(scope: _CrmScope, params: list[Any]) -> tuple[str, str]:
+    """``(join, where)`` that keep a practice row ``p`` inside ``scope``.
+
+    The desk counts practices by their own assignee and does not look at the client, as
+    its practice routes do. The WhatsApp path holds a practice through its client's
+    assignee, as the sibling WhatsApp tools do.
+    """
+    if scope.desk:
+        if scope.practice_owners is None:
+            return "", "TRUE"
+        params.append(scope.practice_owners)
+        return "", f"p.assigned_to = ANY(${len(params)}::text[])"
+    return " JOIN clients c ON c.id = p.client_id", _crm_client_filter(scope, params, "c")
 
 
 class CRMTool(BaseTool):
@@ -1223,6 +1352,12 @@ class CRMTool(BaseTool):
         if not self.db_pool:
             return json.dumps({"error": "CRM database not available"})
 
+        # Whose book this call reads, decided before the pool is touched: a call that
+        # names nobody reads nothing.
+        scope = _crm_scope_of(kwargs)
+        if scope is None:
+            return json.dumps({"error": _CRM_NO_IDENTITY})
+
         # W0 S1: clamp BEFORE any branch below builds a query — every
         # branch that feeds `limit` into `LIMIT $N` (search_clients,
         # expiring_documents, practice_stats, recent_clients) shares this
@@ -1231,28 +1366,41 @@ class CRMTool(BaseTool):
         limit = _clamp_crm_limit(limit)
         days_ahead = _clamp_crm_days_ahead(days_ahead)
 
+        # Every statement below is built from fixed fragments; values travel as parameters.
         try:
             async with self.db_pool.acquire() as conn:
+                params: list[Any]
                 if query_type == "client_stats":
-                    row = await conn.fetchrow("""
+                    params = []
+                    row = await conn.fetchrow(
+                        f"""
                         SELECT
                             COUNT(*) FILTER (WHERE status = 'active') AS active_clients,
                             COUNT(*) FILTER (WHERE status = 'lead') AS leads,
                             COUNT(*) FILTER (WHERE status = 'inactive') AS inactive,
                             COUNT(*) AS total
                         FROM clients
-                    """)
-                    practice_row = await conn.fetchrow("""
+                        WHERE {_crm_client_filter(scope, params)}
+                    """,
+                        *params,
+                    )
+                    params = []
+                    join, inside = _crm_practice_filter(scope, params)
+                    practice_row = await conn.fetchrow(
+                        f"""
                         SELECT
-                            COUNT(*) FILTER (WHERE status = 'on_process') AS on_process,
-                            COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-                            COUNT(*) FILTER (WHERE status = 'sending_invoice') AS sending_invoice,
-                            COUNT(*) FILTER (WHERE status = 'waiting_documents') AS waiting_documents,
-                            COUNT(*) FILTER (WHERE status = 'inquiry') AS inquiry,
-                            COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+                            COUNT(*) FILTER (WHERE p.status = 'on_process') AS on_process,
+                            COUNT(*) FILTER (WHERE p.status = 'completed') AS completed,
+                            COUNT(*) FILTER (WHERE p.status = 'sending_invoice') AS sending_invoice,
+                            COUNT(*) FILTER (WHERE p.status = 'waiting_documents') AS waiting_documents,
+                            COUNT(*) FILTER (WHERE p.status = 'inquiry') AS inquiry,
+                            COUNT(*) FILTER (WHERE p.status = 'cancelled') AS cancelled,
                             COUNT(*) AS total
-                        FROM practices
-                    """)
+                        FROM practices p{join}
+                        WHERE {inside}
+                    """,
+                        *params,
+                    )
                     return json.dumps(
                         {
                             "clients": dict(row) if row else {},
@@ -1264,22 +1412,38 @@ class CRMTool(BaseTool):
                 elif query_type == "search_clients":
                     if not search_term:
                         return json.dumps({"error": "search_term required"})
+                    params = []
+                    inside = _crm_client_filter(scope, params)
+                    params += [f"%{search_term}%", limit]
+                    term = f"${len(params) - 1}"
                     rows = await conn.fetch(
-                        """
+                        f"""
                         SELECT id, full_name, email, nationality, status, phone
                         FROM clients
-                        WHERE full_name ILIKE $1 OR email ILIKE $1 OR passport_number ILIKE $1
+                        WHERE {inside}
+                          AND (full_name ILIKE {term} OR email ILIKE {term}
+                               OR passport_number ILIKE {term})
                         ORDER BY updated_at DESC
-                        LIMIT $2
+                        LIMIT ${len(params)}
                     """,
-                        f"%{search_term}%",
-                        limit,
+                        *params,
                     )
                     return json.dumps([dict(r) for r in rows], default=str)
 
                 elif query_type == "expiring_documents":
+                    params = []
+                    if scope.desk:
+                        # The desk holds a practice by its own assignee; the row carries a
+                        # client's name, so a deleted client is left out.
+                        inside = "c.deleted_at IS NULL"
+                        if scope.practice_owners is not None:
+                            params.append(scope.practice_owners)
+                            inside += f" AND p.assigned_to = ANY(${len(params)}::text[])"
+                    else:
+                        inside = _crm_client_filter(scope, params, "c")
+                    params.append(limit)
                     rows = await conn.fetch(
-                        """
+                        f"""
                         SELECT c.full_name, c.email, c.nationality,
                                p.practice_type_id, p.status, p.notes,
                                p.updated_at
@@ -1290,41 +1454,49 @@ class CRMTool(BaseTool):
                               SELECT id FROM practice_types
                               WHERE name ILIKE '%kitas%' OR name ILIKE '%visa%' OR name ILIKE '%kitap%'
                           )
+                          AND {inside}
                         ORDER BY p.updated_at DESC
-                        LIMIT $1
+                        LIMIT ${len(params)}
                     """,
-                        limit,
+                        *params,
                     )
                     return json.dumps([dict(r) for r in rows], default=str)
 
                 elif query_type == "practice_stats":
+                    params = []
+                    join, inside = _crm_practice_filter(scope, params)
+                    params.append(limit)
                     rows = await conn.fetch(
-                        """
+                        f"""
                         SELECT
                             COALESCE(pt.name, 'Unknown') AS service_type,
                             COUNT(*) AS count,
                             COUNT(*) FILTER (WHERE p.status = 'on_process') AS on_process,
                             COUNT(*) FILTER (WHERE p.status = 'completed') AS completed
                         FROM practices p
-                        LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
+                        LEFT JOIN practice_types pt ON pt.id = p.practice_type_id{join}
+                        WHERE {inside}
                         GROUP BY pt.name
                         ORDER BY count DESC
-                        LIMIT $1
+                        LIMIT ${len(params)}
                     """,
-                        limit,
+                        *params,
                     )
                     return json.dumps([dict(r) for r in rows], default=str)
 
                 elif query_type == "recent_clients":
+                    params = []
+                    inside = _crm_client_filter(scope, params)
+                    params.append(limit)
                     rows = await conn.fetch(
-                        """
+                        f"""
                         SELECT id, full_name, email, nationality, status, created_at
                         FROM clients
-                        WHERE status = 'active'
+                        WHERE {inside} AND status = 'active'
                         ORDER BY created_at DESC
-                        LIMIT $1
+                        LIMIT ${len(params)}
                     """,
-                        limit,
+                        *params,
                     )
                     return json.dumps([dict(r) for r in rows], default=str)
 

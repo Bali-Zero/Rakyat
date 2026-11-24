@@ -19,7 +19,6 @@ _LOGGER_NAME = "backend.services.integrations.messaging_identity_service"
 _SYNTHETIC_PHONE = "+62 000-111-2222"
 _SYNTHETIC_PHONE_DIGITS = "620001112222"
 _SYNTHETIC_CHAT_ID = 194920123
-
 _NON_DIGITS_RE = re.compile(r"\D+")
 
 
@@ -110,16 +109,6 @@ async def test_get_user_by_phone_normalizes_plus_prefix() -> None:
 
     assert await service.get_user_by_phone("+628123") == row
     assert connection.fetchrow_calls[0][1] == ("628123",)
-
-
-@pytest.mark.asyncio
-async def test_get_user_by_telegram_returns_mapping() -> None:
-    row = {"user_id": "user-1", "display_name": "Client", "verified": False}
-    connection = FakeConnection(fetchrow_result=row)
-    service = MessagingIdentityService(FakePool(connection))
-
-    assert await service.get_user_by_telegram(12345) == row
-    assert connection.fetchrow_calls[0][1] == (12345,)
 
 
 @pytest.mark.asyncio
@@ -244,36 +233,6 @@ class TestRawPhoneNeverInLogsGuilt:
         text = _all_log_text(caplog.records)
         assert _SYNTHETIC_PHONE not in text
         assert _SYNTHETIC_PHONE_DIGITS not in _digits_only(text)
-
-    @pytest.mark.asyncio
-    async def test_get_user_by_telegram_success_never_logs_raw_chat_id(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        row = {"user_id": "user-1", "display_name": "Client", "verified": False}
-        connection = FakeConnection(fetchrow_result=row)
-        service = MessagingIdentityService(FakePool(connection))
-
-        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
-            await service.get_user_by_telegram(_SYNTHETIC_CHAT_ID)
-
-        text = _all_log_text(caplog.records)
-        assert str(_SYNTHETIC_CHAT_ID) not in text
-
-    @pytest.mark.asyncio
-    async def test_get_user_by_telegram_db_error_never_logs_raw_chat_id(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        connection = RaisingConnection(raises=asyncpg.PostgresError("boom"))
-        service = MessagingIdentityService(FakePool(connection))
-
-        with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
-            result = await service.get_user_by_telegram(_SYNTHETIC_CHAT_ID)
-
-        assert result is None
-        text = _all_log_text(caplog.records)
-        assert str(_SYNTHETIC_CHAT_ID) not in text
 
     @pytest.mark.asyncio
     async def test_create_mapping_success_never_logs_raw_phone(

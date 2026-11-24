@@ -9,7 +9,11 @@ import {
   act,
 } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { DoneTodayList, useDoneToday } from "../_components/DoneTodaySection";
+import {
+  DoneTodayList,
+  useDoneToday,
+  type DoneTodayUndo,
+} from "../_components/DoneTodaySection";
 import {
   accountingApi,
   type DoneTodayItem,
@@ -30,6 +34,7 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
     linkRecorded: vi.fn(),
     ignoreTransaction: vi.fn(),
     reopenTransaction: vi.fn(),
+    undoConfirmation: vi.fn(),
     getMatchCandidates: vi.fn(),
     confirm: vi.fn(),
     exportSheet: vi.fn(),
@@ -561,5 +566,91 @@ describe("DoneTodaySection", () => {
     await loaded(4);
     open();
     check(done.container);
+  });
+});
+
+describe("DoneTodayList undo (owner rule b)", () => {
+  const items = [
+    item({ txn_id: 1, action: "confirmed" }),
+    item({ txn_id: 2, action: "linked" }),
+    item({ txn_id: 3, action: "ignored" }),
+  ];
+  const undo = (over: Partial<DoneTodayUndo> = {}): DoneTodayUndo => ({
+    onUndo: vi.fn(),
+    locked: false,
+    error: null,
+    ...over,
+  });
+  const list = (u?: DoneTodayUndo) =>
+    render(
+      <DoneTodayList
+        data={body(items)}
+        status="ok"
+        onRetry={vi.fn()}
+        undo={u}
+      />,
+    );
+
+  it("only a confirmed entry gets Undo, and only when the page gives a way to undo", () => {
+    const { unmount } = list(undo());
+    expect(screen.getByTestId("done-today-undo-1")).toBeEnabled();
+    expect(screen.queryByTestId("done-today-undo-2")).toBeNull();
+    expect(screen.queryByTestId("done-today-undo-3")).toBeNull();
+    unmount();
+    list();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("Undo asks first and says the email is not taken back; Keep it sends nothing", () => {
+    const u = undo();
+    list(u);
+    fireEvent.click(screen.getByTestId("done-today-undo-1"));
+    const ask = screen.getByRole("group", { name: "Undo this confirmation" });
+    expect(ask).toHaveTextContent("The transfer goes back to the inbox");
+    expect(ask).toHaveTextContent("that email is not taken back");
+    fireEvent.click(within(ask).getByRole("button", { name: "Keep it" }));
+    expect(screen.queryByRole("group")).toBeNull();
+    expect(u.onUndo).not.toHaveBeenCalled();
+  });
+
+  it("the second step undoes that transfer once and closes the question", () => {
+    const u = undo();
+    list(u);
+    fireEvent.click(screen.getByTestId("done-today-undo-1"));
+    fireEvent.click(screen.getByTestId("done-today-undo-confirm-1"));
+    expect(u.onUndo).toHaveBeenCalledTimes(1);
+    expect(u.onUndo).toHaveBeenCalledWith(1);
+    expect(screen.queryByRole("group")).toBeNull();
+  });
+
+  it("while a write runs both steps are disabled", () => {
+    const { rerender } = list(undo());
+    fireEvent.click(screen.getByTestId("done-today-undo-1"));
+    rerender(
+      <DoneTodayList
+        data={body(items)}
+        status="ok"
+        onRetry={vi.fn()}
+        undo={undo({ locked: true })}
+      />,
+    );
+    expect(screen.getByTestId("done-today-undo-confirm-1")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+    expect(screen.getByTestId("done-today-undo-1")).toBeDisabled();
+  });
+
+  it("a refusal shows under its own entry only", () => {
+    render(
+      <DoneTodayList
+        data={body([...items, item({ txn_id: 4, action: "confirmed" })])}
+        status="ok"
+        onRetry={vi.fn()}
+        undo={undo({ error: { txnId: 4, message: "confirmed before today" } })}
+      />,
+    );
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(screen.getByTestId("done-today-item-4")).toContainElement(alerts[0]);
+    expect(alerts[0]).toHaveTextContent("confirmed before today");
   });
 });

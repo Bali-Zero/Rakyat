@@ -73,10 +73,10 @@ def test_b1_outsider_gets_403_and_no_statement_runs(mock_db_pool, outsider_user)
     conn.fetch.assert_not_called()
 
 
-def test_b1_route_declares_no_query_parameter() -> None:
+def test_b1_only_the_bank_month_can_be_filtered() -> None:
     route = next(r for r in accounting_module.router.routes if r.path.endswith("/done-today"))
     assert route.methods == {"GET"}
-    assert route.dependant.query_params == []
+    assert [p.name for p in route.dependant.query_params] == ["month"]
 
 
 @pytest.mark.parametrize(

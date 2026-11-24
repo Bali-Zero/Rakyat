@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
 from uuid import UUID
 
 import asyncpg
@@ -388,10 +388,29 @@ class CommissionEngine:
                 f"Clawback only valid for approved|paid commissions, got status {orig.status!r}"
             )
 
-        # magnitude is the positive IDR amount to claw back
-        magnitude = amount_idr if amount_idr is not None else orig.net_amount_idr
-        gross_neg = -magnitude
-        net_neg = -magnitude
+        # The amount is judged as the ledger will store it: NUMERIC(16,2), rounded
+        # half away from zero. It is computed in a context built for this call, so
+        # the caller's decimal context can neither change the result nor turn a
+        # refusal into an arithmetic error. The limit is per clawback: the engine
+        # keeps no running balance across partial clawbacks.
+        net = orig.net_amount_idr
+        refusal = (
+            f"clawback amount must be greater than 0 and at most the commission net amount ({net})"
+        )
+        if not net.is_finite() or net <= 0:
+            raise ValueError(refusal)
+        requested = amount_idr if amount_idr is not None else net
+        ctx = Context(prec=28, rounding=ROUND_HALF_UP, traps=[InvalidOperation])
+        try:
+            magnitude = Decimal(str(requested)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP, context=ctx
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            raise ValueError(refusal) from None
+        if not magnitude.is_finite() or magnitude <= 0 or magnitude > net:
+            raise ValueError(refusal)
+        gross_neg = magnitude.copy_negate()
+        net_neg = magnitude.copy_negate()
 
         # Auto-writeoff: if the magnitude is below the threshold (and threshold > 0),
         # insert directly as 'waived' instead of 'clawback_pending'.

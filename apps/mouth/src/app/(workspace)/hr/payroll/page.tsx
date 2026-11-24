@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Banknote,
@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import * as hrApi from "@/lib/api/hr/hr";
+import { workDayOf } from "@/lib/format/work-day";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
 import type { PayrollPeriod, Payslip } from "@/types/hr";
 import { Money } from "@balizero/core";
@@ -30,6 +31,31 @@ const statusColors: Record<string, string> = {
   paid: "bg-[var(--state-success)]/10 text-[var(--state-success)]",
 };
 
+/**
+ * The month payroll is run for: the civil month in Bali, whatever zone the
+ * browser is in. The server cuts the month's bonuses in Asia/Makassar too.
+ */
+function payrollMonthNow(): { month: number; year: number } {
+  const [year, month] = workDayOf().split("-").map(Number);
+  return { month, year };
+}
+
+// The server locks a period once it is approved or paid: a calculation of
+// that month is refused, so the page does not offer one.
+const CLOSED_STATUSES: ReadonlySet<string> = new Set(["approved", "paid"]);
+
+/** What closes that month in the list, "approved" or "paid"; null when it is open or not there. */
+function closedStatusOf(
+  periods: PayrollPeriod[],
+  month: number,
+  year: number,
+): string | null {
+  const period = periods.find(
+    (p) => p.payroll_month === month && p.payroll_year === year,
+  );
+  return period && CLOSED_STATUSES.has(period.status) ? period.status : null;
+}
+
 export default function PayrollPage() {
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [payslips, setPayslips] = useState<Payslip[]>([]);
@@ -38,40 +64,63 @@ export default function PayrollPage() {
   // Calculate, approve and mark-paid belong to the owner and the accountant only.
   const canRunPayroll = capabilities.hr_payroll_write === true;
   const [loading, setLoading] = useState(true);
+  // A list that could not be read is not an empty list: the empty state
+  // invites a calculation, and nothing is known of the month it would be for.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  const [, renderAgain] = useState(0);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
+    try {
+      if (isAdmin) {
+        const data = await hrApi.listPayrollPeriods();
+        setPeriods(data.periods || []);
+      } else {
+        const data = await hrApi.listPayslips();
+        setPayslips(data.payslips || []);
+      }
+    } catch {
+      setLoadFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [isAdmin]);
 
   useEffect(() => {
     if (!loaded) return;
-    async function load() {
-      try {
-        if (isAdmin) {
-          const data = await hrApi.listPayrollPeriods();
-          setPeriods(data.periods || []);
-        } else {
-          const data = await hrApi.listPayslips();
-          setPayslips(data.payslips || []);
-        }
-      } catch {
-        /* the empty state covers it */
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, [loaded, isAdmin]);
+    void load();
+  }, [loaded, load]);
 
   const handleCalculate = async () => {
-    const now = new Date();
+    // The month is read again at the click, and so is its lock: a page left
+    // open across the turn of the month in Bali still shows the button of
+    // the month it was rendered in. A locked month is not sent; the page
+    // renders again, so the button carries the lock of this month.
+    const { month, year } = payrollMonthNow();
+    if (closedStatusOf(periods, month, year) !== null) {
+      renderAgain((n) => n + 1);
+      return;
+    }
     setCalculating(true);
     try {
-      await hrApi.calculatePayroll(now.getMonth() + 1, now.getFullYear());
-      const data = await hrApi.listPayrollPeriods();
-      setPeriods(data.periods || []);
-      toast.success("Payroll calculated");
+      await hrApi.calculatePayroll(month, year);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to calculate payroll",
       );
+      setCalculating(false);
+      return;
+    }
+    // Calculated. Reading the list again is another request: if it fails,
+    // that is a list that could not be read, not a calculation that failed.
+    toast.success("Payroll calculated");
+    try {
+      const data = await hrApi.listPayrollPeriods();
+      setPeriods(data.periods || []);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setCalculating(false);
     }
@@ -116,7 +165,36 @@ export default function PayrollPage() {
     );
   }
 
+  if (loadFailed) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold text-[var(--bz-text-1)]">
+          {isAdmin ? "Payroll Periods" : "My Payslips"}
+        </h1>
+        <div
+          role="alert"
+          className="border rounded-xl p-8 text-center text-[var(--bz-text-2)] space-y-3"
+          style={PANEL}
+        >
+          <p>
+            {isAdmin
+              ? "The payroll periods could not be loaded."
+              : "Your payslips could not be loaded."}
+          </p>
+          <button
+            onClick={() => void load()}
+            className="px-4 py-2 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm transition-colors"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (isAdmin) {
+    const { month, year } = payrollMonthNow();
+    const closedAs = closedStatusOf(periods, month, year);
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -124,14 +202,25 @@ export default function PayrollPage() {
             Payroll Periods
           </h1>
           {canRunPayroll && (
-            <button
-              onClick={handleCalculate}
-              disabled={calculating}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm transition-colors disabled:opacity-50"
-            >
-              <Calculator size={16} />
-              {calculating ? "Calculating..." : "Calculate Current Month"}
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                onClick={handleCalculate}
+                disabled={calculating || closedAs !== null}
+                aria-describedby={closedAs ? "payroll-month-closed" : undefined}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--bz-accent)]/10 text-[var(--bz-accent)] hover:bg-[var(--bz-accent)]/20 text-sm transition-colors disabled:opacity-50"
+              >
+                <Calculator size={16} />
+                {calculating ? "Calculating..." : "Calculate Current Month"}
+              </button>
+              {closedAs && (
+                <p
+                  id="payroll-month-closed"
+                  className="text-xs text-[var(--bz-text-3)]"
+                >
+                  {String(month).padStart(2, "0")}/{year} is already {closedAs}.
+                </p>
+              )}
+            </div>
           )}
         </div>
 

@@ -22,12 +22,7 @@ from backend.app.routers.session import get_session_service, router
 def mock_session_service():
     """Mock SessionService"""
     service = MagicMock()
-    service.create_session = AsyncMock(return_value="session123")
-    service.get_history = AsyncMock(return_value=[{"role": "user", "content": "Hello"}])
-    service.update_history = AsyncMock(return_value=True)
-    service.update_history_with_ttl = AsyncMock(return_value=True)
-    service.extend_ttl = AsyncMock(return_value=True)
-    service.delete_session = AsyncMock(return_value=True)
+    service.health_check = AsyncMock(return_value=True)
     return service
 
 
@@ -62,75 +57,38 @@ class TestSessionRouter:
             service = get_session_service()
             assert service == mock_service
 
-    def test_create_session(self, client, mock_session_service):
-        """Test creating a session"""
-        response = client.post("/api/sessions/create")
+    def test_health_check(self, client, mock_session_service):
+        """The health check is the one route left"""
+        response = client.get("/api/sessions/health")
         assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert "session_id" in data
+        assert response.json() == {"success": True, "service": "session"}
 
-    def test_create_session_error(self, app, client, mock_session_service):
-        """Test creating session with error"""
-        mock_session_service.create_session.side_effect = Exception("Service error")
-        app.dependency_overrides[get_session_service] = lambda: mock_session_service
-
-        response = client.post("/api/sessions/create")
-        assert response.status_code == 500
-
-    def test_get_session(self, client, mock_session_service):
-        """Test getting a session"""
-        response = client.get("/api/sessions/session123")
+    def test_health_check_failure(self, client, mock_session_service):
+        """A failing health check answers success false, never a 500"""
+        mock_session_service.health_check.side_effect = Exception("redis down")
+        response = client.get("/api/sessions/health")
         assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["session_id"] == "session123"
-        assert "history" in data
+        assert response.json()["success"] is False
 
-    def test_get_session_not_found(self, app, client, mock_session_service):
-        """Test getting non-existent session"""
-        mock_session_service.get_history = AsyncMock(return_value=None)
-        app.dependency_overrides[get_session_service] = lambda: mock_session_service
-
-        response = client.get("/api/sessions/nonexistent")
-        assert response.status_code == 404
-
-    def test_update_session(self, client, mock_session_service):
-        """Test updating a session"""
-        response = client.put(
-            "/api/sessions/session123",
-            json={"history": [{"role": "user", "content": "Updated"}]},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        mock_session_service.update_history.assert_called_once()
-
-    def test_update_session_failed(self, app, client, mock_session_service):
-        """Test updating session that fails"""
-        mock_session_service.update_history = AsyncMock(return_value=False)
-        app.dependency_overrides[get_session_service] = lambda: mock_session_service
-
-        response = client.put(
-            "/api/sessions/session123",
-            json={"history": [{"role": "user", "content": "Updated"}]},
-        )
-        assert response.status_code == 400
-
-    def test_extend_session_ttl(self, client, mock_session_service):
-        """Test extending session TTL"""
-        response = client.put(
-            "/api/sessions/session123/ttl",
-            json={"history": [{"role": "user", "content": "Test"}], "ttl_hours": 24},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-
-    def test_delete_session(self, client, mock_session_service):
-        """Test deleting a session"""
-        response = client.delete("/api/sessions/session123")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        mock_session_service.delete_session.assert_called_once_with("session123")
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("post", "/api/sessions/create"),
+            ("get", "/api/sessions/abc"),
+            ("put", "/api/sessions/abc"),
+            ("put", "/api/sessions/abc/ttl"),
+            ("delete", "/api/sessions/abc"),
+            ("post", "/api/sessions/abc/extend"),
+            ("post", "/api/sessions/abc/extend-custom"),
+            ("get", "/api/sessions/abc/info"),
+            ("get", "/api/sessions/abc/export"),
+            ("get", "/api/sessions/analytics/overview"),
+            ("post", "/api/sessions/cleanup"),
+        ],
+    )
+    def test_the_conversation_routes_are_retired(self, client, mock_session_service, method, path):
+        """No route reads, writes or lists a conversation session any more"""
+        response = getattr(client, method)(path)
+        assert response.status_code in (404, 405)
+        assert mock_session_service.method_calls == []
+        assert [route.path for route in router.routes] == ["/api/sessions/health"]

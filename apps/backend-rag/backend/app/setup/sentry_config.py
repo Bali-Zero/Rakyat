@@ -142,9 +142,45 @@ _HR_ROUTE_PREFIX = "/api/hr/"
 # blob that we redact by key rather than parsing.
 _QUERY_KEYS: tuple[str, ...] = ("query_string", "query", "QUERY_STRING")
 
-# Email regex — mirrors the brief. Used both to mask stray emails in strings
-# and to scrub the URL path itself.
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[\w.-]+")
+# Email shape — mirrors the brief: a run of `[\w.+-]` (the local part), `@`, then a run of `[\w.-]`
+# that holds a `.` with a character on each side (the domain). Used both to mask stray emails in
+# strings and to scrub the URL path itself. It is found by `_redact_addresses`, one forward pass,
+# not by a regular expression: `[\w.+-]+@` tried at every start of a long run with no `@` read
+# the rest of the run each time, so the time grew with the square of the run (a minified blob or
+# a long dotted name in an exception text held the hook for seconds).
+_ADDRESS_LOCAL_RUN_RE = re.compile(r"[\w.+-]+")
+_ADDRESS_DOMAIN_RUN_RE = re.compile(r"[\w.-]*")
+
+
+def _redact_addresses(s: str) -> str:
+    """Replace each address with the placeholder: the text `[\\w.+-]+@[\\w.-]+\\.[\\w.-]+` would give.
+
+    A search that starts inside a run of local-part characters reads to the end of that run, so
+    every start in the run reaches the same `@` (or the same absence of one) and the same domain:
+    the run is judged once and the search moves past it. A match ends at the end of its domain run,
+    and the next search starts there, as a substitution would.
+    """
+    if "@" not in s:
+        return s
+    pieces: list[str] = []
+    done = pos = 0
+    while (local := _ADDRESS_LOCAL_RUN_RE.search(s, pos)) is not None:
+        at = local.end()
+        if s[at : at + 1] != "@":
+            pos = at
+            continue
+        end = _ADDRESS_DOMAIN_RUN_RE.match(s, at + 1).end()  # type: ignore[union-attr]
+        if s.rfind(".", at + 2, end - 1) == -1:
+            pos = at + 1
+            continue
+        pieces.append(s[done : local.start()])
+        pieces.append(PII_REDACTION_PLACEHOLDER)
+        done = pos = end
+    if not pieces:
+        return s
+    pieces.append(s[done:])
+    return "".join(pieces)
+
 
 # Bali Zero client_id pattern (e.g. "CL-000142"). These IDs are used as keys
 # into CRM/Drive so they're treated as identity PII even when the field name
@@ -174,8 +210,7 @@ _CLIENT_ID_RE = re.compile(r"\bCL-\d{3,}\b")
 #
 # WHAT THIS STILL CANNOT DO — do not read the list above as full cover:
 #   * a personal NAME in free text ("Created client 7: Jane Doe") is not a
-#     regex-recognisable shape at all; it needs NER (see
-#     `backend/middleware/pii_scanner.py`, Presidio) and is out of scope for a
+#     regex-recognisable shape at all; it needs NER and is out of scope for a
 #     hook that must stay fast and dependency-free on the error path;
 #   * an UNLABELLED passport (`"...: X1234567"`) has no anchor to catch.
 # Both are pinned as known-gap tests. The only real fix for them is not logging
@@ -251,6 +286,52 @@ _QUERY_FIELD_KEYS = frozenset(
 )
 _URL_FIELD_KEYS = frozenset({"url", "http.url", "url.full"})
 _URL_HEADER_NAMES = frozenset({"referer", "referrer", "link", "location"})
+# A request header whose NAME marks its value as a credential keeps its name and loses its value.
+# The SDK filters a fixed handful of names (and only while `send_default_pii` is off); this
+# backend reads many more, one per integration. The rule reads the WORDS of the name, split on
+# "-" and "_": a word that is one of `_CREDENTIAL_HEADER_WORDS`, or that ENDS with one of
+# `_CREDENTIAL_HEADER_SUFFIXES`. The ending covers the compact spellings ("xapikey",
+# "csrftoken", "x-authtoken"); a word that only holds one inside ("keyboard", "tokenizer",
+# "authorship", "authenticate") is not matched.
+_CREDENTIAL_HEADER_WORDS = frozenset(
+    {
+        "authorization",
+        "bearer",
+        "cookie",
+        "session",
+        "sessionid",
+        "credential",
+        "credentials",
+        "passwd",
+        "pwd",
+        "csrf",
+        "xsrf",
+    }
+)
+_CREDENTIAL_HEADER_SUFFIXES = ("key", "token", "secret", "auth", "password", "signature")
+# Named in full: the WebSocket handshake header, which carries a bearer as a subprotocol.
+_CREDENTIAL_HEADER_NAMES = frozenset({"sec-websocket-protocol"})
+# Named exceptions: a header that matches the rule above and carries no credential.
+_PLAIN_HEADER_NAMES = frozenset({"idempotency-key", "x-idempotency-key", "sec-websocket-key"})
+# Outside a `headers` field a key is read as a header only when it is spelled like one: an
+# "x-" name that matches the rule above, one of the standard names, or one of the compact
+# spellings. Plain keys such as `token_count` and `max_tokens` are debug data, not headers,
+# and are left to the key rules further up.
+_STANDARD_CREDENTIAL_HEADER_NAMES = frozenset(
+    {"authorization", "proxy-authorization", "cookie", "set-cookie", "sec-websocket-protocol"}
+)
+_COMPACT_CREDENTIAL_KEYS = frozenset(
+    {
+        "apikey",
+        "xapikey",
+        "csrftoken",
+        "xcsrftoken",
+        "sessionid",
+        "authtoken",
+        "xauthtoken",
+        "bearer",
+    }
+)
 
 
 def _path_only_url(value: str) -> str:
@@ -263,24 +344,74 @@ def _path_only_url(value: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def _header_name(name: Any) -> str | None:
+    """A name as every rule here reads it: stripped, lower case, "_" read as "-"."""
+    if not isinstance(name, str):
+        return None
+    return name.strip().lower().replace("_", "-")
+
+
+def _is_credential_header(name: Any) -> bool:
+    normalised = _header_name(name)
+    if normalised is None or normalised in _PLAIN_HEADER_NAMES:
+        return False
+    if normalised in _CREDENTIAL_HEADER_NAMES:
+        return True
+    return any(
+        word in _CREDENTIAL_HEADER_WORDS or word.endswith(_CREDENTIAL_HEADER_SUFFIXES)
+        for word in normalised.split("-")
+        if word
+    )
+
+
+def _is_credential_header_key(key: Any) -> bool:
+    """A key, anywhere in an event, that is spelled as a credential-carrying request header."""
+    normalised = _header_name(key)
+    if normalised is None:
+        return False
+    if normalised in _STANDARD_CREDENTIAL_HEADER_NAMES or normalised in _COMPACT_CREDENTIAL_KEYS:
+        return True
+    return normalised.startswith("x-") and _is_credential_header(key)
+
+
+def _scrub_cookies(cookies: Any) -> Any:
+    """Every cookie keeps its name and loses its value, whatever the SDK was told to send.
+
+    A cookie is client state, and the ones this backend sets are sessions and CSRF bearers.
+    """
+    if isinstance(cookies, dict):
+        return dict.fromkeys(cookies, PII_REDACTION_PLACEHOLDER)
+    if isinstance(cookies, (list, tuple)):
+        return [
+            type(pair)([pair[0], PII_REDACTION_PLACEHOLDER])
+            if isinstance(pair, (list, tuple)) and pair
+            else PII_REDACTION_PLACEHOLDER
+            for pair in cookies
+        ]
+    if cookies is None or cookies == "":
+        return cookies
+    return PII_REDACTION_PLACEHOLDER
+
+
 def _scrub_headers(headers: Any) -> Any:
     if isinstance(headers, dict):
         return {
-            k: v
+            k: PII_REDACTION_PLACEHOLDER if _is_credential_header(k) else v
             for k, v in headers.items()
             if not (isinstance(k, str) and k.lower() in _URL_HEADER_NAMES)
         }
-    if isinstance(headers, list):
-        return [
-            pair
-            for pair in headers
-            if not (
-                isinstance(pair, (list, tuple))
-                and pair
-                and isinstance(pair[0], str)
-                and pair[0].lower() in _URL_HEADER_NAMES
-            )
-        ]
+    if isinstance(headers, (list, tuple)):
+        kept: list[Any] = []
+        for pair in headers:
+            if not (isinstance(pair, (list, tuple)) and pair and isinstance(pair[0], str)):
+                kept.append(pair)
+            elif pair[0].lower() in _URL_HEADER_NAMES:
+                continue
+            elif _is_credential_header(pair[0]) and len(pair) > 1:
+                kept.append(type(pair)([pair[0], PII_REDACTION_PLACEHOLDER, *pair[2:]]))
+            else:
+                kept.append(pair)
+        return tuple(kept) if isinstance(headers, tuple) else kept
     return headers
 
 
@@ -294,6 +425,8 @@ def _scrub_url_fields(obj: Any) -> Any:
                 out[k] = PII_REDACTION_PLACEHOLDER
             elif isinstance(k, str) and k.lower() == "headers":
                 out[k] = _scrub_headers(v)
+            elif isinstance(k, str) and k.lower() == "cookies":
+                out[k] = _scrub_cookies(v)
             elif isinstance(k, str) and k in _URL_FIELD_KEYS and isinstance(v, str):
                 out[k] = _path_only_url(v)
             elif (
@@ -333,7 +466,7 @@ def _redact_string(s: str) -> str:
     See the free-text block above for the two tiers and for what this still
     cannot reach (bare personal names, unlabelled passport numbers).
     """
-    s = _EMAIL_RE.sub(PII_REDACTION_PLACEHOLDER, s)
+    s = _redact_addresses(s)
     s = _CLIENT_ID_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _NPWP_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _PHONE_INTL_FMT_RE.sub(PII_REDACTION_PLACEHOLDER, s)
@@ -369,7 +502,11 @@ def _scrub(obj: Any, parent_key: str | None = None) -> Any:
     if isinstance(obj, dict):
         scrubbed: dict[Any, Any] = {}
         for k, v in obj.items():
-            if _is_pii_key(k) or (_is_search_param(k) and isinstance(v, str)):
+            if (
+                _is_pii_key(k)
+                or _is_credential_header_key(k)
+                or (_is_search_param(k) and isinstance(v, str))
+            ):
                 scrubbed[k] = PII_REDACTION_PLACEHOLDER
             elif isinstance(k, str) and k in _QUERY_KEYS and isinstance(v, str):
                 scrubbed[k] = _redact_query_string(v)
@@ -525,7 +662,9 @@ def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] 
         # model families, found this path on the same diff. So scrub it on its
         # own: whatever broke the full walk is usually in `extra`/locals.
         try:
-            safe_exception = _scrub(event.get("exception"))
+            # The two passes of the normal path, in its order: the field pass (headers,
+            # cookies, URLs), then the key and text pass.
+            safe_exception = _scrub(_scrub_url_fields(event.get("exception")))
         except Exception:
             # Second failure: drop the exception entirely. Losing the stack is a
             # diagnosis cost; shipping unredacted PII is a UU PDP breach, and the

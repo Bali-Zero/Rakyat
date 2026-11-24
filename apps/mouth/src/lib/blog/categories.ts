@@ -62,7 +62,9 @@ export const CATEGORY_MAP: Record<string, ArticleCategory> = {
 };
 
 export function normalizeCategory(rawCategory: string): ArticleCategory {
-  return CATEGORY_MAP[rawCategory] || "living";
+  return Object.prototype.hasOwnProperty.call(CATEGORY_MAP, rawCategory)
+    ? CATEGORY_MAP[rawCategory] || "living"
+    : "living";
 }
 
 /**

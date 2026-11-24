@@ -42,6 +42,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 CONFIRMATION_KEY_PREFIX = "conf:"
+CONFIRMATION_DECISION_KEY_PREFIX = "conf:decision:"
 CONFIRMATION_PUBSUB_CHANNEL = "conf:resolutions"
 CONFIRMATION_TTL_SECONDS = 180
 CONFIRMATION_TIMEOUT_SECONDS = 170
@@ -118,6 +119,7 @@ class ConfirmationService:
         Returns True if approved, False if rejected.
         Raises ConfirmationRedisDown or ConfirmationTimeout on failure.
         """
+        await self.start()
         client = self._get_client()
         if client is None:
             raise ConfirmationRedisDown("Redis unavailable; cannot persist confirmation request")
@@ -177,6 +179,7 @@ class ConfirmationService:
                 self._pending.pop(request_id, None)
             try:
                 await client.delete(f"{CONFIRMATION_KEY_PREFIX}{request_id}")
+                await client.delete(f"{CONFIRMATION_DECISION_KEY_PREFIX}{request_id}")
             except Exception:
                 pass
 
@@ -223,13 +226,41 @@ class ConfirmationService:
             )
             return False
 
-        # 2. Local fast path
+        # 2. Atomically claim the first decision.
+        try:
+            claimed = await client.set(
+                f"{CONFIRMATION_DECISION_KEY_PREFIX}{request_id}",
+                decision,
+                ex=CONFIRMATION_TTL_SECONDS,
+                nx=True,
+            )
+        except Exception:
+            return False
+
+        if not claimed:
+            try:
+                existing_decision = await client.get(
+                    f"{CONFIRMATION_DECISION_KEY_PREFIX}{request_id}"
+                )
+            except Exception:
+                return False
+            if isinstance(existing_decision, bytes):
+                existing_decision = existing_decision.decode("utf-8", "replace")
+            if existing_decision != decision:
+                logger.info(
+                    "ConfirmationService: contradictory decision for request %s", request_id
+                )
+                return False
+            # The same decision again is delivered again: pub/sub does not queue, so
+            # the first delivery may have been lost, and repeating it changes nothing.
+
+        # 3. Local fast path
         async with self._lock:
             future = self._pending.get(request_id)
         if future is not None and not future.done():
             future.set_result(decision)
 
-        # 3. Cross-process pub/sub
+        # 4. Cross-process pub/sub
         try:
             await client.publish(
                 CONFIRMATION_PUBSUB_CHANNEL,

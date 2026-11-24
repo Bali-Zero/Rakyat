@@ -5,12 +5,16 @@
  *
  * Modelled on Asya's own "Weekly Cashout" Google Sheet: each invoice-payment
  * row carries the price decomposition (PNBP / URGENT / RPTKA-IMTA / MARGIN /
- * FINAL PRICE). Two surfaces:
+ * FINAL PRICE). Three surfaces:
  *   1. Weekly Cashout — the money-log table (read), grouped newest-first.
  *   2. Reconciliation inbox — unmatched incoming bank transfers; pick the
  *      matching invoice (candidate ranking from the backend matcher) and
  *      confirm. Confirm is the SINGLE writer of payment_status (superscar #9);
- *      it never auto-advances the practice (Zero's decision: Asya clicks again).
+ *      paid in full, it starts a case waiting for payment (owner rule a).
+ *   3. Outgoings — every bank debit, to justify or justified (justify, undo the same day).
+ *
+ * The default period is November 2026 by bank or cash movement date. All dates
+ * reopens the full history. The shared Sheets export always covers all dates.
  *
  * RBAC is enforced server-side (403 → error boundary). Money is IDR.
  */
@@ -29,17 +33,38 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { logger } from "@/lib/logger";
+import {
+  AccountingMonth,
+  OCTOBER,
+  NOVEMBER,
+  useAccountingMonth,
+} from "./_components/accountingPeriod";
 import { ReconciliationInbox } from "./_components/ReconciliationInbox";
 import "./control-centre.css";
 import { formatIDR } from "@balizero/core/utils";
 import { Money } from "@balizero/core";
+import { OutgoingsView } from "./_components/OutgoingsView";
+import { CashReceiptForm } from "./_components/CashReceiptForm";
 import {
   accountingApi,
   type CashoutRow,
   type CashbookSummary,
 } from "@/lib/api/workspace/accounting.api";
 
-type View = "centre" | "cashout";
+type View = "centre" | "cashout" | "outgoings" | "cash-receipt";
+
+function BackToCentre({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-testid="back-to-centre"
+      className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
+      onClick={onClick}
+    >
+      <ArrowLeft className="h-4 w-4" /> Back to reconciliation
+    </button>
+  );
+}
 
 // ── Summary cards ────────────────────────────────────────────────────────────
 
@@ -132,6 +157,11 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
               </td>
               <td className="px-3 py-2 font-medium">
                 {r.client_name ?? r.counterparty ?? "—"}
+                {r.payment_method === "cash" && (
+                  <span className="block text-xs font-normal text-[var(--bz-text-2)]">
+                    Cash{r.cash_company_name ? ` · ${r.cash_company_name}` : ""}
+                  </span>
+                )}
               </td>
               <td className="px-3 py-2 text-[var(--bz-text-2)]">
                 {r.type === "cashout_worksheet" && (
@@ -142,7 +172,7 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
                     Worksheet
                   </span>
                 )}
-                {r.category ?? r.type}
+                {r.category ?? r.service_name ?? r.type}
               </td>
               <td className="px-3 py-2 text-right tabular-nums">
                 {r.pnbp_idr ? <Money value={r.pnbp_idr} /> : "—"}
@@ -173,8 +203,35 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
-  const { success, error } = useToast();
+  const [period, setPeriod] = useState<"november" | "october" | "archive">("november");
   const [view, setView] = useState<View>("centre");
+  const month = period === "october" ? OCTOBER.start : period === "november" ? NOVEMBER.start : undefined;
+  return (
+    <AccountingMonth.Provider value={month}>
+      <AccountingWorkspace
+        key={period}
+        view={view}
+        setView={setView}
+        period={period}
+        onPeriod={setPeriod}
+      />
+    </AccountingMonth.Provider>
+  );
+}
+
+function AccountingWorkspace({
+  view,
+  setView,
+  period,
+  onPeriod,
+}: {
+  view: View;
+  setView: (view: View) => void;
+  period: "november" | "october" | "archive";
+  onPeriod: (period: "november" | "october" | "archive") => void;
+}) {
+  const month = useAccountingMonth();
+  const { success, error } = useToast();
   const [summary, setSummary] = useState<CashbookSummary | null>(null);
   const [cashout, setCashout] = useState<CashoutRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,8 +245,10 @@ export default function AccountingPage() {
     try {
       setLoading(true);
       const [s, rows] = await Promise.all([
-        accountingApi.getSummary(),
-        accountingApi.getCashout({ limit: 200 }),
+        accountingApi.getSummary(
+          month ? { periodStart: month, periodEnd: NOVEMBER.end } : undefined,
+        ),
+        accountingApi.getCashout({ limit: 200, month }),
       ]);
       setSummary(s);
       setCashout(rows);
@@ -199,7 +258,7 @@ export default function AccountingPage() {
     } finally {
       setLoading(false);
     }
-  }, [error]);
+  }, [error, month]);
 
   useEffect(() => {
     loadCashout();
@@ -256,22 +315,43 @@ export default function AccountingPage() {
 
   return (
     <div className={view === "centre" ? "px-4 pb-2 pt-1.5" : "p-6"}>
+      <label className="my-2 flex items-center gap-2 text-sm text-[var(--bz-text-2)]">
+        Period
+        <select
+          className="rounded border border-[var(--bz-border)] bg-[var(--bz-card)] px-2 py-1"
+          value={period}
+          onChange={(event) => onPeriod(event.target.value as "november" | "october" | "archive")}
+        >
+          <option value="november">November 2026</option>
+          <option value="october">October 2026</option>
+          <option value="archive">All dates (history)</option>
+        </select>
+      </label>
       {view === "centre" ? (
-        <ReconciliationInbox
-          onConfirmed={handleConfirmed}
-          doneVersion={doneVersion}
-          onOpenCashout={() => setView("cashout")}
-        />
+        <>
+          <div className="px-4 pt-3">
+            <Button variant="outline" onClick={() => setView("cash-receipt")}>Record cash received</Button>
+          </div>
+          <ReconciliationInbox
+            onConfirmed={handleConfirmed}
+            doneVersion={doneVersion}
+            onOpenCashout={() => setView("cashout")}
+            onOpenOutgoings={() => setView("outgoings")}
+          />
+        </>
+      ) : view === "cash-receipt" ? (
+        <div className="space-y-6">
+          <BackToCentre onClick={() => setView("centre")} />
+          <CashReceiptForm onDone={() => { void loadCashout(); setView("cashout"); }} />
+        </div>
+      ) : view === "outgoings" ? (
+        <div className="space-y-6">
+          <BackToCentre onClick={() => setView("centre")} />
+          <OutgoingsView />
+        </div>
       ) : (
         <div className="space-y-6">
-          <button
-            type="button"
-            data-testid="back-to-centre"
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--bz-text-2)] hover:text-[var(--bz-text-1)]"
-            onClick={() => setView("centre")}
-          >
-            <ArrowLeft className="h-4 w-4" /> Back to reconciliation
-          </button>
+          <BackToCentre onClick={() => setView("centre")} />
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Wallet className="h-6 w-6 text-[var(--bz-accent)]" />
@@ -279,6 +359,7 @@ export default function AccountingPage() {
                 Accounting
               </h1>
             </div>
+            <Button variant="outline" onClick={() => setView("cash-receipt")}>Record cash received</Button>
             <div className="flex items-center gap-2">
               <input
                 ref={fileInputRef}
@@ -313,7 +394,7 @@ export default function AccountingPage() {
                 ) : (
                   <Sheet className="mr-2 h-4 w-4" />
                 )}
-                Export to Sheets
+                Export to Sheets (all dates)
               </Button>
             </div>
           </div>

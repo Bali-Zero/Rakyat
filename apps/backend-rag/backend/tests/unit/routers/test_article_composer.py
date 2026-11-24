@@ -449,6 +449,40 @@ def test_compose_status_not_configured(test_client):
 
 @pytest.mark.asyncio
 @patch("backend.services.integrations.github_publisher.github_publisher")
+async def test_publish_does_not_ping_indexnow(
+    mock_publisher,
+    test_client,
+    sample_enriched_article,
+    monkeypatch,
+):
+    """Publishing only opens the article PR: the page is not live yet, so no IndexNow ping.
+
+    IndexNow hears about the article from .github/workflows/indexnow-after-deploy.yml once the
+    Production deployment serves it.
+    """
+    import httpx
+
+    mock_publisher.is_configured = True
+    mock_publisher.check_file_exists = AsyncMock(return_value=False)
+    mock_publisher.create_commit_with_files = AsyncMock(
+        return_value={"success": True, "commit_sha": "abc123", "pull_request_number": 42},
+    )
+    posts: list[str] = []
+
+    async def fake_post(self, url, *args, **kwargs):
+        posts.append(str(url))
+        return httpx.Response(202)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    request = PublishRequest(article=sample_enriched_article, position="normal")
+    response = test_client.post("/api/articles/publish", json=request.model_dump())
+
+    assert response.status_code == 200
+    assert [u for u in posts if "indexnow" in u.lower()] == []
+
+
+@pytest.mark.asyncio
+@patch("backend.services.integrations.github_publisher.github_publisher")
 async def test_publish_article_with_cover_image(
     mock_publisher,
     test_client,

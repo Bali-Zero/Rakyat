@@ -1,26 +1,26 @@
 #!/bin/bash
-# Start Backend with minimal dependencies
+# Start the local two-process backend topology.
+
+set -euo pipefail
 
 cd "$(dirname "$0")" || exit 1
 
-echo "Installing critical dependencies..."
-python3 -m pip install --user \
-  httpx redis aioredis tiktoken \
-  qdrant-client openai anthropic \
-  google-genai google-cloud-storage \
-  sentence-transformers torch transformers \
-  > /tmp/backend_deps.log 2>&1 &
+rag_port="${RAG_PORT:-8081}"
+api_port="${PORT:-8080}"
 
-PIP_PID=$!
-echo "Dependencies installing in background (PID: $PIP_PID)"
-echo "Log: /tmp/backend_deps.log"
+cleanup() {
+  kill "${api_pid:-}" "${rag_pid:-}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
-# Wait a bit for essential packages
-sleep 10
+echo "Starting RAG worker on http://127.0.0.1:${rag_port}"
+PYTHONPATH=. uvicorn backend.app.main_rag:app \
+  --host 127.0.0.1 --port "$rag_port" --reload &
+rag_pid=$!
 
-echo "Starting backend..."
-export PYTHONPATH=$(pwd):$PYTHONPATH
-export PATH="/sessions/epic-gifted-thompson/.local/bin:$PATH"
+echo "Starting API worker on http://127.0.0.1:${api_port}"
+RAG_WORKER_URL="http://127.0.0.1:${rag_port}" PYTHONPATH=. \
+  uvicorn backend.app.main_api:app --host 0.0.0.0 --port "$api_port" --reload &
+api_pid=$!
 
-cd backend
-uvicorn app.main_cloud:app --host 0.0.0.0 --port 8080 --reload
+wait "$api_pid"

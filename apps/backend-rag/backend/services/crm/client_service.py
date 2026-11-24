@@ -1,13 +1,15 @@
 import logging
+import traceback
 from typing import Any
 
 import asyncpg
+from pydantic import ValidationError
 
 # Eccezioni custom di Dominio
 from backend.app.core.exceptions import ResourceConflictError
 
 # Interfaccia Repository (Type Hinting)
-from backend.db.repositories.client_repository import ClientRepository
+from backend.db.repositories.client_repository import ClientRepository, DuplicatePhoneError
 from backend.services.crm.cache_manager import invalidate_client_cache
 
 # Validazione e Caching
@@ -62,23 +64,45 @@ class ClientService:
             logger.info("Cliente creato con successo nel Service Layer: ID %s", client_id)
             return created_record
 
+        # What these lines may say. The text of a database error ends with the DETAIL
+        # line, which quotes the stored value; the text of a validation error quotes the
+        # value of every failing field; and a traceback ends with that same text. So a
+        # line names the kind of failure, the constraint or the fields, and the place
+        # in the code, never the text of the exception.
+        except DuplicatePhoneError:
+            # An expected refusal: the router answers it and logs it.
+            raise
+
         except asyncpg.UniqueViolationError as e:
             # 4. Mappatura eccezioni ("Silent Swallows" replacement)
             # Trasforma l'errore DB in un'eccezione custom riconosciuta dall'applicativo
             logger.error(
-                "Conflitto di risorse: email o numero di telefono già presenti. Dettagli: %s",
-                e,
-                exc_info=True,
+                "Conflitto di risorse: email o numero di telefono già presenti (vincolo %s)",
+                getattr(e, "constraint_name", None) or "non indicato",
             )
             raise ResourceConflictError(
                 "Un cliente con questi dati unici (es. email o telefono) esiste già.",
             ) from e
 
+        except ValidationError as e:
+            logger.error(
+                "Dati cliente non validi in create_client: %s",
+                sorted(
+                    {
+                        (".".join(str(part) for part in error["loc"]), error["type"])
+                        for error in e.errors(
+                            include_url=False, include_context=False, include_input=False
+                        )
+                    }
+                ),
+            )
+            raise
+
         except Exception as e:
             # Propaga altri errori critici mantenendo la traccia nei log
             logger.error(
-                "Errore imprevisto nella logica di business di create_client: %s",
-                e,
-                exc_info=True,
+                "Errore imprevisto nella logica di business di create_client (%s)\n%s",
+                type(e).__name__,
+                "".join(traceback.format_tb(e.__traceback__)),
             )
             raise

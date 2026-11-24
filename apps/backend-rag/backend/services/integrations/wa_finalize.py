@@ -60,6 +60,7 @@ from typing import Any
 from backend.channels.format import format_rich_text
 from backend.services.rag.agentic._reasoning_stubs import get_localized_stub
 from backend.services.rag.agentic.query_helpers import detect_query_language
+from backend.utils.message_chunker import chunk_message
 
 logger = logging.getLogger("zantara.backend")
 
@@ -223,6 +224,15 @@ def _abstain_answer_worth_sending(data: dict[str, Any]) -> str:
     if len(cleaned.strip()) < _ABSTAIN_MIN_SENDABLE_CHARS:
         return ""
     return cleaned.strip()
+
+
+def _shortened_before_the_note(answer: str, note: str, language: str) -> str:
+    """Cut a long answer at a boundary, marked, so the caution note after it still fits."""
+    marker = get_localized_stub("truncated_tail", language)
+    budget = _WHATSAPP_HARD_SEND_LIMIT - len(marker) - len(note)
+    chunks = chunk_message(answer, max_length=budget)
+    head = chunks[0] if chunks and chunks[0] else answer[:budget]
+    return head + marker + note
 
 
 def _strip_kg_workflow_scaffold(answer: str) -> str:
@@ -445,14 +455,19 @@ def _canonical_value(amount: str, multiplier: str | None) -> int | None:
         # A decimal form is allowed before a multiplier ("3,5 juta"); a grouped
         # form ("3.500 juta") canonicalizes by stripping separators.
         normalized = s.replace(",", ".")
-        try:
-            if normalized.count(".") == 1 and len(normalized.split(".")[1]) <= 2:
-                base = float(normalized)
-            else:
-                base = float(re.sub(r"[.,]", "", s))
-        except ValueError:
+        multiplier_value = int(_AMOUNT_MULTIPLIERS[multiplier.lower()])
+        if normalized.count(".") == 1 and len(normalized.split(".")[1]) <= 2:
+            whole, fraction = normalized.split(".")
+            if not whole.isdigit() or not fraction.isdigit():
+                return None
+            return (
+                int(whole) * multiplier_value
+                + int(fraction) * multiplier_value // 10 ** len(fraction)
+            )
+        digits = re.sub(r"[.,]", "", s)
+        if not digits.isdigit():
             return None
-        return int(round(base * _AMOUNT_MULTIPLIERS[multiplier.lower()]))
+        return int(digits) * multiplier_value
     digits = re.sub(r"[.,]", "", s)
     if not digits.isdigit():
         return None
@@ -687,6 +702,15 @@ _SECRET_EGRESS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "bearer_token",
         re.compile(r"(?i)\b(?:bearer|basic)\s+(?=[A-Za-z0-9_./+\-=]*\d)[A-Za-z0-9_./+\-=]{16,}"),
     ),
+    ("aws_access_key_id", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
+    (
+        "github_token",
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})\b"),
+    ),
+    ("slack_token", re.compile(r"\bxox[aboprst]-[A-Za-z0-9-]{20,}\b")),
+    # A lookahead and not `\b` at the end: the last character of this key can
+    # be a hyphen, and `\b` after a hyphen that precedes a space never holds.
+    ("google_api_key", re.compile(r"\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])")),
 )
 
 
@@ -893,6 +917,25 @@ async def finalize_wa_answer(
                         defect_message=veto[1],
                     )
             language = detect_query_language(query)
+            note = get_localized_stub("low_confidence_note", language)
+            text = substantive + note
+            if len(text) > _WHATSAPP_HARD_SEND_LIMIT:
+                # The sender cuts an over-long body at its END, which is where the
+                # caution note sits: the client would read an unverified answer
+                # without being told so. Same rule as the size check below: the
+                # codex leg falls off into the worker's retry ladder; the Gemini leg
+                # shortens the answer, never the note.
+                if provider is FinalizeProvider.CODEX:
+                    return FinalizeResult(
+                        outcome=FinalizeOutcome.DEFECT,
+                        defect_reason="oversized_output",
+                        defect_message=(
+                            f"wa-finalize: codex abstain answer {len(text)} chars with its "
+                            f"caution note exceeds the WhatsApp single-message limit, "
+                            f"thread {thread_id}"
+                        ),
+                    )
+                text = _shortened_before_the_note(substantive, note, language)
             logger.info(
                 "wa-inbox bot: abstain on thread %s carried %d chars of answer — "
                 "sending it with the caution note rather than the stub",
@@ -904,7 +947,7 @@ async def finalize_wa_answer(
                 await _tell(reason)
             return FinalizeResult(
                 outcome=FinalizeOutcome.SEND,
-                text=substantive + get_localized_stub("low_confidence_note", language),
+                text=text,
                 human_reason=reason,
             )
 

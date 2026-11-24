@@ -86,7 +86,7 @@ def test_all_golden_codes_route_to_golden_entity_key(
 ) -> None:
     monkeypatch.setattr(entities, "ENTITY_ROUTING_EFFECTIVE_FROM", EFFECTIVE)
     golden = _golden()
-    assert len(golden) == 121
+    assert len(golden) == 122
     for code, expected_key in golden.items():
         resolved = resolve_invoice_entity(code, instant)
         assert resolved.key == expected_key, code
@@ -112,7 +112,7 @@ def test_all_tax_codes_route_to_permata(
     tax_codes = sorted(
         code for code in _golden() if code.startswith("tax") and code != "tax_close_pma_company"
     )
-    assert len(tax_codes) == 27
+    assert len(tax_codes) == 28
     for code in tax_codes:
         resolved = resolve_invoice_entity(code, FIRST_WITA_INSTANT)
         assert resolved is synthetic_registry["permata_bali_nol_konsultan"], code

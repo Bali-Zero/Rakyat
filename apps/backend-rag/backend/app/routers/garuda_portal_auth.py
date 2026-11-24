@@ -283,7 +283,7 @@ def get_garuda_magic_link_store(request: Request) -> MagicLinkStore:
     process-wide dict with no scoping, and `backend/tests/unit/routers/
     test_dashboard_coverage.py` already calls
     `app.dependency_overrides.clear()` unconditionally in its teardown
-    against the SAME `main_cloud.app` object production code shares (found
+    against the SAME API-process app object production code shares (found
     by team-lead review, 2026-08-25). That call is harmless today only
     because that test file never triggers `initialize_services` and so
     never installs anything into the dict to clear -- but the moment

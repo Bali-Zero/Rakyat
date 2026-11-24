@@ -28,6 +28,7 @@ from backend.services.notifications.email_audit import (
     format_send_error,
     log_email_attempt,
     notify_email_failure_critical,
+    raise_if_not_delivered,
     record_email_result,
 )
 
@@ -206,6 +207,7 @@ async def _send_with_brevo_fallback(
                 json={"to": to_email, "subject": subject, "body": html_body},
             )
             response.raise_for_status()
+            raise_if_not_delivered(response)
         logger.info("Email sent to %s via Brevo", redact_identifier_for_log(to_email))
         await record_email_result(db_pool, row_id, status="sent", provider="brevo")
         return

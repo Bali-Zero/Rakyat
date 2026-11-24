@@ -28,8 +28,8 @@ import { api } from "@/lib/api";
 import * as partnersApi from "@/lib/api/partners/partners";
 import type {
   Partner,
-  PartnerReferral,
-  PartnerCommission,
+  PartnerReferralRow,
+  PartnerCommissionRow,
   AuditLogEntry,
 } from "@/lib/api/partners/partners";
 import { Money } from "@balizero/core";
@@ -141,8 +141,6 @@ function ProfileTab({ partner }: { partner: Partner }) {
             )
           }
         />
-        <InfoRow label="WhatsApp" value={partner.whatsapp} />
-        <InfoRow label="Nationality" value={partner.nationality} />
         <InfoRow label="Company" value={partner.company_name} />
         <InfoRow label="Work Role" value={partner.work_role} />
         <InfoRow
@@ -201,16 +199,6 @@ function ProfileTab({ partner }: { partner: Partner }) {
           }
         />
       </div>
-      {partner.notes && (
-        <div className="border rounded-xl p-4" style={PANEL}>
-          <p className="text-xs text-[var(--bz-text-3)] mb-1 uppercase tracking-wide font-medium">
-            Notes
-          </p>
-          <p className="text-sm text-[var(--bz-text-1)] whitespace-pre-wrap">
-            {partner.notes}
-          </p>
-        </div>
-      )}
     </div>
   );
 }
@@ -252,7 +240,6 @@ function FiscalTab({ partner }: { partner: Partner }) {
 function PaymentTab({ partner }: { partner: Partner }) {
   return (
     <div className="border rounded-xl p-4 space-y-0" style={PANEL}>
-      <InfoRow label="Payment Method" value={partner.payment_method} />
       <InfoRow label="Bank Name" value={partner.bank_name} />
       <InfoRow label="Account Number" value={partner.bank_account_number} />
       <InfoRow label="Account Holder" value={partner.bank_account_holder} />
@@ -260,23 +247,94 @@ function PaymentTab({ partner }: { partner: Partner }) {
   );
 }
 
-function ReferralsTab({ partnerId }: { partnerId: string }) {
-  const [referrals, setReferrals] = useState<PartnerReferral[]>([]);
+/**
+ * One tab's list. The server answers a bare array; anything else is a failed
+ * load, and a failed load is never shown as an empty list.
+ */
+function useTabRows<T>(load: () => Promise<T[]>) {
+  const [rows, setRows] = useState<T[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    partnersApi
-      .listReferrals(partnerId)
-      .then((d) => setReferrals(d.referrals))
-      .catch(() => setReferrals([]))
-      .finally(() => setIsLoading(false));
-  }, [partnerId]);
+    let current = true;
+    load()
+      .then((answer) => {
+        if (!current) return;
+        if (Array.isArray(answer)) {
+          setRows(answer);
+          setFailed(false);
+        } else {
+          setFailed(true);
+        }
+      })
+      .catch(() => {
+        if (current) setFailed(true);
+      })
+      .finally(() => {
+        if (current) setIsLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [load, attempt]);
+
+  const retry = () => {
+    setIsLoading(true);
+    setFailed(false);
+    setAttempt((n) => n + 1);
+  };
+
+  return { rows, isLoading, failed, retry };
+}
+
+function TabLoadError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="flex items-center gap-3 p-4 border rounded-xl"
+      style={DANGER_STRIP}
+    >
+      <AlertCircle size={16} />
+      <span className="text-sm">{message}</span>
+      <Button onClick={onRetry} variant="outline" size="sm" className="ml-auto">
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+const TAB_TH =
+  "text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase";
+
+function ReferralsTab({ partnerId }: { partnerId: string }) {
+  const load = useCallback(
+    () => partnersApi.listReferrals(partnerId),
+    [partnerId],
+  );
+  const {
+    rows: referrals,
+    isLoading,
+    failed,
+    retry,
+  } = useTabRows<PartnerReferralRow>(load);
 
   if (isLoading)
     return (
       <div className="flex justify-center py-12">
         <Loader2 className="animate-spin text-[var(--bz-accent)]" />
       </div>
+    );
+  if (failed)
+    return (
+      <TabLoadError message="Referrals could not be loaded." onRetry={retry} />
     );
   if (referrals.length === 0)
     return (
@@ -291,53 +349,29 @@ function ReferralsTab({ partnerId }: { partnerId: string }) {
       <table className="w-full">
         <thead>
           <tr className="border-b border-[var(--bz-border)]">
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Client
-            </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Practice
-            </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Commission
-            </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Status
-            </th>
+            <th className={TAB_TH}>Practice</th>
+            <th className={TAB_TH}>Share</th>
+            <th className={TAB_TH}>Referred</th>
+            <th className={TAB_TH}>Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--bz-border)]">
-          {referrals.map((r) => {
-            const cs =
-              COMMISSION_STATUS_STYLES[r.commission_status] || NEUTRAL_CHIP;
-            return (
-              <tr key={r.id}>
-                <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
-                  {r.referred_client_name ||
-                    (r.referred_client_id
-                      ? `Client ${r.referred_client_id.substring(0, 8)}…`
-                      : "—")}
-                </td>
-                <td className="px-4 py-3 text-sm text-[var(--bz-text-2)]">
-                  {r.practice_type_name || "—"}
-                </td>
-                <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
-                  {r.commission_amount != null ? (
-                    <Money value={r.commission_amount} />
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className="inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium capitalize"
-                    style={cs}
-                  >
-                    {r.commission_status.replace(/_/g, " ")}
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
+          {referrals.map((r) => (
+            <tr key={r.id}>
+              <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
+                Practice #{r.practice_id}
+              </td>
+              <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
+                {Number(r.share_percent)}%
+              </td>
+              <td className="px-4 py-3 text-sm text-[var(--bz-text-3)]">
+                {new Date(r.referred_at).toLocaleDateString()}
+              </td>
+              <td className="px-4 py-3 text-sm text-[var(--bz-text-2)]">
+                {r.notes || "—"}
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
@@ -345,22 +379,29 @@ function ReferralsTab({ partnerId }: { partnerId: string }) {
 }
 
 function CommissionsTab({ partnerId }: { partnerId: string }) {
-  const [commissions, setCommissions] = useState<PartnerCommission[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    partnersApi
-      .listCommissions(partnerId)
-      .then((d) => setCommissions(d.commissions))
-      .catch(() => setCommissions([]))
-      .finally(() => setIsLoading(false));
-  }, [partnerId]);
+  const load = useCallback(
+    () => partnersApi.listCommissions(partnerId),
+    [partnerId],
+  );
+  const {
+    rows: commissions,
+    isLoading,
+    failed,
+    retry,
+  } = useTabRows<PartnerCommissionRow>(load);
 
   if (isLoading)
     return (
       <div className="flex justify-center py-12">
         <Loader2 className="animate-spin text-[var(--bz-accent)]" />
       </div>
+    );
+  if (failed)
+    return (
+      <TabLoadError
+        message="Commissions could not be loaded."
+        onRetry={retry}
+      />
     );
   if (commissions.length === 0)
     return (
@@ -375,21 +416,12 @@ function CommissionsTab({ partnerId }: { partnerId: string }) {
       <table className="w-full">
         <thead>
           <tr className="border-b border-[var(--bz-border)]">
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Practice
-            </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Gross
-            </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Net
-            </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Status
-            </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-[var(--bz-text-3)] uppercase">
-              Date
-            </th>
+            <th className={TAB_TH}>Practice</th>
+            <th className={TAB_TH}>Entry</th>
+            <th className={TAB_TH}>Gross</th>
+            <th className={TAB_TH}>Net</th>
+            <th className={TAB_TH}>Status</th>
+            <th className={TAB_TH}>Date</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--bz-border)]">
@@ -398,16 +430,16 @@ function CommissionsTab({ partnerId }: { partnerId: string }) {
             return (
               <tr key={c.id}>
                 <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
-                  {c.practice_type_name ||
-                    (c.practice_id
-                      ? `Practice ${c.practice_id.substring(0, 8)}…`
-                      : "—")}
+                  {c.practice_id != null ? `Practice #${c.practice_id}` : "—"}
+                </td>
+                <td className="px-4 py-3 text-sm text-[var(--bz-text-2)] capitalize">
+                  {c.entry_type.replace(/_/g, " ")}
                 </td>
                 <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
-                  <Money value={c.gross_amount} />
+                  <Money value={Number(c.gross_amount_idr)} />
                 </td>
                 <td className="px-4 py-3 text-sm text-[var(--bz-text-1)]">
-                  <Money value={c.net_amount} />
+                  <Money value={Number(c.net_amount_idr)} />
                 </td>
                 <td className="px-4 py-3">
                   <span

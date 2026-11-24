@@ -152,7 +152,7 @@ class TestErrorMonitoringMiddleware:
 
     @pytest.mark.asyncio
     async def test_dispatch_429_error(self, mock_app, mock_alert_service):
-        """Test dispatch with 429 error (should alert)"""
+        """A 429 is the rate limiter doing its job: logged and counted there, never paged."""
         middleware = ErrorMonitoringMiddleware(mock_app, mock_alert_service)
 
         mock_request = MagicMock()
@@ -173,7 +173,7 @@ class TestErrorMonitoringMiddleware:
         result = await middleware.dispatch(mock_request, call_next)
 
         assert result == mock_response
-        mock_alert_service.send_http_error_alert.assert_called_once()
+        mock_alert_service.send_http_error_alert.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_dispatch_403_error(self, mock_app, mock_alert_service):

@@ -1,0 +1,44 @@
+name: IndexNow after deploy
+
+# Tells search engines (IndexNow) about the articles a Production deployment of
+# balizero.com has just made live. Publishing an article only opens its pull
+# request; the page exists after the merge and this deployment, so the backend
+# no longer pings at publish time. Vercel reports every deployment to GitHub;
+# this job runs on the successful Production ones and announces only the new
+# English articles that the live sitemap lists and that answer 200
+# (apps/backend-rag/backend/scripts/indexnow_after_deploy.py). The IndexNow key
+# is public by design (served at balizero.com/<key>.txt): no secret is used.
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  deployments: read
+
+# No concurrency group on purpose: GitHub keeps one pending run per group and
+# cancels the older pending one, whose articles the next run would then never
+# compare (it diffs against that deployment). Each run covers its own range
+# (previous successful Production deployment .. this one), so parallel runs do
+# not overlap.
+
+jobs:
+  announce:
+    name: Announce new articles to IndexNow
+    if: github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the deployed commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.deployment.sha }}
+          fetch-depth: 0
+
+      - name: Announce
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPLOYMENT_SHA: ${{ github.event.deployment.sha }}
+          DEPLOYMENT_ID: ${{ github.event.deployment.id }}
+        run: >-
+          python3 apps/backend-rag/backend/scripts/indexnow_after_deploy.py
+          --sha "$DEPLOYMENT_SHA" --deployment-id "$DEPLOYMENT_ID"

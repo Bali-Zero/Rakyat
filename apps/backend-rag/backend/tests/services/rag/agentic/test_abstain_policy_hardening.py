@@ -293,13 +293,3 @@ class TestContextQualityGateNamed:
         # constant read is the anonymous-gate disease #1414 cured.
         assert "EvidenceScoreConstants.ABSTAIN_THRESHOLD" not in src
         assert "CONTEXT_QUALITY_MIN" in src
-
-    def test_nlm_verifier_window_is_coupled_to_zone_edges(self) -> None:
-        # The NLM verification trigger window reuses the CAUTIOUS band. It
-        # must stay value-coupled to the shared zone-edge constants — a
-        # freshly hardcoded 0.15/0.60 pair here would drift silently if the
-        # zone edges ever move (Codex red-team finding, 2026-07-05).
-        from backend.services.rag import nlm_verifier
-
-        assert nlm_verifier.EVIDENCE_MIN == EvidenceScoreConstants.CONFIDENCE_LOW
-        assert nlm_verifier.EVIDENCE_MAX == EvidenceScoreConstants.CONFIDENCE_HIGH

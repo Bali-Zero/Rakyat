@@ -51,22 +51,40 @@ async def active_garuda_check_policy_available(
     GARUDA_CHECK policy per environment structurally impossible.
     """
 
+    async with db_pool.acquire() as conn:
+        return await active_garuda_check_policy_available_on(
+            conn, environment=environment, created_at=created_at
+        )
+
+
+async def active_garuda_check_policy_available_on(
+    conn: asyncpg.Connection,
+    *,
+    environment: str,
+    created_at: datetime,
+) -> bool:
+    """The same answer, read on a connection the caller already holds.
+
+    A caller inside its own transaction asks here: taking a second connection
+    from the pool while holding one stalls every such caller as soon as as many
+    of them run together as the pool has connections.
+    """
+
     if environment not in _ENVIRONMENTS:
         raise ValueError("environment must be TEST, STAGING, or PRODUCTION")
     if created_at.tzinfo is None or created_at.utcoffset() is None:
         raise ValueError("created_at must be timezone-aware")
-    async with db_pool.acquire() as conn:
-        active_count = await conn.fetchval(
-            """
-            SELECT count(*)
-            FROM public.visa_decision_retention_policies
-            WHERE environment = $1
-              AND policy_scope = 'GARUDA_CHECK'
-              AND effective_period @> $2::timestamptz
-            """,
-            environment,
-            created_at,
-        )
+    active_count = await conn.fetchval(
+        """
+        SELECT count(*)
+        FROM public.visa_decision_retention_policies
+        WHERE environment = $1
+          AND policy_scope = 'GARUDA_CHECK'
+          AND effective_period @> $2::timestamptz
+        """,
+        environment,
+        created_at,
+    )
     return active_count == 1
 
 
@@ -194,6 +212,7 @@ async def garuda_check_retention_evidence(
 __all__ = [
     "GarudaCheckRetentionEvidence",
     "active_garuda_check_policy_available",
+    "active_garuda_check_policy_available_on",
     "bind_legacy_garuda_checks",
     "garuda_check_retention_evidence",
     "purge_expired_garuda_checks",

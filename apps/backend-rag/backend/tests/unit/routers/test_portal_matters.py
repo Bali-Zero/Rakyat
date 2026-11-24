@@ -56,6 +56,20 @@ def test_shape_matter_docs_as_list() -> None:
     assert matter["pending_docs"] == ["passport", "visa"]
 
 
+def test_shape_matter_next_step_uses_human_copy() -> None:
+    matter = _shape_matter(_row(status="waiting_documents"))
+
+    assert matter["next_step"] == "Upload requested documents"
+
+
+def test_shape_matter_next_step_defaults_without_changing_detail() -> None:
+    matter = _shape_matter(_row(status="synthetic_unmapped_status"))
+    detail = _shape_matter_detail(_row(status="waiting_documents"))
+
+    assert matter["next_step"] == "Wait for the next update"
+    assert detail["next_step"] == "Upload requested documents"
+
+
 def test_shape_matter_detail_adds_plain_language_status() -> None:
     matter = _shape_matter_detail(_row(status="waiting_documents"))
 

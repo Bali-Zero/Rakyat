@@ -664,11 +664,13 @@ async def _send_magic_link_email(to_email: str, name: str | None, link_url: str)
     Returns True on success; never raises (a send failure must not change the
     enumeration-safe HTTP response).
     """
+    import html
     import os
 
     import httpx
 
-    greeting = f"Hello {name}," if name else "Hello,"
+    # The name is client-controlled text: shown as text, never as markup.
+    greeting = f"Hello {html.escape(name)}," if name else "Hello,"
     html_body = (
         f"{greeting}<br><br>"
         "Use the secure link below to sign in to your Bali Zero client portal. "

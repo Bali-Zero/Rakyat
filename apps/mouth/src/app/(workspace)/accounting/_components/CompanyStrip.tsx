@@ -1,5 +1,6 @@
 "use client";
 
+import { useAccountingMonth } from "./accountingPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   accountingApi,
@@ -13,6 +14,7 @@ export type CompaniesState =
   | { status: "ok"; rows: AccountingCompany[] };
 
 export function useCompanies() {
+  const month = useAccountingMonth();
   const [state, setState] = useState<CompaniesState>({
     status: "loading",
     rows: [],
@@ -21,7 +23,7 @@ export function useCompanies() {
   const load = useCallback(async () => {
     const token = ++request.current;
     try {
-      const rows = await accountingApi.getCompanies();
+      const rows = await accountingApi.getCompanies(month);
       if (request.current !== token) return;
       setState(
         Array.isArray(rows)
@@ -33,7 +35,7 @@ export function useCompanies() {
       setState((cur) => ({ status: "failed", rows: cur.rows }));
       logger.error("accounting companies load failed", {}, err as Error);
     }
-  }, []);
+  }, [month]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -96,11 +98,13 @@ export function companyStatus(row: AccountingCompany): string {
 export function CompanyStrip({
   companies,
   selected,
+  allowAll = true,
   locked = false,
   onSelect,
 }: {
   companies: CompaniesState;
   selected: string | null;
+  allowAll?: boolean;
   /** A write is pending or a dialog is open: the company cannot change under it. */
   locked?: boolean;
   onSelect: (key: string | null) => void;
@@ -123,7 +127,7 @@ export function CompanyStrip({
       data-testid="cc-companies"
       className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3"
     >
-      <Card
+      {allowAll && <Card
         testId="cc-company-all"
         selected={selected === null}
         disabled={locked}
@@ -131,7 +135,7 @@ export function CompanyStrip({
         detail={`${companies.rows.length} bank accounts`}
         status={`${waiting} to reconcile`}
         onClick={() => onSelect(null)}
-      />
+      />}
       {companies.rows.map((row) => (
         <Card
           key={row.key}

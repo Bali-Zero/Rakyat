@@ -14,7 +14,8 @@ from typing import Any
 
 import asyncpg
 
-from backend.services.invoicing.entities import ENTITIES
+from backend.services.accounting.period import month_bounds, month_condition
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 
 OTHER_KEY = "other"
 
@@ -38,6 +39,32 @@ def company_key_for_account(account_number: str | None) -> str | None:
     return None
 
 
+def account_key_for_account(account_number: str | None) -> str | None:
+    """A stable, account-specific key for an account outside the registry."""
+    digits = _digits(account_number)
+    return f"account:{digits}" if digits else None
+
+
+def account_for_company_key(company_key: str) -> str | None:
+    """Digits of exactly one account selected by the accounting UI, if valid."""
+    entity = ENTITIES.get(company_key)
+    if entity:
+        return _digits(entity.bank_account_number)
+    if company_key.startswith("account:"):
+        digits = _digits(company_key.removeprefix("account:"))
+        return digits or None
+    return None
+
+
+def company_key_for_issuer(issuer_entity_key: str | None) -> str:
+    """The company that issued an invoice: its stored issuer, or the default issuer when NULL.
+
+    Invoices made before issuer routing carry NULL and were issued by the default company, the
+    rule the invoice service itself applies to them.
+    """
+    return issuer_entity_key or DEFAULT_ENTITY_KEY
+
+
 def _later(a: date | None, b: date | None) -> date | None:
     if a is None:
         return b
@@ -46,24 +73,34 @@ def _later(a: date | None, b: date | None) -> date | None:
     return max(a, b)
 
 
-async def load_companies(conn: asyncpg.Connection) -> list[dict[str, Any]]:
+async def load_companies(
+    conn: asyncpg.Connection, *, month: date | None = None
+) -> list[dict[str, Any]]:
     """Every issuing company, in the registry's order, with its statement coverage."""
+    bounds = month_bounds(month) if month else ()
+    through = "LEAST(MAX(bs.period_end), $2::date)" if month else "MAX(bs.period_end)"
+    overlap = "WHERE bs.period_end >= $1::date AND bs.period_start <= $2::date" if month else ""
     statements = await conn.fetch(
-        """
-        SELECT bs.account_number, bs.account_name, MAX(bs.period_end) AS through,
+        f"""
+        SELECT bs.account_number, bs.account_name, {through} AS through,
                COUNT(*) AS statements
         FROM bank_statements bs
+        {overlap}
         GROUP BY bs.account_number, bs.account_name
-        """
+        """,
+        *bounds,
     )
+    params = []
+    period = month_condition("bt.txn_date", month, params)
     waiting = await conn.fetch(
-        """
+        f"""
         SELECT bs.account_number, COUNT(*) AS to_reconcile
         FROM bank_transactions bt
-        JOIN bank_statements bs ON bs.id = bt.statement_id
-        WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'
+        LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
+        WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'{period}
         GROUP BY bs.account_number
-        """
+        """,
+        *params,
     )
     per_key: dict[str, dict[str, Any]] = {}
     for entity in ENTITIES.values():
@@ -76,24 +113,33 @@ async def load_companies(conn: asyncpg.Connection) -> list[dict[str, Any]]:
             "statements": 0,
             "to_reconcile": 0,
         }
-    for row in statements:
-        key = company_key_for_account(row["account_number"]) or OTHER_KEY
-        entry = per_key.setdefault(
-            key,
-            {
-                "key": OTHER_KEY,
-                "company_name": "Other accounts",
+    def account_key(row: Any) -> str:
+        return (
+            company_key_for_account(row["account_number"])
+            or account_key_for_account(row["account_number"])
+            or OTHER_KEY
+        )
+
+    def ensure_unknown(key: str, row: Any) -> None:
+        if key not in per_key:
+            per_key[key] = {
+                "key": key,
+                "company_name": "Unassigned bank account",
                 "bank_name": None,
-                "account_number": None,
+                "account_number": row["account_number"],
                 "data_through": None,
                 "statements": 0,
                 "to_reconcile": 0,
-            },
-        )
+            }
+    for row in statements:
+        key = account_key(row)
+        ensure_unknown(key, row)
+        entry = per_key[key]
         entry["data_through"] = _later(entry["data_through"], row["through"])
         entry["statements"] += int(row["statements"])
     for row in waiting:
-        key = company_key_for_account(row["account_number"]) or OTHER_KEY
+        key = account_key(row)
+        ensure_unknown(key, row)
         per_key[key]["to_reconcile"] += int(row["to_reconcile"])
     for entry in per_key.values():
         if entry["data_through"] is not None:

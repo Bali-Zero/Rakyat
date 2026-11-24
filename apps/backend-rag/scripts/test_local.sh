@@ -27,8 +27,8 @@ if ! curl -f -s "$LOCAL_URL/docs" > /dev/null 2>&1; then
     echo -e "${RED}❌ Backend not running at $LOCAL_URL${NC}"
     echo ""
     echo "Start the backend first:"
-    echo "  cd apps/backend-rag/backend"
-    echo "  uvicorn backend.app.main_cloud:app --reload --port 8080"
+    echo "  cd apps/backend-rag"
+    echo "  ./start_backend.sh"
     exit 1
 fi
 echo -e "${GREEN}✅ Backend is running${NC}"

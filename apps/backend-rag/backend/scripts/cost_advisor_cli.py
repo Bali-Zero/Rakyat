@@ -23,6 +23,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -132,7 +133,10 @@ async def run_weekly_report(pool: Any) -> None:
     send_telegram(text="\n".join(lines))
 
 
-async def run_daily_cap_check(pool: Any) -> None:
+EXIT_DAILY_CAP_EXCEEDED = 3
+
+
+async def run_daily_cap_check(pool: Any, *, exit_on_breach: bool = False) -> None:
     """Alert Telegram if last-24h spend exceeds DAILY_SPEND_ALERT_THRESHOLD_USD."""
     async with pool.acquire() as conn:
         total = await conn.fetchval(
@@ -144,6 +148,12 @@ async def run_daily_cap_check(pool: Any) -> None:
         )
     total_dec = Decimal(str(total or 0))
     if total_dec > DAILY_SPEND_ALERT_THRESHOLD_USD:
+        logger.error(
+            "daily cap exceeded for %s: $%s (cap $%s)",
+            date.today().isoformat(),
+            total_dec,
+            DAILY_SPEND_ALERT_THRESHOLD_USD,
+        )
         send_telegram(
             text=(
                 "🚨 *LLM daily cap ALERT*\n"
@@ -151,6 +161,9 @@ async def run_daily_cap_check(pool: Any) -> None:
                 f"Cap: ${DAILY_SPEND_ALERT_THRESHOLD_USD}"
             ),
         )
+        if exit_on_breach:
+            # 2 is "no database pool": a breach has its own code.
+            sys.exit(EXIT_DAILY_CAP_EXCEEDED)
     else:
         logger.info(
             "daily cap ok: $%s (< $%s)",
@@ -172,7 +185,7 @@ async def _main(args: argparse.Namespace) -> None:
         logger.error("get_db_pool() returned None — aborting")
         sys.exit(2)
     if args.check_daily_cap:
-        await run_daily_cap_check(pool)
+        await run_daily_cap_check(pool, exit_on_breach=True)
     else:
         await run_weekly_report(pool)
 

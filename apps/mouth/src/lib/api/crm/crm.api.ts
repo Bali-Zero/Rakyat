@@ -11,6 +11,7 @@ import type {
   InvoiceCompanyParams,
   InvoiceCompanyMatch,
   InvoiceCompanySuggestion,
+  PphSelection,
   RenewalAlert,
   ClientSummary,
   ClientProfile,
@@ -472,6 +473,7 @@ export class CrmApi {
       assigned_to: string | null;
       notes: string;
       start_date: string | null;
+      pph: PphSelection | null; // null clears it; tax team and CRM admins only
     }> &
       InvoiceCompanyParams,
   ): Promise<Practice> {
@@ -800,6 +802,118 @@ export class CrmApi {
   ): Promise<{ success: boolean; action: string }> {
     return this.client.request<{ success: boolean; action: string }>(
       `/api/crm/clients/${clientId}/documents/${docId}${permanent ? "?permanent=true" : ""}`,
+      { method: "DELETE" },
+    );
+  }
+
+  /**
+   * Upload a document directly into one of the client's (or linked company's)
+   * Drive tax folders. Requires an admin or a team member associated with the
+   * client profile.
+   */
+  async uploadClientTaxDocument(
+    clientId: number,
+    folderId: string,
+    file: File,
+  ): Promise<{
+    success: boolean;
+    file: {
+      id: string;
+      name: string;
+      mime_type: string;
+      size: number;
+      modified_time?: string | null;
+      web_view_link?: string | null;
+      is_folder: boolean;
+    };
+  }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("folder_id", folderId);
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/upload`,
+      {
+        method: "POST",
+        body: formData,
+      },
+      60000,
+    );
+  }
+
+  /**
+   * Rename a document inside the client's (or linked company's) Drive tax folders.
+   */
+  async renameClientTaxDocument(
+    clientId: number,
+    fileId: string,
+    name: string,
+  ): Promise<{
+    success: boolean;
+    file: {
+      id: string;
+      name: string;
+      mime_type: string;
+      size: number;
+      modified_time?: string | null;
+      web_view_link?: string | null;
+      is_folder: boolean;
+    };
+  }> {
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/${encodeURIComponent(fileId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      },
+    );
+  }
+
+  /**
+   * Replace a document's file content in-place (and optionally rename it) inside
+   * the client's (or linked company's) Drive tax folders.
+   */
+  async replaceClientTaxDocument(
+    clientId: number,
+    fileId: string,
+    file: File,
+    name?: string,
+  ): Promise<{
+    success: boolean;
+    file: {
+      id: string;
+      name: string;
+      mime_type: string;
+      size: number;
+      modified_time?: string | null;
+      web_view_link?: string | null;
+      is_folder: boolean;
+    };
+  }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (name && name.trim()) {
+      formData.append("name", name.trim());
+    }
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/${encodeURIComponent(fileId)}/content`,
+      {
+        method: "PUT",
+        body: formData,
+      },
+      60000,
+    );
+  }
+
+  /**
+   * Move a document in the client's (or linked company's) Drive tax folders to
+   * Google Drive Trash (recoverable).
+   */
+  async deleteClientTaxDocument(
+    clientId: number,
+    fileId: string,
+  ): Promise<{ success: boolean; file_id: string; trashed: boolean }> {
+    return this.client.request(
+      `/api/crm/clients/${clientId}/tax-documents/${encodeURIComponent(fileId)}`,
       { method: "DELETE" },
     );
   }

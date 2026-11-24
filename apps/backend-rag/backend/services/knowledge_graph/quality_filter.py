@@ -355,6 +355,8 @@ class KGQualityFilter:
         """Calculate string similarity"""
         a_norm = a.upper().strip()
         b_norm = b.upper().strip()
+        if re.findall(r"\d+", a_norm) != re.findall(r"\d+", b_norm):
+            return 0.0
         return SequenceMatcher(None, a_norm, b_norm).ratio()
 
     def _build_entity_id_map(
@@ -362,20 +364,38 @@ class KGQualityFilter:
         original: list[ExtractedEntity],
         merged: list[ExtractedEntity],
     ) -> dict[str, str]:
-        """Build mapping from original IDs to merged IDs"""
-        id_map = {}
-        merged_names = {e.name.upper(): e.id for e in merged}
+        """Map each original entity id to the id of the entity that stands for it.
+
+        Stateless on purpose: nothing is remembered between two runs of one
+        filter instance. A survivor stands for itself. A dropped entity is
+        mapped within its own type: to the survivor with the same name, else to
+        the most similar survivor above the threshold (`_similarity` refuses
+        names whose numbers differ).
+        """
+        id_map: dict[str, str] = {}
+        merged_ids = {entity.id for entity in merged}
+        by_key = {(entity.type, entity.name.upper()): entity.id for entity in merged}
 
         for entity in original:
-            name_upper = entity.name.upper()
-            if name_upper in merged_names:
-                id_map[entity.id] = merged_names[name_upper]
-            else:
-                # Find by fuzzy match
-                for merged_name, merged_id in merged_names.items():
-                    if self._similarity(name_upper, merged_name) >= self.fuzzy_threshold:
-                        id_map[entity.id] = merged_id
-                        break
+            if entity.id in merged_ids:
+                id_map[entity.id] = entity.id
+                continue
+
+            same_name = by_key.get((entity.type, entity.name.upper()))
+            if same_name is not None:
+                id_map[entity.id] = same_name
+                continue
+
+            best_id: str | None = None
+            best_score = 0.0
+            for candidate in merged:
+                if candidate.type != entity.type:
+                    continue
+                score = self._similarity(entity.name, candidate.name)
+                if score >= self.fuzzy_threshold and score > best_score:
+                    best_id, best_score = candidate.id, score
+            if best_id is not None:
+                id_map[entity.id] = best_id
 
         return id_map
 

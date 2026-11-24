@@ -133,7 +133,9 @@ export function normalizeTags(raw: unknown): string[] {
 export function resolveCategoryAlias(
   rawCategory: string,
 ): ArticleCategory | null {
-  return CATEGORY_MAP[rawCategory] ?? null;
+  return Object.prototype.hasOwnProperty.call(CATEGORY_MAP, rawCategory)
+    ? CATEGORY_MAP[rawCategory]
+    : null;
 }
 
 /** Strip markdown headings and formatting from excerpt text (used for frontmatter/backend strings) */
@@ -643,6 +645,31 @@ export function isArticleHidden(category: string, slug: string): boolean {
   return !parsed || !isPublishedFrontmatter(parsed.data);
 }
 
+/**
+ * Whether the English file of this article asks to stay out of search. The
+ * English file governs its translations: when it is hidden they are hidden,
+ * and when it is kept out of search so are they. A translation is written
+ * once and the English flag can be set later, so the flag is read here and
+ * not expected in every translation file.
+ */
+function isEnglishArticleNoIndex(category: string, slug: string): boolean {
+  const filePath = findMdxFile(category, slug);
+  if (!filePath) return false;
+  return Boolean(readMdxFile(filePath)?.data.noIndex);
+}
+
+/**
+ * True when any category folder holds <slug>.mdx. The reviewed file is the
+ * artifact: a backend row for such a slug is never listed, whatever its own
+ * category says, and the file loop decides (its category, draft, noIndex).
+ */
+function hasArticleFile(slug: string): boolean {
+  if (!isArticleFileSlug(slug)) return false;
+  return ARTICLE_FOLDER_NAMES.some((folder) =>
+    fs.existsSync(articleMdxPath(folder, slug)),
+  );
+}
+
 const PIN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
@@ -829,11 +856,17 @@ export async function getArticleBySlug(
   if (mdxArticle) {
     return mdxArticle;
   }
-  if (isArticleHidden(category, slug)) return null;
+  // A slug with a reviewed file in any category folder is never served from its
+  // backend row: not under another category, and not when the file is hidden.
+  if (hasArticleFile(slug)) return null;
 
-  // Fallback to backend API (news_items) when no local MDX exists.
+  // Fallback to backend API (news_items) when no local MDX exists, and only
+  // under the row's own category: the page of another category is not this one.
   const backendItem = await fetchBackendArticleBySlug(slug);
-  if (backendItem) {
+  if (
+    backendItem &&
+    normalizeCategory(backendItem.category) === normalizeCategory(category)
+  ) {
     return backendToArticle(backendItem);
   }
 
@@ -936,7 +969,9 @@ export async function getArticleByLocale(
         locale:
           (frontmatter.locale as "en" | "id" | "it" | "ru" | "fr") ||
           (locale as "en" | "id" | "it" | "ru" | "fr"),
-        noIndex: frontmatter.noIndex || false,
+        noIndex:
+          Boolean(frontmatter.noIndex) ||
+          isEnglishArticleNoIndex(category, slug),
       };
     }
   }
@@ -980,12 +1015,10 @@ export type ArticleListItemWithUpdated = ArticleListItem & {
   updatedAt?: Date;
 };
 
-export const getAllArticles = unstable_cache(
+const listAllArticles = unstable_cache(
   async (options?: {
     category?: string;
     featured?: boolean;
-    limit?: number;
-    offset?: number;
   }): Promise<{ articles: ArticleListItemWithUpdated[]; total: number }> => {
     const allArticles: ArticleListItemWithUpdated[] = [];
     const seenSlugs = new Set<string>();
@@ -1012,7 +1045,7 @@ export const getAllArticles = unstable_cache(
     if (backendResult) {
       for (const item of backendResult.items) {
         const listItem = backendToArticleListItem(item);
-        if (isArticleHidden(listItem.category, item.slug)) continue;
+        if (hasArticleFile(item.slug)) continue;
         if (
           options?.featured !== undefined &&
           listItem.featured !== options.featured
@@ -1033,7 +1066,19 @@ export const getAllArticles = unstable_cache(
     for (const { folderCategory, slug } of filteredSlugs) {
       if (seenSlugs.has(slug)) continue;
 
-      const article = await getMdxArticleBySlug(folderCategory, slug);
+      // One file that cannot be built is skipped alone; the listing, the feed
+      // and the sitemap keep the others. Its content is never logged.
+      let article: Article | null;
+      try {
+        article = await getMdxArticleBySlug(folderCategory, slug);
+      } catch (error) {
+        console.error(
+          `[articles] skipped unbuildable article file ${folderCategory}/${slug}.mdx: ${
+            error instanceof Error ? error.name : typeof error
+          }`,
+        );
+        continue;
+      }
       if (!article) continue;
 
       // noIndex articles leave every listing/feed surface (sitemap/robots
@@ -1077,18 +1122,7 @@ export const getAllArticles = unstable_cache(
       );
     });
 
-    const total = allArticles.length;
-
-    // Apply pagination
-    let result = allArticles;
-    if (options?.offset) {
-      result = result.slice(options.offset);
-    }
-    if (options?.limit) {
-      result = result.slice(0, options.limit);
-    }
-
-    return { articles: result, total };
+    return { articles: allArticles, total: allArticles.length };
   },
   ["articles"],
   {
@@ -1096,6 +1130,38 @@ export const getAllArticles = unstable_cache(
     revalidate: 60,
   },
 );
+
+export async function getAllArticles(options?: {
+  category?: string;
+  featured?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<{ articles: ArticleListItemWithUpdated[]; total: number }> {
+  // A category filter is a category or one of its aliases (immigration lists
+  // as visas). It is resolved before the cached list is asked, so an alias
+  // shares its category's entry and its local files, and a name that is no
+  // category asks nothing: no cache entry, no backend call, an empty list.
+  let category: ArticleCategory | undefined;
+  if (options?.category) {
+    const canonical = resolveCategoryAlias(options.category);
+    if (canonical === null) return { articles: [], total: 0 };
+    category = canonical;
+  }
+  // The cached list is keyed by category/featured only; pagination happens
+  // here so distinct limit/offset values never create cache entries.
+  const { articles, total } = await listAllArticles({
+    category,
+    featured: options?.featured,
+  });
+  let result = articles;
+  if (options?.offset) {
+    result = result.slice(options.offset);
+  }
+  if (options?.limit) {
+    result = result.slice(0, options.limit);
+  }
+  return { articles: result, total };
+}
 
 /**
  * Get featured articles
@@ -1177,7 +1243,7 @@ export async function searchArticles(
   if (backendResult && backendResult.items.length > 0) {
     return backendResult.items
       .map(backendToArticleListItem)
-      .filter((article) => !isArticleHidden(article.category, article.slug));
+      .filter((article) => !hasArticleFile(article.slug));
   }
 
   // Fallback to in-memory MDX search

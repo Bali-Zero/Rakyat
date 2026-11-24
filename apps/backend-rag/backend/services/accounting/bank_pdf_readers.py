@@ -1,10 +1,11 @@
-"""Readers for the two PDF bank statements the agency's other companies download.
+"""Readers for bank statement PDFs supported by the Accounting page.
 
-One upload on the Accounting page, three formats, detected from the file content:
+One upload accepts several formats, detected from the file content:
 
   * CIMB Niaga OCTO Biz "Account Statement Summary" CSV   (bank_parser.py)
+  * BNI Direct account statement and transaction inquiry PDFs
   * Bank Mandiri Kopra "Account Statement" PDF (JasperReports)
-  * Bank Permata "Transaction Inquiry" PDF (JasperReports)
+  * Bank Permata "Transaction Inquiry" PDF (JasperReports) and eBusiness "Transaction History" PDF
 
 Every reader returns the same `ParsedStatement` the CIMB reader returns (oldest row first,
 exact Decimal debit/credit/balance, the account number as printed), so the preview report and
@@ -100,6 +101,45 @@ def _text(words: list[Word]) -> str:
     return " ".join(w.text for w in sorted(words, key=lambda w: (round(w.top / 3), w.x0)))
 
 
+# A statement file holds one account. An ACCOUNT LINE is recognised as an entity, not by one
+# print's spelling: a label from this list in any letter case, then a number of 6+ digits once
+# spaces, dots and dashes are removed, on a line that starts left of the reader's description
+# column (so a description that mentions an account is never one).
+_ACCOUNT_LINE_RE = re.compile(
+    r"(?:a/c|acc(?:oun)?t|acc|no\.?\s*rek(?:ening)?|nomor\s+rekening|rekening)(?![a-z])\.?"
+    r"(?:\s*(?:no|number|nomor)(?![a-z])\.?)?"
+    r"[\s:.]*(\d[\d .\-]*\d)",
+    re.IGNORECASE,
+)
+# a currency is a parenthesised 3-letter code or a blank "( )"; the bank prints it last on the
+# line, so an account name with its own parentheses never supplies it
+_ACCOUNT_CURRENCY_RE = re.compile(r"\(\s*([A-Za-z]{3}|)\s*\)")
+_MORE_THAN_ONE_ACCOUNT = "file holds more than one account: upload one statement per file"
+
+
+def _currency(printed: str) -> str:
+    """A printed currency code; a blank one reads as IDR, as the readers already accept it."""
+    return printed.strip().upper() or "IDR"
+
+
+def _account_lines(words: list[Word], left_limit: float) -> list[tuple[str, str | None, str]]:
+    """(digits, printed currency or None, line text) of every account line of a page."""
+    found: list[tuple[str, str | None, str]] = []
+    for line in _lines(words):
+        if line[0].x0 >= left_limit:
+            continue
+        text = " ".join(w.text for w in line)
+        m = _ACCOUNT_LINE_RE.match(text)
+        if m is None:
+            continue
+        digits = re.sub(r"\D", "", m.group(1))
+        if len(digits) < 6:
+            continue
+        codes = _ACCOUNT_CURRENCY_RE.findall(text, m.end())
+        found.append((digits, _currency(codes[-1]) if codes else None, text))
+    return found
+
+
 def _amount(raw: str) -> Decimal:
     return Decimal(raw.replace(",", ""))
 
@@ -146,12 +186,27 @@ def _txn(
 
 
 def detect_pdf_format(pages: list[list[Word]]) -> str | None:
-    """'mandiri' | 'permata' | None, from the labels printed on the first page."""
+    """Recognize a supported bank layout from the labels on its first page."""
     text = " ".join(w.text for w in pages[0]) if pages else ""
     if "Account Statement Summary" in text and "Posting Date" in text:
         return "mandiri"
+    if all(
+        label in text
+        for label in (
+            "TRANSACTION HISTORY",
+            "Opening Balance",
+            "Total Debit",
+            "Total Credit",
+            "Closing Balance",
+        )
+    ):
+        return "permata_history"
     if "Transaction Inquiry" in text and "Ledger Balance" in text:
         return "permata"
+    if "Account Information" in text and (
+        "TRANSACTION INQUIRY" in text or "ACCOUNT STATEMENT" in text
+    ):
+        return "bni"
     return None
 
 
@@ -346,7 +401,7 @@ def parse_mandiri_pages(pages: list[list[Word]]) -> ParsedStatement:
         if header is None:
             header = page_header
         elif page_header != header:
-            raise BankParseError("file holds more than one account: upload one statement per file")
+            raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         foot = min((w.top for w in words if "questions" in w.text), default=float("inf"))
         rows += _mandiri_rows([w for w in words if table + 6 < w.top < foot - 3])
     if header is None:
@@ -465,7 +520,12 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
         if identity is None:
             identity = ident
         elif ident != identity:
-            raise BankParseError("file holds more than one account: upload one statement per file")
+            raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
+        # every account line of the page, not only its first, names the first page's account;
+        # descriptions sit right of 500 pt, the account block and row numbers left of 100 pt
+        for digits, cur, _ in _account_lines(words, 100):
+            if digits != identity[0] or (cur is not None and cur != identity[2]):
+                raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
         code_top = next((w.top for w in words if w.text == "Code" and 200 < w.x0 < 270), None)
         if code_top is None:
             raise BankParseError("statement page has no transaction table")
@@ -576,9 +636,469 @@ def parse_permata_pages(pages: list[list[Word]]) -> ParsedStatement:
     )
 
 
+# ── Bank Permata eBusiness (Transaction History) ───────────────────────────
+
+_HISTORY_DATE = r"\d{1,2} [A-Za-z]{3} \d{4}"
+_HISTORY_BAD = "Permata transaction history is incomplete or has an unexpected layout"
+
+
+def _history_date(text: str) -> date:
+    if not re.fullmatch(_HISTORY_DATE, text):
+        raise BankParseError(_HISTORY_BAD)
+    day, month, year = text.split()
+    return _month_date(day, month, year)
+
+
+def _history_amount(words: list[Word]) -> Decimal:
+    # A minus in the narrative or reference column is not an amount sign.
+    value = "".join(w.text for w in words)
+    if not _AMOUNT_RE.fullmatch(value):
+        raise BankParseError(_HISTORY_BAD)
+    return _amount(value)
+
+
+def _history_header(lines: list[list[Word]]) -> tuple[str, str, date, date, list[Decimal]]:
+    labels = (
+        ("Account Name", "Opening Balance"),
+        ("Account No.", "Total Debit"),
+        ("Currency", "Total Credit"),
+        ("Period", "Closing Balance"),
+    )
+    values, controls = [], []
+    if len(lines) != len(labels):
+        raise BankParseError(_HISTORY_BAD)
+    for line, (label, control) in zip(lines, labels, strict=True):
+        if (_text(_column(line, 0, 120)), _text(_column(line, 300, 480))) != (label, control):
+            raise BankParseError(_HISTORY_BAD)
+        values.append(_text(_column(line, 120, 300)))
+        controls.append(_history_amount(_column(line, 480, float("inf"))))
+    name, printed, currency, period = values
+    number = re.sub(r"[ .-]", "", printed)
+    if not name or not re.fullmatch(r"\d{6,}", number):
+        raise BankParseError("statement header has no account")
+    if currency != "IDR":
+        raise BankParseError(_NOT_IDR)
+    parts = period.split(" - ")
+    if len(parts) != 2:
+        raise BankParseError(_HISTORY_BAD)
+    return number, name, _history_date(parts[0]), _history_date(parts[1]), controls
+
+
+@dataclass
+class _HistoryRow:
+    post: date
+    effective: str
+    amount: Decimal
+    description: list[str]
+    references: list[str]
+
+
+def _history_rows(lines: list[list[Word]]) -> list[_HistoryRow]:
+    rows: list[_HistoryRow] = []
+    for line in lines:
+        posted = _text(_column(line, 0, 75))
+        effective = _text(_column(line, 75, 130))
+        amount = _column(line, 490, float("inf"))
+        if posted or effective or amount:
+            post = _history_date(posted)
+            _history_date(effective)
+            rows.append(_HistoryRow(post, effective, _history_amount(amount), [], []))
+        if not rows:
+            raise BankParseError(_HISTORY_BAD)
+        reference = _text(_column(line, 130, 246))
+        description = _text(_column(line, 246, 490))
+        if posted or reference:
+            rows[-1].references.append(reference)
+        if description:
+            rows[-1].description.append(description)
+    if not rows:
+        raise BankParseError(_NO_ROWS)
+    return rows
+
+
+def parse_permata_history_pages(pages: list[list[Word]]) -> ParsedStatement:
+    """The first page prints the account and four controls; the table is newest first."""
+    header = None
+    stamp = None
+    entries: list[_HistoryRow] = []
+    for page_number, words in enumerate(pages, 1):
+        lines = _lines(words)
+        if len(lines) < 7 or _text(lines[0]) != "TRANSACTION HISTORY":
+            raise BankParseError(_HISTORY_BAD)
+        export = _text(lines[1])
+        if not re.fullmatch(rf"{_HISTORY_DATE} \| \d{{2}}:\d{{2}}:\d{{2}}", export):
+            raise BankParseError(_HISTORY_BAD)
+        if (stamp is not None and export != stamp) or _text(
+            lines[-1]
+        ) != f"Page {page_number} of {len(pages)}":
+            raise BankParseError(
+                "Permata transaction history pages do not belong to one complete report"
+            )
+        stamp = export
+        table = next(
+            (
+                i
+                for i, line in enumerate(lines)
+                if _text(_column(line, 246, 490)) == "Description"
+                and _text(_column(line, 490, float("inf"))) == "Amount"
+            ),
+            None,
+        )
+        if table is None or table + 3 >= len(lines):
+            raise BankParseError(_HISTORY_BAD)
+        headings = (
+            "Transaction Value Transaction Reference No./ Description Amount",
+            "Date Date Customer Reference Detail/",
+            "Cheque No.",
+        )
+        if tuple(_text(line) for line in lines[table : table + 3]) != headings:
+            raise BankParseError(_HISTORY_BAD)
+        if page_number == 1:
+            header = _history_header(lines[2:table])
+        elif table != 2:
+            raise BankParseError(
+                "Permata transaction history has an unexpected second account header"
+            )
+        entries.extend(_history_rows(lines[table + 3 : -1]))
+
+    if header is None or not entries:
+        raise BankParseError(_NO_ROWS)
+    number, name, start, end, controls = header
+    opening, total_debit, total_credit, closing = controls
+    balance = opening
+    txns: list[ParsedTxn] = []
+    for entry in reversed(entries):
+        if not start <= entry.post <= end or (txns and entry.post < txns[-1].txn_date):
+            raise BankParseError(
+                "Permata transaction history dates do not match the printed period or order"
+            )
+        if not entry.description or len(entry.references) > 3:
+            raise BankParseError(_HISTORY_BAD)
+        refs = (entry.references + [""] * 3)[:3]
+        debit, credit = max(-entry.amount, Decimal(0)), max(entry.amount, Decimal(0))
+        balance += entry.amount
+        txns.append(
+            _txn(
+                datetime.combine(entry.post, datetime.min.time()),
+                " ".join(entry.description),
+                debit,
+                credit,
+                balance,
+                {
+                    "Eff Date": entry.effective,
+                    "Ref No": refs[0],
+                    "Customer Ref No": refs[1],
+                    "Cheque Number": refs[2],
+                },
+            )
+        )
+    if (sum(t.debit for t in txns), sum(t.credit for t in txns), balance) != (
+        total_debit,
+        total_credit,
+        closing,
+    ):
+        raise BankParseError(
+            "Permata transaction history does not agree with its printed totals or closing balance"
+        )
+    return ParsedStatement(
+        account_number=number,
+        account_name=name,
+        metadata={"Account No.": number, "Account Name": name, "Currency": "IDR"},
+        transactions=txns,
+        order_decided_by="balance_chain",
+        bank_code="bank_permata",
+        source_format="pdf",
+        balances_derived=True,
+        kept_columns=_PERMATA_KEPT,
+    )
+
+
+# ── BNI (BNIdirect "Transaction Inquiry") ───────────────────────────────────
+
+_BNI_DATE_RE = re.compile(r"\d{2}/\d{2}/\d{4}")
+_BNI_TIME_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}")
+_BNI_ACCOUNT_RE = re.compile(r"(\d{6,})\s*/\s*(.*)\(\s*([A-Za-z]{3}|)\s*\)")
+_BNI_AMT = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})"
+_BNI_CREDIT, _BNI_DEBIT = ("C", "K"), ("D",)
+_BNI_STATEMENT_REFUSED = (
+    "BNI Account Statement prints are not read: download the Transaction Inquiry from BNIdirect"
+)
+
+
+@dataclass
+class _BniRow:
+    top: float
+    posted_at: datetime
+    debit: Decimal
+    credit: Decimal
+    balance: Decimal | None
+    journal: str
+    description: str
+
+
+def _bni_find(text: str, pattern: str) -> re.Match[str] | None:
+    return re.search(pattern, text)
+
+
+_BNI_HEADER_WORDS = frozenset(
+    ("Post", "Posting", "Date", "Effective", "Branch", "Journal", "No.", "Transaction",
+     "Description", "Amount", "Db/Cr", "DB/C", "DB/CR", "R", "Balance")
+)  # fmt: skip
+_BNI_CHROME_WORDS = frozenset(
+    ("Account", "Period", "Beginning", "Total", "Information", "TRANSACTION", "INQUIRY",
+     "ACCOUNT", "STATEMENT", "Page", "Ending", "Type")
+)  # fmt: skip
+
+
+def _bni_cells(
+    words: list[Word],
+    flags: list[Word],
+    cols: tuple[Word, Word, Word | None],
+    no_h: Word | None,
+    top0: float,
+) -> tuple[list[list[Word]], list[list[Word]], list[list[Word]], list[list[Word]]]:
+    """Dates, times, description words and journal words of each row (by flag), every word placed
+    by the layout and none by proximity: the Transaction Inquiry numbers its rows, a row is the
+    span from its number to the next, and each span must hold exactly one flag, date and time.
+    Text above the first number of a page (a description carried over a page break), a date that
+    falls outside its span, or any other count refuses the file."""
+    _, amt_h, desc_h = cols
+    header_tops = [w.top for w in words if w.text.lower() in ("db/cr", "db/c")]
+    # page chrome: the title, address and account lines (and the footer) repeat, anywhere on a page
+    tops = sorted(w.top for w in words if w.text in _BNI_CHROME_WORDS and w.x0 < 330)
+    bands: list[tuple[float, float]] = []
+    for t in tops:
+        if bands and t - bands[-1][1] <= 30:
+            bands[-1] = (bands[-1][0], t)
+        else:
+            bands.append((t, t))
+    bands = [(lo - 6, hi + 12) for lo, hi in bands]
+    body = [
+        w
+        for w in words
+        if w.top > top0
+        and not any(lo <= w.top <= hi for lo, hi in bands)
+        and not (w.text in _BNI_HEADER_WORDS and any(-10 <= w.top - t <= 14 for t in header_tops))
+    ]
+    n = len(flags)
+    dates: list[list[Word]] = [[] for _ in flags]
+    times: list[list[Word]] = [[] for _ in flags]
+    desc: list[list[Word]] = [[] for _ in flags]
+    journal: list[list[Word]] = [[] for _ in flags]
+
+    def in_desc(w: Word) -> bool:
+        return desc_h.x1 - 1 <= w.x0 < amt_h.x0 - 2 and not _AMOUNT_RE.fullmatch(w.text)
+
+    def place(k: int, w: Word) -> None:
+        if _BNI_DATE_RE.fullmatch(w.text):
+            dates[k].append(w)
+        elif _BNI_TIME_RE.fullmatch(w.text):
+            times[k].append(w)
+        elif in_desc(w):
+            desc[k].append(w)
+        elif _bni_in_journal_column(cols, w) and w.text.isdigit():
+            journal[k].append(w)
+
+    unplaced = "a statement row block cannot be told apart: text does not fit one row"
+    if no_h is None:
+        raise BankParseError(unplaced)
+    marks = sorted(
+        w.top
+        for w in body
+        if w.text.isdigit() and no_h.x0 - 8 <= w.x0 <= no_h.x0 + 12 and w.x1 < desc_h.x0 - 40
+    )
+    if len(marks) != n:
+        raise BankParseError(unplaced)
+    edges = [m - 3 for m in marks] + [float("inf")]
+    for k, f in enumerate(flags):
+        if not edges[k] <= f.top < edges[k + 1]:
+            raise BankParseError(unplaced)
+    for w in body:
+        if w.top < edges[0]:
+            # text above the page's first row number: a description carried over a page break
+            if _BNI_DATE_RE.fullmatch(w.text) or _BNI_TIME_RE.fullmatch(w.text) or in_desc(w):
+                raise BankParseError(unplaced)
+            continue
+        place(max(j for j in range(n) if edges[j] <= w.top), w)
+    for k in range(n):
+        if len(dates[k]) != 1 or len(times[k]) != 1:
+            raise BankParseError(unplaced)
+    return dates, times, desc, journal
+
+
+def parse_bni_pages(pages: list[list[Word]]) -> ParsedStatement:
+    """BNI 'Transaction Inquiry' pages -> ParsedStatement (file order).
+
+    The page scale differs between files, so the columns are read from the header row. A row is
+    anchored on its Db/Cr flag (C or K credit, D debit); its amount is the amount left of the
+    flag, its balance the amount right of it. The header prints the beginning balance and both
+    totals. The 'Account Statement' print is not read: its descriptions can run over a page
+    break and cannot be placed on a row without guessing."""
+    first_page = " ".join(w.text for w in pages[0])
+    if "ACCOUNT STATEMENT" in first_page and "TRANSACTION INQUIRY" not in first_page:
+        raise BankParseError(_BNI_STATEMENT_REFUSED)
+    cols: tuple[Word, Word, Word | None] | None = None  # flag header, amount header, journal header
+    account: tuple[str, str, str] | None = None
+    text_all = " ".join(" ".join(w.text for w in _lines_flat(p)) for p in pages)
+    begin_m = _bni_find(text_all, rf"Beginning Balance\s*:\s*{_BNI_AMT}")
+    tdeb_m = _bni_find(text_all, rf"Total Debit\s*:\s*{_BNI_AMT}")
+    tcred_m = _bni_find(text_all, rf"Total Credit\s*:\s*{_BNI_AMT}")
+    rows: list[_BniRow] = []
+    no_h: Word | None = None  # the row-number header: only some prints have one
+    for page_no, words in enumerate(pages):
+        flag_h = next((w for w in words if w.text.lower() in ("db/cr", "db/c")), None)
+        if flag_h is not None:
+            amt_h = next(
+                (w for w in words if w.text == "Amount" and abs(w.top - flag_h.top) < 12), None
+            )
+            jr_h = next(
+                (w for w in words if w.text == "Journal" and abs(w.top - flag_h.top) < 12), None
+            )
+            if amt_h is None or jr_h is None:
+                raise BankParseError("statement table header is incomplete")
+            nxt = next(
+                (
+                    w
+                    for w in words
+                    if w.text == "No." and 0 <= w.x0 - jr_h.x1 < 6 and abs(w.top - jr_h.top) < 3
+                ),
+                None,
+            )
+            cols = (flag_h, amt_h, nxt or jr_h)
+            no_h = next(
+                (
+                    w
+                    for w in words
+                    if w.text == "No." and w.x0 < 120 and abs(w.top - flag_h.top) < 12
+                ),
+                None,
+            )
+        if cols is None:
+            if page_no == 0:
+                raise BankParseError("statement page has no transaction table")
+            continue
+        flag_h, amt_h, _ = cols
+        # the header row repeats anywhere on later pages: only page 1's marks where rows start
+        top0 = flag_h.top + 2 if page_no == 0 else -1.0
+        # every account line of every page names the first one's number and, where it prints
+        # one, its currency; descriptions start right of the journal column
+        for digits, cur, text in _account_lines(words, cols[2].x0):
+            if account is None:
+                m = _BNI_ACCOUNT_RE.search(text)
+                if not m or m.group(1) != digits:
+                    raise BankParseError("statement header has no account")
+                account = (digits, m.group(2).strip(), m.group(3).upper())
+            elif digits != account[0] or (cur is not None and cur != _currency(account[2])):
+                raise BankParseError(_MORE_THAN_ONE_ACCOUNT)
+        flags = sorted(
+            (
+                w
+                for w in words
+                if w.text in _BNI_CREDIT + _BNI_DEBIT
+                and w.top > top0
+                and flag_h.x0 - 6 <= w.x0 <= flag_h.x1 + 6
+            ),
+            key=lambda w: w.top,
+        )
+        amounts = [w for w in words if _AMOUNT_RE.fullmatch(w.text) and w.top > top0]
+        if not flags:
+            continue
+
+        dates, times, desc, journal = _bni_cells(words, flags, cols, no_h, top0)
+        for k, f in enumerate(flags):
+            if not dates[k] or not times[k]:
+                raise BankParseError("a statement row does not have a posting date and time")
+            d = min(dates[k], key=lambda w: w.x0).text
+            t = min(times[k], key=lambda w: w.x0).text
+            try:
+                posted = datetime(
+                    int(d[6:]), int(d[3:5]), int(d[:2]), int(t[:2]), int(t[3:5]), int(t[6:])
+                )
+            except ValueError:
+                raise BankParseError(
+                    "a posting date or time in the statement is not real"
+                ) from None
+            near = [w for w in amounts if abs(w.top - f.top) <= 3]
+            left = [w for w in near if w.x1 <= f.x0 + 1]
+            right = [w for w in near if w.x0 >= f.x1 - 1]
+            if len(left) != 1 or len(right) > 1:
+                raise BankParseError("a statement row does not have one amount and one balance")
+            value = _amount(left[0].text)
+            if value < 0:
+                raise BankParseError("a statement row has a negative amount")
+            is_credit = f.text in _BNI_CREDIT
+            rows.append(
+                _BniRow(
+                    f.top,
+                    posted,
+                    Decimal(0) if is_credit else value,
+                    value if is_credit else Decimal(0),
+                    _amount(right[0].text) if right else None,
+                    " ".join(w.text for w in journal[k]),
+                    " ".join(
+                        w.text for w in sorted(desc[k], key=lambda w: (round(w.top / 3), w.x0))
+                    ),
+                )
+            )
+    if account is None or not rows:
+        raise BankParseError(_NO_ROWS if account else "statement header has no account")
+    if account[2] not in ("IDR", ""):
+        raise BankParseError(_NOT_IDR)
+    if begin_m is None or tdeb_m is None or tcred_m is None:
+        raise BankParseError("statement has no beginning balance or printed totals")
+    beginning = _amount(begin_m.group(1))
+    total_debit, total_credit = _amount(tdeb_m.group(1)), _amount(tcred_m.group(1))
+    wrong = [
+        side
+        for side, got, printed in (
+            ("debit", sum((r.debit for r in rows), Decimal(0)), total_debit),
+            ("credit", sum((r.credit for r in rows), Decimal(0)), total_credit),
+        )
+        if got != printed
+    ]
+    if wrong:
+        raise BankParseError(
+            f"statement rows do not add up to the printed total ({' and '.join(wrong)})"
+        )
+    closing = beginning + total_credit - total_debit
+    if any(r.balance is None for r in rows):
+        raise BankParseError("a statement row has no balance")
+    rows = _orient(rows, beginning, closing)
+    if rows[0].balance - rows[0].credit + rows[0].debit != beginning:  # type: ignore[operator]
+        raise BankParseError("statement does not start from its beginning balance")
+    if rows[-1].balance != closing:
+        raise BankParseError(
+            "statement does not end at beginning balance plus credits minus debits"
+        )
+    txns = [
+        _txn(r.posted_at, r.description, r.debit, r.credit, r.balance, {"Journal No.": r.journal})  # type: ignore[arg-type]
+        for r in rows
+    ]
+    return ParsedStatement(
+        account_number=account[0],
+        account_name=account[1],
+        metadata={"Account No.": account[0], "Account Name": account[1], "Currency": "IDR"},
+        transactions=txns,
+        order_decided_by="balance_chain",
+        bank_code="bni",
+        source_format="pdf",
+        kept_columns=("Journal No.",),
+    )
+
+
+def _lines_flat(words: list[Word]) -> list[Word]:
+    return [w for line in _lines(words) for w in line]
+
+
+def _bni_in_journal_column(cols: tuple[Word, Word, Word | None], w: Word) -> bool:
+    """A word in the Journal No. column (between the branch text and the description)."""
+    desc_h = cols[2]
+    return desc_h is not None and desc_h.x0 - 40 <= w.x0 < desc_h.x1 + 1
+
+
 # ── the one entry point of the upload ───────────────────────────────────────
 
-_UNKNOWN = "file is not a bank statement this page reads (CIMB Niaga CSV, Bank Mandiri PDF, Bank Permata PDF)"
+_UNKNOWN = "file is not a bank statement this page reads (CIMB Niaga CSV, Bank Mandiri, BNI or Bank Permata PDF)"
 
 
 def _parse(data: bytes) -> ParsedStatement:
@@ -587,8 +1107,12 @@ def _parse(data: bytes) -> ParsedStatement:
         kind = detect_pdf_format(pages)
         if kind == "mandiri":
             return parse_mandiri_pages(pages)
+        if kind == "permata_history":
+            return parse_permata_history_pages(pages)
         if kind == "permata":
             return parse_permata_pages(pages)
+        if kind == "bni":
+            return parse_bni_pages(pages)
         raise BankParseError(_UNKNOWN)
     try:
         text = data.decode(

@@ -78,8 +78,9 @@ TEMPORAL_PATTERNS = {
     ),
     r"\b(la settimana scorsa|last week)\b": lambda: datetime.now(timezone.utc) - timedelta(weeks=1),
     r"\b(il mese scorso|last month)\b": lambda: datetime.now(timezone.utc) - timedelta(days=30),
-    # Specific dates (DD/MM or DD/MM/YYYY)
-    r"\b(\d{1,2})[/\-](\d{1,2})(?:[/\-](\d{2,4}))?\b": "_parse_date",
+    # Specific dates (DD/MM, DD/MM/YYYY, DD-MM-YYYY). A hyphen is a date
+    # separator only when the year follows: "2-3 months" is a range.
+    r"\b(\d{1,2})(?:/|-(?=\d{1,2}-\d{2,4}\b))(\d{1,2})(?:[/\-](\d{2,4}))?\b": "_parse_date",
 }
 
 # Event type keywords
@@ -190,6 +191,22 @@ class EpisodicMemoryService:
         except ValueError:
             return datetime.now(timezone.utc)
 
+    def _is_calendar_date(self, match: re.Match) -> bool:
+        """True when the matched numbers are a real day and month.
+
+        _parse_date answers "now" for numbers that are not a date; the
+        extraction asks here first, so "10/15" never becomes an event.
+        """
+        year_str = match.group(3)
+        year = int(year_str) if year_str else datetime.now(tz=timezone.utc).year
+        if year_str and year < 100:
+            year += 2000
+        try:
+            datetime(year, int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            return False
+        return True
+
     def _extract_datetime(self, text: str) -> datetime | None:
         """Extract datetime from text using temporal patterns"""
         text_lower = text.lower()
@@ -198,6 +215,8 @@ class EpisodicMemoryService:
             match = re.search(pattern, text_lower)
             if match:
                 if resolver == "_parse_date":
+                    if not self._is_calendar_date(match):
+                        continue
                     return self._parse_date(match)
                 if callable(resolver):
                     try:

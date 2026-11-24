@@ -15,7 +15,9 @@ import pytest
 
 from backend.app.agents import graph as graph_module
 from backend.app.agents.graph import (
+    CONTEXT_WINDOW_CHARACTERS,
     MAX_REFLECTION_RETRIES,
+    _build_conversation_history_block,
     _load_conversation_history,
     check_hallucination_node,
     create_rag_graph,
@@ -29,6 +31,32 @@ from backend.app.agents.graph import (
     should_reflect_or_end,
     transform_query_node,
 )
+
+# ============================================================================
+# _build_conversation_history_block
+# ============================================================================
+
+
+class TestBuildConversationHistoryBlock:
+    def test_keeps_newest_messages_within_context_window(self):
+        messages = [f"message-{index:02d}-" + "x" * 139 for index in range(12)]
+
+        block = _build_conversation_history_block(messages)
+
+        assert block.startswith("=== Conversation History ===\n")
+        assert block.endswith(messages[-1])
+        assert len(block) <= CONTEXT_WINDOW_CHARACTERS
+
+    def test_short_history_matches_existing_block(self):
+        messages = ["[inbound] Synthetic question", "[outbound] Synthetic answer"]
+
+        block = _build_conversation_history_block(messages)
+
+        assert block == "=== Conversation History ===\n" + "\n".join(messages)
+
+    def test_empty_history_has_no_block(self):
+        assert _build_conversation_history_block([]) == ""
+
 
 # ============================================================================
 # Fixtures
@@ -331,6 +359,17 @@ class TestGenerateNode:
 
 class TestCheckHallucination:
     @pytest.mark.asyncio
+    async def test_skips_generation_error_without_reflection(self, base_state):
+        base_state["generation"] = "I apologize, but the synthetic generator failed"
+        base_state["filtered_documents"] = ["KITAS permit requirements"]
+        base_state["execution_path"] = ["generate_error"]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "skipped"
+        assert should_reflect_or_end(result) == "__end__"
+
+    @pytest.mark.asyncio
     async def test_skip_no_generation(self, base_state):
         base_state["generation"] = ""
         base_state["filtered_documents"] = []
@@ -360,11 +399,46 @@ class TestCheckHallucination:
         assert result["hallucination_check"] == "passed"
 
     @pytest.mark.asyncio
+    async def test_passes_grounding_from_generation_context_window(self, base_state):
+        generation = "investor kitas requires an investment plan and a director appointment"
+        base_state["generation"] = generation
+        base_state["filtered_documents"] = [
+            "filler " * 40 + generation + " supporting synthetic detail " * 20,
+        ]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "passed"
+
+    @pytest.mark.asyncio
+    async def test_fails_when_grounding_only_in_sixth_document(self, base_state):
+        generation = "synthetic investor kitas needs a director appointment"
+        base_state["generation"] = generation
+        base_state["filtered_documents"] = [
+            "unrelated synthetic document content" for _ in range(5)
+        ] + [generation]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "failed"
+
+    @pytest.mark.asyncio
     async def test_hallucination_detected(self, base_state):
         base_state["generation"] = "completely unrelated generated content"
         base_state["filtered_documents"] = [{"content": "KBLI codes for restaurant business setup"}]
         result = await check_hallucination_node(base_state)
-        assert result["hallucination_check"] in ("failed", "passed")
+        assert result["hallucination_check"] == "failed"
+        assert should_reflect_or_end(result) == "transform_query"
+
+    @pytest.mark.asyncio
+    async def test_grounded_generation_passes(self, base_state):
+        base_state["generation"] = "KITAS permit requirements apply"
+        base_state["filtered_documents"] = ["KITAS permit requirements apply in Indonesia"]
+
+        result = await check_hallucination_node(base_state)
+
+        assert result["hallucination_check"] == "passed"
+        assert should_reflect_or_end(result) == "__end__"
 
 
 # ============================================================================

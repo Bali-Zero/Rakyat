@@ -9,9 +9,9 @@ Responsibilities:
 - Stay optional: when no DB pool is registered (tests, main_api cold-boot),
   the record call is a silent no-op.
 
-The scanner (pii_scanner.py) registers the FastAPI app via `set_app(app)`
-at startup so the middleware — which runs at ASGI level and doesn't own a
-Request — can still reach `app.state.db_pool`.
+A writer registers the FastAPI app via `set_app(app)` at startup so code
+running at ASGI level, which doesn't own a Request, can still reach
+`app.state.db_pool`.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Severity policy per pattern. Governed by UU PDP No. 27/2022.
 #   high: government-issued identifiers (KTP, NPWP, Passport)
 #   medium: contact information (phone, email)
-#   low: PERSON name matches (Presidio's built-in, high false-positive rate)
+#   low: PERSON name matches (NER-style, high false-positive rate)
 _SEVERITY_BY_PATTERN: dict[str, str] = {
     "ID_KTP": "high",
     "ID_NPWP": "high",
@@ -89,7 +89,7 @@ def aggregate(
     user_hash: str | None,
 ) -> list[PIIViolation]:
     """
-    Turn a flat list of detected patterns (from pii_scanner.scan_text) into
+    Turn a flat list of detected patterns (from a PII scanner) into
     one PIIViolation per pattern — with occurrence_count folded in so we
     write O(distinct patterns) rows, not O(total matches).
     """

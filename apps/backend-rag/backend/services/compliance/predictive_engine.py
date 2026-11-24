@@ -98,6 +98,7 @@ class ScanResult:
     summary: ForecastSummary
     scan_window_days: int
     generated_at: str
+    failed_queries: tuple[str, ...] = ()
 
 
 # ── SQL ────────────────────────────────────────────────────────────────────────
@@ -237,6 +238,7 @@ class PredictiveComplianceEngine:
 
         today = date.today()
         forecasts: list[ComplianceForecast] = []
+        failed_queries: list[str] = []
         active_practice_skipped = 0
 
         async with self._db_pool.acquire() as conn:
@@ -246,6 +248,7 @@ class PredictiveComplianceEngine:
             except Exception:
                 logger.exception("Error querying client documents")
                 client_rows = []
+                failed_queries.append("client_documents")
 
             # ── 2. Practice expiries (license / permits) ──────────────────────
             try:
@@ -253,6 +256,7 @@ class PredictiveComplianceEngine:
             except Exception:
                 logger.exception("Error querying practice expiries")
                 practice_rows = []
+                failed_queries.append("practice_expiries")
 
         all_rows = list(client_rows) + list(practice_rows)
         logger.info(
@@ -305,6 +309,7 @@ class PredictiveComplianceEngine:
             summary=summary,
             scan_window_days=self._scan_window_days,
             generated_at=datetime.now(timezone.utc).isoformat(),
+            failed_queries=tuple(failed_queries),
         )
 
     # ── Internal helpers ───────────────────────────────────────────────────────
@@ -323,6 +328,11 @@ class PredictiveComplianceEngine:
         client_id: int = row["client_id"]
         document_type: str = row["document_type"]
         visa_type: str | None = row.get("current_visa_type") or row.get("practice_type_code")
+        rule_visa_type = (
+            row.get("practice_type_code") or row.get("current_visa_type")
+            if document_type == "license"
+            else visa_type
+        )
         expiry_date: date = row["expiry_date"]
 
         # Skip documents with no expiry (should not happen — filtered in SQL)
@@ -330,7 +340,7 @@ class PredictiveComplianceEngine:
             return None
 
         # Match rule
-        rule: RenewalRule = match_rule(document_type, visa_type)
+        rule: RenewalRule = match_rule(document_type, rule_visa_type)
 
         # Check for active renewal practice
         has_active = await self._has_active_renewal(client_id, rule)

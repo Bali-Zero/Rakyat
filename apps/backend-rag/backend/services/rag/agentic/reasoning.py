@@ -16,6 +16,7 @@ Key features:
 """
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -38,6 +39,7 @@ from backend.app.utils.tracing import (
     trace_span,
 )
 from backend.services.llm_clients.pricing import TokenUsage
+from backend.services.rag.agentic._crm_precall import with_crm_scope_note
 from backend.services.rag.agentic._reasoning_evidence import (
     compute_evidence_score,
     detect_quotable_relevance_veto,
@@ -68,6 +70,7 @@ from backend.services.rag.agentic._reasoning_tier1 import (
     emit_tier1_failure_metrics,
     emit_tier1_success_metrics,
 )
+from backend.services.rag.agentic._tool_denial import is_denial_observation
 from backend.services.rag.agentic.query_helpers import detect_query_language
 from backend.services.rag.agentic.reasoning_utils import (
     calculate_evidence_score,  # noqa: F401  re-exported for tests that patch reasoning.calculate_evidence_score
@@ -1139,7 +1142,10 @@ Make it feel natural and helpful, not forced.
                         "verdict_available",
                         verdict_available,
                     )
-                    if final_verdict_available:
+                    if (
+                        final_verdict_available
+                        and processed.get("verification_status") != "skipped"
+                    ):
                         state.verification_score = processed.get(
                             "verification_score",
                             verification_score,
@@ -1201,6 +1207,15 @@ Make it feel natural and helpful, not forced.
             getattr(state, "caller_profile", None),
         )
 
+        def _is_real_crm_result(observation: str) -> bool:
+            if is_denial_observation(observation) or observation.lstrip().startswith("Error"):
+                return False
+            try:
+                parsed_observation = json.loads(observation)
+            except json.JSONDecodeError:
+                return True
+            return not (isinstance(parsed_observation, dict) and "error" in parsed_observation)
+
         # ==================== REACT LOOP ====================
         while state.current_step < state.max_steps:
             state.current_step += 1
@@ -1222,7 +1237,7 @@ Make it feel natural and helpful, not forced.
                 step_images = images if state.current_step == 1 else None
                 text_response, _model_used_name, response_obj, _ = await llm_gateway.send_message(
                     chat,
-                    message,
+                    with_crm_scope_note(state, message),
                     system_prompt,
                     tier=model_tier,
                     enable_function_calling=True,
@@ -1321,7 +1336,11 @@ Make it feel natural and helpful, not forced.
                 ):
                     logger.info("🚀 [Stream Early Exit] Sufficient context from retrieval.")
                     break
-                if tool_call.tool_name == "crm_query" and len(tool_result) > 10:
+                if (
+                    tool_call.tool_name == "crm_query"
+                    and len(tool_result) > 10
+                    and _is_real_crm_result(tool_result)
+                ):
                     # CRM returns structured JSON data — one call is always enough
                     logger.info("🚀 [Stream Early Exit] CRM data retrieved, skipping extra steps.")
                     state.trusted_tools_used = True
@@ -1451,7 +1470,7 @@ Make it feel natural and helpful, not forced.
                 try:
                     state.final_answer, _, _, _ = await llm_gateway.send_message(
                         chat,
-                        final_prompt,
+                        with_crm_scope_note(state, final_prompt),
                         system_prompt,
                         tier=model_tier,
                         enable_function_calling=False,
@@ -1535,7 +1554,7 @@ Make it feel natural and helpful, not forced.
                     try:
                         state.final_answer, _, _, _ = await llm_gateway.send_message(
                             chat,
-                            final_prompt,
+                            with_crm_scope_note(state, final_prompt),
                             system_prompt,
                             tier=model_tier,
                             enable_function_calling=False,
@@ -1590,7 +1609,7 @@ Make it feel natural and helpful, not forced.
                 try:
                     state.final_answer, _, _, _ = await llm_gateway.send_message(
                         chat,
-                        final_prompt,
+                        with_crm_scope_note(state, final_prompt),
                         system_prompt,
                         tier=model_tier,
                         enable_function_calling=False,
@@ -1613,7 +1632,7 @@ Make it feel natural and helpful, not forced.
                 try:
                     state.final_answer, _, _, _ = await llm_gateway.send_message(
                         chat,
-                        f"Please answer this request: {query}",
+                        with_crm_scope_note(state, f"Please answer this request: {query}"),
                         system_prompt,
                         tier=model_tier,
                         enable_function_calling=False,
@@ -1661,7 +1680,7 @@ Make it feel natural and helpful, not forced.
                     try:
                         state.final_answer, _, _, _ = await llm_gateway.send_message(
                             chat,
-                            final_prompt,
+                            with_crm_scope_note(state, final_prompt),
                             system_prompt,
                             tier=model_tier,
                             enable_function_calling=False,

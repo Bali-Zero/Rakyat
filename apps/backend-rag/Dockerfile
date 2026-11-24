@@ -243,9 +243,13 @@ COPY apps/backend-rag/*.py ./
 # marker files; without them in the image the walk exhausts and the scripts
 # crash — they cannot run where their credentials (QDRANT_URL, OPENAI_API_KEY)
 # actually live.
+# apps/kbli-navigator/data/kbli-2025.json is a byte-identical copy of the canonical
+# (apps/mouth/src/lib/kbli-canonical-pins.test.ts enforces it), so the image holds the
+# canonical once and the second path is a link to it, not a second ~38 MB copy.
 COPY apps/kbli-navigator/lib/kbli-gold-content.ts ./apps/kbli-navigator/lib/kbli-gold-content.ts
-COPY apps/kbli-navigator/data/kbli-2025.json ./apps/kbli-navigator/data/kbli-2025.json
 COPY data/source_documents/KBLI_2025_FINAL_CLEAN.json ./source_documents/KBLI_2025_FINAL_CLEAN.json
+RUN mkdir -p ./apps/kbli-navigator/data \
+    && ln -s /app/source_documents/KBLI_2025_FINAL_CLEAN.json ./apps/kbli-navigator/data/kbli-2025.json
 COPY data/kbli-filiera/pma-editorial-certifications.json ./data/kbli-filiera/pma-editorial-certifications.json
 
 # Set Python path (cell-core included for explicit import resolution)
@@ -287,4 +291,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \
 # Bind to 0.0.0.0 (all IPv4 interfaces, Fly.io compatible). Use PORT env var.
 # CRITICAL: 1 worker only — each worker loads ~2GB of ML models.
 # fly.toml [processes] overrides CMD at runtime (main_api:app for api, main_rag:app for rag).
-CMD sh -c "uvicorn backend.app.main_cloud:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"
+CMD sh -c "uvicorn backend.app.main_api:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"

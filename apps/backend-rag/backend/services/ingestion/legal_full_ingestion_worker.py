@@ -2,7 +2,8 @@
 LegalFullIngestionWorker — async background worker for legal document ingestion.
 
 Pipeline: Qdrant+KG -> Drive (SA) -> NLM bridge -> Google Sheets
-Pattern: PostgreSQL SKIP LOCKED with visibility_at timeout (10 min).
+Pattern: PostgreSQL SKIP LOCKED with visibility_at timeout (10 min), renewed by the
+worker for as long as it is on the job.
 """
 
 import asyncio
@@ -10,6 +11,8 @@ import io
 import json
 import logging
 import os
+import re
+import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 WORKER_INTERVAL = 10  # seconds between queue polls
 VISIBILITY_TIMEOUT = timedelta(minutes=10)
+# A claim hides a job from other claims for VISIBILITY_TIMEOUT, and a law takes far
+# longer than that to ingest. The worker that holds a job renews its claim while it
+# works; without that a second worker takes the job and ingests the same law at the
+# same time.
+CLAIM_RENEW_INTERVAL = timedelta(minutes=3)
+# A job held this long is let go, so one that hangs is not hidden for ever.
+CLAIM_MAX_HOLD = timedelta(hours=12)
 NLM_BRIDGE_URL = os.getenv("NLM_BRIDGE_URL", "")
 NLM_BRIDGE_KEY = os.getenv("NLM_BRIDGE_KEY", "")
 
@@ -67,6 +77,50 @@ async def _claim_job(conn: asyncpg.Connection) -> asyncpg.Record | None:
     )
 
 
+async def _renew_claim(db_pool: asyncpg.Pool, job_id: str) -> None:
+    """Hide the job from other claims for one more VISIBILITY_TIMEOUT."""
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE legal_ingest_jobs
+            SET visibility_at = NOW() + $2::interval
+            WHERE id = $1
+              AND status NOT IN ('complete', 'failed')
+            """,
+            job_id,
+            VISIBILITY_TIMEOUT,
+        )
+
+
+async def _keep_claim(db_pool: asyncpg.Pool, job_id: str) -> None:
+    """Renew the claim on a job for as long as this worker is working on it.
+
+    Runs beside the job and is cancelled when the job ends, in any way. Renewals are
+    due on a fixed schedule of the monotonic clock and end at CLAIM_MAX_HOLD from the
+    start, however long each one takes. A renewal that fails or does not answer within
+    one interval is abandoned and the next is tried: the claim outlives a few of them.
+    """
+    loop = asyncio.get_running_loop()
+    interval = CLAIM_RENEW_INTERVAL.total_seconds()
+    deadline = loop.time() + CLAIM_MAX_HOLD.total_seconds()
+    due = loop.time() + interval
+    while due < deadline:
+        await asyncio.sleep(max(0.0, due - loop.time()))
+        left = deadline - loop.time()
+        if left <= 0:
+            break
+        try:
+            await asyncio.wait_for(_renew_claim(db_pool, job_id), timeout=min(interval, left))
+        except Exception as e:
+            logger.warning(
+                "⚠️ Could not renew the claim on legal job %s: %s", job_id, type(e).__name__
+            )
+        due += interval
+    logger.warning(
+        "⚠️ Legal job %s held for %s: its claim is no longer renewed", job_id, CLAIM_MAX_HOLD
+    )
+
+
 async def _update_job(conn: asyncpg.Connection, job_id: str, **fields: Any) -> None:
     """Update job fields + updated_at."""
     set_clauses = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
@@ -101,8 +155,13 @@ async def _download_pdf(url: str, tipo: str, nomor: str, anno: str) -> Path:
     params) and never bare `str(e)`, which is empty for some httpx timeout
     exceptions and left prior failures undiagnosable from the job row.
     """
-    dest = Path(tempfile.mkdtemp()) / f"{tipo}_{nomor}_{anno}.pdf"
+    temp_dir = Path(tempfile.mkdtemp())
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", f"{tipo}_{nomor}_{anno}")
+    if safe_name in {"", ".", ".."}:
+        safe_name = "document"
+    dest = temp_dir / f"{safe_name}.pdf"
     host = httpx.URL(str(url)).host
+    downloaded = False
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(180.0, connect=30.0),
@@ -112,16 +171,21 @@ async def _download_pdf(url: str, tipo: str, nomor: str, anno: str) -> Path:
             resp = await client.get(str(url))
             resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
         raise RuntimeError(
             f"PDF download failed: HTTP {exc.response.status_code} from host={host}"
         ) from exc
     except (httpx.TimeoutException, httpx.TransportError) as exc:
-        raise RuntimeError(
-            f"PDF download failed: {type(exc).__name__} from host={host}"
-        ) from exc
-    dest.write_bytes(resp.content)
-    logger.info(f"📥 Downloaded PDF: {dest} ({len(resp.content)} bytes)")
-    return dest
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise RuntimeError(f"PDF download failed: {type(exc).__name__} from host={host}") from exc
+    try:
+        dest.write_bytes(resp.content)
+        downloaded = True
+        logger.info(f"📥 Downloaded PDF: {dest} ({len(resp.content)} bytes)")
+        return dest
+    finally:
+        if not downloaded:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _build_drive_service() -> Any:
@@ -202,10 +266,14 @@ def _drive_get_or_create_folder(
     parent_id: str,
 ) -> str:
     """Get or create a folder inside parent_id. Returns folder ID."""
+
+    def escape(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
     # Search for existing
     q = (
-        f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' "
-        f"and '{parent_id}' in parents and trashed = false"
+        f"name = '{escape(folder_name)}' and mimeType = 'application/vnd.google-apps.folder' "
+        f"and '{escape(parent_id)}' in parents and trashed = false"
     )
     result = (
         drive_service.files()
@@ -235,7 +303,11 @@ def _drive_find_file(
     folder_id: str,
 ) -> dict[str, str] | None:
     """Find a file by exact name in a folder. Returns {file_id, web_view_link} or None."""
-    q = f"name = '{file_name}' and '{folder_id}' in parents and trashed = false"
+
+    def escape(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
+    q = f"name = '{escape(file_name)}' and '{escape(folder_id)}' in parents and trashed = false"
     result = (
         drive_service.files()
         .list(
@@ -278,6 +350,7 @@ async def _process_one_job(db_pool: asyncpg.Pool, app_state: Any) -> None:
     )
 
     pdf_path: Path | None = None
+    claim_keeper = asyncio.create_task(_keep_claim(db_pool, job_id))
 
     try:
         # ── Step 1: Qdrant + KG ──────────────────────────────────────────────
@@ -464,8 +537,6 @@ async def _process_one_job(db_pool: asyncpg.Pool, app_state: Any) -> None:
         async with db_pool.acquire() as conn:
             await _update_job(conn, job_id, status="failed", error=error_msg)
     finally:
-        if pdf_path and pdf_path.exists():
-            try:
-                pdf_path.unlink()
-            except Exception:
-                pass
+        claim_keeper.cancel()
+        if pdf_path:
+            shutil.rmtree(pdf_path.parent, ignore_errors=True)

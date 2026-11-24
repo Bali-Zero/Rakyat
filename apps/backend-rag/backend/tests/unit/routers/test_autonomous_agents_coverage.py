@@ -1,27 +1,19 @@
-"""
-Unit tests for autonomous_agents router.
-Coverage target: POST /run, GET /status, GET /executions, GET /scheduler/status,
-POST /scheduler/task/{name}/enable|disable, GET /knowledge-graph/extract-sample,
-POST /knowledge-graph/persist-sample.
-"""
+"""Unit tests for autonomous-agent status and scheduler endpoints."""
 
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from backend.app.dependencies import get_current_user
 from backend.app.routers.autonomous_agents import agent_executions, router
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 # ============================================================
 # FIXTURES
 # ============================================================
 
-# Agent triggers are admin-only (Case OS R3 gate). These coverage tests exercise
-# the handler bodies, so they authenticate as an admin. The gate itself is
-# covered by test_caseos_r3_admin_gates.py (guilt + innocence).
+# Scheduler controls are admin-only.
 ADMIN_USER = {"id": "u-1", "email": "zero@balizero.com", "role": "admin"}
 
 
@@ -44,100 +36,6 @@ def app():
 @pytest.fixture
 def client(app):
     return TestClient(app)
-
-
-# ============================================================
-# POST /api/autonomous-agents/conversation-trainer/run
-# ============================================================
-
-
-def test_run_conversation_trainer_happy_path(client):
-    """Should return 200 and 'started' status immediately."""
-    response = client.post("/api/autonomous-agents/conversation-trainer/run?days_back=7")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "started"
-    assert data["agent_name"] == "conversation_trainer"
-    assert "execution_id" in data
-    assert data["execution_id"].startswith("conv_trainer_")
-
-
-def test_run_conversation_trainer_default_days(client):
-    """Should use default days_back=7 when not provided."""
-    response = client.post("/api/autonomous-agents/conversation-trainer/run")
-    assert response.status_code == 200
-    data = response.json()
-    assert "7" in data["message"] or "started" in data["status"]
-
-
-def test_run_conversation_trainer_invalid_days(client):
-    """Should return 422 for invalid days_back (0 is below minimum 1)."""
-    response = client.post("/api/autonomous-agents/conversation-trainer/run?days_back=0")
-    assert response.status_code == 422
-
-
-def test_run_conversation_trainer_days_too_large(client):
-    """Should return 422 for days_back > 365."""
-    response = client.post("/api/autonomous-agents/conversation-trainer/run?days_back=366")
-    assert response.status_code == 422
-
-
-def test_run_conversation_trainer_max_days(client):
-    """Should accept days_back=365."""
-    response = client.post("/api/autonomous-agents/conversation-trainer/run?days_back=365")
-    assert response.status_code == 200
-
-
-# ============================================================
-# POST /api/autonomous-agents/client-value-predictor/run
-# ============================================================
-
-
-def test_run_client_value_predictor_happy_path(client):
-    """Should return 200 and 'started' status immediately."""
-    response = client.post("/api/autonomous-agents/client-value-predictor/run")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "started"
-    assert data["agent_name"] == "client_value_predictor"
-    assert "execution_id" in data
-    assert data["execution_id"].startswith("client_predictor_")
-
-
-def test_run_client_value_predictor_returns_message(client):
-    """Should return message indicating background execution."""
-    response = client.post("/api/autonomous-agents/client-value-predictor/run")
-    data = response.json()
-    assert "background" in data["message"].lower() or "started" in data["message"].lower()
-
-
-# ============================================================
-# POST /api/autonomous-agents/knowledge-graph-builder/run
-# ============================================================
-
-
-def test_run_knowledge_graph_builder_happy_path(client):
-    """Should return 200 and 'started' status."""
-    response = client.post("/api/autonomous-agents/knowledge-graph-builder/run")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "started"
-    assert data["agent_name"] == "knowledge_graph_builder"
-    assert data["execution_id"].startswith("kg_builder_")
-
-
-def test_run_knowledge_graph_builder_with_params(client):
-    """Should accept days_back and init_schema params."""
-    response = client.post(
-        "/api/autonomous-agents/knowledge-graph-builder/run?days_back=60&init_schema=true"
-    )
-    assert response.status_code == 200
-
-
-def test_run_knowledge_graph_builder_invalid_days(client):
-    """Should reject days_back=0."""
-    response = client.post("/api/autonomous-agents/knowledge-graph-builder/run?days_back=0")
-    assert response.status_code == 422
 
 
 # ============================================================
@@ -361,97 +259,3 @@ def test_disable_scheduler_task_not_found(client):
     with patch.object(_sched_mod, "get_autonomous_scheduler", return_value=mock_scheduler):
         response = client.post("/api/autonomous-agents/scheduler/task/ghost_task/disable")
     assert response.status_code == 404
-
-
-# ============================================================
-# GET /api/autonomous-agents/knowledge-graph/extract-sample
-# ============================================================
-
-
-def test_extract_kg_sample_qdrant_unavailable(client):
-    """Should return 503 when Qdrant retriever not available."""
-    import backend.app.main_cloud as _main
-
-    getattr(_main.app, "state", None)
-    # Remove retriever from state
-    _main.app.state.retriever = None
-    try:
-        response = client.get("/api/autonomous-agents/knowledge-graph/extract-sample")
-    finally:
-        pass
-    assert response.status_code == 503
-
-
-def test_extract_kg_sample_qdrant_client_none(client):
-    """Should return 503 when retriever.client is None."""
-    import backend.app.main_cloud as _main
-
-    mock_retriever = MagicMock()
-    mock_retriever.client = None
-    _main.app.state.retriever = mock_retriever
-    response = client.get("/api/autonomous-agents/knowledge-graph/extract-sample")
-    assert response.status_code == 503
-
-
-def test_extract_kg_sample_success(client):
-    """Should return 200 with dry_run status when Qdrant available."""
-    import backend.app.main_cloud as _main
-
-    mock_chunk = MagicMock()
-    mock_chunk.id = "chunk_abc"
-    mock_chunk.payload = {"text": "PT PMA memerlukan NIB dan KBLI 56101 biaya Rp 10 miliar"}
-
-    mock_qdrant = MagicMock()
-    mock_qdrant.scroll.return_value = ([mock_chunk], None)
-
-    mock_retriever = MagicMock()
-    mock_retriever.client = mock_qdrant
-    _main.app.state.retriever = mock_retriever
-
-    response = client.get("/api/autonomous-agents/knowledge-graph/extract-sample?sample_size=10")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "dry_run"
-    assert "entities_found" in data
-    assert "relationships_inferred" in data
-
-
-def test_extract_kg_sample_qdrant_error(client):
-    """Should return 500 when Qdrant scroll fails."""
-    import backend.app.main_cloud as _main
-
-    mock_qdrant = MagicMock()
-    mock_qdrant.scroll.side_effect = Exception("Qdrant unavailable")
-
-    mock_retriever = MagicMock()
-    mock_retriever.client = mock_qdrant
-    _main.app.state.retriever = mock_retriever
-
-    response = client.get("/api/autonomous-agents/knowledge-graph/extract-sample")
-    assert response.status_code == 500
-
-
-# ============================================================
-# POST /api/autonomous-agents/knowledge-graph/persist-sample
-# ============================================================
-
-
-def test_persist_kg_sample_qdrant_unavailable(client):
-    """Should return 503 when Qdrant not available."""
-    import backend.app.main_cloud as _main
-
-    _main.app.state.retriever = None
-    response = client.post("/api/autonomous-agents/knowledge-graph/persist-sample")
-    assert response.status_code == 503
-
-
-def test_persist_kg_sample_db_unavailable(client):
-    """Should return 503 when db_pool is None."""
-    import backend.app.main_cloud as _main
-
-    mock_retriever = MagicMock()
-    mock_retriever.client = MagicMock()
-    _main.app.state.retriever = mock_retriever
-    _main.app.state.db_pool = None
-    response = client.post("/api/autonomous-agents/knowledge-graph/persist-sample")
-    assert response.status_code == 503

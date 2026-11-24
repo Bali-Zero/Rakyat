@@ -986,3 +986,6 @@ apps/backend-rag/process_batches_2_3.py
 docs/crm/assignment-mismatches-2026-04-20.md
 docs/crm/reports-2026-04-20/mismatches.csv
 apps/backend-rag/backend/data/team_members.json
+
+# Verifikator live local output (CI uploads it as an artifact)
+verifikator-out/

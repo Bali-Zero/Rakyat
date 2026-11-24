@@ -20,6 +20,7 @@ from backend.services.notifications.email_audit import (
     format_send_error,
     log_email_attempt,
     notify_email_failure_critical,
+    raise_if_not_delivered,
     record_email_result,
 )
 from backend.services.notifications.email_branding import logo_header_html, team_email_html
@@ -313,6 +314,7 @@ Zantara — Bali Zero Team
                 json=payload,
             )
             response.raise_for_status()
+            raise_if_not_delivered(response)
             logger.info("Email sent to %s via Brevo", redact_identifier_for_log(to_email))
             await record_email_result(
                 self.db_pool,

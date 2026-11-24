@@ -9,6 +9,7 @@ UPDATED 2025-12-23:
 """
 
 import logging
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -20,6 +21,22 @@ from backend.llm.genai_client import GENAI_AVAILABLE, get_genai_client
 from backend.prompts.zantara_persona import FEW_SHOT_EXAMPLES, SYSTEM_INSTRUCTION
 
 logger = logging.getLogger(__name__)
+
+
+# A quota or rate-limit error, read from the lower-cased message. The bare letters
+# `rate` are not one: they sit inside generate, accurate and separate.
+_RATE_LIMIT_ERROR_RE = re.compile(
+    r"(?<!\d)429(?!\d)"
+    r"|quota(?!t)"
+    r"|resource[ _]exhausted"
+    r"|too many requests"
+    r"|(?<![a-z])rate[ _-]?limit"
+)
+
+
+def _is_rate_limit_error(error_text: str) -> bool:
+    """Return whether an error message describes a quota or rate limit."""
+    return _RATE_LIMIT_ERROR_RE.search(error_text.lower()) is not None
 
 
 class GeminiJakselService:
@@ -224,6 +241,7 @@ class GeminiJakselService:
             # Try Gemini first (if available)
             client = self._get_genai_client()
             if client and client.is_available:
+                has_yielded = False
                 try:
                     chat_history = self.few_shot_history.copy()
                     for msg in history:
@@ -247,6 +265,7 @@ class GeminiJakselService:
                     )
 
                     async for chunk in chat.send_message_stream(final_message):
+                        has_yielded = True
                         yield chunk
 
                     self._gemini_circuit.record_success()
@@ -254,21 +273,25 @@ class GeminiJakselService:
 
                 except (ResourceExhausted, ServiceUnavailable) as e:
                     self._gemini_circuit.record_failure()
+                    if has_yielded:
+                        raise
                     logger.warning(f"Gemini quota exceeded, falling back to OpenRouter: {e}")
 
                 except GoogleAPIError as e:
-                    error_str = str(e).lower()
-                    if "429" in error_str or "quota" in error_str or "rate" in error_str:
+                    if _is_rate_limit_error(str(e)):
                         self._gemini_circuit.record_failure()
+                        if has_yielded:
+                            raise
                         logger.warning(f"Gemini rate limited, falling back to OpenRouter: {e}")
                     else:
                         logger.exception("Unexpected Gemini API error")
                         raise
 
                 except Exception as e:
-                    error_str = str(e).lower()
-                    if "429" in error_str or "quota" in error_str or "rate" in error_str:
+                    if _is_rate_limit_error(str(e)):
                         self._gemini_circuit.record_failure()
+                        if has_yielded:
+                            raise
                         logger.warning(f"Gemini rate limited, falling back to OpenRouter: {e}")
                     else:
                         logger.exception("Unexpected Gemini error")

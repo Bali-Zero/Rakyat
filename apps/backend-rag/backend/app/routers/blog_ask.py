@@ -109,6 +109,9 @@ async def ask_zantara(request: Request, body: BlogAskRequest) -> BlogAskResponse
             query=query,
             user_id="blog_visitor",
             session_id=None,
+            # The visitor is anonymous: the "blog" overlay forbids promising a
+            # callback nobody can make (prompts/channel_overlays.py).
+            channel="blog",
         )
 
         # Format sources for response

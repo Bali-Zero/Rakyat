@@ -351,7 +351,8 @@ async def get_interaction(
                 SELECT
                     i.*,
                     c.full_name as client_name,
-                    c.email as client_email
+                    c.email as client_email,
+                    c.assigned_to as assigned_to
                 FROM interactions i
                 LEFT JOIN clients c ON i.client_id = c.id
                 WHERE i.id = $1

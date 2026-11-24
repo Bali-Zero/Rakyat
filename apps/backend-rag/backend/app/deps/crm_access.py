@@ -90,7 +90,7 @@ def get_crm_user_filter(
     # RBAC: admins see the whole book (None = no filter). Non-admins are scoped to
     # their own assigned clients. NB: this is gated on is_crm_admin, NOT on
     # can_view_all_clients() — the latter stays True so the direct write-guards in
-    # wa_actions/omnichannel/channels keep working unchanged. Before this fix the
+    # omnichannel/channels keep working unchanged. Before this fix the
     # function gated on can_view_all_clients() and thus returned None for everyone,
     # silently disarming the ownership filter on every CRM read-list endpoint.
     if is_crm_admin(current_user):

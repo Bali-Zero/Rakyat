@@ -3,6 +3,7 @@ Company Router - API endpoints for Company-Centric CRM
 Uses asyncpg like other CRM routers
 """
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -870,7 +871,7 @@ async def sync_company_drive_folder(
             raise HTTPException(status_code=400, detail="Company has no Google Drive folder linked")
 
     # Build Drive service using SA credentials
-    try:
+    def _build_drive_service() -> Any:
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
 
@@ -893,7 +894,14 @@ async def sync_company_drive_folder(
             sa_path,
             scopes=["https://www.googleapis.com/auth/drive.readonly"],
         )
-        service = build("drive", "v3", credentials=creds)
+        return build("drive", "v3", credentials=creds)
+
+    # The Drive client is synchronous: reading the credentials, building the client
+    # and every listing call below block the thread they run on. This handler runs
+    # on the API's event loop, so they go to a worker thread; run inline, one slow
+    # Drive answer held every other request of the worker.
+    try:
+        service = await asyncio.to_thread(_build_drive_service)
     except Exception as e:
         logger.error("[sync-drive] Failed to build Drive service: %s", e)
         raise HTTPException(status_code=503, detail=f"Drive auth error: {e}")
@@ -928,7 +936,7 @@ async def sync_company_drive_folder(
 
     # Collect all files recursively
     try:
-        files = _list_files_recursive(folder_id)
+        files = await asyncio.to_thread(_list_files_recursive, folder_id)
     except Exception as e:
         logger.error("[sync-drive] Drive list error for folder %s: %s", folder_id, e)
         raise HTTPException(status_code=503, detail=f"Drive list error: {e}")

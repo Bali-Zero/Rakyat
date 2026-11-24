@@ -96,6 +96,50 @@ CHANNEL_CONFIGS: dict[str, ChannelConfig] = {
         progressive=False,
         extra_instructions="2-3 sentences max. Spoken, brief.",
     ),
+    # The AskZantara widget under balizero.com articles (`/api/blog/ask`).
+    # Red-team 2026-11-20: 8 of 36 answers promised this visitor a callback —
+    # "the team will contact you on WhatsApp within one business hour", "I'll
+    # connect you with the team", "I will ensure they are aware". The prompt's
+    # ESCALATION example teaches that promise; on WhatsApp `wa_finalize` backs
+    # it by alerting a human, but here the visitor is anonymous and nothing
+    # alerts anyone, so every such answer is a promise nobody can keep. The
+    # overlay is appended AFTER the persona, so it can override that example.
+    # It is a prompt rule, so a nudge measured on the live endpoint, not a
+    # guarantee. Plain text because the widget renders `whitespace-pre-wrap`:
+    # `**` and `#` reach the reader as raw symbols.
+    "blog": ChannelConfig(
+        name="blog",
+        max_words=800,
+        markdown=False,
+        emoji=True,
+        progressive=False,
+        extra_instructions=(
+            "The visitor is an ANONYMOUS reader of a balizero.com article. This channel "
+            "gives the Bali Zero team no name, phone number or email for them, and "
+            "nothing you write here alerts a person. So NEVER say or imply that the "
+            "team will contact, call, message or reach out to them, that you are "
+            "connecting them with someone, that you have passed on, flagged or "
+            "forwarded their request, or that anyone will reply within any time. "
+            "This overrides every example elsewhere in these instructions that "
+            "promises a callback. When they need a person (they ask for one, want a "
+            "quote, or the answer depends on their own documents), tell them how to "
+            "reach the team themselves: WhatsApp "
+            f"{settings.CLIENT_CONTACT_WHATSAPP} or info@balizero.com. "
+            # Red-team 2026-11-20: a nominee question got no legal warning, and
+            # a request to split the bill was entertained.
+            "A nominee arrangement, where someone holds shares or land for and on "
+            "behalf of a foreigner, is prohibited and void by law: for shares, Law "
+            "25/2007 on Investment, Article 33; for land, Basic Agrarian Law 5/1960, "
+            "Article 26(2). Say so plainly, "
+            "NEVER give a tip on how to set one up or keep it quiet, and point to the "
+            "legal routes (a PT PMA where the business line allows foreign ownership, "
+            "Hak Pakai or HGB). Bali Zero quotes ONE all-inclusive price: never split it "
+            "into a government fee and a Bali Zero fee, never say an invoice can be "
+            "split that way or that the team will consider it, and never put a "
+            "government fee figure beside the price. "
+            "NO markdown: plain text only."
+        ),
+    ),
     "website": ChannelConfig(
         name="website",
         max_words=400,
@@ -117,7 +161,7 @@ def build_channel_context(channel: str) -> str:
     """Build the XML channel context block for injection into the system prompt.
 
     Args:
-        channel: Channel name (webapp, telegram, whatsapp, instagram, voice, website).
+        channel: Channel name (webapp, telegram, whatsapp, instagram, voice, blog, website).
 
     Returns:
         XML string to inject, or empty string if channel is unknown.

@@ -1,14 +1,12 @@
 """Conversation sinks closed before the conversations INSERT grant.
 
 Guilt and innocence per change, with canary values that must never reach a log,
-a span attribute, the OpenClaw bridge payload or the title model.
+a span attribute or the title model.
 """
 
 from __future__ import annotations
 
-import ast
 import logging
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,10 +15,8 @@ from fastapi.testclient import TestClient
 
 from backend.app.core.config import Settings
 from backend.app.routers import agentic_rag as agentic
-from backend.app.routers import whatsapp_chat
 from backend.app.routers.agentic_rag import AgenticQueryRequest
 from backend.app.routers.crm_interactions import router as crm_router
-from backend.services.integrations import openclaw_whatsapp_bridge as bridge
 
 CANARY_EMAIL = "canary.person@example.test"
 CANARY_USER = "canary-user-000000"
@@ -285,107 +281,9 @@ def test_crm_auto_created_prospect_logs_client_id_not_email(caplog) -> None:
     assert dump
 
 
-# --- Change 2: OpenClaw bridge ------------------------------------------------
-
-
-class _FakeClient:
-    def __init__(self, response=None, error=None):
-        self.response, self.error = response, error
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return None
-
-    async def post(self, url, json, headers):
-        if self.error:
-            raise self.error
-        return self.response
-
-
-def _configure_bridge(monkeypatch) -> None:
-    monkeypatch.setattr(
-        bridge.settings, "whatsapp_openclaw_bridge_url", "https://bridge.test/reply"
-    )
-    monkeypatch.setattr(
-        bridge.settings, "whatsapp_openclaw_bridge_secret", "bridge-test-value"
-    )  # pragma: allowlist secret
-    monkeypatch.setattr(bridge.settings, "openclaw_webhook_secret", None)
-
-
-async def _ask() -> str | None:
-    return await bridge.ask_openclaw_whatsapp(
-        phone="whatsapp_000000", message_text="hi", sender_name=None, message_id="wamid.0"
-    )
-
-
-@pytest.mark.asyncio
-async def test_bridge_rejection_logs_status_not_body(monkeypatch, caplog) -> None:
-    _configure_bridge(monkeypatch)
-    response = MagicMock(status_code=422, text=f"echo {CANARY_EMAIL} {CANARY_TEXT}")
-    monkeypatch.setattr(bridge.httpx, "AsyncClient", lambda **_: _FakeClient(response=response))
-    with caplog.at_level(logging.DEBUG):
-        assert await _ask() is None
-    _assert_clean(caplog.text)
-    assert "status=422" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_bridge_transport_failure_logs_type_not_message(monkeypatch, caplog) -> None:
-    _configure_bridge(monkeypatch)
-    err = bridge.httpx.ConnectError(f"cannot reach {CANARY_EMAIL} {CANARY_TEXT}")
-    monkeypatch.setattr(bridge.httpx, "AsyncClient", lambda **_: _FakeClient(error=err))
-    with caplog.at_level(logging.DEBUG):
-        assert await _ask() is None
-    _assert_clean(caplog.text)
-    assert "ConnectError" in caplog.text
-
-
-STORED_CTX = {
-    "client_name": "Synthetic Client",
-    "client_profile": {"note": CANARY_TEXT},
-    "conversation_history": [{"role": "user", "content": CANARY_TEXT}],
-    "detected_language": "en",
-    "is_first_message": False,
-    "sender_identity": {"kind": "client"},
-    "time_of_day": "morning",
-}
-
-
-def test_openclaw_context_flag_off_empties_history_and_profile_keeping_keys() -> None:
-    out = whatsapp_chat.build_openclaw_context(STORED_CTX, send_stored_context=False)
-    assert out["conversation_history"] == []
-    assert out["client_profile"] == {}
-    assert set(out) == set(STORED_CTX)
-    assert CANARY_TEXT not in repr(out)
-    assert out["client_name"] == "Synthetic Client"
-    assert out["detected_language"] == "en"
-
-
-def test_openclaw_context_flag_on_sends_stored_context() -> None:
-    out = whatsapp_chat.build_openclaw_context(STORED_CTX, send_stored_context=True)
-    assert out == STORED_CTX
-
-
-def test_openclaw_call_site_builds_context_through_the_helper() -> None:
-    tree = ast.parse(Path(whatsapp_chat.__file__).read_text())
-    calls = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "ask_openclaw_whatsapp"
-    ]
-    assert len(calls) == 1
-    ctx_kw = next(k for k in calls[0].keywords if k.arg == "context")
-    assert isinstance(ctx_kw.value, ast.Call)
-    assert ctx_kw.value.func.id == "build_openclaw_context"
-    flag = next(k for k in ctx_kw.value.keywords if k.arg == "send_stored_context")
-    assert ast.unparse(flag.value) == "settings.whatsapp_openclaw_send_stored_context"
-
-
 # --- Change 3: title generation ----------------------------------------------
 
 
 def test_stored_context_is_off_and_the_title_flag_is_gone() -> None:
-    assert Settings.model_fields["whatsapp_openclaw_send_stored_context"].default is False
+    assert "whatsapp_openclaw_send_stored_context" not in Settings.model_fields
     assert "conversation_title_generation_enabled" not in Settings.model_fields

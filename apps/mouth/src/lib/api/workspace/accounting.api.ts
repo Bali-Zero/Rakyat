@@ -36,10 +36,13 @@ export interface CashoutRow {
   description: string | null;
   counterparty: string | null;
   payment_method: string | null;
+  cash_company_name?: string | null;
   recorded_by: string | null;
   recorded_at: string | null;
   reversed_by_id: number | null;
   client_name: string | null;
+  /** The service of the linked case (absent from an older backend). */
+  service_name?: string | null;
 }
 
 export type ReconciledStatus = "unmatched" | "matched" | "manual" | "ignored";
@@ -144,12 +147,30 @@ export interface AccountingCompany {
   to_reconcile: number;
 }
 
+export interface CashInvoice {
+  invoice_id: number;
+  invoice_number: string;
+  practice_id: number;
+  client_name: string;
+  service_name: string;
+  amount_idr: number;
+  outstanding_idr: number;
+}
+
+export interface CashReceiptResponse {
+  cashout_id: number;
+  status_after: string;
+  outstanding_idr: number;
+}
+
 /** One unmatched incoming transfer with its light (GET /reconciliation-inbox). */
 export interface ReconciliationInboxItem {
   txn_id: number;
   txn_date: string;
   amount_idr: number;
   description: string;
+  /** The payer the bank line names, "" when it names none (absent from an older backend). */
+  payer_name?: string;
   /** The issuing company whose bank account received it; null when no company owns the account. */
   company_key: string | null;
   light: InboxLight;
@@ -222,6 +243,127 @@ export interface ImportCashoutResponse {
 }
 
 /** Amounts in a statement report are 2-decimal strings (e.g. "1500000.00"). */
+/** What the bank's text says about one debit (GET /outgoings); never stored. */
+export interface OutgoingReading {
+  label: string;
+  detail: string;
+  payee?: string | null;
+  purpose?: string;
+  billing_code?: string;
+  /** PNBP only: debits carrying the same e-billing code; 2 or more is a possible double payment. */
+  code_debits?: number;
+  cheque?: string;
+}
+
+export interface OutgoingItem {
+  id: number;
+  txn_date: string;
+  posted_at: string | null;
+  amount_idr: number;
+  kind: string;
+  description: string;
+  company_key: string;
+  reading: OutgoingReading;
+  /** A transfer fee: the transfer it was charged for. */
+  fee_of_txn_id: number | null;
+  state: OutgoingState;
+  /** The active justification; for a fee that follows its transfer, that transfer's. */
+  justification: OutgoingJustification | null;
+}
+
+export type OutgoingState = "to_justify" | "justified";
+
+export type OutgoingCategory =
+  | "pnbp_case"
+  | "vendor_case"
+  | "staff_reimbursement"
+  | "payroll"
+  | "cash_withdrawal"
+  | "bank_charges"
+  | "tax"
+  | "own_transfer"
+  | "other";
+
+/** One line of a cash withdrawal's breakdown; the lines sum to the debit. */
+/** The case a justification points to, as the accountant reads it. */
+export interface OutgoingCase {
+  client: string | null;
+  service: string | null;
+}
+
+export interface OutgoingJustifyLine {
+  amount_idr: number;
+  category: OutgoingCategory;
+  note: string;
+  practice_id?: number | null;
+  /** Read only: sent by the list, never in a request. */
+  case?: OutgoingCase | null;
+}
+
+export interface OutgoingJustification {
+  category: OutgoingCategory;
+  practice_id: number | null;
+  /** Client name and service of practice_id, when the case still exists. */
+  case?: OutgoingCase | null;
+  recipient: string | null;
+  note: string | null;
+  lines: OutgoingJustifyLine[];
+  by: string;
+  at: string;
+  /** Set on a fee: the transfer whose justification covers it. */
+  follows_txn_id?: number;
+  /** Set when justified with «Justify all PNBP»: the rows of one click share it. */
+  batch_id?: string | null;
+  batch_active_count?: number;
+}
+
+/** POST /outgoings/pnbp-batch: the PNBP debits justified in one go. */
+export interface PnbpBatchResponse {
+  batch_id: string;
+  n: number;
+  total_idr: number;
+  state: OutgoingState;
+}
+
+/** POST /outgoings/batches/{id}/undo: how many rows of the batch were taken back. */
+export interface OutgoingBatchUndoResponse {
+  batch_id: string;
+  n: number;
+  state: OutgoingState;
+}
+
+/** Body of POST /outgoings/{id}/justify; absent optional keys are left out. */
+export interface JustifyOutgoingRequest {
+  category: OutgoingCategory;
+  practice_id?: number;
+  recipient?: string;
+  note?: string;
+  lines?: OutgoingJustifyLine[];
+}
+
+export interface OutgoingActionResponse {
+  txn_id: number;
+  justification_id: number;
+  state: OutgoingState;
+}
+
+export interface OutgoingKindTotal {
+  kind: string;
+  label: string;
+  n: number;
+  total_idr: number;
+}
+
+export interface OutgoingsResponse {
+  items: OutgoingItem[];
+  by_kind: OutgoingKindTotal[];
+  /** Still to justify. */
+  n: number;
+  total_idr: number;
+  n_justified: number;
+  justified_total_idr: number;
+}
+
 export interface BankStatementKindSum {
   count: number;
   total: string;
@@ -298,12 +440,14 @@ const qs = (params: Record<string, string | number | undefined>): string => {
 export const accountingApi = {
   /** Weekly cashout rows (Asya's sheet), newest first. */
   async getCashout(opts?: {
+    month?: string;
     weekLabel?: string;
     type?: string;
     limit?: number;
   }): Promise<CashoutRow[]> {
     return api.get<CashoutRow[]>(
       `/api/crm/accounting/cashout${qs({
+        month: opts?.month,
         week_label: opts?.weekLabel,
         type: opts?.type,
         limit: opts?.limit,
@@ -313,11 +457,13 @@ export const accountingApi = {
 
   /** Parsed bank-statement transactions, newest first; the reconciliation inbox. */
   async getBankTransactions(opts?: {
+    month?: string;
     reconciledStatus?: ReconciledStatus;
     limit?: number;
   }): Promise<BankTransaction[]> {
     return api.get<BankTransaction[]>(
       `/api/crm/accounting/bank-transactions${qs({
+        month: opts?.month,
         reconciled_status: opts?.reconciledStatus,
         limit: opts?.limit,
       })}`,
@@ -325,25 +471,91 @@ export const accountingApi = {
   },
 
   /** What was confirmed, linked or ignored today (WITA); read-only. */
-  async getDoneToday(): Promise<DoneTodayResponse> {
-    return api.get<DoneTodayResponse>("/api/crm/accounting/done-today");
+  async getDoneToday(month?: string): Promise<DoneTodayResponse> {
+    return api.get<DoneTodayResponse>(
+      `/api/crm/accounting/done-today${qs({ month })}`,
+    );
   },
 
   /** The issuing companies, each with its bank account and how far its statements reach. */
-  async getCompanies(): Promise<AccountingCompany[]> {
-    return api.get<AccountingCompany[]>("/api/crm/accounting/companies");
+  async getCompanies(month?: string): Promise<AccountingCompany[]> {
+    return api.get<AccountingCompany[]>(
+      `/api/crm/accounting/companies${qs({ month })}`,
+    );
+  },
+
+  async getCashInvoices(companyKey: string, q: string): Promise<{ items: CashInvoice[] }> {
+    return api.get(`/api/crm/accounting/cash-invoices${qs({ company_key: companyKey, q })}`);
+  },
+
+  async createCashReceipt(payload: {
+    company_key: string; invoice_id: number; amount_idr: number; movement_date: string;
+    reference?: string; request_id: string;
+  }): Promise<CashReceiptResponse> {
+    return api.post("/api/crm/accounting/cash-receipts", payload);
+  },
+
+  /** Debits newest first with their reading and state; `state` lists one side only. */
+  async getOutgoings(opts?: {
+    companyKey?: string;
+    month?: string;
+    limit?: number;
+    state?: OutgoingState;
+  }): Promise<OutgoingsResponse> {
+    return api.get<OutgoingsResponse>(
+      `/api/crm/accounting/outgoings${qs({ company_key: opts?.companyKey, limit: opts?.limit, state: opts?.state, month: opts?.month })}`,
+    );
+  },
+
+  /** Justify one debit. Writes nothing to the cash-out. 404/409/422 carry a `detail` message. */
+  async justifyOutgoing(
+    txnId: number,
+    body: JustifyOutgoingRequest,
+  ): Promise<OutgoingActionResponse> {
+    return api.post<OutgoingActionResponse>(
+      `/api/crm/accounting/outgoings/${txnId}/justify`,
+      body,
+    );
+  },
+
+  /**
+   * Justify the listed PNBP debits in one go (no case), all or nothing; at most
+   * 500 ids. 404/409/422 carry a `detail` message.
+   */
+  async justifyPnbpBatch(txnIds: number[]): Promise<PnbpBatchResponse> {
+    return api.post<PnbpBatchResponse>(
+      `/api/crm/accounting/outgoings/pnbp-batch`,
+      { txn_ids: txnIds },
+    );
+  },
+
+  /** Take back what is still active of a batch made today (WITA). */
+  async undoOutgoingBatch(batchId: string): Promise<OutgoingBatchUndoResponse> {
+    return api.post<OutgoingBatchUndoResponse>(
+      `/api/crm/accounting/outgoings/batches/${encodeURIComponent(batchId)}/undo`,
+    );
+  },
+
+  /** Take back a justification made today (WITA). */
+  async undoOutgoingJustification(
+    txnId: number,
+  ): Promise<OutgoingActionResponse> {
+    return api.post<OutgoingActionResponse>(
+      `/api/crm/accounting/outgoings/${txnId}/undo`,
+    );
   },
 
   /** Unmatched incoming transfers with their light, newest first. */
   async getReconciliationInbox(
     limit?: number,
+    month?: string,
   ): Promise<ReconciliationInboxItem[]> {
     return api.get<ReconciliationInboxItem[]>(
-      `/api/crm/accounting/reconciliation-inbox${qs({ limit })}`,
+      `/api/crm/accounting/reconciliation-inbox${qs({ limit, month })}`,
     );
   },
 
-  /** Attach a transfer to the invoice of a payment already recorded. Moves no money. */
+  /** Attach a transfer to the invoice of a payment already recorded; it enters the cash-out. */
   async linkRecorded(
     payload: LinkRecordedRequest,
   ): Promise<ReconciliationActionResponse> {
@@ -369,6 +581,16 @@ export const accountingApi = {
   ): Promise<ReconciliationActionResponse> {
     return api.post<ReconciliationActionResponse>(
       "/api/crm/accounting/reopen-transaction",
+      { bank_txn_id: bankTxnId },
+    );
+  },
+
+  /** Take back a payment confirmed today (WITA): everything it recorded goes back. Sends no email. */
+  async undoConfirmation(
+    bankTxnId: number,
+  ): Promise<ReconciliationActionResponse> {
+    return api.post<ReconciliationActionResponse>(
+      "/api/crm/accounting/undo-confirmation",
       { bank_txn_id: bankTxnId },
     );
   },

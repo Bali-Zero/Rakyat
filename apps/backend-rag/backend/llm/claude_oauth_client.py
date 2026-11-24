@@ -687,6 +687,8 @@ def _cli_supports_json_schema(claude_cli: str, timeout_s: float = 10) -> bool:
     misread as a generic error and burn every token before failing. We check
     ``--help`` up front and route to the plain text path when absent, instead of
     trial-and-erroring on real model calls.
+    A probe failure returns False for that call without memoizing, so a later
+    call can retry the capability check.
     """
     global _JSON_SCHEMA_SUPPORTED
     if _JSON_SCHEMA_SUPPORTED is not None:
@@ -702,8 +704,8 @@ def _cli_supports_json_schema(claude_cli: str, timeout_s: float = 10) -> bool:
         )
         _JSON_SCHEMA_SUPPORTED = "--json-schema" in (out.stdout + out.stderr)
     except Exception:
-        # If we can't even probe, assume unsupported and fall back to text.
-        _JSON_SCHEMA_SUPPORTED = False
+        # A failed probe falls back to text now but must be retried later.
+        return False
     return _JSON_SCHEMA_SUPPORTED
 
 

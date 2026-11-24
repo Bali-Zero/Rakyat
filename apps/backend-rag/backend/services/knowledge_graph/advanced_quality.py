@@ -75,11 +75,14 @@ def normalize_entity_name(name: str, entity_type: str) -> str:
         normalized = re.sub(r"^[IB]BLI", "KBLI", normalized, flags=re.IGNORECASE)
 
     elif entity_type in ("undang_undang", "peraturan_pemerintah", "perpres", "permen"):
-        # Ensure proper capitalization
-        normalized = normalized.upper()
-        # Standardize "No." format
-        normalized = re.sub(r"\bNO\b", "No.", normalized)
-        normalized = re.sub(r"\bTAHUN\b", "Tahun", normalized)
+        normalized = re.sub(
+            r"^(UU|PP|Perpres|Permen)\b",
+            lambda match: match.group(0).upper(),
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        normalized = re.sub(r"\bno\.*\s*(\d+)", r"No. \1", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"\btahun\b", "Tahun", normalized, flags=re.IGNORECASE)
 
     elif entity_type == "pasal":
         # Capitalize Pasal, Ayat, Huruf

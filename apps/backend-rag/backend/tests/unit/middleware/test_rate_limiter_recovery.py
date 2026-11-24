@@ -45,10 +45,8 @@ class TestRedisErrorBehavior:
         fail-safe semantics (retry Redis every call) are preserved.
         """
         client = MagicMock()
-        pipe = MagicMock()
         sensitive_detail = "redis down for ratelimit:203.0.113.5:/api/auth/verify-magic/token"
-        pipe.execute.side_effect = ConnectionError(sensitive_detail)
-        client.pipeline.return_value = pipe
+        client.register_script.return_value.side_effect = ConnectionError(sensitive_detail)
 
         rl = _fresh_limiter(redis_client=client)
         assert rl.redis_available is True

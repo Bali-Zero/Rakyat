@@ -34,6 +34,11 @@ class AgentRole:
     # then awaits ConfirmationService.request_and_wait. Empty list = no
     # confirmation needed for any tool (admin default).
     requires_confirmation: list[str] = field(default_factory=list)
+    # The desk role of the signed-in person, as their session carries it. Stamped per
+    # request on a COPY of the registry's role, never on the shared object; None on a
+    # principal that no desk session produced. The assistant's CRM reads answer within
+    # what the desk gives the same e-mail and role.
+    desk_role: str | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════

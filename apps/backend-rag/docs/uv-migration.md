@@ -11,7 +11,7 @@ the human-edited input. The `.lock.txt` files are derived artifacts.
 replacement. The two properties we care about:
 
 1. **10–100× faster resolution + install** in CI. The slowest deps in this
-   project (`torch`, `transformers`, `sentence-transformers`, `presidio-*`)
+   project (`torch`, `transformers`, `sentence-transformers`)
    used to dominate cold-cache CI runs at ~3-5 min; with uv + warm
    `~/.cache/uv`, the same work is ~20-40s.
 2. **Hash-pinned reproducibility** via `--generate-hashes`. uv verifies every

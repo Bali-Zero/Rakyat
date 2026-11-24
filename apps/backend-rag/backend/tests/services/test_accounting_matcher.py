@@ -247,3 +247,54 @@ class TestExportRows:
         rows = [{"movement_date": "2026-06-25", "pnbp_idr": 5, "amount_idr": 5}]
         out = build_export_rows(rows)
         assert all(isinstance(cell, str) for row in out for cell in row)
+
+
+class TestEqualConfidenceClosestAmountFirst:
+    """Equal confidence ranks the closest amount first (2026-11-21: one large undated invoice
+    headed the partial-payment list of every smaller transfer)."""
+
+    def test_partial_candidates_closest_amount_first(self) -> None:
+        invs = [
+            _inv(1, 15_000_000, "Contoh Satu"),  # undated, large: escapes the date gate
+            _inv(2, 3_500_000, "Contoh Dua", date(2026, 11, 1)),
+            _inv(3, 5_000_000, "Contoh Tiga", date(2026, 11, 2)),
+        ]
+        out = rank_candidates(
+            transfer_amount_idr=3_400_000,
+            transfer_date=date(2026, 11, 19),
+            payer_memo="BFS FR CENAIDJA UN SESEORANG LAIN",
+            open_invoices=invs,
+        )
+        assert [(c.invoice_id, c.confidence, c.amount_relation) for c in out] == [
+            (2, 0.2, "partial"),
+            (3, 0.2, "partial"),
+            (1, 0.2, "partial"),
+        ]
+
+    def test_confidence_still_comes_first(self) -> None:
+        invs = [
+            _inv(1, 3_450_000, "Contoh Satu", date(2026, 11, 1)),  # closest, partial
+            _inv(2, 3_400_000, "Contoh Dua", date(2026, 11, 1)),  # exact
+            _inv(3, 2_000_000, "Contoh Tiga", date(2026, 11, 1)),  # over
+        ]
+        out = rank_candidates(
+            transfer_amount_idr=3_400_000,
+            transfer_date=date(2026, 11, 19),
+            payer_memo="BFS FR CENAIDJA UN SESEORANG LAIN",
+            open_invoices=invs,
+        )
+        assert [c.invoice_id for c in out] == [2, 1, 3]
+
+    def test_overpayments_closest_first(self) -> None:
+        invs = [
+            _inv(1, 1_000_000, "Contoh Satu", date(2026, 11, 1)),
+            _inv(2, 9_000_000, "Contoh Dua", date(2026, 11, 1)),
+            _inv(3, 5_000_000, "Contoh Tiga", date(2026, 11, 1)),
+        ]
+        out = rank_candidates(
+            transfer_amount_idr=10_000_000,
+            transfer_date=date(2026, 11, 19),
+            payer_memo="",
+            open_invoices=invs,
+        )
+        assert [c.invoice_id for c in out] == [2, 3, 1]

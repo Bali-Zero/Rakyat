@@ -54,10 +54,7 @@ _SAFE_FILENAME_CHAR_RE = re.compile(r"[^A-Za-z0-9._ -]")
 def _sanitize_disposition_filename(raw_name: str | None) -> str:
     """Return an ASCII-safe basename stripped of Content-Disposition injection chars."""
     base = (raw_name or "").replace("\\", "/").split("/")[-1]
-    cleaned = [
-        "_" if (ord(ch) < 32 or ord(ch) == 127) else ch
-        for ch in base
-    ]
+    cleaned = ["_" if (ord(ch) < 32 or ord(ch) == 127) else ch for ch in base]
     safe = _SAFE_FILENAME_CHAR_RE.sub("_", "".join(cleaned)).strip(" .")
     return safe[:150] or "document"
 
@@ -67,13 +64,9 @@ def _resolve_proxy_content_headers(
     file_name: str | None,
 ) -> tuple[str, dict[str, str]]:
     """Force active/unknown MIME types to download as attachment with nosniff."""
-    essence = (
-        (mime_type or "application/octet-stream")
-        .split(";", 1)[0]
-        .strip()
-        .lower()
-        or "application/octet-stream"
-    )
+    essence = (mime_type or "application/octet-stream").split(";", 1)[
+        0
+    ].strip().lower() or "application/octet-stream"
     safe_name = _sanitize_disposition_filename(file_name)
     if essence in _SAFE_INLINE_MIMES:
         media_type = essence
@@ -321,9 +314,7 @@ async def _get_drive_access_token() -> str:
     # google-auth's `credentials.refresh()` is sync — offload to a thread
     # so we don't block the event loop on the TLS handshake to oauth2.googleapis.com.
     if not drive_service.credentials.token:
-        await asyncio.to_thread(
-            drive_service.credentials.refresh, google_auth_requests.Request()
-        )
+        await asyncio.to_thread(drive_service.credentials.refresh, google_auth_requests.Request())
     token = drive_service.credentials.token
     if not token:
         raise HTTPException(
@@ -466,9 +457,7 @@ async def _assert_file_descends_from_owner(
                 file_id,
                 meta_response.status_code,
             )
-            raise HTTPException(
-                status_code=403, detail="Drive file could not be verified"
-            )
+            raise HTTPException(status_code=403, detail="Drive file could not be verified")
 
         parents = meta_response.json().get("parents") or []
         if parents and await _owned(parents):
@@ -496,8 +485,7 @@ async def _assert_file_descends_from_owner(
                 return
 
     logger.warning(
-        "[PROXY-WRITE] denied: file %s does not descend from owner_id=%s within "
-        "%d hops",
+        "[PROXY-WRITE] denied: file %s does not descend from owner_id=%s within %d hops",
         file_id,
         owner_id,
         _MAX_ANCESTOR_HOPS,
@@ -508,9 +496,7 @@ async def _assert_file_descends_from_owner(
     )
 
 
-async def assert_drive_file_belongs_to_client(
-    file_id: str, client_id: int, conn: Any
-) -> None:
+async def assert_drive_file_belongs_to_client(file_id: str, client_id: int, conn: Any) -> None:
     """Write-time guard for `POST .../clients/{client_id}/documents` (+ bulk
     twin) and `PATCH .../clients/{client_id}/documents/{doc_id}`: refuse a
     `file_id` with incompatible ownership. An unambiguous existing registration
@@ -532,9 +518,7 @@ async def assert_drive_file_belongs_to_client(
     )
 
 
-async def assert_drive_file_belongs_to_company(
-    file_id: str, company_id: int, conn: Any
-) -> None:
+async def assert_drive_file_belongs_to_company(file_id: str, company_id: int, conn: Any) -> None:
     """Write-time guard for `POST .../companies/{company_id}/documents`: refuse
     a `file_id` that does not descend from THIS company's own registered Drive
     folder. Takes the caller's ALREADY-OPEN connection — see
@@ -564,16 +548,45 @@ _CLIENT_REGISTERED_FILE_SQL = f"""
           )
 """
 
+# A portal caller is resolved by its login id alone, never by the address its session
+# carries: an address can be reused by another login, a login id cannot.
 _RESOLVE_PORTAL_CLIENT_ID_SQL = """
     SELECT tm.linked_client_id
       FROM team_members tm
       JOIN clients c ON c.id = tm.linked_client_id AND c.deleted_at IS NULL
-     WHERE (tm.id::text = $1 OR LOWER(tm.email) = LOWER($2))
+     WHERE tm.id::text = $1
        AND tm.role = 'client'
        AND tm.active = true
        AND tm.portal_access = true
      LIMIT 1
 """
+
+
+_MAX_CLIENT_ID = 2_147_483_647
+_CLIENT_ID_TEXT = re.compile(r"[1-9][0-9]{0,9}")
+
+
+def _claimed_client_id(current_user: dict[str, Any]) -> tuple[bool, int | None]:
+    """Read the context's `client_id` claim as (well_formed, value).
+
+    No key, or None, is no claim: (True, None). A claim is an int that is not a bool, or a
+    string of digits with no leading zero, between 1 and 2147483647; anything else is
+    malformed: (False, None).
+    """
+    claim = current_user.get("client_id")
+    if claim is None:
+        return True, None
+    if isinstance(claim, bool):
+        return False, None
+    if isinstance(claim, int):
+        value = claim
+    elif isinstance(claim, str) and _CLIENT_ID_TEXT.fullmatch(claim):
+        value = int(claim)
+    else:
+        return False, None
+    if not 1 <= value <= _MAX_CLIENT_ID:
+        return False, None
+    return True, value
 
 
 async def _assert_portal_caller_owns_file(
@@ -600,15 +613,18 @@ async def _assert_portal_caller_owns_file(
             detail="This account type cannot access this resource",
         )
 
-    client_id = current_user.get("client_id")
+    # The database is the authority for the caller's client, always. A claim in the context
+    # can only narrow it: it must be well formed and equal to the client the login resolves to.
+    well_formed, claimed = _claimed_client_id(current_user)
+    login_id = str(current_user.get("user_id") or current_user.get("id") or "")
+    if not well_formed or not login_id:
+        raise HTTPException(status_code=403, detail="File is not in a known client folder")
     async with db_pool.acquire() as conn:
-        if client_id is None:
-            user_id = str(current_user.get("user_id") or current_user.get("id") or "")
-            email = str(current_user.get("email") or "")
-            row = await conn.fetchrow(_RESOLVE_PORTAL_CLIENT_ID_SQL, user_id, email)
-            if row is not None:
-                client_id = row[0] if isinstance(row, tuple) else row.get("linked_client_id")
-        if client_id is None:
+        row = await conn.fetchrow(_RESOLVE_PORTAL_CLIENT_ID_SQL, login_id)
+        client_id = None
+        if row is not None:
+            client_id = row[0] if isinstance(row, tuple) else row.get("linked_client_id")
+        if client_id is None or (claimed is not None and int(client_id) != claimed):
             raise HTTPException(status_code=403, detail="File is not in a known client folder")
         owns = await conn.fetchrow(_CLIENT_REGISTERED_FILE_SQL, file_id, int(client_id))
         if owns is None:

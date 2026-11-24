@@ -33,6 +33,14 @@ export interface Practice {
   family_member_relationship?: string;
   invoice_company_id?: number | null;
   invoice_company_name?: string | null;
+  /** Backend JSONB; may arrive as JSON text. Read `pph` with pphFromMetadata. */
+  metadata?: unknown;
+}
+
+/** PPh withholding on a process; the API stores it in `metadata.pph`. */
+export interface PphSelection {
+  type: "PPH23" | "PPH21" | "PPH4_2";
+  rate_percent: number;
 }
 
 export interface InvoiceCompanyChoice {
@@ -330,7 +338,8 @@ export interface Client {
   address?: string;
   notes?: string;
   google_drive_folder_id?: string;
-  status: "lead" | "active" | "completed" | "lost" | "inactive";
+  // "completed" and "lost" can still be stored on older rows; no write sets them.
+  status: "lead" | "prospect" | "active" | "completed" | "lost" | "inactive";
   client_type: "individual" | "company";
   assigned_to?: string;
   tax_consultant?: string | null;
@@ -623,6 +632,11 @@ export interface ClientProfile {
    *  tax team or a member of a shared client pool; absent on an older
    *  backend (the desk then falls back to the role rule). */
   viewer_can_create_company?: boolean;
+  /** The server's answer for this viewer: may they upload, edit or delete
+   *  documents in this client's Tax Documents Drive folders? True for CRM
+   *  admins and human team members associated with the profile (assigned_to,
+   *  tax_consultant, created_by, or their validated client-pool peers). */
+  viewer_can_manage_tax_documents?: boolean;
   stats: {
     family_count: number;
     documents_count: number;
@@ -669,7 +683,7 @@ export interface CreateClientParams {
   gender?: "M" | "F";
   birthplace?: string;
   notes?: string;
-  status?: "lead" | "active" | "completed" | "lost" | "inactive";
+  status?: "lead" | "prospect" | "active" | "inactive";
   client_type?: "individual" | "company";
   assigned_to?: string;
   tags?: string[];
@@ -892,12 +906,12 @@ export const COMMON_NATIONALITIES = [
   "Zimbabwean",
 ] as const;
 
-// Client statuses
-export const CLIENT_STATUSES = [
+// The client statuses the backend accepts on create, update and the list filter;
+// mirrors STATUS_VALUES in the backend crm_clients router (anything else is a 422).
+export const WRITABLE_CLIENT_STATUSES = [
   { value: "lead", label: "Lead", color: "blue" },
+  { value: "prospect", label: "Prospect", color: "blue" },
   { value: "active", label: "Active", color: "green" },
-  { value: "completed", label: "Completed", color: "purple" },
-  { value: "lost", label: "Lost", color: "red" },
   { value: "inactive", label: "Inactive", color: "gray" },
 ] as const;
 
@@ -1140,6 +1154,7 @@ export interface CreatePracticeParams {
   invoice_company_id?: number; // Company the invoice is addressed to (pick)...
   invoice_company_name?: string; // ...or type: creates/reuses the company and links the client
   invoice_company_npwp?: string;
+  pph?: PphSelection; // Tax team and CRM admins only; omit for no PPh
 }
 
 // ============================================

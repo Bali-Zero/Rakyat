@@ -205,7 +205,7 @@ class PracticeStatusListener:
             practice_id, payload
         ):
             logger.info(
-                "practice_changed: practice=%s recorded in historical mode: no notifications",
+                "practice_changed: practice=%s recorded without notifications (historical or undone)",
                 practice_id,
             )
             return
@@ -222,11 +222,15 @@ class PracticeStatusListener:
             await self._on_status_changed(practice_id, new_status, data)
 
     async def _recorded_without_notifications(self, practice_id: int, payload: str) -> bool:
-        """True when a historical confirmation made this change: nobody is notified.
+        """True when a historical confirmation or an undo (owner rule b) made this change: nobody
+        is notified.
 
         The payload is read again with its numbers as text, so the trigger's `ts` keeps its
-        microseconds. A confirmation moves the payment and never the practice's status, so a
-        change of status, or a change that leaves the payment where it was, is ordinary. If the
+        microseconds. A historical confirmation moves the payment and never the practice's status
+        (only a live one paid in full starts a case), and an undo that gives a case back its
+        `paid` moves the payment only (it moves the status only when it un-starts a case, and
+        then the payment leaves `paid`), so a change of status, or a change that leaves the
+        payment where it was, is ordinary. If the
         answer cannot be read, nothing is sent: an email about an old payment cannot be taken
         back, a missing one can be sent by hand.
         """

@@ -39,13 +39,10 @@ const SECTION_LABELS: Record<FormSection, string> = {
 interface EditFormState {
   full_name: string;
   phone: string;
-  whatsapp: string;
-  nationality: string;
   company_name: string;
   work_role: string;
   // CRIT-8: was 'tax_id', backend expects 'npwp'
   npwp: string;
-  payment_method: string;
   bank_name: string;
   bank_account_number: string;
   // CRIT-8: was 'bank_account_name', backend expects 'bank_account_holder'
@@ -54,7 +51,6 @@ interface EditFormState {
   // CRIT-8: commission_tier replaced by default_commission_type + default_commission_value
   default_commission_type: "percentage" | "flat";
   default_commission_value: string;
-  notes: string;
 }
 
 function FieldGroup({
@@ -101,13 +97,10 @@ function partnerToFormState(partner: Partner): EditFormState {
   return {
     full_name: partner.full_name,
     phone: partner.phone || "",
-    whatsapp: partner.whatsapp || "",
-    nationality: partner.nationality || "",
     company_name: partner.company_name || "",
     work_role: partner.work_role || "",
     // CRIT-8: backend field is 'npwp'
     npwp: partner.npwp || "",
-    payment_method: partner.payment_method || "bank_transfer",
     bank_name: partner.bank_name || "",
     bank_account_number: partner.bank_account_number || "",
     // CRIT-8: backend field is 'bank_account_holder'
@@ -119,7 +112,6 @@ function partnerToFormState(partner: Partner): EditFormState {
       partner.default_commission_value != null
         ? String(partner.default_commission_value)
         : "10",
-    notes: partner.notes || "",
   };
 }
 
@@ -170,24 +162,23 @@ export default function EditPartnerPage() {
 
     setIsSubmitting(true);
     try {
-      // CRIT-8: field names aligned to backend PartnerUpdate model
+      // CRIT-8: field names aligned to backend PartnerUpdate model.
+      // A field left empty is sent as null: that is how the backend empties it. Left
+      // out of the body, the old value (a retired bank account) would stay.
       const body: UpdatePartnerBody = {
         full_name: form.full_name.trim(),
-        phone: form.phone.trim() || undefined,
-        whatsapp: form.whatsapp.trim() || undefined,
-        nationality: form.nationality.trim() || undefined,
-        company_name: form.company_name.trim() || undefined,
-        work_role: form.work_role.trim() || undefined,
-        npwp: form.npwp.trim() || undefined,
-        bank_name: form.bank_name.trim() || undefined,
-        bank_account_number: form.bank_account_number.trim() || undefined,
-        bank_account_holder: form.bank_account_holder.trim() || undefined,
+        phone: form.phone.trim() || null,
+        company_name: form.company_name.trim() || null,
+        work_role: form.work_role.trim() || null,
+        npwp: form.npwp.trim() || null,
+        bank_name: form.bank_name.trim() || null,
+        bank_account_number: form.bank_account_number.trim() || null,
+        bank_account_holder: form.bank_account_holder.trim() || null,
         tax_withholding_category: form.tax_withholding_category,
         default_commission_type: form.default_commission_type,
         default_commission_value: form.default_commission_value
           ? parseFloat(form.default_commission_value)
           : undefined,
-        notes: form.notes.trim() || undefined,
       };
 
       await partnersApi.updatePartner(partnerId, body);
@@ -289,20 +280,6 @@ export default function EditPartnerPage() {
                   placeholder="+62 8xx xxxx xxxx"
                 />
               </FieldGroup>
-              <FieldGroup label="WhatsApp">
-                <Input
-                  value={form.whatsapp}
-                  onChange={(v) => setField("whatsapp", v)}
-                  placeholder="+62 8xx xxxx xxxx"
-                />
-              </FieldGroup>
-              <FieldGroup label="Nationality">
-                <Input
-                  value={form.nationality}
-                  onChange={(v) => setField("nationality", v)}
-                  placeholder="e.g. Indonesian"
-                />
-              </FieldGroup>
               <FieldGroup label="Company Name">
                 <Input
                   value={form.company_name}
@@ -317,17 +294,6 @@ export default function EditPartnerPage() {
                   placeholder="e.g. Real Estate Agent"
                 />
               </FieldGroup>
-              <div className="sm:col-span-2">
-                <FieldGroup label="Notes">
-                  <textarea
-                    value={form.notes}
-                    onChange={(e) => setField("notes", e.target.value)}
-                    rows={3}
-                    className="w-full px-3 py-2 border rounded-lg text-sm placeholder:text-[var(--bz-text-3)] focus:outline-none focus:border-[var(--bz-accent)] resize-none"
-                    style={INPUT_STYLE}
-                  />
-                </FieldGroup>
-              </div>
             </div>
           )}
 
@@ -367,18 +333,6 @@ export default function EditPartnerPage() {
           {/* Payment */}
           {activeSection === "payment" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <FieldGroup label="Payment Method">
-                <select
-                  value={form.payment_method}
-                  onChange={(e) => setField("payment_method", e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:border-[var(--bz-accent)]"
-                  style={INPUT_STYLE}
-                >
-                  <option value="bank_transfer">Bank Transfer</option>
-                  <option value="cash">Cash</option>
-                  <option value="e-wallet">E-Wallet</option>
-                </select>
-              </FieldGroup>
               <FieldGroup label="Bank Name">
                 <Input
                   value={form.bank_name}

@@ -1,5 +1,7 @@
 # Telegram retirement: business call-site contract
 
+> Historical. The legacy inline WhatsApp reply path this contract describes (the onboarding branch and the conversation-log helper in `whatsapp_chat.py`) has since been removed; those two items no longer exist.
+
 This contract defines the bounded implementation after independent review exposed an unspecified notification failure boundary. It incorporates the planning reviews; none of their BLOCK receipts is source acceptance. Release requires a fresh foreign-family gate on the exact final head, normal hosted CI and live proof.
 
 ## Scope and invariants

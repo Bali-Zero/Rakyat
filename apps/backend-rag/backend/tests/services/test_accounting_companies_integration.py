@@ -86,19 +86,19 @@ async def test_statements_count_for_their_company_by_account_digits(db) -> None:
     assert OTHER_KEY not in got
 
 
-async def test_a_statement_of_an_unknown_account_is_reported_as_other(db) -> None:
+async def test_a_statement_of_an_unknown_account_is_reported_on_its_own(db) -> None:
     sid = await _statement(db, "999000111", date(2026, 11, 2))
     await _txn(db, sid)
     await _txn(db, sid)
     rows = await load_companies(db)
-    assert [r["key"] for r in rows] == [*KEYS, OTHER_KEY]
+    assert [r["key"] for r in rows] == [*KEYS, "account:999000111"]
     other = rows[-1]
     assert (other["data_through"], other["statements"], other["to_reconcile"]) == (
         "2026-11-02",
         1,
         2,
     )
-    assert other["company_name"] == "Other accounts"
+    assert other["company_name"] == "Unassigned bank account"
 
 
 async def test_a_longer_number_holding_a_companys_digits_is_another_account(db) -> None:
@@ -109,7 +109,7 @@ async def test_a_longer_number_holding_a_companys_digits_is_another_account(db) 
         await _txn(db, sid)
     got = _by_key(await load_companies(db))
     assert (got[first.key]["statements"], got[first.key]["to_reconcile"]) == (0, 0)
-    assert (got[OTHER_KEY]["statements"], got[OTHER_KEY]["to_reconcile"]) == (4, 4)
+    assert all((got[f"account:{''.join(c for c in account if c.isdigit())}"]["statements"], got[f"account:{''.join(c for c in account if c.isdigit())}"]["to_reconcile"]) == (1, 1) for account in (f"9{digits}", f"{digits}9", digits[1:], digits[:-1]))
 
 
 async def test_a_statement_without_an_account_number_is_other(db) -> None:

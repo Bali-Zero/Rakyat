@@ -25,6 +25,7 @@ from asyncpg.exceptions import CheckViolationError
 from backend.core.pg_json_codec import init_asyncpg_connection
 from backend.services.accounting.cashout_service import cashbook_summary
 from backend.services.accounting.reconcile_service import ReconcileError, confirm_payment
+from backend.services.invoicing.entities import DEFAULT_ENTITY_KEY, ENTITIES
 
 MIGRATION_238 = (
     Path(__file__).resolve().parents[2]
@@ -34,8 +35,35 @@ MIGRATION_239 = (
     Path(__file__).resolve().parents[2]
     / "db" / "migrations_v2" / "239_cashout_worksheet_type.sql"
 )
+MIGRATION_355 = (
+    Path(__file__).resolve().parents[2]
+    / "db" / "migrations_v2" / "355_invoices_issuer_binding.sql"
+)
+MIGRATION_363 = (
+    Path(__file__).resolve().parents[2]
+    / "db" / "migrations_v2" / "363_bank_statement_import.sql"
+)
+MIGRATION_373 = (
+    Path(__file__).resolve().parents[2]
+    / "db" / "migrations_v2" / "373_reconciliation_log_before_state.sql"
+)
+MIGRATION_375 = (
+    Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "375_outgoing_justifications.sql"
+)
+MIGRATION_376 = (
+    Path(__file__).resolve().parents[2]
+    / "db" / "migrations_v2" / "376_outgoing_justification_batch.sql"
+)
+
+# A statement of the default company's account. A transfer settles only invoices of the company
+# that owns the account it reached, and an invoice with no issuer is the default company's.
+DEFAULT_COMPANY_STATEMENT_SQL = (
+    "INSERT INTO bank_statements (source_format, account_number)"
+    f" VALUES ('csv', '{ENTITIES[DEFAULT_ENTITY_KEY].bank_account_number}') RETURNING id"
+)
 
 STUBS = """
+CREATE TABLE IF NOT EXISTS companies (id SERIAL PRIMARY KEY, company_name VARCHAR);
 CREATE TABLE IF NOT EXISTS team_members (id VARCHAR PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, full_name VARCHAR);
 -- Real types: models.py PracticeType (id int PK, code VARCHAR(50) NOT NULL UNIQUE, name
@@ -44,9 +72,23 @@ CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, full_name VARCHAR);
 CREATE TABLE IF NOT EXISTS practice_types (
     id SERIAL PRIMARY KEY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);
 CREATE TABLE IF NOT EXISTS practices (
+    invoice_company_id INT REFERENCES companies(id),
     id SERIAL PRIMARY KEY, client_id INT, payment_status VARCHAR DEFAULT 'unpaid',
     practice_type_id INT REFERENCES practice_types(id),
-    paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now());
+    paid_amount NUMERIC DEFAULT 0, actual_price NUMERIC, updated_at TIMESTAMPTZ DEFAULT now(),
+    status VARCHAR DEFAULT 'inquiry', start_date DATE, client_visible BOOLEAN DEFAULT true,
+    client_summary TEXT);
+-- Real columns of the two tables a case that starts on confirmation writes (uuid, icon and the
+-- action columns of timeline_events left out: nothing here writes them).
+CREATE TABLE IF NOT EXISTS timeline_events (
+    id SERIAL PRIMARY KEY, client_id INT NOT NULL, practice_id INT,
+    event_type VARCHAR NOT NULL, title VARCHAR NOT NULL, description TEXT,
+    event_date TIMESTAMPTZ NOT NULL, client_visible BOOLEAN DEFAULT true,
+    color VARCHAR DEFAULT 'info', created_at TIMESTAMPTZ DEFAULT now(), created_by VARCHAR);
+CREATE TABLE IF NOT EXISTS activity_log (
+    id SERIAL PRIMARY KEY, entity_type VARCHAR NOT NULL, entity_id INT NOT NULL,
+    action VARCHAR NOT NULL, performed_by VARCHAR NOT NULL, changes JSONB, description TEXT,
+    performed_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE IF NOT EXISTS invoices (
     id SERIAL PRIMARY KEY, practice_id INT UNIQUE, invoice_number VARCHAR,
     amount_idr BIGINT, generated_at TIMESTAMPTZ DEFAULT now());
@@ -112,6 +154,12 @@ async def _fresh_db() -> tuple[asyncpg.Connection, str, str]:
     await conn.execute(STUBS)
     await conn.execute(_forward_sql_of(MIGRATION_238))
     await conn.execute(_forward_sql_of(MIGRATION_239))
+    await conn.execute(_forward_sql_of(MIGRATION_355))
+    await conn.execute(_forward_sql_of(MIGRATION_363))
+    await conn.execute(_forward_sql_of(MIGRATION_373))
+    await conn.execute(_forward_sql_of(MIGRATION_373.with_name("382_manual_cash_receipts.sql")))
+    # 363 sets session timeouts for its own run; the tests here keep the defaults they had.
+    await conn.execute("RESET lock_timeout; RESET statement_timeout")
     return conn, dbname, user
 
 
@@ -138,7 +186,7 @@ async def test_confirm_payment_full_side_effects() -> None:
             pid,
         )
         btid = await conn.fetchval(
-            """INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id"""
+            DEFAULT_COMPANY_STATEMENT_SQL
         )
         txid = await conn.fetchval(
             """INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction)
@@ -225,7 +273,7 @@ async def test_confirm_payment_without_movement_date_uses_db_clock() -> None:
             "INSERT INTO invoices (practice_id, invoice_number, amount_idr) VALUES ($1, 'INV-2', 9000000) RETURNING id",
             pid,
         )
-        btid = await conn.fetchval("INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id")
+        btid = await conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
         txid = await conn.fetchval(
             """INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction)
                VALUES ($1, $2, 9000000, 'credit') RETURNING id""",
@@ -399,7 +447,7 @@ async def _world(conn, *, direction: str = "credit", status: str = "unmatched", 
         )
         pids.append(pid)
         iids.append(iid)
-    sid = await conn.fetchval("INSERT INTO bank_statements (source_format) VALUES ('csv') RETURNING id")
+    sid = await conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
     txid = await conn.fetchval(
         "INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction, reconciled_status)"
         " VALUES ($1, $2, 4000000, $3, $4) RETURNING id",

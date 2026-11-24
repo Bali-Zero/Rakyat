@@ -35,7 +35,18 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 def _read_rows(source: str) -> list[dict]:
     text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+    rows = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"line {line_number}: invalid JSON") from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"line {line_number}: expected a JSON object")
+        rows.append(row)
+    return rows
 
 
 def _read_manifest(mouth_dir: Path) -> dict | None:
@@ -73,7 +84,11 @@ def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
         "previous": old_path,
         "degenerate_rings_dropped": build.degenerate_rings,
     }
-    if old_path == f"{WEB_PREFIX}{name}":
+    data_file = mouth_dir / DATA_SUBDIR / name
+    data_file_matches = (
+        data_file.is_file() and hashlib.sha256(data_file.read_bytes()).hexdigest()[:16] == sha16
+    )
+    if old_path == f"{WEB_PREFIX}{name}" and data_file_matches:
         _emit(status="unchanged", **summary)
         return 0
     if check:
@@ -82,18 +97,21 @@ def run(rows: list[dict], mouth_dir: Path, check: bool) -> int:
 
     data_dir = mouth_dir / DATA_SUBDIR
     data_dir.mkdir(parents=True, exist_ok=True)
-    _atomic_write(data_dir / name, body)
+    _atomic_write(data_file, body)
+    # Rewriting a data file that went missing is not a new version: the manifest
+    # keeps the previous version it already names, and that file is kept.
+    previous = manifest.get("previous") if old_path == f"{WEB_PREFIX}{name}" else old_path
     new_manifest = {
         "path": f"{WEB_PREFIX}{name}",
         "features": count,
         "bytes": len(body),
-        "previous": old_path,
+        "previous": previous,
     }
     _atomic_write(mouth_dir / MANIFEST, (json.dumps(new_manifest, indent=2) + "\n").encode("utf-8"))
 
     # The new version is valid and named by the manifest from here on: a cleanup failure
     # is reported, it does not turn a successful publish into a failure.
-    keep = {name, Path(old_path).name if old_path else None}
+    keep = {name, Path(previous).name if previous else None}
     cleanup_errors = []
     try:
         stale_files = [p for p in data_dir.glob("zones-*.json") if p.name not in keep]
@@ -124,7 +142,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.rows:
         parser.error("--rows is required unless --print-sql is given")
-    return run(_read_rows(args.rows), args.mouth_dir, args.check)
+    try:
+        rows = _read_rows(args.rows)
+    except ValueError as exc:
+        _emit(status="invalid", errors=[str(exc)], features=0, malformed=0)
+        return EXIT_INVALID
+    return run(rows, args.mouth_dir, args.check)
 
 
 if __name__ == "__main__":

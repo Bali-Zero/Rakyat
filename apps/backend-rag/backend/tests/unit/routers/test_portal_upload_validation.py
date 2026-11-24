@@ -348,6 +348,31 @@ def test_upload_rejects_active_pdf_before_side_effects(
     portal_service.upload_document.assert_not_awaited()
 
 
+def test_upload_accepts_pdf_whose_stream_data_holds_short_name_bytes(
+    client: TestClient, portal_service: AsyncMock
+) -> None:
+    """Compressed image and font data hold the bytes of /JS and /AA by chance."""
+    from pypdf.generic import NameObject, NumberObject, StreamObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    stream = StreamObject()
+    stream._data = b"\x00\x01/JS\x02\x03/AA\x04 compressed data"
+    stream[NameObject("/Length")] = NumberObject(len(stream._data))
+    writer.pages[0][NameObject("/Contents")] = writer._add_object(stream)
+    payload = BytesIO()
+    writer.write(payload)
+
+    response = client.post(
+        "/api/portal/documents/upload",
+        data={"document_type": "synthetic"},
+        files={"file": ("scan.pdf", payload.getvalue(), "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    portal_service.upload_document.assert_awaited_once()
+
+
 def test_upload_rejects_reviewer_docx_traversal_probe_before_side_effects(
     client: TestClient, portal_service: AsyncMock
 ) -> None:

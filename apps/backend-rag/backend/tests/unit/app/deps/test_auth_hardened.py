@@ -39,45 +39,57 @@ class TestSecurityConfig:
         assert settings.jwt_access_token_expire_hours == 1
 
 
+def _signed_claims(token: str) -> dict:
+    """Decode with the key the signer used, never with ``settings`` read now.
+
+    ``create_access_token`` signs with ``backend.app.routers.auth.JWT_SECRET_KEY``, a
+    copy of the setting taken when that module was first imported. A test elsewhere
+    that patches or swaps the settings at that moment leaves the two different for the
+    rest of the worker, and these claim checks are not about that key.
+    """
+    from backend.app.routers import auth
+
+    return pyjwt.decode(token, auth.JWT_SECRET_KEY, algorithms=["HS256"])
+
+
+def _new_access_token() -> str:
+    from backend.app.routers.auth import create_access_token
+
+    return create_access_token(
+        data={"sub": "user-1", "email": "test@balizero.com", "role": "admin"},
+        expires_delta=timedelta(hours=1),
+    )
+
+
 class TestTokenCreation:
     """Test that tokens include jti and type claims."""
 
     def test_access_token_has_jti(self):
         """Tokens must include a unique jti claim for revocation support."""
-        from backend.app.core.config import settings
-        from backend.app.routers.auth import create_access_token
-
-        token = create_access_token(
-            data={"sub": "user-1", "email": "test@balizero.com", "role": "admin"},
-            expires_delta=timedelta(hours=1),
-        )
-        payload = pyjwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
+        payload = _signed_claims(_new_access_token())
         assert "jti" in payload
         uuid.UUID(payload["jti"])
 
     def test_access_token_has_type_claim(self):
         """Tokens must include type=access claim."""
-        from backend.app.core.config import settings
-        from backend.app.routers.auth import create_access_token
-
-        token = create_access_token(
-            data={"sub": "user-1", "email": "test@balizero.com", "role": "admin"},
-            expires_delta=timedelta(hours=1),
-        )
-        payload = pyjwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
+        payload = _signed_claims(_new_access_token())
         assert payload.get("type") == "access"
 
     def test_access_token_has_iat(self):
         """Tokens must include iat (issued-at) claim."""
-        from backend.app.core.config import settings
-        from backend.app.routers.auth import create_access_token
-
-        token = create_access_token(
-            data={"sub": "user-1", "email": "test@balizero.com", "role": "admin"},
-            expires_delta=timedelta(hours=1),
-        )
-        payload = pyjwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
+        payload = _signed_claims(_new_access_token())
         assert "iat" in payload
+
+    def test_claims_are_read_when_the_settings_key_has_drifted(self, monkeypatch):
+        """The settings key differing from the signer's copy (as a test that patched it
+        during the auth module's first import leaves it) does not hide the claims."""
+        from backend.app.core.config import settings
+
+        _new_access_token()  # the auth module is imported with the real key
+        monkeypatch.setattr(settings, "jwt_secret_key", "drifted-key-for-this-test-only-000000")
+        payload = _signed_claims(_new_access_token())
+        assert "jti" in payload
+        assert payload.get("type") == "access"
 
 
 class TestJWTExpiryValidation:

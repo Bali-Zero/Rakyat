@@ -1283,20 +1283,9 @@ class PracticeTransitionEmailHandler:
     NO PAYLOAD ON THE OUTBOX ROW, same privacy property `PracticeReceivedEmailHandler`
     documents above — `apply_transition` enqueues no payload, so this reads
     `garuda_practices` FRESH at send time rather than trusting anything
-    captured when the job was queued. That also means a later transition
-    overtaking a still-queued earlier one (retry backlog drains out of
-    order) sends the mail matching the practice's CURRENT state, never a
-    stale one describing a state the practice has already moved past.
-
-    NO STATE GUARD, unlike `PaymentPaidEmailHandler`'s `_STATES_WORTH_
-    CONFIRMING`: every state this handler can be asked to announce
-    (`In_review`/`Blocked`/`Submitted`/`Approved`/`Rejected`/`Delivered`) is
-    reached only through a staff-driven CAS transition on an already-`paid`
-    order (`garuda_practices` rows only exist for paid orders — `practice.py`'s
-    own module docstring), so there is no "order refunded out from under
-    this practice" race the way `PracticeReceivedEmailHandler` guards
-    against on intake — nothing in this codebase moves a practice's state
-    on refund.
+    captured when the job was queued. A later transition can overtake a
+    still-queued earlier job, so this handler resolves without sending when
+    the current state is no longer one this job announces.
     """
 
     def __init__(
@@ -1307,12 +1296,14 @@ class PracticeTransitionEmailHandler:
         job_type: str,
         subject: str,
         body: Callable[[PracticeTransitionEmailFacts], str],
+        announced_states: frozenset[str] | None = None,
     ) -> None:
         self._pool = pool
         self._sender = sender
         self._job_type = job_type
         self._subject = subject
         self._body = body
+        self._announced_states = announced_states
 
     async def __call__(self, job: OutboxJob) -> None:
         facts = await self._load(job.order_id)
@@ -1320,6 +1311,15 @@ class PracticeTransitionEmailHandler:
             raise EmailSendFailed(
                 f"order {job.order_id} (or its practice) not found for a queued {self._job_type}"
             )
+        if self._announced_states is not None and facts.state not in self._announced_states:
+            logger.warning(
+                "outbox %s resolved WITHOUT sending for order %s: announced states %s, current state %s",
+                self._job_type,
+                facts.order_id,
+                sorted(self._announced_states),
+                facts.state,
+            )
+            return
         await self._sender.send(to=facts.email, subject=self._subject, html_body=self._body(facts))
         # order id only — never the address, the name or the passport number.
         logger.info("outbox %s sent for order %s", self._job_type, facts.order_id)
@@ -1368,45 +1368,52 @@ def _practice_transition_body(message: str) -> Callable[[PracticeTransitionEmail
     return _body
 
 
-#: (job_type, subject, message) — the message completes "...application
+#: (job_type, subject, message, announced_states) — the message completes "...application
 #: (<case_type>) {message}". Order matches `staff_transitions.py::
 #: apply_transition`'s if/elif chain (PR-02, PR-03/05/08, PR-04, PR-06,
 #: PR-07, PR-09/10, PR-11).
-_PRACTICE_TRANSITION_EMAILS: tuple[tuple[str, str, str], ...] = (
+_PRACTICE_TRANSITION_EMAILS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     (
         "practice_in_review_email",
         "Your VOA application is now in review",
         "is now being reviewed by our team.",
+        ("In_review",),
     ),
     (
         "practice_blocked_email",
         "Action needed on your VOA application",
         "needs your attention before we can continue — please check your tracker for details.",
+        ("Blocked",),
     ),
     (
         "practice_submitted_email",
         "Your VOA application has been submitted",
         "has been submitted to immigration.",
+        ("Submitted",),
     ),
     (
         "practice_approved_email",
         "Your VOA application has been approved",
         "has been approved.",
+        ("Approved",),
     ),
     (
         "practice_rejected_email",
         "Update on your VOA application",
         "was not approved — please check your tracker for details.",
+        ("Rejected",),
     ),
     (
         "practice_resumed_email",
         "Your VOA application is moving again",
         "is being processed again.",
+        ("In_review", "Submitted"),
     ),
     (
         "practice_delivered_email",
         "Your VOA document is ready",
         "is complete — your document is ready.",
+        ("Delivered",),
     ),
 )
 
@@ -1933,8 +1940,10 @@ class StaffPageDuplicateChargeHandler(_StaffPageHandler):
     `late_case_charge_id = $2` UNCONDITIONALLY and OP-08 passes `None`, so at
     page time the column is always EMPTY — it cannot name the live payment or
     anything else. The instruction stands on the true reason instead: a refund
-    through `resolveLateOrder` has nothing to target, and `honoured` walks into
-    the practice weld. A justification that is false in the safe direction is
+    through `resolveLateOrder` has nothing to target, and `honoured` closes the
+    case without refunding the duplicate (the order's `payment.paid` exists,
+    so the release it enqueues is the one already there). A justification that
+    is false in the safe direction is
     still false, and staff calibrate on reasons, not only on orders.
 
     GUARD: `late_case_open`. `repository.py`'s OP-08 branch sets it TRUE the
@@ -1989,8 +1998,9 @@ class StaffPageDuplicateChargeHandler(_StaffPageHandler):
             "OP-08 case writes that column as NULL when it opens — so the "
             "automated refund has nothing to target and raises instead, which "
             "is the safe direction but leaves the case open. Its `honoured` "
-            "resolution closes the case and then fails on every drain "
-            "(PracticeNotMinted), delivering nothing. Refund the duplicate "
+            "resolution closes the case and refunds nothing: the first "
+            "payment already started the practice, so it starts nothing new "
+            "and the duplicate money stays where it is. Refund the duplicate "
             "through the provider, then leave the case OPEN and escalate: a "
             "correct automated close for OP-08 does not exist yet.\n\n"
             f"Order: {self._tracker_link(facts.order_id)}"
@@ -2064,9 +2074,10 @@ class StaffPageLatePaidAfterRefundHandler(_StaffPageHandler):
     closing move, because both are wrong here — `resolveLateOrder`'s
     `refunded_in_full` calls `provider.refund(late_case_charge_id)`
     (`repository.py`, and by then the ROW holds the replayed charge, i.e. the
-    refunded one), while `honoured` walks into the practice weld described in
-    `StaffPageChargeWithoutWebhookHandler`'s docstring. A page that cannot
-    offer a safe close says so rather than inventing one.
+    refunded one), while `honoured` is refused: an order that came here
+    through a refunded OP-F08 case never recorded a `payment.paid`
+    (`HonouredWithoutPaidPayment`, a 409). A page that cannot offer a safe
+    close says so rather than inventing one.
     """
 
     job_type = "staff_page_late_paid_after_refund"
@@ -2084,11 +2095,11 @@ class StaffPageLatePaidAfterRefundHandler(_StaffPageHandler):
                 "delivered the SAME charge as a late payment. The money is "
                 "already with the customer; there is nothing further to "
                 "return.\n\n"
-                "Neither resolveLateOrder outcome is safe on this case: "
-                "`refunded_in_full` asks the provider to refund this same "
-                "charge a SECOND time, and `honoured` closes the case and "
-                "then fails on every drain (PracticeNotMinted), delivering "
-                "nothing. Leave the case OPEN and escalate."
+                "Neither resolveLateOrder outcome is a way out of this "
+                "case: `refunded_in_full` asks the provider to refund this "
+                "same charge a SECOND time, and `honoured` is refused (409) "
+                "because this order never recorded a payment to honour. "
+                "Leave the case OPEN and escalate."
             )
         else:
             instruction = (
@@ -2152,15 +2163,15 @@ class StaffPageChargeWithoutWebhookHandler(_StaffPageHandler):
     would have staff read a sentence that is false about the case in front of
     them.
 
-    THE COPY DOES NOT OFFER "honour" AS A MANUAL ACTION, and that is a
-    finding, not a style choice. `resolve_late_order`'s `honoured` branch
-    enqueues `practice_release` against the RESOLUTION journal event, while
-    `PracticeReleaseHandler` looks a practice up by
-    `source_paid_journal_event_id` — which only ever holds a `payment.paid`
-    event id. Honouring a case by hand therefore closes it and raises
-    `PracticeNotMinted` on every drain: case shut, service never started.
-    That weld predates OP-F08 (it is reachable from OP-F04/F05 too) and is
-    logged for its own PR; what this page can do is not send staff down it.
+    THE COPY DOES NOT OFFER "honour" AS A MANUAL ACTION, because the code
+    refuses it. `resolve_late_order`'s `honoured` branch enqueues
+    `practice_release` against the order's `payment.paid` event, and an OP-F08
+    order has none until a signed webhook arrives: the call raises
+    `HonouredWithoutPaidPayment` (a 409) and leaves the order, the journal
+    and the outbox unchanged. It used to
+    enqueue against the RESOLUTION event instead, which closed the case and
+    raised `PracticeNotMinted` on every drain; the page said so until the copy
+    was brought in line with the refusal.
     The replayed webhook is the route that both closes the case (OP-02 now
     resolves an open case as honoured in the paying transaction) and mints
     the practice.
@@ -2196,8 +2207,9 @@ class StaffPageChargeWithoutWebhookHandler(_StaffPageHandler):
             "customer who never paid — and replay the signed callback. A "
             "replayed webhook reconciles the order itself and closes this "
             "case as honoured, which is the only route that also starts the "
-            "practice. Resolving it as honoured BY HAND does not: it closes "
-            "the case and the customer is left paid with nothing running. "
+            "practice. Resolving it as honoured BY HAND is refused (409): "
+            "the order has no recorded payment until the webhook arrives, "
+            "and the case stays open. "
             "Use resolveLateOrder here only to refund.\n\n"
             "REPLAY ONLY IF YOU HAVE NOT REFUNDED. The two moves on this page "
             "are alternatives, not a sequence. Once this case is refunded the "
@@ -2396,13 +2408,14 @@ def build_handlers(
             portal_base_url=settings.frontend_portal_url,
         ),
     }
-    for job_type, subject, message in _PRACTICE_TRANSITION_EMAILS:
+    for job_type, subject, message, announced_states in _PRACTICE_TRANSITION_EMAILS:
         handlers[job_type] = PracticeTransitionEmailHandler(
             pool,
             sender,
             job_type=job_type,
             subject=subject,
             body=_practice_transition_body(message),
+            announced_states=frozenset(announced_states),
         )
     if staff_page_sender is not None:
         handlers.update(

@@ -23,6 +23,7 @@ from typing import Any
 
 from backend.app.metrics import metrics_collector
 from backend.services.agents.confirmation_service import (
+    ConfirmationError,
     ConfirmationRedisDown,
     ConfirmationService,
     ConfirmationTimeout,
@@ -429,6 +430,16 @@ async def execute_tool(
                 ),
                 time.time() - start_time,
             )
+        except ConfirmationError:
+            metrics_collector.record_tool_call(tool_name, "denied")
+            logger.warning("tool_authz: confirmation interrupted for %s", tool_name)
+            return (
+                _denial_observation(
+                    agent_role,
+                    f"confirmation was interrupted for '{tool_name}'",
+                ),
+                time.time() - start_time,
+            )
         if not approved:
             metrics_collector.record_tool_call(tool_name, "rejected")
             logger.info(
@@ -457,6 +468,10 @@ async def execute_tool(
             arguments["_user_id"] = user_id
         if caller_profile:
             arguments["_caller_profile"] = caller_profile
+        desk_role = getattr(agent_role, "desk_role", None)
+        if user_id and desk_role is not None:
+            # The signed-in desk identity of this request, as its session carries it.
+            arguments["_desk_user"] = {"email": user_id, "role": desk_role}
         result = await tool.execute(**arguments)
         duration = time.time() - start_time
 

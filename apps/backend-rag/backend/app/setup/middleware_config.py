@@ -15,14 +15,6 @@ from backend.middleware.hybrid_auth import HybridAuthMiddleware
 from backend.middleware.rate_limiter import RateLimitMiddleware
 from backend.middleware.request_tracing import RequestTracingMiddleware
 
-try:
-    from backend.middleware.pii_scanner import PIIScannerMiddleware as _PIIScannerMiddleware
-
-    _pii_scanner_available = True
-except ImportError:
-    _PIIScannerMiddleware = None  # type: ignore[assignment]
-    _pii_scanner_available = False
-
 logger = logging.getLogger("zantara.backend")
 
 
@@ -53,31 +45,44 @@ def _register_brotli_middleware(app: FastAPI) -> bool:
             return False
 
 
-def register_middleware(app: FastAPI) -> None:
+def register_middleware(app: FastAPI, *, rate_limit: bool = True) -> None:
     """
     Register all middleware components on FastAPI application.
 
-    Middleware order matters (Starlette wraps in reverse order):
-    1. CORS (first, wraps all responses)
-    2. Brotli/GZip Compression (compress all responses)
-    3. Hybrid Authentication (after CORS)
-    4. Request Tracing (correlation IDs, end-to-end tracing)
-    5. Error Monitoring (monitors 4xx/5xx errors, sends alerts)
-    6. Rate Limiting (prevents API abuse, DoS protection)
-    7. Activity Logging (audit trail)
+    Starlette runs the middleware added LAST first, so the order of the calls below is
+    the reverse of the order on a request, which is:
+
+    1. Activity Logging (audit trail)
+    2. Error Monitoring (monitors 4xx/5xx errors, sends alerts)
+    3. Request Tracing (correlation IDs, end-to-end tracing)
+    4. Hybrid Authentication (establishes who is calling)
+    5. Rate Limiting (counts the caller authentication established)
+    6. Brotli/GZip Compression
+    7. CORS (innermost: it wraps the routes, not the middleware above)
+
+    Rate limiting runs after authentication so that it can count the verified caller;
+    what authentication refuses itself (401, the role boundary's 403, 503) is not counted.
 
     Args:
         app: FastAPI application instance
+        rate_limit: False for an app that is reached only through another app of the
+            same deployment which already enforces the limits (the RAG worker behind
+            the API's proxy route): one request is charged once, by the app that
+            faces the edge.
     """
-    # Add CORS middleware first so it wraps all downstream middleware and responses.
-    # Starlette wraps middleware in reverse order; the first added user-middleware is the outermost.
+    # CORS is added first, which makes it the innermost middleware.
     register_cors_middleware(app)
 
     # Add Brotli compression (or GZip fallback) - compresses all API responses
     has_brotli = _register_brotli_middleware(app)
     compression = "Brotli" if has_brotli else "GZip"
 
-    # Add Hybrid Authentication middleware (after CORS)
+    # Add Rate Limiting middleware (prevents API abuse, DoS protection). Added before
+    # authentication, so it runs after it.
+    if rate_limit:
+        app.add_middleware(RateLimitMiddleware)
+
+    # Add Hybrid Authentication middleware
     app.add_middleware(HybridAuthMiddleware)
 
     # Add Request Tracing middleware (correlation IDs, end-to-end tracing)
@@ -86,23 +91,11 @@ def register_middleware(app: FastAPI) -> None:
     # Add Error Monitoring middleware (monitors 4xx/5xx errors, sends alerts)
     app.add_middleware(ErrorMonitoringMiddleware)
 
-    # Add Rate Limiting middleware (prevents API abuse, DoS protection)
-    app.add_middleware(RateLimitMiddleware)
-
     # Add Activity Logging middleware (logs all API calls for audit trail)
     app.add_middleware(ActivityLoggingMiddleware)
 
-    # Add PII Scanner middleware (redacts Indonesian PII from /api/agentic/* responses)
-    # UU PDP No. 27/2022 Art. 35, 36, 38 compliance
-    if _pii_scanner_available:
-        app.add_middleware(_PIIScannerMiddleware)
-        pii_label = " + PIIScanner"
-    else:
-        logger.warning("⚠️ presidio_analyzer not installed — PIIScanner middleware disabled")
-        pii_label = ""
-
     logger.info(
-        "✅ Middleware registered: CORS + %s + Auth + Tracing + ErrorMonitoring + RateLimiting + ActivityLogging%s",
+        "✅ Middleware registered: CORS + %s + %sAuth + Tracing + ErrorMonitoring + ActivityLogging",
         compression,
-        pii_label,
+        "RateLimiting + " if rate_limit else "",
     )

@@ -22,46 +22,20 @@ from uuid import UUID
 import asyncpg
 from fastapi import HTTPException
 
+from backend.app.utils.service_accounts import TEAM_ROLES
 from backend.services.crm.partners.models import Partner, PartnerAuditLogEntry
 from backend.services.crm.partners.repository import PartnersRepository
 
 logger = logging.getLogger(__name__)
 
 
-# CATA-6: SSOT for internal-team role strings. The router imports this to
-# keep both layers consistent (see _INTERNAL_ROLES_ALWAYS_ALLOWED re-export
-# in routers/partners.py). All comparisons are case-insensitive; callers
-# must .strip().lower() before membership checks.
-INTERNAL_ROLES_ALWAYS_ALLOWED: frozenset[str] = frozenset(
-    {
-        # Legacy/test conventions (kept so existing fixtures still pass)
-        "admin",
-        "team",
-        # Production team_members.role values (job titles)
-        "founder",
-        "ceo",
-        "board member",
-        "team leader",
-        "supervisor",
-        "tax lead",
-        "tax manager",
-        "manager",  # department head title (2026-10-20)
-        "direktur",  # reorganisation 2026-11-09
-        "tax supervisor",
-        "tax responsible",
-        "tax consultant",  # owner order 2026-11-15: same access as Tax Lead
-        "senior consultant",
-        "hr & accounting",
-        "tax care",
-        "accounting",
-        "marketing & accounting",
-        "executive consultant",
-        "specialist advisor",
-        "junior consultant",
-        "reception",
-        "member",
-    }
-)
+# CATA-6: the staff roles that may work with partners. It is the team roster of
+# backend.app.utils.service_accounts (every role a colleague can hold, normalised),
+# not a second hand-kept list: a job title added to the roster is admitted here the
+# same day. The router re-exports it (_INTERNAL_ROLES_ALWAYS_ALLOWED in
+# routers/partners.py). Comparisons are case-insensitive; callers must
+# .strip().lower() before membership checks.
+INTERNAL_ROLES_ALWAYS_ALLOWED: frozenset[str] = TEAM_ROLES
 
 # CATA-6: roles that count as admin-equivalent when email allowlist misses
 # (legacy test fixtures use 'admin'; production uses 'Founder').
@@ -135,16 +109,22 @@ class PartnersService:
     async def list_partners(
         self,
         *,
-        # CATA-5: actor_user is team_members.id (VARCHAR string ID)
-        actor_user: str,
-        actor_role: str,
+        # CATA-5: scope_to and assigned_to are team_members.id (VARCHAR string IDs)
+        scope_to: str | None,
         assigned_to: str | None = None,
         onboarding_status: str | None = None,
         orphaned: bool = False,
         search: str | None = None,
     ) -> list[Partner]:
-        if actor_role == "team":
-            assigned_to = actor_user  # force scope to own
+        """List partners within the scope the caller decided.
+
+        `scope_to` is required: when it is a team_members.id, only that member's partners
+        are listed, whatever owner filter was named (an unassigned-only request then finds
+        none); when it is None, the request's filters apply as given. The list route decides
+        it with the administrator test; nothing here reads a role.
+        """
+        if scope_to is not None:
+            assigned_to = scope_to
         return await self.repo.list_partners(
             assigned_to=assigned_to,
             onboarding_status=onboarding_status,

@@ -137,6 +137,36 @@ export interface PartnerSelfCommission extends PartnerCommissionBase {
   net_amount_idr: number;
 }
 
+/**
+ * A row of `GET /api/partners/{id}/referrals`: the stored referral, nothing
+ * joined. A decimal travels as text ("100.00").
+ */
+export interface PartnerReferralRow {
+  id: string;
+  partner_id: string;
+  practice_id: number;
+  share_percent: string;
+  referred_at: string;
+  referred_by_user_id: string | null;
+  notes: string | null;
+}
+
+/**
+ * A row of `GET /api/partners/{id}/commissions`: the stored ledger entry. A
+ * decimal travels as text ("1250000.00").
+ */
+export interface PartnerCommissionRow {
+  id: string;
+  partner_id: string;
+  entry_type: "accrual" | "clawback" | "manual_adjustment";
+  practice_id: number | null;
+  gross_amount_idr: string;
+  withholding_amount_idr: string;
+  net_amount_idr: string;
+  status: CommissionStatus;
+  created_at: string;
+}
+
 export interface PartnerListResponse {
   partners: Partner[];
   total: number;
@@ -158,8 +188,6 @@ export interface CreatePartnerBody {
   email: string;
   entity_type: EntityType;
   phone?: string;
-  whatsapp?: string;
-  nationality?: string;
   // CRIT-8: backend field is 'npwp', not 'tax_id'
   npwp?: string;
   company_name?: string;
@@ -176,27 +204,24 @@ export interface CreatePartnerBody {
   // Send pdp_consent_version instead when the user checks the consent box.
   pdp_consent_version?: string;
   assigned_to?: string;
-  notes?: string;
 }
 
 export interface UpdatePartnerBody {
+  // null empties the field; a field left out is not changed.
   full_name?: string;
-  phone?: string;
-  whatsapp?: string;
-  nationality?: string;
+  phone?: string | null;
   // CRIT-8: backend field is 'npwp', not 'tax_id'
-  npwp?: string;
-  company_name?: string;
-  work_role?: string;
+  npwp?: string | null;
+  company_name?: string | null;
+  work_role?: string | null;
   // CRIT-8: backend uses default_commission_type + default_commission_value, not commission_tier
   default_commission_type?: "percentage" | "flat";
   default_commission_value?: number;
-  bank_name?: string;
-  bank_account_number?: string;
+  bank_name?: string | null;
+  bank_account_number?: string | null;
   // CRIT-8: backend field is 'bank_account_holder', not 'bank_account_name'
-  bank_account_holder?: string;
+  bank_account_holder?: string | null;
   tax_withholding_category?: TaxWithholdingCategory;
-  notes?: string;
 }
 
 export interface ReassignBody {
@@ -267,11 +292,19 @@ const BASE = "/api/partners";
 
 // ─── API Functions ──────────────────────────────────────────────────────────
 
-/** List partners with optional filters */
-export const listPartners = (filters?: PartnerFilters) =>
-  api.get<PartnerListResponse>(
-    `${BASE}${qs(filters as Record<string, string | number | boolean | null | undefined>)}`,
+/**
+ * List partners with optional filters.
+ *
+ * The page calls its filter `status`; the server's list route reads
+ * `onboarding_status` and ignores a query key it does not know, so the
+ * filter goes out under the server's name.
+ */
+export const listPartners = (filters?: PartnerFilters) => {
+  const { status, ...rest } = filters ?? {};
+  return api.get<PartnerListResponse>(
+    `${BASE}${qs({ ...rest, onboarding_status: status || undefined })}`,
   );
+};
 
 /** Create a new partner */
 export const createPartner = (body: CreatePartnerBody) =>
@@ -321,68 +354,54 @@ export const bulkReassign = (body: BulkReassignBody) =>
 export const createReferral = (partnerId: string, body: CreateReferralBody) =>
   api.post<PartnerReferral>(`${BASE}/${partnerId}/referrals`, body);
 
-/** List referrals for a specific partner */
+/** List referrals for a specific partner. The server answers a bare array. */
 export const listReferrals = (
   partnerId: string,
   params?: Record<string, string | number | null | undefined>,
 ) =>
-  api.get<{ referrals: PartnerReferral[]; total: number }>(
-    `${BASE}/${partnerId}/referrals${qs(params)}`,
-  );
+  api.get<PartnerReferralRow[]>(`${BASE}/${partnerId}/referrals${qs(params)}`);
 
-/** List commissions for a specific partner */
+/** List commissions for a specific partner. The server answers a bare array. */
 export const listCommissions = (
   partnerId: string,
   params?: Record<string, string | number | null | undefined>,
 ) =>
-  api.get<{ commissions: PartnerCommission[]; total: number }>(
+  api.get<PartnerCommissionRow[]>(
     `${BASE}/${partnerId}/commissions${qs(params)}`,
   );
 
 /** Approve a commission */
 // CRIT-8: was /api/partner-commissions/{id}/approve — corrected to /api/partners/commissions/{id}/approve
 export const approveCommission = (id: string) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/approve`,
-    {},
-  );
+  api.post<void>(`${BASE}/commissions/${id}/approve`, {});
 
 /** Mark a commission as paid */
 // CRIT-8: was /api/partner-commissions/{id}/mark-paid — corrected
 export const markPaid = (id: string, body: MarkPaidBody) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/mark-paid`,
-    body,
-  );
+  api.post<void>(`${BASE}/commissions/${id}/mark-paid`, body);
 
 /** Clawback a commission */
 // CRIT-8: was /api/partner-commissions/{id}/clawback — corrected
 export const clawback = (id: string, body: ClawbackBody) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/clawback`,
-    body,
-  );
+  api.post<{ id: string }>(`${BASE}/commissions/${id}/clawback`, body);
 
 /** Waive a commission */
 // CRIT-8: was /api/partner-commissions/{id}/waive — corrected
 export const waive = (id: string, body: WaiveBody) =>
-  api.post<{ success: boolean; commission: PartnerCommission }>(
-    `${BASE}/commissions/${id}/waive`,
-    body,
-  );
+  api.post<void>(`${BASE}/commissions/${id}/waive`, body);
 
-/** Export finance CSV (pending/ready-to-pay commissions) */
+/** Export all finance commission statuses within the requested date range. */
 // CRIT-8: was /api/partners/commissions/export — corrected to /api/partners/finance/export
-export const exportFinanceCsv = (from?: string, to?: string): string => {
-  const params: Record<string, string> = {};
-  if (from) params["from"] = from;
-  if (to) params["to"] = to;
+export const exportFinanceCsv = (from: string, to: string): string => {
+  const params: Record<string, string> = { from, to };
   return `${api.getBaseUrl()}${BASE}/finance/export${qs(params)}`;
 };
 
 /** Get active partners list for dropdown (scoped by caller role) */
 export const listActivePartnersDropdown = () =>
-  api.get<PartnerListResponse>(`${BASE}?status=active&page_size=200`);
+  api.get<PartnerListResponse>(
+    `${BASE}?onboarding_status=active&page_size=200`,
+  );
 
 /** List audit log entries for a partner */
 export const listAuditLog = (partnerId: string) =>

@@ -29,6 +29,9 @@ from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
 from backend.services.common.background import spawn
 from backend.services.common.cache import cache_invalidating
+from backend.services.crm.admin_document_visibility import (
+    admin_document_not_team_deleted_clause,
+)
 from backend.services.crm.documents import validate_client_document_date
 from backend.services.crm.drive_taxonomy import (
     canonical_folders,
@@ -416,7 +419,7 @@ class PortalDocumentsMixin:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 row = await conn.fetchrow(
-                    """
+                    f"""
                     UPDATE documents
                     SET deleted_at = NULL, deleted_by = NULL
                     WHERE id = $1
@@ -424,6 +427,7 @@ class PortalDocumentsMixin:
                       AND client_visible = true
                       AND deleted_at IS NOT NULL
                       AND COALESCE(is_archived, FALSE) = FALSE
+                      AND {admin_document_not_team_deleted_clause()}
                     RETURNING id, file_name, document_type
                     """,
                     document_id,

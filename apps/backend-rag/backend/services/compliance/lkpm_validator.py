@@ -46,7 +46,9 @@ class LKPMValidator:
         alerts.extend(wna_alerts)
 
         # 3. Zero realization detection
-        zero_alerts = await self.detect_zero_realization(draft.client_id)
+        zero_alerts = await self.detect_zero_realization(
+            draft.client_id, draft.company_id, year=draft.year, quarter=draft.quarter
+        )
         alerts.extend(zero_alerts)
 
         # 4. Cross-check consistency (realized ≤ planned)
@@ -77,7 +79,7 @@ class LKPMValidator:
         """Check that client's registered KBLI codes exist in our KBLI database."""
         alerts: list[ValidationAlert] = []
 
-        if not registered_kbli:
+        if not any((code or "").strip() for code in registered_kbli):
             alerts.append(
                 ValidationAlert(
                     field="kbli_codes",
@@ -179,8 +181,22 @@ class LKPMValidator:
 
         return alerts
 
-    async def detect_zero_realization(self, client_id: int) -> list[ValidationAlert]:
-        """Count consecutive quarters with zero investment realization."""
+    async def detect_zero_realization(
+        self,
+        client_id: int,
+        company_id: int | None = None,
+        *,
+        year: int | None = None,
+        quarter: str | None = None,
+    ) -> list[ValidationAlert]:
+        """Count the consecutive quarters with zero investment realization of one company.
+
+        A client can report for several companies, one row per company per quarter:
+        only the rows of the report's own company are read (a report with no company
+        reads the rows with no company), one total per quarter, and none later than
+        the report's own quarter when that is given. An amount that was never filled
+        in counts as zero.
+        """
         alerts: list[ValidationAlert] = []
 
         try:
@@ -188,16 +204,29 @@ class LKPMValidator:
                 rows = await conn.fetch(
                     """
                     SELECT year, quarter,
-                           (realized_equipment_domestic + realized_equipment_import +
-                            realized_building_domestic + realized_building_import +
-                            realized_vehicle_domestic + realized_vehicle_import +
-                            realized_land + realized_working_capital + realized_other) as total
+                           SUM(COALESCE(realized_equipment_domestic, 0)
+                               + COALESCE(realized_equipment_import, 0)
+                               + COALESCE(realized_building_domestic, 0)
+                               + COALESCE(realized_building_import, 0)
+                               + COALESCE(realized_vehicle_domestic, 0)
+                               + COALESCE(realized_vehicle_import, 0)
+                               + COALESCE(realized_land, 0)
+                               + COALESCE(realized_working_capital, 0)
+                               + COALESCE(realized_other, 0)) AS total
                     FROM lkpm_reports
                     WHERE client_id = $1
+                      AND company_id IS NOT DISTINCT FROM $2::integer
+                      AND ($3::integer IS NULL
+                           OR year < $3
+                           OR (year = $3 AND quarter <= $4::text))
+                    GROUP BY year, quarter
                     ORDER BY year DESC, quarter DESC
                     LIMIT 8
                     """,
                     client_id,
+                    company_id,
+                    year,
+                    quarter,
                 )
         except Exception as e:
             logger.warning("Zero realization query failed: %s", e)

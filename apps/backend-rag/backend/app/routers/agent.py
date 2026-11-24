@@ -152,19 +152,29 @@ async def invoke_agent(
         metadata.update(
             {
                 "user_email": current_user.get("email"),
-                "user_id": current_user.get("id"),
+                "user_id": current_user.get("user_id"),
                 "request_timestamp": datetime.now(tz=timezone.utc).isoformat(),
             },
         )
 
+        # `client_id` selects whose stored conversation the graph loads: it is
+        # never taken from the caller's metadata on this route.
+        graph_metadata = {k: v for k, v in metadata.items() if k != "client_id"}
+
         # Invoke the workflow
         final_state = await invoke_rag_workflow(
             question=request.question,
-            metadata=metadata,
+            metadata=graph_metadata,
         )
 
-        # Check for errors
         errors = final_state.get("errors")
+        generation = final_state.get("generation")
+        if generation is None or not generation.strip():
+            generation = "No generation produced"
+            errors = [
+                *(errors or []),
+                "No answer was produced because no relevant document was found.",
+            ]
         success = not bool(errors)
 
         if not success:
@@ -174,7 +184,7 @@ async def invoke_agent(
         response = AgentInvokeResponse(
             success=success,
             question=request.question,
-            generation=final_state.get("generation", "No generation produced"),
+            generation=generation,
             execution_path=final_state.get("execution_path", []),
             step_count=final_state.get("step_count", 0),
             timestamp=final_state.get("timestamp", datetime.now(tz=timezone.utc)),

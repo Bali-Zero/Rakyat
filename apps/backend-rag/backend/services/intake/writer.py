@@ -1816,7 +1816,7 @@ async def rollback_commit(
             INSERT INTO intake_commit_audit (
                 proposal_id, queue_id, client_id, doc_id, practice_id,
                 decision, committed_by, dry_run, outcome, idempotency_key, plan, error
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text::jsonb,$12)
             RETURNING id
             """,
             proposal_id,
@@ -1888,7 +1888,7 @@ async def _write_audit(
         INSERT INTO intake_commit_audit (
             proposal_id, queue_id, client_id, doc_id, practice_id,
             decision, committed_by, dry_run, outcome, idempotency_key, plan, error
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text::jsonb,$12)
         RETURNING id
         """,
         plan.proposal_id,

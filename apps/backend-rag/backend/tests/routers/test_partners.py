@@ -14,6 +14,8 @@ Fixture layout:
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -27,7 +29,7 @@ from fastapi.testclient import TestClient
 import backend.app.routers.partners as partners_module
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.setup.route_walk import iter_leaf_routes
-from backend.services.crm.partners.models import Partner
+from backend.services.crm.partners.models import Partner, PartnerCommission
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -269,10 +271,9 @@ class TestListPartners:
             svc_instance.list_partners = AsyncMock(return_value=[])
             resp = client.get("/api/partners")
         assert resp.status_code == 200
-        # Verify actor_role was passed as team
+        # The team user is scoped to their own partners
         call_kwargs = svc_instance.list_partners.await_args.kwargs
-        assert call_kwargs["actor_role"] == "team"
-        assert str(call_kwargs["actor_user"]) == fake_team["user_id"]
+        assert call_kwargs["scope_to"] == fake_team["user_id"]
 
     @pytest.mark.integration
     def test_list_partners_returns_envelope_shape(self, admin_app) -> None:
@@ -501,6 +502,67 @@ class TestUpdatePartner:
                 json={"full_name": "Hacker"},
             )
         assert resp.status_code == 403
+
+
+class TestPartnerUpdateCommissionBounds:
+    """default_commission_value is bounded on the PATCH request model."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"default_commission_value": "-1"},
+            {"default_commission_type": "percentage", "default_commission_value": "100.01"},
+            {"default_commission_type": "percentage", "default_commission_value": "5000"},
+            {"default_commission_type": "flat", "default_commission_value": "-0.01"},
+            {"default_commission_value": "99999999999"},
+        ],
+    )
+    def test_out_of_range_commission_is_refused(self, payload) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            partners_module.PartnerUpdate(**payload)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"default_commission_value": "0"},
+            {"default_commission_value": "12.5"},
+            {"default_commission_type": "percentage", "default_commission_value": "100"},
+            {"default_commission_type": "flat", "default_commission_value": "250000"},
+        ],
+    )
+    def test_ordinary_commission_is_accepted(self, payload) -> None:
+        partners_module.PartnerUpdate(**payload)
+
+    @pytest.mark.integration
+    def test_patch_with_negative_commission_returns_422(self, team_app) -> None:
+        _, client, _, _ = team_app
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.update_partner = AsyncMock()
+            resp = client.patch(
+                f"/api/partners/{_PARTNER_ID}",
+                json={"default_commission_value": "-5"},
+            )
+        assert resp.status_code == 422
+        svc_instance.update_partner.assert_not_awaited()
+
+    @pytest.mark.integration
+    def test_patch_with_percentage_over_100_returns_422(self, team_app) -> None:
+        _, client, _, _ = team_app
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.update_partner = AsyncMock()
+            resp = client.patch(
+                f"/api/partners/{_PARTNER_ID}",
+                json={"default_commission_type": "percentage", "default_commission_value": "150"},
+            )
+        assert resp.status_code == 422
+        svc_instance.update_partner.assert_not_awaited()
 
 
 # ── 5. activate / deactivate ──────────────────────────────────────────────────
@@ -819,7 +881,259 @@ class TestCreateReferralCata3:
         assert resp.status_code == 201
 
 
+class TestCreateReferralJobTitleStaff:
+    """Ownership checks bind every non-admin staff member, whatever the role title."""
+
+    @staticmethod
+    def _job_title_app(mock_db_pool) -> tuple[TestClient, AsyncMock, dict[str, Any]]:
+        pool, conn = mock_db_pool
+        staff = {
+            "user_id": str(_TEAM_ID),
+            "email": "staff@test.invalid",
+            "role": "Tax Lead",
+            "permissions": [],
+        }
+        app = _make_app(staff, pool)
+        return TestClient(app, raise_server_exceptions=False), conn, staff
+
+    @pytest.mark.integration
+    def test_job_title_staff_cannot_attach_unowned_partner(self, mock_db_pool) -> None:
+        client, _, _ = self._job_title_app(mock_db_pool)
+        partner_owned_by_other = _make_partner(assigned_to=str(_USER_ID))
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=partner_owned_by_other)
+            svc_instance.repo.insert_referral = AsyncMock(return_value=_REFERRAL_ID)
+            resp = client.post(f"/api/partners/{_PARTNER_ID}/referrals", json={"practice_id": 1})
+        assert resp.status_code == 403
+        svc_instance.repo.insert_referral.assert_not_awaited()
+
+    @pytest.mark.integration
+    def test_job_title_staff_cannot_attach_practice_of_another_owner(self, mock_db_pool) -> None:
+        client, conn, staff = self._job_title_app(mock_db_pool)
+        own_partner = _make_partner(assigned_to=staff["user_id"])
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": 1, "client_id": 7},
+                {"assigned_to": str(_USER_ID)},
+            ]
+        )
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=own_partner)
+            svc_instance.repo.insert_referral = AsyncMock(return_value=_REFERRAL_ID)
+            resp = client.post(f"/api/partners/{_PARTNER_ID}/referrals", json={"practice_id": 1})
+        assert resp.status_code == 403
+        svc_instance.repo.insert_referral.assert_not_awaited()
+
+    @pytest.mark.integration
+    def test_job_title_staff_owning_partner_and_practice_passes(self, mock_db_pool) -> None:
+        client, conn, staff = self._job_title_app(mock_db_pool)
+        own_partner = _make_partner(assigned_to=staff["user_id"])
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": 1, "client_id": 7},
+                {"assigned_to": staff["user_id"]},
+            ]
+        )
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=own_partner)
+            svc_instance.repo.insert_referral = AsyncMock(return_value=_REFERRAL_ID)
+            resp = client.post(f"/api/partners/{_PARTNER_ID}/referrals", json={"practice_id": 1})
+        assert resp.status_code == 201
+
+
 # ── 8. commissions ────────────────────────────────────────────────────────────
+
+
+class TestJobTitleStaffListAndCreate:
+    """Every non-admin staff member lists and creates partners as their owner."""
+
+    @staticmethod
+    def _client(mock_db_pool, role: str, email: str) -> tuple[TestClient, dict[str, Any]]:
+        pool, _ = mock_db_pool
+        user = {"user_id": str(_TEAM_ID), "email": email, "role": role, "permissions": []}
+        return TestClient(_make_app(user, pool), raise_server_exceptions=False), user
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("query", ["", f"?assigned_to={_USER_ID}"])
+    def test_job_title_staff_list_is_scoped_to_their_own_partners(
+        self, mock_db_pool, query
+    ) -> None:
+        client, staff = self._client(mock_db_pool, "Tax Lead", "staff@test.invalid")
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.list_partners = AsyncMock(return_value=[])
+            resp = client.get(f"/api/partners{query}")
+        assert resp.status_code == 200
+        assert svc_instance.list_partners.await_args.kwargs["scope_to"] == staff["user_id"]
+
+    @pytest.mark.integration
+    def test_admin_list_keeps_the_owner_filter_it_names(self, admin_app) -> None:
+        _, client, _, _ = admin_app
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.list_partners = AsyncMock(return_value=[])
+            named = client.get(f"/api/partners?assigned_to={_TEAM_ID}")
+            unfiltered = client.get("/api/partners")
+        assert named.status_code == 200 and unfiltered.status_code == 200
+        calls = svc_instance.list_partners.await_args_list
+        assert calls[0].kwargs["assigned_to"] == str(_TEAM_ID)
+        assert calls[1].kwargs["assigned_to"] is None
+        assert calls[0].kwargs["scope_to"] is None
+        assert calls[1].kwargs["scope_to"] is None
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("named_owner", [None, str(_USER_ID)])
+    def test_job_title_staff_owns_the_partner_they_create(self, mock_db_pool, named_owner) -> None:
+        client, staff = self._client(mock_db_pool, "Tax Lead", "staff@test.invalid")
+        body = {"full_name": "Hotel Kama", "email": "h@k.io", "entity_type": "corporate_pt"}
+        if named_owner is not None:
+            body["assigned_to"] = named_owner
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.create_partner = AsyncMock(return_value=_PARTNER_ID)
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(
+                return_value=_make_partner(assigned_to=staff["user_id"])
+            )
+            resp = client.post("/api/partners", json=body)
+        assert resp.status_code == 201
+        assert svc_instance.create_partner.await_args.kwargs["assigned_to"] == staff["user_id"]
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("named_owner", [None, str(_TEAM_ID)])
+    def test_admin_create_keeps_the_owner_it_names(self, admin_app, named_owner) -> None:
+        _, client, _, _ = admin_app
+        body = {"full_name": "Hotel Kama", "email": "h@k.io", "entity_type": "corporate_pt"}
+        if named_owner is not None:
+            body["assigned_to"] = named_owner
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.create_partner = AsyncMock(return_value=_PARTNER_ID)
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=_make_partner())
+            resp = client.post("/api/partners", json=body)
+        assert resp.status_code == 201
+        assert svc_instance.create_partner.await_args.kwargs["assigned_to"] == named_owner
+
+
+class TestPartnerStaffRolesAreTheTeamRoster:
+    """The staff roles admitted to the partner routes are the canonical team roster."""
+
+    @pytest.mark.unit
+    def test_the_partner_staff_roles_are_the_team_roster(self) -> None:
+        from backend.app.utils.service_accounts import TEAM_ROLES
+
+        assert partners_module._INTERNAL_ROLES_ALWAYS_ALLOWED == TEAM_ROLES
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "role", ["Consultant", "Marketing Advisory", "Finance & Client Services Coordinator"]
+    )
+    def test_every_roster_title_reaches_the_partner_routes(self, role) -> None:
+        user = {"role": role, "email": "staff@test.invalid", "permissions": []}
+        assert partners_module._require_team_or_admin(user) is None  # no raise
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("role", ["client", "partner", "user", "", "monitoring", "group_staff"])
+    def test_a_role_outside_the_roster_stays_refused(self, role) -> None:
+        from fastapi import HTTPException
+
+        user = {"role": role, "email": "someone@test.invalid", "permissions": []}
+        with pytest.raises(HTTPException) as exc_info:
+            partners_module._require_team_or_admin(user)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.integration
+    def test_a_roster_title_lists_only_its_own_partners(self, mock_db_pool) -> None:
+        pool, _ = mock_db_pool
+        staff = {
+            "user_id": str(_TEAM_ID),
+            "email": "staff@test.invalid",
+            "role": "Finance & Client Services Coordinator",
+            "permissions": [],
+        }
+        client = TestClient(_make_app(staff, pool), raise_server_exceptions=False)
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.list_partners = AsyncMock(return_value=[])
+            resp = client.get("/api/partners")
+        assert resp.status_code == 200
+        assert svc_instance.list_partners.await_args.kwargs["scope_to"] == staff["user_id"]
+
+
+class TestClawbackAmountThroughTheRoute:
+    """The real engine behind the route: a refused amount is a 400 and nothing is written.
+
+    The repository is a stub because the route runs on the TestClient's own event loop, which
+    cannot share an asyncpg connection with the test; the setting read finds no row.
+    """
+
+    @staticmethod
+    def _paid() -> PartnerCommission:
+        now = datetime.now(timezone.utc)
+        return PartnerCommission(
+            id=_COMMISSION_ID,
+            partner_id=_PARTNER_ID,
+            entry_type="accrual",
+            base_amount_idr=Decimal("10000000"),
+            commission_type_snapshot="percentage",
+            commission_value_snapshot=Decimal("10.0"),
+            rule_source="partner_default",
+            gross_amount_idr=Decimal("1000000"),
+            withholding_category="pph23",
+            withholding_rate=Decimal("2.0"),
+            withholding_amount_idr=Decimal("20000"),
+            net_amount_idr=Decimal("980000.00"),
+            status="paid",
+            accrued_at=now,
+            eligible_for_approval_at=now,
+            created_at=now,
+        )
+
+    def _post(self, admin_app, amount: str) -> tuple[Any, list[dict[str, Any]]]:
+        _, client, _, _ = admin_app
+        inserted: list[dict[str, Any]] = []
+        paid = self._paid()
+
+        class _StubRepo:
+            def __init__(self, conn: Any) -> None:
+                pass
+
+            async def get_commission(self, commission_id: Any) -> PartnerCommission:
+                return paid
+
+            async def insert_commission(self, **kwargs: Any) -> uuid.UUID:
+                inserted.append(kwargs)
+                return uuid.UUID("ffffffff-0000-0000-0000-000000000001")
+
+        with patch("backend.services.crm.partners.commission_engine.PartnersRepository", _StubRepo):
+            resp = client.post(
+                f"/api/partners/commissions/{_COMMISSION_ID}/clawback",
+                json={"reason": "refund", "amount_idr": amount},
+            )
+        return resp, inserted
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("amount", ["0.001", "1E+30"])
+    def test_a_refused_amount_is_a_400_and_nothing_is_written(self, admin_app, amount) -> None:
+        resp, inserted = self._post(admin_app, amount)
+        assert resp.status_code == 400
+        assert "at most the commission net amount" in resp.json()["detail"]
+        assert inserted == []
+
+    @pytest.mark.integration
+    def test_a_half_cent_is_stored_as_the_ledger_rounds_it(self, admin_app) -> None:
+        resp, inserted = self._post(admin_app, "0.005")
+        assert resp.status_code == 201
+        assert len(inserted) == 1
+        assert inserted[0]["gross_amount_idr"] == Decimal("-0.01")
+        assert inserted[0]["net_amount_idr"] == Decimal("-0.01")
 
 
 class TestCommissions:
@@ -927,6 +1241,56 @@ class TestCommissions:
             json={"reason": "test"},
         )
         assert resp.status_code == 403
+
+
+class TestPartnerAuditLogAccess:
+    """The audit log of a partner record is an internal view: staff only."""
+
+    @staticmethod
+    def _get_audit_log(client: TestClient):
+        partner = _make_partner()
+
+        async def _verify(*args, **kwargs):
+            return partner
+
+        with (
+            patch("backend.app.routers.partners.verify_partner_access_with_role") as mock_verify,
+            patch("backend.app.routers.partners.PartnersService") as MockSvc,
+        ):
+            mock_verify.side_effect = _verify
+            MockSvc.return_value.list_audit = AsyncMock(return_value=[])
+            return client.get(f"/api/partners/{_PARTNER_ID}/audit-log")
+
+    @pytest.mark.integration
+    def test_partner_role_cannot_read_own_audit_log(self, partner_app) -> None:
+        _, client, _, _ = partner_app
+        resp = self._get_audit_log(client)
+        assert resp.status_code == 403
+
+    @pytest.mark.integration
+    def test_admin_can_read_audit_log(self, admin_app) -> None:
+        _, client, _, _ = admin_app
+        resp = self._get_audit_log(client)
+        assert resp.status_code == 200
+
+    @pytest.mark.integration
+    def test_owning_staff_can_read_audit_log(self, team_app) -> None:
+        _, client, _, _ = team_app
+        resp = self._get_audit_log(client)
+        assert resp.status_code == 200
+
+    @pytest.mark.integration
+    def test_partner_role_still_reads_own_record(self, partner_app) -> None:
+        _, client, _, _ = partner_app
+        partner = _make_partner()
+
+        async def _verify(*args, **kwargs):
+            return partner
+
+        with patch("backend.app.routers.partners.verify_partner_access_with_role") as mock_verify:
+            mock_verify.side_effect = _verify
+            resp = client.get(f"/api/partners/{_PARTNER_ID}")
+        assert resp.status_code == 200
 
 
 # ── 9. /me endpoints ──────────────────────────────────────────────────────────
@@ -1101,6 +1465,67 @@ class TestFinanceExport:
         assert "commission_id" in first_line
         assert "partner" in first_line
         assert "net_idr" in first_line
+
+    @pytest.mark.integration
+    def test_finance_export_escapes_formula_prefixes(self, admin_app) -> None:
+        _, client, pool, conn = admin_app
+        values = {
+            "id": str(_COMMISSION_ID),
+            "full_name": "=SUM(1,1)",
+            "npwp": None,
+            "entity_type": "individual",
+            "entry_type": "accrual",
+            "gross_amount_idr": Decimal("1000000"),
+            "withholding_category": "tbd",
+            "withholding_amount_idr": Decimal("0"),
+            "net_amount_idr": Decimal("1000000"),
+            "status": "approved",
+            "paid_at": None,
+            "paid_via": None,
+            "payment_reference": "@synthetic-ref",
+        }
+        mock_row = MagicMock()
+        mock_row.keys = MagicMock(return_value=list(values))
+        mock_row.__getitem__ = MagicMock(side_effect=values.__getitem__)
+        conn.fetch = AsyncMock(return_value=[mock_row])
+
+        resp = client.get("/api/partners/finance/export?from=2026-01-01&to=2026-04-30")
+
+        assert resp.status_code == 200
+        row = list(csv.reader(io.StringIO(resp.text)))[1]
+        assert row[1] == "'=SUM(1,1)"
+        assert row[12] == "'@synthetic-ref"
+
+    @pytest.mark.integration
+    def test_finance_export_preserves_safe_text_numbers_and_none(self, admin_app) -> None:
+        _, client, pool, conn = admin_app
+        values = {
+            "id": str(_COMMISSION_ID),
+            "full_name": "Synthetic Partner",
+            "npwp": None,
+            "entity_type": "individual",
+            "entry_type": "accrual",
+            "gross_amount_idr": Decimal("1000000"),
+            "withholding_category": "tbd",
+            "withholding_amount_idr": Decimal("0"),
+            "net_amount_idr": Decimal("-2500"),
+            "status": "approved",
+            "paid_at": None,
+            "paid_via": None,
+            "payment_reference": None,
+        }
+        mock_row = MagicMock()
+        mock_row.keys = MagicMock(return_value=list(values))
+        mock_row.__getitem__ = MagicMock(side_effect=values.__getitem__)
+        conn.fetch = AsyncMock(return_value=[mock_row])
+
+        resp = client.get("/api/partners/finance/export?from=2026-01-01&to=2026-04-30")
+
+        assert resp.status_code == 200
+        row = list(csv.reader(io.StringIO(resp.text)))[1]
+        assert row[1] == "Synthetic Partner"
+        assert row[8] == "-2500"
+        assert row[2] == ""
 
     @pytest.mark.integration
     def test_finance_export_team_forbidden(self, team_app) -> None:
@@ -1324,3 +1749,171 @@ class TestRequireFinance:
         with pytest.raises(HTTPException) as exc_info:
             partners_module._require_finance(user)
         assert exc_info.value.status_code == 403
+
+
+# ── A field sent as null is emptied ──────────────────────────────────────────
+
+# Written by hand, not read from the router: a field added to the update must be put
+# in one of the two lists before these tests pass.
+_NEVER_EMPTIED = [
+    "full_name",
+    "email",
+    "entity_type",
+    "preferred_language",
+    "tax_withholding_category",
+    "payment_currency",
+    "default_commission_type",
+    "default_commission_value",
+    "pdp_consent_version",
+    "terms_version",
+]
+_CAN_BE_EMPTIED = [
+    "work_role",
+    "company_name",
+    "office_address",
+    "phone",
+    "npwp",
+    "nik",
+    "fiscal_address",
+    "bank_name",
+    "bank_account_holder",
+    "bank_account_number",
+    "ewallet_type",
+    "ewallet_number",
+    "iban",
+    "payment_notes",
+]
+
+
+class TestUpdatePartnerEmptiesAField:
+    """A field sent as null is emptied; one that is not sent is left as it is."""
+
+    @staticmethod
+    def _update(client: TestClient, body: dict[str, Any]) -> tuple[Any, AsyncMock]:
+        with patch("backend.app.routers.partners.PartnersService") as MockSvc:
+            svc_instance = MockSvc.return_value
+            svc_instance.update_partner = AsyncMock()
+            svc_instance.repo = MagicMock()
+            svc_instance.repo.get_partner = AsyncMock(return_value=_make_partner())
+            resp = client.patch(f"/api/partners/{_PARTNER_ID}", json=body)
+        return resp, svc_instance.update_partner
+
+    @staticmethod
+    def _fields(update: AsyncMock) -> dict[str, Any]:
+        sent = dict(update.await_args.kwargs)
+        sent.pop("actor_user")
+        sent.pop("actor_role")
+        return sent
+
+    def test_a_field_sent_as_null_is_emptied(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, {"bank_account_number": None, "phone": None})
+
+        assert resp.status_code == 200
+        assert self._fields(update) == {"bank_account_number": None, "phone": None}
+
+    def test_a_field_that_is_not_sent_is_left_as_it_is(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, {"full_name": "Updated Name"})
+
+        assert resp.status_code == 200
+        assert self._fields(update) == {"full_name": "Updated Name"}
+
+    def test_a_new_value_and_an_emptied_field_travel_together(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(
+            client, {"bank_name": "Bank Baru", "bank_account_number": None, "iban": None}
+        )
+
+        assert resp.status_code == 200
+        assert self._fields(update) == {
+            "bank_name": "Bank Baru",
+            "bank_account_number": None,
+            "iban": None,
+        }
+
+    def test_every_field_that_can_be_empty_is_emptied_when_sent_as_null(self, team_app) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, dict.fromkeys(_CAN_BE_EMPTIED))
+
+        assert resp.status_code == 200
+        assert self._fields(update) == dict.fromkeys(_CAN_BE_EMPTIED)
+
+    @pytest.mark.parametrize("name", _NEVER_EMPTIED)
+    def test_a_field_every_partner_has_is_never_emptied(self, team_app, name: str) -> None:
+        _, client, _, _ = team_app
+
+        resp, update = self._update(client, {name: None, "phone": None})
+
+        assert resp.status_code == 422
+        update.assert_not_awaited()
+
+    def test_the_edit_pages_whole_request_is_saved_and_audited(self, team_app) -> None:
+        """The real service and repository under the handler: only the connection is a
+        stand-in. The page always sends the commission value, a number, with the rest."""
+        import json
+
+        _, client, _, conn = team_app
+        stored = _make_partner(
+            phone="+62 811 000 000",
+            company_name="Zz Agency",
+            bank_name="Bank Lama",
+            bank_account_number="1234567890",
+            bank_account_holder="Zz Holder",
+        )
+        body = {
+            "full_name": "Test Partner",
+            "phone": "+62 811 000 000",
+            "company_name": "Zz Agency",
+            "work_role": None,
+            "npwp": None,
+            "bank_name": "Bank Lama",
+            "bank_account_number": None,
+            "bank_account_holder": "Zz Holder",
+            "tax_withholding_category": "tbd",
+            "default_commission_type": "percentage",
+            "default_commission_value": 12.5,
+        }
+        with (
+            patch(
+                "backend.services.crm.partners.service.verify_partner_access_with_role",
+                AsyncMock(return_value=stored),
+            ),
+            patch(
+                "backend.services.crm.partners.repository.PartnersRepository.get_partner",
+                AsyncMock(return_value=stored),
+            ),
+        ):
+            resp = client.patch(f"/api/partners/{_PARTNER_ID}", json=body)
+
+        assert resp.status_code == 200, resp.text
+        statements = [call.args for call in conn.execute.await_args_list]
+        update = next(args for args in statements if args[0].startswith("UPDATE partners SET"))
+        audit = next(args for args in statements if "INSERT INTO partner_audit_log" in args[0])
+        assert "bank_account_number = $" in update[0]
+        assert Decimal("12.5") in update[1:]
+        assert audit[3] == "updated"
+        assert json.loads(audit[4]) == {
+            "full_name": "Test Partner",
+            "phone": "+62 811 000 000",
+            "company_name": "Zz Agency",
+            "work_role": None,
+            "npwp": None,
+            "bank_name": "Bank Lama",
+            "bank_account_number": "1234567890",
+            "bank_account_holder": "Zz Holder",
+            "tax_withholding_category": "tbd",
+            "default_commission_type": "percentage",
+            "default_commission_value": "10.0",
+        }
+        assert json.loads(audit[5]) == {**body, "default_commission_value": "12.5"}
+
+    def test_every_field_of_the_update_is_in_one_of_the_two_lists(self) -> None:
+        fields = set(partners_module.PartnerUpdate.model_fields)
+
+        assert fields == set(_NEVER_EMPTIED) | set(_CAN_BE_EMPTIED)
+        assert not set(_NEVER_EMPTIED) & set(_CAN_BE_EMPTIED)

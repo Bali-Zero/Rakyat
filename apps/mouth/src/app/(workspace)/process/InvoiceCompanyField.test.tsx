@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/error-handler";
@@ -581,6 +581,72 @@ describe("invoice company helpers", () => {
     ).toBeNull();
     expect(ambiguityFromError(new Error("x"), "a")).toBeNull();
   });
+
+  const ambiguousError = (candidates: unknown) =>
+    new ApiError("x", 409, {
+      detail: { code: "invoice_company_ambiguous", candidates },
+    });
+
+  it("shows one named button per candidate and picks its id", async () => {
+    mockSuggest.mockResolvedValue({
+      autofill: false,
+      suggested_company_id: null,
+      companies: [],
+    });
+    const ambiguity = ambiguityFromError(
+      ambiguousError([
+        { id: 1, company_name: "A" },
+        { id: 2, company_name: "B" },
+      ]),
+      "typed",
+    );
+    const onPick = vi.fn();
+    render(
+      <InvoiceCompanyField
+        clientId={7}
+        practiceTypeCode="tax_annual_company"
+        value={EMPTY_INVOICE_COMPANY}
+        onChange={vi.fn()}
+        ambiguity={ambiguity}
+        onPickCandidate={onPick}
+      />,
+    );
+    const panel = await screen.findByTestId("invoice-company-ambiguity");
+    const buttons = within(panel).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["A", "B"]);
+    await userEvent.click(buttons[1]);
+    expect(onPick).toHaveBeenCalledWith(2, "B");
+  });
+
+  it("treats candidates sent as text as an ordinary error", () => {
+    expect(
+      ambiguityFromError(
+        ambiguousError(["{'id': 1, 'company_name': 'A'}", "{'id': 2}"]),
+        "typed",
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["no candidates", []],
+    ["a missing id", [{ company_name: "A" }]],
+    ["a text id", [{ id: "1", company_name: "A" }]],
+    ["a fractional id", [{ id: 1.5, company_name: "A" }]],
+    ["a missing name", [{ id: 1 }]],
+    ["a blank name", [{ id: 1, company_name: "  " }]],
+    ["a null row", [null]],
+  ])("treats %s as an ordinary error", (_label, candidates) => {
+    expect(ambiguityFromError(ambiguousError(candidates), "typed")).toBeNull();
+  });
+
+  it("keeps only the candidates that can be shown and picked", () => {
+    expect(
+      ambiguityFromError(
+        ambiguousError([{ id: 1, company_name: "A" }, "{'id': 2}", { id: 3 }]),
+        "typed",
+      ),
+    ).toEqual({ typed: "typed", candidates: [{ id: 1, company_name: "A" }] });
+  });
 });
 
 describe("InvoiceCompanyField live company search", () => {
@@ -899,5 +965,59 @@ describe("InvoiceCompanyField live company search", () => {
     await settle(50);
     expect(screen.queryByRole("button", { name: "PT Bayu Lain" })).toBeNull();
     expect(screen.queryByTestId("invoice-company-search")).toBeNull();
+  });
+
+  const UNAVAILABLE = "Company search unavailable — ask an admin";
+
+  it("a failed search says it is unavailable", async () => {
+    mockSearch.mockRejectedValue(new Error("boom"));
+    render(<Harness onValue={vi.fn()} />);
+    await typeName("bayu");
+    expect(await screen.findByText(UNAVAILABLE)).toBeInTheDocument();
+    expect(screen.queryByTestId("invoice-company-search")).toBeNull();
+  });
+
+  it("a successful search says nothing about being unavailable", async () => {
+    mockSearch.mockResolvedValue({ companies: [match(21, "PT Bayu Lain")] });
+    render(<Harness onValue={vi.fn()} />);
+    await typeName("bayu");
+    await screen.findByRole("button", { name: "PT Bayu Lain" });
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+  });
+
+  it("the notice leaves as soon as the name changes and a retry succeeds", async () => {
+    mockSearch.mockRejectedValueOnce(new Error("boom"));
+    let resolveRetry: (v: unknown) => void = () => {};
+    mockSearch.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRetry = resolve)),
+    );
+    render(<Harness onValue={vi.fn()} />);
+    const user = await typeName("bayu");
+    await screen.findByText(UNAVAILABLE);
+    await user.type(screen.getByLabelText("Company name"), "x");
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+    await waitFor(() => expect(mockSearch).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveRetry({ companies: [match(21, "PT Bayu Lain")] });
+    });
+    await screen.findByRole("button", { name: "PT Bayu Lain" });
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+  });
+
+  it("a cancelled search that fails late shows no notice", async () => {
+    let rejectOld: (e: Error) => void = () => {};
+    mockSearch.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => (rejectOld = reject)),
+    );
+    mockSearch.mockImplementationOnce(() => new Promise(() => {}));
+    render(<Harness onValue={vi.fn()} />);
+    const user = await typeName("bayu");
+    await waitFor(() => expect(mockSearch).toHaveBeenCalledTimes(1));
+    await user.type(screen.getByLabelText("Company name"), "x");
+    await act(async () => {
+      rejectOld(new Error("boom"));
+    });
+    await settle(50);
+    expect(screen.queryByText(UNAVAILABLE)).toBeNull();
   });
 });

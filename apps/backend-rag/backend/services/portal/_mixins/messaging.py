@@ -84,7 +84,7 @@ class PortalMessagingMixin:
                     LIMIT 1
                 ) tm ON TRUE
                 WHERE m.client_id = $1
-                ORDER BY m.created_at DESC
+                ORDER BY m.created_at DESC, m.id DESC
                 LIMIT $2 OFFSET $3
                 """,
                 client_id,
@@ -199,14 +199,18 @@ class PortalMessagingMixin:
         (`mark_client_message_read`, which restricts to `client_to_team`).
         Without this, a client could mark one of their OWN outbound
         messages read and forge a "the team has read this" signal.
+
+        A message that is already read is marked again with success and keeps
+        its first read time: the portal polls and can be open in two tabs, so
+        the same message is marked more than once.
         """
         async with self.pool.acquire() as conn:
             result = await conn.execute(
                 """
                 UPDATE portal_messages
-                SET read_at = NOW()
+                SET read_at = COALESCE(read_at, NOW())
                 WHERE id = $1 AND client_id = $2
-                AND direction = 'team_to_client' AND read_at IS NULL
+                AND direction = 'team_to_client'
                 """,
                 message_id,
                 client_id,

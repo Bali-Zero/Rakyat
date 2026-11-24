@@ -6,7 +6,7 @@ import {
   GarudaUploadUnexpectedError,
   uploadIntakeDocument,
 } from "./api-client";
-import { messageFor, messageForUnknownCode } from "./messages";
+import { isCatalogCode, messageFor, messageForUnknownCode } from "./messages";
 import {
   ALLOWED_UPLOAD_MEDIA_TYPES,
   MAX_UPLOAD_BYTES_CLIENT_HINT,
@@ -73,14 +73,14 @@ export function useDocumentUpload(resultId: string) {
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       abortRef.current?.abort();
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const runUpload = useCallback(async () => {
     const file = fileRef.current;
@@ -153,8 +153,11 @@ export function useDocumentUpload(resultId: string) {
         setState({
           step: "error",
           message: messageFor(err.code),
-          retryable: err.retryable,
-          code: err.code,
+          retryable:
+            typeof err.retryable === "boolean"
+              ? err.retryable
+              : err.httpStatus === 429 || err.httpStatus >= 500,
+          code: isCatalogCode(err.code) ? err.code : null,
         });
         return;
       }
@@ -207,6 +210,7 @@ export function useDocumentUpload(resultId: string) {
    */
   const retryUpload = useCallback(() => {
     if (!fileRef.current || !idempotencyKeyRef.current) return;
+    pollAttemptRef.current = 0;
     void runUpload();
   }, [runUpload]);
 
@@ -216,6 +220,7 @@ export function useDocumentUpload(resultId: string) {
       pollTimeoutRef.current = null;
     }
     abortRef.current?.abort();
+    abortRef.current = null;
     fileRef.current = null;
     idempotencyKeyRef.current = null;
     pollAttemptRef.current = 0;

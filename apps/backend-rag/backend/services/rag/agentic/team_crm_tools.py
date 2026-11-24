@@ -523,7 +523,7 @@ class TeamMyDeadlinesTool(BaseTool):
             FROM client_expiry_alerts_view
             WHERE expiry_date IS NOT NULL
               AND expiry_date > CURRENT_DATE
-              AND expiry_date <= CURRENT_DATE + ($1 || ' days')::interval
+              AND expiry_date <= CURRENT_DATE + make_interval(days => $1::int)
         """
         alerts_sql = """
             SELECT c.full_name AS client_name, ca.category, ca.deadline,
@@ -532,7 +532,7 @@ class TeamMyDeadlinesTool(BaseTool):
             JOIN clients c ON c.id = ca.client_id
             WHERE ca.deadline IS NOT NULL
               AND ca.deadline > CURRENT_DATE
-              AND ca.deadline <= CURRENT_DATE + ($1 || ' days')::interval
+              AND ca.deadline <= CURRENT_DATE + make_interval(days => $1::int)
               AND ca.status <> 'resolved'
         """
         expiry_params: list[Any] = [days_ahead]

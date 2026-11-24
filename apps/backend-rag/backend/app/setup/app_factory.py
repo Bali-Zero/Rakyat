@@ -178,14 +178,9 @@ async def lifespan(app: FastAPI):
 
         await validate_client_pools_on_pool(getattr(app.state, "db_pool", None))
 
-        # Initialize Notification Scheduler (automated email alerts)
-        try:
-            from backend.app.modules.notifications.scheduler import init_scheduler
-
-            app.state.notification_scheduler = await init_scheduler(app.state.db_pool)
-            logger.info("✅ Notification Scheduler initialized")
-        except Exception as e:
-            logger.error("⚠️ Failed to initialize Notification Scheduler: %s", e)
+        # The api process owns notification delivery so pending alerts have one sender.
+        app.state.notification_scheduler = None
+        logger.info("Notification Scheduler runs on the api process")
 
         # P0-0: mark startup complete so /health stops returning warmup status.
         app.state.startup_complete = True
@@ -356,13 +351,15 @@ async def lifespan(app: FastAPI):
                 # scar prong 2): a meta-inbox-targeted payload must recover
                 # through process_meta_inbox_payload (idempotent, passes the
                 # wa_reply_claims gate), never through the retired
-                # ChannelRouter pipeline used for every other channel.
-                async def _route_whatsapp(payload: dict) -> None:
+                # ChannelRouter pipeline used for every other channel. A payload for
+                # any other number is closed with an explicit reason; a payload
+                # that cannot be classified still goes to ChannelRouter.
+                async def _route_whatsapp(payload: dict) -> str | None:
                     from backend.app.routers.whatsapp_chat import (
                         route_whatsapp_recovery,
                     )
 
-                    await route_whatsapp_recovery(
+                    return await route_whatsapp_recovery(
                         payload,
                         db_pool=app.state.db_pool,
                         legacy_route=lambda p: _route_via_channel_router("whatsapp", p),

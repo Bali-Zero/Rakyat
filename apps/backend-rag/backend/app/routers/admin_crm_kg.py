@@ -220,4 +220,4 @@ async def crm_kg_health(request: Request) -> dict[str, Any]:
         }
     except Exception as e:
         logger.error("crm_kg health failed: %s", e, exc_info=True)
-        return {"status": "error", "message": str(e)[:200]}
+        return {"status": "error", "message": "Health query failed"}

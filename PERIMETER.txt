@@ -94,6 +94,7 @@ scripts/tests/test_ban_predicates.py
 scripts/tests/test_cate_paid_budget.sh
 scripts/tests/test_cate_plan_oauth_baseline.sh
 scripts/tests/test_lint_ban_prose.py
+scripts/tests/test_redact_for_external.py
 scripts/tests/test_typesafe_client_pin.py
 scripts/tests/test_vendor_authorization_fence.py
 scripts/typesafe_client.py
@@ -211,12 +212,17 @@ scripts/tests/test_vercel_should_build.sh	carried from the source tree with a da
 .github/workflows/catE-sovereignty-lint.yml
 .github/workflows/detect-secrets.yml
 .github/workflows/fly-deploy.yml
+.github/workflows/indexnow-after-deploy.yml
 .github/workflows/lint-garuda-environment-values.yml
 .github/workflows/lint-migration-numbers.yml
 .github/workflows/merah-putih-day-contrast.yml
 .github/workflows/security.yml
 .github/workflows/tests.yml
+.github/workflows/verifikator-live.yml
 scripts/ci/test_required_checks_contract.py
+scripts/verifikator/config.json
+scripts/verifikator/run.mjs
+scripts/verifikator/run.test.mjs
 
 # Known references from prod code to paths outside this repository (checked at build: the referrer is here,
 # still carries the reference, and the target is absent). Every target is also absent from the Fly image, so

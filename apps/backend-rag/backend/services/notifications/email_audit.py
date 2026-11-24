@@ -33,6 +33,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# Shared here to avoid a cycle through practice_status_listener.
+class EmailNotDelivered(RuntimeError):
+    """The internal send endpoint answered 200 but reported ``success=false``."""
+
+    def __init__(self, message: str, *, delivery_uncertain: bool = False) -> None:
+        super().__init__(message)
+        self.delivery_uncertain = delivery_uncertain
+
+
+def raise_if_not_delivered(response: Any) -> None:
+    """Raise :class:`EmailNotDelivered` when the send endpoint's 200 says ``success=false``.
+
+    The endpoint answers 200 when every provider failed and when a keyed send is uncertain.
+    A body that cannot be read as a JSON object says nothing either way and is left alone.
+    """
+    try:
+        answer = response.json()
+    except Exception:
+        return
+    if not isinstance(answer, dict) or answer.get("success") is not False:
+        return
+    message = str(answer.get("message") or "send endpoint reported failure")[:200]
+    raise EmailNotDelivered(
+        message,
+        delivery_uncertain=answer.get("delivery_uncertain") is True,
+    )
+
+
 # Owner chat_id comes from TELEGRAM_OWNER_CHAT_ID (no fallback: unset = no alert).
 # We prefer the env var so tests can override with a stub chat_id.
 _OWNER_CHAT_ID: str = os.getenv("TELEGRAM_OWNER_CHAT_ID", "").strip()

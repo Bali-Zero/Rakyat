@@ -65,13 +65,43 @@ class LKPMService:
     # Client Config
     # ------------------------------------------------------------------
 
-    async def get_client_config(self, client_id: int) -> LKPMClientConfig | None:
-        """Get LKPM config for a client."""
+    async def get_client_config(
+        self, client_id: int, company_id: int | None = None
+    ) -> LKPMClientConfig | None:
+        """The LKPM configuration of one company of a client.
+
+        Asked for a company: the row of that client and that company, or None. Never
+        the row of another company and never a row that names no company: either can
+        hold the identity and the investment plan of a company the report is not about.
+
+        Asked with no company (a report that has none, and the entry points that take
+        a client only): the client's only row; when the client has several, the one
+        row that names no company; in any other state ``ValueError``. This is a
+        compatibility rule: it cannot tell which company such a report is about, it
+        only refuses to pick one of several.
+        """
         async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM lkpm_client_config WHERE client_id = $1",
-                client_id,
-            )
+            if company_id is not None:
+                row = await conn.fetchrow(
+                    "SELECT * FROM lkpm_client_config WHERE client_id = $1 AND company_id = $2",
+                    client_id,
+                    company_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT * FROM lkpm_client_config WHERE client_id = $1 ORDER BY id",
+                    client_id,
+                )
+                if len(rows) <= 1:
+                    row = rows[0] if rows else None
+                else:
+                    unnamed = [candidate for candidate in rows if candidate["company_id"] is None]
+                    if len(unnamed) != 1:
+                        raise ValueError(
+                            f"Client {client_id} has LKPM configurations for more than one "
+                            "company: the company must be named"
+                        )
+                    row = unnamed[0]
         if not row:
             return None
 
@@ -218,12 +248,22 @@ class LKPMService:
         logger.info("Draft created: id=%s", draft_id)
         return draft
 
-    async def _ensure_client_config(self, client_id: int) -> None:
-        """Auto-create lkpm_client_config from CRM company data if missing."""
+    async def _ensure_client_config(self, client_id: int, company_id: int | None = None) -> None:
+        """Auto-create lkpm_client_config from CRM company data if missing.
+
+        With a company: the check and the row are for that company, read through an
+        active link of that client to it. With none: any configuration of the client
+        counts, and the client's primary company is the one created.
+        """
         async with self.db_pool.acquire() as conn:
             existing = await conn.fetchval(
-                "SELECT id FROM lkpm_client_config WHERE client_id = $1",
+                """
+                SELECT id FROM lkpm_client_config
+                WHERE client_id = $1 AND ($2::integer IS NULL OR company_id = $2)
+                LIMIT 1
+                """,
                 client_id,
+                company_id,
             )
             if existing:
                 return
@@ -235,18 +275,21 @@ class LKPMService:
                 FROM client_company_links ccl
                 JOIN companies c ON c.id = ccl.company_id
                 WHERE ccl.client_id = $1 AND ccl.status = 'active'
+                  AND ($2::integer IS NULL OR ccl.company_id = $2)
                 ORDER BY ccl.is_primary DESC NULLS LAST
                 LIMIT 1
             """,
                 client_id,
+                company_id,
             )
 
             if row:
-                kbli = row["kbli_code"] or ""
+                kbli_code = row["kbli_code"]
+                kbli_codes = [kbli_code] if kbli_code and kbli_code.strip() else []
                 await conn.execute(
                     """
                     INSERT INTO lkpm_client_config (client_id, company_id, company_name, npwp, nib, kbli_codes)
-                    VALUES ($1, $2, $3, $4, $5, ARRAY[$6])
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     ON CONFLICT (client_id, company_id) DO NOTHING
                 """,
                     client_id,
@@ -254,15 +297,16 @@ class LKPMService:
                     row["company_name"],
                     row["npwp_company"],
                     row["nib"],
-                    kbli,
+                    kbli_codes,
                 )
                 logger.info(
                     f"Auto-created lkpm_client_config for client {client_id}: {row['company_name']}",
                 )
             else:
                 logger.warning(
-                    "No active company found for client %s, cannot auto-create config",
+                    "No active company found for client %s (company %s), cannot auto-create config",
                     client_id,
+                    company_id,
                 )
 
     async def get_history_for_portal_client(self, client_id: int) -> list[LKPMBatchItem]:
@@ -347,6 +391,7 @@ class LKPMService:
                 FROM lkpm_receipts re
                 JOIN lkpm_reports r ON r.id = re.lkpm_report_id
                 LEFT JOIN lkpm_client_config cfg ON cfg.client_id = r.client_id
+                    AND COALESCE(r.company_id, 0) = COALESCE(cfg.company_id, 0)
                 LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.company_id IN (
                     SELECT DISTINCT ccl.company_id
@@ -437,8 +482,8 @@ class LKPMService:
             f"{submission.quarter} {submission.year}",
         )
 
-        # Auto-create config from CRM if missing
-        await self._ensure_client_config(submission.client_id)
+        # Auto-create the configuration of the submission's company from CRM if missing
+        await self._ensure_client_config(submission.client_id, submission.company_id)
 
         draft = self.data_collector.collect_from_form(submission)
         # The collector historically omitted this optional field. Preserve the
@@ -451,6 +496,7 @@ class LKPMService:
             submission.client_id,
             submission.quarter,
             submission.year,
+            draft.company_id,
         )
         draft.cumulative = InvestmentRealization(
             equipment_domestic=cumulative.equipment_domestic + draft.realized.equipment_domestic,
@@ -550,7 +596,7 @@ class LKPMService:
         )
 
         # Calculate cumulative
-        cumulative = await self._calculate_cumulative(client_id, quarter, year)
+        cumulative = await self._calculate_cumulative(client_id, quarter, year, draft.company_id)
         draft.cumulative = InvestmentRealization(
             equipment_domestic=cumulative.equipment_domestic + draft.realized.equipment_domestic,
             equipment_import=cumulative.equipment_import + draft.realized.equipment_import,
@@ -577,9 +623,11 @@ class LKPMService:
         if not draft:
             raise ValueError(f"Draft {draft_id} not found")
 
-        config = await self.get_client_config(draft.client_id)
+        config = await self.get_client_config(draft.client_id, draft.company_id)
         if not config:
-            raise ValueError(f"No config for client {draft.client_id}")
+            raise ValueError(
+                f"No LKPM configuration for client {draft.client_id} and company {draft.company_id}"
+            )
 
         result = await self.validator.validate(draft, config)
 
@@ -619,9 +667,11 @@ class LKPMService:
         if not draft:
             raise ValueError(f"Draft {draft_id} not found")
 
-        config = await self.get_client_config(draft.client_id)
+        config = await self.get_client_config(draft.client_id, draft.company_id)
         if not config:
-            raise ValueError(f"No config for client {draft.client_id}")
+            raise ValueError(
+                f"No LKPM configuration for client {draft.client_id} and company {draft.company_id}"
+            )
 
         # Calculate realization percentage
         planned_total = config.planned.grand_total
@@ -769,6 +819,44 @@ class LKPMService:
         """Get a specific draft."""
         return await self._load_draft(client_id, quarter, year)
 
+    async def get_draft_for_portal_client(
+        self, client_id: int, quarter: str, year: int
+    ) -> LKPMDraft | None:
+        """Get the draft of a portal client: a report of one of its active linked
+        companies, or a draft generated for the client itself.
+
+        A report with a company is scoped by `r.company_id` (the authoritative FK),
+        never by `r.client_id`, which holds a company id for imported rows (see
+        `get_history_for_portal_client`). A draft generated for a client carries no
+        company, and only then does `r.client_id` identify the caller. One draft is
+        returned: the lowest linked company id first, the client's own generated
+        draft after them.
+        """
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT r.* FROM lkpm_reports r
+                WHERE r.quarter = $2 AND r.year = $3
+                  AND (
+                    r.company_id IN (
+                        SELECT DISTINCT ccl.company_id
+                        FROM client_company_links ccl
+                        WHERE ccl.client_id = $1
+                          AND ccl.status = 'active'
+                    )
+                    OR (r.company_id IS NULL AND r.client_id = $1)
+                  )
+                ORDER BY r.company_id ASC NULLS LAST, r.id ASC
+                LIMIT 1
+                """,
+                client_id,
+                quarter,
+                year,
+            )
+        if not row:
+            return None
+        return self._row_to_draft(row)
+
     async def get_history(self, client_id: int) -> list[LKPMBatchItem]:
         """
         Get LKPM report history visible to a client (workspace view).
@@ -824,6 +912,7 @@ class LKPMService:
                 FROM lkpm_receipts re
                 JOIN lkpm_reports r ON r.id = re.lkpm_report_id
                 LEFT JOIN lkpm_client_config cfg ON cfg.client_id = r.client_id
+                    AND COALESCE(r.company_id, 0) = COALESCE(cfg.company_id, 0)
                 LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.company_id IN (
                     SELECT DISTINCT ccl.company_id
@@ -837,17 +926,29 @@ class LKPMService:
             )
         return [dict(r) for r in rows]
 
+    # The two team listings below return exactly one row per report. The lateral query
+    # is an aggregate (no row or one) and ``companies.id`` is a key, so no join multiplies
+    # a report. The name shown is the configuration's when exactly one configuration
+    # matches the report's client and company (no company matches no company), otherwise
+    # the company's own, otherwise empty.
+
     async def get_batch(self, quarter: str, year: int) -> list[LKPMBatchItem]:
-        """Get all LKPM reports for a quarter (team batch view)."""
+        """Get all LKPM reports for a quarter (team batch view), one row per report."""
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT r.*, c.company_name
+                SELECT r.*, COALESCE(cfg.company_name, co.company_name, '') AS company_name
                 FROM lkpm_reports r
-                JOIN lkpm_client_config c ON r.client_id = c.client_id
-                    AND COALESCE(r.company_id, 0) = COALESCE(c.company_id, 0)
+                LEFT JOIN LATERAL (
+                    SELECT MIN(c.company_name) AS company_name
+                    FROM lkpm_client_config c
+                    WHERE c.client_id = r.client_id
+                      AND c.company_id IS NOT DISTINCT FROM r.company_id
+                    HAVING COUNT(*) = 1
+                ) cfg ON TRUE
+                LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.quarter = $1 AND r.year = $2
-                ORDER BY c.company_name
+                ORDER BY company_name, r.id
                 """,
                 quarter,
                 year,
@@ -859,14 +960,21 @@ class LKPMService:
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT r.id, r.client_id, r.company_id, c.company_name, r.quarter, r.year,
+                SELECT r.id, r.client_id, r.company_id,
+                       COALESCE(cfg.company_name, co.company_name, '') AS company_name, r.quarter, r.year,
                        r.validation_alerts, r.status
                 FROM lkpm_reports r
-                JOIN lkpm_client_config c ON r.client_id = c.client_id
-                    AND COALESCE(r.company_id, 0) = COALESCE(c.company_id, 0)
+                LEFT JOIN LATERAL (
+                    SELECT MIN(c.company_name) AS company_name
+                    FROM lkpm_client_config c
+                    WHERE c.client_id = r.client_id
+                      AND c.company_id IS NOT DISTINCT FROM r.company_id
+                    HAVING COUNT(*) = 1
+                ) cfg ON TRUE
+                LEFT JOIN companies co ON co.id = r.company_id
                 WHERE r.validation_status = 'invalid'
                   AND r.status NOT IN ('submitted', 'archived')
-                ORDER BY r.year DESC, r.quarter DESC
+                ORDER BY r.year DESC, r.quarter DESC, r.id
                 """,
             )
 
@@ -898,24 +1006,21 @@ class LKPMService:
         deadlines: list[LKPMDeadline] = []
 
         for quarter, (month, day) in QUARTER_DEADLINES.items():
-            # Current year deadline
-            year = today.year
-            if quarter == "Q4":
-                year += 1  # Q4 deadline is in January next year
+            for report_year in (today.year - 1, today.year):
+                deadline_year = report_year + 1 if quarter == "Q4" else report_year
+                deadline_dt = datetime(deadline_year, month, day, tzinfo=timezone.utc)
+                days_remaining = (deadline_dt.date() - today).days
 
-            deadline_dt = datetime(year, month, day, tzinfo=timezone.utc)
-            days_remaining = (deadline_dt.date() - today).days
-
-            if -30 <= days_remaining <= days_ahead:
-                deadlines.append(
-                    LKPMDeadline(
-                        quarter=quarter,
-                        year=year if quarter != "Q4" else year - 1,
-                        deadline=deadline_dt,
-                        days_remaining=days_remaining,
-                        is_overdue=days_remaining < 0,
-                    ),
-                )
+                if -30 <= days_remaining <= days_ahead:
+                    deadlines.append(
+                        LKPMDeadline(
+                            quarter=quarter,
+                            year=report_year,
+                            deadline=deadline_dt,
+                            days_remaining=days_remaining,
+                            is_overdue=days_remaining < 0,
+                        ),
+                    )
 
         return sorted(deadlines, key=lambda d: d.days_remaining)
 
@@ -1063,10 +1168,15 @@ class LKPMService:
         client_id: int,
         quarter: str,
         year: int,
+        company_id: int | None = None,
     ) -> InvestmentRealization:
-        """Sum all previous quarters' realization for cumulative total."""
-        # Quarter ordering for comparison
+        """Sum the realization of the earlier quarters of one report series.
 
+        A series is the key a draft is saved under: the client and the company, or
+        the client alone for a draft that names no company. `client_id` holds a
+        company id on imported rows, so a sum keyed by the client alone could add
+        the figures of a company the client is not linked to.
+        """
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -1082,11 +1192,13 @@ class LKPMService:
                     COALESCE(SUM(realized_other), 0) as other
                 FROM lkpm_reports
                 WHERE client_id = $1
+                  AND company_id IS NOT DISTINCT FROM $4
                   AND (year < $2 OR (year = $2 AND quarter < $3))
                 """,
                 client_id,
                 year,
                 quarter,
+                company_id,
             )
 
         if not rows or not rows[0]:

@@ -54,6 +54,7 @@ from backend.services.crm.related_names import (
 from backend.services.crm.related_subjects import REGISTRY_ACTOR, prepare_identifiers
 from backend.services.monitoring.activity_logger import activity_logger
 from backend.tests.fixtures.prod_shaped_pool import init_prod_shaped_connection
+from backend.tests.fixtures.registry_privacy import INTERPRETER_ATTRIBUTES
 
 MIGRATIONS = Path(route_module.__file__).resolve().parents[2] / "db" / "migrations_v2"
 MIGRATION_NAMES = MIGRATIONS / "365_related_subject_names.sql"
@@ -94,6 +95,8 @@ CLIENTS_SCHEMA = """
 CREATE TABLE clients (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     full_name text NOT NULL,
+    passport_number varchar(100),
+    date_of_birth date,
     deleted_at timestamptz
 );
 """
@@ -175,6 +178,7 @@ async def pool(writes):
                 "367_related_subject_links.sql",
                 "369_related_subject_merges.sql",
                 "370_related_subject_detachments.sql",
+                "372_related_subject_link_reviews.sql",
             ):
                 forward, _ = split_migration_sql((MIGRATIONS / migration).read_text())
                 await c.execute(forward)
@@ -435,6 +439,7 @@ async def test_n1_migration_table_constraints_cascade_and_rollback(pool, conn):
             "related_subject_links",
             "related_subject_merges",
             "related_subject_detachments",
+            "related_subject_link_reviews",
         }
         assert await conn.fetchval("SELECT count(*) FROM related_subjects") == 1
 
@@ -1162,9 +1167,31 @@ def _forbidden(data, *, answer_words: bool) -> set[str]:
     return tokens
 
 
+# The numbers the interpreter measures about a log call (clock, thread, process, line) are not
+# derived from any body, and a request leaf made of digits, such as the name "12345", can turn up
+# in them by chance. They are the only attributes left out; `extra=` cannot carry their names,
+# because logging refuses to overwrite an attribute the record already has.
 def _record_text(record: logging.LogRecord) -> str:
     rendered = logging.Formatter().format(record)
-    return rendered + " " + " ".join(str(v) for v in record.__dict__.values())
+    scanned = (v for k, v in record.__dict__.items() if k not in INTERPRETER_ATTRIBUTES)
+    return rendered + " " + " ".join(str(v) for v in scanned)
+
+
+def test_record_text_skips_the_measured_numbers_and_keeps_every_other():
+    record = logging.LogRecord("probe", logging.INFO, __file__, 12345, "plain message", None, None)
+    record.created, record.msecs, record.relativeCreated = 1795712345.12345, 123.45, 12345.5
+    record.thread = record.process = 12345
+    assert "12345" not in _record_text(record)
+
+    in_message = logging.LogRecord("probe", logging.INFO, __file__, 1, "name %s", ("12345",), None)
+    assert "12345" in _record_text(in_message)
+    logger = logging.getLogger("probe.record_text")
+    extra = logger.makeRecord(
+        "probe", logging.INFO, __file__, 1, "m", None, None, extra={"n": "12345"}
+    )
+    assert "12345" in _record_text(extra)
+    with pytest.raises(KeyError):
+        logger.makeRecord("probe", logging.INFO, __file__, 1, "m", None, None, extra={"thread": 1})
 
 
 # The probe world: every subject a case can reach. Registration names are built on the probe

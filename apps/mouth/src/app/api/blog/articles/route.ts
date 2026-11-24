@@ -5,8 +5,27 @@ import {
   searchArticles,
   getCategoryCounts,
 } from "@/lib/blog/articles";
+import { CATEGORY_MAP } from "@/lib/blog/categories";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
+
+const DEFAULT_LIMIT = 12;
+const MAX_LIMIT = 12;
+const KNOWN_CATEGORIES: ReadonlySet<string> = new Set([
+  ...Object.keys(CATEGORY_MAP),
+  ...Object.values(CATEGORY_MAP),
+]);
+
+function boundedLimit(raw: string | null): number {
+  const n = parseInt(raw || "", 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_LIMIT;
+  return Math.min(n, MAX_LIMIT);
+}
+
+function boundedOffset(raw: string | null): number {
+  const n = parseInt(raw || "", 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 
 /**
  * GET /api/blog/articles
@@ -20,8 +39,12 @@ export async function GET(request: NextRequest) {
     const query = searchParams.get("q") || undefined;
     const category = searchParams.get("category") || undefined;
     const featured = searchParams.get("featured") === "true" ? true : undefined;
-    const limit = parseInt(searchParams.get("limit") || "12");
-    const offset = parseInt(searchParams.get("offset") || "0");
+    const limit = boundedLimit(searchParams.get("limit"));
+    const offset = boundedOffset(searchParams.get("offset"));
+
+    if (category !== undefined && !KNOWN_CATEGORIES.has(category)) {
+      return NextResponse.json({ articles: [], total: 0, hasMore: false });
+    }
 
     // If search query, use search function
     if (query) {
@@ -53,12 +76,10 @@ export async function GET(request: NextRequest) {
       toError(error),
     );
 
-    // Return mock data as fallback
-    return NextResponse.json({
-      articles: MOCK_ARTICLES,
-      total: MOCK_ARTICLES.length,
-      hasMore: false,
-    });
+    return NextResponse.json(
+      { error: "Failed to fetch articles" },
+      { status: 500 },
+    );
   }
 }
 
@@ -75,73 +96,3 @@ export async function POST(_request: NextRequest) {
     { status: 501 },
   );
 }
-
-// Mock data for development/fallback
-const MOCK_ARTICLES = [
-  {
-    id: "1",
-    slug: "golden-visa-revolution",
-    title: "The Golden Visa Revolution: Indonesia's $350K Bet on Global Talent",
-    excerpt:
-      "Indonesia launches its Golden Visa program, offering 5-10 year stays for investors.",
-    coverImage: "/static/blog/golden-visa.jpg",
-    category: "visas",
-    author: {
-      id: "zantara-ai",
-      name: "Zantara AI",
-      avatar: "/static/zantara-avatar.png",
-      role: "AI Research Assistant",
-      isAI: true,
-    },
-    publishedAt: new Date().toISOString(),
-    readingTime: 12,
-    viewCount: 15420,
-    featured: true,
-    trending: true,
-    aiGenerated: true,
-  },
-  {
-    id: "2",
-    slug: "oss-2-complete-guide",
-    title: "OSS 2.0: The Complete Guide to Indonesia Business Licensing",
-    excerpt:
-      "Everything about the Online Single Submission system for company registration.",
-    coverImage: "/static/blog/oss-guide.jpg",
-    category: "business",
-    author: {
-      id: "zantara-ai",
-      name: "Zantara AI",
-      avatar: "/static/zantara-avatar.png",
-      role: "AI Research Assistant",
-      isAI: true,
-    },
-    publishedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    readingTime: 15,
-    viewCount: 8932,
-    featured: false,
-    trending: true,
-    aiGenerated: false,
-  },
-  {
-    id: "3",
-    slug: "tax-deadlines-2026",
-    title: "Tax Deadlines 2026: What Every Expat Needs to Know",
-    excerpt:
-      "Key dates for personal and corporate tax filings. New Coretax system fully operational.",
-    coverImage: "/static/blog/tax-calendar.jpg",
-    category: "taxes",
-    author: {
-      id: "zantara-ai",
-      name: "Zantara AI",
-      avatar: "/static/zantara-avatar.png",
-      role: "AI Research Assistant",
-      isAI: true,
-    },
-    publishedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    readingTime: 8,
-    viewCount: 6234,
-    featured: false,
-    trending: false,
-    aiGenerated: true,
-  },
-];

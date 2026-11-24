@@ -39,7 +39,7 @@ _POLL_FALLBACK_SECONDS = 5  # Drain pending if no NOTIFY for 5s.
 _DRAIN_BATCH_SIZE = 50  # Rows fetched per drain pass.
 
 # Type alias for per-channel handlers.
-ChannelHandler = Callable[[dict[str, Any]], Awaitable[None]]
+ChannelHandler = Callable[[dict[str, Any]], Awaitable[str | None]]
 
 
 def _compute_backoff_seconds(*, attempts: int) -> int:
@@ -282,7 +282,7 @@ class WebhookProcessor:
             return
 
         try:
-            await handler(payload)
+            outcome = await handler(payload)
         except Exception as exc:
             logger.exception(
                 "WebhookProcessor: handler crashed for id=%d channel=%s: %s",
@@ -323,10 +323,18 @@ class WebhookProcessor:
                 )
             return
 
-        # Success.
+        # Success. A handler may return a short text to say the row was closed
+        # on purpose without being handled (e.g. a retired route); it is kept
+        # as the row's error_message so the skip stays visible in the table.
         await conn.execute(
-            "UPDATE inbound_webhooks SET processed_at = NOW() WHERE id = $1",
+            """
+            UPDATE inbound_webhooks
+            SET processed_at = NOW(),
+                error_message = COALESCE($2, error_message)
+            WHERE id = $1
+            """,
             row_id,
+            outcome[:500] if isinstance(outcome, str) else None,
         )
         logger.debug(
             "WebhookProcessor: processed id=%d channel=%s",

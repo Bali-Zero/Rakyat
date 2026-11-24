@@ -28,7 +28,7 @@
  * field the backend does not have.
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Loader2, Pause, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { logger } from "@/lib/logger";
@@ -305,6 +305,11 @@ export default function NotificationsDashboardPage() {
   const [filterType, setFilterType] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedAlert, setExpandedAlert] = useState<number | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  // Read and set in the same tick as the click: two clicks in one frame both
+  // pass a check on state, and each request re-sends every failed alert to
+  // its client. The state only drives what the button shows.
+  const retryInFlight = useRef(false);
 
   const loadDashboard = async () => {
     try {
@@ -341,6 +346,9 @@ export default function NotificationsDashboardPage() {
   }, []);
 
   const handleRetryFailed = async () => {
+    if (retryInFlight.current) return;
+    retryInFlight.current = true;
+    setIsRetrying(true);
     try {
       const result = await api.crm.request("/api/admin/notifications/retry", {
         method: "POST",
@@ -349,7 +357,15 @@ export default function NotificationsDashboardPage() {
       success("Retry completed", (result as { message: string }).message);
       loadDashboard();
     } catch (err) {
-      error("Retry failed", "Please try again");
+      // No answer is not "nothing was sent": the server may still be working
+      // through the list, and a second request would send those mails again.
+      error(
+        "Retry failed",
+        "The server may still be sending. Refresh and check the failed count before retrying.",
+      );
+    } finally {
+      retryInFlight.current = false;
+      setIsRetrying(false);
     }
   };
 
@@ -464,13 +480,23 @@ export default function NotificationsDashboardPage() {
               <button
                 type="button"
                 onClick={handleRetryFailed}
+                disabled={isRetrying}
+                aria-busy={isRetrying}
+                title="Re-sends every failed alert of the last 7 days"
                 className={cn(
                   "inline-flex min-h-11 items-center gap-2 border border-[var(--bz-copper)] bg-transparent px-3.5 text-[12px] font-[650] text-[var(--bz-copper-text)] hover:bg-[var(--bz-card-hover)]",
+                  isRetrying && "cursor-not-allowed opacity-60",
                   FOCUS,
                 )}
               >
-                <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                Retry failed ({stats.failed_count_24h})
+                <RefreshCw
+                  className={cn("h-4 w-4", isRetrying && "animate-spin")}
+                  aria-hidden="true"
+                />
+                {/* The server retries every failed alert of the last 7 days,
+                    not the 24-hour count of the tile below: the label names
+                    the scope instead of a number it would not honour. */}
+                {isRetrying ? "Retrying…" : "Retry failed · 7 days"}
               </button>
             ) : null}
           </>

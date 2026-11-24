@@ -410,32 +410,50 @@ class PostgresCrmWriter:
                 # (dashboard reads timeline_events). Same tolerance as
                 # the canonical writer: a missing table (42P01) during
                 # rollout is ignored, anything else is logged.
+                #
+                # Nested transaction = SAVEPOINT, like the canonical
+                # writer: without it a missing timeline_events table
+                # aborts the OUTER transaction in Postgres, the
+                # practice insert rolls back at COMMIT, and this
+                # method would return an id that does not exist.
+                # Only the INSERT's own failure is tolerated, and only
+                # once the savepoint is rolled back: a failure to open,
+                # release or roll back the savepoint propagates, or the
+                # outer COMMIT would end as a ROLLBACK after this method
+                # returned the id. CancelledError is not an Exception and
+                # propagates too, undoing the whole handoff.
+                milestone = conn.transaction()
+                await milestone.start()
                 try:
-                    # Nested transaction = SAVEPOINT, like the canonical
-                    # writer: without it a missing timeline_events table
-                    # aborts the OUTER transaction in Postgres, the
-                    # practice insert rolls back at COMMIT, and this
-                    # method would return an id that does not exist.
-                    async with conn.transaction():
-                        await conn.execute(
-                            """
-                            INSERT INTO timeline_events (
-                                client_id, practice_id, event_type, title, description,
-                                event_date, client_visible, color, created_by
-                            )
-                            VALUES ($1, $2, 'milestone', $3, $4, NOW(), true, 'info', $5)
-                            """,
-                            client_id,
-                            int(practice_id),
-                            "New case started",
-                            f"{practice_type_code} started",
-                            CREATED_BY_GARUDA,
+                    await conn.execute(
+                        """
+                        INSERT INTO timeline_events (
+                            client_id, practice_id, event_type, title, description,
+                            event_date, client_visible, color, created_by
                         )
-                except asyncpg.UndefinedTableError:
-                    logger.warning(
-                        "timeline_events table missing; milestone skipped for practice %s",
+                        VALUES ($1, $2, 'milestone', $3, $4, NOW(), true, 'info', $5)
+                        """,
+                        client_id,
                         int(practice_id),
+                        "New case started",
+                        f"{practice_type_code} started",
+                        CREATED_BY_GARUDA,
                     )
+                except Exception as exc:
+                    await milestone.rollback()
+                    # The milestone is cosmetic and the paid practice is not.
+                    if getattr(exc, "sqlstate", None) == "42P01":
+                        logger.warning(
+                            "timeline_events table missing; milestone skipped for practice %s",
+                            int(practice_id),
+                        )
+                    else:
+                        logger.warning(
+                            "milestone insert failed (%s); the practice is kept",
+                            type(exc).__name__,
+                        )
+                else:
+                    await milestone.commit()
                 return int(practice_id)
 
             # Lost the race — the database, not this code, decided who won.

@@ -13,11 +13,13 @@ import asyncio
 import datetime as dt
 import logging
 import os
+import re
 import tempfile
+import uuid
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, Literal, NoReturn
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -27,6 +29,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.accounting import (
     bank_import_service,
+    cash_receipts,
     cashout_import_service,
     cashout_service,
     reconcile_service,
@@ -39,12 +42,29 @@ from backend.services.accounting.bank_pdf_readers import (
 )
 from backend.services.accounting.companies import (
     OTHER_KEY,
+    account_key_for_account,
     company_key_for_account,
+    company_key_for_issuer,
     load_companies,
 )
 from backend.services.accounting.done_today_service import BUSINESS_TZ, load_done_today
 from backend.services.accounting.lights import classify_transfer
-from backend.services.accounting.matcher import MatchCandidate, OpenInvoice, rank_candidates
+from backend.services.accounting.matcher import (
+    MatchCandidate,
+    OpenInvoice,
+    extract_payer_name,
+    rank_candidates,
+)
+from backend.services.accounting.outgoing_justify import (
+    BATCH_LIMIT,
+    OutgoingError,
+    justify_outgoing,
+    justify_pnbp_batch,
+    undo_batch,
+    undo_justification,
+)
+from backend.services.accounting.outgoings import load_outgoings
+from backend.services.accounting.period import month_condition
 from backend.services.accounting.reconcile_service import ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
@@ -84,12 +104,13 @@ async def get_cashout(
     limit: int = Query(200, ge=1, le=1000),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """Weekly cashout rows (mirrors Asya's sheet), newest first."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
         return await cashout_service.list_cashout(
-            conn, week_label=week_label, type_filter=type_filter, limit=limit
+            conn, week_label=week_label, type_filter=type_filter, limit=limit, month=month
         )
 
 
@@ -101,6 +122,7 @@ async def get_bank_transactions(
     limit: int = Query(200, ge=1, le=1000),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """Parsed bank statement transactions, newest first."""
     _require_accounting_access(current_user)
@@ -113,7 +135,7 @@ async def get_bank_transactions(
         raise HTTPException(status_code=422, detail="invalid reconciled_status")
     async with db_pool.acquire() as conn:
         return await cashout_service.list_bank_transactions(
-            conn, reconciled_status=reconciled_status, limit=limit
+            conn, reconciled_status=reconciled_status, limit=limit, month=month
         )
 
 
@@ -226,7 +248,7 @@ async def _read_statement_upload(file: UploadFile) -> bytes:
 
 @router.post("/bank-statement/preview")
 async def preview_bank_statement(
-    file: UploadFile = File(..., description="CIMB Niaga CSV, Bank Mandiri PDF or Bank Permata PDF statement"),
+    file: UploadFile = File(..., description="CIMB Niaga CSV, or Bank Mandiri, BNI or Bank Permata PDF statement"),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Parse a bank statement and return a summary report. Writes nothing."""
@@ -242,7 +264,7 @@ async def preview_bank_statement(
 
 @router.post("/bank-statement/import")
 async def import_bank_statement(
-    file: UploadFile = File(..., description="CIMB Niaga CSV, Bank Mandiri PDF or Bank Permata PDF statement"),
+    file: UploadFile = File(..., description="CIMB Niaga CSV, or Bank Mandiri, BNI or Bank Permata PDF statement"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -290,7 +312,15 @@ async def import_bank_statement(
 
 # An invoice is OPEN while its practice's payment status is not `paid`, RECORDED once it is.
 _OPEN_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') <> 'paid'"
-_RECORDED_POOL_SQL = "COALESCE(p.payment_status, 'unpaid') = 'paid'"
+_RECORDED_POOL_SQL = """COALESCE(p.payment_status, 'unpaid') = 'paid'
+    AND NOT EXISTS (
+        SELECT 1 FROM weekly_cashout wc
+        WHERE wc.linked_practice_id=p.id AND wc.direction='in' AND wc.type='invoice_payment'
+          AND wc.reversed_by_id IS NULL
+        GROUP BY wc.linked_practice_id
+        HAVING bool_or(wc.payment_method='cash')
+           AND sum(wc.amount_idr) >= i.amount_idr - COALESCE(i.pph_expected_idr, 0)
+    )"""
 
 
 def _finite_int(value: Any) -> int:
@@ -316,12 +346,13 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
         f"""
         SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
                i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
-               c.full_name AS client_name,
-               i.invoice_number, pt.name AS service_name
+               c.full_name AS client_name, billed.company_name AS bill_to_company,
+               i.invoice_number, pt.name AS service_name, i.issuer_entity_key
         FROM invoices i
         JOIN practices p ON i.practice_id = p.id
         LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
         LEFT JOIN clients c ON p.client_id = c.id
+        LEFT JOIN companies billed ON billed.id = p.invoice_company_id
         WHERE {_RECORDED_POOL_SQL if recorded else _OPEN_POOL_SQL}
         """
     )
@@ -336,9 +367,22 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
             invoice_number=r.get("invoice_number"),
             invoice_issued_at=_iso(r["generated_at"]),
             service_name=r.get("service_name"),
+            issuer_entity_key=r.get("issuer_entity_key"),
+            bill_to_company=r.get("bill_to_company"),
         )
         for r in rows
     ]
+
+
+def _own_company(invoices: list[OpenInvoice], company_key: str | None) -> list[OpenInvoice]:
+    """The invoices issued by the company that owns the receiving account (owner rule d).
+
+    A transfer into one company's account never settles another company's invoice, and a
+    transfer into an account no company owns settles none.
+    """
+    if company_key is None:
+        return []
+    return [i for i in invoices if company_key_for_issuer(i.issuer_entity_key) == company_key]
 
 
 def _candidate_json(c: MatchCandidate) -> dict[str, Any]:
@@ -370,7 +414,13 @@ async def match_candidates(
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
         tx = await conn.fetchrow(
-            "SELECT id, txn_date, amount_idr, direction, description FROM bank_transactions WHERE id = $1",
+            """
+            SELECT bt.id, bt.txn_date, bt.amount_idr, bt.direction, bt.description,
+                   bs.account_number
+            FROM bank_transactions bt
+            LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
+            WHERE bt.id = $1
+            """,
             txn_id,
         )
         if tx is None:
@@ -378,8 +428,9 @@ async def match_candidates(
         if tx["direction"] != "credit":
             raise HTTPException(status_code=422, detail="only incoming (credit) transactions are matched")
 
-        open_invoices = await _fetch_invoice_pool(conn, recorded=False)
-        recorded_invoices = await _fetch_invoice_pool(conn, recorded=True)
+        company_key = company_key_for_account(tx["account_number"])
+        open_invoices = _own_company(await _fetch_invoice_pool(conn, recorded=False), company_key)
+        recorded_invoices = _own_company(await _fetch_invoice_pool(conn, recorded=True), company_key)
         candidates = rank_candidates(
             transfer_amount_idr=int(tx["amount_idr"]),
             transfer_date=tx["txn_date"],
@@ -398,6 +449,48 @@ async def match_candidates(
             "candidates": [_candidate_json(c) for c in candidates],
             "recorded_candidates": [_candidate_json(c) for c in recorded_candidates],
         }
+
+
+class CashReceiptRequest(BaseModel):
+    company_key: str = Field(min_length=1, max_length=80)
+    invoice_id: int = Field(gt=0)
+    amount_idr: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
+    movement_date: date
+    reference: str | None = Field(default=None, max_length=120)
+    request_id: uuid.UUID
+
+
+@router.get("/cash-invoices")
+async def list_cash_invoices(
+    company_key: str,
+    q: str = Query("", max_length=120),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        try:
+            return {"items": await cash_receipts.cash_invoices(conn, company_key, q)}
+        except ReconcileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/cash-receipts")
+async def record_cash_receipt(
+    payload: CashReceiptRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        try:
+            result = await cash_receipts.record_cash(
+                conn, **payload.model_dump(), confirmed_by=current_user["email"].lower(),
+            )
+        except ReconcileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _invalidate_payment_caches()
+    return result
 
 
 class ConfirmRequest(BaseModel):
@@ -428,8 +521,9 @@ async def confirm_reconciliation(
 ) -> dict[str, Any]:
     """Confirm a payment match. Single writer of payment_status (superscar #9).
 
-    Does NOT auto-transition the practice to on_process — Zero's decision #1:
-    Asya moves it with a second explicit click.
+    Paid in full, a case in sending_invoice moves to on_process in the same transaction (owner
+    rule a, 2026-11-18, replacing the earlier "second explicit click"); historical
+    confirmations never move it.
     """
     _require_accounting_access(current_user)
     confirmed_by = (current_user.get("email") or "unknown").lower()
@@ -457,6 +551,19 @@ async def confirm_reconciliation(
         except ReconcileError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    await _invalidate_payment_caches()
+    return {
+        "practice_id": result.practice_id,
+        "invoice_id": result.invoice_id,
+        "cashout_id": result.cashout_id,
+        "reconciliation_log_id": result.reconciliation_log_id,
+        "status_before": result.status_before,
+        "status_after": result.status_after,
+        "historical": payload.historical,
+    }
+
+
+async def _invalidate_payment_caches() -> None:
     # Same cache keys the CRM uses (superscar #9) — payment_status changed.
     try:
         from backend.core.cache import invalidate_cache
@@ -470,18 +577,22 @@ async def confirm_reconciliation(
     except Exception as cache_exc:  # cache failure must not fail the write
         logger.warning("accounting confirm cache invalidation failed: %s", cache_exc)
 
-    return {
-        "practice_id": result.practice_id,
-        "invoice_id": result.invoice_id,
-        "cashout_id": result.cashout_id,
-        "reconciliation_log_id": result.reconciliation_log_id,
-        "status_before": result.status_before,
-        "status_after": result.status_after,
-        "historical": payload.historical,
-    }
-
-
 # ── Lights: the reconciliation inbox and the three actions that move no money ───────────
+
+
+# The payer patterns backtrack on a long run of spaces (16 000 spaces took seconds). The inbox
+# names the payer from the first 256 characters only: the longest bank line in production is
+# 112, so every real line is read whole. Matching (classify_transfer) still reads the whole line.
+PAYER_LINE_CHARS = 256
+# A token of four or more digits is a payment code, not a name: one sending bank puts
+# "PY<8 digits> 261" in the BI-FAST name slot (5 inbox rows on 2026-11-22). Display only:
+# the matcher reads the line as it always did.
+_PAYMENT_CODE_TOKEN = re.compile(r"\d{4,}")
+
+
+def _display_payer(name: str) -> str:
+    """The payer name the inbox shows, or "" when the name slot carries a payment code."""
+    return "" if _PAYMENT_CODE_TOKEN.search(name) else name
 
 
 def _classify_inbox(
@@ -489,15 +600,27 @@ def _classify_inbox(
     open_invoices: list[OpenInvoice],
     recorded_invoices: list[OpenInvoice],
 ) -> list[dict[str, Any]]:
-    """Pure CPU work over in-memory rows; run off the event loop."""
+    """Pure CPU work over in-memory rows; run off the event loop.
+
+    Each transfer is classified against the invoices of the company that owns its account only.
+    """
+    pools: dict[str, tuple[list[OpenInvoice], list[OpenInvoice]]] = {}
     items: list[dict[str, Any]] = []
     for tx in txns:
+        key = tx["company_key"]
+        if key not in pools:
+            owner = None if key == OTHER_KEY else key
+            pools[key] = (
+                _own_company(open_invoices, owner),
+                _own_company(recorded_invoices, owner),
+            )
+        own_open, own_recorded = pools[key]
         res = classify_transfer(
             transfer_amount_idr=tx["amount_idr"],
             transfer_date=tx["txn_date"],
             payer_memo=tx["description"],
-            open_invoices=open_invoices,
-            recorded_invoices=recorded_invoices,
+            open_invoices=own_open,
+            recorded_invoices=own_recorded,
         )
         items.append(
             {
@@ -505,6 +628,10 @@ def _classify_inbox(
                 "txn_date": tx["txn_date"],
                 "amount_idr": tx["amount_idr"],
                 "description": tx["description"],
+                # The payer the bank line names ("" when it names none), for the list to show.
+                "payer_name": _display_payer(
+                    extract_payer_name((tx["description"] or "")[:PAYER_LINE_CHARS])
+                ),
                 "company_key": tx["company_key"],
                 "light": res.light,
                 "open_candidates": res.open_candidates,
@@ -522,20 +649,23 @@ async def reconciliation_inbox(
     limit: int = Query(200, ge=1, le=1000),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """Unmatched incoming transfers, newest first, each with its light and company. Advice only."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
+        params = [limit]
+        period = month_condition("bt.txn_date", month, params)
         rows = await conn.fetch(
-            """
+            f"""
             SELECT bt.id, bt.txn_date, bt.amount_idr, bt.description, bs.account_number
             FROM bank_transactions bt
             LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
-            WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'
+            WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'{period}
             ORDER BY bt.txn_date DESC, bt.id DESC
             LIMIT $1
             """,
-            limit,
+            *params,
         )
         open_invoices = await _fetch_invoice_pool(conn, recorded=False)
         recorded_invoices = await _fetch_invoice_pool(conn, recorded=True)
@@ -545,23 +675,162 @@ async def reconciliation_inbox(
             "txn_date": r["txn_date"],
             "amount_idr": int(r["amount_idr"]),
             "description": r["description"] or "",
-            # Same rule as the companies strip: an account no company owns is "other".
-            "company_key": company_key_for_account(r["account_number"]) or OTHER_KEY,
+            "company_key": company_key_for_account(r["account_number"])
+            or account_key_for_account(r["account_number"])
+            or OTHER_KEY,
         }
         for r in rows
     ]
     return await asyncio.to_thread(_classify_inbox, txns, open_invoices, recorded_invoices)
 
 
+@router.get("/outgoings")
+async def outgoings(
+    company_key: str | None = Query(None, min_length=1),
+    limit: int = Query(1000, ge=1, le=5000),
+    state: Literal["to_justify", "justified", "all"] = Query("to_justify"),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
+) -> dict[str, Any]:
+    """Debits newest first, each with its state and justification, bank text read apart."""
+    _require_accounting_access(current_user)
+    async with db_pool.acquire() as conn:
+        try:
+            kwargs: dict[str, Any] = {"limit": limit, "state": state, "month": month}
+            if company_key is not None:
+                kwargs["company_key"] = company_key
+            return await load_outgoings(conn, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class JustifyLine(BaseModel):
+    amount_idr: int = Field(gt=0)
+    category: str
+    note: str
+    practice_id: int | None = Field(None, gt=0)
+
+
+class JustifyOutgoingRequest(BaseModel):
+    category: str
+    practice_id: int | None = Field(None, gt=0)
+    recipient: str | None = None
+    note: str | None = None
+    lines: list[JustifyLine] | None = None
+
+
+@router.post("/outgoings/{txn_id}/justify")
+async def justify_outgoing_route(
+    txn_id: int,
+    payload: JustifyOutgoingRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Justify one bank debit (append-only log). Writes nothing to the cash-out."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await justify_outgoing(
+                conn,
+                txn_id=txn_id,
+                category=payload.category,
+                practice_id=payload.practice_id,
+                recipient=payload.recipient,
+                note=payload.note,
+                lines=[ln.model_dump() for ln in payload.lines] if payload.lines else None,
+                justified_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except asyncpg.UniqueViolationError as exc:  # a parallel justify won the race
+        raise HTTPException(
+            status_code=409, detail="this debit is already justified: undo it first"
+        ) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+
+
+@router.post("/outgoings/{txn_id}/undo")
+async def undo_outgoing_justification(
+    txn_id: int,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Take back a justification made today (WITA), as undo-confirmation does. Deletes nothing."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await undo_justification(
+                conn, txn_id=txn_id, undone_by=(current_user.get("email") or "unknown").lower()
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+
+
+class PnbpBatchRequest(BaseModel):
+    # JSON integers only (A8), as every other id here: a boolean or a string is a 422.
+    txn_ids: list[_StrictBigId] = Field(min_length=1, max_length=BATCH_LIMIT)
+
+
+@router.post("/outgoings/pnbp-batch")
+async def justify_pnbp_batch_route(
+    payload: PnbpBatchRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Justify the listed PNBP debits in one go (no case), all or nothing. No cash-out write."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await justify_pnbp_batch(
+                conn,
+                txn_ids=payload.txn_ids,
+                justified_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except asyncpg.UniqueViolationError as exc:  # a parallel justify won the race
+        raise HTTPException(
+            status_code=409, detail="a debit is already justified: reload the list"
+        ) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+
+
+@router.post("/outgoings/batches/{batch_id}/undo")
+async def undo_outgoing_batch(
+    batch_id: uuid.UUID,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Take back what is still active of a batch made today (WITA). Deletes nothing."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await undo_batch(
+                conn,
+                batch_id=batch_id,
+                undone_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except OutgoingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+
+
 @router.get("/companies")
 async def companies(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> list[dict[str, Any]]:
     """The issuing companies with bank, account and how far their imported statements reach."""
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
-        return await load_companies(conn)
+        return await load_companies(conn, month=month)
 
 
 def _wita_now() -> dt.datetime:
@@ -572,12 +841,13 @@ def _wita_now() -> dt.datetime:
 async def done_today(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
+    month: date | None = None,
 ) -> dict[str, Any]:
     """Transfers handled today (WITA): counts by action and the latest items. Read-only."""
     _require_accounting_access(current_user)
     now = _wita_now()
     async with db_pool.acquire() as conn:
-        return await load_done_today(conn, now)
+        return await load_done_today(conn, now, month=month)
 
 
 # JSON integers only (A8): a boolean, a string or a number with a fraction is a 422.
@@ -624,7 +894,7 @@ async def link_recorded(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Link an unmatched credit to a payment its practice already records. Moves no money."""
+    """Link an unmatched credit to a payment its practice already records; it enters the cash-out."""
     _require_accounting_access(current_user)
     try:
         async with db_pool.acquire() as conn:
@@ -679,6 +949,28 @@ async def reopen_transaction(
                 conn,
                 bank_txn_id=payload.bank_txn_id,
                 reopened_by=(current_user.get("email") or "unknown").lower(),
+            )
+    except ReconcileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # total: a driver's own text can quote row values
+        _fail_action(exc)
+    return _action_json(result)
+
+
+@router.post("/undo-confirmation")
+async def undo_confirmation(
+    payload: ReopenTransactionRequest,
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Owner rule (b): take back a payment confirmed today (WITA). Sends no email."""
+    _require_accounting_access(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            result = await reconcile_service.undo_confirmation(
+                conn,
+                bank_txn_id=payload.bank_txn_id,
+                undone_by=(current_user.get("email") or "unknown").lower(),
             )
     except ReconcileError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

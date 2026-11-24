@@ -70,6 +70,12 @@ class TestVerifyMetaHmac:
             )
         assert ei.value.reason == "malformed_header"
 
+    def test_non_ascii_digest_raises_malformed_header(self) -> None:
+        header = "sha256=not-a-digest-" + chr(233)
+        with pytest.raises(WebhookVerificationError) as ei:
+            verify_meta_hmac(b"x", header, META_SECRET, provider="whatsapp")
+        assert ei.value.reason == "malformed_header"
+
     def test_wrong_secret_raises_signature_mismatch(self) -> None:
         body = b'{"a":1}'
         sig = _meta_sig(body, secret="wrong-secret")
@@ -150,6 +156,12 @@ class TestVerifyTwitterHmac:
     def test_malformed_header_raises(self) -> None:
         with pytest.raises(WebhookVerificationError) as ei:
             verify_twitter_hmac(b"x", "junk", TWITTER_SECRET)
+        assert ei.value.reason == "malformed_header"
+
+    def test_non_ascii_digest_raises_malformed_header(self) -> None:
+        header = "sha256=not-a-digest-" + chr(233)
+        with pytest.raises(WebhookVerificationError) as ei:
+            verify_twitter_hmac(b"x", header, TWITTER_SECRET)
         assert ei.value.reason == "malformed_header"
 
     def test_wrong_secret_raises(self) -> None:

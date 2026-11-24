@@ -252,25 +252,3 @@ async def lookup_by_phone(
         raise HTTPException(status_code=404, detail="No mapping found for this phone")
 
     return {"phone": phone, "mapping": mapping}
-
-
-@router.get("/lookup/telegram/{chat_id}")
-async def lookup_by_telegram(
-    chat_id: int,
-    request: Request,
-    _admin: Annotated[str, Depends(require_admin)],
-) -> dict[str, Any]:
-    """
-    Lookup user by Telegram chat ID.
-
-    Admin only. Returns mapping if exists (team member or portal client).
-    """
-    db_pool = get_database(request)
-    identity_service = get_messaging_identity_service(db_pool)
-
-    mapping = await identity_service.get_user_by_telegram(chat_id)
-
-    if not mapping:
-        raise HTTPException(status_code=404, detail="No mapping found for this Telegram chat ID")
-
-    return {"telegram_chat_id": chat_id, "mapping": mapping}

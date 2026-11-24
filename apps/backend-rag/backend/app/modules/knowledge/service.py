@@ -6,7 +6,7 @@ Business logic for RAG, Search, and Vector Database operations
 It is kept only as a fallback for test/local boot scenarios where SearchService may not be initialized.
 
 Migration path:
-- Use SearchService from backend.app.state.search_service (injected in main_cloud.py)
+- Use SearchService from backend.app.state.search_service (injected during app setup)
 - For /api/search endpoint, use get_search_service(request) helper in router.py
 
 Status: This service will be removed in a future version once all tests and fallback scenarios

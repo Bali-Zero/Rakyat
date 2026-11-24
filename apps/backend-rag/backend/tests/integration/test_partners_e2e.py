@@ -201,3 +201,125 @@ async def test_full_flow_process_to_paid_email(
     body = commission_call["body"]
     assert "Mario Rossi" not in body, "Full client name leaked — UU PDP violation"
     assert "Mario R." in body, "Sterilized client name 'Mario R.' missing from body"
+
+
+# ── The partner update, through its handler ──────────────────────────────────
+
+
+class _OneConnectionPool:
+    """The handler asks a pool for a connection: it gets the test's own."""
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def acquire(self):
+        return self
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+# What the edit page sends: every field of the form, an emptied one as null, the
+# commission value as a number.
+_EDIT_PAGE_BODY = {
+    "full_name": "Zz Partner",
+    "phone": None,
+    "company_name": "Zz Agency",
+    "work_role": None,
+    "npwp": None,
+    "bank_name": "Bank Baru",
+    "bank_account_number": None,
+    "bank_account_holder": "Zz Holder",
+    "tax_withholding_category": "pph23",
+    "default_commission_type": "percentage",
+    "default_commission_value": 12.5,
+}
+
+
+async def _partner_with_a_bank_account(db_conn, partner_factory, admin_id):
+    partner_id = await partner_factory(
+        default_commission_value=Decimal("10.0"), assigned_to=admin_id
+    )
+    await db_conn.execute(
+        "UPDATE partners SET bank_name = 'Bank Lama', bank_account_number = '1234567890' "
+        "WHERE id = $1",
+        partner_id,
+    )
+    return partner_id
+
+
+async def _stored(db_conn, partner_id):
+    return await db_conn.fetchrow(
+        "SELECT full_name, bank_name, bank_account_number, default_commission_value "
+        "FROM partners WHERE id = $1",
+        partner_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_edit_pages_request_reaches_the_row_and_its_audit_row(
+    db_conn, user_factory, partner_factory
+):
+    import json
+
+    # Imported here: the router pulls in the whole CRM stack.
+    from backend.app.routers.partners import PartnerUpdate, update_partner
+
+    admin_id = await user_factory(role="admin")
+    partner_id = await _partner_with_a_bank_account(db_conn, partner_factory, admin_id)
+
+    answer = await update_partner(
+        partner_id,
+        body=PartnerUpdate.model_validate(_EDIT_PAGE_BODY),
+        user={"user_id": admin_id, "role": "admin"},
+        pool=_OneConnectionPool(db_conn),
+    )
+
+    row = await _stored(db_conn, partner_id)
+    assert row["bank_account_number"] is None
+    assert row["bank_name"] == "Bank Baru"
+    assert row["default_commission_value"] == Decimal("12.5")
+    assert answer["bank_account_number"] is None
+    audit = await db_conn.fetch(
+        "SELECT before_json, after_json FROM partner_audit_log "
+        "WHERE partner_id = $1 AND action = 'updated'",
+        partner_id,
+    )
+    assert len(audit) == 1
+    before, after = json.loads(audit[0]["before_json"]), json.loads(audit[0]["after_json"])
+    assert before["bank_account_number"] == "1234567890"
+    assert Decimal(before["default_commission_value"]) == Decimal("10")
+    assert after == {**_EDIT_PAGE_BODY, "default_commission_value": "12.5"}
+
+
+@pytest.mark.asyncio
+async def test_a_change_whose_audit_row_cannot_be_written_is_not_kept(
+    db_conn, user_factory, partner_factory, monkeypatch
+):
+    from fastapi import HTTPException
+
+    from backend.app.routers.partners import PartnerUpdate, update_partner
+    from backend.services.crm.partners.repository import PartnersRepository
+
+    admin_id = await user_factory(role="admin")
+    partner_id = await _partner_with_a_bank_account(db_conn, partner_factory, admin_id)
+    kept = await _stored(db_conn, partner_id)
+
+    async def no_audit(self, **kwargs):
+        raise RuntimeError("the audit table is away")
+
+    monkeypatch.setattr(PartnersRepository, "insert_audit", no_audit)
+
+    with pytest.raises(HTTPException) as refused:
+        await update_partner(
+            partner_id,
+            body=PartnerUpdate.model_validate(_EDIT_PAGE_BODY),
+            user={"user_id": admin_id, "role": "admin"},
+            pool=_OneConnectionPool(db_conn),
+        )
+
+    assert refused.value.status_code == 500
+    assert await _stored(db_conn, partner_id) == kept

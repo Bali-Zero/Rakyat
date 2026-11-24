@@ -36,6 +36,7 @@ except ImportError:
     _AIOSMTPLIB_AVAILABLE = False
 
 from backend.app.modules.notifications.models import (
+    SENDABLE_ALERT_TYPES,
     AlertStatus,
     AlertType,
     ClientAlert,
@@ -551,6 +552,7 @@ class NotificationService:
                    SET status = 'suppressed',
                        error_message = 'superseded by a newer pending alert of the same type'
                  WHERE a.status = 'pending'
+                   AND a.alert_type = ANY($1::text[])
                    AND EXISTS (
                        SELECT 1
                          FROM notification_alerts AS b
@@ -561,6 +563,7 @@ class NotificationService:
                    )
                 RETURNING a.id
                 """,
+                list(SENDABLE_ALERT_TYPES),
             )
         if superseded:
             logger.info(
@@ -583,8 +586,10 @@ class NotificationService:
                 """
                 SELECT * FROM notification_alerts
                 WHERE status = 'pending'
+                AND alert_type = ANY($1::text[])
                 AND created_at > NOW() - INTERVAL '7 days'
                 ORDER BY created_at ASC
                 """,
+                list(SENDABLE_ALERT_TYPES),
             )
             return [ClientAlert(**dict(row)) for row in rows]

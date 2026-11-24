@@ -908,20 +908,27 @@ class TestIntegration:
 class TestPerformance:
     """Performance-related tests."""
 
-    def test_variant_assignment_performance(self, ab_manager):
-        """Test that variant assignment is fast."""
+    def test_variant_assignment_performance(self):
+        """Assignment does constant work per call: ten times the users take about ten times as
+        long, and work that grows with the users already assigned takes about a hundred.
+
+        A ratio of two runs on the same machine, not seconds: an absolute bound failed under
+        coverage on shared CI runners and let a quadratic assignment pass on a fast laptop.
+        """
         import time
 
-        n_assignments = 10000
-        start = time.time()
+        def best_of_three(n_users: int) -> float:
+            best = float("inf")
+            for _ in range(3):
+                manager = ABTestManager(metrics_tracker=MagicMock())
+                start = time.perf_counter()
+                for i in range(n_users):
+                    manager.assign_variant(f"user_{i}", "hybrid_vs_dense")
+                best = min(best, time.perf_counter() - start)
+            return best
 
-        for i in range(n_assignments):
-            ab_manager.assign_variant(f"user_{i}", "hybrid_vs_dense")
-
-        elapsed = time.time() - start
-
-        # Should be very fast (less than 1 second for 10k assignments)
-        assert elapsed < 1.0
+        small, large = best_of_three(1_000), best_of_three(10_000)
+        assert large / small < 30, f"1k users {small:.4f}s, 10k users {large:.4f}s"
 
     def test_variant_cache_performance(self, ab_manager):
         """Test that caching improves performance."""

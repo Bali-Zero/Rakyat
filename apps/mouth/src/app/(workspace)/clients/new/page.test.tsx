@@ -299,3 +299,39 @@ describe("NewClientPage — a scanned passport is saved in its own format", () =
     expect(payload.document_type).toBe("passport");
   });
 });
+
+describe("NewClientPage — the status select offers what the backend accepts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getProfile.mockResolvedValue({ email: "surya@balizero.com" });
+    createClient.mockResolvedValue({ id: 4242 });
+  });
+
+  it("GUILT: a client created as prospect reaches the API as prospect", async () => {
+    await openManualForm();
+    const name = document.querySelector<HTMLInputElement>(
+      'input[name="full_name"]',
+    );
+    if (!name) throw new Error("full_name input not rendered");
+    await userEvent.type(name, "Test Client");
+    await userEvent.click(
+      screen.getByRole("button", { name: /crm settings/i }),
+    );
+    const status = document.querySelector<HTMLSelectElement>(
+      'select[name="status"]',
+    );
+    if (!status) throw new Error("status select not rendered");
+    expect(Array.from(status.options).map((o) => o.value)).toEqual([
+      "lead",
+      "prospect",
+      "active",
+      "inactive",
+    ]);
+    await userEvent.selectOptions(status, "prospect");
+    await userEvent.click(
+      screen.getByRole("button", { name: /create client/i }),
+    );
+    await waitFor(() => expect(createClient).toHaveBeenCalled());
+    expect(createPayload().status).toBe("prospect");
+  });
+});

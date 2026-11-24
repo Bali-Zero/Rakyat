@@ -212,8 +212,8 @@ def words_to_pdf(pages: list[list[Word]]) -> bytes:
 
     buf = io.BytesIO()
     pdf = canvas.Canvas(buf, pagesize=(900, _PAGE_H))
-    pdf.setFont("Helvetica", 7)
     for words in pages:
+        pdf.setFont("Helvetica", 7)
         for w in words:
             y = _PAGE_H - w.top - 7
             if _AMOUNT.fullmatch(w.text):
@@ -223,3 +223,74 @@ def words_to_pdf(pages: list[list[Word]]) -> bytes:
         pdf.showPage()
     pdf.save()
     return buf.getvalue()
+
+
+# ── BNI ─────────────────────────────────────────────────────────────────────
+def _n(text: str, x0: float, top: float) -> Word:  # Helvetica 7pt is ~3.6 pt a character
+    return Word(text, x0, x0 + 3.6 * len(text), top)
+
+
+def _na(text: str, right: float, top: float) -> Word:
+    return Word(text, right - 3.6 * len(text), right, top)
+
+
+# a row: (date "07/11/2025", time "10.00.58", journal, description, amount, flag, balance or None)
+BniRow = tuple[str, str, str, str, str, str, str | None]
+
+
+def bni_page(
+    rows: list[BniRow],
+    *,
+    beginning: str,
+    total_debit: str,
+    total_credit: str,
+    currency: str = "IDR",
+    account: str = ACCOUNT,
+    name: str = NAME,
+    start_no: int = 1,
+    table_header: bool = True,
+    title: str = "TRANSACTION INQUIRY",
+) -> list[Word]:
+    """A Transaction Inquiry page: the account block with the beginning balance and totals (it
+    repeats on every page), the table header (only where `table_header`), then the rows numbered
+    from `start_no`, each description from its number's line downwards."""
+    words = [_n("Account", 257, 110), _n("Information", 302, 110)]
+    cur = f"( {currency} )" if currency else "( )"
+    words += [
+        _n("Account", 97, 156),
+        _n(":", 202, 156),
+        _n(f"{account}/{name.split()[0]}", 213, 156),
+    ]
+    words += [_n(p, 300 + 40 * i, 156) for i, p in enumerate(name.split()[1:] + cur.split())]
+    words += [_n(t, 246 + 81 * i, 130) for i, t in enumerate(title.split())]
+    for label, value, y in (
+        ("Beginning Balance", beginning, 176),
+        ("Total Debit", total_debit, 188),
+        ("Total Credit", total_credit, 198),
+    ):
+        words += [_n(t, 97 + 40 * i, y) for i, t in enumerate(label.split())] + [_n(":", 202, y)]
+        words.append(_n(value, 213, y))
+    top = 210.0
+    if table_header:
+        words += [
+            _n("Post", 129, top),
+            _n("Date", 150, top),
+            _n("Journal", 224, top),
+            _n("Amount", 410, top),
+            _n("Db/Cr", 451, top),
+            _n("Balance", 486, top),
+            _n("No.", 250, top),
+            _n("No.", 97, top),
+        ]
+    y = top + 8
+    for i, (date, time, journal, desc, amount, flag, balance) in enumerate(rows):
+        lines = desc.split("\n")
+        words.append(_n(str(start_no + i), 96, y))
+        words += [_n(date, 110, y), _n(time, 152, y), _n(journal, 223, y)]
+        for k, line in enumerate(lines):
+            words += [_n(t, 263 + 30 * j, y + 9 * k) for j, t in enumerate(line.split())]
+        words += [_na(amount, 445, y), _n(flag, 456, y)]
+        if balance is not None:
+            words.append(_n(balance, 480, y))
+        y += max(30, 9 * (len(lines) - 1) + 12)
+    return words

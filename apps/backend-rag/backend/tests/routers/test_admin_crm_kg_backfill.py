@@ -133,3 +133,54 @@ async def test_crm_kg_mutating_routes_require_admin(
     with pytest.raises(HTTPException) as exc3:
         await trigger_garbage_collect(request=req, background_tasks=BackgroundTasks())
     assert exc3.value.status_code == expected_status
+
+
+class _HealthAcquireContext:
+    def __init__(self, connection: object) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> object:
+        return self.connection
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+class _HealthPool:
+    def __init__(self, connection: object) -> None:
+        self.connection = connection
+
+    def acquire(self) -> _HealthAcquireContext:
+        return _HealthAcquireContext(self.connection)
+
+
+class _FailingHealthConnection:
+    async def fetchval(self, query: str) -> object:
+        raise RuntimeError("recognisable synthetic health query failure")
+
+
+class _WorkingHealthConnection:
+    async def fetchval(self, query: str) -> bool:
+        return True
+
+    async def fetch(self, query: str) -> list[dict[str, object]]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_crm_kg_health_does_not_return_database_error_text() -> None:
+    from backend.app.routers.admin_crm_kg import crm_kg_health
+
+    result = await crm_kg_health(_request_with_pool(_HealthPool(_FailingHealthConnection())))
+
+    assert result["status"] == "error"
+    assert "recognisable synthetic health query failure" not in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_crm_kg_health_working_query_remains_healthy() -> None:
+    from backend.app.routers.admin_crm_kg import crm_kg_health
+
+    result = await crm_kg_health(_request_with_pool(_HealthPool(_WorkingHealthConnection())))
+
+    assert result == {"status": "healthy", "nodes_by_type": {}, "edges_by_tier": []}

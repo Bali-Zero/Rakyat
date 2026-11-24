@@ -40,12 +40,21 @@ const COPY: Record<UploadErrorCode, string> = {
 const GENERIC_NETWORK_ERROR =
   "We couldn't reach the server. Check your connection and try again.";
 
+/** True only for a code the catalog lists itself, never for a name inherited from
+ * `Object.prototype`. */
+export function isCatalogCode(code: string): code is UploadErrorCode {
+  return Object.prototype.hasOwnProperty.call(COPY, code);
+}
+
+/** A code the server sent that this page's catalog does not list (the platform's own
+ * rate limiter answers with one) gets the generic server-side sentence, never an empty
+ * message. */
 export function messageFor(code: UploadErrorCode): string {
-  return COPY[code];
+  return isCatalogCode(code) ? COPY[code] : COPY.SERVICE_UNAVAILABLE;
 }
 
 export function messageForUnknownCode(code: string): string {
-  return code in COPY ? COPY[code as UploadErrorCode] : GENERIC_NETWORK_ERROR;
+  return isCatalogCode(code) ? COPY[code] : GENERIC_NETWORK_ERROR;
 }
 
 export const COPY_LOW_CONFIDENCE_INSTRUCTION =

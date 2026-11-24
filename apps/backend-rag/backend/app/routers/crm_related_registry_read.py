@@ -1,5 +1,7 @@
 """Read-only admin view of the related-subjects registry.
 
+(The decision route of slice 4F lives in ``crm_related_link_reviews``, on the same prefix.)
+
 GET /api/crm/related-registry and GET /api/crm/related-registry/{subject_id}. CRM admins only
 (same gate as ``compliance_obligations``); the routes stay behind HybridAuthMiddleware. The
 prefix differs on purpose from the write router's, whose ``/register`` path is public.
@@ -61,6 +63,22 @@ LinkRelation = Literal[
 ]
 
 
+ReviewRelation = Literal["self", "spouse", "child", "employee", "other"]
+SuggestionBasis = Literal[
+    "passport_equal",
+    "passport_one_char_apart",
+    "nik_encodes_client_birth_date",
+    "birth_date_equal",
+]
+
+
+class RelatedRegistryLinkReview(BaseModel):
+    decision: Literal["confirmed", "rejected"]
+    relation: ReviewRelation | None
+    decided_by: str
+    decided_at: datetime
+
+
 class RelatedRegistryLink(BaseModel):
     client_id: int
     client_name: str | None
@@ -70,6 +88,9 @@ class RelatedRegistryLink(BaseModel):
     created_at: datetime
     files: int | None
     from_subject_id: int | None
+    review: RelatedRegistryLinkReview | None
+    suggested_relation: Literal["self"] | None
+    suggestion_basis: list[SuggestionBasis]
 
 
 class RelatedRegistrySubjectRow(BaseModel):

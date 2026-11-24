@@ -34,7 +34,7 @@ _mock_settings.redis_url = "redis://localhost:6379/0"
 # a FAKE backend.app.core.config module into sys.modules at collection time,
 # session-wide and without cleanup (W96 family: test state leaking beyond the
 # test). Any test that later lazy-imported the real app (e.g. the unit/routers
-# coverage tests importing main_cloud) got a MagicMock settings whose log_level
+# coverage tests importing the application) got a MagicMock settings whose log_level
 # exploded configure_logging with "attribute name must be string, not MagicMock".
 # The env defaults above are sufficient for the real Settings() to validate,
 # so the hack is gone. _mock_settings stays for fixtures that patch it locally.
