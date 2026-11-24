@@ -289,6 +289,26 @@ test.describe("Bali Zero product-family noqata page Page", () => {
   }) => {
     await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
     const service = "Visa Extension";
+    await page.route("**/api/auth/profile", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPortalProfile,
+          id: "synthetic-operator",
+          role: "consultant",
+        },
+      }),
+    );
+    await page.route(
+      "**/api/crm/practices/invoice-company/suggestion?**",
+      (route) =>
+        route.fulfill({
+          json: {
+            autofill: false,
+            suggested_company_id: null,
+            companies: [],
+          },
+        }),
+    );
     await page.route("**/api/hr/me/delivery-desk", (route) =>
       route.fulfill({
         json: {
