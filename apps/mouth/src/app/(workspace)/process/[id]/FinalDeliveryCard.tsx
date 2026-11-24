@@ -275,12 +275,16 @@ function StaffDeliveryCard({
           <h2>
             {data?.status === "completed"
               ? "Final documents delivered"
-              : "Upload final documents"}
+              : writable
+                ? "Upload final documents"
+                : "Final documents"}
           </h2>
           <p>
             {writable
               ? "Upload the issued documents listed below, then mark this practice as completed."
-              : "Review the final documents for this practice."}
+              : practice.can_manage_delivery === false
+                ? "View-only access. The assigned operator manages uploads and completion."
+                : "Review the final documents for this practice."}
           </p>
         </div>
         {data && !error && !data.needs_titles && data.slots.length > 0 && (
@@ -445,8 +449,9 @@ function StaffDeliveryCard({
                       </p>
                     ) : (
                       <p className="text-sm text-[var(--bz-text-2)]">
-                        Upload the issued document that confirms this service is
-                        finished.
+                        {writable || repairable(slot)
+                          ? "Upload the issued document that confirms this service is finished."
+                          : "This document has not been uploaded yet."}
                       </p>
                     )}
                     {data.visa_followup?.slot_key === slot.key && (
@@ -658,6 +663,12 @@ function StaffDeliveryCard({
                             ? `Upload ${missingSlots.map((slot) => slot.label).join(", ")} before completing this practice.`
                             : "All document requirements are ready. Complete the practice to record delivery."}
                   </p>
+                  {missingSlots.some((slot) => slot.condition) && (
+                    <p>
+                      For a requirement marked If applicable, you can record why
+                      it does not apply.
+                    </p>
+                  )}
                   <p className={styles.consequence}>
                     Completing changes the status to Completed and publishes the
                     final documents for practices shared with the client.

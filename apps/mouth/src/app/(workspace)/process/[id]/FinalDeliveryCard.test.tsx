@@ -65,7 +65,7 @@ const initial = {
   slots: requiredSlots,
 };
 
-function setup(payment = "paid") {
+function setup(payment = "paid", canManageDelivery = true) {
   const complete = vi.fn();
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
@@ -75,7 +75,7 @@ function setup(payment = "paid") {
             id: 12,
             client_id: 19,
             payment_status: payment,
-            can_manage_delivery: true,
+            can_manage_delivery: canManageDelivery,
           } as Practice
         }
         onComplete={complete}
@@ -191,6 +191,30 @@ describe("Final delivery", () => {
     await user.selectOptions(screen.getByRole("combobox"), "5");
     expect(file).toBeEnabled();
     expect(requests.post).not.toHaveBeenCalled();
+  });
+
+  it("explains view-only access without instructing a viewer to upload", async () => {
+    requests.get.mockResolvedValue({
+      ...initial,
+      bonus_slot: null,
+      slots: [slot("document_1", "Renewed ITK")],
+    });
+    setup("paid", false);
+    expect(
+      await screen.findByText(
+        "View-only access. The assigned operator manages uploads and completion.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Final documents" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("This document has not been uploaded yet."),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("Upload document — Renewed ITK")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Mark practice as completed" }),
+    ).toBeNull();
   });
 
   it("records issuance on upload and keeps completion unavailable until the post-entry permit is saved", async () => {
