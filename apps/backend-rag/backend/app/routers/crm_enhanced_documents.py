@@ -46,6 +46,7 @@ from backend.services.crm.drive_taxonomy import (
     folder_for_category,
     physical_root_layout,
 )
+from backend.services.documents.ocr_dispatcher_service import is_passport_document_type
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 logger = get_logger(__name__)
@@ -161,7 +162,7 @@ def _schedule_upload_ocr(
 ) -> None:
     # Typed passport uploads are enrolled by the pending write in the same transaction.
     # Their provider work runs on the Drive machine.
-    if document_type.strip().casefold() not in {"passport", "paspor"}:
+    if not is_passport_document_type(document_type):
         tasks.add_task(
             _dispatch_ocr_by_folder, pool, client_id, file_id, folder, name,
             document_id, document_type,

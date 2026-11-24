@@ -28,6 +28,11 @@ logger = get_logger(__name__)
 _CONTENT_CONFIDENCE_THRESHOLD = 0.70
 
 
+def is_passport_document_type(value: str | None) -> bool:
+    """Match the type accepted by crm_passport_ocr_is_passport in the database."""
+    return (value or "").strip(" \t\r\n\v\f\u00a0").lower() in {"passport", "paspor"}
+
+
 def _kg_enabled() -> bool:
     """Feature flag for CRM Knowledge Graph linking.
 
@@ -169,7 +174,7 @@ async def dispatch_ocr_by_folder(
     # ─── Tier 1: filename / folder keyword match ─────────────────────────
 
     # Passport detection
-    if dtype_lower in {"passport", "paspor"} or "passport" in fn_lower or "paspor" in fn_lower:
+    if is_passport_document_type(document_type) or "passport" in fn_lower or "paspor" in fn_lower:
         ocr_result = await _auto_ocr_passport(db_pool, client_id, file_id, doc_id)
         return {
             "dispatched": True,

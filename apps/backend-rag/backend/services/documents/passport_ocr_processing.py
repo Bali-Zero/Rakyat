@@ -146,7 +146,12 @@ async def process_one(pool: Any, **binding: Any) -> dict[str, Any]:
                 await assert_drive_file_belongs_to_client(
                     job["file_id"], job["client_id"], conn, require_ancestry=True
                 )
-            fields = await extract(job)
+            try:
+                fields = await extract(job)
+            except HTTPException as exc:
+                if exc.status_code in (408, 429) or exc.status_code >= 500:
+                    raise RuntimeError("provider_unavailable") from exc
+                raise NeedsReview("provider_request_failed") from exc
     except NeedsReview as exc:
         status = await jobs.finish(pool, job, reason=str(exc))
     except HttpError as exc:

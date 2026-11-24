@@ -65,7 +65,8 @@ async def review_untyped(pool: Any, *, doc_id: int, client_id: int, file_id: str
                    )
              WHERE id=$1 AND client_id=$2
                AND file_id=$3
-               AND lower(btrim(coalesce(document_type,''))) NOT IN ('passport','paspor')
+               AND NOT crm_passport_ocr_is_passport(document_type)
+               AND intake_idempotency_key IS NULL AND intake_proposal_id IS NULL
                AND ocr_status='pending' AND ocr_completed_at IS NULL
                AND coalesce(ocr_extracted_data,'{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb)
                AND verified_at IS NULL AND verified_by IS NULL AND rejection_reason IS NULL

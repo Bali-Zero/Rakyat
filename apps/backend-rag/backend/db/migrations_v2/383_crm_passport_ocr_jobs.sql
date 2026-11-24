@@ -1,4 +1,5 @@
 -- An explicit pending transition enrolls new work. Existing rows are opt-in.
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE crm_passport_ocr_jobs (
     document_id bigint PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
     client_id bigint NOT NULL,
@@ -16,15 +17,26 @@ CREATE TABLE crm_passport_ocr_jobs (
 );
 CREATE INDEX crm_passport_ocr_ready ON crm_passport_ocr_jobs (available_at, document_id)
     WHERE status IN ('pending','leased');
+CREATE INDEX crm_passport_ocr_owner_by_file ON documents (file_id)
+    WHERE deleted_at IS NULL AND status IS DISTINCT FROM 'deleted' AND NOT coalesce(is_archived,false);
+CREATE INDEX crm_passport_ocr_owner_by_hash ON documents (content_hash)
+    WHERE content_hash IS NOT NULL AND deleted_at IS NULL
+      AND status IS DISTINCT FROM 'deleted' AND NOT coalesce(is_archived,false);
+
+CREATE FUNCTION crm_passport_ocr_is_passport(value text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT lower(btrim(coalesce(value,''), E' \t\r\n\f' || chr(11) || chr(160))) IN ('passport','paspor')
+$$;
 
 -- A protected document must never receive an extraction or a review marker from this worker.
 CREATE FUNCTION crm_passport_ocr_writable(d documents) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$
-    SELECT lower(btrim(d.document_type)) IN ('passport','paspor')
+    SELECT crm_passport_ocr_is_passport(d.document_type)
        AND d.ocr_status = 'pending' AND d.status IN ('active','google_drive')
        AND d.deleted_at IS NULL AND NOT coalesce(d.is_archived, false)
        AND d.verified_at IS NULL AND d.verified_by IS NULL AND d.rejection_reason IS NULL
        AND d.ocr_completed_at IS NULL
+       AND d.intake_idempotency_key IS NULL AND d.intake_proposal_id IS NULL
        AND coalesce(d.ocr_extracted_data, '{}'::jsonb) IN ('{}'::jsonb, 'null'::jsonb)
 $$;
 
@@ -96,3 +108,21 @@ BEGIN
         GRANT SELECT ON TABLE crm_passport_ocr_jobs TO nuzantara_readonly;
     END IF;
 END $$;
+
+-- === ROLLBACK ===
+-- Keep settled documents and refuse to discard the queue while it contains work or audit history.
+LOCK TABLE crm_passport_ocr_jobs IN ACCESS EXCLUSIVE MODE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM crm_passport_ocr_jobs) THEN
+        RAISE EXCEPTION 'Preserve passport OCR jobs before reversing this migration';
+    END IF;
+END $$;
+DROP TRIGGER crm_passport_ocr_enqueue_pending_trg ON documents;
+DROP FUNCTION crm_passport_ocr_enqueue_pending();
+DROP FUNCTION crm_passport_ocr_review_code(documents);
+DROP FUNCTION crm_passport_ocr_writable(documents);
+DROP FUNCTION crm_passport_ocr_is_passport(text);
+DROP INDEX crm_passport_ocr_owner_by_hash;
+DROP INDEX crm_passport_ocr_owner_by_file;
+DROP TABLE crm_passport_ocr_jobs;

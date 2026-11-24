@@ -44,7 +44,14 @@ async def test_extract_does_not_download_a_trashed_file() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_one_keeps_mismatch_terminal_and_never_publishes() -> None:
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (processing.NeedsReview("passport_holder_mismatch"), "passport_holder_mismatch"),
+        (processing.HTTPException(status_code=400), "provider_request_failed"),
+    ],
+)
+async def test_process_one_records_the_terminal_reason_after_ownership_succeeds(error, reason):
     job = {"document_id": 9, "client_id": 7, "file_id": "f1", "full_name": "Jane Doe"}
     pool = MagicMock()
     with (
@@ -55,13 +62,13 @@ async def test_process_one_keeps_mismatch_terminal_and_never_publishes() -> None
         patch.object(
             processing,
             "extract",
-            new=AsyncMock(side_effect=processing.NeedsReview("passport_holder_mismatch")),
+            new=AsyncMock(side_effect=error),
         ),
         patch.object(processing.jobs, "finish", new=AsyncMock(return_value="review")) as finish,
     ):
         result = await processing.process_one(pool, doc_id=9, client_id=7, file_id="f1")
     assert result == {"success": False, "status": "review"}
-    finish.assert_awaited_once_with(pool, job, reason="passport_holder_mismatch")
+    finish.assert_awaited_once_with(pool, job, reason=reason)
 
 
 @pytest.mark.asyncio

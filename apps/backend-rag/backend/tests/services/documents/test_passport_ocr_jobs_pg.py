@@ -57,7 +57,11 @@ async def pg_pool() -> asyncpg.Pool:
             VALUES (900,99,'paspor','historical-file','active','google_drive','pending');
         """)
         migration = Path(__file__).parents[3] / "db/migrations_v2/383_crm_passport_ocr_jobs.sql"
-        await admin.execute(migration.read_text())
+        from backend.db.migration_base import split_migration_sql
+
+        forward, rollback = split_migration_sql(migration.read_text())
+        assert rollback
+        await admin.execute(forward)
     finally:
         await admin.close()
 
@@ -87,6 +91,24 @@ async def _seed(
             status,
             storage,
         )
+
+
+@pytest.mark.asyncio
+async def test_migration_rollback_preserves_work_and_reverses_an_empty_queue(pg_pool):
+    from backend.db.migration_base import split_migration_sql
+
+    migration = Path(__file__).parents[3] / "db/migrations_v2/383_crm_passport_ocr_jobs.sql"
+    _, rollback = split_migration_sql(migration.read_text())
+    await _seed(pg_pool)
+    async with pg_pool.acquire() as conn:
+        with pytest.raises(asyncpg.RaiseError, match="Preserve passport OCR jobs"):
+            async with conn.transaction():
+                await conn.execute(rollback)
+        assert await conn.fetchval("SELECT count(*) FROM crm_passport_ocr_jobs") == 1
+        await conn.execute("DELETE FROM documents WHERE id=10")
+        async with conn.transaction():
+            await conn.execute(rollback)
+        assert not await conn.fetchval("SELECT to_regclass('crm_passport_ocr_jobs') IS NOT NULL")
 
 
 @pytest.mark.asyncio
@@ -196,6 +218,43 @@ async def test_final_crash_settles_staff_reason_and_replay_is_unchanged(
 async def test_google_drive_status_is_not_historical_opt_in(pg_pool: asyncpg.Pool) -> None:
     await _seed(pg_pool, status="google_drive")
     assert await enqueue_selected(pg_pool, [10]) == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_intake_document_never_enrolls(pg_pool: asyncpg.Pool) -> None:
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO documents
+               (id,client_id,document_type,file_id,status,storage_type,ocr_status,intake_idempotency_key)
+               VALUES (10,99,'passport','intake-file','active','google_drive','pending','intake-key')"""
+        )
+        assert await conn.fetchval("SELECT count(*) FROM crm_passport_ocr_jobs") == 0
+    assert await claim(pg_pool) is None
+
+
+@pytest.mark.asyncio
+async def test_intake_marker_added_after_claim_preserves_document_payload(
+    pg_pool: asyncpg.Pool,
+) -> None:
+    await _seed(pg_pool)
+    job = await claim(pg_pool)
+    assert job is not None
+    async with pg_pool.acquire() as conn:
+        await conn.execute("UPDATE documents SET intake_proposal_id=99 WHERE id=10")
+    assert await finish(pg_pool, job, extracted={"passport": "must-not-write"}) == "stale"
+    async with pg_pool.acquire() as conn:
+        assert await conn.fetchval("SELECT ocr_extracted_data FROM documents WHERE id=10") is None
+
+
+@pytest.mark.asyncio
+async def test_passport_normalization_handles_tabs_and_nbsp(pg_pool: asyncpg.Pool) -> None:
+    await _seed(pg_pool)
+    async with pg_pool.acquire() as conn:
+        await conn.execute("UPDATE documents SET document_type=$1 WHERE id=10", "\t\u00a0PASPOR\n")
+        assert await conn.fetchval(
+            "SELECT crm_passport_ocr_is_passport(document_type) FROM documents WHERE id=10"
+        )
+    assert await claim(pg_pool) is not None
 
 
 @pytest.mark.asyncio
