@@ -70,9 +70,9 @@ export function CheckoutFlow({
 
   useEffect(() => {
     const handoff = readCheckoutHandoff(resultId);
+    if (handoff.full_name) setFullName(handoff.full_name);
+    if (handoff.passport_number) setPassportNumber(handoff.passport_number);
     if (handoff.full_name && handoff.passport_number) {
-      setFullName(handoff.full_name);
-      setPassportNumber(handoff.passport_number);
       setHandoffPresent(true);
     }
   }, [resultId]);
