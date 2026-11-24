@@ -15,6 +15,8 @@ must be caught.
 from __future__ import annotations
 
 import ast
+import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -580,7 +582,7 @@ class HostedFanInCheckout(unittest.TestCase):
             )
 
 
-class EditorialDiff(unittest.TestCase):
+class GitFixture:
     def _git(self, root, *args):
         return subprocess.run(
             ("git", "-C", str(root), *args), check=True, stdout=subprocess.PIPE
@@ -605,6 +607,8 @@ class EditorialDiff(unittest.TestCase):
         self._git(root, "commit", "-qm", message)
         return self._git(root, "rev-parse", "HEAD")
 
+
+class EditorialDiff(GitFixture, unittest.TestCase):
     def test_articles_and_usual_news_images_are_editorial(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, base = self._repo(tmp)
@@ -715,6 +719,85 @@ class EditorialDiff(unittest.TestCase):
                 root, "nested", (("apps/mouth/src/content/articles/visa/extra/nested.mdx", b"a"),)
             )
             self.assertEqual(st.editorial_diff(base, head, root), "full")
+
+
+@unittest.skipUnless(importlib.util.find_spec("yaml"), "workflow tests require PyYAML")
+class WorkflowPlanner(GitFixture, unittest.TestCase):
+    article = ("apps/mouth/src/content/articles/news/a.mdx", b"article")
+    helper = "scripts/ci/shard_tests.py"
+
+    def setUp(self):
+        import yaml
+
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
+        self.root, _ = self._repo(self.scratch)
+        self.base = self._commit(self.root, "base classifier", [(self.helper, Path(st.__file__).read_bytes())])
+        self._git(self.root, "update-ref", "refs/remotes/origin/main", self.base)
+        workflow = Path(__file__).resolve().parents[2] / ".github/workflows/tests.yml"
+        self.jobs = yaml.safe_load(workflow.read_text())["jobs"]
+        self.bash = next(step["run"] for step in self.jobs["changes"]["steps"] if step.get("id") == "classify")
+        gh = self.scratch / "gh"
+        gh.write_text("#!/bin/sh\nprintf '%s\\n' \"$PR_JSON\"\n")
+        gh.chmod(0o755)
+
+    def merge(self, tree, first, second):
+        sha = self._git(self.root, "commit-tree", tree + "^{tree}", "-p", first, "-p", second, "-m", "merge")
+        self._git(self.root, "update-ref", "HEAD", sha)
+
+    def plan(self, head, **overrides):
+        output = self.scratch / "output"
+        output.write_text("")
+        repo = {"full_name": "owner/repo"}
+        pr = {"merged": True, "base": {"ref": "main", "sha": self.base, "repo": repo},
+              "head": {"sha": head, "repo": repo}}
+        env = dict(os.environ, GITHUB_EVENT_NAME="pull_request", BASE=self.base, BASE_BRANCH="main",
+                   HEAD=head, GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(self.scratch / "summary"),
+                   RUNNER_TEMP=str(self.scratch), GITHUB_REPOSITORY=repo["full_name"], PR_JSON=json.dumps(pr),
+                   PATH=str(self.scratch) + os.pathsep + os.environ["PATH"])
+        env.update(overrides)
+        subprocess.run(["bash", "-c", self.bash], cwd=self.root, env=env, check=True, timeout=20, capture_output=True)
+        return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+    def test_pr_binds_merge_parents_and_loads_classifier_from_base(self):
+        head = self._commit(self.root, "article", [self.article])
+        self.merge(head, self.base, head)
+        self.assertEqual(self.plan(head).get("mode"), "editorial")
+        self.assertNotEqual(self.plan(self.base).get("mode"), "editorial")
+        self._git(self.root, "update-ref", "HEAD", head)
+        changed = self._commit(self.root, "change helper", [(self.helper, b"print('editorial')\n")])
+        self.merge(changed, self.base, changed)
+        self.assertEqual(self.plan(changed).get("mode"), "full")
+
+    def test_missing_base_classifier_runs_full(self):
+        (self.root / self.helper).unlink()
+        self.base = self._commit(self.root, "remove helper")
+        self._git(self.root, "update-ref", "refs/remotes/origin/main", self.base)
+        head = self._commit(self.root, "article", [self.article])
+        self.merge(head, self.base, head)
+        self.assertEqual(self.plan(head).get("mode"), "full")
+
+    def test_replay_binds_original_product_and_ci_revision(self):
+        head = self._commit(self.root, "article", [self.article])
+        replay = dict(GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/ci-validation/1",
+                      REPLAY_PR="1", REPLAY_CI=self.base)
+        self.merge(head, head, self.base)
+        self.assertEqual(self.plan(head, **replay), {"mode": "editorial", "replay": "true", "replay_base": self.base})
+        self.assertNotIn("replay", self.plan(head, **dict(replay, REPLAY_CI=head)))
+        self.merge(head, self.base, head)
+        self.assertNotIn("replay", self.plan(head, **replay))
+        product = self._commit(self.root, "product change", [("apps/backend-rag/backend/example.py", b"x")])
+        self.merge(product, head, self.base)
+        self.assertNotIn("replay", self.plan(head, **replay))
+        ci = self._commit(self.root, "CI change", [(self.helper, b"# new classifier\n")])
+        self.merge(head, head, ci)
+        self.assertNotIn("replay", self.plan(head, **dict(replay, REPLAY_CI=ci)))
+
+    def test_validation_coverage_is_consistent(self):
+        shard = self.jobs["backend-shard"]["env"]["BACKEND_COLLECT_COVERAGE"]
+        self.assertIn("github.event_name != 'pull_request'", shard)
+        self.assertEqual(shard, self.jobs["backend-tests"]["env"]["BACKEND_COLLECT_COVERAGE"])
 
 
 if __name__ == "__main__":

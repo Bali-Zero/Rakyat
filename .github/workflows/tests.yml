@@ -590,20 +590,24 @@ jobs:
           PYTHONPATH=.:../crm-cell timeout 120 python -m backend.db.migrate apply-all
 
       - name: Run backend stability gate
-        # This preflight is identical on each shard. One current-run copy
-        # suffices for editorial changes; every shard still migrates its own
-        # database and executes its complete partition against it.
+        # The preflight runs on a disposable clone of the migrated database.
+        # Its writes must not change the template used by the partition tests.
         if: env.EDITORIAL_MODE != 'true' || matrix.shard == 1
         env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
-          TEST_DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
-          INTAKE_TEST_DSN: postgresql://test:test@localhost:5432/nuzantara_test
-          REDIS_URL: redis://localhost:6379
+          PG_SERVICE: ${{ job.services.postgres.id }}
+          DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_preflight
+          TEST_DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_preflight
+          INTAKE_TEST_DSN: postgresql://test:test@localhost:5432/nuzantara_preflight
+          REDIS_URL: redis://localhost:6379/1
           JWT_SECRET_KEY: test_jwt_secret_key_for_testing_only_min_32_chars_long
           API_KEYS: test_api_key_1,test_api_key_2
         run: |
           cd apps/backend-rag
-          PYTHONPATH=.:../crm-cell python scripts/backend_stability_gate.py
+          docker exec "$PG_SERVICE" createdb -U test -T nuzantara_test nuzantara_preflight
+          status=0
+          PYTHONPATH=.:../crm-cell python scripts/backend_stability_gate.py || status=$?
+          docker exec "$PG_SERVICE" dropdb -U test nuzantara_preflight
+          exit "$status"
 
       - name: Compute this shard's chunk
         # scripts/ci/shard_tests.py is the SSOT for both "what is the corpus"
@@ -705,14 +709,9 @@ jobs:
             exit 0
           fi
 
-          workers=auto
-          if [[ "$EDITORIAL_MODE" == true ]]; then
-            workers=$(nproc)
-            export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-          fi
           PYTHONPATH=.:../crm-cell pytest \
             "${CHUNK[@]}" \
-            -n "$workers" --dist loadfile \
+            -n auto --dist loadfile \
             -ra --no-header --durations=50 \
             --ignore=backend/tests/e2e \
             "${COV_ARGS[@]}" \
@@ -1029,7 +1028,7 @@ jobs:
           set -euo pipefail
           RECEIPTS="$GITHUB_WORKSPACE/shard-receipts"
           if [ "$BACKEND_COLLECT_COVERAGE" != "true" ]; then
-            echo "coverage not collected on this lane (pull_request) — threshold not applicable"
+            echo "coverage not collected for this PR or validated PR replay"
             exit 0
           fi
           cd apps/backend-rag
@@ -2197,6 +2196,9 @@ jobs:
 
       - name: Install the packages the scanner tests import
         run: python -m pip install --quiet --disable-pip-version-check pytest==9.0.3 PyJWT==2.15.1 PyYAML==6.0.3
+
+      - name: Test backend execution classification and partitioning
+        run: python -m unittest scripts/ci/test_shard_tests.py
 
       - name: Run the repo-wide scanner tests
         working-directory: apps/backend-rag
