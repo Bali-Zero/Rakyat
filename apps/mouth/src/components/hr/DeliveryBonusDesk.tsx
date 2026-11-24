@@ -37,6 +37,7 @@ type Hold = {
   practice_id: number;
   service: string;
   slot_key: string;
+  slot_label?: string | null;
   due_on: string;
   payout_from_month: string;
   next_action:
@@ -112,6 +113,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
   const [goal, setGoal] = useState("");
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [payrollConfirmed, setPayrollConfirmed] = useState(false);
   const [error, setError] = useState(false);
   const [saveError, setSaveError] = useState(false);
   useEffect(() => {
@@ -137,6 +139,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
           setError(true);
           return;
         }
+        setPayrollConfirmed(res.data.on_payroll);
         setBound({ data: res.data });
         const next = res.data.next_case;
         if (
@@ -161,7 +164,12 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
             waiver_reason?: string | null;
           }[];
         }>(`/api/crm/practices/${next.practice_id}/delivery`);
-        if (!live || !acceptResponse(pack, owner)) return;
+        if (!live) return;
+        if (!acceptResponse(pack, owner)) {
+          setBound(null);
+          setError(true);
+          return;
+        }
         const followup = pack.data.visa_followup;
         const openFollowup = followup && !followup.fulfilled_at;
         const missing = pack.data.slots.filter(
@@ -195,13 +203,18 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
     };
   }, [identity, generation]);
   const data = bound?.data;
-  if (data && !data.on_payroll) return null;
+  if (!payrollConfirmed || (data && !data.on_payroll)) return null;
   if (!data) {
     return (
       <div
         className={`sentry-block mb-5 flex min-h-14 items-center gap-3 px-5 text-sm text-[var(--bz-text-2)] ${CARD}`}
         data-sentry-block=""
       >
+        {saveError && (
+          <p role="alert">
+            Your goal update could not be verified. Reload to check your goal.
+          </p>
+        )}
         {error ? (
           <button
             type="button"
@@ -225,7 +238,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
 
   async function saveGoal(event: React.FormEvent) {
     event.preventDefault();
-    if (!identity || busy) return;
+    if (busy) return;
     const target = Number(goal);
     if (!Number.isInteger(target) || target < 1 || target > 200) return;
     setBusy(true);
@@ -239,6 +252,11 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
         setBound({ data: res.data });
         setEditing(false);
         refresh((v) => v + 1);
+      } else {
+        setBound(null);
+        setEditing(false);
+        setSaveError(true);
+        setError(true);
       }
     } catch {
       setSaveError(true);
@@ -525,7 +543,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
   );
 }
 
-const summaryClass = `flex min-h-11 w-fit cursor-pointer list-none items-center gap-2 text-sm font-semibold text-[var(--bz-copper-text)] hover:underline [&::-webkit-details-marker]:hidden ${FOCUS}`;
+const summaryClass = `flex min-h-11 w-fit cursor-pointer list-none items-center gap-2 text-sm font-semibold text-[var(--bz-text-1)] hover:underline [&::-webkit-details-marker]:hidden ${FOCUS}`;
 const chevronClass =
   "size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none";
 
@@ -539,8 +557,9 @@ function PermitHold({ row }: { row: Hold }) {
         Case #{row.practice_id} · {row.service}{" "}
         <ArrowUpRight className="size-4" aria-hidden />
       </Link>
-      <p>
-        {holdActions[row.next_action]} · {row.slot_key.toUpperCase()} due{" "}
+      <p>{holdActions[row.next_action]}</p>
+      <p className="mt-1 text-sm">
+        {row.slot_label || "Required permit"} · Due{" "}
         <time dateTime={row.due_on}>
           {baliDate(row.due_on, {
             day: "numeric",

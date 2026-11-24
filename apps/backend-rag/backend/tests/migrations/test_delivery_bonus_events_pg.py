@@ -235,3 +235,37 @@ async def test_excluded_claims_do_not_displace_unattributed_claims_from_hr_revie
     pool.acquire.return_value.__aenter__.return_value = db
     response = await delivery_bonus_reviews({"role": "admin", "user_id": "reviewer"}, pool)
     assert [row["practice_id"] for row in response["items"]] == [104]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("service", "slot", "label"),
+    [
+        ("visa_c1_tourism", "document_2", "ITK — Visit Stay Permit · after confirmed entry"),
+        (
+            "kitas_dependent_1yr_offshore",
+            "document_3",
+            "IMK — Re-entry Permit · after confirmed entry",
+        ),
+        ("legacy_unknown", "document_2", None),
+        ("visa_c1_tourism", "retired_slot", None),
+    ],
+)
+async def test_employee_hold_uses_service_catalog_document(db, service, slot, label):
+    await record_delivery_bonus(
+        db,
+        2,
+        service,
+        "consultant@example.invalid",
+        "electronic_visa_issued",
+        issued_on=date.today(),
+    )
+    await db.execute(
+        """INSERT INTO practice_visa_followups(practice_id, service_code, slot_key, started_on, due_on, allow_postpone)
+           VALUES (2, $1, $2, CURRENT_DATE - 35, CURRENT_DATE - 5, true)""",
+        service,
+        slot,
+    )
+    (held,) = (await delivery_desk(db, "tm-1"))["holds"]
+    assert held["slot_key"] == slot
+    assert held["slot_label"] == label

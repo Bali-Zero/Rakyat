@@ -12,6 +12,7 @@ from backend.app.services.hr.hr_service import (
     _refuse_if_payroll_closed,
     payroll_set_sql,
 )
+from backend.services.crm.delivery_catalog import delivery_policy
 
 WITA = ZoneInfo(BUSINESS_TZ)
 
@@ -266,7 +267,7 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
         today,
     )
     holds = await conn.fetch(
-        """SELECT o.practice_id, COALESCE(pt.name,o.service_code) AS service, o.slot_key,
+        """SELECT o.practice_id, o.service_code, COALESCE(pt.name,o.service_code) AS service, o.slot_key,
                   o.due_on, COALESCE(o.bound_month,o.payout_from_month) AS payout_from_month, o.email_state,
                   CASE WHEN $2::date < o.started_on + 60 THEN 'upload_permit'
                        WHEN o.email_state IN ('sending','uncertain') THEN 'verify_escalation_email'
@@ -278,9 +279,22 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
         emp_id,
         today,
     )
+    labeled_holds = []
+    for row in holds:
+        hold = dict(row)
+        policy = delivery_policy(hold.pop("service_code"))
+        hold["slot_label"] = (
+            next(
+                (slot["label"] for slot in policy["slots"] if slot["key"] == hold["slot_key"]),
+                None,
+            )
+            if policy
+            else None
+        )
+        labeled_holds.append(hold)
     return {
         **result,
-        "holds": [dict(r) for r in holds],
+        "holds": labeled_holds,
         "totals": dict(totals),
         "milestones": milestones,
         "target": target,

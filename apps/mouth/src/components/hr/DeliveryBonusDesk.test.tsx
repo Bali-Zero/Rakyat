@@ -113,7 +113,8 @@ describe("DeliveryBonusDesk", () => {
           {
             practice_id: 47,
             service: "C1 Tourism",
-            slot_key: "itk",
+            slot_key: "document_2",
+            slot_label: "ITK — Visit Stay Permit · after confirmed entry",
             due_on: "2026-11-28",
             payout_from_month: "2026-12-01",
             next_action: nextAction,
@@ -134,9 +135,11 @@ describe("DeliveryBonusDesk", () => {
       expect(
         await screen.findByRole("link", { name: "Case #47 · C1 Tourism" }),
       ).toHaveAttribute("href", "/process/47#final-delivery");
-      expect(screen.getByText(expectedAction)).toHaveTextContent(
-        "ITK due 28 Nov 2026",
+      expect(screen.getByText(expectedAction)).toBeVisible();
+      expect(screen.getByText(/ITK — Visit Stay Permit/)).toHaveTextContent(
+        "Due 28 Nov 2026",
       );
+      expect(screen.queryByText(/document_2/i)).toBeNull();
       expect(screen.getByText("28 Nov 2026")).toHaveAttribute(
         "datetime",
         "2026-11-28",
@@ -236,4 +239,80 @@ describe("DeliveryBonusDesk", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("spinbutton")).toBeNull();
   });
+  it.each(["off-payroll", "request error"])(
+    "stays silent before eligibility is confirmed, including %s",
+    async (outcome) => {
+      if (outcome === "off-payroll") {
+        mocks.request.mockResolvedValue({
+          sentSub: "employee-a",
+          data: { team_member_id: "employee-a", on_payroll: false },
+        });
+      } else {
+        mocks.request.mockRejectedValue(new Error("unavailable"));
+      }
+      const { container } = render(<DeliveryBonusDesk />);
+      expect(container).toBeEmptyDOMElement();
+      await waitFor(() => expect(mocks.request).toHaveBeenCalledOnce());
+      expect(container).toBeEmptyDOMElement();
+    },
+  );
+  it("clears protected figures when the goal response fails identity binding, then allows a fresh read", async () => {
+    const data = { ...desk(), next_case: null };
+    mocks.request.mockImplementation(async (url: string) => ({
+      sentSub: url.endsWith("/delivery-goal") ? "employee-b" : "employee-a",
+      data,
+    }));
+    render(<DeliveryBonusDesk />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit personal goal" }),
+    );
+    fireEvent.change(screen.getByRole("spinbutton"), {
+      target: { value: "9" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your goal update could not be verified",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "My delivery bonuses" }),
+    ).toBeNull();
+    expect(screen.queryAllByText("Rp 100.000")).toHaveLength(0);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reload my delivery bonuses" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "My delivery bonuses" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  it.each([
+    ["document_3", "IMK — Re-entry Permit", "IMK — Re-entry Permit"],
+    ["document_legacy", null, "Required permit"],
+  ])(
+    "uses the display label on hold %s and a neutral fallback for legacy keys",
+    async (slot_key, slot_label, expected) => {
+      const data = {
+        ...desk(),
+        next_case: null,
+        holds: [
+          {
+            practice_id: 9,
+            service: "Synthetic service",
+            slot_key,
+            slot_label,
+            due_on: "2026-11-28",
+            payout_from_month: "2026-12-01",
+            next_action: "upload_permit",
+            email_state: "not_sent",
+          },
+        ],
+      };
+      mocks.request.mockResolvedValue({ sentSub: "employee-a", data });
+      render(<DeliveryBonusDesk />);
+      expect(await screen.findByText(new RegExp(expected!))).toHaveTextContent(
+        "Due 28 Nov 2026",
+      );
+      expect(screen.queryByText(new RegExp(slot_key!, "i"))).toBeNull();
+    },
+  );
 });
