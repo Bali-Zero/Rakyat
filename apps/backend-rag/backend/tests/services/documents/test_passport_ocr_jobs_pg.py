@@ -408,8 +408,9 @@ async def test_staff_reads_one_result_after_interrupted_upload_and_two_workers(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stored_hash", [None, "a" * 64])
 async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
-    pg_pool, monkeypatch
+    pg_pool, monkeypatch, stored_hash
 ):
     from unittest.mock import AsyncMock
 
@@ -418,6 +419,9 @@ async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
     from backend.services.intake.extract import _mrz_check_digit
 
     await _seed(pg_pool)
+    await pg_pool.execute(
+        "UPDATE documents SET file_id='local-test-file', content_hash=$1 WHERE id=10", stored_hash
+    )
     # Recreate the historical state from before the upload trigger existed.
     await pg_pool.execute("DELETE FROM crm_passport_ocr_jobs WHERE document_id=10")
     number = "T00000001"
@@ -426,7 +430,7 @@ async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
     source = {
         "document_id": 10,
         "client_id": 1,
-        "file_id": "file-a",
+        "file_id": "local-test-file",
         "source_sha256": "a" * 64,
         "mrz_line1": "P<UTOCLIENT<<SYNTHETIC",
         "mrz_line2": line,
@@ -462,7 +466,7 @@ async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
     task = asyncio.create_task(local.apply_apple_receipt(pg_pool, receipt))
     try:
         await asyncio.wait_for(at_write.wait(), 5)
-        assert await jobs.claim(pg_pool, doc_id=10, client_id=1, file_id="file-a") is None
+        assert await jobs.claim(pg_pool, doc_id=10, client_id=1, file_id="local-test-file") is None
     finally:
         release.set()
     assert await task == "completed"
@@ -479,13 +483,19 @@ async def test_local_receipt_is_atomic_with_the_cloud_worker_and_safe_to_replay(
         )
         == number
     )
+    await pg_pool.execute("UPDATE documents SET verified_at=now() WHERE id=10")
+    with pytest.raises(local.ReceiptRejected, match="ineligible_document"):
+        await local.apply_apple_receipt(pg_pool, receipt)
+    await pg_pool.execute("UPDATE documents SET verified_at=NULL WHERE id=10")
     await pg_pool.execute(
         "INSERT INTO clients (id,status,passport_number) VALUES (2,'active',$1)", number
     )
     with pytest.raises(local.ReceiptRejected, match="identity_mismatch"):
         await local.apply_apple_receipt(pg_pool, receipt)
     assert await pg_pool.fetchrow(observation) == before
-    await pg_pool.execute("UPDATE clients SET status='lead', passport_number=$1 WHERE id=2", "T-0000 0001")
+    await pg_pool.execute(
+        "UPDATE clients SET status='lead', passport_number=$1 WHERE id=2", "T-0000 0001"
+    )
     with pytest.raises(local.ReceiptRejected, match="identity_mismatch"):
         await local.apply_apple_receipt(pg_pool, receipt)
     assert await pg_pool.fetchrow(observation) == before

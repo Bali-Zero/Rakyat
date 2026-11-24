@@ -83,7 +83,9 @@ async def test_process_one_returns_not_claimed_without_extraction() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", [None, "source_sha", "folder", "trashed"])
+@pytest.mark.parametrize(
+    "change", [None, "source_sha", "folder", "trashed", "missing_storage_hash"]
+)
 async def test_local_receipt_verifies_metadata_without_downloading_media(change):
     from backend.app.routers import documents_proxy
     from backend.services.documents import passport_ocr_receipt as local
@@ -117,10 +119,34 @@ async def test_local_receipt_verifies_metadata_without_downloading_media(change)
             documents_proxy, "assert_drive_file_belongs_to_client", new_callable=AsyncMock
         ) as owner,
     ):
-        if change:
+        if change == "missing_storage_hash":
+            await local._verify_drive(conn, source, None)
+        elif change:
             with pytest.raises(local.ReceiptRejected):
                 await local._verify_drive(conn, source, "b" * 32)
         else:
             await local._verify_drive(conn, source, "b" * 32)
         owner.assert_awaited_once_with("sample-file", 2, conn, require_ancestry=True)
     service.download_file_content.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "header,name", [("PNUTOHOLDER<<SAMPLE", "SAMPLE HOLDER"), ("P<D<<HOLDER<<", "HOLDER")]
+)
+def test_local_receipt_recognizes_td3_subtypes_and_mononyms(header, name):
+    from backend.services.documents.passport_ocr_receipt import AppleReceipt, ReceiptRejected
+    from backend.services.intake.extract import _mrz_check_digit
+
+    number, birth, expiry = "T00000001", "900101", "350101"
+    lower = f"{number}{_mrz_check_digit(number)}UTO{birth}{_mrz_check_digit(birth)}F{expiry}{_mrz_check_digit(expiry)}"
+    receipt = {
+        "document_id": 1,
+        "client_id": 1,
+        "file_id": "synthetic-file",
+        "source_sha256": "a" * 64,
+        "mrz_line1": header,
+        "mrz_line2": lower,
+    }
+    assert AppleReceipt.parse(receipt).full_name == name
+    with pytest.raises(ReceiptRejected, match="invalid_receipt"):
+        AppleReceipt.parse({**receipt, "file_id": "too-short"})
