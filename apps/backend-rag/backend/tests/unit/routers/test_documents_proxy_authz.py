@@ -588,6 +588,22 @@ async def test_write_guard_guilt_a_failed_metadata_fetch_denies_rather_than_perm
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failed_id", "status", "expected"),
+    [("fileA0001Z", 503, 503), ("subfolder1", 429, 503), ("fileA0001Z", 404, 403)],
+)
+async def test_durable_worker_distinguishes_unavailable_ancestry_from_denial(
+    mod, monkeypatch, failed_id, status, expected
+):
+    client = _FakeDriveFileClient({"fileA0001Z": ["subfolder1"]}, statuses={failed_id: status})
+    _patch_drive_client(monkeypatch, mod, client)
+    pool = _FakeOwnerPool(mod, client_folders={1: {"client-1-folder"}})
+    with pytest.raises(HTTPException) as exc:
+        await mod.assert_drive_file_belongs_to_client("fileA0001Z", 1, pool, require_ancestry=True)
+    assert exc.value.status_code == expected
+
+
+@pytest.mark.asyncio
 async def test_write_guard_guilt_a_transport_error_denies_rather_than_500s(mod, monkeypatch):
     """The top-level metadata fetch previously had no `try/except` around it
     (unlike `_drive_parent_fetcher._fetch`, which already caught

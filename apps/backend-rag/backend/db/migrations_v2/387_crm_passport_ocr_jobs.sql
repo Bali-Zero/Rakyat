@@ -28,6 +28,14 @@ LANGUAGE sql IMMUTABLE AS $$
     SELECT lower(btrim(coalesce(value,''), E' \t\r\n\f' || chr(11) || chr(160))) IN ('passport','paspor')
 $$;
 
+-- Surface externally owned intake records without changing their legacy state.
+CREATE FUNCTION crm_passport_ocr_staff_status(d documents) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE WHEN d.ocr_status='pending' AND crm_passport_ocr_is_passport(d.document_type)
+        AND (d.intake_idempotency_key IS NOT NULL OR d.intake_proposal_id IS NOT NULL)
+        THEN 'intake' ELSE d.ocr_status END
+$$;
+
 -- A protected document must never receive an extraction or a review marker from this worker.
 CREATE FUNCTION crm_passport_ocr_writable(d documents) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$
@@ -122,6 +130,7 @@ DROP TRIGGER crm_passport_ocr_enqueue_pending_trg ON documents;
 DROP FUNCTION crm_passport_ocr_enqueue_pending();
 DROP FUNCTION crm_passport_ocr_review_code(documents);
 DROP FUNCTION crm_passport_ocr_writable(documents);
+DROP FUNCTION crm_passport_ocr_staff_status(documents);
 DROP FUNCTION crm_passport_ocr_is_passport(text);
 DROP INDEX crm_passport_ocr_owner_by_hash;
 DROP INDEX crm_passport_ocr_owner_by_file;

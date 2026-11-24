@@ -37,8 +37,9 @@ class _FakeConn:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("document_type", ["passport", "\tPASPOR\u00a0"])
 async def test_backfill_keeps_completed_passport_extraction_on_document(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, document_type: str,
 ) -> None:
     from backend.services.documents.crm_drive_backfill_service import run_crm_drive_backfill
 
@@ -50,7 +51,7 @@ async def test_backfill_keeps_completed_passport_extraction_on_document(
                 "client_id": 42,
                 "file_id": "drive-completed",
                 "file_name": "passport.pdf",
-                "document_type": "passport",
+                "document_type": document_type,
                 "document_category": "immigration",
                 "practice_id": None,
                 "google_drive_file_url": "https://drive/file",

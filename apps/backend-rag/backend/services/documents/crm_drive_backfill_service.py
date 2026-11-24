@@ -173,7 +173,9 @@ async def _link_candidate_to_kg(
     document_type: str,
     extracted_fields: dict[str, Any] | None = None,
 ) -> bool:
-    if document_type.lower() in {"passport", "paspor"}:
+    from backend.services.documents.ocr_dispatcher_service import is_passport_document_type
+
+    if is_passport_document_type(document_type):
         return False
     from backend.services.knowledge_graph.document_linker import kg_link_document
 
@@ -295,7 +297,7 @@ LEFT JOIN crm_kg_nodes kg
     AND kg.entity_type = 'crm_document'
     AND kg.deleted_at IS NULL
 WHERE c.deleted_at IS NULL
-  AND lower(coalesce(d.document_type,'')) NOT IN ('passport','paspor')
+  AND NOT crm_passport_ocr_is_passport(d.document_type)
   AND d.client_id IS NOT NULL
   AND d.file_id IS NOT NULL
   AND d.file_id <> ''

@@ -121,7 +121,8 @@ async def get_client_documents(
                 d.id, d.document_type, d.document_category,
                 d.file_name, d.file_id, d.file_url, d.google_drive_file_url,
                 d.status, d.expiry_date, d.notes, d.is_archived,
-                d.ocr_status, d.ocr_extracted_data->>'review_reason' AS ocr_review_reason,
+                crm_passport_ocr_staff_status(d) AS ocr_status,
+                d.ocr_extracted_data->>'review_reason' AS ocr_review_reason,
                 d.family_member_id, d.practice_id, d.client_visible,
                 d.created_at, d.updated_at,
                 fm.full_name as family_member_name,
@@ -702,11 +703,14 @@ async def get_client_ocr_status(
                        AS _pending_ocr_count,
                    COUNT(*) FILTER (WHERE ocr_status = 'completed') OVER ()
                        AS _completed_ocr_count
-            FROM documents
-            WHERE client_id = $1
-              AND ocr_status IS NOT NULL
-              AND ($2::bigint IS NULL OR id = $2)
-              AND {admin_document_not_deleted_clause()}
+            FROM (
+                SELECT id, document_type, file_name, crm_passport_ocr_staff_status(d) AS ocr_status,
+                       ocr_completed_at, ocr_extracted_data, updated_at
+                FROM documents d
+                WHERE client_id = $1 AND ocr_status IS NOT NULL
+                  AND ($2::bigint IS NULL OR id = $2)
+                  AND {admin_document_not_deleted_clause()}
+            ) AS staff_documents
             ORDER BY updated_at DESC
             LIMIT 10
             """,
@@ -1687,10 +1691,14 @@ async def upload_document_base64(
                                 )
                                 raise
 
+                intake_passport = bool(data.intake_idempotency_key) and is_passport_document_type(
+                    data.document_type
+                )
                 if not deduplicated_doc_in_tx:
                     await conn.execute(
-                        "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
+                        "UPDATE documents SET ocr_status = $2 WHERE id = $1",
                         doc_id,
+                        "intake" if intake_passport else "pending",
                     )
 
             if deduplicated_doc_in_tx and (company_id is None or deduplicated_comp_in_tx):
@@ -1725,7 +1733,7 @@ async def upload_document_base64(
                 "document_id": doc_id,
                 "file_id": effective_file_id,
                 "file_url": effective_file_url,
-                "ocr_triggered": not deduplicated_doc_in_tx,
+                "ocr_triggered": not deduplicated_doc_in_tx and not intake_passport,
                 "company_document_id": company_document_id,
             }
 

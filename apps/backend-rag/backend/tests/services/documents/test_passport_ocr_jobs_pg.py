@@ -229,6 +229,9 @@ async def test_pending_intake_document_never_enrolls(pg_pool: asyncpg.Pool) -> N
                VALUES (10,99,'passport','intake-file','active','google_drive','pending','intake-key')"""
         )
         assert await conn.fetchval("SELECT count(*) FROM crm_passport_ocr_jobs") == 0
+        assert await conn.fetchval(
+            "SELECT crm_passport_ocr_staff_status(d) FROM documents d WHERE id=10"
+        ) == "intake"
     assert await claim(pg_pool) is None
 
 

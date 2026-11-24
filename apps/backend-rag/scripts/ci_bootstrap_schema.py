@@ -520,6 +520,7 @@ def main() -> int:
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_source VARCHAR(50) DEFAULT 'team'",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash VARCHAR(32)",
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS subfolder VARCHAR(100)",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_status VARCHAR(20)",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_extracted_data JSONB",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_completed_at TIMESTAMPTZ",

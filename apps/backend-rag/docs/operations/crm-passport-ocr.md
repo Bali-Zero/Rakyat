@@ -10,6 +10,8 @@ document at `GET /api/crm/clients/{client_id}/ocr-status?document_id={document_i
 The document list also returns
 `ocr_review_reason`. A completed result belongs to the document, client and Drive file
 that the worker claimed. Staff reconcile identity differences before updating client records.
+An `intake` status identifies a passport owned by the intake workflow and excludes
+it from the CRM worker's pending count.
 
 ## Historical recovery
 
