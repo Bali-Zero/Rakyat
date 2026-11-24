@@ -152,6 +152,37 @@ class TestTransitions:
         assert case.itas_date == date(2026, 8, 15)
         assert case.guarantee_anchor == date(2026, 8, 15)
 
+    @pytest.mark.parametrize("to_stage", [E33Stage.ENTRY, E33Stage.ITAS_ACTIVE])
+    def test_a_date_left_out_is_the_day_in_bali_not_the_utc_day(self, to_stage):
+        # 06:00 WITA on 1 December is still 30 November in UTC
+        early_morning_in_bali = datetime(2026, 11, 30, 22, 0, tzinfo=timezone.utc)
+        case = _case(stage=E33Stage.VISA_ISSUED)
+        if to_stage == E33Stage.ITAS_ACTIVE:
+            case.advance(E33Stage.ENTRY, at=AT, occurred_on=date(2026, 11, 20))
+        case.advance(to_stage, at=early_morning_in_bali)
+        recorded = case.entry_date if to_stage == E33Stage.ENTRY else case.itas_date
+        assert recorded == date(2026, 12, 1)
+
+    def test_a_naive_instant_is_read_as_utc(self):
+        case = _case(stage=E33Stage.VISA_ISSUED)
+        case.advance(E33Stage.ENTRY, at=datetime(2026, 11, 30, 22, 0))
+        assert case.entry_date == date(2026, 12, 1)
+
+    def test_a_date_left_out_late_in_the_bali_day_stays_that_day(self):
+        # 23:00 WITA on 1 December is 15:00 UTC the same day
+        case = _case(stage=E33Stage.VISA_ISSUED)
+        case.advance(E33Stage.ENTRY, at=datetime(2026, 12, 1, 15, 0, tzinfo=timezone.utc))
+        assert case.entry_date == date(2026, 12, 1)
+
+    def test_an_explicit_date_is_kept_whatever_the_hour(self):
+        case = _case(stage=E33Stage.VISA_ISSUED)
+        case.advance(
+            E33Stage.ENTRY,
+            at=datetime(2026, 11, 30, 22, 0, tzinfo=timezone.utc),
+            occurred_on=date(2026, 11, 28),
+        )
+        assert case.entry_date == date(2026, 11, 28)
+
 
 # ── Day-90 guarantee gate ──────────────────────────────────────────────────────
 
