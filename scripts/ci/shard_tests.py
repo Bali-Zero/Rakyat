@@ -53,6 +53,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -269,9 +271,92 @@ def verify(all_tests, shards, chunk_dir, union_only=False):
     return problems
 
 
+_SHA = re.compile(r"[0-9a-f]{40}\Z")
+_ARTICLE = re.compile(
+    rb"apps/mouth/src/content/articles/[A-Za-z0-9_-]+/[A-Za-z0-9][A-Za-z0-9._-]*\.mdx\Z"
+)
+_NEWS_IMAGE = re.compile(
+    rb"apps/mouth/public/static/news/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpg|png)\Z"
+)
+
+
+def _git(root, *args):
+    return subprocess.run(
+        ("git", "-C", str(root), *args),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    ).stdout
+
+
+def _is_editorial_path(path):
+    return bool(_ARTICLE.fullmatch(path) or _NEWS_IMAGE.fullmatch(path))
+
+
+def editorial_diff(base, head, root="."):
+    """Return ``editorial`` only for a complete, linear, editorial-only range.
+
+    This deliberately inspects each commit rather than the final tree diff: a
+    reverted backend edit must still run the full CI suite.
+    """
+    if not (_SHA.fullmatch(base) and _SHA.fullmatch(head)):
+        return "full"
+    try:
+        root = _git(root, "rev-parse", "--show-toplevel").strip().decode("utf-8")
+        if _git(root, "rev-parse", "--is-shallow-repository").strip() != b"false":
+            return "full"
+        for sha in (base, head):
+            _git(root, "cat-file", "-e", sha + "^{commit}")
+        bases = _git(root, "merge-base", "--all", base, head).splitlines()
+        if len(bases) != 1:
+            return "full"
+        start = bases[0].decode("ascii")
+        commits = _git(root, "rev-list", "--parents", start + ".." + head).splitlines()
+        if not commits:
+            return "full"
+        for row in commits:
+            revisions = row.decode("ascii").split()
+            if len(revisions) != 2:
+                return "full"
+            commit, parent = revisions
+            # An explicit delete/add representation makes both ends of moves
+            # visible, irrespective of local rename settings or similarity.
+            raw = _git(root, "diff-tree", "--no-commit-id", "--no-renames", "--no-abbrev",
+                       "--raw", "-r", "-z", parent, commit)
+            if not raw.endswith(b"\0"):
+                return "full"
+            entries = raw[:-1].split(b"\0")
+            if len(entries) % 2:
+                return "full"
+            for metadata, path in zip(entries[::2], entries[1::2]):
+                if not _is_editorial_path(path):
+                    return "full"
+                fields = metadata.split()
+                if len(fields) != 5 or fields[4] not in (b"A", b"D", b"M"):
+                    return "full"
+                old_mode, new_mode, old_oid, new_oid, _ = fields
+                if not old_mode.startswith(b":"):
+                    return "full"
+                for mode, oid in ((old_mode[1:], old_oid), (new_mode, new_oid)):
+                    if mode == b"000000":
+                        continue
+                    if mode != b"100644":
+                        return "full"
+                    _git(root, "cat-file", "-e", oid.decode("ascii") + "^{blob}")
+        if not _git(root, "diff-tree", "--no-commit-id", "--no-renames", "--name-only",
+                    "-r", "-z", start, head):
+            return "full"
+        return "editorial"
+    except (UnicodeDecodeError, subprocess.CalledProcessError):
+        return "full"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("targets", "enumerate", "chunk", "verify"))
+    parser.add_argument("command", choices=("targets", "enumerate", "chunk", "verify", "editorial-diff"))
+    parser.add_argument("base", nargs="?")
+    parser.add_argument("head", nargs="?")
     parser.add_argument("--root", default=".", help="directory pytest runs from")
     parser.add_argument("--shards", type=int, default=3)
     parser.add_argument("--shard", type=int)
@@ -282,6 +367,12 @@ def main(argv=None):
         help="security mode: assert only that the trusted corpus ran, disjointly",
     )
     args = parser.parse_args(argv)
+
+    if args.command == "editorial-diff":
+        if args.base is None or args.head is None:
+            parser.error("editorial-diff requires <base-sha> <head-sha>")
+        print(editorial_diff(args.base, args.head))
+        return 0
 
     root = Path(args.root)
     targets = resolve_targets()

@@ -580,5 +580,141 @@ class HostedFanInCheckout(unittest.TestCase):
             )
 
 
+class EditorialDiff(unittest.TestCase):
+    def _git(self, root, *args):
+        return subprocess.run(
+            ("git", "-C", str(root), *args), check=True, stdout=subprocess.PIPE
+        ).stdout.decode().strip()
+
+    def _repo(self, tmp):
+        root = Path(tmp) / "repo"
+        self._git(root.parent, "init", "-q", str(root))
+        self._git(root, "config", "user.email", "ci@example.test")
+        self._git(root, "config", "user.name", "CI")
+        (root / "README").write_text("base\n")
+        self._git(root, "add", ".")
+        self._git(root, "commit", "-qm", "base")
+        return root, self._git(root, "rev-parse", "HEAD")
+
+    def _commit(self, root, message, files=()):
+        for name, content in files:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        self._git(root, "add", "-A")
+        self._git(root, "commit", "-qm", message)
+        return self._git(root, "rev-parse", "HEAD")
+
+    def test_articles_and_usual_news_images_are_editorial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            head = self._commit(
+                root,
+                "article",
+                (
+                    ("apps/mouth/src/content/articles/immigration/a.id.mdx", b"---\n---\n"),
+                    ("apps/mouth/public/static/news/a_card.jpg", b"jpg"),
+                    ("apps/mouth/public/static/news/a_social.png", b"png"),
+                ),
+            )
+            self.assertEqual(st.editorial_diff(base, head, root), "editorial")
+            output = subprocess.run(
+                (sys.executable, str(Path(st.__file__)), "editorial-diff", base, head),
+                cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True,
+            )
+            self.assertEqual(output.stdout, "editorial\n")
+            self.assertEqual(output.stderr, "")
+
+    def test_pure_editorial_rename_and_deletion_are_editorial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            self._commit(root, "add", (("apps/mouth/src/content/articles/visa/a.mdx", b"a"),))
+            self._git(root, "mv", "apps/mouth/src/content/articles/visa/a.mdx", "apps/mouth/src/content/articles/visa/b.mdx")
+            self._git(root, "commit", "-qm", "rename")
+            (root / "apps/mouth/src/content/articles/visa/b.mdx").unlink()
+            self._git(root, "add", "-A")
+            self._git(root, "commit", "-qm", "delete")
+            self.assertEqual(st.editorial_diff(base, self._git(root, "rev-parse", "HEAD"), root), "editorial")
+
+    def test_mixed_rename_and_backend_shared_lock_or_workflow_are_full(self):
+        for bad in (
+            "apps/backend-rag/backend/x.py",
+            "scripts/ci/shard_tests.py",
+            "package-lock.json",
+            ".github/workflows/tests.yml",
+        ):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
+                root, base = self._repo(tmp)
+                self._commit(root, "add", (("apps/mouth/src/content/articles/visa/a.mdx", b"a"),))
+                self._git(root, "mv", "apps/mouth/src/content/articles/visa/a.mdx", "apps/mouth/src/content/articles/visa/b.mdx")
+                head = self._commit(root, "mixed", ((bad, b"x"),))
+                self.assertEqual(st.editorial_diff(base, head, root), "full")
+
+    def test_reverted_backend_change_remains_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            self._commit(root, "article", (("apps/mouth/src/content/articles/visa/a.mdx", b"a"),))
+            self._commit(root, "backend", (("apps/backend-rag/backend/x.py", b"x"),))
+            (root / "apps/backend-rag/backend/x.py").unlink()
+            self._git(root, "add", "-A")
+            self._git(root, "commit", "-qm", "revert backend")
+            self.assertEqual(st.editorial_diff(base, self._git(root, "rev-parse", "HEAD"), root), "full")
+
+    def test_symlink_empty_missing_and_shallow_are_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            link = root / "apps/mouth/src/content/articles/visa/a.mdx"
+            link.parent.mkdir(parents=True)
+            link.symlink_to("/tmp/not-an-article")
+            self._git(root, "add", "-A")
+            self._git(root, "commit", "-qm", "symlink")
+            head = self._git(root, "rev-parse", "HEAD")
+            self.assertEqual(st.editorial_diff(base, head, root), "full")
+            self.assertEqual(st.editorial_diff("0" * 40, head, root), "full")
+            self.assertEqual(st.editorial_diff(base, "f" * 40, root), "full")
+            self._git(root, "commit", "--allow-empty", "-qm", "empty")
+            self.assertEqual(st.editorial_diff(head, self._git(root, "rev-parse", "HEAD"), root), "full")
+            shallow = Path(tmp) / "shallow"
+            self._git(Path(tmp), "clone", "-q", "--depth", "1", "file://" + str(root), str(shallow))
+            self.assertEqual(st.editorial_diff(head, self._git(root, "rev-parse", "HEAD"), shallow), "full")
+
+    def test_main_can_advance_independently_of_an_editorial_pr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            path = "apps/mouth/src/content/articles/business/story.mdx"
+            head = self._commit(root, "article", [(path, b"story\n")])
+            self._git(root, "checkout", "-qb", "advanced-base", base)
+            advanced = self._commit(root, "shared", [("packages/core/a.ts", b"code\n")])
+            self.assertEqual(st.editorial_diff(advanced, head, root), "editorial")
+
+    def test_fully_reverted_editorial_diff_is_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            path = "apps/mouth/src/content/articles/business/story.mdx"
+            self._commit(root, "article", [(path, b"story\n")])
+            (root / path).unlink()
+            head = self._commit(root, "remove article")
+            self.assertEqual(st.editorial_diff(base, head, root), "full")
+
+    def test_merge_commit_is_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            main = self._git(root, "symbolic-ref", "--short", "HEAD")
+            self._commit(root, "main", (("apps/mouth/src/content/articles/visa/main.mdx", b"a"),))
+            self._git(root, "checkout", "-qb", "side", base)
+            self._commit(root, "side", (("apps/mouth/src/content/articles/visa/side.mdx", b"a"),))
+            self._git(root, "checkout", "-q", main)
+            self._git(root, "merge", "--no-ff", "-qm", "merge", "side")
+            self.assertEqual(st.editorial_diff(base, self._git(root, "rev-parse", "HEAD"), root), "full")
+
+    def test_nested_article_path_is_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, base = self._repo(tmp)
+            head = self._commit(
+                root, "nested", (("apps/mouth/src/content/articles/visa/extra/nested.mdx", b"a"),)
+            )
+            self.assertEqual(st.editorial_diff(base, head, root), "full")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -5,6 +5,15 @@ on:
     types: [opened, synchronize, reopened]
   merge_group:
   workflow_dispatch:
+    inputs:
+      replay_pr:
+        description: 'Merged PR number on a dedicated ci-validation ref (empty runs full coverage)'
+        type: string
+        required: false
+      replay_ci:
+        description: 'Full SHA of the CI revision being validated, independently pinned by the dispatcher'
+        type: string
+        required: false
   # Task #37 (2026-07-26). STRUCTURAL claim, not a snapshot of one night:
   # `cancel-in-progress: false` (below) protects a run that has already
   # STARTED — a run still QUEUED for a runner slot is superseded
@@ -114,23 +123,68 @@ concurrency:
   # `refs/heads/main`. No PR-triggered idempotent run in this workflow lacks
   # cancellation.
 
-# S11: the coverage-collection decision lives HERE, once, and nowhere else.
-# It used to be a per-shard step that wrote its answer to a file the fan-in read
-# back. A refuter (Codex GPT-5.6) pointed out the hole: that file is written in
-# the same working directory pytest then runs PR code in, so a `pytest_sessionfinish`
-# in the diff could rewrite every shard's receipt to `false` and the fan-in would
-# skip the coverage combine and the --fail-under gate entirely. A workflow-level
-# `env:` is not writable by anything the job runs, and it is still ONE definition
-# read by both the shards and the fan-in — which was the whole reason the receipt
-# existed (superscar #9: two copies of one derivation is how they drift).
-# Coverage is collected on merge_group / schedule / workflow_dispatch, never on
-# pull_request: it adds wall-clock to every PR for a signal that only needs to be
-# current at the point a commit actually lands
-# (research/operations/2026-08-21-token-ceremony-ci-system-audit.md).
-env:
-  BACKEND_COLLECT_COVERAGE: ${{ github.event_name != 'pull_request' }}
-
 jobs:
+  changes:
+    name: Classify backend execution
+    permissions:
+      contents: read
+      pull-requests: read
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.replay_pr != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+      replay: ${{ steps.classify.outputs.replay }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          sparse-checkout: scripts/ci/shard_tests.py
+          sparse-checkout-cone-mode: false
+      - name: Classify the complete PR history using the base classifier
+        id: classify
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          REPLAY_PR: ${{ inputs.replay_pr }}
+          REPLAY_CI: ${{ inputs.replay_ci }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            [[ "$BASE_BRANCH" == main && "$(git rev-parse HEAD^1)" == "$BASE" && "$(git rev-parse HEAD^2)" == "$HEAD" ]] || exit 0
+            git merge-base --is-ancestor "$BASE" refs/remotes/origin/main || exit 0
+            trusted=$BASE
+          else
+            # A validation commit has two parents: the immutable real PR head
+            # and the CI revision under test. Only those three CI files may differ.
+            [[ "$GITHUB_REF" == refs/heads/ci-validation/* && "$REPLAY_PR" =~ ^[1-9][0-9]*$ ]] || exit 0
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$REPLAY_PR")
+            jq -e --arg repo "$GITHUB_REPOSITORY" '.merged and .base.ref == "main" and .base.repo.full_name == $repo and .head.repo.full_name == $repo' <<< "$pr" >/dev/null || exit 0
+            BASE=$(jq -r .base.sha <<< "$pr")
+            HEAD=$(jq -r .head.sha <<< "$pr")
+            [[ "$(git rev-parse HEAD^1)" == "$HEAD" ]] || exit 0
+            trusted=$(git rev-parse HEAD^2)
+            [[ "$REPLAY_CI" =~ ^[0-9a-f]{40}$ && "$trusted" == "$REPLAY_CI" ]] || exit 0
+            paths=(.github/workflows/tests.yml scripts/ci/shard_tests.py scripts/ci/test_shard_tests.py)
+            exclusions=()
+            for path in "${paths[@]}"; do exclusions+=(":(exclude)$path"); done
+            git diff --quiet "$HEAD" HEAD -- . "${exclusions[@]}" || exit 0
+            git diff --quiet "$trusted" HEAD -- "${paths[@]}" || exit 0
+            echo "replay=true" >> "$GITHUB_OUTPUT"
+            echo "Hosted PR replay #$REPLAY_PR. Base $BASE, head $HEAD, CI revision $trusted." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          classifier="$RUNNER_TEMP/base-shard-tests.py"
+          mode=full
+          if git show "$trusted:scripts/ci/shard_tests.py" > "$classifier" &&
+             candidate=$(python3 -I "$classifier" editorial-diff "$BASE" "$HEAD") &&
+             [[ "$candidate" == editorial ]]; then
+            mode=editorial
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Backend execution: $mode" >> "$GITHUB_STEP_SUMMARY"
+
   # ── S11 backend-test sharding (2026-08-23) ──────────────────────────────────
   # `Backend Tests (Python)` used to be ONE job, and every code PR paid it twice
   # (PR lane + merge-group lane). Measured on this workflow, not estimated:
@@ -393,7 +447,7 @@ jobs:
 
   backend-shard:
     name: Backend Shard ${{ matrix.shard }}
-    # No change map on Rakyat: every event runs the shard.
+    needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Coverage runs (see BACKEND_COLLECT_COVERAGE) are slower: on 2026-11-06 Shard 1
@@ -419,6 +473,10 @@ jobs:
       # 1..SHARD_COUNT, or a missing one inside it, is a hard error there.
       SHARD_COUNT: "3"
       SHARD_INDEX: ${{ matrix.shard }}
+      EDITORIAL_MODE: ${{ needs.changes.result == 'success' && needs.changes.outputs.mode == 'editorial' }}
+      # The shards and fan-in use one expression. Only real PRs and verified
+      # PR replays omit coverage instrumentation. Missing replay evidence runs it.
+      BACKEND_COLLECT_COVERAGE: &backend_coverage ${{ github.event_name != 'pull_request' && !(needs.changes.result == 'success' && needs.changes.outputs.replay == 'true') }}
 
     services:
       postgres:
@@ -530,6 +588,10 @@ jobs:
           PYTHONPATH=.:../crm-cell timeout 120 python -m backend.db.migrate apply-all
 
       - name: Run backend stability gate
+        # This preflight is identical on each shard. One current-run copy
+        # suffices for editorial changes; every shard still migrates its own
+        # database and executes its complete partition against it.
+        if: env.EDITORIAL_MODE != 'true' || matrix.shard == 1
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
           TEST_DATABASE_URL: postgresql://test:test@localhost:5432/nuzantara_test
@@ -641,9 +703,14 @@ jobs:
             exit 0
           fi
 
+          workers=auto
+          if [[ "$EDITORIAL_MODE" == true ]]; then
+            workers=$(nproc)
+            export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+          fi
           PYTHONPATH=.:../crm-cell pytest \
             "${CHUNK[@]}" \
-            -n auto --dist loadfile \
+            -n "$workers" --dist loadfile \
             -ra --no-header --durations=50 \
             --ignore=backend/tests/e2e \
             "${COV_ARGS[@]}" \
@@ -694,21 +761,15 @@ jobs:
   # the three shards and the static job do the work.
   backend-tests:
     name: Backend Tests (Python)
-    needs: [backend-static, backend-shard]
-    # Reads what the upstream jobs actually did. Rakyat has no change map, so
-    # they always run; this runs and adjudicates, including when a shard failed
-    # (`!cancelled()` overrides the implicit success() that `needs` imposes).
-    if: >-
-      !cancelled() &&
-      (
-        needs.backend-shard.result != 'skipped' ||
-        needs.backend-static.result != 'skipped'
-      )
+    needs: [changes, backend-static, backend-shard]
+    # The fan-in adjudicates the real static and matrix results even on failure.
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
       SHARD_COUNT: "3"
+      BACKEND_COLLECT_COVERAGE: *backend_coverage
 
     steps:
       - name: Assert every upstream job succeeded
@@ -2160,12 +2221,7 @@ jobs:
       - name: Create test summary
         uses: actions/github-script@v9
         env:
-          # One entry per job in `needs:` — the two lists are load-bearing
-          # together. A job present in `needs:` but absent here reaches the
-          # script as `undefined`: it renders ❌ while `anyFailed` (which tests
-          # for "failure"/"cancelled") ignores it, so the summary would show a
-          # red row and still pass. That is the same class of lying gate the
-          # comment below describes, arriving through the back door.
+          # Every dependency must report success, including the editorial scanners.
           BACKEND_RESULT: ${{ needs.backend-tests.result }}
           FRONTEND_RESULT: ${{ needs.frontend-tests.result }}
           PACKAGES_CORE_RESULT: ${{ needs.packages-core-tests.result }}
@@ -2206,9 +2262,7 @@ jobs:
               .map(([name, r]) => `- ${icon(r)} ${name}: ${r}`)
               .join("\n");
 
-            const anyFailed = Object.values(results).some(
-              (r) => r === "failure" || r === "cancelled"
-            );
+            const anyFailed = Object.values(results).some((r) => r !== "success");
 
             const summary = `
             ## ${anyFailed ? "❌" : "✅"} Test Results
