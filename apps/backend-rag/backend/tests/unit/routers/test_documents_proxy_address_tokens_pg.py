@@ -211,18 +211,19 @@ EXPLICIT = [
 ]
 
 
+@pytest.mark.parametrize("stored", [X, "12345678901"], ids=["letters", "digits"])
 @pytest.mark.parametrize("case", EXPLICIT, ids=[f"{r}:{t}.{c}" for r, t, c, _ in EXPLICIT])
-async def test_an_explicit_id_column_is_read_as_the_exact_id(conn, case):
+async def test_an_explicit_id_column_is_read_as_the_exact_id(conn, case, stored):
     reader, table, col, owner = case
     await conn.execute(
         "DELETE FROM documents; DELETE FROM company_documents; DELETE FROM invoices;"
         " DELETE FROM lkpm_receipts; DELETE FROM weekly_cashout"
     )
     if owner:
-        await conn.execute(f"INSERT INTO {table}({owner}, {col}) VALUES (1, $1)", X)
+        await conn.execute(f"INSERT INTO {table}({owner}, {col}) VALUES (1, $1)", stored)
     else:
-        await conn.execute(f"INSERT INTO {table}({col}) VALUES ($1)", X)
-    assert await _ask(conn, reader, X)
+        await conn.execute(f"INSERT INTO {table}({col}) VALUES ($1)", stored)
+    assert await _ask(conn, reader, stored)
     assert not await _ask(conn, reader, Y)
 
 
