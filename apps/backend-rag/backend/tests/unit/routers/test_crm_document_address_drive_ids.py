@@ -520,3 +520,59 @@ async def test_the_company_route_refuses_a_foreign_all_digit_run(pool):
     assert exc.value.status_code == 403
     assert guard.await_args_list == [call(FOREIGN_DIGITS, 7, pool.conn)]
     pool.conn.fetchrow.assert_not_called()
+
+
+@pytest.mark.parametrize("explicit", [OWN, None], ids=["own_explicit_id", "no_explicit_id"])
+@pytest.mark.asyncio
+async def test_the_company_route_checks_every_run_of_a_multi_token_address(pool, explicit):
+    guard = _company_guard()
+    with pytest.raises(HTTPException) as exc:
+        await _create_company_document(
+            pool,
+            guard,
+            google_drive_file_id=explicit,
+            google_drive_file_url=f"https://drive.google.com/file/d/{OWN}/view?id={FOREIGN}",
+        )
+
+    assert exc.value.status_code == 403
+    assert guard.await_args_list == [call(OWN, 7, pool.conn), call(FOREIGN, 7, pool.conn)]
+    pool.conn.fetchrow.assert_not_called()
+
+
+MULTI = f"https://drive.google.com/file/d/{OWN}/view?id={FOREIGN}"
+
+
+@pytest.mark.parametrize("field", ["file_url", "google_drive_file_url"])
+@pytest.mark.asyncio
+async def test_create_checks_every_run_of_a_multi_token_address(pool, field):
+    data = DocumentCreate(document_type="passport", file_id=OWN, **{field: MULTI})
+    guard = _guard()
+    with (
+        patch(f"{MODULE}.verify_client_access", new=AsyncMock()),
+        patch(f"{MODULE}.assert_drive_file_belongs_to_client", new=guard),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await create_document(
+            client_id=1, data=data, background_tasks=MagicMock(), pool=pool, current_user=ADMIN
+        )
+
+    assert exc.value.status_code == 403
+    assert guard.await_args_list == [call(OWN, 1, pool.conn), call(FOREIGN, 1, pool.conn)]
+    pool.conn.fetchval.assert_not_called()
+
+
+@pytest.mark.parametrize("field", ["file_url", "google_drive_file_url"])
+@pytest.mark.asyncio
+async def test_patch_checks_every_run_of_a_multi_token_address(pool, field):
+    data = DocumentUpdate(**{field: MULTI})
+    guard = _guard()
+    with (
+        patch(f"{MODULE}.verify_client_access", new=AsyncMock()),
+        patch(f"{MODULE}.assert_drive_file_belongs_to_client", new=guard),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await update_document(client_id=1, doc_id=10, data=data, pool=pool, current_user=ADMIN)
+
+    assert exc.value.status_code == 403
+    assert guard.await_args_list == [call(OWN, 1, pool.conn), call(FOREIGN, 1, pool.conn)]
+    pool.conn.execute.assert_not_called()
