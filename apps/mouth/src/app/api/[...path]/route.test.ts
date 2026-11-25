@@ -625,6 +625,52 @@ describe("proxy catch-all route — public Visa Oracle boundary", () => {
     expect(errors.join("\n")).toContain("/api/crm/practices");
   });
 
+  it("never logs the secret segment of a credential route, whichever way the upstream call ends", async () => {
+    const secret = "tkfixture42zz"; // pragma: allowlist secret
+    const paths = [
+      `/api/portal/invite/validate/${secret}`,
+      `/api/auth/verify-magic/${secret}`,
+      `/api/funnel_email/unsubscribe/${secret}`,
+      `/api/visa/clock/${secret}`,
+      `/api/visa/match/${secret}`,
+      // an escaped letter in the route prefix: the upstream decodes it to the same route
+      `/api/visa/m%61tch/${secret}`,
+      `/api/portal/invite/v%61lidate/${secret}`,
+    ];
+    for (const path of paths) {
+      const makeRequest = () =>
+        new MockNextRequest(`http://localhost${path}`, { method: "GET" });
+      vi.mocked(global.fetch).mockResolvedValueOnce(
+        new Response("rejected", { status: 401 }),
+      );
+      await POST(makeRequest() as never);
+      vi.mocked(global.fetch).mockResolvedValueOnce(
+        new Response("unavailable", { status: 503 }),
+      );
+      await POST(makeRequest() as never);
+      vi.mocked(global.fetch).mockRejectedValueOnce(
+        new TypeError(`Failed to parse URL from http://backend.test${path}`),
+      );
+      await POST(makeRequest() as never);
+    }
+    const logs = JSON.stringify({
+      debug: vi.mocked(logger.debug).mock.calls.map((c) => c.slice(0, 2)),
+      error: vi
+        .mocked(logger.error)
+        .mock.calls.map((c) => [
+          c[0],
+          c[1],
+          (c[2] as Error | undefined)?.message,
+          (c[2] as Error | undefined)?.stack,
+        ]),
+      warn: vi.mocked(logger.warn).mock.calls,
+    });
+    expect(logs).not.toContain(secret);
+    // innocence: the route is still named, only its secret segment is gone
+    expect(logs).toContain("/api/visa/match/[REDACTED]");
+    expect(logs).toContain("Fetch error for GET");
+  });
+
   it("does not log identifying request context for an upstream auth rejection", async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce(
       new Response("rejected", { status: 401 }),

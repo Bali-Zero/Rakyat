@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 
-import { redactSensitiveQueryParams } from "@/lib/analytics-url";
+import { analyticsSafeHref, analyticsSafePath } from "@/lib/analytics-url";
 
 type GtagWindow = typeof window & { gtag?: (...args: unknown[]) => void };
 
@@ -30,10 +30,12 @@ export function RouteChangeTracker() {
     const win = window as GtagWindow;
     if (typeof win.gtag !== "function") return;
     win.gtag("event", "page_view", {
-      page_path: pathname,
+      // Credential-route segments replaced (proposal, invitation, unsubscribe, result hash).
+      page_path: analyticsSafePath(pathname),
       // Never the raw href: a credential-bearing query string reached
       // Google verbatim through this field (portal audit L-GA, 2026-09-11).
-      page_location: redactSensitiveQueryParams(window.location.href),
+      // Origin and path only, secret path segments replaced.
+      page_location: analyticsSafeHref(window.location.href),
       page_title: document.title,
     });
   }, [pathname]);

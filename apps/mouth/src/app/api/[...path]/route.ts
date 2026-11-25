@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { logRouteTouch } from "@/lib/api/route-touch";
 import { toError } from "@/lib/types/common";
 import { safeUpstreamError } from "@/lib/search-redaction";
+import { pathOnlyUrl } from "@/lib/sentry-url-scrub";
 
 // Use Node.js runtime (not Edge) for long-running SSE streams.
 // Edge has a 30s timeout which kills workspace-stream responses.
@@ -107,7 +108,11 @@ async function proxy(req: NextRequest): Promise<Response> {
   // semantic request_category and the typed search text of the client, practice and company
   // search bars (`?search=`, `?q=`: names, e-mails, phones). The upstream still receives the
   // full targetUrl.
-  const logTargetUrl = `${backendBase}${url.pathname}`;
+  // The secret segment of a credential route (invitation, sign-in, unsubscribe, result hash) is
+  // replaced too, and a path the upstream would read differently (an escaped letter or slash) is
+  // logged as a placeholder: these lines reach Sentry and the Vercel logs.
+  const logPathname = pathOnlyUrl(url.pathname);
+  const logTargetUrl = `${backendBase}${logPathname}`;
 
   // Extract correlation ID for logging
   const correlationId = req.headers.get("X-Correlation-ID") || "unknown";
@@ -118,7 +123,7 @@ async function proxy(req: NextRequest): Promise<Response> {
 
   // Log requests in development
   if (process.env.NODE_ENV !== "production") {
-    logger.debug(`[Proxy] ${req.method} ${url.pathname} -> ${logTargetUrl}`, {
+    logger.debug(`[Proxy] ${req.method} ${logPathname} -> ${logTargetUrl}`, {
       component: "AUTO",
       action: "log",
     });
@@ -126,7 +131,7 @@ async function proxy(req: NextRequest): Promise<Response> {
 
   // Log streaming requests
   if (isStreamingEndpoint && process.env.NODE_ENV !== "production") {
-    logger.debug(`[Proxy] SSE request start: ${req.method} ${url.pathname}`, {
+    logger.debug(`[Proxy] SSE request start: ${req.method} ${logPathname}`, {
       component: "AUTO",
       action: "log",
       metadata: {
@@ -257,7 +262,7 @@ async function proxy(req: NextRequest): Promise<Response> {
         action: "log",
         metadata: {
           method: req.method,
-          path: url.pathname,
+          path: logPathname,
           hasBody: !!body,
           bodySize: body
             ? typeof body === "string"
@@ -359,7 +364,7 @@ async function proxy(req: NextRequest): Promise<Response> {
           component: "AUTO",
           action: "redirect_refused",
           metadata: {
-            path: url.pathname,
+            path: logPathname,
             redirectOrigin: resolvedRedirect.origin,
           },
         });
@@ -409,7 +414,7 @@ async function proxy(req: NextRequest): Promise<Response> {
       logger.warn("[Proxy] Upstream redirect chain exceeded the limit", {
         component: "AUTO",
         action: "redirect_limit",
-        metadata: { path: url.pathname, redirects: redirectCount },
+        metadata: { path: logPathname, redirects: redirectCount },
       });
       upstream = new Response(
         JSON.stringify({ detail: "Too many upstream redirects" }),
@@ -467,7 +472,7 @@ async function proxy(req: NextRequest): Promise<Response> {
 
         if (hasAuthCookie || hasAuthHeader) {
           logger.warn(
-            `[Proxy] Auth rejected ${upstream.status} for ${req.method} ${url.pathname} with credentials`,
+            `[Proxy] Auth rejected ${upstream.status} for ${req.method} ${logPathname} with credentials`,
             {
               ...authLogContext,
               action: "auth_rejected",
@@ -475,14 +480,14 @@ async function proxy(req: NextRequest): Promise<Response> {
           );
         } else {
           logger.warn(
-            `[Proxy] Auth rejected ${upstream.status} for ${req.method} ${url.pathname} without credentials`,
+            `[Proxy] Auth rejected ${upstream.status} for ${req.method} ${logPathname} without credentials`,
             authLogContext,
           );
         }
       } else if (process.env.NODE_ENV !== "production") {
         // Log other errors only in development
         logger.error(
-          `[Proxy] Error ${upstream.status} for ${req.method} ${url.pathname}`,
+          `[Proxy] Error ${upstream.status} for ${req.method} ${logPathname}`,
           {
             component: "AUTO",
             action: "error",
@@ -492,7 +497,7 @@ async function proxy(req: NextRequest): Promise<Response> {
             },
           },
           toError(
-            `[Proxy] Error ${upstream.status} for ${req.method} ${url.pathname}`,
+            `[Proxy] Error ${upstream.status} for ${req.method} ${logPathname}`,
           ),
         );
       }
@@ -534,18 +539,25 @@ async function proxy(req: NextRequest): Promise<Response> {
     );
   } catch (error) {
     logger.error(
-      `[Proxy] Fetch error for ${req.method} ${url.pathname}`,
+      `[Proxy] Fetch error for ${req.method} ${logPathname}`,
       {
         component: "AUTO",
         action: "error",
         metadata: {
           method: req.method,
-          pathname: url.pathname,
+          pathname: logPathname,
           targetUrl: logTargetUrl,
         },
       },
       // a fetch error can print the whole target URL, query included
-      safeUpstreamError(toError(error), targetUrl, logTargetUrl, url.search),
+      safeUpstreamError(
+        toError(error),
+        targetUrl,
+        logTargetUrl,
+        url.search,
+        url.pathname,
+        logPathname,
+      ),
     );
     return new Response(
       JSON.stringify({

@@ -5,7 +5,8 @@
  * string of a URL. Same rules as the backend (`sentry_config.py`), applied BY FIELD and never to
  * free text: query-string fields are replaced, URL-valued fields keep their path only, and the
  * request headers that carry a URL as an opaque string (Referer, Link, Location) are dropped.
- * Messages, exception values and stack frames are not touched.
+ * Free text is not parsed for URLs, but every string is filtered for the path of a known
+ * credential route (`TOKEN_PATH_PREFIXES`), so a token in a message or an exception value goes too.
  */
 
 const PLACEHOLDER = "[REDACTED]";
@@ -17,7 +18,34 @@ const QUERY_FIELDS = new Set([
   "url.query",
   "url.fragment",
 ]);
-const URL_FIELDS = new Set(["url", "http.url", "url.full"]);
+/**
+ * Every attribute or event field the installed Sentry 11.10 packages (core, browser, nextjs,
+ * node, vercel-edge, browser-utils) can fill with an address: `url.path` on HTTP and pageload
+ * spans, the older `http.target`/`http.url`, `url.full`, and the LCP and UI-element URLs.
+ */
+const URL_FIELDS = new Set([
+  "url",
+  "http.url",
+  "url.full",
+  "url.path",
+  "http.target",
+  "browser.web_vital.lcp.url",
+  "lcp.url",
+  "ui.element.url",
+]);
+/**
+ * Fields holding a transaction or span label: an HTTP one is `METHOD /path`, a non-HTTP one may
+ * still embed an address (`navigation /clients?q=...`). Query and fragment leave the address
+ * inside them, whatever the span op.
+ */
+const LABEL_FIELDS = new Set([
+  "transaction",
+  "name",
+  "description",
+  "next.span_name",
+  "sentry.segment.name",
+  "sentry.custom_span_name",
+]);
 const URL_HEADERS = new Set(["referer", "referrer", "link", "location"]);
 /**
  * A navigation breadcrumb (`category: "navigation"`) carries the two addresses
@@ -39,16 +67,266 @@ function isSearchParamKey(key: string): boolean {
   }
 }
 
-function pathOnlyUrl(value: string): string {
+/**
+ * Routes whose address carries a secret as ONE path segment (an invitation or sign-in token, an
+ * unsubscribe token, a result hash that grants access), written as the prefix that precedes it.
+ * The segment after the prefix is replaced by the placeholder in every address and in every
+ * string this file cleans. `sentry-url-scrub.test.ts` walks `src/app` and the backend routers
+ * and fails when a credential segment is missing here or from the reviewed exemption list.
+ */
+export type TokenPathRule = {
+  prefix: string;
+  staticChildren: readonly string[];
+};
+
+export const TOKEN_PATH_RULES: readonly TokenPathRule[] = [
+  // apps/mouth/src/app/prime/proposal/[token]
+  { prefix: "/prime/proposal/", staticChildren: [] },
+  // apps/mouth/src/app/api/prime/v2/proposal/[token]
+  { prefix: "/api/prime/v2/proposal/", staticChildren: [] },
+  // backend invitation check called by portal.api.ts validateInviteToken, no page folder
+  { prefix: "/api/portal/invite/validate/", staticChildren: [] },
+  // backend magic-link check called by auth.api.ts verifyMagicLink, no page folder
+  { prefix: "/api/auth/verify-magic/", staticChildren: [] },
+  // backend funnel e-mail unsubscribe link, reached through the /api/[...path] proxy
+  { prefix: "/api/funnel_email/unsubscribe/", staticChildren: [] },
+  // apps/mouth/src/app/visa/clock/[hash] and match/[hash]: the hash grants the result
+  { prefix: "/visa/clock/", staticChildren: [] },
+  { prefix: "/visa/match/", staticChildren: [] },
+  // the backend routes those two pages call through the proxy (JWT issuance too)
+  { prefix: "/api/visa/clock/", staticChildren: ["email"] },
+  { prefix: "/api/visa/match/", staticChildren: [] },
+] as const;
+
+export const TOKEN_PATH_PREFIXES: readonly string[] = TOKEN_PATH_RULES.map(
+  ({ prefix }) => prefix,
+);
+
+function isRouteTemplate(segment: string): boolean {
+  return /^(?:\[(?:\.\.\.)?[^/\]]+\]|\{[^/{}]+\}|:[^/:]+)$/.test(segment);
+}
+
+/**
+ * Replace the credential segment of every known credential route found anywhere in `text`: a
+ * bare path, an absolute URL, or a path inside an error message. Only the segment is replaced,
+ * the rest of the text is kept.
+ */
+export function redactTokenPaths(
+  text: string,
+  placeholder: string = PLACEHOLDER,
+  rules: readonly TokenPathRule[] = TOKEN_PATH_RULES,
+): string {
+  let out = text;
+  for (const { prefix, staticChildren } of rules) {
+    let from = 0;
+    for (;;) {
+      const at = out.indexOf(prefix, from);
+      if (at < 0) break;
+      const nestedPrefix = rules.find(
+        (rule) =>
+          rule.prefix.length > prefix.length &&
+          rule.prefix.endsWith(prefix) &&
+          out.slice(
+            at - (rule.prefix.length - prefix.length),
+            at - (rule.prefix.length - prefix.length) + rule.prefix.length,
+          ) === rule.prefix,
+      );
+      if (nestedPrefix) {
+        from = at + prefix.length;
+        continue;
+      }
+      const start = at + prefix.length;
+      let end = start;
+      while (end < out.length && !/[/?#\s"'`<>\\)]/.test(out[end])) end += 1;
+      if (end === start) {
+        from = start;
+        continue;
+      }
+      const segment = out.slice(start, end);
+      if (
+        (staticChildren as readonly string[]).includes(segment) ||
+        isRouteTemplate(segment)
+      ) {
+        from = end;
+        continue;
+      }
+      out = `${out.slice(0, start)}${placeholder}${out.slice(end)}`;
+      from = start + placeholder.length;
+    }
+  }
+  return out;
+}
+
+const D2_ESCAPE = /%(?:[0-9a-f][0-9a-f])/gi;
+const DATA_MEDIA_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  "image/avif",
+  "text/plain",
+  "application/pdf",
+  "application/octet-stream",
+]);
+
+export function rawPathOf(value: string): string {
+  const raw = value.split(/[?#]/, 1)[0] ?? "";
+  const authority = raw.match(/^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/]*/i);
+  return authority ? raw.slice(authority[0].length) || "/" : raw || "/";
+}
+
+function admittedAddress(
+  value: string,
+): "absolute" | "protocol-relative" | "root-relative" | null {
+  if (
+    /^[\x00-\x1f\x7f]|[\x00-\x1f\x7f\\]/.test(value) ||
+    value.startsWith(" ") ||
+    value.endsWith(" ")
+  )
+    return null;
+  if (/^https?:\/\/(?!\/)[^/?#]/i.test(value)) return "absolute";
+  if (/^\/\/(?!\/)[^/?#]/.test(value)) return "protocol-relative";
+  if (/^\/(?!\/)/.test(value)) return "root-relative";
+  return null;
+}
+
+export function encodeAsParser(path: string): string {
+  return [...path]
+    .map((character) =>
+      character === "%" ||
+      character === "/" ||
+      character === "." ||
+      /[A-Za-z0-9]/.test(character)
+        ? character
+        : new URL(`http://x/a${character}`).pathname.slice(2),
+    )
+    .join("");
+}
+
+function hasD2Escape(path: string): boolean {
+  return [...path.matchAll(D2_ESCAPE)].some((match) => {
+    const byte = String.fromCharCode(parseInt(match[0].slice(1), 16));
+    return /[A-Za-z0-9\\/.\-_~]/.test(byte);
+  });
+}
+
+export function pathOnlyUrl(value: string): string {
+  if (/^blob:/i.test(value)) return `blob:${PLACEHOLDER}`;
+  if (/^data:/i.test(value)) {
+    const media = value.slice(5).split(/[;,]/, 1)[0].toLowerCase();
+    return DATA_MEDIA_TYPES.has(media)
+      ? `data:${media}`
+      : `data:${PLACEHOLDER}`;
+  }
+  if (/^about:blank$/i.test(value)) return value;
+  const kind = admittedAddress(value);
+  if (!kind) return PLACEHOLDER;
   try {
     const parsed = new URL(value, "http://local.invalid");
-    if (!parsed.search && !parsed.hash) return value;
-    return /^[a-z][a-z0-9+.-]*:/i.test(value)
-      ? `${parsed.protocol}//${parsed.host}${parsed.pathname}`
-      : parsed.pathname;
+    const rawPath = rawPathOf(value);
+    if (hasD2Escape(rawPath)) return PLACEHOLDER;
+    if (encodeAsParser(rawPath) !== parsed.pathname) return PLACEHOLDER;
+    const pathname = redactTokenPaths(rawPath);
+    return kind === "absolute"
+      ? `${parsed.protocol}//${parsed.host}${pathname}`
+      : kind === "protocol-relative"
+        ? `//${parsed.host}${pathname}`
+        : pathname;
   } catch {
     return PLACEHOLDER;
   }
+}
+
+export function redactFreeText(value: string): string {
+  const token = /[^\s"'`<>(),]*[\\/][^\s"'`<>(),]*/g;
+  const withoutAddressTokens = value.replace(token, (candidate) => {
+    const normalized = candidate.replace(/[\t\n\r]/g, "");
+    if (
+      /(?:^|[\\/])(?:\.{1,2}|%2e\.|\.%2e|%2e%2e)(?:[\\/]|$)/i.test(
+        normalized,
+      ) ||
+      [...normalized.matchAll(D2_ESCAPE)].some((match) => {
+        const byte = String.fromCharCode(parseInt(match[0].slice(1), 16));
+        return /[A-Za-z0-9\\/.\-_~]/.test(byte);
+      })
+    )
+      return PLACEHOLDER;
+    return candidate;
+  });
+  const view: string[] = [];
+  const originalIndex: number[] = [];
+  for (let index = 0; index < withoutAddressTokens.length; index += 1) {
+    const character = withoutAddressTokens[index];
+    if (/[\t\n\r]/.test(character)) continue;
+    view.push(character === "\\" ? "/" : character);
+    originalIndex.push(index);
+  }
+  const matchingText = view.join("");
+  const replacements: Array<{ start: number; end: number }> = [];
+  const rules = [...TOKEN_PATH_RULES].sort(
+    (left, right) => right.prefix.length - left.prefix.length,
+  );
+
+  for (let index = 0; index < matchingText.length; index += 1) {
+    const rule = rules.find(({ prefix }) => {
+      if (matchingText.startsWith(prefix, index)) return true;
+      if (!matchingText.startsWith(prefix.slice(1), index)) return false;
+      if (index === 0) return true;
+      const previous = withoutAddressTokens[originalIndex[index] - 1];
+      return /\s|["'(\[<=,]/.test(previous);
+    });
+    if (!rule) continue;
+    const segmentStart =
+      index +
+      (matchingText.startsWith(rule.prefix, index)
+        ? rule.prefix.length
+        : rule.prefix.length - 1);
+    let segmentEnd = segmentStart;
+    while (
+      segmentEnd < matchingText.length &&
+      !/[\\/?#\s"'<>)]/.test(matchingText[segmentEnd])
+    )
+      segmentEnd += 1;
+    if (segmentEnd === segmentStart) continue;
+    const segment = matchingText.slice(segmentStart, segmentEnd);
+    if (rule.staticChildren.includes(segment) || isRouteTemplate(segment)) {
+      index = segmentEnd - 1;
+      continue;
+    }
+    replacements.push({
+      start: originalIndex[segmentStart],
+      end: originalIndex[segmentEnd - 1] + 1,
+    });
+    index = segmentEnd - 1;
+  }
+
+  return replacements
+    .reverse()
+    .reduce(
+      (out, { start, end }) =>
+        `${out.slice(0, start)}${PLACEHOLDER}${out.slice(end)}`,
+      withoutAddressTokens,
+    );
+}
+
+const ADDRESS_START = /^(\/|[a-z][a-z0-9+.-]*:\/\/)/i;
+
+/** `METHOD /path?query`, a bare address or free label text: an address inside it loses its query and fragment. */
+function cleanLabel(value: string): string {
+  const space = value.indexOf(" ");
+  if (
+    space > 0 &&
+    /^[A-Z]+$/.test(value.slice(0, space)) &&
+    ADDRESS_START.test(value.slice(space + 1)) &&
+    !/\s/.test(value.slice(space + 1))
+  ) {
+    return `${value.slice(0, space)} ${pathOnlyUrl(value.slice(space + 1))}`;
+  }
+  if (ADDRESS_START.test(value) && !/\s/.test(value)) return pathOnlyUrl(value);
+  return redactFreeText(
+    value.replace(/(\/[^\s?#"'`<>]*)[?#][^\s"'`<>]*/g, "$1"),
+  );
 }
 
 function scrubHeaders(headers: unknown): unknown {
@@ -73,15 +351,30 @@ function scrubHeaders(headers: unknown): unknown {
 }
 
 function scrub(value: unknown, depth: number): unknown {
+  // Every string passes the credential-route filter: a path can sit in a message, an exception
+  // value, a stack frame or a breadcrumb, not only in a URL-shaped field.
+  if (typeof value === "string") return redactFreeText(value);
   if (depth > MAX_DEPTH) return value;
   if (Array.isArray(value)) return value.map((v) => scrub(v, depth + 1));
   if (!value || typeof value !== "object") return value;
   const source = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(source)) {
-    if (isSearchParamKey(key) && typeof v === "string") {
+    if (key === "http.route" || key === "route") {
+      out[key] = v;
+    } else if (
+      key === "transaction" &&
+      (source.transaction_info as Record<string, unknown> | undefined)
+        ?.source === "route"
+    ) {
+      out[key] = v;
+    } else if (isSearchParamKey(key) && typeof v === "string") {
       out[key] = PLACEHOLDER;
-    } else if (QUERY_FIELDS.has(key) && typeof v === "string") {
+    } else if (
+      QUERY_FIELDS.has(key) &&
+      (typeof v === "string" || (v !== null && typeof v === "object"))
+    ) {
+      // a string, or the structured form: an array of [name, value] pairs or an object
       out[key] = PLACEHOLDER;
     } else if (
       key === "data" &&
@@ -103,31 +396,30 @@ function scrub(value: unknown, depth: number): unknown {
     } else if (URL_FIELDS.has(key) && typeof v === "string") {
       out[key] = pathOnlyUrl(v);
     } else if (
-      key === "description" &&
-      typeof v === "string" &&
-      typeof source.op === "string" &&
-      source.op.startsWith("http")
+      URL_FIELDS.has(key) &&
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof (v as Record<string, unknown>).value === "string"
     ) {
-      const space = v.indexOf(" ");
-      out[key] =
-        space < 0
-          ? pathOnlyUrl(v)
-          : `${v.slice(0, space)} ${pathOnlyUrl(v.slice(space + 1))}`;
-    } else if (key === "name" && typeof v === "string") {
-      const attrs = source.attributes;
-      const op =
-        attrs && typeof attrs === "object" && !Array.isArray(attrs)
-          ? (attrs as Record<string, unknown>)["sentry.op"]
-          : undefined;
-      if (typeof op === "string" && op.startsWith("http")) {
-        const space = v.indexOf(" ");
-        out[key] =
-          space < 0
-            ? pathOnlyUrl(v)
-            : `${v.slice(0, space)} ${pathOnlyUrl(v.slice(space + 1))}`;
-      } else {
-        out[key] = scrub(v, depth + 1);
-      }
+      // the typed attribute form of a streamed span: { value, type }
+      out[key] = {
+        ...(v as Record<string, unknown>),
+        value: pathOnlyUrl((v as { value: string }).value),
+      };
+    } else if (LABEL_FIELDS.has(key) && typeof v === "string") {
+      out[key] = cleanLabel(v);
+    } else if (
+      LABEL_FIELDS.has(key) &&
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof (v as Record<string, unknown>).value === "string"
+    ) {
+      out[key] = {
+        ...(v as Record<string, unknown>),
+        value: cleanLabel((v as { value: string }).value),
+      };
     } else {
       out[key] = scrub(v, depth + 1);
     }

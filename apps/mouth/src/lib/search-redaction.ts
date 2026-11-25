@@ -5,6 +5,8 @@
  * parts, so its query and fragment never enter the line in the first place.
  */
 
+import { redactTokenPaths } from "@/lib/sentry-url-scrub";
+
 /** The path of a URL or referrer, never its query or fragment; null when it is not a URL. */
 export function pathOnly(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -25,11 +27,19 @@ export function safeUpstreamError(
   targetUrl: string,
   logTargetUrl: string,
   search: string,
+  pathname?: string,
+  logPathname?: string,
 ): Error {
   const clean = (text: string) => {
     let out = text.split(targetUrl).join(logTargetUrl);
     if (search) out = out.split(search).join("");
-    return out;
+    // the request path on its own, in its logged form (a secret segment replaced, or the whole path
+    // a placeholder because the upstream would read it differently)
+    if (pathname && logPathname !== undefined)
+      out = out.split(pathname).join(logPathname);
+    // the path of a credential route (invitation, sign-in, unsubscribe, result hash) can sit in
+    // the message on its own, e.g. a proxy log line: only its secret segment is replaced
+    return redactTokenPaths(out);
   };
   const safe = new Error(clean(error.message));
   safe.name = error.name;
