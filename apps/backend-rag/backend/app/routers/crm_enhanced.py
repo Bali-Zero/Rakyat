@@ -337,7 +337,8 @@ async def _auto_ocr_visa(
 ) -> dict:
     """
     OCR on visa/KITAS/KITAP document → extract visa_type, expiry, number.
-    Updates documents.expiry_date and documents.ocr_extracted_data.
+    Updates documents.expiry_date and documents.ocr_extracted_data, then syncs
+    the client's visa fields unless the document belongs to a family member.
     Uses the shared app-level pool passed in to avoid connection churn.
     """
     try:
@@ -445,18 +446,32 @@ async def _auto_ocr_visa(
                 sync_idx += 1
 
             if sync_parts:
-                sync_params.append(client_id)
-                await conn.execute(
-                    f"UPDATE clients SET {', '.join(sync_parts)}, updated_at = NOW() WHERE id = ${sync_idx}",
+                # The client's visa fields describe the client's OWN permit. A
+                # document of a family member (`family_member_id` set) keeps its
+                # OCR on the document only: the guard sits in the same statement,
+                # so it holds whichever caller ran the OCR. No doc_id (NULL)
+                # matches no document and keeps the client sync as before.
+                sync_params.extend([client_id, doc_id])
+                result = await conn.execute(
+                    f"UPDATE clients SET {', '.join(sync_parts)}, updated_at = NOW() "
+                    f"WHERE id = ${sync_idx} AND NOT EXISTS ("
+                    f"SELECT 1 FROM documents WHERE id = ${sync_idx + 1} "
+                    "AND family_member_id IS NOT NULL)",
                     *sync_params,
                 )
-                logger.info(
-                    "Synced visa OCR to client %s: type=%s, expiry=%s, sponsor=%s",
-                    client_id,
-                    bool(visa_type),
-                    bool(expiry_date_parsed),
-                    bool(sponsor),
-                )
+                if result == "UPDATE 0":
+                    logger.info(
+                        "Visa OCR not synced to client %s: family member document or no client row",
+                        client_id,
+                    )
+                else:
+                    logger.info(
+                        "Synced visa OCR to client %s: type=%s, expiry=%s, sponsor=%s",
+                        client_id,
+                        bool(visa_type),
+                        bool(expiry_date_parsed),
+                        bool(sponsor),
+                    )
 
         logger.info(
             "Auto OCR visa completed for client %s (visa_type extracted: %s)",
