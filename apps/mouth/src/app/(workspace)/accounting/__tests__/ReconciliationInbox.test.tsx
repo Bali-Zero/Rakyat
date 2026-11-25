@@ -587,6 +587,38 @@ describe("ported reconciliation contract", () => {
     });
   });
 
+  it("18b: a partly applied transfer reads what is still to match and confirms its remainder", async () => {
+    api.getReconciliationInbox.mockResolvedValue(
+      four().map((item, i) =>
+        i === 0 ? { ...item, amount_idr: 750000, applied_idr: 400000 } : item,
+      ),
+    );
+    const onConfirmed = renderInbox();
+    await ready();
+    expect(await screen.findByText("Our invoice")).toBeInTheDocument();
+    expect(opened()).toHaveTextContent("Rp350.000 of Rp750.000 still to match");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm payment" }),
+    );
+    // 350,000 are left against a 500,000 invoice: a partial, on the remainder
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm partial$/ }));
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    expect(api.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bank_txn_id: 1,
+        amount_applied_idr: 350000,
+        new_status: "partial",
+      }),
+    );
+  });
+
+  it("18c: a transfer with nothing applied has no still-to-match line", async () => {
+    renderInbox();
+    await ready();
+    expect(await screen.findByText("Our invoice")).toBeInTheDocument();
+    expect(opened()).not.toHaveTextContent("still to match");
+  });
+
   it("19: a late candidate answer for A never lands under B", async () => {
     const a = deferred<ReturnType<typeof candidatesFor>>();
     api.getMatchCandidates.mockReturnValueOnce(a.promise);
@@ -2103,7 +2135,8 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
       bank_txn_id: 103,
       practice_id: 21_032,
       invoice_id: 11_032,
-      amount_applied_idr: 1_000_103,
+      // the invoice balance: the excess of the 1,000,103 transfer stays in the inbox
+      amount_applied_idr: 501_032,
       new_status: "paid",
       payment_method: "bank_transfer",
       payment_reference: "TRANSFER 103",
@@ -2360,7 +2393,8 @@ describe("the transfer acted on (TEST-SPEC T2, T3)", () => {
       bank_txn_id: 103,
       practice_id: 21_032,
       invoice_id: 11_032,
-      amount_applied_idr: 1_000_103,
+      // the invoice balance: the excess of the 1,000,103 transfer stays in the inbox
+      amount_applied_idr: 501_032,
       new_status: "paid",
       payment_method: "bank_transfer",
       payment_reference: "TRANSFER 103",

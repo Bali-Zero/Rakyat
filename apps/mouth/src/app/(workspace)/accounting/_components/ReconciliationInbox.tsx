@@ -322,7 +322,8 @@ export function ReconciliationInbox({
       return;
     const txn = {
       id: opened.txn_id,
-      amount_idr: opened.amount_idr,
+      // What is left of the transfer: a partly applied one is confirmed on its remainder.
+      amount_idr: opened.amount_idr - (opened.applied_idr ?? 0),
       description: opened.description,
       txn_date: opened.txn_date,
     };

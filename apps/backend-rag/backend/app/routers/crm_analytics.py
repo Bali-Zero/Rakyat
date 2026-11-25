@@ -21,6 +21,7 @@ from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_crm_user_filter
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.logging_utils import get_logger, log_success
+from backend.services.accounting.reconcile_service import STANDING_CONFIRMATION_SQL
 
 logger = get_logger(__name__)
 
@@ -329,29 +330,50 @@ async def get_revenue_summary(
             window_start = _months_ago(5).date()
             window_end = _next_month_start(_months_ago(0)).date()
             bank_params: list[Any] = [window_start, window_end]
-            scope_sql = ""
+            collected_sql = "bt.amount_idr"
+            payments_scope_sql = ""
             if assigned_filter:
                 scope_idx = len(bank_params) + 1
-                scope_sql = f"""
-                    AND EXISTS (
+                # Scoped, a transfer counts the parts of it applied inside the scope: its
+                # closing part when it closed on a scoped case (what is left of it after the
+                # parts applied elsewhere), plus every standing part of it on a scoped case
+                # that is not the closing one. A transfer is a payment of the scope when any
+                # part of it is in scope.
+                collected_sql = f"""(
+                    CASE WHEN EXISTS (
                         SELECT 1 FROM practices sp JOIN clients sc ON sc.id = sp.client_id
                         WHERE sp.id = bt.matched_practice_id
                           AND sc.assigned_to = ANY(${scope_idx}::text[])
-                    )
-                """
+                    ) THEN GREATEST(bt.amount_idr - COALESCE((
+                        SELECT SUM(r.amount_applied_idr) FROM reconciliation_log r
+                        WHERE r.bank_txn_id = bt.id AND {STANDING_CONFIRMATION_SQL}
+                          AND r.practice_id IS DISTINCT FROM bt.matched_practice_id
+                    ), 0), 0)
+                    ELSE 0 END
+                    + COALESCE((
+                        SELECT SUM(r.amount_applied_idr) FROM reconciliation_log r
+                        WHERE r.bank_txn_id = bt.id AND {STANDING_CONFIRMATION_SQL}
+                          AND r.practice_id IS DISTINCT FROM bt.matched_practice_id
+                          AND EXISTS (
+                              SELECT 1 FROM practices rp JOIN clients rc ON rc.id = rp.client_id
+                              WHERE rp.id = r.practice_id
+                                AND rc.assigned_to = ANY(${scope_idx}::text[])
+                          )
+                    ), 0)
+                )"""
+                payments_scope_sql = f" AND ({collected_sql}) > 0"
                 bank_params.append(assigned_filter)
             month_rows = await conn.fetch(
                 f"""
                 SELECT to_char(date_trunc('month', bt.txn_date), 'YYYY-MM') AS period,
-                       COALESCE(SUM(bt.amount_idr) FILTER (
+                       COALESCE(SUM({collected_sql}) FILTER (
                            WHERE bt.direction = 'credit'
                              AND bt.reconciled_status IN ('matched', 'manual')
-                             {scope_sql}
                        ), 0) AS collected,
                        COUNT(*) FILTER (
                            WHERE bt.direction = 'credit'
                              AND bt.reconciled_status IN ('matched', 'manual')
-                             {scope_sql}
+                             {payments_scope_sql}
                        ) AS payments,
                        COUNT(*) FILTER (
                            WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'

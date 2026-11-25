@@ -31,6 +31,18 @@ const BAND: Record<Situation, { title: string; glyph: CcGlyphName }> = {
   nomatch: { title: "No invoice has this amount", glyph: "nomatch" },
 };
 
+/** "Rp Y of Rp X still to match": a transfer partly applied by earlier confirmations. */
+function StillToMatch({ item }: { item: ReconciliationInboxItem }) {
+  const applied = item.applied_idr ?? 0;
+  if (applied <= 0) return null;
+  return (
+    <p className="text-sm text-[var(--state-warning)]">
+      <CcAmount value={item.amount_idr - applied} /> of{" "}
+      <CcAmount value={item.amount_idr} /> still to match
+    </p>
+  );
+}
+
 function BankSide({ item }: { item: ReconciliationInboxItem }) {
   return (
     <div className="rounded-[12px] bg-[var(--cc-wash)] px-6 pb-6 pt-[22px]">
@@ -40,6 +52,7 @@ function BankSide({ item }: { item: ReconciliationInboxItem }) {
       <span className="mb-4 mt-2 block text-[26px] font-medium leading-[1.1]">
         <CcAmount value={item.amount_idr} />
       </span>
+      <StillToMatch item={item} />
       <p className="text-sm font-bold">{item.description || "(no memo)"}</p>
       <p className="mt-0.5 text-sm text-[var(--cc-tx-2)]">
         Received {ccFull(item.txn_date)}
@@ -343,6 +356,7 @@ export function OpenedTransfer({
               <p className="text-sm text-[var(--cc-tx-2)]">
                 Received {ccFull(item.txn_date)}
               </p>
+              <StillToMatch item={item} />
             </div>
             <span className="text-[26px] font-medium leading-none">
               <CcAmount value={item.amount_idr} />

@@ -1,8 +1,8 @@
 """Done today: the transfers the accountant handled in the current WITA day. Read-only.
 
 One SELECT over reconciliation_log. A transfer counts once, under its newest log row, and
-only while its current status is matched, manual or ignored (a reopened transfer is back in
-the inbox, so it is not "done"). The reason typed for an ignore is stored but never returned.
+only while its current status is matched, manual or ignored, or unmatched with a standing
+confirmation (a partly applied transfer); a reopened transfer is back in the inbox, so it is not "done". The reason typed for an ignore is stored but never returned.
 """
 
 from __future__ import annotations
@@ -14,26 +14,41 @@ from zoneinfo import ZoneInfo
 import asyncpg
 
 from backend.services.accounting.period import month_condition
+from backend.services.accounting.reconcile_service import STANDING_CONFIRMATION_SQL
 
 BUSINESS_TZ = ZoneInfo("Asia/Makassar")
 
 # Items returned at most; counts still cover every handled transfer.
 CAP = 500
 
-_ACTION_OF_STATUS = {"matched": "confirmed", "manual": "linked", "ignored": "ignored"}
+_ACTION_OF_STATUS = {
+    "matched": "confirmed",
+    "manual": "linked",
+    "ignored": "ignored",
+    "unmatched": "confirmed",  # partly applied: the SQL admits an unmatched row only then
+}
 
-DONE_TODAY_SQL = """
+# A partly applied transfer is `unmatched` with no ids on the bank row: it is "confirmed", and its
+# invoice and client are those of its newest standing confirmation, read from that log row. A
+# closed transfer reads the same row; a linked one (no confirmation) falls back to the bank row.
+DONE_TODAY_SQL = f"""
 SELECT bt.id AS txn_id, bt.txn_date, bt.amount_idr, bt.description,
        bt.reconciled_status, l.confirmed_at,
        i.invoice_number, c.full_name AS client_name
 FROM reconciliation_log l
 JOIN bank_transactions bt ON bt.id = l.bank_txn_id
-LEFT JOIN invoices i ON i.id = bt.matched_invoice_id
-LEFT JOIN practices p ON p.id = bt.matched_practice_id
+LEFT JOIN LATERAL (
+    SELECT r.practice_id, r.invoice_ids FROM reconciliation_log r
+    WHERE r.bank_txn_id = bt.id AND {STANDING_CONFIRMATION_SQL}
+    ORDER BY r.id DESC LIMIT 1
+) s ON true
+LEFT JOIN invoices i ON i.id = COALESCE((s.invoice_ids->>0)::bigint, bt.matched_invoice_id)
+LEFT JOIN practices p ON p.id = COALESCE(s.practice_id, bt.matched_practice_id)
 LEFT JOIN clients c ON c.id = p.client_id
 WHERE l.confirmed_at >= $1 AND l.confirmed_at < $2
-  AND bt.direction = 'credit'{period}
-  AND bt.reconciled_status IN ('matched', 'manual', 'ignored')
+  AND bt.direction = 'credit'{{period}}
+  AND (bt.reconciled_status IN ('matched', 'manual', 'ignored')
+       OR (bt.reconciled_status = 'unmatched' AND s.practice_id IS NOT NULL))
   AND NOT EXISTS (
       SELECT 1 FROM reconciliation_log later
       WHERE later.bank_txn_id = l.bank_txn_id AND later.id > l.id)

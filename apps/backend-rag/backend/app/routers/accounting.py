@@ -65,7 +65,7 @@ from backend.services.accounting.outgoing_justify import (
 )
 from backend.services.accounting.outgoings import load_outgoings
 from backend.services.accounting.period import month_condition
-from backend.services.accounting.reconcile_service import ReconcileError
+from backend.services.accounting.reconcile_service import TRANSFER_APPLIED_SQL, ReconcileError
 
 # 8 MB is generous for a digital cashout worksheet PDF (Asya's are < 1 MB).
 _MAX_CASHOUT_PDF_BYTES = 8 * 1024 * 1024
@@ -420,9 +420,9 @@ async def match_candidates(
     _require_accounting_access(current_user)
     async with db_pool.acquire() as conn:
         tx = await conn.fetchrow(
-            """
+            f"""
             SELECT bt.id, bt.txn_date, bt.amount_idr, bt.direction, bt.description,
-                   bs.account_number
+                   bs.account_number, {TRANSFER_APPLIED_SQL} AS applied_idr
             FROM bank_transactions bt
             LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
             WHERE bt.id = $1
@@ -437,21 +437,23 @@ async def match_candidates(
         company_key = company_key_for_account(tx["account_number"])
         open_invoices = _own_company(await _fetch_invoice_pool(conn, recorded=False), company_key)
         recorded_invoices = _own_company(await _fetch_invoice_pool(conn, recorded=True), company_key)
+        # What is left of the transfer: a partly applied one is matched on its remainder.
+        remaining = int(tx["amount_idr"]) - int(tx.get("applied_idr") or 0)
         candidates = rank_candidates(
-            transfer_amount_idr=int(tx["amount_idr"]),
+            transfer_amount_idr=remaining,
             transfer_date=tx["txn_date"],
             payer_memo=tx["description"] or "",
             open_invoices=open_invoices,
         )
         recorded_candidates = rank_candidates(
-            transfer_amount_idr=int(tx["amount_idr"]),
+            transfer_amount_idr=remaining,
             transfer_date=tx["txn_date"],
             payer_memo=tx["description"] or "",
             open_invoices=recorded_invoices,
         )
         return {
             "txn_id": txn_id,
-            "transfer_amount_idr": int(tx["amount_idr"]),
+            "transfer_amount_idr": remaining,
             "candidates": [_candidate_json(c) for c in candidates],
             "recorded_candidates": [_candidate_json(c) for c in recorded_candidates],
         }
@@ -622,7 +624,9 @@ def _classify_inbox(
             )
         own_open, own_recorded = pools[key]
         res = classify_transfer(
-            transfer_amount_idr=tx["amount_idr"],
+            # What is left of the transfer, not its whole amount: a partly applied one is
+            # matched on its remainder.
+            transfer_amount_idr=tx["amount_idr"] - tx.get("applied_idr", 0),
             transfer_date=tx["txn_date"],
             payer_memo=tx["description"],
             open_invoices=own_open,
@@ -633,6 +637,8 @@ def _classify_inbox(
                 "txn_id": tx["id"],
                 "txn_date": tx["txn_date"],
                 "amount_idr": tx["amount_idr"],
+                # Already applied by standing confirmations; the rest is still to match.
+                "applied_idr": tx.get("applied_idr", 0),
                 "description": tx["description"],
                 # The payer the bank line names ("" when it names none), for the list to show.
                 "payer_name": _display_payer(
@@ -664,7 +670,8 @@ async def reconciliation_inbox(
         period = month_condition("bt.txn_date", month, params)
         rows = await conn.fetch(
             f"""
-            SELECT bt.id, bt.txn_date, bt.amount_idr, bt.description, bs.account_number
+            SELECT bt.id, bt.txn_date, bt.amount_idr, bt.description, bs.account_number,
+                   {TRANSFER_APPLIED_SQL} AS applied_idr
             FROM bank_transactions bt
             LEFT JOIN bank_statements bs ON bs.id = bt.statement_id
             WHERE bt.direction = 'credit' AND bt.reconciled_status = 'unmatched'{period}
@@ -680,6 +687,7 @@ async def reconciliation_inbox(
             "id": r["id"],
             "txn_date": r["txn_date"],
             "amount_idr": int(r["amount_idr"]),
+            "applied_idr": int(r.get("applied_idr") or 0),
             "description": r["description"] or "",
             "company_key": company_key_for_account(r["account_number"])
             or account_key_for_account(r["account_number"])

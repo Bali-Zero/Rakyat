@@ -42,7 +42,11 @@ export function ConfirmModal({
   const identity = candidateIdentityParts(candidate);
   const paid = candidate.paid_idr ?? 0;
   const balance = candidate.balance_idr ?? candidate.invoice_amount_idr - paid;
-  const delta = txn.amount_idr - balance;
+  // The invoice takes at most its balance: of an overpayment the excess stays in the inbox to be
+  // matched. A transfer within the rounding tolerance above the balance is applied whole.
+  const applied = txn.amount_idr <= balance + 1000 ? txn.amount_idr : balance;
+  const excess = txn.amount_idr - applied;
+  const delta = applied - balance;
   // A transfer net of PPh23 withholding (delta < 0 but flagged likely_withheld)
   // still SETTLES the invoice — the withheld tax is recorded separately, not a
   // shortfall. Only a genuine underpayment (short, NOT withholding) is 'partial'.
@@ -68,7 +72,7 @@ export function ConfirmModal({
         bank_txn_id: txn.id,
         practice_id: candidate.practice_id,
         invoice_id: candidate.invoice_id,
-        amount_applied_idr: txn.amount_idr,
+        amount_applied_idr: applied,
         new_status: newStatus,
         payment_method: "bank_transfer",
         payment_reference: txn.description ?? undefined,
@@ -173,12 +177,20 @@ export function ConfirmModal({
           <div className="flex justify-between">
             <dt className="text-[var(--bz-text-2)]">Delta</dt>
             <dd
-              className={`tabular-nums ${delta < 0 ? "text-[var(--state-warning)]" : "text-[var(--state-success)]"}`}
+              className={`tabular-nums ${delta < 0 || excess > 0 ? "text-[var(--state-warning)]" : "text-[var(--state-success)]"}`}
             >
               {delta >= 0 ? "+" : ""}
               <Money value={delta} />
             </dd>
           </div>
+          {excess > 0 && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-[var(--bz-text-2)]">Applied here</dt>
+              <dd className="tabular-nums">
+                <Money value={applied} />
+              </dd>
+            </div>
+          )}
           <div className="flex justify-between">
             <dt className="text-[var(--bz-text-2)]">New status</dt>
             <dd className="font-semibold uppercase">{newStatus}</dd>
@@ -192,6 +204,11 @@ export function ConfirmModal({
                 None: historical mode
               </dd>
             </div>
+          )}
+          {excess > 0 && (
+            <p className="rounded-md bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] p-2 text-xs text-[var(--state-warning)]">
+              <Money value={excess} /> stays in the inbox to be matched.
+            </p>
           )}
           {candidate.likely_withheld && (
             <p className="rounded-md bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] p-2 text-xs text-[var(--state-warning)]">
