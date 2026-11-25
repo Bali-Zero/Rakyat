@@ -23,6 +23,7 @@ from backend.app.routers.documents_proxy import assert_drive_file_belongs_to_com
 from backend.app.utils.client_pools import can_edit_company, ensure_client_pools_validated
 from backend.app.utils.crm_utils import can_create_company, is_crm_admin, verify_client_access
 from backend.services.common.background import spawn
+from backend.services.documents.drive_address import address_drive_ids
 from backend.services.crm.entity_search import (
     build_company_search,
     escape_like,
@@ -729,6 +730,11 @@ async def create_company_document(
         google_drive_file_id = data.google_drive_file_id
         if google_drive_file_id:
             await assert_drive_file_belongs_to_company(google_drive_file_id, company_id, conn)
+        # The Drive proxy reads every run its address names as this row's file: each
+        # one other than the explicit id is checked like it (a run equal to it, once).
+        for drive_id in address_drive_ids(data.google_drive_file_url):
+            if drive_id != google_drive_file_id:
+                await assert_drive_file_belongs_to_company(drive_id, company_id, conn)
 
         row = await conn.fetchrow(
             """

@@ -3,7 +3,8 @@
 The Drive proxy reads the run that follows `/d/` or `?id=` / `&id=` in a stored
 `file_url` or `google_drive_file_url` as that row's Drive file. Every write route of
 `crm_enhanced_documents.py` (create, bulk, archive, PATCH) runs the client ownership
-check on each such run before the row is written.
+check on each such run before the row is written, and the company documents route
+of `company_router.py` runs the company ownership check the same way.
 """
 
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -363,3 +364,113 @@ async def test_patch_checks_a_run_the_addresses_name_beside_the_file_id(pool):
     assert exc.value.status_code == 403
     assert guard.await_args_list == [call(OWN, 1, pool.conn), call(FOREIGN, 1, pool.conn)]
     pool.conn.execute.assert_not_called()
+
+
+# The company route: `POST /api/crm/companies/{company_id}/documents`.
+
+COMPANY_MODULE = "backend.app.modules.crm.company_router"
+
+
+def _company_guard():
+    async def guard(file_id, company_id, conn):
+        if file_id != OWN:
+            raise HTTPException(
+                status_code=403, detail="Drive file is not in this company's own folder tree"
+            )
+
+    return AsyncMock(side_effect=guard)
+
+
+async def _create_company_document(pool, guard, **fields):
+    from backend.app.modules.crm.company_router import create_company_document
+    from backend.app.modules.crm.company_schemas import CompanyDocumentCreate
+
+    pool.conn.fetchval.return_value = 1  # the company exists
+    pool.conn.fetchrow.return_value = {"id": 10, "uuid": "doc-uuid"}
+    with patch(f"{COMPANY_MODULE}.assert_drive_file_belongs_to_company", new=guard):
+        return await create_company_document(
+            request=MagicMock(),
+            company_id=7,
+            data=CompanyDocumentCreate(document_type="npwp", **fields),
+            db=pool,
+            current_user=ADMIN,
+        )
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        f"https://drive.google.com/file/d/{FOREIGN}/view",
+        f"https://drive.google.com/open?id={FOREIGN}",
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_company_route_refuses_a_foreign_id_in_its_address(pool, address):
+    guard = _company_guard()
+    with pytest.raises(HTTPException) as exc:
+        await _create_company_document(pool, guard, google_drive_file_url=address)
+
+    assert exc.value.status_code == 403
+    assert guard.await_args_list == [call(FOREIGN, 7, pool.conn)]
+    pool.conn.fetchrow.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_company_route_refuses_a_foreign_address_beside_its_own_file_id(pool):
+    guard = _company_guard()
+    with pytest.raises(HTTPException) as exc:
+        await _create_company_document(
+            pool,
+            guard,
+            google_drive_file_id=OWN,
+            google_drive_file_url=f"https://drive.google.com/open?id={FOREIGN}",
+        )
+
+    assert exc.value.status_code == 403
+    assert guard.await_args_list == [call(OWN, 7, pool.conn), call(FOREIGN, 7, pool.conn)]
+    pool.conn.fetchrow.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        f"https://drive.google.com/file/d/{OWN}/view?usp=sharing&ouid=123456789012345678901",
+        f"https://docs.google.com/spreadsheets/d/{OWN}/edit#gid=1234567890123",
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_company_route_writes_its_own_address_with_one_check(pool, address):
+    guard = _company_guard()
+    result = await _create_company_document(
+        pool, guard, google_drive_file_id=OWN, google_drive_file_url=address
+    )
+
+    assert result["id"] == 10
+    assert guard.await_args_list == [call(OWN, 7, pool.conn)]
+    pool.conn.fetchrow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_the_company_route_writes_an_address_that_names_no_drive_file(pool):
+    guard = _company_guard()
+    result = await _create_company_document(
+        pool, guard, google_drive_file_url="https://x.example.test/company/npwp"
+    )
+
+    assert result["id"] == 10
+    guard.assert_not_awaited()
+    pool.conn.fetchrow.assert_awaited_once()
+
+
+@pytest.mark.parametrize("digits", ["12345678901", "98765432109"])
+@pytest.mark.asyncio
+async def test_the_company_route_checks_an_all_digit_run_like_any_run(pool, digits):
+    guard = _company_guard()
+    with pytest.raises(HTTPException) as exc:
+        await _create_company_document(
+            pool, guard, google_drive_file_url=f"https://x.example.test/open?id={digits}"
+        )
+
+    assert exc.value.status_code == 403
+    assert guard.await_args_list == [call(digits, 7, pool.conn)]
+    pool.conn.fetchrow.assert_not_called()
