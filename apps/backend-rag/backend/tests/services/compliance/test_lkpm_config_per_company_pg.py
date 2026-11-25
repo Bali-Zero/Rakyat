@@ -28,7 +28,7 @@ from fastapi import HTTPException
 
 from backend.app.models.lkpm import InvestmentRealization, LKPMClientSubmission, LKPMDraft
 from backend.app.routers import lkpm as lkpm_router
-from backend.services.compliance.lkpm_service import LKPMService
+from backend.services.compliance.lkpm_service import LKPMService, LKPMSubmissionConflict
 
 _DB_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -234,6 +234,42 @@ async def _report(
         validation_status,
         alerts,
     )
+
+
+async def test_submission_happens_once_and_only_after_approval(pool: asyncpg.Pool) -> None:
+    approved_report = await _report(pool, ALPHA["id"], status="approved")
+    draft_report = await _report(pool, BETA["id"], status="draft")
+    service = LKPMService(pool)
+
+    result = await service.mark_submitted(approved_report, "staff@example.test")
+    assert result["status"] == "submitted"
+    first_submission = await pool.fetchrow(
+        "SELECT status, oss_submitted, oss_submitted_at, oss_submitted_by "
+        "FROM lkpm_reports WHERE id = $1",
+        approved_report,
+    )
+    assert first_submission["status"] == "submitted"
+    assert first_submission["oss_submitted"] is True
+
+    with pytest.raises(LKPMSubmissionConflict, match="already submitted"):
+        await service.mark_submitted(approved_report, "second@example.test")
+    second_submission = await pool.fetchrow(
+        "SELECT oss_submitted_at, oss_submitted_by FROM lkpm_reports WHERE id = $1",
+        approved_report,
+    )
+    assert tuple(second_submission.values()) == (
+        first_submission["oss_submitted_at"],
+        first_submission["oss_submitted_by"],
+    )
+
+    with pytest.raises(LKPMSubmissionConflict, match="not approved"):
+        await service.mark_submitted(draft_report, "staff@example.test")
+    draft_submission = await pool.fetchrow(
+        "SELECT status, oss_submitted, oss_submitted_at, oss_submitted_by "
+        "FROM lkpm_reports WHERE id = $1",
+        draft_report,
+    )
+    assert tuple(draft_submission.values()) == ("draft", False, None, None)
 
 
 async def _both_configured(pool: asyncpg.Pool) -> tuple[int, int]:

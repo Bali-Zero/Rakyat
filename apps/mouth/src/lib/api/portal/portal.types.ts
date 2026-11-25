@@ -383,6 +383,7 @@ export interface LKPMReadyPack {
   company_name: string;
   quarter: string;
   year: number;
+  status?: string | null;
   realized: LKPMInvestmentRealization;
   cumulative: LKPMInvestmentRealization;
   employment: LKPMEmploymentData;
