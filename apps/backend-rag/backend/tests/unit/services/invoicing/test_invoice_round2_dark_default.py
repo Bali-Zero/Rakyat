@@ -65,7 +65,7 @@ def _golden() -> dict[str, str]:
 def test_every_golden_code_resolves_to_default_entity(instant: datetime) -> None:
     assert entities.ENTITY_ROUTING_EFFECTIVE_FROM is None
     golden = _golden()
-    assert len(golden) == 122
+    assert len(golden) == 123
     for code in golden:
         assert resolve_invoice_entity(code, instant).key == DEFAULT_ENTITY_KEY, code
 

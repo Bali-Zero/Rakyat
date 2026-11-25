@@ -280,6 +280,7 @@ PRACTICE_TYPE_ENTITY_KEYS: dict[str, str] = {
     # new invoices only, stored invoices keep their issuer)
     "ext_b1_voa": BNI_BAYU_SANTERO.key,
     "ext_c1_tourism": BNI_BAYU_SANTERO.key,
+    "ext_d12": BNI_BAYU_SANTERO.key,
     "extension_visa": BNI_BAYU_SANTERO.key,
 }
 

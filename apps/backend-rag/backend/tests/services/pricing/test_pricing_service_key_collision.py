@@ -243,9 +243,10 @@ def test_every_unambiguous_real_key_still_resolves_unchanged(svc: PricingService
     PIRT `company_services` rows were added; 117 until 2026-10-17, when the
     owner retired the five unique Urgent 1/2/3 Hari, Driving License and
     Created Molina Express rows — none of them in the collision set; 113
-    until 2026-11-23, when the owner put the unique Driving License row back.)"""
+    until 2026-11-23, when the owner put the unique Driving License row back
+    and the unique D12 extension row was added.)"""
     unambiguous = _unambiguous_real_entries(svc.prices["services"])
-    assert len(unambiguous) == 114, (
+    assert len(unambiguous) == 115, (
         "the real catalogue's unambiguous-key count moved — re-verify the "
         "4-collision assumption this whole file rests on before touching "
         "this number"

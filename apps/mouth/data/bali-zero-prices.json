@@ -290,6 +290,18 @@
         "description_en": "Multiple-entry business investigation visa valid 2 years, for investors and business representatives exploring opportunities in Indonesia.",
         "icon_id": "visa-investigation",
         "tier_range": null
+      },
+      "D12 Extension": {
+        "category": "multiple_entry_visas",
+        "key": "D12 Extension",
+        "name": "D12 Business Investigation — Extension",
+        "price": "3.750.000 IDR",
+        "duration": "180 days",
+        "validity": "Extension only",
+        "notes": "",
+        "description_en": "One extension of the D12 Business Investigation stay permit for a further 180 days.",
+        "icon_id": "visa-extension",
+        "tier_range": null
       }
     },
     "kitas_permits": {
