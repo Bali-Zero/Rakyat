@@ -647,13 +647,39 @@ async def link_recorded(
 
         # The ceiling: what is already attached to this invoice plus this transfer may not
         # exceed the invoice's exact amount (cents included) by more than the matcher's
-        # tolerance. A payment confirmed without naming its invoice is attached to the
-        # invoices of its practice.
+        # tolerance. A transfer attached here counts what of it is not already applied
+        # elsewhere; a confirmation applied here counts even when its transfer is attached
+        # to another invoice or still partly applied (unmatched). A payment confirmed
+        # without naming its invoice is attached to the invoices of its practice.
         attached = await conn.fetchval(
-            "SELECT COALESCE(SUM(amount_idr), 0) FROM bank_transactions"
-            " WHERE reconciled_status IN ('matched', 'manual')"
-            " AND (matched_invoice_id = $1"
-            "      OR (matched_invoice_id IS NULL AND matched_practice_id = $2))",
+            f"""
+            SELECT COALESCE((
+                SELECT SUM(GREATEST(bt.amount_idr - COALESCE((
+                    SELECT SUM(r.amount_applied_idr) FROM reconciliation_log r
+                    WHERE r.bank_txn_id = bt.id AND {STANDING_CONFIRMATION_SQL}
+                      AND NOT COALESCE((r.invoice_ids->>0)::bigint = $1
+                                        OR (r.invoice_ids->>0 IS NULL AND r.practice_id = $2),
+                                       false)
+                ), 0), 0))
+                FROM bank_transactions bt
+                WHERE bt.reconciled_status IN ('matched', 'manual')
+                  AND (bt.matched_invoice_id = $1
+                       OR (bt.matched_invoice_id IS NULL AND bt.matched_practice_id = $2))
+            ), 0) + COALESCE((
+                SELECT SUM(r.amount_applied_idr)
+                FROM reconciliation_log r
+                JOIN bank_transactions bt ON bt.id = r.bank_txn_id
+                WHERE {STANDING_CONFIRMATION_SQL}
+                  AND COALESCE((r.invoice_ids->>0)::bigint = $1
+                                OR (r.invoice_ids->>0 IS NULL AND r.practice_id = $2),
+                               false)
+                  AND NOT COALESCE(bt.reconciled_status IN ('matched', 'manual')
+                                   AND (bt.matched_invoice_id = $1
+                                        OR (bt.matched_invoice_id IS NULL
+                                            AND bt.matched_practice_id = $2)),
+                                   false)
+            ), 0)
+            """,
             invoice_id,
             practice_id,
         )

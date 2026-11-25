@@ -287,6 +287,56 @@ async def test_a_team_member_sees_the_payments_of_their_own_clients_only() -> No
 
 
 @pytest.mark.asyncio
+async def test_a_split_transfer_counts_each_part_where_it_was_applied() -> None:
+    async def test(conn: asyncpg.Connection, pool: asyncpg.Pool) -> None:
+        bank = _Bank(conn)
+        day = _month(0) + timedelta(days=3)
+        pid_a, iid_a = await bank.practice(
+            created=_month(0), amount=10_000_000, owner="staffa@example.test"
+        )
+        pid_b, iid_b = await bank.practice(
+            created=_month(0), amount=15_000_000, owner="staffb@example.test"
+        )
+        txid = await bank.row(day, 25_000_000)
+        await confirm_payment(
+            conn,
+            bank_txn_id=txid,
+            practice_id=pid_a,
+            invoice_id=iid_a,
+            amount_applied_idr=10_000_000,
+            new_status="paid",
+            confirmed_by=STAFF,
+            movement_date=day,
+        )
+        # not fully applied yet: the transfer is still in the inbox of every scope
+        months = await _summary(pool, scope=["staffa@example.test"])
+        assert _shape(months[_label(0)]) == ("partial", 0, 0, 1)
+        await confirm_payment(
+            conn,
+            bank_txn_id=txid,
+            practice_id=pid_b,
+            invoice_id=iid_b,
+            amount_applied_idr=15_000_000,
+            new_status="paid",
+            confirmed_by=STAFF,
+            movement_date=day,
+        )
+
+        scoped_a = await _summary(pool, scope=["staffa@example.test"])
+        scoped_b = await _summary(pool, scope=["staffb@example.test"])
+        everyone = await _summary(pool)
+        assert _shape(scoped_a[_label(0)]) == ("complete", 10_000_000, 1, 0)
+        assert _shape(scoped_b[_label(0)]) == ("complete", 15_000_000, 1, 0)
+        assert _shape(everyone[_label(0)]) == ("complete", 25_000_000, 1, 0)
+        assert (
+            scoped_a[_label(0)]["collected"] + scoped_b[_label(0)]["collected"]
+            == everyone[_label(0)]["collected"]
+        )
+
+    await _with_db(test)
+
+
+@pytest.mark.asyncio
 async def test_with_no_imported_statement_every_month_has_no_figure() -> None:
     """No record is not a zero: without a statement the report cannot say Rp 0."""
 

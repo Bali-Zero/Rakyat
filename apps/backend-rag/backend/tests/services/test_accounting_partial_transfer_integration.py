@@ -121,6 +121,16 @@ async def _state(conn):
     )
 
 
+async def _credit(conn, txid, amount):
+    """Another credit on the statement `txid` belongs to, waiting in the inbox."""
+    return await conn.fetchval(
+        "INSERT INTO bank_transactions (statement_id, txn_date, description, amount_idr, direction)"
+        " SELECT statement_id, txn_date, description, $2, 'credit' FROM bank_transactions"
+        " WHERE id = $1 RETURNING id",
+        txid, amount,
+    )
+
+
 async def _inbox_item(conn, txid):
     items = await accounting_module.reconciliation_inbox(
         limit=200, db_pool=_Pool(conn), current_user=ADMIN, month=None
@@ -198,6 +208,103 @@ async def test_a_partly_applied_transfer_is_neither_ignored_nor_linked(db) -> No
     await undo_confirmation(db, bank_txn_id=txid, undone_by=WHO)
     result = await ignore_transaction(db, bank_txn_id=txid, reason="bukan klien", ignored_by=WHO)
     assert result.reconciled_status == "ignored"  # an undone confirmation does not stand
+
+
+# The link ceiling: an invoice never takes more than its amount (+ tolerance). A transfer
+# attached to it counts what of it is not already applied elsewhere; a confirmation applied
+# to it counts even when its transfer is attached elsewhere or still unmatched.
+
+
+async def test_a_manual_link_counts_its_whole_amount_toward_the_ceiling(db) -> None:
+    (pid,), (iid,), txid = await _world(db, invoices=(4 * M,), transfer=4 * M)
+    # the payment was recorded by hand (no transfer named), then the transfer is linked to it
+    await confirm_payment(
+        db, bank_txn_id=None, practice_id=pid, invoice_id=iid,
+        amount_applied_idr=4 * M, new_status="paid", confirmed_by=WHO,
+    )
+    result = await link_recorded(db, bank_txn_id=txid, practice_id=pid, invoice_id=iid,
+                                 linked_by=WHO)
+    assert result.reconciled_status == "manual"
+    second = await _credit(db, txid, 1 * M)
+    before = await _state(db)
+    with pytest.raises(ReconcileError, match=f"bank transaction {second} would exceed"):
+        await link_recorded(db, bank_txn_id=second, practice_id=pid, invoice_id=iid,
+                            linked_by=WHO)
+    assert await _state(db) == before
+
+
+async def test_a_wholly_confirmed_transfer_counts_its_whole_amount_whatever_it_applied(db) -> None:
+    (pid,), (iid,), txid = await _world(db, invoices=(4 * M,), transfer=4 * M)
+    await _apply(db, txid, pid, iid, 4 * M - 500)  # within tolerance: the transfer closes
+    assert (await _bank(db, txid))["reconciled_status"] == "matched"
+    # 1.500 would fit beside the 4M - 500 applied (ceiling 4M + 1.000); beside the whole 4M
+    # transfer it does not
+    fresh = await _credit(db, txid, 1_500)
+    before = await _state(db)
+    with pytest.raises(ReconcileError, match=f"bank transaction {fresh} would exceed"):
+        await link_recorded(db, bank_txn_id=fresh, practice_id=pid, invoice_id=iid, linked_by=WHO)
+    assert await _state(db) == before
+
+
+async def test_a_transfer_partly_applied_on_an_invoice_blocks_a_fresh_link_to_it(db) -> None:
+    (p0, _, _), (i0, _, _), txid = await _world(db)
+    await _apply(db, txid, p0, i0, 10 * M)  # 10M of the 25M pay the 10M invoice; 15M are left
+    fresh = await _credit(db, txid, 10 * M)
+    before = await _state(db)
+    with pytest.raises(ReconcileError, match=f"bank transaction {fresh} would exceed"):
+        await link_recorded(db, bank_txn_id=fresh, practice_id=p0, invoice_id=i0, linked_by=WHO)
+    assert await _state(db) == before
+
+
+async def test_a_closed_transfer_counts_on_each_invoice_only_what_it_applied_there(db) -> None:
+    (p0, p1, p2), (i0, i1, i2), txid = await _world(db)
+    for pid, iid, amount in ((p0, i0, 10 * M), (p1, i1, 10 * M), (p2, i2, 5 * M)):
+        await _apply(db, txid, pid, iid, amount)
+    assert (await _bank(db, txid))["reconciled_status"] == "matched"
+    ten = await _credit(db, txid, 10 * M)
+    two = await _credit(db, txid, 2 * M)
+    before = await _state(db)
+    # INV-0 already took its 10M from the transfer, wherever the transfer closed
+    with pytest.raises(ReconcileError, match=f"bank transaction {ten} would exceed"):
+        await link_recorded(db, bank_txn_id=ten, practice_id=p0, invoice_id=i0, linked_by=WHO)
+    # INV-2 counts what is left of the transfer (25M - 20M = 5M), not the whole 25M nor 0
+    with pytest.raises(ReconcileError, match=f"bank transaction {two} would exceed"):
+        await link_recorded(db, bank_txn_id=two, practice_id=p2, invoice_id=i2, linked_by=WHO)
+    assert await _state(db) == before
+
+
+async def test_a_partly_applied_transfer_leaves_room_for_what_still_fits(db) -> None:
+    (p0, _, _), (i0, _, _), txid = await _world(db)
+    await _apply(db, txid, p0, i0, 4 * M)  # the application counts, not the whole 25M transfer
+    fresh = await _credit(db, txid, 6 * M)
+    result = await link_recorded(db, bank_txn_id=fresh, practice_id=p0, invoice_id=i0,
+                                 linked_by=WHO)
+    assert result.reconciled_status == "manual"
+
+
+async def test_a_confirmation_that_named_no_invoice_counts_against_its_practice_invoices(
+    db,
+) -> None:
+    (p0,), (i0,), txid = await _world(db, invoices=(10 * M,))
+    await _apply(db, txid, p0, None, 10 * M)  # 10M confirmed on the case, no invoice named
+    fresh = await _credit(db, txid, 10 * M)
+    before = await _state(db)
+    with pytest.raises(ReconcileError, match=f"bank transaction {fresh} would exceed"):
+        await link_recorded(db, bank_txn_id=fresh, practice_id=p0, invoice_id=i0, linked_by=WHO)
+    assert await _state(db) == before
+
+
+async def test_a_confirmation_that_named_no_invoice_on_another_case_frees_what_it_applied(
+    db,
+) -> None:
+    (p0, p1), (i0, _), txid = await _world(db, invoices=(25 * M, 10 * M), transfer=30 * M)
+    await _apply(db, txid, p1, None, 10 * M)  # 10M on the other case, no invoice named
+    await _apply(db, txid, p0, i0, 20 * M)  # 20M on the 25M invoice close the transfer there
+    assert (await _bank(db, txid))["reconciled_status"] == "matched"
+    fresh = await _credit(db, txid, 4 * M)
+    result = await link_recorded(db, bank_txn_id=fresh, practice_id=p0, invoice_id=i0,
+                                 linked_by=WHO)
+    assert result.reconciled_status == "manual"  # 20M attached + 4M fit the 25M invoice
 
 
 async def test_undo_takes_back_the_newest_application_and_unwinds_last_first(db) -> None:
