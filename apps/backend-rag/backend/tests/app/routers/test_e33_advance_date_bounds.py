@@ -47,6 +47,11 @@ def _case(*, stage: E33Stage = E33Stage.VISA_ISSUED) -> E33Case:
     )
 
 
+def _bali_today() -> date:
+    """The endpoint's own day, so a case cannot straddle a UTC or Bali midnight."""
+    return e33_cases_module._latest_occurred_on()
+
+
 def _advance(client: TestClient, case: E33Case, occurred_on: date):
     return client.post(
         f"/api/e33/cases/{case.case_id}/advance",
@@ -70,7 +75,7 @@ def test_advance_rejects_occurred_on_more_than_six_years_ago(mock_db_pool, admin
     pool, conn = mock_db_pool
     case = _case()
     _wire_case(conn, case)
-    too_old = date.today() - timedelta(days=7 * 366)
+    too_old = _bali_today() - timedelta(days=7 * 366)
 
     response = _advance(TestClient(_make_app(pool, admin_user)), case, too_old)
 
@@ -81,7 +86,7 @@ def test_advance_rejects_occurred_on_more_than_six_years_ago(mock_db_pool, admin
 def test_advance_rejects_occurred_on_before_case_entry_date(mock_db_pool, admin_user) -> None:
     pool, conn = mock_db_pool
     case = _case(stage=E33Stage.ENTRY)
-    case.entry_date = date.today()
+    case.entry_date = _bali_today()
     _wire_case(conn, case)
     client = TestClient(_make_app(pool, admin_user))
 
@@ -97,11 +102,9 @@ def test_advance_rejects_occurred_on_before_case_entry_date(mock_db_pool, admin_
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "occurred_on",
-    [date.today(), date.today() - timedelta(days=365)],
-)
-def test_advance_accepts_today_and_recent_past_dates(mock_db_pool, admin_user, occurred_on) -> None:
+@pytest.mark.parametrize("days_back", [0, 365])
+def test_advance_accepts_today_and_recent_past_dates(mock_db_pool, admin_user, days_back) -> None:
+    occurred_on = _bali_today() - timedelta(days=days_back)
     pool, conn = mock_db_pool
     case = _case()
     _wire_case(conn, case)
@@ -167,7 +170,7 @@ def test_advance_accepts_today_in_bali_while_the_server_clock_is_still_on_yester
 def test_a_same_stage_advance_is_still_refused_as_re_dating(mock_db_pool, admin_user) -> None:
     pool, conn = mock_db_pool
     case = _case(stage=E33Stage.ENTRY)
-    case.entry_date = date.today()
+    case.entry_date = _bali_today()
     _wire_case(conn, case)
 
     response = _advance(
@@ -212,7 +215,7 @@ def test_the_oldest_accepted_date_is_exactly_six_years_back(
 def test_an_event_on_the_entry_date_itself_is_accepted(mock_db_pool, admin_user) -> None:
     pool, conn = mock_db_pool
     case = _case(stage=E33Stage.ENTRY)
-    case.entry_date = date.today() - timedelta(days=10)
+    case.entry_date = _bali_today() - timedelta(days=10)
     _wire_case(conn, case)
 
     response = TestClient(_make_app(pool, admin_user)).post(
@@ -235,7 +238,7 @@ def test_a_same_stage_advance_with_an_impossible_date_is_still_a_conflict(
 ) -> None:
     pool, conn = mock_db_pool
     case = _case(stage=E33Stage.ENTRY)
-    case.entry_date = date.today()
+    case.entry_date = _bali_today()
     _wire_case(conn, case)
 
     response = _advance(TestClient(_make_app(pool, admin_user)), case, occurred_on)
@@ -251,7 +254,7 @@ def test_closing_the_guarantee_gate_without_evidence_is_still_a_conflict_whateve
 ) -> None:
     pool, conn = mock_db_pool
     case = _case(stage=E33Stage.GUARANTEE_PROOF_DUE)
-    case.entry_date = date.today() - timedelta(days=100)
+    case.entry_date = _bali_today() - timedelta(days=100)
     _wire_case(conn, case)
 
     response = TestClient(_make_app(pool, admin_user)).post(
