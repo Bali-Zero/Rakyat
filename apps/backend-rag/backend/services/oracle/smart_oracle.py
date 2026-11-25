@@ -221,15 +221,21 @@ async def smart_oracle(query, best_filename_from_qdrant) -> str:
                     max_output_tokens=8192,
                 )
 
-                # Cleanup: Remove local temp file to save space
-                os.remove(pdf_path)
-
                 return result.get("text", "No response generated.")
             return "GenAI SDK not available."
 
         except Exception as ai_error:
             logger.error("AI Processing Error: %s", ai_error)
             return "Error processing the document with AI."
+        finally:
+            # A file that cannot be removed must not replace the answer or the error answer.
+            try:
+                os.remove(pdf_path)
+            except OSError as cleanup_error:
+                logger.warning(
+                    "Could not remove the downloaded document: %s",
+                    type(cleanup_error).__name__,
+                )
     else:
         # Fallback if the file is missing from Drive
         return "Original document not found in Drive storage. Unable to perform deep analysis."
