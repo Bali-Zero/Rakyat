@@ -51,6 +51,7 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -78,6 +79,7 @@ from backend.services.crm.e33_lifecycle import (
     guarantee_gate_open,
     severity_for_days_until,
     validate_dependent_code,
+    validate_transition,
 )
 
 logger = logging.getLogger(__name__)
@@ -334,6 +336,33 @@ class CaseCreateBody(BaseModel):
                 "dependent_code and principal_case_id must be provided together"
             )
         return self
+
+
+_OFFICE_TZ = ZoneInfo("Asia/Makassar")
+
+
+def _latest_occurred_on() -> date:
+    # Staff date events in Bali, which is ahead of the server's UTC clock.
+    return max(date.today(), datetime.now(_OFFICE_TZ).date())
+
+
+def _six_years_before(day: date) -> date:
+    # 29 February has no counterpart six years earlier unless that year is a leap year too.
+    try:
+        return day.replace(year=day.year - 6)
+    except ValueError:
+        return day.replace(year=day.year - 6, day=28)
+
+
+def _occurred_on_error(occurred_on: date, entry_date: date | None) -> str | None:
+    today = _latest_occurred_on()
+    if occurred_on > today:
+        return "occurred_on cannot be after today"
+    if occurred_on < _six_years_before(today):
+        return "occurred_on cannot be more than six years ago"
+    if entry_date is not None and occurred_on < entry_date:
+        return "occurred_on cannot be before the case entry date"
+    return None
 
 
 class AdvanceBody(BaseModel):
@@ -611,6 +640,22 @@ async def advance_case(
                         "title filing) before closing the Day-90 gate"
                     ),
                 )
+
+            if body.occurred_on is not None:
+                # A refused transition keeps its 409 whatever the date says.
+                try:
+                    validate_transition(
+                        case.stage, body.to_stage, itap_eval_enabled=E33_ITAP_EVAL_ENABLED
+                    )
+                except E33InvalidTransitionError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+                    ) from exc
+                date_error = _occurred_on_error(body.occurred_on, case.entry_date)
+                if date_error is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=date_error
+                    )
 
             try:
                 case.advance(
