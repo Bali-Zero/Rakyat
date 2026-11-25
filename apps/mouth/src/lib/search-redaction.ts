@@ -27,10 +27,16 @@ export function safeUpstreamError(
   targetUrl: string,
   logTargetUrl: string,
   search: string,
+  pathname?: string,
+  logPathname?: string,
 ): Error {
   const clean = (text: string) => {
     let out = text.split(targetUrl).join(logTargetUrl);
     if (search) out = out.split(search).join("");
+    // the request path on its own, in its logged form (a secret segment replaced, or the whole path
+    // a placeholder because the upstream would read it differently)
+    if (pathname && logPathname !== undefined)
+      out = out.split(pathname).join(logPathname);
     // the path of a credential route (invitation, sign-in, unsubscribe, result hash) can sit in
     // the message on its own, e.g. a proxy log line: only its secret segment is replaced
     return redactTokenPaths(out);

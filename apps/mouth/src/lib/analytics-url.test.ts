@@ -12,6 +12,7 @@ import {
 } from "./analytics-url";
 import { TOKEN_PATH_PREFIXES, TOKEN_PATH_RULES } from "./sentry-url-scrub";
 import {
+  TELEMETRY_ADDRESS_CASES,
   TELEMETRY_CAMPAIGN_CASES,
   TELEMETRY_PATH_CASES,
   TELEMETRY_PATH_REDACTION,
@@ -68,6 +69,12 @@ describe("redactSensitiveQueryParams", () => {
 });
 
 describe("analyticsSafeHref / analyticsSafePath (GA4 page_location, page_path)", () => {
+  it.each(TELEMETRY_ADDRESS_CASES)(
+    "cleans GA4 address row: $input",
+    ({ input, ga4 }) => {
+      expect(analyticsSafeHref(input)).toBe(ga4);
+    },
+  );
   const SECRET = "ga4fixturehash77"; // pragma: allowlist secret
 
   it("keeps origin and path only: no other query parameter, no fragment", () => {
@@ -119,10 +126,8 @@ describe("analyticsSafeHref / analyticsSafePath (GA4 page_location, page_path)",
     },
   );
 
-  it("never throws and never keeps the query of an unparseable value", () => {
-    expect(analyticsSafeHref("/visa/clock/" + SECRET + "?x=1")).toBe(
-      `/visa/clock/${REDACTED}`,
-    );
+  it("replaces a root-relative value because GA4 admits absolute http(s) only", () => {
+    expect(analyticsSafeHref("/visa/clock/" + SECRET + "?x=1")).toBe(REDACTED);
     expect(analyticsSafeHref("")).toBe("");
   });
 
@@ -305,6 +310,44 @@ describe("analyticsUrlRedactScript", () => {
       "https://example.test/x?utm_content=[redacted]",
     );
   });
+
+  it.each([
+    ["https://host.example?q=a/b", "https://host.example/"],
+    [
+      "https://host.example/api/visa/clock/{hash}",
+      "https://host.example/api/visa/clock/{hash}",
+    ],
+    ["https://u:p@host.example/x", "https://host.example/x"],
+    ["https:///u:p@host.example/x", REDACTED],
+    ["https://host.example/visa/clock/zq-a/../zq-b", REDACTED],
+    ["https://host.example/api/visa%2Fclock/zq-synthetic", REDACTED],
+    ["https:\\\\host.example\\visa\\clock\\zq-synthetic", REDACTED],
+    ["mailto:n@host.example", REDACTED],
+    ["/clients?next=x", REDACTED],
+    [
+      "https://host.example/x%20y/%E2%9C%93",
+      "https://host.example/x%20y/%E2%9C%93",
+    ],
+  ])("uses the raw referrer address rules: %s", (referrer, expected) => {
+    const pushed = runBootstrap("/canonical?not_allowlisted=zq", referrer);
+    const payload = Array.from(pushed[pushed.length - 1] as IArguments)[1] as {
+      page_referrer: string;
+    };
+    expect(payload.page_referrer).toBe(expected);
+  });
+
+  it.each(TELEMETRY_ADDRESS_CASES)(
+    "matches analyticsSafeHref for the shared GA4 fixture row: $input",
+    ({ input }) => {
+      const pushed = runBootstrap("/canonical?not_allowlisted=zq", input);
+      const payload = Array.from(
+        pushed[pushed.length - 1] as IArguments,
+      )[1] as {
+        page_referrer: string;
+      };
+      expect(payload.page_referrer).toBe(analyticsSafeHref(input));
+    },
+  );
 });
 
 describe("root layout wiring", () => {

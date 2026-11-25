@@ -31,6 +31,8 @@ import {
   TOKEN_PATH_RULES,
   type TokenPathRule,
   redactTokenPaths,
+  rawPathOf,
+  encodeAsParser,
 } from "@/lib/sentry-url-scrub";
 
 /**
@@ -111,17 +113,31 @@ export function analyticsSafeHref(
   rules: readonly TokenPathRule[] = TOKEN_PATH_RULES,
 ): string {
   if (!href) return href;
+  if (
+    /^[\x00-\x1f\x7f]|[\x00-\x1f\x7f\\]/.test(href) ||
+    href.startsWith(" ") ||
+    href.endsWith(" ") ||
+    !/^https?:\/\/(?!\/)[^/?#]/i.test(href)
+  )
+    return REDACTED;
   try {
     const url = new URL(href);
-    const authorityEnd = href.indexOf("/", href.indexOf("//") + 2);
-    const rawPath =
-      authorityEnd < 0
-        ? "/"
-        : href.slice(authorityEnd).split(/[?#]/, 1)[0] || "/";
-    return `${url.protocol}//${url.host}${redactTokenPaths(rawPath, REDACTED, rules)}${allowedQuery(url.search)}`;
+    const rawPath = rawPathOf(href);
+    if (hasUnsafeEscape(rawPath)) return REDACTED;
+    if (encodeAsParser(rawPath) !== url.pathname) return REDACTED;
+    const path = redactTokenPaths(rawPath, REDACTED, rules);
+    return `${url.protocol}//${url.host}${path}${allowedQuery(url.search)}`;
   } catch {
-    return redactTokenPaths(href.split(/[?#]/)[0] ?? "", REDACTED, rules);
+    return REDACTED;
   }
+}
+
+function hasUnsafeEscape(path: string): boolean {
+  return [...path.matchAll(/%[0-9a-f]{2}/gi)].some((match) =>
+    /[A-Za-z0-9\\/.\-_~]/.test(
+      String.fromCharCode(parseInt(match[0].slice(1), 16)),
+    ),
+  );
 }
 
 /** A pathname as GA4 `page_path`: the credential segment of a known route replaced. */
@@ -188,7 +204,7 @@ export function buildAnalyticsUrlRedactScript(
     rules.map(({ prefix }) => prefix),
   )};var C=${JSON.stringify(rules.map(({ staticChildren }) => staticChildren))};var A=${JSON.stringify(ANALYTICS_QUERY_ALLOWLIST)};var S=${JSON.stringify(
     SENSITIVE_QUERY_PARAMS,
-  )};var R=${JSON.stringify(REDACTED)};function tt(x){return /^(?:\\[(?:\\.\\.\\.)?[^/\\]]+\\]|\\{[^/{}]+\\}|%7B[^/]+%7D|:[^/:]+)$/i.test(x);}function tp(s){P.forEach(function(p,n){var i=0;for(;;){i=s.indexOf(p,i);if(i<0)break;var nested=P.some(function(x){var d=x.length-p.length;return d>0&&x.slice(-p.length)===p&&s.slice(i-d,i-d+x.length)===x;});if(nested){i+=p.length;continue;}var a=i+p.length;var e=a;while(e<s.length&&'/?#'.indexOf(s.charAt(e))<0&&!/[\\s"'<>)]/.test(s.charAt(e)))e++;var x=s.slice(a,e);if(e>a&&!tt(x)&&C[n].indexOf(x)<0){s=s.slice(0,a)+R+s.slice(e);e=a+R.length;}i=e>a?e:a;}});return s;}function scrub(h){if(!h)return h;var u;try{u=new URL(h);}catch(e){return tp(h.split(/[?#]/)[0]);}var q=[];u.search.replace(/^\\?/,'').split('&').forEach(function(pr){var z=pr.indexOf('=');var k=z<0?pr:pr.slice(0,z);if(A.indexOf(k)<0)return;var v=z<0?'':pr.slice(z+1);var d;try{d=decodeURIComponent(v.replace(/\\+/g,' '));}catch(e){q.push(k+'='+R);return;}q.push(d&&/^[A-Za-z0-9 ._~-]+$/.test(d)?k+'='+v:k+'='+R);});var raw=h.slice(h.indexOf('//')+2);var slash=raw.indexOf('/');var path=slash<0?'/' : raw.slice(slash).split(/[?#]/)[0]||'/';return u.protocol+'//'+u.host+tp(path)+(q.length?'?'+q.join('&'):'');}var loc=window.location.href;var ref=document.referrer;var sl=scrub(loc);var sr=scrub(ref);if(sl!==loc||sr!==ref){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('set',{page_location:sl,page_referrer:sr});}}catch(e){}})();`;
+  )};var R=${JSON.stringify(REDACTED)};var E={};function tt(x){return /^(?:\\[(?:\\.\\.\\.)?[^/\\]]+\\]|\\{[^/{}]+\\}|%7B[^/]+%7D|:[^/:]+)$/i.test(x);}function tp(s){P.forEach(function(p,n){var i=0;for(;;){i=s.indexOf(p,i);if(i<0)break;var nested=P.some(function(x){var d=x.length-p.length;return d>0&&x.slice(-p.length)===p&&s.slice(i-d,i-d+x.length)===x;});if(nested){i+=p.length;continue;}var a=i+p.length;var e=a;while(e<s.length&&'/?#'.indexOf(s.charAt(e))<0&&!/[\\s"'<>)]/.test(s.charAt(e)))e++;var x=s.slice(a,e);if(e>a&&!tt(x)&&C[n].indexOf(x)<0){s=s.slice(0,a)+R+s.slice(e);e=a+R.length;}i=e>a?e:a;}});return s;}function ad(h){return !/[\\x00-\\x1f\\x7f\\\\]/.test(h)&&h.charAt(0)!==' '&&h.charAt(h.length-1)!==' '&&/^https?:\\/\\/(?!\\/)[^/?#]/i.test(h);}function rp(h){var r=h.split(/[?#]/)[0]||'';var m=r.match(/^(?:[a-z][a-z0-9+.-]*:)?\\/\\/[^/]*/i);return m?r.slice(m[0].length)||'/':r||'/';}function ep(s){var o='';for(var i=0;i<s.length;i++){var c=s.charAt(i);o+=c==='%'||c==='/'||c==='.'||/[A-Za-z0-9]/.test(c)?c:(E[c]||(E[c]=new URL('http://x/a'+c).pathname.slice(2)));}return o;}function d2(s){var r=/%[0-9a-f]{2}/gi,m;while((m=r.exec(s))){if(/[A-Za-z0-9\\\\/.\\-_~]/.test(String.fromCharCode(parseInt(m[0].slice(1),16))))return true;}return false;}function scrub(h){if(!h)return h;if(!ad(h))return R;var u;try{u=new URL(h);}catch(e){return R;}var path=rp(h);if(d2(path)||ep(path)!==u.pathname)return R;var q=[];u.search.replace(/^\\?/,'').split('&').forEach(function(pr){var z=pr.indexOf('=');var k=z<0?pr:pr.slice(0,z);if(A.indexOf(k)<0)return;var v=z<0?'':pr.slice(z+1);var d;try{d=decodeURIComponent(v.replace(/\\+/g,' '));}catch(e){q.push(k+'='+R);return;}q.push(d&&/^[A-Za-z0-9 ._~-]+$/.test(d)?k+'='+v:k+'='+R);});return u.protocol+'//'+u.host+tp(path)+(q.length?'?'+q.join('&'):'');}var loc=window.location.href;var ref=document.referrer;var sl=scrub(loc);var sr=scrub(ref);if(sl!==loc||sr!==ref){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('set',{page_location:sl,page_referrer:sr});}}catch(e){}})();`;
 }
 
 export const analyticsUrlRedactScript = buildAnalyticsUrlRedactScript();

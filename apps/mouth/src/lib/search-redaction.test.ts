@@ -48,6 +48,45 @@ describe("safeUpstreamError and credential paths", () => {
   });
 });
 
+describe("safeUpstreamError and a path logged as a placeholder", () => {
+  const secret = "tkfixture42zz"; // pragma: allowlist secret
+  const path = `/api/visa/m%61tch/${secret}`;
+
+  it("replaces the raw request path wherever the message carries it", () => {
+    const raw = new TypeError(
+      `Failed to parse URL from http://elsewhere.test${path}`,
+    );
+    const safe = safeUpstreamError(
+      raw,
+      `http://backend${path}`,
+      "http://backend[REDACTED]",
+      "",
+      path,
+      "[REDACTED]",
+    );
+    expect(safe.message).not.toContain(secret);
+    expect(String(safe.stack)).not.toContain(secret);
+    expect(safe.message).toBe(
+      "Failed to parse URL from http://elsewhere.test[REDACTED]",
+    );
+  });
+
+  it("leaves the message alone when no request path is given", () => {
+    const raw = new TypeError(
+      "Failed to parse URL from http://elsewhere.test/api/x/y",
+    );
+    const safe = safeUpstreamError(
+      raw,
+      "http://backend/api/x/y",
+      "http://backend/api/x/y",
+      "",
+      "",
+      "[REDACTED]",
+    );
+    expect(safe.message).toBe(raw.message);
+  });
+});
+
 describe("safeUpstreamError", () => {
   const target = `http://backend/api/crm/clients?search=${VALUE}`;
   const search = `?search=${VALUE}`;

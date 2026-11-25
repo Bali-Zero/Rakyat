@@ -1,13 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import {
   redactTokenPaths,
+  redactFreeText,
+  encodeAsParser,
+  pathOnlyUrl,
   scrubSentryUrls,
   TOKEN_PATH_PREFIXES,
   TOKEN_PATH_RULES,
 } from "./sentry-url-scrub";
 import {
+  TELEMETRY_ADDRESS_CASES,
+  TELEMETRY_FREE_TEXT_CASES,
   TELEMETRY_PATH_CASES,
   TELEMETRY_PATH_REDACTION,
 } from "./telemetry-address-cases.fixture";
@@ -25,6 +39,78 @@ const URLS = [
   `https://kita.example/clients#q=${VALUE}`,
   `/clients?search=${VALUE}`,
 ];
+
+type RouteChildren = Record<string, string[]>;
+
+function enumerateRouteChildren(
+  appDir: string,
+  routersDir: string,
+  rules: readonly { prefix: string }[] = TOKEN_PATH_RULES,
+): RouteChildren {
+  const found: RouteChildren = Object.fromEntries(
+    rules.map(({ prefix }) => [prefix, []]),
+  );
+  const add = (prefix: string, child: string) => {
+    if (!found[prefix].includes(child)) found[prefix].push(child);
+  };
+  const transparent = (name: string) =>
+    /^\(.*\)$/.test(name) || name.startsWith("@");
+  const appWalk = (dir: string, segments: string[]) => {
+    const prefix = `/${segments.join("/")}/`;
+    if (found[prefix]) {
+      const directChildren = (folder: string): string[] =>
+        readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+          if (!entry.isDirectory()) return [];
+          const full = join(folder, entry.name);
+          return transparent(entry.name) ? directChildren(full) : [entry.name];
+        });
+      for (const child of directChildren(dir)) add(prefix, child);
+    }
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      appWalk(
+        join(dir, entry.name),
+        transparent(entry.name) ? segments : [...segments, entry.name],
+      );
+    }
+  };
+  appWalk(appDir, []);
+
+  for (const file of readdirSync(routersDir)) {
+    if (!file.endsWith(".py")) continue;
+    const source = readFileSync(join(routersDir, file), "utf8");
+    const router = /APIRouter\([^)]*?prefix\s*=\s*"([^"]*)"/s.exec(source);
+    const base = router ? router[1] : "";
+    for (const route of source.matchAll(
+      /@router\.(?:get|post|put|patch|delete)\(\s*"([^"]*)"/g,
+    )) {
+      const path = `${base}${route[1]}`;
+      for (const { prefix } of rules) {
+        if (!path.startsWith(prefix)) continue;
+        const child = path.slice(prefix.length).split("/")[0];
+        if (child) add(prefix, child);
+      }
+    }
+  }
+  return found;
+}
+
+function assertListedRouteChildren(
+  children: RouteChildren,
+  rules: readonly (typeof TOKEN_PATH_RULES)[number][] = TOKEN_PATH_RULES,
+): void {
+  for (const { prefix, staticChildren } of rules) {
+    for (const child of children[prefix] ?? []) {
+      const template =
+        /^\[(?:\.\.\.)?[^\]]+\]$/.test(child) ||
+        /^\{[^}]+\}$/.test(child) ||
+        /^:[^/]+$/.test(child);
+      if (!template && !staticChildren.includes(child)) {
+        throw new Error(`${prefix}${child}`);
+      }
+    }
+  }
+}
 
 describe("scrubSentryUrls", () => {
   it.each(URLS)("keeps only the path of %s", (url) => {
@@ -394,6 +480,17 @@ describe("scrubSentryUrls", () => {
 
     it("covers every credential-named dynamic folder of the app route tree", () => {
       const appDir = join(__dirname, "..", "app");
+      const routers = join(
+        __dirname,
+        "..",
+        "..",
+        "..",
+        "backend-rag",
+        "backend",
+        "app",
+        "routers",
+      );
+      assertListedRouteChildren(enumerateRouteChildren(appDir, routers));
       const found: string[] = [];
       const walk = (dir: string) => {
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -443,6 +540,9 @@ describe("scrubSentryUrls", () => {
         "routers",
       );
       expect(existsSync(routers), routers).toBe(true);
+      assertListedRouteChildren(
+        enumerateRouteChildren(join(__dirname, "..", "app"), routers),
+      );
       const found: string[] = [];
       for (const file of readdirSync(routers)) {
         if (!file.endsWith(".py")) continue;
@@ -474,26 +574,118 @@ describe("scrubSentryUrls", () => {
       }
     });
 
-    it("rejects an unlisted static child in the synthetic route walk", () => {
-      const fixtureTree = {
-        "/api/visa/clock/": ["email", "synthetic-unlisted-child"],
-      };
-      expect(() => {
-        for (const [prefix, children] of Object.entries(fixtureTree)) {
-          const reviewed = TOKEN_PATH_RULES.find(
-            (rule) => rule.prefix === prefix,
-          );
-          for (const child of children) {
-            if (
-              !(
-                reviewed?.staticChildren as readonly string[] | undefined
-              )?.includes(child)
-            ) {
-              throw new Error(`${prefix}${child}`);
-            }
-          }
-        }
-      }).toThrow("/api/visa/clock/synthetic-unlisted-child");
+    it("rejects an unlisted static child in a synthetic app route tree", () => {
+      const root = mkdtempSync(join(tmpdir(), "zq-route-walk-"));
+      try {
+        const appDir = join(root, "app");
+        const routers = join(root, "routers");
+        mkdirSync(join(appDir, "api", "visa", "clock", "[hash]"), {
+          recursive: true,
+        });
+        mkdirSync(join(appDir, "api", "visa", "clock", "zq-unlisted"), {
+          recursive: true,
+        });
+        mkdirSync(routers);
+        expect(() =>
+          assertListedRouteChildren(enumerateRouteChildren(appDir, routers)),
+        ).toThrow("/api/visa/clock/zq-unlisted");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
+
+    it("rejects an unlisted static child in synthetic backend routes", () => {
+      const root = mkdtempSync(join(tmpdir(), "zq-route-walk-"));
+      try {
+        const appDir = join(root, "app");
+        const routers = join(root, "routers");
+        mkdirSync(appDir);
+        mkdirSync(routers);
+        writeFileSync(
+          join(routers, "zq_synthetic.py"),
+          'router = APIRouter(prefix="/api/visa")\n@router.get("/clock/zq-unlisted-api")\n@router.get("/clock/{hash}")\n',
+        );
+        expect(() =>
+          assertListedRouteChildren(enumerateRouteChildren(appDir, routers)),
+        ).toThrow("/api/visa/clock/zq-unlisted-api");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+describe("structured address admission", () => {
+  it.each(TELEMETRY_ADDRESS_CASES)(
+    "cleans structured Sentry address row: $input",
+    ({ input, sentry }) => {
+      expect(pathOnlyUrl(input)).toBe(sentry);
+      const out = scrubSentryUrls({
+        request: { url: input },
+        breadcrumbs: [{ data: { url: input } }],
+      });
+      expect(out.request.url).toBe(sentry);
+      expect(out.breadcrumbs[0].data.url).toBe(sentry);
+    },
+  );
+
+  it("fails closed for parser-normalized credential paths", () => {
+    expect(pathOnlyUrl("/visa/clock/zq-a/../zq-b")).toBe("[REDACTED]");
+  });
+
+  it("keeps an ordinary encoded path", () => {
+    expect(pathOnlyUrl("https://host.example/x%20y/%E2%9C%93")).toBe(
+      "https://host.example/x%20y/%E2%9C%93",
+    );
+  });
+
+  it("uses the parser's per-character pathname witness", () => {
+    expect(encodeAsParser("/visa/clock/{hash}")).toBe(
+      "/visa/clock/" + new URL("http://x/a{").pathname.slice(2) + "hash%7D",
+    );
+    expect(pathOnlyUrl("/visa/clock/zq-a/../zq-b")).toBe("[REDACTED]");
+  });
+
+  it.each(TELEMETRY_PATH_CASES.filter(({ rules }) => !rules))(
+    "applies the v3 path row through structured and error fields: $path",
+    ({ path, expected }) => {
+      const structured = expected.replace(
+        TELEMETRY_PATH_REDACTION,
+        "[REDACTED]",
+      );
+      expect(pathOnlyUrl(path)).toBe(structured);
+      const out = scrubSentryUrls({ message: `GET ${path} failed` });
+      expect(out.message).toBe(`GET ${structured} failed`);
+    },
+  );
+});
+
+describe("free-text addresses", () => {
+  it.each(TELEMETRY_FREE_TEXT_CASES)(
+    "cleans free-text row: $input",
+    ({ input, expected }) => {
+      const out = scrubSentryUrls({
+        message: input,
+        exception: { values: [{ value: input }] },
+      });
+      expect(out.message).toBe(expected);
+      expect(out.exception.values[0].value).toBe(expected);
+    },
+  );
+  it("masks address-shaped dot and encoded-separator tokens", () => {
+    expect(
+      redactFreeText(
+        "GET https://host.example/visa/x/../clock/zq-synthetic failed",
+      ),
+    ).toBe("GET [REDACTED] failed");
+    expect(redactFreeText("fetch /api/visa%2Fclock/zq-synthetic")).toBe(
+      "fetch [REDACTED]",
+    );
+  });
+
+  it("keeps ordinary prose and a public route", () => {
+    expect(redactFreeText("see v1.2.3 and /clients/new")).toBe(
+      "see v1.2.3 and /clients/new",
+    );
   });
 });

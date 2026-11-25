@@ -157,25 +157,157 @@ export function redactTokenPaths(
   return out;
 }
 
-function pathOnlyUrl(value: string): string {
+const D2_ESCAPE = /%(?:[0-9a-f][0-9a-f])/gi;
+const DATA_MEDIA_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  "image/avif",
+  "text/plain",
+  "application/pdf",
+  "application/octet-stream",
+]);
+
+export function rawPathOf(value: string): string {
+  const raw = value.split(/[?#]/, 1)[0] ?? "";
+  const authority = raw.match(/^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/]*/i);
+  return authority ? raw.slice(authority[0].length) || "/" : raw || "/";
+}
+
+function admittedAddress(
+  value: string,
+): "absolute" | "protocol-relative" | "root-relative" | null {
+  if (
+    /^[\x00-\x1f\x7f]|[\x00-\x1f\x7f\\]/.test(value) ||
+    value.startsWith(" ") ||
+    value.endsWith(" ")
+  )
+    return null;
+  if (/^https?:\/\/(?!\/)[^/?#]/i.test(value)) return "absolute";
+  if (/^\/\/(?!\/)[^/?#]/.test(value)) return "protocol-relative";
+  if (/^\/(?!\/)/.test(value)) return "root-relative";
+  return null;
+}
+
+export function encodeAsParser(path: string): string {
+  return [...path]
+    .map((character) =>
+      character === "%" ||
+      character === "/" ||
+      character === "." ||
+      /[A-Za-z0-9]/.test(character)
+        ? character
+        : new URL(`http://x/a${character}`).pathname.slice(2),
+    )
+    .join("");
+}
+
+function hasD2Escape(path: string): boolean {
+  return [...path.matchAll(D2_ESCAPE)].some((match) => {
+    const byte = String.fromCharCode(parseInt(match[0].slice(1), 16));
+    return /[A-Za-z0-9\\/.\-_~]/.test(byte);
+  });
+}
+
+export function pathOnlyUrl(value: string): string {
+  if (/^blob:/i.test(value)) return `blob:${PLACEHOLDER}`;
+  if (/^data:/i.test(value)) {
+    const media = value.slice(5).split(/[;,]/, 1)[0].toLowerCase();
+    return DATA_MEDIA_TYPES.has(media)
+      ? `data:${media}`
+      : `data:${PLACEHOLDER}`;
+  }
+  if (/^about:blank$/i.test(value)) return value;
+  const kind = admittedAddress(value);
+  if (!kind) return PLACEHOLDER;
   try {
     const parsed = new URL(value, "http://local.invalid");
-    const schemeEnd = value.indexOf("//");
-    const authorityEnd = schemeEnd < 0 ? -1 : value.indexOf("/", schemeEnd + 2);
-    const rawPath =
-      authorityEnd < 0
-        ? value.split(/[?#]/, 1)[0] || "/"
-        : value.slice(authorityEnd).split(/[?#]/, 1)[0] || "/";
+    const rawPath = rawPathOf(value);
+    if (hasD2Escape(rawPath)) return PLACEHOLDER;
+    if (encodeAsParser(rawPath) !== parsed.pathname) return PLACEHOLDER;
     const pathname = redactTokenPaths(rawPath);
-    if (!parsed.search && !parsed.hash && pathname === parsed.pathname) {
-      return value;
-    }
-    return /^[a-z][a-z0-9+.-]*:/i.test(value)
+    return kind === "absolute"
       ? `${parsed.protocol}//${parsed.host}${pathname}`
-      : pathname;
+      : kind === "protocol-relative"
+        ? `//${parsed.host}${pathname}`
+        : pathname;
   } catch {
     return PLACEHOLDER;
   }
+}
+
+export function redactFreeText(value: string): string {
+  const token = /[^\s"'`<>(),]*[\\/][^\s"'`<>(),]*/g;
+  const withoutAddressTokens = value.replace(token, (candidate) => {
+    const normalized = candidate.replace(/[\t\n\r]/g, "");
+    if (
+      /(?:^|[\\/])(?:\.{1,2}|%2e\.|\.%2e|%2e%2e)(?:[\\/]|$)/i.test(
+        normalized,
+      ) ||
+      [...normalized.matchAll(D2_ESCAPE)].some((match) => {
+        const byte = String.fromCharCode(parseInt(match[0].slice(1), 16));
+        return /[A-Za-z0-9\\/.\-_~]/.test(byte);
+      })
+    )
+      return PLACEHOLDER;
+    return candidate;
+  });
+  const view: string[] = [];
+  const originalIndex: number[] = [];
+  for (let index = 0; index < withoutAddressTokens.length; index += 1) {
+    const character = withoutAddressTokens[index];
+    if (/[\t\n\r]/.test(character)) continue;
+    view.push(character === "\\" ? "/" : character);
+    originalIndex.push(index);
+  }
+  const matchingText = view.join("");
+  const replacements: Array<{ start: number; end: number }> = [];
+  const rules = [...TOKEN_PATH_RULES].sort(
+    (left, right) => right.prefix.length - left.prefix.length,
+  );
+
+  for (let index = 0; index < matchingText.length; index += 1) {
+    const rule = rules.find(({ prefix }) => {
+      if (matchingText.startsWith(prefix, index)) return true;
+      if (!matchingText.startsWith(prefix.slice(1), index)) return false;
+      if (index === 0) return true;
+      const previous = withoutAddressTokens[originalIndex[index] - 1];
+      return /\s|["'(\[<=,]/.test(previous);
+    });
+    if (!rule) continue;
+    const segmentStart =
+      index +
+      (matchingText.startsWith(rule.prefix, index)
+        ? rule.prefix.length
+        : rule.prefix.length - 1);
+    let segmentEnd = segmentStart;
+    while (
+      segmentEnd < matchingText.length &&
+      !/[\\/?#\s"'<>)]/.test(matchingText[segmentEnd])
+    )
+      segmentEnd += 1;
+    if (segmentEnd === segmentStart) continue;
+    const segment = matchingText.slice(segmentStart, segmentEnd);
+    if (rule.staticChildren.includes(segment) || isRouteTemplate(segment)) {
+      index = segmentEnd - 1;
+      continue;
+    }
+    replacements.push({
+      start: originalIndex[segmentStart],
+      end: originalIndex[segmentEnd - 1] + 1,
+    });
+    index = segmentEnd - 1;
+  }
+
+  return replacements
+    .reverse()
+    .reduce(
+      (out, { start, end }) =>
+        `${out.slice(0, start)}${PLACEHOLDER}${out.slice(end)}`,
+      withoutAddressTokens,
+    );
 }
 
 const ADDRESS_START = /^(\/|[a-z][a-z0-9+.-]*:\/\/)/i;
@@ -192,7 +324,7 @@ function cleanLabel(value: string): string {
     return `${value.slice(0, space)} ${pathOnlyUrl(value.slice(space + 1))}`;
   }
   if (ADDRESS_START.test(value) && !/\s/.test(value)) return pathOnlyUrl(value);
-  return redactTokenPaths(
+  return redactFreeText(
     value.replace(/(\/[^\s?#"'`<>]*)[?#][^\s"'`<>]*/g, "$1"),
   );
 }
@@ -221,7 +353,7 @@ function scrubHeaders(headers: unknown): unknown {
 function scrub(value: unknown, depth: number): unknown {
   // Every string passes the credential-route filter: a path can sit in a message, an exception
   // value, a stack frame or a breadcrumb, not only in a URL-shaped field.
-  if (typeof value === "string") return redactTokenPaths(value);
+  if (typeof value === "string") return redactFreeText(value);
   if (depth > MAX_DEPTH) return value;
   if (Array.isArray(value)) return value.map((v) => scrub(v, depth + 1));
   if (!value || typeof value !== "object") return value;
