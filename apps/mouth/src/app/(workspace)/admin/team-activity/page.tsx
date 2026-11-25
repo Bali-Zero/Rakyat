@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
@@ -120,6 +120,9 @@ export default function TeamActivityPage() {
   const [crmTotal, setCrmTotal] = useState(0);
   const [crmPage, setCrmPage] = useState(0);
   const [crmFilter, setCrmFilter] = useState("");
+  const messagesRequestRef = useRef(0);
+  const timesheetRequestRef = useRef(0);
+  const crmRequestRef = useRef(0);
 
   const LIMIT = 50;
 
@@ -146,6 +149,7 @@ export default function TeamActivityPage() {
   }, []);
 
   const loadMessages = useCallback(async () => {
+    const request = ++messagesRequestRef.current;
     try {
       const res = await api.adminApi.getTeamActivityMessages({
         user_id: messageFilters.user_id || undefined,
@@ -154,8 +158,10 @@ export default function TeamActivityPage() {
         limit: LIMIT,
         offset: messagesPage * LIMIT,
       });
-      setMessages(res.messages);
-      setMessagesTotal(res.total);
+      if (request === messagesRequestRef.current) {
+        setMessages(res.messages);
+        setMessagesTotal(res.total);
+      }
     } catch (err) {
       logger.error(
         "Failed to load messages:",
@@ -166,14 +172,17 @@ export default function TeamActivityPage() {
   }, [messageFilters, messagesPage]);
 
   const loadTimesheet = useCallback(async () => {
+    const request = ++timesheetRequestRef.current;
     try {
       const res = await api.adminApi.getTeamTimesheet({
         email: timesheetFilter || undefined,
         limit: LIMIT,
         offset: timesheetPage * LIMIT,
       });
-      setTimesheet(res.records);
-      setTimesheetTotal(res.total);
+      if (request === timesheetRequestRef.current) {
+        setTimesheet(res.records);
+        setTimesheetTotal(res.total);
+      }
     } catch (err) {
       logger.error(
         "Failed to load timesheet:",
@@ -184,14 +193,17 @@ export default function TeamActivityPage() {
   }, [timesheetFilter, timesheetPage]);
 
   const loadCrmActions = useCallback(async () => {
+    const request = ++crmRequestRef.current;
     try {
       const res = await api.adminApi.getCrmActions({
         email: crmFilter || undefined,
         limit: LIMIT,
         offset: crmPage * LIMIT,
       });
-      setCrmActions(res.actions);
-      setCrmTotal(res.total);
+      if (request === crmRequestRef.current) {
+        setCrmActions(res.actions);
+        setCrmTotal(res.total);
+      }
     } catch (err) {
       logger.error(
         "Failed to load CRM actions:",
@@ -242,6 +254,8 @@ export default function TeamActivityPage() {
     try {
       const blob = await api.adminApi.exportMessages({
         user_id: messageFilters.user_id || undefined,
+        role: messageFilters.role || undefined,
+        search: messageFilters.search || undefined,
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -550,12 +564,13 @@ export default function TeamActivityPage() {
                       placeholder="Search messages..."
                       aria-label="Search messages"
                       value={messageFilters.search}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setMessagesPage(0);
                         setMessageFilters((f) => ({
                           ...f,
                           search: e.target.value,
-                        }))
-                      }
+                        }));
+                      }}
                       onKeyDown={(e) => e.key === "Enter" && loadMessages()}
                       className="flex-1 px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm"
                     />
@@ -565,19 +580,24 @@ export default function TeamActivityPage() {
                     placeholder="Filter by user..."
                     aria-label="Filter by user"
                     value={messageFilters.user_id}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      setMessagesPage(0);
                       setMessageFilters((f) => ({
                         ...f,
                         user_id: e.target.value,
-                      }))
-                    }
+                      }));
+                    }}
                     className="px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm w-48"
                   />
                   <select
                     value={messageFilters.role}
-                    onChange={(e) =>
-                      setMessageFilters((f) => ({ ...f, role: e.target.value }))
-                    }
+                    onChange={(e) => {
+                      setMessagesPage(0);
+                      setMessageFilters((f) => ({
+                        ...f,
+                        role: e.target.value,
+                      }));
+                    }}
                     className="px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm"
                   >
                     <option value="">All roles</option>
@@ -654,7 +674,10 @@ export default function TeamActivityPage() {
                     placeholder="Filter by email..."
                     aria-label="Filter by email"
                     value={timesheetFilter}
-                    onChange={(e) => setTimesheetFilter(e.target.value)}
+                    onChange={(e) => {
+                      setTimesheetPage(0);
+                      setTimesheetFilter(e.target.value);
+                    }}
                     onKeyDown={(e) => e.key === "Enter" && loadTimesheet()}
                     className="px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm w-64"
                   />
@@ -733,7 +756,10 @@ export default function TeamActivityPage() {
                     placeholder="Filter by email..."
                     aria-label="Filter CRM actions by email"
                     value={crmFilter}
-                    onChange={(e) => setCrmFilter(e.target.value)}
+                    onChange={(e) => {
+                      setCrmPage(0);
+                      setCrmFilter(e.target.value);
+                    }}
                     onKeyDown={(e) => e.key === "Enter" && loadCrmActions()}
                     className="px-3 py-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm w-64"
                   />
@@ -868,6 +894,8 @@ function Pagination({
   onPrev: () => void;
   onNext: () => void;
 }) {
+  if (total === 0) return null;
+
   const totalPages = Math.ceil(total / limit);
   const start = page * limit + 1;
   const end = Math.min((page + 1) * limit, total);

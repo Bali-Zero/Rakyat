@@ -593,6 +593,8 @@ async def export_messages(
     user_id: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    role: str | None = Query(None),
+    search: str | None = Query(None),
     _admin: dict = Depends(verify_admin),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> StreamingResponse:
@@ -606,6 +608,16 @@ async def export_messages(
             param_count += 1
             conditions.append(f"user_id = ${param_count}")
             params.append(user_id)
+
+        if role:
+            param_count += 1
+            conditions.append(f"role = ${param_count}")
+            params.append(role)
+
+        if search:
+            param_count += 1
+            conditions.append(f"content ILIKE ${param_count}")
+            params.append(f"%{search}%")
 
         if date_from:
             param_count += 1

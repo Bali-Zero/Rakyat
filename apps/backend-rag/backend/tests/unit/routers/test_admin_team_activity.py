@@ -393,6 +393,55 @@ class TestGetPracticeStats:
 
 class TestExportMessages:
     @pytest.mark.asyncio
+    async def test_export_with_role_and_search_matches_message_filters(self, mock_db_pool):
+        from backend.app.routers.admin_team_activity import export_messages
+
+        mock_db_pool._mock_conn.fetch = AsyncMock(return_value=[])
+        await export_messages(
+            user_id="synthetic@example.test",
+            role="assistant",
+            search="synthetic phrase",
+            date_from="2026-01-01",
+            date_to="2026-01-02",
+            _admin={"email": "admin"},
+            db_pool=mock_db_pool,
+        )
+
+        query, *params = mock_db_pool._mock_conn.fetch.call_args.args
+        assert "user_id = $1" in query
+        assert "role = $2" in query
+        assert "content ILIKE $3" in query
+        assert "DATE(conversation_started) >= $4::date" in query
+        assert "DATE(conversation_started) <= $5::date" in query
+        assert params == [
+            "synthetic@example.test",
+            "assistant",
+            "%synthetic phrase%",
+            "2026-01-01",
+            "2026-01-02",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_export_without_role_and_search_keeps_existing_parameters(self, mock_db_pool):
+        from backend.app.routers.admin_team_activity import export_messages
+
+        mock_db_pool._mock_conn.fetch = AsyncMock(return_value=[])
+        await export_messages(
+            user_id="synthetic@example.test",
+            role=None,
+            search=None,
+            date_from="2026-01-01",
+            date_to="2026-01-02",
+            _admin={"email": "admin"},
+            db_pool=mock_db_pool,
+        )
+
+        query, *params = mock_db_pool._mock_conn.fetch.call_args.args
+        assert "role =" not in query
+        assert "content ILIKE" not in query
+        assert params == ["synthetic@example.test", "2026-01-01", "2026-01-02"]
+
+    @pytest.mark.asyncio
     async def test_export_basic(self, mock_db_pool):
         from backend.app.routers.admin_team_activity import export_messages
 
