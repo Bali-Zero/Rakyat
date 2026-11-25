@@ -21,6 +21,7 @@ from backend.services.common.background import spawn
 from backend.services.crm.gender import normalize_gender
 from backend.services.crm.practice_state_machine import (
     normalize_state,
+    require_editable_status,
     validate_quoted_price_for_invoice,
 )
 
@@ -289,7 +290,6 @@ class CRMQueryOptimizer:
             "notes",
             "quoted_price",
             "actual_price",
-            "paid_amount",
             "currency",
             "start_date",
             "completion_date",
@@ -313,13 +313,16 @@ class CRMQueryOptimizer:
         async with self.db_pool.acquire() as conn, conn.transaction():
             total_updated = 0
             for update in updates:
+                update = dict(update)
                 practice_id = update.pop("id")
+                require_editable_status(update.get("status"))
                 if not update:
                     continue
                 # Entering Sending Invoice needs a Quoted Price: this batch's own, else the row's.
                 if normalize_state(str(update.get("status") or "")) == "sending_invoice":
                     row = await conn.fetchrow(
-                        "SELECT status, quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                        "SELECT status, quoted_price, discount_amount FROM practices"
+                        " WHERE id = $1 FOR UPDATE",
                         practice_id,
                     )
                     if (
@@ -331,6 +334,7 @@ class CRMQueryOptimizer:
                             update["quoted_price"]
                             if "quoted_price" in update
                             else row["quoted_price"],
+                            row.get("discount_amount"),
                         )
                 fields = []
                 values = []

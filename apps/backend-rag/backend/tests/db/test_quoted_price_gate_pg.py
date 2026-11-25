@@ -15,8 +15,8 @@ R6  Only ENTERING is gated: a practice already in sending_invoice keeps acceptin
     other transitions are untouched -> test_patch_unrelated_edits_on_a_priceless_sending_invoice_practice_pass, test_other_transitions_need_no_price
 R7  Creating a practice straight in sending_invoice follows the same rule
     -> test_create_in_sending_invoice_without_a_price_is_refused, test_create_in_sending_invoice_with_a_price_passes
-R8  A discount that makes the total 0 does not make the price missing
-    -> test_a_discount_to_zero_total_still_passes
+R8  DAI-177: a discount that makes the total 0 is refused and the status does not change
+    -> test_a_discount_to_zero_total_is_refused
 R10 An explicit `quoted_price: null` sent with the status gets the gate's 422, not the generic
     "cannot be null" 400 -> test_patch_with_an_explicit_null_price_gets_the_gate_refusal
 R11 A concurrent write of price 0 committed between the early read and the UPDATE cannot slip
@@ -186,17 +186,19 @@ async def test_other_transitions_need_no_price(pool: asyncpg.Pool) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_discount_to_zero_total_still_passes(pool: asyncpg.Pool) -> None:
+async def test_a_discount_to_zero_total_is_refused(pool: asyncpg.Pool) -> None:
     practice = await priceless(pool, await client(pool))
-    out = await patch(
-        pool,
-        practice,
-        status="sending_invoice",
-        quoted_price=Decimal("100"),
-        discount_amount=Decimal("100"),
-        discount_reason="synthetic full discount",
-    )
-    assert out["status"] == "sending_invoice"
+    with pytest.raises(HTTPException) as caught:
+        await patch(
+            pool,
+            practice,
+            status="sending_invoice",
+            quoted_price=Decimal("100"),
+            discount_amount=Decimal("100"),
+            discount_reason="synthetic full discount",
+        )
+    assert caught.value.status_code == 422
+    assert await status_of(pool, practice) == "waiting_documents"
 
 
 @pytest.mark.asyncio

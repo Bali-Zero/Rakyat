@@ -195,8 +195,9 @@ export default function HRSettingsPage() {
             Bonus Rate Configuration
           </h1>
           <p className="mt-1 text-sm text-[var(--bz-text-2)]">
-            What a completed practice earns. Tax services can have a rate too —
-            and any bonus can also be added by hand from the Bonuses page.
+            New visas earn their bonus when staff upload the Electronic Visa. KITAS
+            renewals earn it when staff upload the renewed IMK. Other services
+            earn theirs at final delivery. Review missing rates on the Bonuses page.
           </p>
         </div>
         <button
@@ -329,8 +330,8 @@ export default function HRSettingsPage() {
                     <p className="text-sm text-[var(--bz-text-1)]">
                       No tax rate yet.
                       <span className="block text-xs text-[var(--bz-text-2)]">
-                        Set an amount per tax service, or add a bonus by hand
-                        whenever it is earned.
+                        Set a rate for future tax services. Review earned services
+                        awaiting a rate on the Bonuses page.
                       </span>
                     </p>
                   </div>

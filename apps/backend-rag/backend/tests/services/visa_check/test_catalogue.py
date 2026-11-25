@@ -264,12 +264,13 @@ class TestNormativeCatalogueAlignment:
         remote_visas = {vt for vt, m in VISA_META.items() if Purpose.WORK_REMOTE in m.purposes}
         assert remote_visas == {VisaType.E33G}
 
-    def test_d12_is_180_days_non_extendable(self):
+    def test_d12_is_180_days_extendable_once(self):
+        # Owner ruling 2026-11-23 (K134) replaces the non-extendable ruling of 2026-10-19.
         d12 = VISA_META[VisaType.D12]
         assert d12.duration_days == 180
-        assert d12.extensions == (0, 0)
+        assert d12.extensions == (1, 180)
         assert DEFAULT_DURATION_DAYS[VisaType.D12] == 180
-        assert EXTENSION_POLICY[VisaType.D12] == (0, 0)
+        assert EXTENSION_POLICY[VisaType.D12] == (1, 180)
 
     def test_c7_is_30_days_non_extendable(self):
         c7 = VISA_META[VisaType.C7]

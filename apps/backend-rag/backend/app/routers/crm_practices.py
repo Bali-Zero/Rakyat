@@ -19,6 +19,13 @@ from pydantic import BaseModel, field_validator, model_validator
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_practices_user_filter
+from backend.app.deps.process_access import (
+    assignment_clause,
+    process_assignees,
+    process_session,
+    require_visible_process,
+    visible_process_target,
+)
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
 from backend.app.services.internal_email import send_internal_email
 from backend.app.utils.client_pools import caller_pool_peers
@@ -26,7 +33,7 @@ from backend.app.utils.crm_utils import COMPANY_CREATE_ROLES, is_crm_admin, veri
 from backend.app.utils.error_handlers import handle_database_error
 from backend.app.utils.json_utils import to_jsonb
 from backend.app.utils.logging_utils import get_logger, log_database_operation, log_success
-from backend.app.utils.service_accounts import CLIENT_ROLES, normalize_role
+from backend.app.utils.service_accounts import CLIENT_ROLES, TEAM_ROLES, normalize_role
 from backend.core.cache import cached, invalidate_cache
 from backend.services.common.background import spawn
 from backend.services.crm.entity_search import (
@@ -38,8 +45,11 @@ from backend.services.crm.practice_state_machine import (
     OPEN_INQUIRY_TYPE_CODE,
     STATES_WITHOUT_SERVICE,
     InvalidTransitionError,
+    PracticeWorkflowActionRequired,
     QuotedPriceRequiredError,
+    discount_covers_price,
     normalize_state,
+    require_editable_status,
     validate_quoted_price_for_invoice,
     validate_service_selected,
     validate_transition,
@@ -50,6 +60,7 @@ from backend.services.invoicing.client_email_outcome import (
     client_email_outcome,
     regenerated_message,
 )
+from backend.services.invoicing.invoice_service import INVOICE_AMOUNT_ERROR_CODES
 from backend.services.invoicing.pph import PphWithholding, validate_pph
 from backend.services.portal._mixins.documents import PortalDocumentsMixin
 from backend.services.portal.required_slots import mark_required_slot_uploaded
@@ -91,6 +102,7 @@ PRACTICE_CLEARABLE_FIELDS = {
     "client_summary",
 }
 REVENUE_GROWTH_CACHE_NAMESPACE = "crm_practices_revenue_growth"
+DISCOUNT_NEEDS_PRICE_DETAIL = "Fill Quoted Price before adding a discount"
 
 
 async def _attach_invoice_company_name(conn: asyncpg.Connection, practice: dict) -> None:
@@ -811,6 +823,10 @@ async def create_practice(
             status_code=400,
             detail=f"practice_type_code is required to create a practice in status '{practice.status}'",
         )
+    try:
+        require_editable_status(practice.status)
+    except PracticeWorkflowActionRequired as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     practice.practice_type_code = practice_type_code
 
     try:
@@ -864,7 +880,9 @@ async def create_practice(
 
             # A practice cannot be CREATED straight into Sending Invoice without a price either.
             try:
-                validate_quoted_price_for_invoice(practice.status, quoted_price)
+                validate_quoted_price_for_invoice(
+                    practice.status, quoted_price, practice.discount_amount
+                )
             except QuotedPriceRequiredError as e:
                 raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -914,11 +932,13 @@ async def create_practice(
             # applied which discount when, even if discount_amount is later
             # changed via PATCH.
             if practice.discount_amount is not None:
-                if quoted_price is not None and practice.discount_amount > quoted_price:
+                if practice.discount_amount > 0 and quoted_price is None:
+                    raise HTTPException(status_code=400, detail=DISCOUNT_NEEDS_PRICE_DETAIL)
+                if discount_covers_price(practice.discount_amount, quoted_price):
                     raise HTTPException(
                         status_code=400,
                         detail=(
-                            f"discount_amount ({practice.discount_amount}) cannot exceed "
+                            f"discount_amount ({practice.discount_amount}) must be lower than "
                             f"quoted_price ({quoted_price})"
                         ),
                     )
@@ -1128,6 +1148,21 @@ def _build_status_transitions(rows: list[dict]) -> dict[int, list[dict]]:
     return result
 
 
+def _process_roster_join(role_parameter: int) -> str:
+    # Assign the color before filtering by caller, date or active status. Existing staff keep
+    # their color when they change roles within the team or a colleague is deactivated.
+    return f"""LEFT JOIN (
+        SELECT DISTINCT ON (email_key) * FROM (
+            SELECT LOWER(BTRIM(tm.email)) AS email_key, tm.id::text AS member_id,
+                   COALESCE(NULLIF(tm.full_name, ''), tm.name) AS name, tm.active,
+                   CASE WHEN LOWER(BTRIM(tm.department)) IN ('setup', 'tax')
+                        THEN LOWER(BTRIM(tm.department)) END AS department,
+                   ROW_NUMBER() OVER (ORDER BY tm.created_at ASC NULLS FIRST, tm.id) - 1 AS color_index
+            FROM team_members tm WHERE LOWER(BTRIM(tm.role)) = ANY(${role_parameter}::text[])
+        ) ranked ORDER BY email_key, active DESC NULLS LAST, color_index
+    ) assignee ON assignee.email_key = LOWER(BTRIM(p.assigned_to))"""
+
+
 @router.get("/", response_model=list[dict])
 async def list_practices(
     request: Any = None,
@@ -1146,29 +1181,9 @@ async def list_practices(
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
-    # Support for direct calls from dashboard_summary.py
-    user_id: str | None = None,
-    pool: Any | None = None,
+    current_user: dict = Depends(process_session),
 ) -> list[Any]:
-    """
-    List practices with optional filtering.
-
-    Access Control:
-    - Admin users (zero@balizero.com, role=admin): See ALL practices
-    - Team members: See only practices where they are the Lead (client.assigned_to = user email)
-
-    Returns practices with client and practice type information joined
-    """
-    # Use provided pool if called directly
-    if pool:
-        db_pool = pool
-
-    # FIX: Resolve Depends/Query objects when called directly (not via HTTP)
-    # FastAPI doesn't resolve these defaults for direct function calls
-    # When current_user is still a Depends object (direct call), skip RBAC filtering
-    if not isinstance(current_user, dict):
-        current_user = None  # Will skip RBAC filtering safely
+    """List practices visible to the authenticated staff member, then apply requested filters."""
 
     client_id = resolve_query_param(client_id)
     status = resolve_query_param(status)
@@ -1183,11 +1198,13 @@ async def list_practices(
 
     try:
         async with db_pool.acquire() as conn:
-            # Build query dynamically
+            # Apply permissions before querying, pagination, and the history batch.
             query_parts = [
-                """
+                f"""
                 SELECT
                     p.*,
+                    assignee.member_id AS assignee_member_id, assignee.name AS assignee_name,
+                    assignee.department AS assignee_department, assignee.color_index AS assignee_color_index,
                     c.full_name as client_name,
                     c.email as client_email,
                     c.phone as client_phone,
@@ -1201,11 +1218,12 @@ async def list_practices(
                 JOIN clients c ON p.client_id = c.id
                 JOIN practice_types pt ON p.practice_type_id = pt.id
                 LEFT JOIN client_family_members fm ON p.family_member_id = fm.id
+                {_process_roster_join(1)}
                 WHERE 1=1
                 """,
             ]
-            params: list[Any] = []
-            param_index = 1
+            params: list[Any] = [sorted(TEAM_ROLES)]
+            param_index = 2
 
             if client_id:
                 query_parts.append(f" AND p.client_id = ${param_index}")
@@ -1218,8 +1236,8 @@ async def list_practices(
                 param_index += 1
 
             if assigned_to:
-                query_parts.append(f" AND p.assigned_to = ${param_index}")
-                params.append(assigned_to)
+                query_parts.append(f" AND LOWER(BTRIM(p.assigned_to)) = ${param_index}")
+                params.append(assigned_to.strip().lower())
                 param_index += 1
 
             if practice_type:
@@ -1232,15 +1250,11 @@ async def list_practices(
                 params.append(priority)
                 param_index += 1
 
-            # RBAC: non-admin users only see practices assigned to them
-            # When current_user is None (direct call), use assigned_to param for filtering
-            if current_user:
-                practices_filter = get_practices_user_filter(current_user)
-                if practices_filter:
-                    query_parts.append(f" AND p.assigned_to = ANY(${param_index}::text[])")
-                    params.append(practices_filter)
-                    param_index += 1
-                    logger.info("RBAC: Filtering practices by p.assigned_to")
+            owners = await process_assignees(conn, current_user)
+            if owners is not None:
+                logger.info("RBAC: Filtering practices by p.assigned_to")
+            query_parts.append(assignment_clause(owners, params))
+            param_index = len(params) + 1
 
             # Smart search (same behaviour as the client search; legacy substring fallback)
             if isinstance(search, str) and search.strip():
@@ -1285,7 +1299,7 @@ async def list_practices(
                 query_parts[0] = query_parts[0].replace("SELECT\n", "SELECT DISTINCT\n", 1)
 
             query_parts.append(
-                f" ORDER BY p.created_at DESC LIMIT ${param_index} OFFSET ${param_index + 1}",
+                f" ORDER BY p.created_at DESC, p.id DESC LIMIT ${param_index} OFFSET ${param_index + 1}",
             )
             params.extend([limit, offset])
 
@@ -1293,6 +1307,12 @@ async def list_practices(
             rows = await conn.fetch(query, *params)
 
             practices = [dict(row) for row in rows]
+            for item in practices:
+                item["can_edit_process"] = any(
+                    _practice_ownership_flags(
+                        current_user, item.get("created_by"), item.get("assigned_to")
+                    )
+                )
 
             # Enrich with status transitions if requested
             if include_history and practices:
@@ -1326,43 +1346,21 @@ async def get_active_practices(
     request: Request,
     assigned_to: str | None = Query(None),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> list[Any]:
-    """
-    Get all active practices (in progress, not completed/cancelled)
-
-    Access Control:
-    - Admin users: Can view all active practices
-    - Team members: Can only view practices assigned to them
-    """
+    """Active practices in the caller's scope; an assignee filter can only narrow it."""
     try:
-        # RBAC: non-admin users can only see their own practices
-        practices_filter = get_practices_user_filter(current_user)
-        owners = practices_filter
-        if practices_filter is not None and assigned_to:
-            owners = [
-                owner
-                for owner in practices_filter
-                if owner.strip().lower() == assigned_to.strip().lower()
-            ]
-            if not owners:
-                return []
-        elif practices_filter is None and assigned_to:
-            owners = [assigned_to]
-
         async with db_pool.acquire() as conn:
-            query_parts = ["SELECT * FROM active_practices_view WHERE 1=1"]
             params: list[Any] = []
-            param_index = 1
-
-            if owners:
-                query_parts.append(f" AND assigned_to = ANY(${param_index}::text[])")
-                params.append(owners)
-
-            query_parts.append(" ORDER BY priority DESC, start_date ASC")
-            query = " ".join(query_parts)
-
-            rows = await conn.fetch(query, *params)
+            query = "SELECT * FROM active_practices_view WHERE TRUE"
+            owners = await process_assignees(conn, current_user)
+            if owner := resolve_query_param(assigned_to):
+                owner = owner.strip().lower()
+                if owners is not None and owner not in owners:
+                    return []
+                owners = [owner]
+            query += assignment_clause(owners, params, "assigned_to")
+            rows = await conn.fetch(query + " ORDER BY priority DESC, start_date ASC", *params)
             return [dict(row) for row in rows]
 
     except Exception as e:
@@ -1379,27 +1377,16 @@ async def get_upcoming_renewals(
         description="Days to look ahead",
     ),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> list[Any]:
-    """
-    Get practices with upcoming renewal dates
-
-    Access Control:
-    - Admin users: Can view all upcoming renewals
-    - Team members: Can only view renewals for practices assigned to them
-
-    Default: next 90 days
-    """
+    """Upcoming renewals in the caller's Process scope."""
     try:
-        # RBAC: non-admin users can only see their own renewals
-        practices_filter = get_practices_user_filter(current_user)
-
         async with db_pool.acquire() as conn:
             query = "SELECT * FROM upcoming_renewals_view WHERE days_until_expiry <= $1"
             params: list[Any] = [days]
-            if practices_filter:
-                query += " AND assigned_to = ANY($2::text[])"
-                params.append(practices_filter)
+            query += assignment_clause(
+                await process_assignees(conn, current_user), params, "assigned_to"
+            )
             rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
 
@@ -1583,22 +1570,17 @@ async def get_practice(
     request: Request,
     practice_id: int = Path(..., gt=0, description="Practice ID"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> Any:
-    """
-    Get practice details by ID with full client and type info.
-
-    Access Control:
-    - Admin users: Can view any practice
-    - Team members: Can only view practices where they are assigned_to or created_by
-    """
+    """Get a visible practice and the actions available to this viewer."""
     try:
         async with db_pool.acquire() as conn:
-            # RBAC: non-admin users only see practices they own
-            practices_filter = get_practices_user_filter(current_user)
-            base_query = """
+            owners = await process_assignees(conn, current_user)
+            base_query = f"""
                     SELECT
                         p.*,
+                        assignee.member_id AS assignee_member_id, assignee.name AS assignee_name,
+                        assignee.department AS assignee_department, assignee.color_index AS assignee_color_index,
                         c.full_name as client_name,
                         c.email as client_email,
                         c.phone as client_phone,
@@ -1610,30 +1592,35 @@ async def get_practice(
                     FROM practices p
                     JOIN clients c ON p.client_id = c.id
                     JOIN practice_types pt ON p.practice_type_id = pt.id
+                    {_process_roster_join(2)}
                     WHERE p.id = $1
             """
-            if practices_filter:
-                base_query += (
-                    " AND (c.assigned_to = ANY($2::text[]) OR p.created_by = ANY($2::text[])"
-                    " OR LOWER(p.assigned_to) = ANY($2::text[]))"
-                )
-                row = await conn.fetchrow(base_query, practice_id, practices_filter)
-                if not row:
-                    logger.info("RBAC: Practice %s not visible to caller", practice_id)
-            else:
-                row = await conn.fetchrow(base_query, practice_id)
-
+            params: list[Any] = [practice_id, sorted(TEAM_ROLES)]
+            row = await conn.fetchrow(base_query + assignment_clause(owners, params), *params)
             if not row:
+                if owners is not None:
+                    logger.info("RBAC: Practice %s not visible to caller", practice_id)
                 raise HTTPException(status_code=404, detail="Practice not found")
 
             practice = dict(row)
             await _attach_invoice_company_name(conn, practice)
-            if practices_filter:
-                created_by_match = str(practice.get("created_by") or "").lower() in practices_filter
-                client_lead_match = (
-                    str(practice.get("client_lead") or "").lower() in practices_filter
+            practice["can_edit_process"] = any(
+                _practice_ownership_flags(
+                    current_user, practice.get("created_by"), practice.get("assigned_to")
                 )
-                if not (created_by_match or client_lead_match):
+            )
+            from backend.services.crm.practice_delivery import can_manage_delivery
+
+            practice["can_manage_delivery"] = can_manage_delivery(
+                current_user, practice.get("assigned_to")
+            )
+            if owners is not None:
+                # Viewing a colleague's practice does not grant their client-contact privileges.
+                caller = (current_user.get("email") or "").strip().lower()
+                if caller not in {
+                    (practice.get("created_by") or "").strip().lower(),
+                    (practice.get("client_lead") or "").strip().lower(),
+                }:
                     for field in PRACTICE_CLIENT_CONTACT_FIELDS:
                         practice.pop(field, None)
             return practice
@@ -1650,7 +1637,7 @@ async def update_practice(
     practice_id: int = Path(..., gt=0, description="Practice ID"),
     updates: PracticeUpdate = Body(...),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> Any:
     """
     Update practice information.
@@ -1669,6 +1656,9 @@ async def update_practice(
     user_email = current_user.get("email", "unknown")
     try:
         async with db_pool.acquire() as conn:
+            owners = await process_assignees(conn, current_user)
+            read_params = [practice_id]
+            read_scope = assignment_clause(owners, read_params)
             # Fetch old state for timeline events (status changes)
             old_status: str | None = None
             practice_client_id: int | None = None
@@ -1676,15 +1666,13 @@ async def update_practice(
             practice_created_by: str | None = None
             practice_assigned_to: str | None = None
             practice_client_lead: str | None = None
-            old_start_date: Any = None
-            old_completion_date: Any = None
             old_discount_amount: Decimal | None = None
             old_metadata: dict | None = None
             old_quoted_price: Decimal | None = None
             old_practice_type_code: str | None = None
             try:
                 old_row = await conn.fetchrow(
-                    """
+                    f"""
                     SELECT p.status, p.client_id, p.client_visible, p.created_by,
                            p.assigned_to, p.start_date, p.completion_date,
                            p.discount_amount, p.metadata, p.quoted_price,
@@ -1693,9 +1681,9 @@ async def update_practice(
                     FROM practices p
                     LEFT JOIN clients c ON p.client_id = c.id
                     LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
-                    WHERE p.id = $1
+                    WHERE p.id = $1{read_scope}
                     """,
-                    practice_id,
+                    *read_params,
                 )
                 if old_row:
                     old_status = old_row["status"]
@@ -1708,8 +1696,6 @@ async def update_practice(
                     practice_created_by = old_row.get("created_by", "")
                     practice_assigned_to = old_row.get("assigned_to", "")
                     practice_client_lead = old_row.get("client_lead", "")
-                    old_start_date = old_row.get("start_date")
-                    old_completion_date = old_row.get("completion_date")
                     old_discount_amount = old_row.get("discount_amount")
                     raw_meta = old_row.get("metadata")
                     if isinstance(raw_meta, str):
@@ -1725,7 +1711,7 @@ async def update_practice(
                 # Backward compatibility: client_visible column may not exist yet.
                 if getattr(e, "sqlstate", None) == "42703":
                     old_row = await conn.fetchrow(
-                        """
+                        f"""
                         SELECT p.status, p.client_id, p.created_by, p.assigned_to,
                                p.start_date, p.completion_date, p.quoted_price,
                                c.assigned_to AS client_lead,
@@ -1733,9 +1719,9 @@ async def update_practice(
                         FROM practices p
                         LEFT JOIN clients c ON p.client_id = c.id
                         LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
-                        WHERE p.id = $1
+                        WHERE p.id = $1{read_scope}
                         """,
-                        practice_id,
+                        *read_params,
                     )
                     if old_row:
                         old_status = old_row["status"]
@@ -1744,12 +1730,13 @@ async def update_practice(
                         practice_created_by = old_row.get("created_by", "")
                         practice_assigned_to = old_row.get("assigned_to", "")
                         practice_client_lead = old_row.get("client_lead", "")
-                        old_start_date = old_row.get("start_date")
-                        old_completion_date = old_row.get("completion_date")
                         old_quoted_price = old_row.get("quoted_price")
                         old_practice_type_code = old_row.get("practice_type_code")
                 else:
                     raise
+
+            if old_row is None:
+                raise HTTPException(status_code=404, detail="Practice not found")
 
             # RBAC: Check ownership or admin status
             user_is_admin = is_crm_admin(current_user)
@@ -1773,6 +1760,16 @@ async def update_practice(
             pph_touched = "pph" in updates.model_fields_set
             if pph_touched:
                 _require_pph_role(current_user)
+
+            for field in ("payment_status", "paid_amount"):
+                if field in updates.model_fields_set and getattr(updates, field) is None:
+                    raise HTTPException(status_code=400, detail=f"{field} cannot be null")
+            if {"payment_status", "paid_amount"} & updates.model_fields_set:
+                raise HTTPException(status_code=409, detail="Record the payment in Accounting.")
+            try:
+                require_editable_status(updates.status)
+            except PracticeWorkflowActionRequired as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
 
             # Validate state machine transition if status is being changed
             if updates.status and updates.status != old_status:
@@ -1919,6 +1916,7 @@ async def update_practice(
                         else (
                             old_quoted_price if old_quoted_price is not None else service_base_price
                         ),
+                        update_set.get("discount_amount", old_discount_amount),
                     )
                 except QuotedPriceRequiredError as e:
                     raise HTTPException(status_code=422, detail=str(e)) from e
@@ -1969,66 +1967,48 @@ async def update_practice(
                 params.append(pph_metadata)
                 param_index += 1
 
-            # Autoset date fields on status transitions (only if not already in DB
-            # and caller did not pass an explicit value). Uses NOW() server-side,
-            # no parameter binding required.
-            if (
-                updates.status == "completed"
-                and "completion_date" not in update_set
-                and old_completion_date is None
-            ):
-                update_fields.append("completion_date = NOW()")
-            if (
-                updates.status == "on_process"
-                and "start_date" not in update_set
-                and old_start_date is None
-            ):
-                update_fields.append("start_date = NOW()")
-
             if not update_fields:
                 raise HTTPException(status_code=400, detail="No fields to update")
+            update_fields.append("updated_at = NOW()")
 
-            # Cutoff rule: completed after 28th → practice shows as next month
-            today = date.today()
-            if updates.status == "completed" and today.day > 28:
-                if today.month == 12:
-                    next_month_1st = datetime(today.year + 1, 1, 1, tzinfo=timezone.utc)
-                else:
-                    next_month_1st = datetime(today.year, today.month + 1, 1, tzinfo=timezone.utc)
-                update_fields.append(f"updated_at = ${param_index}")
-                params.append(next_month_1st)
-                param_index += 1
-            else:
-                update_fields.append("updated_at = NOW()")
-
-            # Discount vs quoted_price sanity (owner Q4=a): if both quoted_price
-            # and discount_amount end up touched in this PATCH, the new discount
-            # must not exceed the new quoted_price. Use the post-update value
-            # for each field (fall back to the value already on the row).
-            if updates.discount_amount is not None:
+            # Discount vs quoted_price sanity (owner Q4=a, DAI-177): any PATCH that
+            # changes the price or the discount is checked on the values the row
+            # will hold afterwards, so lowering the price under a stored discount
+            # is refused too. A PATCH that touches neither is not gated.
+            if (
+                "quoted_price" in update_set
+                or "discount_amount" in update_set
+                or service_base_price is not None
+            ):
+                effective_discount = update_set.get("discount_amount", old_discount_amount)
                 effective_quoted = (
-                    updates.quoted_price if updates.quoted_price is not None else old_quoted_price
+                    update_set["quoted_price"]
+                    if "quoted_price" in update_set
+                    else (old_quoted_price if old_quoted_price is not None else service_base_price)
                 )
-                if effective_quoted is not None and Decimal(updates.discount_amount) > Decimal(
-                    effective_quoted
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"discount_amount ({updates.discount_amount}) cannot exceed "
-                            f"quoted_price ({effective_quoted})"
-                        ),
-                    )
+                if effective_discount:
+                    if effective_quoted is None:
+                        raise HTTPException(status_code=400, detail=DISCOUNT_NEEDS_PRICE_DETAIL)
+                    if discount_covers_price(effective_discount, effective_quoted):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"discount_amount ({effective_discount}) must be lower than "
+                                f"quoted_price ({effective_quoted})"
+                            ),
+                        )
 
             update_fields_str = ", ".join(update_fields)
 
             # Column names are from a whitelist (field_mapping), values are parameterized
             # nosemgrep: sqlalchemy-execute-raw-query
+            params.append(practice_id)
+            write_scope = assignment_clause(owners, params, "assigned_to")
             query = f"""
                 WITH updated AS (
                     UPDATE practices
                     SET {update_fields_str}
-                    WHERE id = ${param_index}
+                    WHERE id = ${param_index}{write_scope}
                     RETURNING *
                 )
                 SELECT
@@ -2045,15 +2025,31 @@ async def update_practice(
                 LEFT JOIN clients c ON updated.client_id = c.id
                 LEFT JOIN practice_types pt ON updated.practice_type_id = pt.id
             """
-            params.append(practice_id)
 
             async with conn.transaction():
+                if new_practice_type_code and new_practice_type_code != old_practice_type_code:
+                    # Serialise with a first delivery upload that may have gone to storage
+                    # while this editor was open. An issued visa keeps its service identity.
+                    await conn.fetchval(
+                        "SELECT id FROM practices WHERE id = $1 FOR UPDATE", practice_id
+                    )
+                    has_delivery = await conn.fetchval(
+                        "SELECT EXISTS(SELECT 1 FROM practice_delivery_slots WHERE practice_id=$1) "
+                        "OR EXISTS(SELECT 1 FROM practice_delivery_titles WHERE practice_id=$1)",
+                        practice_id,
+                    )
+                    if has_delivery:
+                        raise HTTPException(
+                            status_code=409, detail="Service already has delivery records."
+                        )
                 if updates.status and normalize_state(updates.status) == "sending_invoice":
                     # The gate above ran on values read before this transaction. Lock the row
-                    # and decide on the LOCKED status and price: a concurrent commit (price
-                    # to 0/NULL, or a move out of sending_invoice) cannot slip a move in.
+                    # and decide on the LOCKED status, price and discount: a concurrent commit
+                    # (price to 0/NULL, a full discount, or a move out of sending_invoice)
+                    # cannot slip a move in.
                     locked = await conn.fetchrow(
-                        "SELECT status, quoted_price FROM practices WHERE id = $1 FOR UPDATE",
+                        "SELECT status, quoted_price, discount_amount FROM practices"
+                        " WHERE id = $1 FOR UPDATE",
                         practice_id,
                     )
                     if locked and normalize_state(locked["status"] or "") != "sending_invoice":
@@ -2067,6 +2063,7 @@ async def update_practice(
                                     if locked["quoted_price"] is not None
                                     else service_base_price
                                 ),
+                                update_set.get("discount_amount", locked.get("discount_amount")),
                             )
                         except QuotedPriceRequiredError as e:
                             raise HTTPException(status_code=422, detail=str(e)) from e
@@ -2302,31 +2299,6 @@ async def update_practice(
             # NOTE: on_process automation handled by PracticeStatusListener (M5)
             # via PG NOTIFY trigger — no need to duplicate here.
 
-            # 🚀 Process Completion Automation: Trigger when status changes to 'completed'
-            if updates.status == "completed" and old_status != "completed":
-                from backend.services.crm.completed_process_service import CompletedProcessService
-
-                completion_service = CompletedProcessService(db_pool)
-                spawn(
-                    completion_service.trigger_on_completed(
-                        practice_id=practice_id,
-                        triggered_by=user_email,
-                    ),
-                )
-                logger.info(
-                    "🚀 Process completion automation triggered for practice %s",
-                    practice_id,
-                )
-
-                # 🎯 HR Bonus Auto-Creation: create bonus ledger entry for assigned team member
-                spawn(
-                    _create_hr_bonus_on_completed(
-                        db_pool,
-                        practice_id,
-                        updated_practice.get("assigned_to"),
-                    ),
-                )
-
             log_success(
                 logger,
                 "Updated practice",
@@ -2343,7 +2315,7 @@ async def update_practice(
         raise handle_database_error(e)
 
 
-@router.delete("/{practice_id}")
+@router.delete("/{practice_id}", dependencies=[Depends(visible_process_target)])
 async def delete_practice(
     request: Request,
     practice_id: int = Path(..., gt=0, description="Practice ID"),
@@ -2432,7 +2404,7 @@ async def delete_practice(
         raise handle_database_error(e)
 
 
-@router.post("/{practice_id}/documents/add")
+@router.post("/{practice_id}/documents/add", dependencies=[Depends(visible_process_target)])
 async def add_document_to_practice(
     request: Request,
     practice_id: int = Path(..., gt=0, description="Practice ID"),
@@ -2514,53 +2486,26 @@ async def add_document_to_practice(
         raise handle_database_error(e)
 
 
-@cached(ttl=CACHE_TTL_STATS_SECONDS, prefix="crm_practices_stats")
 async def get_practices_stats(
-    request: Any = None,
-    db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
-    # Support for direct calls from dashboard_summary.py
-    user_id: str | None = None,
-    pool: Any | None = None,
-    is_admin: bool = False,
+    db_pool: asyncpg.Pool,
+    current_user: dict,
 ) -> dict[str, Any]:
-    """
-    Get overall practice statistics
+    if not current_user:
+        logger.debug("get_practices_stats called without user context (internal call)")
+    async with db_pool.acquire() as conn:
+        owners = await process_assignees(conn, current_user)
+    return await _scoped_practices_stats(db_pool=db_pool, owners=owners)
 
-    - Counts by status
-    - Counts by practice type
-    - Revenue metrics
 
-    Access Control:
-    - Admin: sees global stats across all practices
-    - Team member: sees only stats for practices assigned to them
-
-    Performance: Cached for 5 minutes to reduce database load.
-    """
-    # Use provided pool if called directly
-    if pool:
-        db_pool = pool
-
+@cached(ttl=CACHE_TTL_STATS_SECONDS, prefix="crm_practices_stats")
+async def _scoped_practices_stats(
+    db_pool: asyncpg.Pool, owners: list[str] | None
+) -> dict[str, Any]:
+    """Counts by status and type, active cases and revenue within the caller's scope."""
     try:
-        # Resolve effective user and admin status
-        effective_user: str | None = None
-        if user_id:
-            effective_user = user_id.lower()
-        elif isinstance(current_user, dict):
-            effective_user = current_user.get("email", "").lower()
-            is_admin = is_admin or not get_practices_user_filter(current_user)
-        else:
-            logger.debug("get_practices_stats called without user context (internal call)")
-
-        # Build RBAC filter: non-admins see only their assigned practices
-        rbac_where = ""
-        rbac_params: list[Any] = []
-        if not is_admin and effective_user:
-            rbac_where = " AND assigned_to = ANY($1::text[])"
-            # An explicit user_id is an internal caller naming one owner: no pool expansion.
-            rbac_params = [[effective_user] if user_id else sorted(caller_pool_peers(current_user))]
-
         async with db_pool.acquire() as conn:
+            rbac_params: list[Any] = []
+            rbac_where = assignment_clause(owners, rbac_params, "assigned_to")
             # By status (filtered by user for non-admins)
             by_status_rows = await conn.fetch(
                 f"""
@@ -2628,56 +2573,26 @@ async def get_practices_stats(
 @router.get("/stats/overview")
 async def get_practices_stats_route(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> dict[str, Any]:
     """HTTP entry: the caller's identity comes from the session, never from the query string."""
     return await get_practices_stats(db_pool=db_pool, current_user=current_user)
 
 
 @router.get("/stats/revenue-growth")
-@cached(ttl=CACHE_TTL_STATS_SECONDS, prefix=REVENUE_GROWTH_CACHE_NAMESPACE)
 async def get_practices_revenue_growth(
-    request: Any = None,
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> dict[str, Any]:
-    """
-    Month-over-month revenue growth for the practices book.
+    async with db_pool.acquire() as conn:
+        owners = await process_assignees(conn, current_user)
+    return await _scoped_revenue_growth(db_pool=db_pool, owners=owners)
 
-    Contract consumed by the frontend (crm.api.ts::getRevenueGrowth →
-    useDashboardStats). The FE runs this inside a Promise.all with practice
-    stats + expiry alerts and has NO catch, so a 404 here previously rejected
-    the whole dashboard stats block on every workspace page. The route MUST
-    exist and return the shape below.
 
-    Response shape:
-        {
-          "current_month":  {total_revenue, paid_revenue, outstanding_revenue},
-          "previous_month": {total_revenue, paid_revenue, outstanding_revenue},
-          "growth_percentage": float,   # (curr - prev) / prev * 100, 0 if prev==0
-          "monthly_breakdown": [ {month, total_revenue}, ... ]  # last 6 months
-        }
-
-    Access Control:
-    - Admin (full view): revenue across all practices.
-    - Team member: revenue only for practices assigned to them.
-
-    Performance: cached for 5 minutes (CACHE_TTL_STATS_SECONDS).
-    """
+@cached(ttl=CACHE_TTL_STATS_SECONDS, prefix=REVENUE_GROWTH_CACHE_NAMESPACE)
+async def _scoped_revenue_growth(db_pool: asyncpg.Pool, owners: list[str] | None) -> dict[str, Any]:
+    """Cache aggregates by resolved assignments so roster changes take effect immediately."""
     try:
-        # RBAC: None for admins (full view), else the user's email plus client-pool peers.
-        user_filter = get_practices_user_filter(current_user)
-
-        # Build the optional RBAC clause; placeholder indices are DERIVED from
-        # params length (PR #2142 class) so the admin path (empty params) and
-        # the team-member path (one leading param) both bind without an
-        # IndeterminateDatatypeError.
-        params: list[Any] = []
-        rbac_where = ""
-        if user_filter:
-            params.append(user_filter)
-            rbac_where = f" AND assigned_to = ANY(${len(params)}::text[])"
-
         # Month boundaries (UTC), computed in Python so the SQL only binds dates.
         now = datetime.now(timezone.utc)
         current_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -2699,6 +2614,8 @@ async def get_practices_revenue_growth(
         )
 
         async with db_pool.acquire() as conn:
+            params: list[Any] = []
+            rbac_where = assignment_clause(owners, params, "assigned_to")
             # Current month.
             cur_start_idx = len(params) + 1
             cur_end_idx = len(params) + 2
@@ -2796,7 +2713,7 @@ async def regenerate_invoice(
     request: Request,
     practice_id: int = Path(..., gt=0, description="Practice ID"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> dict[str, Any]:
     """
     Manually regenerate and resend invoice for a practice.
@@ -2818,13 +2735,21 @@ async def regenerate_invoice(
 
         # Verify practice exists and check status
         async with db_pool.acquire() as conn:
+            params = [practice_id]
+            scope = assignment_clause(await process_assignees(conn, current_user), params)
             practice_row = await conn.fetchrow(
-                "SELECT status FROM practices WHERE id = $1",
-                practice_id,
+                "SELECT p.status, p.created_by, p.assigned_to FROM practices p WHERE p.id = $1"
+                + scope,
+                *params,
             )
-
             if not practice_row:
                 raise HTTPException(status_code=404, detail="Practice not found")
+            if not any(
+                _practice_ownership_flags(
+                    current_user, practice_row.get("created_by"), practice_row.get("assigned_to")
+                )
+            ):
+                raise HTTPException(status_code=403, detail="You cannot regenerate this invoice")
 
             if practice_row["status"] != "sending_invoice":
                 raise HTTPException(
@@ -2838,6 +2763,9 @@ async def regenerate_invoice(
             practice_id=practice_id,
             triggered_by=user_email,
         )
+
+        if result.get("error_code") in INVOICE_AMOUNT_ERROR_CODES:
+            raise HTTPException(status_code=422, detail=result["error"])
 
         if not result.get("success"):
             raise HTTPException(
@@ -2919,12 +2847,13 @@ class ClientDocumentUploadRequest(BaseModel):
 @router.get("/{practice_id}/required-documents", response_model=list[RequiredDocumentResponse])
 async def get_required_documents(
     practice_id: int = Path(..., gt=0),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> list[Any]:
     """Get all required documents for a practice (for team members)."""
     try:
         async with db_pool.acquire() as conn:
+            await require_visible_process(conn, practice_id, current_user)
             rows = await conn.fetch(
                 """
                 SELECT
@@ -2957,12 +2886,18 @@ async def get_required_documents(
                 }
                 for row in rows
             ]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to get required documents: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
-@router.post("/{practice_id}/required-documents", response_model=RequiredDocumentResponse)
+@router.post(
+    "/{practice_id}/required-documents",
+    response_model=RequiredDocumentResponse,
+    dependencies=[Depends(visible_process_target)],
+)
 async def add_required_document(
     practice_id: int = Path(..., gt=0),
     doc: RequiredDocumentCreate = Body(...),
@@ -3060,7 +2995,9 @@ async def add_required_document(
         raise handle_database_error(e)
 
 
-@router.delete("/{practice_id}/required-documents/{doc_id}")
+@router.delete(
+    "/{practice_id}/required-documents/{doc_id}", dependencies=[Depends(visible_process_target)]
+)
 async def delete_required_document(
     practice_id: int = Path(..., gt=0),
     doc_id: int = Path(..., gt=0),
@@ -3123,7 +3060,11 @@ async def delete_required_document(
         raise handle_database_error(e)
 
 
-@router.patch("/{practice_id}/required-documents/{doc_id}", response_model=RequiredDocumentResponse)
+@router.patch(
+    "/{practice_id}/required-documents/{doc_id}",
+    response_model=RequiredDocumentResponse,
+    dependencies=[Depends(visible_process_target)],
+)
 async def update_required_document(
     practice_id: int = Path(..., gt=0),
     doc_id: int = Path(..., gt=0),
@@ -3264,6 +3205,7 @@ async def upload_client_document(
                 # Allow team members to upload on behalf of client
                 if not is_crm_admin(current_user):
                     raise HTTPException(status_code=403, detail="Not authorized")
+                await require_visible_process(conn, practice_id, current_user)
 
         # Champion Round 2 scores uploaded_source='client': only a portal client
         # session uploading for its own practice earns it, never a staff session.

@@ -52,7 +52,9 @@ class TestCreateManualBonus:
     @pytest.mark.asyncio
     async def test_inserts_pending_manual_row_at_noon_wita(self, svc, pool):
         conn = pool._conn
-        conn.fetchrow = AsyncMock(side_effect=[{"id": 7, "on_payroll": True}, {"id": 99, "source": "manual"}])
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"id": 7, "on_payroll": True}, {"id": 99, "source": "manual"}]
+        )
         conn.fetchval = AsyncMock(return_value=None)  # period not locked
         row = await svc.create_manual_bonus(**_args())
         assert row == {"id": 99, "source": "manual"}
@@ -107,8 +109,11 @@ class TestCreateManualBonus:
         lock_sql, month, year = conn.fetchval.await_args.args
         assert "payroll_month" in lock_sql and (month, year) == (11, 2026)
         # the shared month lock was taken before the status read
-        assert "pg_advisory_xact_lock_shared" in conn.execute.await_args_list[0].args[0]
-        assert conn.execute.await_args_list[0].args[1] == "hr_payroll_month:2026-11"
+        allocation_lock, month_lock = conn.execute.await_args_list
+        assert "pg_advisory_xact_lock_shared" in allocation_lock.args[0]
+        assert "hr_bonus_payout_allocation" in allocation_lock.args[0]
+        assert "pg_advisory_xact_lock_shared" in month_lock.args[0]
+        assert month_lock.args[1] == "hr_payroll_month:2026-11"
 
 
 class TestRejectAndDelete:
@@ -267,3 +272,24 @@ class TestPeriodLocks:
             await svc.approve_payroll(1, "tm-1")
         assert conn.fetchrow.await_count == 2  # the UPDATE never ran
         assert "pg_advisory_xact_lock(" in conn.execute.await_args.args[0]  # exclusive
+
+
+@pytest.mark.asyncio
+async def test_a_pending_deferred_bonus_can_be_approved_after_its_original_month_closes(svc, pool):
+    conn = pool._conn
+    conn.fetchrow = AsyncMock(
+        side_effect=[
+            {
+                "status": "pending",
+                "employee_id": 7,
+                "m": 2,
+                "y": 2026,
+                "deferred_from": date(2026, 2, 1),
+            },
+            {"id": 21, "status": "approved"},
+        ]
+    )
+    conn.fetchval = AsyncMock(return_value=True)  # employee is still on payroll
+    assert (await svc.approve_bonus(21, "test-admin"))["status"] == "approved"
+    assert conn.fetchval.await_count == 1
+    assert "hr_employees" in conn.fetchval.await_args.args[0]

@@ -14,6 +14,7 @@ from __future__ import annotations
 import random
 import re
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -257,3 +258,447 @@ def test_late_family_redaction_stays_linear():
     started = time.perf_counter()
     redact(text)
     assert time.perf_counter() - started < 20.0
+
+
+# ───────────────────────────────── construction: main first, then a stage that hides more
+
+# A marker assembled at run time, so no line of this file carries it whole.
+_PEM = "-----BEGIN " + "PRIVATE KEY-----"
+
+# Inputs and the exact output of the rules as they stand on main (before the stage
+# and the late families), captured by running main's redact() on each input and
+# written here as literals. The table does not call the module under test.
+MAIN_TABLE: list[tuple[str, str]] = [
+    (
+        'LONGEXAMPLEAPIKEY="opaque-value-123"',  # pragma: allowlist secret
+        'LONGEXAMPLEAPIKEY="<REDACTED:secret>"',
+    ),
+    (
+        "Authorization: Bearer UPSTREAM_TOKEN=opaque-value-123",  # pragma: allowlist secret
+        "Authorization: Bearer UPSTREAM_TOKEN=<REDACTED:secret>",
+    ),
+    (
+        '{"gho_aaaaaaaaaaaaaaaaaaaaaaaa_TOKEN": "opaque-value-123"}',  # pragma: allowlist secret
+        '{"gho_aaaaaaaaaaaaaaaaaaaaaaaa_TOKEN": "<REDACTED:secret>"}',
+    ),
+    (
+        'API_KEY = """aaaa\\"""opaque-value-123"""',  # pragma: allowlist secret
+        'API_KEY = """aaaa\\"""opaque-value-123"""',  # pragma: allowlist secret
+    ),
+    (
+        "export TOKEN='abcd\\' # keep this comment",
+        "export TOKEN='<REDACTED:secret>' # keep this comment",
+    ),
+    (
+        "export TOKEN='abcd\\' API_KEY=' hidden-value-123'",  # pragma: allowlist secret
+        "export TOKEN='<REDACTED:secret>' API_KEY='<REDACTED:secret>'",
+    ),
+    (
+        "# "
+        + _PEM
+        + '\nLONGEXAMPLEAPIKEY="opaque-value-123"',  # pragma: allowlist secret
+        "# " + _PEM + '\nLONGEXAMPLEAPIKEY="<REDACTED:secret>"',
+    ),
+    (
+        "Authorization: Bearer a2345678@example.test",
+        "Authorization: Bearer <REDACTED:email>",
+    ),
+    ("Authorization: Bearer YWJjZGVmKEY=", "Authorization: Bearer YWJjZGVmKEY="),
+    (
+        "Authorization: Bearer abcd1234;MODE=production",
+        "Authorization: Bearer abcd1234;MODE=production",
+    ),
+    (
+        "Authorization: Bearer abcd1234.API_KEY=hidden-value-123",  # pragma: allowlist secret
+        "Authorization: Bearer abcd1234.API_KEY=<REDACTED:secret>",
+    ),
+    ("Authorization: Bearer AbcdEfgh", "Authorization: Bearer AbcdEfgh"),
+    (
+        "Authorization: Bearer abcdefgh12345678",
+        "Authorization: Bearer abcdefgh12345678",
+    ),
+    (
+        '-H "Authorization: Basic abcd1234efgh"',
+        '-H "Authorization: Basic abcd1234efgh"',
+    ),
+    (
+        '{"Authorization": "Bearer abcd1234efgh"}',
+        '{"Authorization": "Bearer abcd1234efgh"}',
+    ),
+    ('authorization="Bearer abcd1234efgh"', 'authorization="Bearer abcd1234efgh"'),
+    (
+        'headers["Authorization"] = "Bearer abcdefgh12345678"',
+        'headers["Authorization"] = "Bearer abcdefgh12345678"',
+    ),
+    (
+        "h['authorization']='Basic abcd1234efgh'",
+        "h['authorization']='Basic abcd1234efgh'",
+    ),
+    (
+        '"Authorization": f"Bearer abcd1234efgh"',
+        '"Authorization": f"Bearer abcd1234efgh"',
+    ),
+    ("Authorization: Bearer {token}", "Authorization: Bearer {token}"),
+    ("Authorization: Bearer ${TOKEN}", "Authorization: Bearer ${TOKEN}"),
+    ("Authorization: Bearer $TOKEN", "Authorization: Bearer $TOKEN"),
+    ("Authorization: Bearer <token>", "Authorization: Bearer <token>"),
+    ("Authorization: Bearer %s", "Authorization: Bearer %s"),
+    ("Authorization header missing", "Authorization header missing"),
+    ("Authorization: Bearer short12", "Authorization: Bearer short12"),
+    (
+        "Authorization: Bearer abcdefghijklmnop",
+        "Authorization: Bearer abcdefghijklmnop",
+    ),
+    ("Authorization: Bearer ABCDEFGH", "Authorization: Bearer ABCDEFGH"),
+    ("Authorization: Bearer Abcdefgh", "Authorization: Bearer Abcdefgh"),
+    (
+        "Authorization: Bearer abcdefgh;MODE=production",
+        "Authorization: Bearer abcdefgh;MODE=production",
+    ),
+    ("Authorization: Digest abcd1234efgh", "Authorization: Digest abcd1234efgh"),
+    (
+        "postgres://admin:hunter22@db.internal:5432/app",  # pragma: allowlist secret
+        "postgres://<REDACTED:dsn-credentials>@db.internal:5432/app",  # pragma: allowlist secret
+    ),
+    ("contact nobody@example.test now", "contact <REDACTED:email> now"),
+    ("UPSTREAM_TOKEN: abcd1234efgh", "UPSTREAM_TOKEN: <REDACTED:secret>"),
+    (
+        '{"api_key": "opaque-value-123"}',  # pragma: allowlist secret
+        '{"api_key": "<REDACTED:secret>"}',
+    ),
+    (
+        "UPSTREAM_TOKEN='opaque-value-123' and DB_PASSWORD=abcd1234efgh",  # pragma: allowlist secret
+        "UPSTREAM_TOKEN='<REDACTED:secret>' and DB_PASSWORD=<REDACTED:secret>",
+    ),
+    (
+        "Authorization: Bearer <REDACTED:secret> and a@example.test",
+        "Authorization: Bearer <REDACTED:secret> and <REDACTED:email>",
+    ),
+    (
+        "Authorization: Bearer abcd1234 Authorization: Bearer efgh5678 x",
+        "Authorization: Bearer abcd1234 Authorization: Bearer efgh5678 x",
+    ),
+]
+
+MAIN_PLACEHOLDERS = (
+    "<REDACTED:secret>",
+    "<REDACTED:email>",
+    "<REDACTED:dsn-credentials>",
+)
+_PLACEHOLDER_RE = re.compile(r"<REDACTED:[^>]*>")
+
+
+def _is_subsequence(needles: list[str], haystack: list[str]) -> bool:
+    it = iter(haystack)
+    return all(any(item == n for item in it) for n in needles)
+
+
+def test_the_placeholders_main_emits_are_the_reserved_list():
+    import inspect
+
+    emitted = set()
+    for func in (module._redact_main, module._redact_emails):
+        emitted.update(re.findall(r"<REDACTED:[a-z\-]+>", inspect.getsource(func)))
+    assert emitted == set(MAIN_PLACEHOLDERS)
+    assert module._RESERVED_PLACEHOLDERS == MAIN_PLACEHOLDERS
+    for _, output in MAIN_TABLE:
+        assert set(_PLACEHOLDER_RE.findall(output)) <= set(MAIN_PLACEHOLDERS)
+
+
+@pytest.mark.parametrize("index", range(len(MAIN_TABLE)))
+def test_main_rules_equal_the_literal_outputs_of_main(index):
+    line, expected = MAIN_TABLE[index]
+    assert module._redact_main(line) == expected
+
+
+@pytest.mark.parametrize("index", range(len(MAIN_TABLE)))
+def test_with_the_stage_and_late_families_off_redact_is_main(index, monkeypatch):
+    line, expected = MAIN_TABLE[index]
+    monkeypatch.setattr(module, "_stage", lambda text: text)
+    monkeypatch.setattr(module, "_redact_late_token_families", lambda text: text)
+    assert redact(line) == expected
+
+
+@pytest.mark.parametrize("index", range(len(MAIN_TABLE)))
+def test_every_placeholder_of_main_survives_the_stage_in_order(index):
+    line, expected = MAIN_TABLE[index]
+    kept = _PLACEHOLDER_RE.findall(redact(line))
+    assert _is_subsequence(_PLACEHOLDER_RE.findall(expected), kept)
+
+
+# T3: main's literal output, and the stage adds nothing.
+_UNCHANGED_BY_THE_STAGE = [
+    'LONGEXAMPLEAPIKEY="opaque-value-123"',  # pragma: allowlist secret
+    "Authorization: Bearer UPSTREAM_TOKEN=opaque-value-123",  # pragma: allowlist secret
+    '{"gho_aaaaaaaaaaaaaaaaaaaaaaaa_TOKEN": "opaque-value-123"}',  # pragma: allowlist secret
+    'API_KEY = """aaaa\\"""opaque-value-123"""',  # pragma: allowlist secret
+    "export TOKEN='abcd\\' # keep this comment",
+    "export TOKEN='abcd\\' API_KEY=' hidden-value-123'",  # pragma: allowlist secret
+    "# " + _PEM + '\nLONGEXAMPLEAPIKEY="opaque-value-123"',  # pragma: allowlist secret
+]
+
+
+@pytest.mark.parametrize("index", range(len(_UNCHANGED_BY_THE_STAGE)))
+def test_inputs_main_already_answers_come_out_exactly_as_main_gives_them(index):
+    line = _UNCHANGED_BY_THE_STAGE[index]
+    expected = dict(MAIN_TABLE)[line]
+    assert redact(line) == expected
+
+
+def test_main_hides_the_address_before_the_stage_reads_the_header():
+    assert (
+        redact("Authorization: Bearer a2345678@example.test")
+        == "Authorization: Bearer <REDACTED:email>"
+    )
+
+
+_COVERAGE = [
+    ("Authorization: Bearer abcd1234efgh", "Authorization: Bearer <REDACTED:secret>"),
+    (
+        '-H "Authorization: Basic abcd1234efgh"',
+        '-H "Authorization: Basic <REDACTED:secret>"',
+    ),
+    (
+        '{"Authorization": "Bearer abcd1234efgh"}',
+        '{"Authorization": "Bearer <REDACTED:secret>"}',
+    ),
+    (
+        'authorization="Bearer abcd1234efgh"',
+        'authorization="Bearer <REDACTED:secret>"',
+    ),
+    (
+        'headers["Authorization"] = "Bearer abcdefgh12345678"',
+        'headers["Authorization"] = "Bearer <REDACTED:secret>"',
+    ),
+    (
+        "h['authorization']='Basic abcd1234efgh'",
+        "h['authorization']='Basic <REDACTED:secret>'",
+    ),
+    (
+        '"Authorization": f"Bearer abcd1234efgh"',
+        '"Authorization": f"Bearer <REDACTED:secret>"',
+    ),
+    (
+        "Authorization: Bearer abcd1234;MODE=production",
+        "Authorization: Bearer <REDACTED:secret>;MODE=production",
+    ),
+    (
+        "Authorization: Bearer abcd1234.API_KEY=hidden-value-123",  # pragma: allowlist secret
+        "Authorization: Bearer <REDACTED:secret>API_KEY=<REDACTED:secret>",
+    ),
+    ("Authorization: Bearer AbcdEfgh", "Authorization: Bearer <REDACTED:secret>"),
+    (
+        "Authorization: Bearer Authorization: Bearer abcd1234efgh",
+        "Authorization: Bearer Authorization: Bearer <REDACTED:secret>",
+    ),
+    (
+        "Authorization: Basic Authorization: Basic abcd1234efgh",
+        "Authorization: Basic Authorization: Basic <REDACTED:secret>",
+    ),
+    (
+        "Authorization: Bearer Authorization: Basic abcd1234efgh",
+        "Authorization: Bearer Authorization: Basic <REDACTED:secret>",
+    ),
+    (
+        "Authorization: Basic " * 3 + "abcd1234efgh",
+        "Authorization: Basic " * 3 + "<REDACTED:secret>",
+    ),
+    (
+        '{"Authorization": "Bearer Authorization: Bearer abcd1234efgh"}',
+        '{"Authorization": "Bearer Authorization: Bearer <REDACTED:secret>"}',
+    ),
+    (
+        "Authorization: Bearer ab-Authorization=Basic abcd1234efgh",
+        "Authorization: Bearer <REDACTED:secret>Basic <REDACTED:secret>",
+    ),
+]
+
+
+@pytest.mark.parametrize("index", range(len(_COVERAGE)))
+def test_an_authorization_credential_is_hidden_and_its_frame_stays(index):
+    line, expected = _COVERAGE[index]
+    assert redact(line) == expected
+
+
+_INNOCENT = [
+    "Authorization: Bearer {token}",
+    "Authorization: Bearer ${TOKEN}",
+    "Authorization: Bearer $TOKEN",
+    "Authorization: Bearer <token>",
+    "Authorization: Bearer %s",
+    "Authorization header missing",
+    "Authorization: Bearer short12",
+    "Authorization: Bearer abcdefghijklmnop",
+    "Authorization: Bearer ABCDEFGH",
+    "Authorization: Bearer Abcdefgh",
+    "Authorization: Bearer abcdefgh;MODE=production",
+    "Authorization: Digest abcd1234efgh",
+]
+
+
+@pytest.mark.parametrize("index", range(len(_INNOCENT)))
+def test_a_template_a_short_word_or_another_scheme_is_left_alone(index):
+    assert redact(_INNOCENT[index]) == _INNOCENT[index]
+
+
+def test_a_credential_run_that_reads_as_a_name_site_stays_as_main_leaves_it():
+    line = "Authorization: Bearer YWJjZGVmKEY="
+    assert redact(line) == dict(MAIN_TABLE)[line] == line
+
+
+def _reserved_by_hand(text: str) -> list[tuple[int, int]]:
+    """Reserved intervals again, from the placeholders and the name regex alone."""
+    found = []
+    for holder in MAIN_PLACEHOLDERS:
+        at = text.find(holder)
+        while at != -1:
+            found.append((at, at + len(holder)))
+            at = text.find(holder, at + 1)
+    found.extend(m.span() for m in module._RESERVED_NAME_SITE.finditer(text))
+    return found
+
+
+def _edit_corpus() -> list[str]:
+    pieces = [
+        "Authorization",
+        '"Authorization"',
+        "Bearer ",
+        "Basic ",
+        ": ",
+        "=",
+        "]",
+        "abcd1234",
+        "AbcdEfgh",
+        "short",
+        "." + KEYISH + "=",
+        KEYISH + ": ",
+        '"' + TOKENISH + '": ',
+        "<REDACTED:secret>",
+        "<REDACTED:email>",
+        "<REDACTED:dsn-credentials>",
+        "a2345678@example.test",
+        ";",
+        '"',
+        " ",
+        "\n",
+    ]
+    rng = random.Random(20261124)
+    corpus = [line for line, _ in MAIN_TABLE]
+    frames = [
+        "Authorization: Bearer ",
+        'h["Authorization"] = "Basic ',
+        "authorization=Bearer ",
+    ]
+    for _ in range(3000):
+        body = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 14)))
+        corpus.append(rng.choice(["", rng.choice(frames)]) + body)
+    return corpus
+
+
+def test_the_edit_list_is_sorted_disjoint_outside_every_reserved_interval():
+    edited = 0
+    for original in _edit_corpus():
+        text = module._redact_main(original)
+        edits = module._authorization_edits(text)
+        reserved = _reserved_by_hand(text)
+        previous_end = 0
+        for start, end in edits:
+            assert previous_end <= start < end <= len(text), (text, edits)
+            assert text[start:end].strip(), (text, edits)
+            for r_start, r_end in reserved:
+                assert end <= r_start or r_end <= start, (text, edits, reserved)
+            previous_end = end
+        merged = module._reserved_intervals(text)
+        assert merged == sorted(merged)
+        assert all(a[1] < b[0] for a, b in pairwise(merged))
+        edited += bool(edits)
+    assert edited > 100  # the corpus reaches the stage
+
+
+def _accepted_runs_from_every_start(text: str) -> list[tuple[int, int]]:
+    """Every accepted run, trying a header at each position of `text` (a slow reference)."""
+    runs = []
+    for position in range(len(text)):
+        match = module._AUTHORIZATION_CREDENTIAL.match(text, position)
+        if match and module._is_credential_run(match["run"]):
+            runs.append(match.span("run"))
+    return runs
+
+
+def test_a_rejected_or_hidden_run_never_hides_the_header_after_it():
+    nested = [
+        "Authorization: Bearer " * depth + "Authorization: " + scheme + " abcd1234efgh"
+        for depth in range(1, 4)
+        for scheme in ("Bearer", "Basic")
+    ]
+    reached = 0
+    for original in _edit_corpus() + nested:
+        text = module._redact_main(original)
+        edits = module._authorization_edits(text)
+        reserved = module._reserved_intervals(text)
+        for start, end in _accepted_runs_from_every_start(text):
+            for index in range(start, end):
+                if text[index].isspace() or any(a <= index < b for a, b in reserved):
+                    continue
+                assert any(a <= index < b for a, b in edits), (
+                    text,
+                    edits,
+                    (start, end),
+                )
+                reached += 1
+    assert reached > 1000
+
+
+def test_the_stage_never_touches_a_reserved_interval():
+    for original in _edit_corpus():
+        text = module._redact_main(original)
+        out = module._stage(text)
+        if out == text:
+            continue
+        for holder in MAIN_PLACEHOLDERS:
+            assert out.count(holder) >= text.count(holder)
+        for start, end in module._reserved_intervals(text):
+            assert text[start:end] in out, (text, out)
+
+
+def _growth_families():
+    return {
+        "short-credentials": lambda n: "Authorization: Bearer short\n" * n,
+        "one-long-run": lambda n: "Authorization: Bearer " + "ab12." * n,
+        "placeholders-after-the-scheme": (
+            lambda n: "Authorization: Bearer " + "<REDACTED:secret>" * n
+        ),
+        "words-without-a-scheme": lambda n: "Authorization " * n,
+        "one-edit-each": lambda n: "Authorization: Bearer abcd1234 " * n,
+        "nested-bearer": lambda n: "Authorization: Bearer " * n + "abcd1234efgh",
+        "nested-basic": lambda n: "Authorization: Basic " * n,
+        "nested-in-hidden-runs": lambda n: (
+            "Authorization: Bearer ab-Authorization=" * n
+        ),
+    }
+
+
+def _best_cpu_time(text: str, rounds: int = 5) -> float:
+    import time
+
+    best = float("inf")
+    for _ in range(rounds):
+        started = time.process_time()
+        module._stage(text)
+        best = min(best, time.process_time() - started)
+    return best
+
+
+@pytest.mark.parametrize("family", sorted(_growth_families()))
+def test_the_stage_grows_linearly_with_its_input(family):
+    build = _growth_families()[family]
+    n = 64
+    while _best_cpu_time(build(n), rounds=1) < 0.005:
+        n *= 2
+        assert n < 2**24
+    t1 = _best_cpu_time(build(n))
+    t4 = _best_cpu_time(build(4 * n))
+    t16 = _best_cpu_time(build(16 * n))
+    # Linear growth gives about 4 for each step, quadratic about 16.
+    assert t4 / t1 < 5.5, (family, n, t1, t4)
+    assert t16 / t4 < 5.5, (family, n, t4, t16)

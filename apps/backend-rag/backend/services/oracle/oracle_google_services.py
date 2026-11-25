@@ -8,6 +8,7 @@ UPDATED 2025-12-23:
 
 import json
 import logging
+import time
 from typing import Any
 
 from google.oauth2 import service_account
@@ -19,20 +20,29 @@ from backend.services.oracle.oracle_config import oracle_config
 logger = logging.getLogger(__name__)
 
 
+#: After a Drive set-up that failed, the next attempt waits this long: a permanent
+#: failure costs one attempt per interval, not one per request.
+_DRIVE_RETRY_SECONDS = 300.0
+
+
 class GoogleServices:
     """Google Cloud services manager for Oracle endpoints"""
 
     def __init__(self) -> None:
+        self._initialized = False
         self._gemini_initialized = False
         self._drive_service = None
         self._genai_client: GenAIClient | None = None
+        self._drive_retry_at = 0.0
         # Services are now lazily initialized to prevent gRPC fork safety issues
         # self._initialize_services()
 
     def _ensure_services_initialized(self) -> None:
         """Initialize Google Gemini and Drive services if not already done"""
-        if self._genai_client is None:
-            try:
+        if self._initialized or time.monotonic() < self._drive_retry_at:
+            return
+        try:
+            if self._genai_client is None:
                 # Initialize GenAI client (only if API key is available)
                 api_key = oracle_config.google_api_key
                 if api_key and GENAI_AVAILABLE:
@@ -48,19 +58,24 @@ class GoogleServices:
                     )
                     self._gemini_initialized = False
 
-                # Initialize Drive Service
-                self._initialize_drive_service()
+            # A Drive set-up that failed is tried again, after an interval.
+            self._initialized = self._initialize_drive_service()
+            if not self._initialized:
+                self._drive_retry_at = time.monotonic() + _DRIVE_RETRY_SECONDS
 
-            except Exception as e:
-                logger.error("❌ Failed to initialize Google services: %s", e)
-                logger.warning(
-                    "⚠️ Continuing without Google services - some Oracle features may be unavailable",
-                )
-                self._gemini_initialized = False
-                self._drive_service = None
+        except Exception as e:
+            logger.error("❌ Failed to initialize Google services: %s", e)
+            logger.warning(
+                "⚠️ Continuing without Google services - some Oracle features may be unavailable",
+            )
+            self._gemini_initialized = False
+            self._drive_service = None
 
-    def _initialize_drive_service(self) -> None:
-        """Initialize Google Drive service using service account"""
+    def _initialize_drive_service(self) -> bool:
+        """Initialize Google Drive service using service account.
+
+        Returns False when the set-up failed and is worth trying again.
+        """
         import base64
         import os
 
@@ -100,14 +115,16 @@ class GoogleServices:
                     "Set GOOGLE_SERVICE_ACCOUNT_JSON or add google_credentials.json",
                 )
                 self._drive_service = None
-                return
+                return True
 
             self._drive_service = build("drive", "v3", credentials=credentials)
             logger.info("✅ Google Drive service initialized successfully")
+            return True
 
         except Exception as e:
             logger.error("❌ Error initializing Google Drive service: %s", e)
             self._drive_service = None
+            return False
 
     @property
     def gemini_available(self) -> bool:

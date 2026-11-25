@@ -18,6 +18,7 @@ import {
   STAGE_GROUP,
   STAGE_LABELS,
   VISIBLE_STAGES,
+  isTerminalStage,
 } from "@/lib/api/secondhome/state-machine";
 import type {
   CaseSummary,
@@ -42,13 +43,18 @@ export default function SecondHomeConsolePage() {
     activeOnly: true,
   });
 
+  // "Active only" excludes terminal stages server-side, so it can never be
+  // combined with a terminal stage choice (the list would always be empty).
+  const activeOnlyApplies =
+    filters.activeOnly && !(filters.stage && isTerminalStage(filters.stage));
+
   const listParams = useMemo(
     () => ({
       stage: filters.stage ? (filters.stage as E33Stage) : undefined,
       basis: filters.basis ? (filters.basis as GuaranteeBasis) : undefined,
-      active_only: filters.activeOnly || undefined,
+      active_only: activeOnlyApplies || undefined,
     }),
-    [filters],
+    [filters.stage, filters.basis, activeOnlyApplies],
   );
 
   const summaryQuery = useSecondHomeSummary();
@@ -57,7 +63,7 @@ export default function SecondHomeConsolePage() {
   const activeFiltersCount = [
     filters.stage,
     filters.basis,
-    filters.activeOnly ? "active_only" : "",
+    activeOnlyApplies ? "active_only" : "",
   ].filter(Boolean).length;
 
   const clearFilters = () =>
@@ -79,12 +85,15 @@ export default function SecondHomeConsolePage() {
     let pipeline = 0;
     let permit = 0;
     let terminal = 0;
+    // Terminal = what the backend excludes from "active" (epo, status_change).
+    // itap_eval is grouped "terminal" in STAGE_GROUP but is backend-active and
+    // currently disabled, so it is counted in no chip.
     for (const [stage, count] of Object.entries(byStage)) {
       const group = STAGE_GROUP[stage as E33Stage];
       const n = count ?? 0;
       if (group === "pipeline") pipeline += n;
       else if (group === "permit") permit += n;
-      else if (group === "terminal") terminal += n;
+      else if (isTerminalStage(stage)) terminal += n;
     }
     return { pipeline, permit, terminal };
   }, [summaryQuery.data]);
@@ -139,7 +148,7 @@ export default function SecondHomeConsolePage() {
             },
             {
               key: "terminal",
-              content: <>{groupCounts.terminal} terminal</>,
+              content: <>{groupCounts.terminal} terminal (all time)</>,
               className:
                 "bg-[var(--surface-raised)] text-[var(--bz-text-2)] border-[var(--bz-border)]",
             },
@@ -215,15 +224,35 @@ export default function SecondHomeConsolePage() {
             <FilterSelect
               id="active-only-filter"
               label="Status"
-              value={filters.activeOnly ? "active" : "all"}
+              value={activeOnlyApplies ? "active" : "all"}
               onChange={(v) =>
                 setFilters((f) => ({ ...f, activeOnly: v === "active" }))
               }
               selectClassName="border border-[var(--bz-border)] bg-[var(--bz-base)] text-[var(--bz-text-1)] focus:ring-2 focus:ring-[var(--bz-accent)]/50"
             >
-              <option value="active">Active cases only</option>
+              <option
+                value="active"
+                disabled={
+                  !activeOnlyApplies &&
+                  !!filters.stage &&
+                  isTerminalStage(filters.stage)
+                }
+              >
+                Active cases only
+              </option>
               <option value="all">All cases (incl. terminal)</option>
             </FilterSelect>
+            {!activeOnlyApplies &&
+              filters.stage &&
+              isTerminalStage(filters.stage) && (
+                <p
+                  className="text-xs sm:col-span-3"
+                  style={{ color: "var(--bz-text-2)" }}
+                  data-testid="active-only-not-applied"
+                >
+                  Active-only is not applied to terminal stages.
+                </p>
+              )}
           </FilterBar>
         )}
       </div>

@@ -57,3 +57,13 @@ export function readCheckoutHandoff(resultId: string): CheckoutHandoffValues {
     return {};
   }
 }
+
+/** Drops the handed-off traveller values; called once the order exists. */
+export function clearCheckoutHandoff(resultId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key(resultId));
+  } catch {
+    // Best-effort, same as the write.
+  }
+}

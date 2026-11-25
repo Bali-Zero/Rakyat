@@ -39,7 +39,14 @@ export function useCheckout(resultId: string) {
   const lastPayloadKeyRef = useRef<string | null>(null);
 
   const submit = useCallback(
-    async (applicant: Applicant) => {
+    async (typed: Applicant) => {
+      const applicant: Applicant = {
+        ...typed,
+        full_name: typed.full_name.trim(),
+        email: typed.email.trim(),
+        phone: typed.phone.trim(),
+        passport_number: typed.passport_number.trim(),
+      };
       const payloadKey = stableKeyFor(resultId, applicant);
       if (payloadKey !== lastPayloadKeyRef.current) {
         idempotencyKeyRef.current =

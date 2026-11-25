@@ -953,6 +953,8 @@ async def test_get_client_ocr_status_success(mock_db_pool, mock_current_user):
     assert result["pending_ocr"] == 1
     assert result["completed_ocr"] == 1
     assert len(result["documents"]) == 2
+    assert "_pending_ocr_count" not in result["documents"][0]
+    assert "_completed_ocr_count" not in result["documents"][0]
 
 
 @pytest.mark.asyncio
@@ -975,6 +977,70 @@ async def test_get_client_ocr_status_empty(mock_db_pool, mock_current_user):
     assert result["completed_ocr"] == 0
 
 
+@pytest.mark.asyncio
+async def test_get_client_ocr_status_preserves_recent_poll_window(mock_db_pool, mock_current_user):
+    from backend.app.routers.crm_enhanced_documents import get_client_ocr_status
+
+    mock_db_pool._mock_conn.fetch.return_value = [
+        {
+            "id": document_id,
+            "document_type": "passport",
+            "file_name": f"passport-{document_id}.pdf",
+            "ocr_status": "completed",
+            "ocr_completed_at": None,
+            "ocr_extracted_data": None,
+        }
+        for document_id in range(1, 11)
+    ]
+
+    with patch(
+        "backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()
+    ):
+        result = await get_client_ocr_status(
+            client_id=1,
+            pool=mock_db_pool,
+            current_user=mock_current_user,
+        )
+
+    assert (result["pending_ocr"], result["completed_ocr"]) == (0, 10)
+    assert len(result["documents"]) == 10
+    call = mock_db_pool._mock_conn.fetch.await_args
+    assert "LIMIT 10" in call.args[0]
+    assert call.args[1:] == (1, None)
+
+
+@pytest.mark.asyncio
+async def test_get_client_ocr_status_filters_exact_historical_document(
+    mock_db_pool, mock_current_user
+):
+    from backend.app.routers.crm_enhanced_documents import get_client_ocr_status
+
+    mock_db_pool._mock_conn.fetch.return_value = [
+        {
+            "id": 7,
+            "document_type": "passport",
+            "file_name": "older-passport.pdf",
+            "ocr_status": "completed",
+            "ocr_completed_at": None,
+            "ocr_extracted_data": None,
+        }
+    ]
+
+    with patch(
+        "backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()
+    ):
+        result = await get_client_ocr_status(
+            client_id=1,
+            pool=mock_db_pool,
+            current_user=mock_current_user,
+            document_id=7,
+        )
+
+    assert (result["pending_ocr"], result["completed_ocr"]) == (0, 1)
+    assert result["documents"][0]["id"] == 7
+    assert mock_db_pool._mock_conn.fetch.await_args.args[1:] == (1, 7)
+
+
 # ============================================================
 # extract_visa_data
 # ============================================================
@@ -989,6 +1055,10 @@ async def test_extract_visa_data_success(mock_db_pool, mock_current_user):
 
     with (
         patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
+        patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=AsyncMock(),
+        ),
         patch(
             "backend.app.routers.crm_enhanced_documents._auto_ocr_visa",
             new=AsyncMock(return_value={"success": True, "fields_extracted": ["expiry_date"]}),
@@ -1071,9 +1141,18 @@ def test_extract_visa_data_accepts_valid_body(
 ):
     """Innocence: a valid file_id, with or without doc_id, reaches
     _auto_ocr_visa with the same arguments the dict body produced."""
+    from backend.app.routers.crm_enhanced_documents import _CLIENT_DOCUMENT_OF_FILE_SQL
+
     ocr = AsyncMock(return_value={"success": True, "extracted": {"visa_type": "KITAS"}})
+    owns = AsyncMock()
+    conn = mock_db_pool._mock_conn
+    conn.fetchval.return_value = 1
     with (
         patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
+        patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=owns,
+        ),
         patch("backend.app.routers.crm_enhanced_documents._auto_ocr_visa", new=ocr),
     ):
         response = extract_visa_client.post("/api/crm/clients/1/extract-visa", json=payload)
@@ -1081,6 +1160,61 @@ def test_extract_visa_data_accepts_valid_body(
     assert response.status_code == 200
     assert response.json()["success"] is True
     ocr.assert_awaited_once_with(mock_db_pool, 1, "drive-file-123", expected_doc_id)
+    owns.assert_awaited_once_with("drive-file-123", 1, conn)
+    if expected_doc_id is None:
+        conn.fetchval.assert_not_awaited()
+    else:
+        conn.fetchval.assert_awaited_once_with(
+            _CLIENT_DOCUMENT_OF_FILE_SQL, expected_doc_id, 1, "drive-file-123"
+        )
+
+
+def test_extract_visa_refuses_a_drive_file_that_is_not_the_clients(extract_visa_client):
+    """Guilt: any file the service account can read was downloaded and OCR'd for
+    the caller, past the ownership guard every other document write uses."""
+    ocr = AsyncMock()
+    refuse = AsyncMock(side_effect=HTTPException(status_code=403, detail="not this client's"))
+    with (
+        patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
+        patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=refuse,
+        ),
+        patch("backend.app.routers.crm_enhanced_documents._auto_ocr_visa", new=ocr),
+    ):
+        response = extract_visa_client.post(
+            "/api/crm/clients/1/extract-visa",
+            json={"file_id": "drive-file-of-client-2", "doc_id": 42},
+        )
+
+    assert response.status_code == 403
+    ocr.assert_not_awaited()
+
+
+@pytest.mark.parametrize("doc_id", [77, 0, -1])
+def test_extract_visa_refuses_a_document_that_is_not_this_clients_record_of_the_file(
+    extract_visa_client, mock_db_pool, doc_id
+):
+    """Guilt: doc_id alone chose the row the OCR overwrote, so another client's
+    document (or another file's) was rewritten and synced onto this client."""
+    ocr = AsyncMock()
+    mock_db_pool._mock_conn.fetchval.return_value = None
+    with (
+        patch("backend.app.routers.crm_enhanced_documents.verify_client_access", new=AsyncMock()),
+        patch(
+            "backend.app.routers.crm_enhanced_documents.assert_drive_file_belongs_to_client",
+            new=AsyncMock(),
+        ),
+        patch("backend.app.routers.crm_enhanced_documents._auto_ocr_visa", new=ocr),
+    ):
+        response = extract_visa_client.post(
+            "/api/crm/clients/1/extract-visa",
+            json={"file_id": "drive-file-123", "doc_id": doc_id},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+    ocr.assert_not_awaited()
 
 
 # ============================================================

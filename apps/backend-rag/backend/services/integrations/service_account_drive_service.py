@@ -277,15 +277,18 @@ class ServiceAccountDriveService:
         logger.info("✅ Created folder (ID: %s)", folder["id"])
         return folder
 
-    async def get_file_metadata(self, file_id: str) -> dict[str, Any]:
+    async def get_file_metadata(self, file_id: str, *, checksums: bool = False) -> dict[str, Any]:
         """Fetch file/folder metadata via Drive API v3.
 
         Returns the dict from Drive API (name, parents, mimeType, size, ...).
         Caller paths: backend/services/crm/drive_poll_service.py:266 + :314.
         """
+        fields = "id, name, mimeType, parents, trashed, size, modifiedTime, webViewLink"
+        if checksums:
+            fields += ", md5Checksum, sha256Checksum"
         request = self.service.files().get(
             fileId=file_id,
-            fields="id, name, mimeType, parents, trashed, size, modifiedTime, webViewLink",
+            fields=fields,
             supportsAllDrives=True,
         )
         return await asyncio.to_thread(request.execute)

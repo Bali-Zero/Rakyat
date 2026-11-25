@@ -196,8 +196,8 @@ export const createPracticeSchema = z
     internal_notes: emptyToUndefined,
     quoted_price: z.number().nonnegative("Price cannot be negative").optional(),
     // Discount (added 2026-05-06, owner Q1=a/Q4=a/Q5=c). Cross-field check
-    // below enforces discount_amount <= quoted_price so the form catches
-    // an over-discount before the backend round-trip.
+    // below enforces discount_amount < quoted_price (DAI-177) so the form
+    // catches a full or over-discount before the backend round-trip.
     discount_amount: z
       .number()
       .nonnegative("Discount cannot be negative")
@@ -208,14 +208,18 @@ export const createPracticeSchema = z
   })
   .refine(
     (data) =>
-      data.discount_amount === undefined ||
+      !data.discount_amount ||
       data.quoted_price === undefined ||
-      data.discount_amount <= data.quoted_price,
+      data.discount_amount < data.quoted_price,
     {
-      message: "Discount cannot exceed quoted price",
+      message: "Discount harus lebih kecil dari Quoted Price",
       path: ["discount_amount"],
     },
-  );
+  )
+  .refine((data) => !data.discount_amount || data.quoted_price !== undefined, {
+    message: "Isi Quoted Price dulu sebelum mengisi Discount",
+    path: ["discount_amount"],
+  });
 
 export type CreatePracticeInput = z.input<typeof createPracticeSchema>;
 export type CreatePracticeOutput = z.output<typeof createPracticeSchema>;

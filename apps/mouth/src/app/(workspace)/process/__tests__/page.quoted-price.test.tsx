@@ -15,6 +15,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tokenFor } from "@/lib/auth/session-test-utils";
 import PratichePage from "../page";
 import type { Practice } from "@/lib/api/crm/crm.types";
 
@@ -32,12 +33,6 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/lib/api", () => ({
   api: {
-    getProfile: vi.fn().mockResolvedValue({
-      id: "1",
-      email: "zero@balizero.com",
-      name: "Test User",
-      role: "admin",
-    }),
     crm: {
       getPractices: mocks.getPractices,
       updatePractice: mocks.updatePractice,
@@ -48,9 +43,6 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 vi.mock("@/lib/analytics");
-vi.mock("@/hooks/useTeamMembers", () => ({
-  useTeamMemberOptions: () => ({ options: [] }),
-}));
 vi.mock("@/components/ui/toast", () => ({
   useToast: () => ({
     success: mocks.toastSuccess,
@@ -64,8 +56,8 @@ const practice = (over: Partial<Practice>): Practice =>
   ({
     id: 1,
     client_id: 101,
+    can_edit_process: true,
     client_name: "Synthetic Alpha",
-    client_lead: "zero@balizero.com",
     practice_type_id: 1,
     practice_type_code: "kitas_application",
     status: "waiting_documents",
@@ -89,6 +81,7 @@ describe("process board: Quoted Price gate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    localStorage.setItem("auth_token", tokenFor("synthetic-operator"));
     mocks.updatePractice.mockResolvedValue({});
   });
 
@@ -145,12 +138,13 @@ describe("process board: Quoted Price gate", () => {
       practice({ quoted_price: undefined }),
     ]);
     await openMenuFor("Synthetic Alpha");
-    const onProcess = screen.getByRole("button", { name: /On Process/ });
-    expect(onProcess).toBeEnabled();
-    await userEvent.setup().click(onProcess);
+    const inquiry = screen.getByRole("button", { name: /^Inquiry$/ });
+    expect(inquiry).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^On Process$/ })).toBeNull();
+    await userEvent.setup().click(inquiry);
     await waitFor(() =>
       expect(mocks.updatePractice).toHaveBeenCalledWith(1, {
-        status: "on_process",
+        status: "inquiry",
       }),
     );
   });
@@ -192,7 +186,7 @@ describe("process board: Quoted Price gate", () => {
     await openMenuFor("Synthetic Alpha");
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: /On Process/ }));
+      .click(screen.getByRole("button", { name: /^Inquiry$/ }));
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
         "Error",

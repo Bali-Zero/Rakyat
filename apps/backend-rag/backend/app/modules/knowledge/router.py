@@ -8,15 +8,23 @@ This eliminates duplicate RAG pipelines and cache collisions.
 
 import logging
 import time
+import traceback
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
 from backend.app.models import ChunkMetadata, SearchQuery, SearchResponse, SearchResult, TierLevel
 from backend.app.modules.knowledge.service import KnowledgeService
+from backend.services.search.log_safety import install_query_log_redaction, query_log_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/search", tags=["knowledge"])
+
+# Every error answer of this route carries one of these fixed texts, never an exception text
+# or user input: backend errors quote the query they were given.
+_INVALID_LEVEL_DETAIL = "Invalid access level. Must be 0-3."
+_SEARCH_FAILED_DETAIL = "Search failed"
+_FIXED_DETAILS = frozenset({_INVALID_LEVEL_DETAIL, _SEARCH_FAILED_DETAIL})
 
 # Fallback service instance (only used if SearchService not available in app.state)
 _knowledge_service_fallback: KnowledgeService | None = None
@@ -44,9 +52,19 @@ def get_search_service(request: Request) -> Any:
     return _knowledge_service_fallback
 
 
+install_query_log_redaction()
+
+
 @router.post("", response_model=SearchResponse)
 @router.post("/", response_model=SearchResponse, include_in_schema=False)
 async def semantic_search(query: SearchQuery, request: Request) -> SearchResponse:
+    # Backstop: whatever a client library under the search path logs, the query text is
+    # replaced in it (see services/search/log_safety.py).
+    with query_log_scope(query.query, query.collection):
+        return await _semantic_search(query, request)
+
+
+async def _semantic_search(query: SearchQuery, request: Request) -> SearchResponse:
     """
     Semantic search with tier-based access control.
 
@@ -60,6 +78,10 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
     REFACTORED: Now uses SearchService (canonical retriever) instead of KnowledgeService singleton.
     This ensures consistent RAG pipeline across chat agentic and /api/search endpoints.
     """
+    # The error answer is raised after the `except` blocks below have ended, so it carries
+    # no `__cause__` and no `__context__`: neither the HTTP exception handler's log line nor
+    # Sentry's framework event can reach the original exception (and the text it quotes).
+    failure: tuple[int, str]
     try:
         start_time = time.time()
 
@@ -84,7 +106,7 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
 
         # Validate level
         if query.level < 0 or query.level > 3:
-            raise HTTPException(status_code=400, detail="Invalid access level. Must be 0-3.")
+            raise HTTPException(status_code=400, detail=_INVALID_LEVEL_DETAIL)
 
         # Get service instance (SearchService preferred, KnowledgeService fallback)
         search_service = get_search_service(request)
@@ -161,11 +183,24 @@ async def semantic_search(query: SearchQuery, request: Request) -> SearchRespons
             execution_time_ms=round(execution_time, 2),
         )
 
-    except HTTPException:
-        raise
+    except HTTPException as http_exc:
+        detail = http_exc.detail
+        failure = (
+            http_exc.status_code,
+            detail
+            if isinstance(detail, str) and detail in _FIXED_DETAILS
+            else _SEARCH_FAILED_DETAIL,
+        )
     except Exception as e:
-        logger.error("Search error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Search failed: {e!s}") from e
+        # The exception text can echo the query (backend errors quote their input), so the
+        # log carries the type and the frames only; the traceback is what debugging needs.
+        logger.error(
+            "Search error: %s\n%s",
+            type(e).__name__,
+            "".join(traceback.format_tb(e.__traceback__)),
+        )
+        failure = (500, _SEARCH_FAILED_DETAIL)
+    raise HTTPException(status_code=failure[0], detail=failure[1])
 
 
 @router.options("/")

@@ -19,11 +19,13 @@ Depends on PortalService for:
 """
 
 import asyncio
+import html
 import re
 from datetime import date, datetime, timezone
 from typing import Any
 
 import asyncpg
+from fastapi import HTTPException
 
 from backend.app.core.config import settings
 from backend.app.utils.logging_utils import get_logger
@@ -206,6 +208,8 @@ class PortalDocumentsMixin:
                 SELECT d.id, d.document_type, d.file_name, d.status,
                        d.expiry_date, d.file_url, d.file_id, d.file_size_kb, d.created_at,
                        d.document_purpose,
+                       NOT EXISTS (SELECT 1 FROM practice_delivery_slots s
+                                   WHERE s.practice_id=d.practice_id AND s.document_id=d.id) AS can_remove,
                        p.id as practice_id, pt.name as practice_name
                 FROM documents d
                 LEFT JOIN practices p ON p.id = d.practice_id
@@ -234,6 +238,7 @@ class PortalDocumentsMixin:
                     "practice_id": d["practice_id"],
                     "practice_name": d["practice_name"],
                     "downloadable": d["file_url"] is not None or d["file_id"] is not None,
+                    "can_remove": d["can_remove"],
                     "created_at": d["created_at"].isoformat(),
                     "purpose": d["document_purpose"],
                 }
@@ -363,6 +368,17 @@ class PortalDocumentsMixin:
         # and silently rolled the UPDATE back while returning 200 "deleted: true".)
         async with self.pool.acquire() as conn:
             async with conn.transaction():
+                # The staff delivery writer locks the same document before
+                # assigning it. Check slot membership in a fresh snapshot after
+                # acquiring the lock, including a concurrent publication.
+                owned = await conn.fetchrow(
+                    f"""SELECT id FROM documents WHERE id=$1 AND client_id=$2
+                        AND {document_visibility_clause()} FOR UPDATE""",
+                    document_id,
+                    client_id,
+                )
+                if owned is None:
+                    return None
                 row = await conn.fetchrow(
                     f"""
                     UPDATE documents
@@ -370,6 +386,8 @@ class PortalDocumentsMixin:
                     WHERE id = $1
                       AND client_id = $2
                       AND {document_visibility_clause()}
+                      AND NOT EXISTS (SELECT 1 FROM practice_delivery_slots s
+                                      WHERE s.practice_id=documents.practice_id AND s.document_id=documents.id)
                     RETURNING id, file_name, document_type
                     """,
                     document_id,
@@ -377,7 +395,10 @@ class PortalDocumentsMixin:
                     deleted_by,
                 )
                 if not row:
-                    return None
+                    raise HTTPException(
+                        409,
+                        "The team maintains this final practice document. Contact your consultant for a correction.",
+                    )
 
         # Audit log — separate connection, after the delete has committed.
         await self._record_timeline_event(
@@ -1256,23 +1277,23 @@ class PortalDocumentsMixin:
                 # Build email content
                 doc_type_display = document_type.replace("_", " ").title()
 
-                subject = f"📄 New Document Uploaded - {client['full_name']}"
+                subject_name = re.sub(r"[\r\n\u2028\u2029]+", " ", str(client["full_name"]))
+                subject = f"📄 New Document Uploaded - {subject_name}"
 
-                # Build extra info section
-                extra_info = ""
-                if expiry_date:
-                    extra_info += f"• Detected Expiry Date: {expiry_date}\n"
-                if drive_url:
-                    extra_info += f"• Drive Link: {drive_url}\n"
+                def _render(esc: Any) -> str:
+                    extra_info = ""
+                    if expiry_date:
+                        extra_info += f"• Detected Expiry Date: {esc(expiry_date)}\n"
+                    if drive_url:
+                        extra_info += f"• Drive Link: {esc(drive_url)}\n"
+                    return f"""Hello,
 
-                body = f"""Hello,
-
-Client {client["full_name"]} has uploaded a new document to the portal.
+Client {esc(client["full_name"])} has uploaded a new document to the portal.
 
 Details:
-• File: {document_name}
-• Type: {doc_type_display}
-• Client: {client["full_name"]}
+• File: {esc(document_name)}
+• Type: {esc(doc_type_display)}
+• Client: {esc(client["full_name"])}
 {extra_info}
 Open the workspace to review and verify the document:
 https://kita.balizero.com/clients/{client_id}
@@ -1281,13 +1302,17 @@ https://kita.balizero.com/clients/{client_id}
 This is an automated notification from Bali Zero CRM.
 """
 
+                body = _render(str)
+                # Values from the client or a form are escaped for the HTML part only.
+                html_body = _render(lambda v: html.escape(str(v))).replace("\n", "<br>")
+
                 # Primary: Brevo
                 sent = False
                 if gate_notice_adapter is not None:
                     await gate_notice_adapter.send_document_notification(
                         recipient=lead_email,
                         subject=subject,
-                        html_body=body.replace("\n", "<br>"),
+                        html_body=html_body,
                     )
                     sent = True
                     logger.info("Document upload notification captured by the portal QA sink")
@@ -1302,7 +1327,6 @@ This is an automated notification from Bali Zero CRM.
                             "https://nuzantara-rag.fly.dev/api/notifications/send-email",
                         )
                         _api_key = os.getenv("NUZANTARA_API_KEY", "")
-                        html_body = body.replace("\n", "<br>")
                         async with httpx.AsyncClient(timeout=30.0) as http_client:
                             resp = await http_client.post(
                                 _api_url,

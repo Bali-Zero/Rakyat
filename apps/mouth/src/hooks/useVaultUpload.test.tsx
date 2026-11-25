@@ -31,6 +31,7 @@ class MockXHR {
 
   openCalledWith: { method: string; url: string } | null = null;
   sentBody: FormData | null = null;
+  requestHeaders: Record<string, string> = {};
 
   constructor() {
     MockXHR.last = this;
@@ -38,6 +39,9 @@ class MockXHR {
 
   open(method: string, url: string) {
     this.openCalledWith = { method, url };
+  }
+  setRequestHeader(name: string, value: string) {
+    this.requestHeaders[name] = value;
   }
   send(body: FormData) {
     this.sentBody = body;
@@ -154,6 +158,30 @@ describe("useVaultUpload", () => {
     if (result.current.state.status === "uploading") {
       expect(result.current.state.progress).toBe(50);
     }
+  });
+
+  it("sends the CSRF cookie back as the X-CSRF-Token header", () => {
+    document.cookie = "nz_csrf_token=csrf-test-value; path=/";
+    try {
+      const { result } = renderHook(() => useVaultUpload());
+      act(() =>
+        result.current.upload(makeFile("ok.pdf", 4096, "application/pdf")),
+      );
+      expect(MockXHR.last!.requestHeaders).toEqual({
+        "X-CSRF-Token": "csrf-test-value",
+      });
+    } finally {
+      document.cookie =
+        "nz_csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    }
+  });
+
+  it("sends no CSRF header when there is no CSRF cookie", () => {
+    const { result } = renderHook(() => useVaultUpload());
+    act(() =>
+      result.current.upload(makeFile("ok.pdf", 4096, "application/pdf")),
+    );
+    expect(MockXHR.last!.requestHeaders).toEqual({});
   });
 
   it("transitions to done on a client-safe successful upload", async () => {

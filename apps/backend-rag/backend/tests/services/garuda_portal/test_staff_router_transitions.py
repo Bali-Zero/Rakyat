@@ -1201,3 +1201,104 @@ class TestEvidenceIdGloballyUnique:
         )
         loser = resp_a if resp_a.status_code == 422 else resp_b
         assert loser.json()["code"] == "INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+class TestOneEvidenceIdRecordsOneKindOfEvidence:
+    """The filing evidence_id sent again to approve or reject used to pass and record no
+    evidence of its own: the INSERT skipped it on the (practice_id, evidence_id) conflict.
+    It is refused with 422 and the practice stays Submitted; a decision with its own
+    evidence_id is recorded beside the filing."""
+
+    _FILING = "evidence_filing_kind_000001"
+    _REASON = "garuda_voa.practice.missing_document"
+
+    async def _post(self, client, practice_id, key, payload):
+        return await client.post(
+            f"/api/visa/voa/staff/practices/{practice_id}/transitions",
+            headers={"Authorization": _bearer(_ADMIN, "admin"), "Idempotency-Key": key},
+            json=payload,
+        )
+
+    async def _submitted(self, client, pool, order_repository, label: str) -> str:
+        order_id = await _create_and_pay_order(
+            order_repository,
+            result_id=f"result-kind-{label}-000000000",
+            provider_event_id=f"evt-kind-{label}",
+        )
+        practice_id = await _practice_id_for(pool, order_id)
+        r02 = await self._post(
+            client, practice_id, f"kind-{label}-pr02-00000001", {"transition_id": "PR-02"}
+        )
+        assert r02.status_code == 200, r02.text
+        r04 = await self._post(
+            client,
+            practice_id,
+            f"kind-{label}-pr04-00000001",
+            {"transition_id": "PR-04", "evidence_id": self._FILING},
+        )
+        assert r04.status_code == 200, r04.text
+        return practice_id
+
+    async def _evidence_and_state(self, pool, practice_id):
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT transition_id, evidence_id, kind FROM garuda_practice_evidence"
+                " WHERE practice_id = $1 ORDER BY transition_id",
+                practice_id,
+            )
+            state = await conn.fetchval(
+                "SELECT state FROM garuda_practices WHERE practice_id = $1", practice_id
+            )
+        return [(r["transition_id"], r["evidence_id"], r["kind"]) for r in rows], state
+
+    @pytest.mark.parametrize(
+        ("label", "decision"),
+        [
+            ("approve", {"transition_id": "PR-06"}),
+            ("reject", {"transition_id": "PR-07", "customer_reason_key": _REASON}),
+        ],
+    )
+    async def test_the_filing_evidence_id_cannot_record_a_decision(
+        self, pool, order_repository, label, decision
+    ) -> None:
+        app = _make_app(pool)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            practice_id = await self._submitted(client, pool, order_repository, label)
+            response = await self._post(
+                client,
+                practice_id,
+                f"kind-{label}-decision-0001",
+                {**decision, "evidence_id": self._FILING},
+            )
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "INVALID_REQUEST"
+        assert await self._evidence_and_state(pool, practice_id) == (
+            [("PR-04", self._FILING, "filing")],
+            "Submitted",
+        )
+
+    async def test_a_rejection_with_its_own_evidence_id_is_recorded(
+        self, pool, order_repository
+    ) -> None:
+        app = _make_app(pool)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            practice_id = await self._submitted(client, pool, order_repository, "own")
+            response = await self._post(
+                client,
+                practice_id,
+                "kind-own-decision-0001",
+                {
+                    "transition_id": "PR-07",
+                    "customer_reason_key": self._REASON,
+                    "evidence_id": "evidence_rejection_0000001",
+                },
+            )
+        assert response.status_code == 200, response.text
+        assert await self._evidence_and_state(pool, practice_id) == (
+            [
+                ("PR-04", self._FILING, "filing"),
+                ("PR-07", "evidence_rejection_0000001", "rejection"),
+            ],
+            "Rejected",
+        )

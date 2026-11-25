@@ -91,6 +91,7 @@ def _client_row(*, assigned_to: str | None, created_by: str | None = None) -> di
         "id": 1,
         "assigned_to": assigned_to,
         "created_by": created_by if created_by is not None else assigned_to,
+        "email": "client@example.com",
     }
 
 
@@ -169,6 +170,16 @@ async def test_send_invitation_response_never_carries_token_or_any_link(
     # Negative-content check too — RAW_TOKEN must not appear anywhere in the
     # serialized response, not just under the keys we know about today.
     assert RAW_TOKEN not in repr(response)
+
+
+@pytest.fixture(autouse=True)
+def _mail_sender_is_mocked():
+    """The resend route mails the invitation: nothing in this file may reach Brevo."""
+    with patch(
+        "backend.app.routers.portal_invite.send_portal_invite_email",
+        new=AsyncMock(),
+    ):
+        yield
 
 
 @pytest.mark.asyncio

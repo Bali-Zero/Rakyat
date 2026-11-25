@@ -121,6 +121,11 @@ function normalizeMessagesResponse(
   };
 }
 
+/** The stored profile plus the contact fields filed as change requests. */
+export type ProfileUpdateResult = PortalProfile & {
+  contactChangeRequested: string[];
+};
+
 export class PortalApi {
   constructor(private client: ApiClientBase) {}
 
@@ -223,8 +228,10 @@ export class PortalApi {
   // Profile Update
   // ============================================================================
 
-  async updateProfile(data: UpdateProfileRequest): Promise<PortalProfile> {
-    const response = await this.client.request<PortalApiResponse<any>>(
+  async updateProfile(data: UpdateProfileRequest): Promise<ProfileUpdateResult> {
+    const response = await this.client.request<
+      PortalApiResponse<any> & { contact_change_requested?: string[] }
+    >(
       "/api/portal/profile",
       { method: "PATCH", body: JSON.stringify(data) },
     );
@@ -251,6 +258,7 @@ export class PortalApi {
             avatarUrl: d.assigned_to.avatar_url,
           }
         : undefined,
+      contactChangeRequested: response.contact_change_requested ?? [],
     };
   }
 

@@ -20,11 +20,12 @@ function deadlineColor(days: number): string {
   return "var(--bz-text-2)";
 }
 
-function CaseRow({ item }: { item: CaseSummary }) {
+export function CaseRow({ item }: { item: CaseSummary }) {
   const router = useRouter();
-  const deadlineDays = item.guarantee_proof_deadline
-    ? daysUntil(item.guarantee_proof_deadline)
-    : null;
+  const deadlineDays =
+    item.guarantee_gate_open && item.guarantee_proof_deadline
+      ? daysUntil(item.guarantee_proof_deadline)
+      : null;
 
   return (
     <button

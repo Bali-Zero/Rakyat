@@ -306,14 +306,10 @@ def test_get_client_timeline_not_found(client, mock_db_conn):
 
 def test_get_practice_history_happy_path(client, mock_db_conn):
     """Should return history for a practice."""
-    check_row = MagicMock()
-    check_row.__getitem__ = lambda self, key: {"id": 10, "client_id": 42}[key]
-
-    mock_db_conn.fetchrow.return_value = check_row
+    mock_db_conn.fetchval.return_value = 1
     mock_db_conn.fetch.return_value = []
 
-    with patch("backend.app.routers.crm_interactions.verify_client_access", new=AsyncMock()):
-        response = client.get("/api/crm/interactions/practice/10/history")
+    response = client.get("/api/crm/interactions/practice/10/history")
 
     assert response.status_code == 200
     data = response.json()
@@ -323,9 +319,10 @@ def test_get_practice_history_happy_path(client, mock_db_conn):
 
 def test_get_practice_history_not_found(client, mock_db_conn):
     """Should return 404 when practice doesn't exist."""
-    mock_db_conn.fetchrow.return_value = None
+    mock_db_conn.fetchval.return_value = None
     response = client.get("/api/crm/interactions/practice/999/history")
     assert response.status_code == 404
+    mock_db_conn.fetch.assert_not_awaited()
 
 
 # ============================================================

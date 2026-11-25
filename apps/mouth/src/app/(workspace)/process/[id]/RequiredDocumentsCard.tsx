@@ -40,6 +40,7 @@ import {
 } from "@/lib/types/required-documents";
 
 interface RequiredDocumentsCardProps {
+  readOnly?: boolean;
   practiceId: number;
 }
 
@@ -313,6 +314,7 @@ function DocumentReviewModal({
 // Main Component
 export function RequiredDocumentsCard({
   practiceId,
+  readOnly = false,
 }: RequiredDocumentsCardProps) {
   const {
     documents,
@@ -358,10 +360,12 @@ export function RequiredDocumentsCard({
               {stats.verified}/{stats.total}
             </Badge>
           </div>
-          <Button size="sm" onClick={() => setShowAddModal(true)}>
-            <Plus className="w-4 h-4 mr-1" />
-            Add
-          </Button>
+          {!readOnly && (
+            <Button size="sm" onClick={() => setShowAddModal(true)}>
+              <Plus className="w-4 h-4 mr-1" />
+              Add
+            </Button>
+          )}
         </div>
 
         {/* Progress Bar */}
@@ -392,18 +396,22 @@ export function RequiredDocumentsCard({
           <div className="p-8 text-center text-muted-foreground">
             <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p>No required documents set</p>
-            <p className="text-sm">
-              Add documents that the client needs to provide
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-4"
-              onClick={() => setShowAddModal(true)}
-            >
-              <Plus className="w-4 h-4 mr-1" />
-              Add First Document
-            </Button>
+            {!readOnly && (
+              <>
+                <p className="text-sm">
+                  Add documents that the client needs to provide
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => setShowAddModal(true)}
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add First Document
+                </Button>
+              </>
+            )}
           </div>
         ) : (
           documents.map((doc) => (
@@ -446,39 +454,41 @@ export function RequiredDocumentsCard({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1">
-                  {/* Every slot gets the status action: a document can reach
+                {!readOnly && (
+                  <div className="flex items-center gap-1">
+                    {/* Every slot gets the status action: a document can reach
                       the team through the Vault, WhatsApp or email, not only
                       through this slot's upload button. */}
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8"
-                    onClick={() => setReviewDoc(doc)}
-                    aria-label={
-                      doc.uploaded_by_client
-                        ? "Review document"
-                        : "Update status"
-                    }
-                    title={
-                      doc.uploaded_by_client
-                        ? "Review document"
-                        : "Update status"
-                    }
-                  >
-                    <Eye className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    onClick={() => handleDelete(doc.id)}
-                    disabled={processingId === doc.id}
-                    aria-label="Delete document"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() => setReviewDoc(doc)}
+                      aria-label={
+                        doc.uploaded_by_client
+                          ? "Review document"
+                          : "Update status"
+                      }
+                      title={
+                        doc.uploaded_by_client
+                          ? "Review document"
+                          : "Update status"
+                      }
+                    >
+                      <Eye className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      onClick={() => handleDelete(doc.id)}
+                      disabled={processingId === doc.id}
+                      aria-label="Delete document"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           ))

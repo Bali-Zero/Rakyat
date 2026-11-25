@@ -82,7 +82,12 @@ _EVIDENCE_KIND: dict[str, str] = {"submit": "filing", "approve": "approval", "re
 #: (they live on `garuda_practices` directly, not the evidence table), but
 #: they are staff-supplied opaque identifiers of the identical shape and
 #: deserve the identical guard, not a laxer one by omission.
-_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+#: Always applied with `fullmatch`: a Python `$` also matches before a final
+#: newline, which the database's `$` does not, so `match` let "<id>\n" through.
+_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,128}")
+#: Lowercase hex SHA-256, as the frozen contract's `DeliverPracticeTransition.
+#: artifact_digest` pattern and `garuda_practice_artifacts`' CHECK (313) state.
+_DIGEST_PATTERN = re.compile(r"[a-f0-9]{64}")
 
 
 def visible_or_403(row: asyncpg.Record, actor: dict[str, Any]) -> None:
@@ -122,7 +127,7 @@ def validate_transition_body(transition_id: str, body: dict) -> dict[str, Any]:
         return {"customer_reason_key": reason, "required_action_key": action, "private_staff_note": note}
     if spec.kind in ("submit", "approve"):
         evidence_id = body.get("evidence_id")
-        if not isinstance(evidence_id, str) or not _ID_PATTERN.match(evidence_id):
+        if not isinstance(evidence_id, str) or not _ID_PATTERN.fullmatch(evidence_id):
             _fail()
         return {"evidence_id": evidence_id}
     if spec.kind == "reject":
@@ -130,7 +135,7 @@ def validate_transition_body(transition_id: str, body: dict) -> dict[str, Any]:
         reason = body.get("customer_reason_key")
         if (
             not isinstance(evidence_id, str)
-            or not _ID_PATTERN.match(evidence_id)
+            or not _ID_PATTERN.fullmatch(evidence_id)
             or not isinstance(reason, str)
             or not reason.startswith(_REASON_PATTERN)
         ):
@@ -141,7 +146,7 @@ def validate_transition_body(transition_id: str, body: dict) -> dict[str, Any]:
         return {"evidence_id": evidence_id, "customer_reason_key": reason, "private_staff_note": note}
     if spec.kind == "resume":
         resolved_block_id = body.get("resolved_block_id")
-        if not isinstance(resolved_block_id, str) or not _ID_PATTERN.match(resolved_block_id):
+        if not isinstance(resolved_block_id, str) or not _ID_PATTERN.fullmatch(resolved_block_id):
             _fail()
         return {"resolved_block_id": resolved_block_id}
     if spec.kind == "deliver":
@@ -149,9 +154,9 @@ def validate_transition_body(transition_id: str, body: dict) -> dict[str, Any]:
         artifact_digest = body.get("artifact_digest")
         if (
             not isinstance(artifact_id, str)
-            or not _ID_PATTERN.match(artifact_id)
+            or not _ID_PATTERN.fullmatch(artifact_id)
             or not isinstance(artifact_digest, str)
-            or len(artifact_digest) != 64
+            or not _DIGEST_PATTERN.fullmatch(artifact_digest)
         ):
             _fail()
         return {"artifact_id": artifact_id, "artifact_digest": artifact_digest}
@@ -212,19 +217,23 @@ async def apply_transition(
     if spec.kind in _EVIDENCE_KIND:
         # An evidence_id already bound to a DIFFERENT practice is a
         # client-side mistake (evidence identifiers are meant to be
-        # practice-scoped), not a genuine conflict worth 409. A replay of
-        # the SAME (practice_id, evidence_id) pair is handled by the
-        # INSERT ... ON CONFLICT DO NOTHING below, not here.
-        other_owner = await conn.fetchval(
+        # practice-scoped), not a genuine conflict worth 409. So is one this
+        # practice already recorded as another kind (the filing id sent
+        # again to approve or reject): the INSERT below would skip it on
+        # the (practice_id, evidence_id) conflict and the transition would
+        # record no evidence of its own. A replay of the SAME pair and kind
+        # is handled by the INSERT ... ON CONFLICT DO NOTHING below.
+        recorded = await conn.fetchrow(
             """
-            SELECT practice_id FROM garuda_practice_evidence
-             WHERE evidence_id = $1 AND practice_id != $2
+            SELECT practice_id, kind FROM garuda_practice_evidence
+             WHERE evidence_id = $1
              LIMIT 1
             """,
             fields["evidence_id"],
-            practice_id,
         )
-        if other_owner is not None:
+        if recorded is not None and (
+            recorded["practice_id"] != practice_id or recorded["kind"] != _EVIDENCE_KIND[spec.kind]
+        ):
             raise HTTPException(
                 status_code=422, detail={"code": "INVALID_REQUEST", "retryable": False}
             )

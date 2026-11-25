@@ -41,7 +41,7 @@ export async function generateMetadata({
       title:
         "Bali Visa Agency 2026 | KITAS, Visit & Working Visa Indonesia | Bali Zero",
       description:
-        "Trusted visa agency in Bali. KITAS, KITAP, Visit Visa, Investor Visa & Working Permits handled end-to-end. 1000+ expats served. Fast processing, transparent pricing.",
+        "Bali visas and KITAS handled end to end by a licensed Indonesian team: visit visas, investor, working, family and retirement KITAS, documents, timelines.",
       keywords: [
         "bali visa agency",
         "visa agent bali",
@@ -57,7 +57,7 @@ export async function generateMetadata({
     company: {
       title: "PT PMA & Company Setup in Bali 2026 | Bali Zero",
       description:
-        "Need a business license in Indonesia? We handle PT PMA setup, OSS licensing, and NIB permits end-to-end. 5,000+ businesses registered.",
+        "Set up a PT PMA in Bali with a licensed Indonesian team: capital rules, KBLI choice, OSS licensing, notary deed, NPWP and bank account.",
       keywords: [
         "company registration bali",
         "business license indonesia",

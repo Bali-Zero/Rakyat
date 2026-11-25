@@ -34,11 +34,17 @@ import {
   QUOTED_PRICE_REQUIRED_TEXT_ID,
   STATUS_LABELS as STATUS_DROPDOWN_LABELS,
   getAllowedNextStatuses,
-  isQuotedPriceRefusal,
+  invoiceAmountRefusalText,
+  managedStageReason,
   needsQuotedPriceBefore,
   needsServiceBefore,
   type PracticeStatus,
 } from "@/lib/api/crm/state-machine";
+import {
+  acceptResponse,
+  useSessionIdentity,
+  type SessionIdentity,
+} from "@/lib/auth/session-identity";
 import { casesMetrics } from "@/lib/metrics/cases-metrics";
 import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
@@ -48,6 +54,7 @@ import {
   getStatusColumn,
 } from "@/components/process/kanban-colors";
 import { RequiredDocumentsCard } from "./RequiredDocumentsCard";
+import { FinalDeliveryCard } from "./FinalDeliveryCard";
 import { SelectServiceCard } from "./SelectServiceCard";
 import { InvoiceCompanyCard } from "./InvoiceCompanyCard";
 import {
@@ -111,10 +118,36 @@ const STATUS_INFO: Record<string, { label: string; icon: React.ReactNode }> = {
 };
 
 export default function CaseDetailPage() {
-  const router = useRouter();
+  const identity = useSessionIdentity();
   const params = useParams();
+  const caseId = params?.id ? Number(params.id) : null;
+  if (!identity) return null;
+  return (
+    <StaffProcessDetail
+      key={JSON.stringify([identity.sub, identity.epoch, caseId])}
+      identity={identity}
+      caseId={caseId}
+    />
+  );
+}
+
+async function readPractice(id: number, identity: SessionIdentity) {
+  const response = await api.requestWithCredential<Practice>(
+    `/api/crm/practices/${id}`,
+  );
+  if (!acceptResponse(response, identity)) throw new Error("Session changed");
+  return response.data;
+}
+
+function StaffProcessDetail({
+  identity,
+  caseId,
+}: {
+  identity: SessionIdentity;
+  caseId: number | null;
+}) {
+  const router = useRouter();
   const toast = useToast();
-  const caseId = params?.id ? parseInt(params.id as string) : null;
 
   const { options: teamMemberOptions } = useTeamMemberOptions();
   const [practice, setPractice] = useState<Practice | null>(null);
@@ -126,7 +159,7 @@ export default function CaseDetailPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   // Reduced to status + assignee + start date (kita-prune lot 6): priority,
-  // payment status and price already have their own inline editors on this
+  // payment status is maintained by Accounting and price has its own editor on this
   // page, so the modal no longer duplicates them.
   const [editForm, setEditForm] = useState({
     status: "",
@@ -144,9 +177,6 @@ export default function CaseDetailPage() {
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState("");
   const [isSavingNotes, setIsSavingNotes] = useState(false);
-
-  // Inline payment status update
-  const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
 
   // Inline priority cycle
   const [isUpdatingPriority, setIsUpdatingPriority] = useState(false);
@@ -211,6 +241,7 @@ export default function CaseDetailPage() {
   }, [caseId]);
 
   useEffect(() => {
+    let active = true;
     const loadPractice = async () => {
       if (!caseId) {
         setError("Invalid process ID");
@@ -232,7 +263,8 @@ export default function CaseDetailPage() {
 
       try {
         // ✅ Using dedicated GET endpoint for single practice (efficient: 1 query instead of loading 200 practices)
-        const foundPractice = await api.crm.getPractice(caseId);
+        const foundPractice = await readPractice(caseId, identity);
+        if (!active) return;
         const apiDuration = performance.now() - apiStart;
         casesMetrics.trackApiCall(
           `/api/crm/practices/${caseId}`,
@@ -251,6 +283,7 @@ export default function CaseDetailPage() {
           userEmail.current || undefined,
         );
       } catch (err) {
+        if (!active) return;
         const apiDuration = performance.now() - apiStart;
         casesMetrics.trackApiCall(
           `/api/crm/practices/${caseId}`,
@@ -276,12 +309,15 @@ export default function CaseDetailPage() {
           userEmail.current || undefined,
         );
       } finally {
-        setIsLoading(false);
+        if (active) setIsLoading(false);
       }
     };
 
-    loadPractice();
-  }, [caseId]);
+    void loadPractice();
+    return () => {
+      active = false;
+    };
+  }, [caseId, identity]);
 
   const formatDate = (dateString?: string | null) => {
     if (!dateString) return "Not set";
@@ -317,28 +353,6 @@ export default function CaseDetailPage() {
       toast.error("Failed to save notes", (err as Error).message);
     } finally {
       setIsSavingNotes(false);
-    }
-  };
-
-  const cyclePaymentStatus = async () => {
-    if (!practice || !caseId || isUpdatingPayment) return;
-    const cycle: string[] = ["unpaid", "partial", "paid"];
-    const current = practice.payment_status || "unpaid";
-    const nextIndex = (cycle.indexOf(current) + 1) % cycle.length;
-    const nextStatus = cycle[nextIndex];
-    setIsUpdatingPayment(true);
-    try {
-      const user = await api.getProfile();
-      const updatedPractice = await api.crm.updatePractice(caseId, {
-        payment_status: nextStatus,
-      });
-      applyPracticeUpdate(updatedPractice);
-      await invalidateClient();
-      toast.success("Payment status updated", `→ ${nextStatus}`);
-    } catch (err) {
-      toast.error("Failed to update payment status", (err as Error).message);
-    } finally {
-      setIsUpdatingPayment(false);
     }
   };
 
@@ -395,6 +409,7 @@ export default function CaseDetailPage() {
       !practice ||
       !caseId ||
       practice.status === newStatus ||
+      managedStageReason(newStatus) ||
       isJumpingStatus
     )
       return;
@@ -428,9 +443,7 @@ export default function CaseDetailPage() {
     } catch (err) {
       toast.error(
         "Failed to update status",
-        isQuotedPriceRefusal(err)
-          ? QUOTED_PRICE_REQUIRED_TEXT_ID
-          : (err as Error).message,
+        invoiceAmountRefusalText(err) ?? (err as Error).message,
       );
     } finally {
       setIsJumpingStatus(null);
@@ -481,7 +494,11 @@ export default function CaseDetailPage() {
       const user = await api.getProfile();
       const updates: Parameters<typeof api.crm.updatePractice>[1] = {};
 
-      if (editForm.status && editForm.status !== practice.status)
+      if (
+        editForm.status &&
+        editForm.status !== practice.status &&
+        !managedStageReason(editForm.status)
+      )
         updates.status = editForm.status;
       if (editForm.assigned_to !== (practice.assigned_to || ""))
         updates.assigned_to = editForm.assigned_to || null;
@@ -608,8 +625,9 @@ export default function CaseDetailPage() {
       // Status comes from ApiError.statusCode. The message tests remain only as a
       // fallback for errors that never went through the api client; a bare
       // `message.includes("404")` would also fire on a process id containing 404.
-      if (isQuotedPriceRefusal(err)) {
-        errorMessage = QUOTED_PRICE_REQUIRED_TEXT_ID;
+      const amountRefusal = invoiceAmountRefusalText(err);
+      if (amountRefusal) {
+        errorMessage = amountRefusal;
       } else if (err instanceof Error) {
         const status = err instanceof ApiError ? err.statusCode : undefined;
         if (
@@ -710,6 +728,7 @@ export default function CaseDetailPage() {
     );
   }
 
+  const canEdit = practice.can_edit_process === true;
   const statusInfo = STATUS_INFO[practice.status] || {
     label: practice.status,
     icon: <FileText className="w-4 h-4" />,
@@ -743,7 +762,7 @@ export default function CaseDetailPage() {
               breadcrumb duplicated the same /clients/{id} navigation). */}
         </div>
 
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-2 flex-wrap">
               <h1
@@ -811,9 +830,6 @@ export default function CaseDetailPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Payment status is edited from the Process Details card below
-                (kita-prune lot 6: this header duplicated the same cycle
-                button/state, `cyclePaymentStatus`, with no distinct role). */}
             {(practice.actual_price || practice.quoted_price) && (
               <div
                 className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg tabular-nums"
@@ -838,10 +854,12 @@ export default function CaseDetailPage() {
                 )}
               </div>
             )}
-            <Button variant="outline" size="sm" onClick={handleEditClick}>
-              <Edit className="w-4 h-4 mr-2" />
-              Edit
-            </Button>
+            {canEdit && (
+              <Button variant="outline" size="sm" onClick={handleEditClick}>
+                <Edit className="w-4 h-4 mr-2" />
+                Edit
+              </Button>
+            )}
             <div className="relative" ref={moreMenuRef}>
               <Button
                 variant="outline"
@@ -869,35 +887,42 @@ export default function CaseDetailPage() {
                   </button>
                   {/* WhatsApp/Email/profile actions live in the Client
                       Information card (main content, kita-prune lot 6). */}
-                  <div className="my-1 border-t border-[var(--bz-border)]" />
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_10%,transparent)] transition-colors"
-                    onClick={async () => {
-                      setShowMoreMenu(false);
-                      if (!caseId) return;
-                      const confirmed = window.confirm(
-                        "Delete this process? This action will cancel the process and cannot be undone.",
-                      );
-                      if (!confirmed) return;
-                      try {
-                        const user = await api.getProfile();
-                        await api.crm.deletePractice(caseId, user.email);
-                        await invalidateClient();
-                        sonnerToast.success("Process deleted");
-                        router.push("/process");
-                      } catch (err) {
-                        logger.error(
-                          "Failed to delete process",
-                          { component: "CaseDetail", action: "deleteProcess" },
-                          toError(err),
-                        );
-                        sonnerToast.error("Failed to delete process");
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete process
-                  </button>
+                  {canEdit && (
+                    <>
+                      <div className="my-1 border-t border-[var(--bz-border)]" />
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_10%,transparent)] transition-colors"
+                        onClick={async () => {
+                          setShowMoreMenu(false);
+                          if (!caseId) return;
+                          const confirmed = window.confirm(
+                            "Delete this process? This action will cancel the process and cannot be undone.",
+                          );
+                          if (!confirmed) return;
+                          try {
+                            const user = await api.getProfile();
+                            await api.crm.deletePractice(caseId, user.email);
+                            await invalidateClient();
+                            sonnerToast.success("Process deleted");
+                            router.push("/process");
+                          } catch (err) {
+                            logger.error(
+                              "Failed to delete process",
+                              {
+                                component: "CaseDetail",
+                                action: "deleteProcess",
+                              },
+                              toError(err),
+                            );
+                            sonnerToast.error("Failed to delete process");
+                          }
+                        }}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete process
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -955,7 +980,7 @@ export default function CaseDetailPage() {
           return false;
         });
         return (
-          <div className="mb-6 flex items-center gap-0">
+          <div className="mb-6 flex max-w-full items-center gap-0 overflow-x-auto py-1">
             {STEPS.map((step, idx) => {
               const isDone = idx < currentIdx;
               const isCurrent = idx === currentIdx;
@@ -970,13 +995,20 @@ export default function CaseDetailPage() {
                   <button
                     className="flex flex-col items-center gap-1 flex-shrink-0 group/step"
                     onClick={() => jumpToStatus(step.key)}
-                    disabled={isCurrent || !!isJumpingStatus || stepNeedsPrice}
+                    disabled={
+                      !canEdit ||
+                      isCurrent ||
+                      !!isJumpingStatus ||
+                      stepNeedsPrice ||
+                      Boolean(managedStageReason(step.key))
+                    }
                     title={
                       isCurrent
                         ? `Current: ${step.label}`
                         : stepNeedsPrice
                           ? `${step.label} — ${QUOTED_PRICE_REQUIRED_TEXT_ID}`
-                          : `Jump to: ${step.label}`
+                          : (managedStageReason(step.key) ??
+                            `Jump to: ${step.label}`)
                     }
                   >
                     <div
@@ -1052,12 +1084,44 @@ export default function CaseDetailPage() {
       })()}
 
       {/* Open inquiry: service still to be chosen (required before Documents) */}
-      {caseId && practice.practice_type_code === OPEN_INQUIRY_TYPE_CODE && (
-        <SelectServiceCard
-          practiceId={caseId}
-          onSaved={(saved) => applyPracticeUpdate(saved, { service: true })}
-        />
-      )}
+      {caseId &&
+        canEdit &&
+        practice.practice_type_code === OPEN_INQUIRY_TYPE_CODE && (
+          <SelectServiceCard
+            practiceId={caseId}
+            onSaved={(saved) => applyPracticeUpdate(saved, { service: true })}
+          />
+        )}
+
+      {caseId &&
+        (getStatusColumn(practice.status) === "completed" ||
+          (getStatusColumn(practice.status) === "on_process" &&
+            practice.payment_status === "paid")) && (
+          <FinalDeliveryCard
+            key={caseId}
+            practice={practice}
+            onComplete={() => {
+              setPractice((previous) =>
+                previous ? { ...previous, status: "completed" } : previous,
+              );
+              void readPractice(caseId, identity)
+                .then((updated) => {
+                  setPractice((previous) =>
+                    previous?.id === updated.id
+                      ? mergePracticeUpdate(previous, updated)
+                      : previous,
+                  );
+                })
+                .catch(() =>
+                  toast.error(
+                    "Refresh needed",
+                    "Reload the practice to see its latest completion details.",
+                  ),
+                );
+              void invalidateClient();
+            }}
+          />
+        )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
@@ -1240,6 +1304,7 @@ export default function CaseDetailPage() {
 
           {caseId && (
             <InvoiceCompanyCard
+              readOnly={!canEdit}
               practice={practice}
               onSaved={(patch) =>
                 setPractice((current) =>
@@ -1291,9 +1356,13 @@ export default function CaseDetailPage() {
                 </label>
                 <button
                   onClick={cyclePriority}
-                  disabled={isUpdatingPriority}
-                  title="Click to cycle: normal → high → urgent"
-                  aria-label="Cycle priority"
+                  disabled={!canEdit || isUpdatingPriority}
+                  title={
+                    canEdit
+                      ? "Click to cycle: normal → high → urgent"
+                      : undefined
+                  }
+                  aria-label={canEdit ? "Cycle priority" : "Priority"}
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium transition-colors cursor-pointer ${
                     practice.priority === "urgent"
                       ? "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_25%,transparent)]"
@@ -1320,28 +1389,12 @@ export default function CaseDetailPage() {
                 >
                   Payment Status
                 </label>
-                <button
-                  onClick={cyclePaymentStatus}
-                  disabled={isUpdatingPayment}
-                  title="Click to cycle: unpaid → partial → paid"
-                  aria-label="Cycle payment status"
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium transition-colors cursor-pointer ${
-                    practice.payment_status === "paid"
-                      ? "bg-[color-mix(in_srgb,var(--state-success)_15%,transparent)] text-[var(--state-success)] hover:bg-[color-mix(in_srgb,var(--state-success)_25%,transparent)]"
-                      : practice.payment_status === "partial"
-                        ? "bg-[color-mix(in_srgb,var(--state-warning)_15%,transparent)] text-[var(--state-warning)] hover:bg-[color-mix(in_srgb,var(--state-warning)_25%,transparent)]"
-                        : "bg-[color-mix(in_srgb,var(--state-danger)_15%,transparent)] text-[var(--state-danger)] hover:bg-[color-mix(in_srgb,var(--state-danger)_25%,transparent)]"
-                  }`}
+                <span
+                  className="inline-flex items-center rounded-full bg-[var(--bz-base)] px-3 py-1 text-sm capitalize"
+                  title="Updated by Accounting"
                 >
-                  {isUpdatingPayment ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                  )}
-                  <span className="capitalize">
-                    {practice.payment_status || "unpaid"}
-                  </span>
-                </button>
+                  {practice.payment_status || "unpaid"}
+                </span>
               </div>
 
               <div>
@@ -1390,8 +1443,9 @@ export default function CaseDetailPage() {
                     }}
                     className="font-medium hover:underline text-left transition-colors"
                     style={{ color: "var(--bz-text-1)" }}
-                    title="Click to edit"
-                    aria-label="Edit quoted price"
+                    disabled={!canEdit}
+                    title={canEdit ? "Click to edit" : undefined}
+                    aria-label={canEdit ? "Edit quoted price" : "Quoted price"}
                   >
                     {practice.quoted_price != null ? (
                       <Money value={practice.quoted_price} />
@@ -1448,8 +1502,9 @@ export default function CaseDetailPage() {
                     }}
                     className="font-medium hover:underline text-left transition-colors"
                     style={{ color: "var(--bz-text-1)" }}
-                    title="Click to edit"
-                    aria-label="Edit actual price"
+                    disabled={!canEdit}
+                    title={canEdit ? "Click to edit" : undefined}
+                    aria-label={canEdit ? "Edit actual price" : "Actual price"}
                   >
                     {practice.actual_price != null ? (
                       <Money value={practice.actual_price} />
@@ -1653,7 +1708,7 @@ export default function CaseDetailPage() {
                 <FileText className="w-5 h-5" />
                 Notes
               </h2>
-              {!isEditingNotes && (
+              {canEdit && !isEditingNotes && (
                 <button
                   onClick={() => setIsEditingNotes(true)}
                   className="p-1.5 rounded-lg transition-colors"
@@ -1714,9 +1769,9 @@ export default function CaseDetailPage() {
               </div>
             ) : (
               <div
-                className="cursor-pointer rounded-lg p-3 min-h-[80px] transition-colors"
+                className={`rounded-lg p-3 min-h-[80px] transition-colors ${canEdit ? "cursor-pointer" : ""}`}
                 style={{ background: "var(--bz-base)" }}
-                onClick={() => setIsEditingNotes(true)}
+                onClick={canEdit ? () => setIsEditingNotes(true) : undefined}
               >
                 {practice.notes ? (
                   <p
@@ -1730,7 +1785,7 @@ export default function CaseDetailPage() {
                     className="text-sm italic"
                     style={{ color: "var(--bz-text-2)" }}
                   >
-                    Click to add notes…
+                    {canEdit ? "Click to add notes…" : "No notes"}
                   </p>
                 )}
               </div>
@@ -1746,7 +1801,9 @@ export default function CaseDetailPage() {
               the primary instance for all three. */}
 
           {/* Required Documents */}
-          {caseId && <RequiredDocumentsCard practiceId={caseId} />}
+          {caseId && (
+            <RequiredDocumentsCard practiceId={caseId} readOnly={!canEdit} />
+          )}
 
           {/* Status History */}
           {practice.status_transitions &&
@@ -1847,7 +1904,7 @@ export default function CaseDetailPage() {
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
+      {isEditModalOpen && canEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div
             className="rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto"
@@ -1912,21 +1969,27 @@ export default function CaseDetailPage() {
                   }}
                 >
                   {getAllowedNextStatuses(
-                    editForm.status as PracticeStatus,
+                    practice.status as PracticeStatus,
                     isAdmin,
-                  ).map((status) => {
-                    const blocked = needsQuotedPriceBefore(
-                      status,
-                      practice?.quoted_price,
-                      practice?.status,
-                    );
-                    return (
-                      <option key={status} value={status} disabled={blocked}>
-                        {STATUS_DROPDOWN_LABELS[status] ?? status}
-                        {blocked ? ` — ${QUOTED_PRICE_REQUIRED_TEXT_ID}` : ""}
-                      </option>
-                    );
-                  })}
+                  )
+                    .filter(
+                      (status) =>
+                        status === practice.status ||
+                        !managedStageReason(status),
+                    )
+                    .map((status) => {
+                      const blocked = needsQuotedPriceBefore(
+                        status,
+                        practice?.quoted_price,
+                        practice?.status,
+                      );
+                      return (
+                        <option key={status} value={status} disabled={blocked}>
+                          {STATUS_DROPDOWN_LABELS[status] ?? status}
+                          {blocked ? ` — ${QUOTED_PRICE_REQUIRED_TEXT_ID}` : ""}
+                        </option>
+                      );
+                    })}
                 </select>
               </div>
 

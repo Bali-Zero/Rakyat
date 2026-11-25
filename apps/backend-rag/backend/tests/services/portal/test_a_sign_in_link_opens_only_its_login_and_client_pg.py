@@ -45,6 +45,9 @@ async def _used_at(pool, token: str):
 
 
 async def _redeem(pool, client: int, email: str) -> None:
+    # An invitation goes only to the address on the client record, so the
+    # address moves on the record first, as staff move it.
+    await pool.execute("UPDATE clients SET email = $2 WHERE id = $1", client, email)
     service = InviteService(pool)
     invite = await service.create_invitation(client, email, "staff@example.test")
     await service.complete_registration(invite["token"], "123456")

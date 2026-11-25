@@ -17,6 +17,7 @@ import {
 } from "../InvoiceCompanyField";
 
 interface Props {
+  readOnly?: boolean;
   practice: Practice;
   /** Only the invoice fields this card owns, so a delayed response cannot restore older ones. */
   onSaved: (
@@ -30,7 +31,11 @@ function savedValue(practice: Practice): InvoiceCompanyValue {
     : EMPTY_INVOICE_COMPANY;
 }
 
-export function InvoiceCompanyCard({ practice, onSaved }: Props) {
+export function InvoiceCompanyCard({
+  practice,
+  onSaved,
+  readOnly = false,
+}: Props) {
   const [value, setValue] = useState<InvoiceCompanyValue>(() =>
     savedValue(practice),
   );
@@ -138,28 +143,34 @@ export function InvoiceCompanyCard({ practice, onSaved }: Props) {
       >
         Invoice to company
       </h2>
-      <InvoiceCompanyField
-        clientId={practice.client_id}
-        practiceTypeCode={practice.practice_type_code}
-        value={value}
-        onChange={(next) => {
-          setAmbiguity(null);
-          setLabel(null);
-          setClearIntent(next === EMPTY_INVOICE_COMPANY);
-          setValue(next);
-        }}
-        savedName={label ?? practice.invoice_company_name}
-        autofill={!hasCompany}
-        ambiguity={ambiguity}
-        onPickCandidate={(id, name) => {
-          // The pick becomes the draft first, so a failed save is retried as the pick.
-          const picked = { companyId: id, name: "", npwp: "" };
-          setValue(picked);
-          setLabel(name);
-          void save(picked);
-        }}
-        disabled={isSaving}
-      />
+      {readOnly ? (
+        <p className="text-sm text-[var(--bz-text-2)]">
+          {practice.invoice_company_name || "Individual"}
+        </p>
+      ) : (
+        <InvoiceCompanyField
+          clientId={practice.client_id}
+          practiceTypeCode={practice.practice_type_code}
+          value={value}
+          onChange={(next) => {
+            setAmbiguity(null);
+            setLabel(null);
+            setClearIntent(next === EMPTY_INVOICE_COMPANY);
+            setValue(next);
+          }}
+          savedName={label ?? practice.invoice_company_name}
+          autofill={!hasCompany}
+          ambiguity={ambiguity}
+          onPickCandidate={(id, name) => {
+            // The pick becomes the draft first, so a failed save is retried as the pick.
+            const picked = { companyId: id, name: "", npwp: "" };
+            setValue(picked);
+            setLabel(name);
+            void save(picked);
+          }}
+          disabled={isSaving}
+        />
+      )}
       {incomplete && (
         <p role="alert" className="mt-2 text-xs text-[var(--state-danger)]">
           Enter the company name too, or clear the NPWP.

@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from backend.services.pii.violation_store import hash_subject
 from backend.services.portal.portal_service import PortalService
@@ -102,6 +103,7 @@ async def test_get_documents_shapes_client_visible_rows() -> None:
             "practice_id": 3,
             "practice_name": "KITAS",
             "document_purpose": "Passport for KITAS renewal",
+            "can_remove": True,
         },
     ]
 
@@ -127,6 +129,7 @@ async def test_get_documents_shapes_client_visible_rows() -> None:
             "practice_id": 3,
             "practice_name": "KITAS",
             "downloadable": True,
+            "can_remove": True,
             "created_at": created_at.isoformat(),
             "purpose": "Passport for KITAS renewal",
         },
@@ -1819,3 +1822,93 @@ async def test_oauth_missing_client_root_is_persisted_under_creation_lock(monkey
     assert operations[1][1] == ("client-root", 42)
     assert "pg_advisory_unlock" in operations[2][0]
     assert drive.upload_file_to_folder.await_args.kwargs["folder_id"] == "profile-folder"
+
+
+@pytest.mark.asyncio
+async def test_portal_final_delivery_is_locked_and_refuses_client_soft_delete():
+    service, conn = _make_service_with_fetchrow(row=None)
+    conn.fetchrow.side_effect = [{"id": 19}, None]
+    with pytest.raises(HTTPException) as error:
+        await service.soft_delete_document(
+            1, 19, current_user={"client_id": 1, "email": "client@example.test"}
+        )
+    assert error.value.status_code == 409
+    lock, write = conn.fetchrow.await_args_list
+    assert "FOR UPDATE" in lock.args[0] and lock.args[1:] == (19, 1)
+    assert "NOT EXISTS (SELECT 1 FROM practice_delivery_slots" in write.args[0]
+    conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notice_html_body_escapes_values_from_the_client_and_the_form() -> None:
+    markup_type = '<a href="https://example.invalid/x">open</a>'
+    markup_name = "Zz <b>Client</b> & Co"
+    markup_file = "<img src=x>.pdf"
+    service, _conn = _make_service_with_fetchrow(
+        {"full_name": markup_name, "assigned_to": "lead@example.com"}
+    )
+    notice = MagicMock()
+    notice.send_document_notification = AsyncMock()
+
+    await service._notify_lead_about_document(
+        client_id=1,
+        document_name=markup_file,
+        document_type=markup_type,
+        expiry_date="2030-01-01",
+        drive_url="https://example.invalid/<s>",
+        gate_notice_adapter=notice,
+    )
+
+    sent = notice.send_document_notification.call_args.kwargs
+    html_body = sent["html_body"]
+    for raw in ("<a ", "<b>", "<img", "<s>"):
+        assert raw not in html_body
+    assert "&lt;img src=x&gt;.pdf" in html_body
+    assert "&lt;b&gt;Client&lt;/b&gt; &amp; Co" in html_body
+    assert "&lt;A " in html_body
+    assert "<br>" in html_body
+    assert "\n" not in sent["subject"]
+
+
+@pytest.mark.asyncio
+async def test_notice_subject_carries_no_line_break_from_the_client_name() -> None:
+    service, _conn = _make_service_with_fetchrow(
+        {"full_name": "Zz Client\r\nBcc: other@example.com", "assigned_to": "lead@example.com"}
+    )
+    notice = MagicMock()
+    notice.send_document_notification = AsyncMock()
+
+    await service._notify_lead_about_document(
+        client_id=1,
+        document_name="passport.pdf",
+        document_type="passport",
+        gate_notice_adapter=notice,
+    )
+
+    subject = notice.send_document_notification.call_args.kwargs["subject"]
+    assert "\n" not in subject and "\r" not in subject
+    assert subject.startswith("📄 New Document Uploaded - Zz Client")
+
+
+@pytest.mark.asyncio
+async def test_notice_plain_text_keeps_values_as_written() -> None:
+    service, _conn = _make_service_with_fetchrow(
+        {"full_name": "Zz <Client>", "assigned_to": "lead@example.com"}
+    )
+    zoho = MagicMock()
+    zoho.send_email = AsyncMock()
+
+    with (
+        patch.dict("os.environ", {"INTERNAL_EMAIL_API_URL": "http://127.0.0.1:9/x"}),
+        patch("httpx.AsyncClient.post", AsyncMock(side_effect=RuntimeError("down"))),
+        patch(
+            "backend.services.integrations.zoho_email_service.ZohoEmailService",
+            return_value=zoho,
+        ),
+    ):
+        await service._notify_lead_about_document(
+            client_id=1, document_name="a&b.pdf", document_type="passport"
+        )
+
+    text_body = zoho.send_email.call_args.kwargs["body"]
+    assert "Zz <Client>" in text_body and "a&b.pdf" in text_body

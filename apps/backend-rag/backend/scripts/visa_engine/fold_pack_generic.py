@@ -221,6 +221,10 @@ def attestation_instant(
                 _fail(
                     f"{label}: a receipt names {receipt.get('canonical_url')!r}, not the record's canonical_url"
                 )
+            if "final_url" in receipt and receipt["final_url"] != record["canonical_url"]:
+                _fail(
+                    f"{label}: a receipt finished at {receipt['final_url']!r}, not the record's canonical_url"
+                )
             instant = _parse_utc(receipt["fetched_at"], what=f"{record_id[:8]} fetched_at")
             if instant > now:
                 _fail(f"{label}: receipt fetched_at {receipt['fetched_at']!r} is in the future")

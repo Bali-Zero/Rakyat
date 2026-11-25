@@ -127,6 +127,13 @@ export interface CaseSummary {
   /** ISO date, present once the Day-90 anchor (entry/ITAS) is known. */
   guarantee_proof_deadline?: string | null;
   stayguard_eligible: boolean;
+  /**
+   * Server-side rule (`E33Case.guarantee_gate_open`): the Day-90 proof is still
+   * due — stage itas_active / guarantee_proof_due AND evidence not complete.
+   * The deadline stays on the row for the whole life of the case, so the
+   * countdown must be shown only while this is true. No client-side recomputation.
+   */
+  guarantee_gate_open: boolean;
   dependent_code?: string | null;
   principal_case_id?: string | null;
   created_at: string;
@@ -141,8 +148,12 @@ export interface CaseListResponse {
 export interface DependentLinkView {
   code: string;
   client_id: number;
-  relationship: string;
-  /** Not guaranteed by the spec's fixed shapes — optional convenience join. */
+  /** No stored source today: the API sends null and the dependent code says what it is. */
+  relationship: string | null;
+  /** The dependent's own case, so the console can link to it. */
+  case_id?: string;
+  stage?: string;
+  /** Joined from the dependent's client record. */
   client_name?: string;
 }
 

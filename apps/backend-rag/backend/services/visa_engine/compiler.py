@@ -127,13 +127,6 @@ from backend.services.visa_engine.models import (
 #: eligibility, or review rules").
 _LEGAL_STAGES = frozenset({RuleStage.HARD_FILTER, RuleStage.ELIGIBILITY, RuleStage.HUMAN_REVIEW})
 
-#: Leaf operators that carry no comparison semantics — a rule whose `when`
-#: uses only these (plus `all`/`any`/`not` combinators) cannot manufacture
-#: positive eligibility from mere presence/absence (spec §2 compiler-only
-#: invariant "Eligibility rules cannot derive positive support solely from
-#: known, unknown, or absence tests").
-_PRESENCE_ONLY_OPERATORS = frozenset({"known", "unknown"})
-
 #: Spec §2 compiler-only invariant: "Maximum ... rules 4096, products 256".
 #: Redundant with `RulePackPayload.rules`/`.products`'s own `max_length`
 #: `Field` constraint (bypass-proof re-check, see module docstring).
@@ -241,6 +234,7 @@ def compile_rule_pack(
     _check_support_purposes_on_product(payload, errors)
     _check_extension_policy_status(payload, errors)
     _check_unique_ids(payload, errors)
+    _check_valid_periods(payload, errors)
     _check_utc_and_nfc(payload, errors)
     _check_pack_size_limits(payload, errors)
 
@@ -556,20 +550,41 @@ def _check_eligibility_not_presence_only(
     for rule in rules:
         if rule.stage is not RuleStage.ELIGIBILITY:
             continue
-        leaf_ops = _safe_ast_call(rule, ast_module.collect_leaf_operators, errors=errors)
-        if leaf_ops is None:
-            continue
-        if leaf_ops and leaf_ops.issubset(_PRESENCE_ONLY_OPERATORS):
+        presence_only = _safe_ast_call(
+            rule, lambda when: _satisfiable_by_presence_alone(when, True), errors=errors
+        )
+        if presence_only:
             errors.append(
                 CompilationError(
                     code="ELIGIBILITY_RULE_PRESENCE_ONLY",
                     message=(
-                        "ELIGIBILITY rule's `when` uses only known/unknown presence "
-                        "tests — cannot derive positive support"
+                        "ELIGIBILITY rule's `when` can be satisfied through known/unknown "
+                        "presence tests alone — cannot derive positive support"
                     ),
                     rule_id=rule.rule_id,
                 )
             )
+
+
+def _satisfiable_by_presence_alone(node: object, positive: bool) -> bool:
+    """True iff ``node`` can evaluate to ``positive`` (TRUE when ``True``,
+    FALSE when ``False``) with the outcome decided by presence tests alone,
+    i.e. without any value comparison having to hold.
+
+    A presence leaf can be steered either way by presence alone; any other
+    leaf cannot. ``all``/``any`` flip between "every child" and "some child"
+    with the polarity, and ``not`` flips the polarity, so every branch of the
+    tree is read rather than only the flat set of leaf operators.
+    """
+    if isinstance(node, ast_module.PresenceCondition):
+        return True
+    if isinstance(node, ast_module.NotCondition):
+        return _satisfiable_by_presence_alone(node.arg, not positive)
+    if isinstance(node, (ast_module.AllCondition, ast_module.AnyCondition)):
+        children = [_satisfiable_by_presence_alone(arg, positive) for arg in node.args]
+        needs_every_child = isinstance(node, ast_module.AllCondition) == positive
+        return all(children) if needs_every_child else any(children)
+    return False
 
 
 def _check_stage_effect_compatibility(
@@ -1231,6 +1246,62 @@ def _check_utc_and_nfc(payload: RulePackPayload, errors: list[CompilationError])
                     message=f"payload.{path} is not UTC (missing 'Z' suffix): {text!r}",
                 )
             )
+
+
+def _period_is_ordered(period: TimeRange) -> bool:
+    """True iff the half-open ``[from_, to)`` interval is non-empty."""
+    return period.to is None or period.from_ < period.to
+
+
+def _periods_overlap(a: TimeRange, b: TimeRange) -> bool:
+    """True iff two half-open ``[from_, to)`` intervals share a moment."""
+    a_starts_before_b_ends = b.to is None or a.from_ < b.to
+    b_starts_before_a_ends = a.to is None or b.from_ < a.to
+    return a_starts_before_b_ends and b_starts_before_a_ends
+
+
+def _check_valid_periods(payload: RulePackPayload, errors: list[CompilationError]) -> None:
+    """A ``valid_period`` is the half-open ``[from_, to)``: ``to <= from_``
+    describes an interval that contains no moment, so the rule or product it
+    belongs to would never be in force. Also, a PRODUCTS-scoped rule whose
+    period shares no moment with a product it names can never apply to it.
+    """
+    products_by_id = {product.product_version_id: product for product in payload.products}
+    for product in payload.products:
+        if not _period_is_ordered(product.valid_period):
+            errors.append(
+                CompilationError(
+                    code="INVALID_TIME_RANGE",
+                    message="valid_period must satisfy from < to (empty or inverted interval)",
+                    product_code=product.product_code,
+                )
+            )
+    for rule in payload.rules:
+        if not _period_is_ordered(rule.valid_period):
+            errors.append(
+                CompilationError(
+                    code="INVALID_TIME_RANGE",
+                    message="valid_period must satisfy from < to (empty or inverted interval)",
+                    rule_id=rule.rule_id,
+                )
+            )
+            continue
+        for product_version_id in rule.product_version_ids or ():
+            product = products_by_id.get(product_version_id)
+            if product is None or not _period_is_ordered(product.valid_period):
+                continue  # unknown ref / bad product period reported elsewhere
+            if not _periods_overlap(rule.valid_period, product.valid_period):
+                errors.append(
+                    CompilationError(
+                        code="RULE_PERIOD_DISJOINT_FROM_PRODUCT",
+                        message=(
+                            "valid_period shares no moment with the valid_period of "
+                            f"product {product.product_code}"
+                        ),
+                        rule_id=rule.rule_id,
+                        product_code=product.product_code,
+                    )
+                )
 
 
 def _check_pack_size_limits(payload: RulePackPayload, errors: list[CompilationError]) -> None:

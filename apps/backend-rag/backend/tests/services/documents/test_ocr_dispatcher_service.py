@@ -393,9 +393,8 @@ async def test_kg_hook_off_by_default():
 
 
 @pytest.mark.asyncio
-async def test_kg_hook_fires_when_flag_on(monkeypatch):
-    """With CRM_KG_ENABLED=true, dispatcher must call kg_link_document
-    after successful OCR with the extracted fields."""
+async def test_passport_never_links_kg_when_flag_on(monkeypatch):
+    """Passport fields remain document-confined even if KG is enabled."""
     monkeypatch.setenv("CRM_KG_ENABLED", "true")
     from backend.services.documents.ocr_dispatcher_service import dispatch_ocr_by_folder
 
@@ -422,13 +421,7 @@ async def test_kg_hook_fires_when_flag_on(monkeypatch):
             filename="passport.pdf",
         )
 
-        mock_kg.assert_called_once()
-        call_kwargs = mock_kg.call_args.kwargs
-        assert call_kwargs["file_id"] == "drive_x"
-        assert call_kwargs["client_id"] == 42
-        assert call_kwargs["document_type"] == "passport"
-        assert call_kwargs["extracted_fields"] == extracted
-        assert call_kwargs["filename"] == "passport.pdf"
+        mock_kg.assert_not_called()
 
 
 @pytest.mark.asyncio

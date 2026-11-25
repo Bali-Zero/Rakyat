@@ -301,3 +301,138 @@ class TestBuildCompiledPackPrecondition:
     def test_innocent_pack_never_raises(self, minimal_valid_pack: M.RulePack) -> None:
         compiled = build_compiled_pack(minimal_valid_pack)
         assert isinstance(compiled, CompiledRulePack)
+
+
+def _period_pack(
+    *,
+    rule_period: dict[str, str | None] | None = None,
+    product_period: dict[str, str | None] | None = None,
+    scope: str = "GLOBAL",
+) -> M.RulePack:
+    source_id = B.new_uuid()
+    product_id = B.new_uuid()
+    src = B.source_record(source_id=source_id)
+    prod_kwargs = {"valid_period": product_period} if product_period else {}
+    prod = B.product(product_id=product_id, source_id=source_id, **prod_kwargs)
+    rule_kwargs: dict[str, object] = {}
+    if rule_period:
+        rule_kwargs["valid_period"] = rule_period
+    if scope == "PRODUCTS":
+        rule_kwargs["product_version_ids"] = [product_id]
+    rule = B.rule(
+        rule_id="period-rule",
+        stage="HARD_FILTER",
+        scope=scope,
+        when={"op": "gt", "fact": "immigration.overstay_days", "value": 60},
+        effect={"type": "EXCLUDE", "reason_code": "OVERSTAY"},
+        source_id=source_id,
+        required_facts=["immigration.overstay_days"],
+        **rule_kwargs,
+    )
+    payload = B.rule_pack_payload(rules=[rule], products=[prod], source_records=[src])
+    return M.RulePack(**B.rule_pack_envelope(payload))
+
+
+def _codes(pack: M.RulePack) -> set[str]:
+    return {e.code for e in compile_rule_pack(pack, fact_registry=FactRegistry()).errors}
+
+
+class TestValidPeriodOrdering:
+    def test_inverted_rule_period_fails(self) -> None:
+        pack = _period_pack(
+            rule_period=B.time_range(start="2026-08-01T00:00:00Z", end="2026-07-01T00:00:00Z")
+        )
+        assert "INVALID_TIME_RANGE" in _codes(pack)
+
+    def test_empty_rule_period_fails(self) -> None:
+        pack = _period_pack(
+            rule_period=B.time_range(start="2026-08-01T00:00:00Z", end="2026-08-01T00:00:00Z")
+        )
+        assert "INVALID_TIME_RANGE" in _codes(pack)
+
+    def test_inverted_and_empty_product_period_fail(self) -> None:
+        for end in ("2026-07-01T00:00:00Z", B.UTC_NOW):
+            pack = _period_pack(product_period=B.time_range(end=end))
+            assert "INVALID_TIME_RANGE" in _codes(pack)
+
+    def test_valid_periods_compile(self) -> None:
+        pack = _period_pack(rule_period=B.time_range(end="2027-01-01T00:00:00Z"))
+        assert compile_rule_pack(pack, fact_registry=FactRegistry()).ok
+
+    def test_open_ended_period_compiles(self) -> None:
+        assert compile_rule_pack(_period_pack(), fact_registry=FactRegistry()).ok
+
+
+class TestRulePeriodAgainstProductPeriod:
+    def test_disjoint_products_rule_fails(self) -> None:
+        pack = _period_pack(
+            scope="PRODUCTS",
+            product_period=B.time_range(start="2026-01-01T00:00:00Z", end="2026-02-01T00:00:00Z"),
+            rule_period=B.time_range(start="2026-03-01T00:00:00Z"),
+        )
+        assert "RULE_PERIOD_DISJOINT_FROM_PRODUCT" in _codes(pack)
+
+    def test_touching_half_open_periods_are_disjoint(self) -> None:
+        pack = _period_pack(
+            scope="PRODUCTS",
+            product_period=B.time_range(start="2026-01-01T00:00:00Z", end="2026-02-01T00:00:00Z"),
+            rule_period=B.time_range(start="2026-02-01T00:00:00Z"),
+        )
+        assert "RULE_PERIOD_DISJOINT_FROM_PRODUCT" in _codes(pack)
+
+    def test_a_rule_ending_where_the_product_starts_is_disjoint(self) -> None:
+        pack = _period_pack(
+            scope="PRODUCTS",
+            product_period=B.time_range(start="2026-02-01T00:00:00Z"),
+            rule_period=B.time_range(start="2026-01-01T00:00:00Z", end="2026-02-01T00:00:00Z"),
+        )
+        assert "RULE_PERIOD_DISJOINT_FROM_PRODUCT" in _codes(pack)
+
+    def test_overlapping_products_rule_compiles(self) -> None:
+        pack = _period_pack(
+            scope="PRODUCTS",
+            product_period=B.time_range(start="2026-01-01T00:00:00Z", end="2026-03-01T00:00:00Z"),
+            rule_period=B.time_range(start="2026-02-01T00:00:00Z"),
+        )
+        assert compile_rule_pack(pack, fact_registry=FactRegistry()).ok
+
+
+class TestRulesForWindowAndPriorityOrder:
+    def test_lower_priority_sorts_first_then_rule_id(self) -> None:
+        source_id = B.new_uuid()
+        src = B.source_record(source_id=source_id)
+        prod = B.product(product_id=B.new_uuid(), source_id=source_id)
+        rules = [
+            B.rule(
+                rule_id=rule_id,
+                stage="HARD_FILTER",
+                scope="GLOBAL",
+                priority=priority,
+                when={"op": "gt", "fact": "immigration.overstay_days", "value": 60},
+                effect={"type": "EXCLUDE", "reason_code": "OVERSTAY"},
+                source_id=source_id,
+                required_facts=["immigration.overstay_days"],
+            )
+            for rule_id, priority in [("b-rule", 10), ("c-rule", 5), ("a-rule", 10)]
+        ]
+        payload = B.rule_pack_payload(rules=rules, products=[prod], source_records=[src])
+        compiled = build_compiled_pack(
+            M.RulePack(**B.rule_pack_envelope(payload)), fact_registry=FactRegistry()
+        )
+        ids = [
+            r.rule_id for r in compiled.rules_for(compiled.products[0], effective_at=_EFFECTIVE_AT)
+        ]
+        assert ids == ["c-rule", "a-rule", "b-rule"]
+
+    def test_window_includes_from_and_excludes_to(self) -> None:
+        compiled, product = _build_temporal_pack(
+            [("window-rule", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")]
+        )
+
+        def ids(moment: datetime) -> list[str]:
+            return [r.rule_id for r in compiled.rules_for(product, effective_at=moment)]
+
+        assert ids(datetime(2026, 1, 1, tzinfo=timezone.utc)) == ["window-rule"]
+        assert ids(datetime(2026, 2, 1, tzinfo=timezone.utc)) == []
+        assert ids(datetime(2026, 1, 31, 23, 59, 59, tzinfo=timezone.utc)) == ["window-rule"]
+        assert ids(datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)) == []

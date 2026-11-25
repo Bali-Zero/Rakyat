@@ -102,6 +102,18 @@ describe("createCaseSchema", () => {
       owner_email: "",
     });
     expect(empty.success).toBe(true);
+    // ...but a blank owner is dropped from the parsed body, never posted as ''.
+    expect(empty.success && empty.data.owner_email).toBeUndefined();
+
+    const whitespace = createCaseSchema.safeParse({
+      client_id: 1,
+      basis: "deposit",
+      owner_email: "   ",
+    });
+    expect(whitespace.success && whitespace.data.owner_email).toBeUndefined();
+    expect(JSON.stringify(whitespace.success && whitespace.data)).not.toContain(
+      "owner_email",
+    );
   });
 
   it("never carries a note field through to the parsed output (backend dropped it — 2026-08-19 reconciliation)", () => {

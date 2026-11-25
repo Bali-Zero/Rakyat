@@ -21,6 +21,43 @@ import type {
 } from "@/lib/api/secondhome/secondhome.types";
 import { useCreateSecondHomeCase } from "@/hooks/useSecondHome";
 import { ClientPicker } from "../components/ClientPicker";
+import { COPY } from "@/lib/secondhome-studio/copy";
+import {
+  E33_LIVE_PRICE_CATEGORY,
+  E33_LIVE_PRICE_KEY,
+  E33E_LIVE_PRICE_KEY,
+  E33F_OFFSHORE_LIVE_PRICE_KEY,
+} from "@/lib/secondhome-studio/pricing-key";
+import {
+  getExactSnapshotPrice,
+  getPricingSnapshotEntry,
+} from "@/lib/pricing-snapshot";
+
+// Facts for the staff panel, read from the catalogue snapshot (same rows the
+// public studio resolves through usePricingData).
+const E33_ENTRY = getPricingSnapshotEntry(
+  E33_LIVE_PRICE_CATEGORY,
+  E33_LIVE_PRICE_KEY,
+);
+const E33E_ENTRY = getPricingSnapshotEntry(
+  E33_LIVE_PRICE_CATEGORY,
+  E33E_LIVE_PRICE_KEY,
+);
+const E33F_ENTRY = getPricingSnapshotEntry(
+  E33_LIVE_PRICE_CATEGORY,
+  E33F_OFFSHORE_LIVE_PRICE_KEY,
+);
+
+const CATALOGUE_DESCRIPTION_UNAVAILABLE =
+  "Catalogue description unavailable — check the E33F catalogue entry before opening this case.";
+const CATALOGUE_VALIDITY_UNAVAILABLE = "catalogue validity unavailable";
+
+function catalogueTextOrUnavailable(
+  value: string | null | undefined,
+  unavailable: string,
+): string {
+  return typeof value === "string" && value.trim() ? value : unavailable;
+}
 
 const DEPENDENT_CODE_OPTIONS: { value: DependentCode; label: string }[] = [
   { value: "E31B", label: "E31B — Spouse" },
@@ -34,6 +71,14 @@ const inputClass =
 const labelClass = "text-sm font-medium text-[var(--foreground)] mb-1.5 block";
 
 export default function NewSecondHomeCasePage() {
+  const e33Price = getExactSnapshotPrice(
+    E33_LIVE_PRICE_CATEGORY,
+    E33_LIVE_PRICE_KEY,
+  );
+  const e33ePrice = getExactSnapshotPrice(
+    E33_LIVE_PRICE_CATEGORY,
+    E33E_LIVE_PRICE_KEY,
+  );
   const router = useRouter();
   const toast = useToast();
   const createCase = useCreateSecondHomeCase();
@@ -107,7 +152,7 @@ export default function NewSecondHomeCasePage() {
       client_id: selectedClient?.id,
       basis,
       practice_id: practiceId ? Number(practiceId) : undefined,
-      owner_email: ownerEmail,
+      owner_email: ownerEmail.trim() || undefined,
       dependent_code: isDependent && dependentCode ? dependentCode : undefined,
       principal_case_id: isDependent ? principalCaseId : undefined,
     });
@@ -158,30 +203,50 @@ export default function NewSecondHomeCasePage() {
         </div>
       </div>
 
-      {/* Confirmed-facts info panel — no forbidden claims, no dependent
-          pricing, no price decomposition. */}
-      <div className="rounded-lg border border-[var(--accent)]/20 bg-[var(--accent)]/5 p-4 flex gap-3">
+      {/* Confirmed-facts info panel — every fact comes from the studio copy
+          (COPY) or the generated catalogue snapshot, never from a literal
+          here: no forbidden claims, no hardcoded price, no dependent pricing. */}
+      <div
+        data-testid="e33-facts-panel"
+        className="rounded-lg border border-[var(--accent)]/20 bg-[var(--accent)]/5 p-4 flex gap-3"
+      >
         <Info className="w-4 h-4 text-[var(--accent)] shrink-0 mt-0.5" />
         <div className="text-xs text-[var(--foreground-muted)] space-y-1.5">
           <p>
-            <strong className="text-[var(--foreground)]">Base E33</strong> — USD
-            130,000 own-name deposit at a state-owned (BUMN) bank, or a
-            completed strata-title property worth USD 1,000,000 (BERSYARAT —
-            completed titles only). No sponsor. First grant up to 5 years;
-            renewal follows Permenkumham 22/2023 Pasal 113 cumulative caps.
+            <strong className="text-[var(--foreground)]">Base E33</strong> —{" "}
+            {COPY.wizard.capital.body} The alternative route is a completed
+            strata-title property (BERSYARAT — completed titles only).{" "}
+            {COPY.wizard.property.why} No sponsor. First grant up to{" "}
+            {catalogueTextOrUnavailable(
+              E33_ENTRY?.validity,
+              CATALOGUE_VALIDITY_UNAVAILABLE,
+            )}
+            ; renewal follows Permenkumham 22/2023 Pasal 113 cumulative caps.
           </p>
           <p>
             <strong className="text-[var(--foreground)]">E33E</strong> —
-            retirement KITAS, senior 55+, 5 years, USD 50,000 deposit + USD
-            3,000/month income, IDR 45,000,000 all-inclusive (not the IDR
-            35,000,000 base E33; ages 55–59 handled as a signed-disclosure
-            band). <strong className="text-[var(--foreground)]">E33F</strong> —
-            senior 55+, USD 3,000/month passive income only, no deposit.
+            retirement KITAS, senior 55+,{" "}
+            {catalogueTextOrUnavailable(
+              E33E_ENTRY?.validity,
+              CATALOGUE_VALIDITY_UNAVAILABLE,
+            )}
+            . {COPY.wizard.seniorFunding.why} Ages 55–59 are handled as a
+            signed-disclosure band.
           </p>
           <p>
-            <strong className="text-[var(--foreground)]">Price</strong> — IDR
-            35,000,000 all-inclusive (base E33). Dependent pricing is not live
-            yet.
+            <strong className="text-[var(--foreground)]">E33F</strong> —{" "}
+            {catalogueTextOrUnavailable(
+              E33F_ENTRY?.description_en,
+              CATALOGUE_DESCRIPTION_UNAVAILABLE,
+            )}
+          </p>
+          <p>
+            <strong className="text-[var(--foreground)]">Price</strong> —{" "}
+            {e33Price
+              ? `${e33Price} all-inclusive (base E33)`
+              : "see catalogue"}
+            {e33ePrice ? `; ${e33ePrice} (E33E)` : ""}. Dependent pricing is not
+            live yet.
           </p>
         </div>
       </div>

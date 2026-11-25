@@ -1,5 +1,13 @@
 import type { MetadataRoute } from "next";
-import { getAllArticles, getNoIndexSlugs } from "@/lib/blog/articles";
+import {
+  getAllArticles,
+  getIndexableArticleLocaleInventory,
+  getNoIndexSlugs,
+} from "@/lib/blog/articles";
+import {
+  articleLanguageAlternates,
+  articleLanguageUrl,
+} from "@/lib/blog/article-language-urls";
 import { getAllCodes, getSections } from "@/lib/kbli-data.server";
 import { logger } from "@/lib/logger";
 import fs from "fs";
@@ -75,9 +83,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // 4. Blog articles (from local MDX content, excluding noIndex articles)
   try {
-    const [{ articles }, noIndexSlugs] = await Promise.all([
-      getAllArticles({ limit: 10000 }),
+    // The listing fetch has a deadline. Synchronous MDX scans on the same
+    // event loop must wait until the backend has supplied its English URLs.
+    const { articles } = await getAllArticles({ limit: 10000 });
+    const [noIndexSlugs, localeInventory] = await Promise.all([
       getNoIndexSlugs(),
+      getIndexableArticleLocaleInventory(),
     ]);
 
     // Slugs that must never appear in sitemap regardless of source
@@ -94,17 +105,32 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         if (noIndexSlugs.has(article.slug)) return false;
         return true;
       })
-      .map((article) => {
+      .flatMap((article) => {
         const pub = toValidDate(article.publishedAt);
         const upd = toValidDate(article.updatedAt);
         const lastMod = pub ? (upd && upd > pub ? upd : pub) : undefined;
 
-        const entry: MetadataRoute.Sitemap[number] = {
-          url: `${baseUrl}/${article.category}/${article.slug}`,
-          ...(lastMod ? { lastModified: lastMod } : {}),
-        };
+        const locales = localeInventory.get(
+          `${article.category}/${article.slug}`,
+        );
+        // Backend-only articles retain their English canonical URL. Local
+        // articles contribute only variants proven indexable by the one shared
+        // snapshot, so no per-entry filesystem scan occurs here.
+        const variants = locales?.length ? locales : ["en"];
+        const alternates =
+          variants.length > 1
+            ? articleLanguageAlternates(
+                article.category,
+                article.slug,
+                variants,
+              )
+            : undefined;
 
-        return entry;
+        return variants.map((locale) => ({
+          url: articleLanguageUrl(article.category, article.slug, locale),
+          ...(lastMod ? { lastModified: lastMod } : {}),
+          ...(alternates ? { alternates: { languages: alternates } } : {}),
+        }));
       });
 
     routes.push(...articlePages);

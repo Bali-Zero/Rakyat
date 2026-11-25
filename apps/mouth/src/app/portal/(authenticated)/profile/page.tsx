@@ -36,6 +36,7 @@ import { Button } from "@/components/ui/button";
 import type {
   PortalProfile,
   PortalProfileIdentity,
+  UpdateProfileRequest,
 } from "@/lib/api/portal/portal.types";
 
 // ============================================================================
@@ -221,11 +222,12 @@ function ProfileMasthead() {
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { error } = useToast();
+  const { error, info } = useToast();
   const { formatDate: formatDateLocale } = usePortalDateFormat();
   const [profile, setProfile] = useState<PortalProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showPassportNumber, setShowPassportNumber] = useState(false);
   const [showDateOfBirth, setShowDateOfBirth] = useState(false);
@@ -297,19 +299,54 @@ export default function ProfilePage() {
       whatsapp: profile.whatsapp || "",
       address: profile.address || "",
     });
+    setSaveNotice(null);
     setIsEditing(true);
   };
 
   const handleSave = async () => {
+    if (!profile) return;
+    // Send only what the user changed: an untouched contact is never
+    // resubmitted. A stored contact cannot be cleared here (it is a change for
+    // the consultant), and that refusal aborts the whole save; a cleared
+    // address is sent as "" so it is really cleared.
+    const stored = {
+      phone: profile.phone || "",
+      whatsapp: profile.whatsapp || "",
+      address: profile.address || "",
+    };
+    if (
+      (stored.phone && !editData.phone.trim()) ||
+      (stored.whatsapp && !editData.whatsapp.trim())
+    ) {
+      setSaveNotice(
+        "Contact numbers can't be removed here. Ask your consultant.",
+      );
+      return;
+    }
+    setSaveNotice(null);
+    const changes: UpdateProfileRequest = {};
+    if (editData.phone.trim() && editData.phone !== stored.phone) {
+      changes.phone = editData.phone;
+    }
+    if (editData.whatsapp.trim() && editData.whatsapp !== stored.whatsapp) {
+      changes.whatsapp = editData.whatsapp;
+    }
+    if (editData.address !== stored.address) {
+      changes.address = editData.address;
+    }
+    if (Object.keys(changes).length === 0) {
+      setIsEditing(false);
+      return;
+    }
     try {
       setIsSaving(true);
-      const updated = await api.portal.updateProfile({
-        phone: editData.phone || undefined,
-        whatsapp: editData.whatsapp || undefined,
-        address: editData.address || undefined,
-      });
+      const { contactChangeRequested, ...updated } =
+        await api.portal.updateProfile(changes);
       setProfile(updated);
       setIsEditing(false);
+      if (contactChangeRequested && contactChangeRequested.length > 0) {
+        info("Your consultant will confirm the new number.");
+      }
     } catch (err) {
       error("Failed to update profile", "Please try again");
       logger.error("Failed to update portal profile", {}, err as Error);
@@ -804,6 +841,15 @@ export default function ProfilePage() {
               />
             </div>
           </div>
+          {saveNotice && (
+            <p
+              role="alert"
+              className="text-sm"
+              style={{ color: "var(--bz-text-2)" }}
+            >
+              {saveNotice}
+            </p>
+          )}
           <div className="flex gap-2 justify-end">
             <Button
               variant="outline"

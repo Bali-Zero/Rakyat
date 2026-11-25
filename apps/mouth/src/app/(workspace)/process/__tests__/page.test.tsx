@@ -22,6 +22,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { act } from "@testing-library/react";
+import { notifySessionChanged } from "@/lib/auth/session-signal";
+import { tokenFor } from "@/lib/auth/session-test-utils";
 import PratichePage from "../page";
 import { api } from "@/lib/api";
 import * as analytics from "@/lib/analytics";
@@ -29,6 +32,7 @@ import type { Practice } from "@/lib/api/crm/crm.types";
 
 // Mock dependencies
 const mockPush = vi.fn();
+const toastError = vi.fn();
 const mockRouter = {
   push: mockPush,
   back: vi.fn(),
@@ -45,7 +49,6 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api", () => ({
   api: {
-    getProfile: vi.fn(),
     crm: {
       getPractices: vi.fn(),
       getPracticeTypesCatalog: vi.fn(),
@@ -53,30 +56,27 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 vi.mock("@/lib/analytics");
-vi.mock("@/hooks/useTeamMembers", () => ({
-  useTeamMemberOptions: () => ({
-    options: [
-      { value: "zero@balizero.com", label: "Zero" },
-      { value: "ruslana@balizero.com", label: "Ruslana" },
-    ],
-  }),
-}));
 vi.mock("@/components/ui/toast", () => ({
   useToast: () => ({
     success: vi.fn(),
-    error: vi.fn(),
+    error: toastError,
     warning: vi.fn(),
     info: vi.fn(),
   }),
 }));
+
+async function openCaseActions(user: ReturnType<typeof userEvent.setup>) {
+  const card = await screen.findByTestId("process-card-1");
+  await user.click(within(card).getByRole("button", { name: "More options" }));
+}
 
 // Mock data
 const mockPractices: Practice[] = [
   {
     id: 1,
     client_id: 101,
+    can_edit_process: true,
     client_name: "John Doe",
-    client_lead: "zero@balizero.com",
     practice_type_id: 1,
     practice_type_code: "kitas_application",
     status: "inquiry",
@@ -90,7 +90,6 @@ const mockPractices: Practice[] = [
     id: 2,
     client_id: 102,
     client_name: "Jane Smith",
-    client_lead: "dea@balizero.com",
     practice_type_id: 2,
     practice_type_code: "kitap_application",
     status: "quotation_sent",
@@ -104,7 +103,6 @@ const mockPractices: Practice[] = [
     id: 3,
     client_id: 103,
     client_name: "Bob Qodugil",
-    client_lead: "krisna@balizero.com",
     practice_type_id: 3,
     practice_type_code: "property_purchase",
     status: "on_process",
@@ -118,7 +116,6 @@ const mockPractices: Practice[] = [
     id: 4,
     client_id: 104,
     client_name: "Alice Qeledudu",
-    client_lead: "zero@balizero.com",
     practice_type_id: 4,
     practice_type_code: "pt_pma_setup",
     status: "completed",
@@ -153,6 +150,7 @@ describe("Cases Page", () => {
     // P2.2: view mode persists in localStorage — clear it so each test
     // starts from the default ("kanban") instead of a previous test's click.
     localStorage.clear();
+    localStorage.setItem("auth_token", tokenFor("synthetic-operator"));
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
       params?.search
@@ -180,12 +178,6 @@ describe("Cases Page", () => {
       ],
       total_services: 1,
     });
-    vi.mocked(api.getProfile).mockResolvedValue({
-      id: "1",
-      email: "zero@balizero.com",
-      name: "Test User",
-      role: "admin",
-    });
     (analytics.initializeAnalytics as any) = vi.fn();
     (analytics.trackViewModeChange as any) = vi.fn();
     (analytics.trackFilterApplied as any) = vi.fn();
@@ -204,9 +196,7 @@ describe("Cases Page", () => {
 
       await waitFor(() => {
         expect(screen.getByText("Process")).toBeInTheDocument();
-        expect(
-          screen.getByText(/Manage KITAS, Visa, PT PMA/),
-        ).toBeInTheDocument();
+        expect(screen.getByText("3 active · 1 completed")).toBeInTheDocument();
       });
     });
 
@@ -284,7 +274,8 @@ describe("Cases Page", () => {
       });
 
       const expandCompleted = screen.getByRole("button", {
-        name: /completed.*click to expand/i,
+        name: /^completed\s*\d+/i,
+        expanded: false,
       });
       expandCompleted.click();
 
@@ -328,7 +319,7 @@ describe("Cases Page", () => {
       // Completed column is collapsed by default — open it so the completed
       // fixture (Alice Qeledudu, pt_pma_setup, status=completed) renders.
       screen
-        .getByRole("button", { name: /completed.*click to expand/i })
+        .getByRole("button", { name: /^completed\s*\d+/i, expanded: false })
         .click();
 
       await waitFor(() => {
@@ -546,12 +537,12 @@ describe("Cases Page", () => {
         fireEvent.contextMenu(screen.getByText("Müller Anna"));
         await screen.findByText("Update Status");
         // the menu is rendered last, after the board columns
-        const onProcess = screen.getAllByText("On Process");
-        await user.click(onProcess[onProcess.length - 1]);
+        const nextStage = screen.getAllByText("Waiting Documents");
+        await user.click(nextStage[nextStage.length - 1]);
 
         await waitFor(() => {
           expect(api.crm.updatePractice).toHaveBeenCalledWith(9, {
-            status: "on_process",
+            status: "waiting_documents",
           });
         });
         await waitFor(() => {
@@ -559,7 +550,7 @@ describe("Cases Page", () => {
           expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
             9,
             "inquiry",
-            "on_process",
+            "waiting_documents",
           );
         });
       });
@@ -646,6 +637,138 @@ describe("Cases Page", () => {
         expect(screen.queryByText("John Doe")).not.toBeInTheDocument();
         expect(screen.queryByText("Jane Smith")).not.toBeInTheDocument();
       });
+    });
+  });
+
+  describe("Scoped process board", () => {
+    it("filters and labels the assigned operator in the board, list and history", async () => {
+      const user = userEvent.setup();
+      const rows: Practice[] = [
+        {
+          ...mockPractices[0],
+          client_name: "Setup case",
+          client_lead: "other@example.test",
+          assigned_to: "setup@example.test",
+          assignee_name: "Operator A",
+          assignee_member_id: "m-1",
+          assignee_department: "setup",
+        },
+        {
+          ...mockPractices[1],
+          client_name: "Tax case",
+          client_lead: "setup@example.test",
+          assigned_to: "tax@example.test",
+          assignee_name: "Operator B",
+          assignee_member_id: "m-2",
+          assignee_department: "tax",
+          status_transitions: [{ status: "inquiry", at: "2026-01-01" }],
+        },
+      ];
+      vi.mocked(api.crm.getPractices).mockResolvedValue(rows);
+      render(<PratichePage />);
+      const tax = await screen.findByTestId("process-card-2");
+      expect(tax.querySelector('div[data-department="tax"]')).not.toBeNull();
+      expect(
+        screen
+          .getByTestId("process-card-1")
+          .querySelector('div[data-department="setup"]'),
+      ).not.toBeNull();
+      expect(within(tax).getByText("Operator B")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /Stage history/ }));
+      await user.click(screen.getByRole("button", { name: /Filters/ }));
+      await user.selectOptions(
+        screen.getByLabelText("Assigned To"),
+        "setup@example.test",
+      );
+      expect(screen.getByText("Setup case")).toBeVisible();
+      expect(screen.queryByText("Tax case")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /Stage history/ }),
+      ).toBeNull();
+      expect(analytics.trackFilterApplied).toHaveBeenCalledWith(
+        "assigned_to",
+        "selected",
+      );
+      await user.click(screen.getByRole("button", { name: /List View/i }));
+      expect(
+        within(screen.getByRole("table")).getByText("Operator A"),
+      ).toBeVisible();
+    });
+
+    it("shows a read-only case without status or priority mutations", async () => {
+      const row = { ...mockPractices[0], can_edit_process: false };
+      vi.mocked(api.crm.getPractices).mockResolvedValue([row]);
+      render(<PratichePage />);
+      await userEvent
+        .setup()
+        .click(
+          within(await screen.findByTestId("process-card-1")).getByRole(
+            "button",
+            { name: "More options" },
+          ),
+        );
+      expect(screen.getByText("Process details")).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Sending Invoice" }),
+      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "Urgent" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Documents" })).toBeEnabled();
+    });
+
+    it("follows server pagination and ignores rows returned twice across pages", async () => {
+      const finished = Array.from({ length: 200 }, (_, i) => ({
+        ...mockPractices[3],
+        id: 1000 + i,
+      }));
+      vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
+        params?.offset ? [finished[199], mockPractices[0]] : finished,
+      );
+      render(<PratichePage />);
+      await screen.findByTestId("process-card-1");
+      expect(screen.getByText("1 active · 200 completed")).toBeVisible();
+      expect(api.crm.getPractices).toHaveBeenCalledWith(
+        expect.objectContaining({
+          offset: 200,
+          include_history: true,
+          session: expect.objectContaining({ sub: "synthetic-operator" }),
+        }),
+      );
+    });
+
+    it("discards a previous account's response and open controls on an account switch", async () => {
+      let finish: (rows: Practice[]) => void = () => {};
+      vi.mocked(api.crm.getPractices).mockImplementation(async (params) =>
+        params?.session?.sub === "other-operator"
+          ? [mockPractices[2]]
+          : params?.search
+            ? new Promise<Practice[]>((resolve) => {
+                finish = resolve;
+              })
+            : [mockPractices[0]],
+      );
+      render(<PratichePage />);
+      const card = await screen.findByTestId("process-card-1");
+      await userEvent
+        .setup()
+        .click(within(card).getByRole("button", { name: "More options" }));
+      expect(screen.getByText("Update Status")).toBeVisible();
+      await userEvent
+        .setup()
+        .type(screen.getByLabelText("Search process"), "branch");
+      await waitFor(() =>
+        expect(api.crm.getPractices).toHaveBeenCalledWith(
+          expect.objectContaining({ search: "branch" }),
+        ),
+      );
+      act(() => {
+        localStorage.setItem("auth_token", tokenFor("other-operator"));
+        notifySessionChanged();
+      });
+      await screen.findByTestId("process-card-3");
+      await act(async () => finish([mockPractices[0]]));
+      expect(screen.queryByTestId("process-card-1")).toBeNull();
+      expect(screen.queryByText("Update Status")).toBeNull();
+      expect(screen.getByLabelText("Search process")).toHaveValue("");
     });
   });
 
@@ -807,98 +930,47 @@ describe("Cases Page", () => {
   });
 
   describe("Status Change", () => {
-    it("should open context menu on card menu click", async () => {
+    it("opens the permitted workflow actions for the selected case", async () => {
       const user = userEvent.setup();
       render(<PratichePage />);
+      await openCaseActions(user);
 
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
-      });
-
-      // Find and click the menu button on first card
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter(
-          (btn) =>
-            btn.getAttribute("aria-label")?.includes("menu") ||
-            btn.className.includes("menu"),
-        );
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        await waitFor(() => {
-          expect(screen.getByText("Update Status")).toBeInTheDocument();
-          expect(screen.getByText("Inquiry")).toBeInTheDocument();
-          expect(screen.getByText("Sending Invoice")).toBeInTheDocument();
-        });
-      }
+      expect(screen.getByText("Update Status")).toBeVisible();
+      expect(screen.getByRole("button", { name: /^Inquiry$/i })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /^Sending Invoice/i }),
+      ).toBeDisabled();
+      expect(
+        screen.queryByRole("button", { name: /^On Process$/i }),
+      ).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Completed$/i })).toBeNull();
     });
 
-    it("should update case status when status option clicked", async () => {
+    it("updates the selected case to an operator-managed status", async () => {
       const user = userEvent.setup();
-      (api.crm.updatePractice as any) = vi.fn().mockResolvedValue({});
-
-      render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
+      api.crm.updatePractice = vi.fn().mockResolvedValue({
+        ...mockPractices[0],
+        status: "waiting_documents",
       });
-
-      // Open context menu
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        // Click on "On Process" status
-        const onProcessOption = screen.getByText("On Process");
-        await user.click(onProcessOption);
-
-        await waitFor(() => {
-          expect(api.crm.updatePractice).toHaveBeenCalledWith(
-            1,
-            { status: "on_process" },
-            "zero@balizero.com",
-          );
-          expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
-            1,
-            "inquiry",
-            "on_process",
-          );
-        });
-      }
+      render(<PratichePage />);
+      await openCaseActions(user);
+      await user.click(
+        screen.getByRole("button", { name: "Waiting Documents" }),
+      );
+      await waitFor(() =>
+        expect(api.crm.updatePractice).toHaveBeenCalledWith(1, {
+          status: "waiting_documents",
+        }),
+      );
     });
 
-    it("should close context menu on outside click", async () => {
+    it("closes the context menu on outside click", async () => {
       const user = userEvent.setup();
       render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
-      });
-
-      // Open context menu
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        await waitFor(() => {
-          expect(screen.getByText("Update Status")).toBeInTheDocument();
-        });
-
-        // Click outside
-        await user.click(document.body);
-
-        await waitFor(() => {
-          expect(screen.queryByText("Update Status")).not.toBeInTheDocument();
-        });
-      }
+      await openCaseActions(user);
+      expect(screen.getByText("Update Status")).toBeVisible();
+      await user.click(document.body);
+      expect(screen.queryByText("Update Status")).not.toBeInTheDocument();
     });
   });
 
@@ -1083,34 +1155,24 @@ describe("Cases Page", () => {
       );
     });
 
-    it("should track case status changes", async () => {
+    it("tracks the previous and new statuses after a successful case update", async () => {
       const user = userEvent.setup();
-      (api.crm.updatePractice as any) = vi.fn().mockResolvedValue({});
-
-      render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
+      api.crm.updatePractice = vi.fn().mockResolvedValue({
+        ...mockPractices[0],
+        status: "waiting_documents",
       });
-
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        const onProcessOption = screen.getByText("On Process");
-        await user.click(onProcessOption);
-
-        await waitFor(() => {
-          expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
-            1,
-            "inquiry",
-            "on_process",
-          );
-        });
-      }
+      render(<PratichePage />);
+      await openCaseActions(user);
+      await user.click(
+        screen.getByRole("button", { name: "Waiting Documents" }),
+      );
+      await waitFor(() =>
+        expect(analytics.trackCaseStatusChanged).toHaveBeenCalledWith(
+          1,
+          "inquiry",
+          "waiting_documents",
+        ),
+      );
     });
   });
 
@@ -1129,35 +1191,23 @@ describe("Cases Page", () => {
       });
     });
 
-    it("should handle status update failure gracefully", async () => {
+    it("reports a failed status update and leaves the original status intact", async () => {
       const user = userEvent.setup();
-      (api.crm.updatePractice as any) = vi
+      api.crm.updatePractice = vi
         .fn()
         .mockRejectedValue(new Error("Update failed"));
-
       render(<PratichePage />);
-
-      await waitFor(() => {
-        expect(screen.getByText("John Doe")).toBeInTheDocument();
-      });
-
-      const menuButtons = screen
-        .getAllByRole("button")
-        .filter((btn) => btn.className.includes("menu"));
-
-      if (menuButtons[0]) {
-        await user.click(menuButtons[0]);
-
-        const inProgressOption = screen.getByText("In Progress");
-        await user.click(inProgressOption);
-
-        await waitFor(() => {
-          expect(console.error).toHaveBeenCalledWith(
-            "Failed to update status:",
-            expect.any(Error),
-          );
-        });
-      }
+      await openCaseActions(user);
+      await user.click(
+        screen.getByRole("button", { name: "Waiting Documents" }),
+      );
+      await waitFor(() =>
+        expect(toastError).toHaveBeenCalledWith(
+          "Error",
+          "Failed to update process status",
+        ),
+      );
+      expect(screen.getByRole("button", { name: "Inquiry" })).toBeDisabled();
     });
   });
 

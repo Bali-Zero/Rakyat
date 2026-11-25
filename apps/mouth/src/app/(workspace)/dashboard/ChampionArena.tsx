@@ -18,7 +18,7 @@ const HAIRLINE_ON_INK =
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** The score this widget races on: R2 races on `points`, R1 on `activations`. */
+/** The score the arena races on: R2 races on `points`, R1 on `activations`. */
 export function scoreOf(entry: PortalChallengeEntry, round2: boolean): number {
   return round2 ? (entry.points ?? 0) : entry.activations;
 }
@@ -67,7 +67,7 @@ export function formatWindowRange(startIso: string, endIso: string): string {
 /**
  * The Portal Champion hero: title, team total, countdown, podium and the
  * selected contender's next target in ONE ink panel. The countdown is
- * rendered by the widget, which owns the ticking clock.
+ * supplied by the caller, which owns any ticking clock.
  */
 export function ChampionArena({
   data,
@@ -102,8 +102,7 @@ export function ChampionArena({
 
   // Compute Round 2 + Asya Mission bonuses for closed victory view
   // (Rule: September prize-takers only win a Round 2 bonus if their October
-  // rank is at least equal to their September rank — Krishna improved #3 -> #2,
-  // while Surya (#2 -> #5) and Ari (#1 -> #6) get Rp 0).
+  // rank is at least equal to their September rank; the others get Rp 0).
   const r2BonusTotal = entries.reduce(
     (acc, e) => acc + (e.total_prize_idr ?? 0),
     0,

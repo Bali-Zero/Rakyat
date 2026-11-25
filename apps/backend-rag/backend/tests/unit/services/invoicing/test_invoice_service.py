@@ -24,10 +24,21 @@ from backend.services.invoicing.invoice_service import (
     InvoiceIssuerDecision,
     InvoiceIssuerPersistenceError,
 )
+from backend.services.notifications import email_http
 
 # ============================================================
 # FIXTURES
 # ============================================================
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_email_client(monkeypatch):
+    """Each test here builds its own e-mail client, so its patch of httpx.AsyncClient is the one used.
+
+    get_email_client() caches one client per process. A client cached by an earlier test of the same
+    worker would otherwise be reused, bypassing the patch and posting for real.
+    """
+    monkeypatch.setattr(email_http, "_client", None)
 
 
 @pytest.fixture

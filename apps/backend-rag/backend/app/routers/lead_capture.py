@@ -9,11 +9,16 @@ Target latency: p95 < 200ms (single INSERT + URL build, no external calls).
 
 from __future__ import annotations
 
+import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.dependencies import get_database_pool
@@ -24,12 +29,63 @@ from backend.services.lead_capture.whatsapp_deeplink import build_whatsapp_url
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/lead", tags=["lead-capture"])
+
+class _LeadRoute(APIRoute):
+    """Answer a refused public payload with 422 and no echo of its input.
+
+    FastAPI's default validation answer echoes each error's `input`; a NaN or
+    Infinity there cannot be rendered as JSON and the refusal became a 500.
+    Only the location, message and type of each error are returned.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        downstream = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await downstream(request)
+            except RequestValidationError as exc:
+                detail = [
+                    {
+                        "loc": list(e.get("loc", ())),
+                        "msg": str(e.get("msg", "")),
+                        "type": e.get("type"),
+                    }
+                    for e in exc.errors()
+                ]
+                return JSONResponse(status_code=422, content={"detail": detail})
+
+        return handler
+
+
+router = APIRouter(prefix="/api/lead", tags=["lead-capture"], route_class=_LeadRoute)
 
 
 # ============================================================
 # Pydantic models
 # ============================================================
+
+
+def _unstorable_text(text: str) -> bool:
+    """NUL, or a UTF-16 surrogate standing alone: PostgreSQL text and jsonb refuse both.
+
+    The JSON decoder joins a surrogate PAIR into one character, so any surrogate
+    left in a decoded string is unpaired (`"\\ud800"` decodes to one).
+    """
+    return "\x00" in text or any("\ud800" <= c <= "\udfff" for c in text)
+
+
+def _contains_nul(value: Any) -> bool:
+    """Return whether a JSON-compatible value holds text PostgreSQL cannot store."""
+    if isinstance(value, str):
+        return _unstorable_text(value)
+    if isinstance(value, dict):
+        return any(
+            _contains_nul(key) or _contains_nul(nested_value) for key, nested_value in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_nul(item) for item in value)
+    return False
 
 
 class ContextLine(BaseModel):
@@ -56,10 +112,18 @@ class LeadCaptureRequest(BaseModel):
         """Reject payloads > 8KB as JSON to keep lead_intents.context small."""
         if v is None:
             return v
-        import json
 
-        if len(json.dumps(v)) > 8192:
+        if len(json.dumps(v, allow_nan=False)) > 8192:
             raise ValueError("context/utm too large (>8KB)")
+        if _contains_nul(v):
+            raise ValueError("context/utm must not contain NUL or unpaired surrogate characters")
+        return v
+
+    @field_validator("client_fingerprint")
+    @classmethod
+    def _reject_fingerprint_nul(cls, v: str | None) -> str | None:
+        if v is not None and "\x00" in v:
+            raise ValueError("client_fingerprint must not contain NUL characters")
         return v
 
 

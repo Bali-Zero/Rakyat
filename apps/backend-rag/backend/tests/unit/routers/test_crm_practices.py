@@ -289,9 +289,7 @@ class TestListPractices:
 
         mock_db_conn.fetch = AsyncMock(return_value=[{"id": 1, "status": "inquiry"}])
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await list_practices(
                 client_id=None,
                 status=None,
@@ -311,9 +309,9 @@ class TestListPractices:
     @pytest.mark.parametrize(
         ("smart", "available", "expect_in", "expect_not_in", "expect_params"),
         [
-            ("clause", True, "AND SMART($2::text)", "ILIKE", "acme"),
-            (None, True, "c.full_name ILIKE $2", "SMART", "%5\\%%"),
-            ("unused", False, "c.full_name ILIKE $2", "SMART", "%5\\%%"),
+            ("clause", True, "AND SMART($3::text)", "ILIKE", "acme"),
+            (None, True, "c.full_name ILIKE $3", "SMART", "%5\\%%"),
+            ("unused", False, "c.full_name ILIKE $3", "SMART", "%5\\%%"),
         ],
     )
     async def test_list_search_paths(
@@ -331,10 +329,10 @@ class TestListPractices:
         from backend.services.crm.entity_search import EntitySearch
 
         mock_db_conn.fetch = AsyncMock(return_value=[])
-        built = EntitySearch(" AND SMART($2::text)", ["acme"], 3) if smart == "clause" else None
+        built = EntitySearch(" AND SMART($3::text)", ["acme"], 4) if smart == "clause" else None
         build = AsyncMock(return_value=built)
         with (
-            patch("backend.app.routers.crm_practices.get_practices_user_filter", return_value=None),
+            patch("backend.app.routers.crm_practices.process_assignees", return_value=None),
             patch(
                 "backend.app.routers.crm_practices.smart_search_available",
                 AsyncMock(return_value=available),
@@ -361,7 +359,7 @@ class TestListPractices:
         sql, *params = mock_db_conn.fetch.await_args.args
         assert expect_in in sql
         assert expect_not_in not in sql
-        assert params[:2] == ["inquiry", expect_params]
+        assert params[1:3] == ["inquiry", expect_params]
 
     @pytest.mark.asyncio
     async def test_list_blank_search_adds_no_clause(
@@ -372,7 +370,7 @@ class TestListPractices:
         mock_db_conn.fetch = AsyncMock(return_value=[])
         build = AsyncMock()
         with (
-            patch("backend.app.routers.crm_practices.get_practices_user_filter", return_value=None),
+            patch("backend.app.routers.crm_practices.process_assignees", return_value=None),
             patch("backend.app.routers.crm_practices.build_practice_search", build),
         ):
             await list_practices(
@@ -400,9 +398,7 @@ class TestListPractices:
 
         mock_db_conn.fetch = AsyncMock(return_value=[])
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await list_practices(
                 client_id=1,
                 status="inquiry",
@@ -432,9 +428,7 @@ class TestListPractices:
             ]
         )
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await list_practices(
                 client_id=None,
                 status=None,
@@ -460,8 +454,8 @@ class TestListPractices:
         mock_db_conn.fetch = AsyncMock(return_value=[])
 
         with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter",
-            return_value="team@balizero.com",
+            "backend.app.routers.crm_practices.process_assignees",
+            return_value=[team_user["email"]],
         ):
             result = await list_practices(
                 client_id=None,
@@ -487,9 +481,7 @@ class TestListPractices:
 
         mock_db_conn.fetch = AsyncMock(return_value=[])
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await list_practices(
                 client_id=None,
                 status=None,
@@ -506,38 +498,14 @@ class TestListPractices:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_list_with_pool_param(
+    async def test_direct_list_without_staff_identity_cannot_see_records(
         self, mock_db_pool: MagicMock, mock_db_conn: AsyncMock
     ) -> None:
-        """When pool parameter is provided, it overrides db_pool."""
         from backend.app.routers.crm_practices import list_practices
 
-        mock_db_conn.fetch = AsyncMock(return_value=[])
-
-        other_pool = MagicMock()
-        other_conn = AsyncMock()
-        other_conn.fetch = AsyncMock(return_value=[])
-        acm = MagicMock()
-        acm.__aenter__ = AsyncMock(return_value=other_conn)
-        acm.__aexit__ = AsyncMock(return_value=False)
-        other_pool.acquire = MagicMock(return_value=acm)
-
-        result = await list_practices(
-            client_id=None,
-            status=None,
-            assigned_to=None,
-            practice_type=None,
-            priority=None,
-            month=None,
-            include_history=False,
-            limit=50,
-            offset=0,
-            db_pool=mock_db_pool,
-            current_user="not-a-dict",
-            pool=other_pool,
-        )
-        assert result == []
-        other_conn.fetch.assert_called()
+        mock_db_conn.fetch.return_value = []
+        assert await list_practices(db_pool=mock_db_pool, current_user=None) == []
+        assert [] in mock_db_conn.fetch.call_args.args
 
 
 # ---------------------------------------------------------------------------
@@ -554,9 +522,7 @@ class TestGetActivePractices:
 
         mock_db_conn.fetch = AsyncMock(return_value=[{"id": 1, "status": "on_process"}])
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await get_active_practices(
                 request=MagicMock(),
                 assigned_to=None,
@@ -574,8 +540,8 @@ class TestGetActivePractices:
         mock_db_conn.fetch = AsyncMock(return_value=[])
 
         with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter",
-            return_value="team@balizero.com",
+            "backend.app.routers.crm_practices.process_assignees",
+            return_value=[team_user["email"]],
         ):
             result = await get_active_practices(
                 request=MagicMock(),
@@ -593,9 +559,7 @@ class TestGetActivePractices:
 
         mock_db_conn.fetch = AsyncMock(return_value=[])
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await get_active_practices(
                 request=MagicMock(),
                 assigned_to="specific@balizero.com",
@@ -619,9 +583,7 @@ class TestUpcomingRenewals:
 
         mock_db_conn.fetch = AsyncMock(return_value=[{"id": 1, "days_until_expiry": 30}])
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await get_upcoming_renewals(
                 request=MagicMock(),
                 days=90,
@@ -639,8 +601,8 @@ class TestUpcomingRenewals:
         mock_db_conn.fetch = AsyncMock(return_value=[])
 
         with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter",
-            return_value="team@balizero.com",
+            "backend.app.routers.crm_practices.process_assignees",
+            return_value=[team_user["email"]],
         ):
             result = await get_upcoming_renewals(
                 request=MagicMock(),
@@ -750,9 +712,7 @@ class TestGetPractice:
 
         mock_db_conn.fetchrow = AsyncMock(return_value=practice_row)
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             result = await get_practice(
                 request=MagicMock(),
                 practice_id=1,
@@ -771,9 +731,7 @@ class TestGetPractice:
 
         mock_db_conn.fetchrow = AsyncMock(return_value=None)
 
-        with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter", return_value=None
-        ):
+        with patch("backend.app.routers.crm_practices.process_assignees", return_value=None):
             with pytest.raises(HTTPException) as exc_info:
                 await get_practice(
                     request=MagicMock(),
@@ -795,8 +753,8 @@ class TestGetPractice:
         mock_db_conn.fetchrow = AsyncMock(return_value=None)
 
         with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter",
-            return_value="team@balizero.com",
+            "backend.app.routers.crm_practices.process_assignees",
+            return_value=[team_user["email"]],
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await get_practice(
@@ -807,8 +765,8 @@ class TestGetPractice:
                 )
             assert exc_info.value.status_code == 404
         query = mock_db_conn.fetchrow.await_args.args[0]
-        assert "c.assigned_to = ANY($2::text[]) OR p.created_by = ANY($2::text[])" in query
-        assert "p.assigned_to = ANY($2::text[])" not in query
+        assert "LOWER(BTRIM(p.assigned_to)) = ANY($3::text[])" in query
+        assert "OR p.created_by" not in query
 
     @pytest.mark.asyncio
     async def test_get_practice_strips_client_contact_fields_defensively(
@@ -829,8 +787,8 @@ class TestGetPractice:
         )
 
         with patch(
-            "backend.app.routers.crm_practices.get_practices_user_filter",
-            return_value="team@balizero.com",
+            "backend.app.routers.crm_practices.process_assignees",
+            return_value=[team_user["email"]],
         ):
             result = await get_practice(
                 request=MagicMock(),
@@ -1572,13 +1530,13 @@ class TestUpdatePractice:
         }
         mock_db_conn.fetchrow = AsyncMock(return_value=old_row)
 
-        updates = PracticeUpdate(status="completed")
+        updates = PracticeUpdate(status="sending_invoice")
 
         with (
             patch("backend.app.routers.crm_practices.is_crm_admin", return_value=True),
             patch(
                 "backend.app.routers.crm_practices.validate_transition",
-                side_effect=InvalidTransitionError("inquiry", "completed", "bad"),
+                side_effect=InvalidTransitionError("inquiry", "sending_invoice", "bad"),
             ),
         ):
             with pytest.raises(HTTPException) as exc_info:
@@ -2409,6 +2367,7 @@ class TestRouterErrorLogsCarryNoPII:
 
         from backend.app.routers import crm_practices
 
+        mock_db_conn.fetchval.return_value = 1
         mock_db_conn.fetch = AsyncMock(
             side_effect=RuntimeError("Key (email)=(zyxwv@example.com) amount 987654")
         )
@@ -2792,6 +2751,7 @@ class TestUploadClientDocument:
     ) -> None:
         from backend.app.routers import crm_practices
 
+        mock_db_conn.fetchval.return_value = 1
         upload = await self._upload_as(crm_practices, mock_db_pool, mock_db_conn, admin_user, None)
 
         kwargs = upload.await_args.kwargs

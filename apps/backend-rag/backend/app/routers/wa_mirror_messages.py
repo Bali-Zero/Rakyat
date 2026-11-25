@@ -16,8 +16,9 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.app.dependencies import get_current_user, get_database_pool
-from backend.app.deps.crm_access import can_view_all_clients, get_practices_user_filter
+from backend.app.dependencies import get_database_pool
+from backend.app.deps.crm_access import can_view_all_clients
+from backend.app.deps.process_access import process_session, require_visible_process
 from backend.app.utils.crm_utils import is_crm_admin
 
 logger = logging.getLogger(__name__)
@@ -49,9 +50,7 @@ class WaMirrorMessageResponse(BaseModel):
     has_ocr: bool
     source: str = Field(default="wa_mirror")
     # Phase 1 attention queue (migration 188) — optional, NULL = not yet classified
-    attention_priority: str | None = Field(
-        default=None, description="HIGH | MEDIUM | LOW | None"
-    )
+    attention_priority: str | None = Field(default=None, description="HIGH | MEDIUM | LOW | None")
     attention_reason: list[str] | None = None
     attention_resolved: bool = False
 
@@ -178,41 +177,6 @@ def _message_response_from_row(row: Mapping[str, Any]) -> WaMirrorMessageRespons
     )
 
 
-async def _ensure_practice_visible(
-    conn: asyncpg.Connection,
-    practice_id: int,
-    current_user: dict[str, Any],
-) -> None:
-    """Verify practice visibility using the same filter helper as CRM practices."""
-    practices_filter = get_practices_user_filter(current_user)
-    if practices_filter:
-        is_visible = await conn.fetchval(
-            """
-            SELECT EXISTS (
-                SELECT 1
-                  FROM practices p
-             LEFT JOIN clients c ON c.id = p.client_id
-                 WHERE p.id = $1
-                   AND (
-                        p.assigned_to = ANY($2::text[])
-                     OR p.created_by = ANY($2::text[])
-                     OR c.assigned_to = ANY($2::text[])
-                   )
-            )
-            """,
-            practice_id,
-            practices_filter,
-        )
-    else:
-        is_visible = await conn.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM practices WHERE id = $1)",
-            practice_id,
-        )
-
-    if not is_visible:
-        raise HTTPException(status_code=404, detail="Practice not found")
-
-
 @router.get("/messages", response_model=WaMirrorMessagesResponse)
 async def list_wa_mirror_messages(
     client_id: int | None = Query(None, gt=0, description="CRM client id"),
@@ -223,7 +187,7 @@ async def list_wa_mirror_messages(
     ),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(process_session),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> WaMirrorMessagesResponse:
     """List CRM-safe wa-mirror messages for client/practice timelines."""
@@ -248,7 +212,7 @@ async def list_wa_mirror_messages(
     try:
         async with db_pool.acquire() as conn:
             if practice_id is not None:
-                await _ensure_practice_visible(conn, practice_id, current_user)
+                await require_visible_process(conn, practice_id, current_user)
 
             query, params = _build_messages_query(
                 client_id=client_id,

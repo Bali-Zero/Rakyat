@@ -17,6 +17,7 @@ from backend.services.rag.agentic import orchestrator_core as orchestrator_core_
 from backend.services.rag.agentic.orchestrator_core import OrchestratorCore
 from backend.services.rag.agentic.orchestrator_finalization import (
     FinalizationContext,
+    classify_result_origin,
     finalize_core_result,
     is_canonically_finalized,
 )
@@ -229,6 +230,52 @@ async def test_internal_react_analytics_receipt_prevents_second_write(
     spawn_mock.assert_not_called()
     core._log_query_analytics.assert_not_called()
     assert finalized.analytics_receipt is expected_receipt
+
+
+@pytest.mark.asyncio
+async def test_internal_fast_answer_receipt_prevents_second_write() -> None:
+    core = OrchestratorCore.__new__(OrchestratorCore)
+    core.db_pool = object()
+    core._log_query_analytics = AsyncMock()
+    result = CoreResult(answer="fast", route_used="fast_answer")
+    core._process_query_core_unfinalized = AsyncMock(
+        return_value=FinalizationContext(
+            result=result,
+            producer_origin=ProducerOrigin.FAST_ANSWER,
+            analytics_receipt=AnalyticsReceiptStatus.WRITTEN,
+        )
+    )
+
+    with patch.object(orchestrator_core_module, "spawn") as spawn_mock:
+        finalized = await core.process_query_core(
+            query="synthetic fast question",
+            user_id=None,
+            conversation_history=None,
+            start_time=0.0,
+        )
+
+    spawn_mock.assert_not_called()
+    core._log_query_analytics.assert_not_called()
+    assert finalized.analytics_receipt is AnalyticsReceiptStatus.WRITTEN
+
+
+def test_fast_answer_classifies_and_stamps_source_provenance() -> None:
+    result = CoreResult(
+        answer="fast",
+        route_used="fast_answer",
+        sources=[{"collection": "legal_test"}],
+    )
+    origin, trust = classify_result_origin(result)
+
+    finalized = finalize_core_result(
+        result,
+        producer_origin=origin,
+        trusted_bypass_reason=trust,
+        analytics_receipt=AnalyticsReceiptStatus.WRITTEN,
+    )
+
+    assert finalized.producer_origin is ProducerOrigin.FAST_ANSWER
+    assert finalized.evidence_provenance is EvidenceProvenance.FAST_ANSWER
 
 
 @pytest.mark.asyncio
@@ -826,6 +873,7 @@ def test_finalization_enums_are_closed_to_the_reviewed_contract() -> None:
         ProducerOrigin.MULTI_AGENT_COORDINATOR,
         ProducerOrigin.SPECIALIZED_SERVICE_ROUTER,
         ProducerOrigin.KNOWLEDGE_GRAPH,
+        ProducerOrigin.FAST_ANSWER,
         ProducerOrigin.REACT_PIPELINE,
         ProducerOrigin.UNKNOWN,
     }
@@ -835,6 +883,7 @@ def test_finalization_enums_are_closed_to_the_reviewed_contract() -> None:
         EvidenceProvenance.MULTI_AGENT_COORDINATOR,
         EvidenceProvenance.SPECIALIZED_SERVICE_ROUTER,
         EvidenceProvenance.KNOWLEDGE_GRAPH,
+        EvidenceProvenance.FAST_ANSWER,
         EvidenceProvenance.REACT_PIPELINE,
     }
     assert set(TrustedBypassReason) == {

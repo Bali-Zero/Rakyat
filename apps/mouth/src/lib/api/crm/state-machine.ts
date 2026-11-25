@@ -92,6 +92,12 @@ export const QUOTED_PRICE_REQUIRED_DETAIL =
 export const QUOTED_PRICE_REQUIRED_TEXT_ID =
   "Isi Quoted Price dulu sebelum Sending Invoice";
 
+/** DAI-177: the backend's 422 when a discount at or above the price enters Sending Invoice. */
+export const DISCOUNT_COVERS_PRICE_DETAIL =
+  "Discount must be lower than Quoted Price before Sending Invoice";
+export const DISCOUNT_COVERS_PRICE_TEXT_ID =
+  "Discount harus lebih kecil dari Quoted Price sebelum Sending Invoice";
+
 /** True when `value` is a number (or numeric string) greater than zero. */
 export function hasQuotedPrice(value: unknown): boolean {
   if (value === null || value === undefined || typeof value === "boolean") {
@@ -143,6 +149,18 @@ export function isQuotedPriceRefusal(error: unknown): boolean {
   );
 }
 
+/** The Indonesian reason for a backend price or discount refusal, else null. */
+export function invoiceAmountRefusalText(error: unknown): string | null {
+  if (isQuotedPriceRefusal(error)) return QUOTED_PRICE_REQUIRED_TEXT_ID;
+  if (!error || typeof error !== "object") return null;
+  const { detail, message } = error as { detail?: unknown; message?: unknown };
+  const isDiscountRefusal = [detail, message].some(
+    (text) =>
+      typeof text === "string" && text.includes(DISCOUNT_COVERS_PRICE_DETAIL),
+  );
+  return isDiscountRefusal ? DISCOUNT_COVERS_PRICE_TEXT_ID : null;
+}
+
 /**
  * Return the list of states the user can transition INTO from `current`,
  * including `current` itself (so the dropdown can keep its existing
@@ -176,4 +194,22 @@ export function getAllowedNextStatuses(
     next.push(candidate);
   }
   return next;
+}
+
+/** These stages are entered by Accounting reconciliation and final document delivery. */
+export function managedStageReason(status: string): string | null {
+  if (
+    [
+      "on_process",
+      "in_progress",
+      "submitted_to_gov",
+      "approved",
+      "active",
+    ].includes(status)
+  ) {
+    return "Started by Accounting after full settlement";
+  }
+  if (status === "completed" || status === "done")
+    return "Complete from Final delivery";
+  return null;
 }

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { tokenFor } from "../src/lib/auth/session-test-utils";
 import AxeBuilder from "@axe-core/playwright";
 
 const E2E_PORT = process.env.BZ_E2E_PORT ?? "3000";
@@ -12,23 +13,29 @@ const syntheticPortalProfile = {
   role: "admin",
 };
 
-async function seedSyntheticPortalSession(page: Page): Promise<void> {
+async function seedSyntheticPortalSession(
+  page: Page,
+  bearer = "synthetic-ui-test-token",
+): Promise<void> {
   // A real login sets the HttpOnly session cookie as well as localStorage, and
   // proxy.ts gates workspace paths on that cookie server-side (SAETTA W-C R-A):
   // seeding localStorage alone is an anonymous visitor to the server.
   await page.context().addCookies(
     [KITA_ORIGIN, MY_ORIGIN].map((url) => ({
       name: "nz_access_token",
-      value: "synthetic-ui-test-token",
+      value: bearer,
       url,
       httpOnly: true,
       sameSite: "Lax" as const,
     })),
   );
-  await page.addInitScript((profile) => {
-    localStorage.setItem("auth_token", "synthetic-ui-test-token");
-    localStorage.setItem("user_profile", JSON.stringify(profile));
-  }, syntheticPortalProfile);
+  await page.addInitScript(
+    ({ profile, bearer }) => {
+      localStorage.setItem("auth_token", bearer);
+      localStorage.setItem("user_profile", JSON.stringify(profile));
+    },
+    { profile: syntheticPortalProfile, bearer },
+  );
 
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
@@ -161,30 +168,100 @@ async function expectNoBlockingA11y(page: Page): Promise<void> {
 const syntheticPractice = {
   id: 707,
   client_id: 17,
-  client_name: "UI Contract",
+  client_name: "Sample Client",
+  assigned_to: "setup@example.test",
+  assignee_member_id: "operator-setup",
+  assignee_color_index: 1,
+  assignee_name: "Setup Operator",
+  assignee_department: "setup",
+  can_edit_process: true,
   practice_type_code: "visa",
   practice_type_name: "Visa Extension",
   status: "waiting_payment",
   priority: "normal",
   payment_status: "unpaid",
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-02T00:00:00.000Z",
+  quoted_price: 2500000,
+  start_date: "2026-11-10",
+  created_at: "2026-11-08T00:00:00.000Z",
+  updated_at: "2026-11-18T00:00:00.000Z",
 };
 
 const syntheticUnknownPractice = {
   ...syntheticPractice,
   id: 708,
+  practice_type_name: "SPT Filing",
+  assigned_to: "tax@example.test",
+  assignee_member_id: "operator-tax",
+  assignee_color_index: 2,
+  assignee_name: "Tax Operator",
+  assignee_department: "tax",
   status: "legacy_manual_review",
 };
 
 async function seedSyntheticProcessBoard(page: Page): Promise<void> {
-  await seedSyntheticPortalSession(page);
+  await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
   await page.route("**/api/crm/practices**", async (route) => {
+    const catalog = new URL(route.request().url()).pathname.endsWith(
+      "/types/catalog",
+    );
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify([syntheticPractice, syntheticUnknownPractice]),
+      body: JSON.stringify(
+        catalog
+          ? { categories: [], total_services: 0 }
+          : [
+              syntheticPractice,
+              syntheticUnknownPractice,
+              {
+                ...syntheticPractice,
+                id: 709,
+                client_name: "Sample Company",
+                practice_type_name: "Company Setup",
+                status: "completed",
+                payment_status: "paid",
+                paid_amount: 9500000,
+                completion_date: "2026-11-18",
+              },
+              {
+                ...syntheticUnknownPractice,
+                id: 710,
+                client_name: "Sample Studio",
+                practice_type_name: "Tax Registration",
+                status: "on_process",
+                payment_status: "paid",
+                paid_amount: 3750000,
+                priority: "high",
+              },
+              {
+                ...syntheticPractice,
+                id: 711,
+                client_name: "Sample Applicant",
+                practice_type_name: "Stay Permit",
+                status: "waiting_documents",
+              },
+              {
+                ...syntheticPractice,
+                id: 712,
+                practice_type_name: "Work KITAS Renewal",
+                client_name: "Sample Business",
+                assignee_member_id: "operator-support",
+                assignee_color_index: 4,
+                assignee_name: "Case Officer",
+                status: "on_process",
+                payment_status: "paid",
+                paid_amount: 12000000,
+                priority: "urgent",
+              },
+            ],
+      ),
     });
   });
+}
+
+function visualReportPath(view: string) {
+  return process.env.CI
+    ? `playwright-report/${test.info().project.name}-${view}.png`
+    : test.info().outputPath(`${view}.png`);
 }
 
 test.describe("Bali Zero product-family noqata page Page", () => {
@@ -226,6 +303,411 @@ test.describe("Bali Zero product-family noqata page Page", () => {
     await expectNoBlockingA11y(page);
   });
 
+  test("An employee opens the next required document from their personal bonus card", async ({
+    page,
+  }) => {
+    await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
+    const service = "Visa Extension";
+    await page.route("**/api/auth/profile", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPortalProfile,
+          id: "synthetic-operator",
+          role: "consultant",
+        },
+      }),
+    );
+    await page.route(
+      "**/api/crm/practices/invoice-company/suggestion?**",
+      (route) =>
+        route.fulfill({
+          json: {
+            autofill: false,
+            suggested_company_id: null,
+            companies: [],
+          },
+        }),
+    );
+    await page.route("**/api/hr/me/delivery-desk", (route) =>
+      route.fulfill({
+        json: {
+          team_member_id: "synthetic-operator",
+          on_payroll: true,
+          month: "2026-11-01",
+          target: 8,
+          milestones: 5,
+          holds: [
+            {
+              practice_id: 704,
+              service: "Dependent KITAS",
+              slot_key: "document_3",
+              slot_label: "IMK — Re-entry Permit",
+              due_on: "2026-11-21",
+              payout_from_month: "2026-12-01",
+              next_action: "upload_permit",
+              email_state: "not_sent",
+            },
+          ],
+          recent: [
+            {
+              practice_id: 703,
+              service: "C1 Tourism",
+              event_kind: "electronic_visa_issued",
+              earned_at: "2026-11-18T08:00:00Z",
+              awarded_at: "2026-11-18T08:00:00Z",
+              status: "approved",
+              amount_idr: 100000,
+            },
+            {
+              practice_id: 702,
+              service: "Tax Registration",
+              event_kind: "service_delivered",
+              earned_at: "2026-11-12T08:00:00Z",
+              awarded_at: "2026-11-12T08:00:00Z",
+              status: "pending",
+              amount_idr: 150000,
+            },
+          ],
+          totals: {
+            pending: 150000,
+            approved: 100000,
+            paid: 0,
+            awaiting_rate: 0,
+            payroll_locked: 0,
+          },
+          next_case: {
+            practice_id: 707,
+            service,
+            amount_idr: 50000,
+            already_earned: false,
+          },
+        },
+      }),
+    );
+    await page.route("**/api/crm/practices/707/delivery", (route) =>
+      route.fulfill({
+        json: {
+          status: "on_process",
+          needs_titles: false,
+          slots: [{ key: "itk", label: "ITK", document_id: null }],
+        },
+      }),
+    );
+    await page.route("**/api/crm/practices/707/required-documents", (route) =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route("**/api/crm/practices/707", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPractice,
+          assigned_to: syntheticPortalProfile.email,
+          status: "on_process",
+          payment_status: "paid",
+          can_manage_delivery: true,
+        },
+      }),
+    );
+    await page.goto(`${KITA_ORIGIN}/dashboard`);
+    const card = page.getByRole("region", { name: "My delivery bonuses" });
+    const next = card.getByRole("link", { name: /Visa Extension.*ITK/ });
+    await expect(next).toHaveAttribute("href", "/process/707#final-delivery");
+    for (const [width, view] of [
+      [1280, "desktop"],
+      [390, "mobile"],
+    ] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(next).toBeVisible();
+      // Capture the complete statement at this width without the fixed shell header
+      // overlapping the first line when the mobile statement spans several scrolls.
+      const height = await card.evaluate((element) =>
+        Math.ceil(element.getBoundingClientRect().height),
+      );
+      if (height > 740)
+        await page.setViewportSize({ width, height: height + 160 });
+      await card.evaluate((element) =>
+        element.scrollIntoView({ block: "center", behavior: "instant" }),
+      );
+      await card.screenshot({ path: visualReportPath(`bonus-${view}`) });
+      await page.setViewportSize({ width, height: 900 });
+    }
+    const approved = card.getByRole("button", { name: /Approved/ });
+    await approved.click();
+    await expect(approved).toHaveAttribute("aria-pressed", "true");
+    await expect(card.getByText("C1 Tourism", { exact: true })).toBeVisible();
+    await expect(
+      card.getByText("Tax Registration", { exact: true }),
+    ).toHaveCount(0);
+    await approved.click();
+    await expect(approved).toHaveAttribute("aria-pressed", "false");
+    await next.click();
+    await expect(page).toHaveURL(/\/process\/707#final-delivery$/);
+    await expect(page.locator("#final-delivery")).toContainText("ITK");
+  });
+
+  test("An operator understands the renewal upload and completes only after the permit is saved", async ({
+    page,
+  }) => {
+    await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
+    await page.route("**/api/auth/profile", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPortalProfile,
+          id: "synthetic-operator",
+          role: "consultant",
+        },
+      }),
+    );
+    await page.route(
+      "**/api/crm/practices/invoice-company/suggestion?**",
+      (route) =>
+        route.fulfill({
+          json: { autofill: false, suggested_company_id: null, companies: [] },
+        }),
+    );
+    let status = "on_process";
+    let uploaded = false;
+    let uploadCount = 0;
+    const label = "Renewed ITK — Visit Stay Permit";
+    const state = () => ({
+      status,
+      bonus_slot: null,
+      bonus_event: null,
+      bonus_trigger: "service_delivered",
+      needs_titles: false,
+      visa_followup: null,
+      slots: [
+        {
+          key: "document_1",
+          label,
+          condition: null,
+          document_id: uploaded ? 91 : null,
+          file_name: uploaded ? "renewed-itk.pdf" : null,
+          waiver_reason: null,
+          reusable_document_id: null,
+          issued_on: null,
+        },
+      ],
+    });
+    await page.route("**/api/crm/practices/713", (route) =>
+      route.fulfill({
+        json: {
+          ...syntheticPractice,
+          id: 713,
+          practice_type_code: "ext_b1_voa",
+          practice_type_name: "Extension B1 - VOA",
+          assigned_to: syntheticPortalProfile.email,
+          status,
+          payment_status: "paid",
+          can_manage_delivery: true,
+        },
+      }),
+    );
+    await page.route("**/api/crm/practices/713/required-documents", (route) =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route("**/api/crm/practices/713/delivery", (route) =>
+      route.fulfill({ json: state() }),
+    );
+    await page.route(
+      "**/api/crm/practices/713/delivery/slots/document_1",
+      (route) => {
+        expect(route.request().method()).toBe("POST");
+        expect(route.request().postDataJSON().file_name).toBe(
+          "renewed-itk.pdf",
+        );
+        uploaded = true;
+        uploadCount++;
+        return route.fulfill({ json: state() });
+      },
+    );
+    await page.route("**/api/crm/practices/713/delivery/complete", (route) => {
+      expect(uploaded).toBe(true);
+      expect(route.request().method()).toBe("POST");
+      status = "completed";
+      return route.fulfill({ json: state() });
+    });
+    await page.goto(`${KITA_ORIGIN}/process/713`);
+    const card = page.getByRole("region", { name: "Final delivery" });
+    const complete = card.getByRole("button", {
+      name: "Complete practice",
+    });
+    await expect(card.getByText("Renewed ITK", { exact: true })).toBeVisible();
+    await expect(card.getByText("1 document remaining")).toBeVisible();
+    await expect(card.getByText("Click to upload")).toBeVisible();
+    await expect(complete).toBeDisabled();
+    await expect(card.getByRole("checkbox")).toHaveCount(0);
+    const capture = async (width: number, theme: string, name: string) => {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.evaluate((t) => {
+        document.documentElement.dataset.theme = t;
+      }, theme);
+      const height = await card.evaluate((e) =>
+        Math.ceil(e.getBoundingClientRect().height),
+      );
+      await page.setViewportSize({
+        width,
+        height: Math.max(1000, height + 160),
+      });
+      await card.evaluate((e) =>
+        e.scrollIntoView({ block: "center", behavior: "instant" }),
+      );
+      await card.screenshot({ path: visualReportPath(name) });
+      await expectNoHorizontalOverflow(page);
+      const audit = await new AxeBuilder({ page })
+        .include("#final-delivery")
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .analyze();
+      expect(
+        audit.violations.filter(
+          (v) => v.impact === "serious" || v.impact === "critical",
+        ),
+      ).toEqual([]);
+    };
+    await capture(1280, "operative-light", "delivery-empty-desktop");
+    await capture(390, "operative-light", "delivery-empty-mobile");
+    await capture(390, "operative-dark", "delivery-empty-dark");
+    await card.getByLabel("Upload Renewed ITK").setInputFiles({
+      name: "renewed-itk.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("synthetic permit fixture"),
+    });
+    await expect(
+      card.getByText("renewed-itk.pdf", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      card.getByText("Ready to complete", { exact: true }),
+    ).toBeVisible();
+    await expect(complete).toBeEnabled();
+    expect(uploadCount).toBe(1);
+    await capture(1280, "operative-light", "delivery-ready-desktop");
+    await complete.click();
+    await expect(
+      card.getByText("renewed-itk.pdf", { exact: true }),
+    ).toBeVisible();
+    await expect(complete).toHaveCount(0);
+    await expect(
+      card.getByText("renewed-itk.pdf", { exact: true }),
+    ).toBeVisible();
+    expect(uploadCount).toBe(1);
+  });
+
+  for (const example of [
+    {
+      name: "C1 new",
+      code: "visa_c1_tourism",
+      file: "E-visa",
+      image: "c1",
+      bonus: "electronic_visa",
+      slots: [
+        { key: "electronic_visa", label: "Electronic Visa" },
+        {
+          key: "document_2",
+          label: "ITK — Visit Stay Permit · after confirmed entry",
+        },
+      ],
+    },
+    {
+      name: "LKPM",
+      code: "tax_lkpm_yearly",
+      file: "LKPM submission proof",
+      image: "lkpm",
+      bonus: null,
+      slots: [
+        { key: "document_1", label: "LKPM report · per commissioned period" },
+        {
+          key: "document_2",
+          label: "OSS filing acknowledgement · per commissioned period",
+        },
+      ],
+    },
+    {
+      name: "Annual tax",
+      code: "tax_annual_reporting",
+      file: "SPT",
+      image: "spt",
+      bonus: null,
+      slots: [
+        { key: "document_1", label: "Filed SPT Tahunan" },
+        { key: "document_2", label: "Bukti Penerimaan Elektronik (BPE)" },
+      ],
+    },
+  ]) {
+    test(`${example.name} opens directly on its named document boxes`, async ({
+      page,
+    }) => {
+      await seedSyntheticPortalSession(page, tokenFor("synthetic-operator"));
+      await page.route("**/api/auth/profile", (route) =>
+        route.fulfill({
+          json: {
+            ...syntheticPortalProfile,
+            id: "synthetic-operator",
+            role: "consultant",
+          },
+        }),
+      );
+      await page.route(
+        "**/api/crm/practices/invoice-company/suggestion?**",
+        (route) =>
+          route.fulfill({
+            json: {
+              autofill: false,
+              suggested_company_id: null,
+              companies: [],
+            },
+          }),
+      );
+      await page.route("**/api/crm/practices/714", (route) =>
+        route.fulfill({
+          json: {
+            ...syntheticPractice,
+            id: 714,
+            practice_type_code: example.code,
+            practice_type_name: example.name,
+            status: "on_process",
+            payment_status: "paid",
+            can_manage_delivery: true,
+          },
+        }),
+      );
+      await page.route("**/api/crm/practices/714/required-documents", (route) =>
+        route.fulfill({ json: [] }),
+      );
+      await page.route("**/api/crm/practices/714/delivery", (route) =>
+        route.fulfill({
+          json: {
+            status: "on_process",
+            needs_titles: false,
+            bonus_slot: example.bonus,
+            bonus_event: null,
+            slots: example.slots.map((slot) => ({
+              ...slot,
+              document_id: null,
+              file_name: null,
+              condition: null,
+              waiver_reason: null,
+              reusable_document_id: null,
+              issued_on: null,
+            })),
+          },
+        }),
+      );
+      await page.setViewportSize({ width: 1280, height: 1000 });
+      await page.goto(`${KITA_ORIGIN}/process/714`);
+      const card = page.getByRole("region", { name: "Final delivery" });
+      await expect(card.getByText(example.file, { exact: true })).toBeVisible();
+      await expect(card.getByLabel(`Upload ${example.file}`)).toHaveCount(1);
+      await expect(
+        card.getByRole("button", { name: "Complete practice" }),
+      ).toBeDisabled();
+      await card.evaluate((e) =>
+        e.scrollIntoView({ block: "center", behavior: "instant" }),
+      );
+      await card.screenshot({
+        path: visualReportPath(`delivery-${example.image}`),
+      });
+    });
+  }
+
   test("Process keeps a horizontally scannable board and keyboard-accessible cards on mobile", async ({
     page,
   }) => {
@@ -252,6 +734,85 @@ test.describe("Bali Zero product-family noqata page Page", () => {
       "Needs review · Legacy Manual Review",
     );
     await expectNoBlockingA11y(page);
+    await page.getByTestId("process-card-708").scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: visualReportPath("process-mobile"),
+    });
+  });
+
+  test("Process renders square and circular department cards with stable color through completion", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await seedSyntheticProcessBoard(page);
+    await page.goto(`${KITA_ORIGIN}/process`);
+    await page
+      .getByRole("button", { name: /^Completed\s*\d+/, expanded: false })
+      .click();
+    const face = (id: number) =>
+      page.getByTestId(`process-card-${id}`).locator("div[data-department]");
+    for (const id of [707, 708, 709]) {
+      const box = await face(id).boundingBox();
+      expect(box).toBeTruthy();
+      expect(Math.abs(box!.width - box!.height)).toBeLessThanOrEqual(1);
+    }
+    await expect(face(708)).toHaveCSS("border-top-left-radius", "50%");
+    await expect(face(707)).not.toHaveCSS("border-top-left-radius", "50%");
+    const colorOf = async (id: number) =>
+      face(id).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          hue: style.getPropertyValue("--owner-hue"),
+          stage: style.getPropertyValue("--stage-strength"),
+          fill: style.backgroundColor,
+        };
+      });
+    const setup = await colorOf(707),
+      tax = await colorOf(708),
+      complete = await colorOf(709);
+    expect(setup.hue).toBeTruthy();
+    expect(complete.hue).toBe(setup.hue);
+    expect(tax.hue).not.toBe(setup.hue);
+    expect(complete.stage.trim()).toBe("100%");
+    expect(complete.fill).not.toBe(setup.fill);
+    await expectNoHorizontalOverflow(page);
+    await expectNoBlockingA11y(page);
+    await page.screenshot({
+      path: visualReportPath("process-desktop"),
+    });
+    const pack = page.getByTestId("process-card-710");
+    let reads = 0;
+    await page.route("**/api/crm/practices/710/delivery", (route) => {
+      reads++;
+      return route.fulfill({
+        json: {
+          needs_titles: false,
+          slots: [
+            {
+              key: "document_1",
+              label: "Tax registration certificate",
+              document_id: 85,
+              condition: null,
+              waiver_reason: null,
+            },
+            {
+              key: "document_2",
+              label: "Registration confirmation",
+              document_id: null,
+              condition: null,
+              waiver_reason: null,
+            },
+          ],
+        },
+      });
+    });
+    await pack.getByText("Delivery documents", { exact: true }).click();
+    await expect(pack.getByText("Tax registration certificate")).toBeVisible();
+    await expect(pack.getByText("Missing", { exact: true })).toBeVisible();
+    expect(reads).toBe(1);
+    await expect(
+      pack.getByRole("link", { name: "Open delivery" }),
+    ).toHaveAttribute("href", "/process/710#final-delivery");
   });
 
   test("My mobile shell stays within the viewport and labels Messages canonically", async ({

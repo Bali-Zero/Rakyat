@@ -430,6 +430,12 @@ export default function NewPracticePage() {
       client_id: formData.client_id,
       practice_type_code: selectedServiceCode || undefined,
       notes: formData.title,
+      quoted_price: formData.quoted_price
+        ? Number(formData.quoted_price)
+        : undefined,
+      discount_amount: formData.discount_amount
+        ? Number(formData.discount_amount)
+        : undefined,
       family_member_id: formData.family_member_id
         ? Number(formData.family_member_id)
         : undefined,

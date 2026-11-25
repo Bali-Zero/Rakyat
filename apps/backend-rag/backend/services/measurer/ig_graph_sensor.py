@@ -159,6 +159,10 @@ class IGGraphSensor:
             name = entry.get("name")
             if name == "saved":
                 name = "saves"
+            # Keep only the names this sensor asked for (the keys seeded
+            # above): the name is stored as post_metrics_history.metric_name.
+            if not isinstance(name, str) or name not in parsed:
+                continue
             values = entry.get("values") or [{}]
             parsed[name] = int(values[0].get("value", 0))
         return parsed

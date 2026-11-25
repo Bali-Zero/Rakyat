@@ -58,11 +58,11 @@ class TestAgentRoleRequiresConfirmation:
 
     def test_visa_specialist_requires_confirmation_image_generation(self) -> None:
         """Phase 3: ROLE_VISA_SPECIALIST must require confirmation for image_generation."""
-        assert "image_generation" in ROLE_VISA_SPECIALIST.requires_confirmation
+        assert "generate_image" in ROLE_VISA_SPECIALIST.requires_confirmation
 
     def test_executive_consultant_requires_confirmation_image_generation(self) -> None:
         """Phase 3: ROLE_EXECUTIVE_CONSULTANT must require confirmation for image_generation."""
-        assert "image_generation" in ROLE_EXECUTIVE_CONSULTANT.requires_confirmation
+        assert "generate_image" in ROLE_EXECUTIVE_CONSULTANT.requires_confirmation
 
     def test_admin_has_no_requires_confirmation(self) -> None:
         """Admins bypass confirmation — they don't confirm their own actions."""
@@ -96,13 +96,13 @@ class TestCheckRequiresConfirmation:
         result = authorizer._check_requires_confirmation(
             user_email="damar@balizero.com",
             agent_role=ROLE_VISA_SPECIALIST,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={"prompt": "a KITAS card"},
         )
         assert result is not None
         assert result.decision == AuthDecision.NEEDS_CONFIRMATION
         assert result.reason  # non-empty preview text
-        assert "image_generation" in result.reason
+        assert "generate_image" in result.reason
 
     def test_returns_confirm_for_executive_consultant_image_generation(
         self,
@@ -111,7 +111,7 @@ class TestCheckRequiresConfirmation:
         result = authorizer._check_requires_confirmation(
             user_email="adit@balizero.com",
             agent_role=ROLE_EXECUTIVE_CONSULTANT,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={"prompt": "a marketing banner"},
         )
         assert result is not None
@@ -143,7 +143,7 @@ class TestCheckRequiresConfirmation:
         result = authorizer._check_requires_confirmation(
             user_email="zero@balizero.com",
             agent_role=ROLE_ADMIN,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={"prompt": "anything"},
         )
         assert result is None
@@ -157,7 +157,7 @@ class TestCheckRequiresConfirmation:
         result = authorizer._check_requires_confirmation(
             user_email="damar@balizero.com",
             agent_role=ROLE_VISA_SPECIALIST,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args=original,
         )
         assert result is not None
@@ -182,7 +182,7 @@ class TestAuthorizeEndToEndConfirmation:
         result = await authorizer.authorize(
             user_email="damar@balizero.com",
             agent_role=ROLE_VISA_SPECIALIST,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={"prompt": "a KITAS card"},
         )
         assert result.needs_confirmation
@@ -198,7 +198,7 @@ class TestAuthorizeEndToEndConfirmation:
         result = await authorizer.authorize(
             user_email="adit@balizero.com",
             agent_role=ROLE_EXECUTIVE_CONSULTANT,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={"prompt": "banner"},
         )
         assert result.needs_confirmation
@@ -212,7 +212,7 @@ class TestAuthorizeEndToEndConfirmation:
         result = await authorizer.authorize(
             user_email="zero@balizero.com",
             agent_role=ROLE_ADMIN,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={"prompt": "anything"},
         )
         assert result.is_allowed
@@ -230,7 +230,7 @@ class TestAuthorizeEndToEndConfirmation:
         result = await authorizer.authorize(
             user_email=None,
             agent_role=None,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={"prompt": "anything"},
         )
         assert result.is_allowed
@@ -276,14 +276,14 @@ class TestAuditLogConfirmation:
             await authorizer.authorize(
                 user_email="damar@balizero.com",
                 agent_role=ROLE_VISA_SPECIALIST,
-                tool_name="image_generation",
+                tool_name="generate_image",
                 args={"prompt": "test"},
             )
         records = [r for r in caplog.records if "tool_authz" in r.getMessage()]
         assert records, "tool_authz audit line missing for needs_confirmation"
         msg = records[-1].getMessage()
         assert "decision=needs_confirmation" in msg
-        assert "tool=image_generation" in msg
+        assert "tool=generate_image" in msg
         assert f"user=h:{hash_subject('damar@balizero.com')}" in msg
         assert "damar@balizero.com" not in msg, "raw staff email must never reach the audit log"
         assert "role=visa_specialist" in msg

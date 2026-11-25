@@ -1,7 +1,13 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import type {
+  PortalChallengeEntry,
+  PortalChallengeResponse,
+} from "@/lib/api/dashboard/dashboard.api";
 import { TeamReelMonthlyHub } from "../TeamReelMonthlyHub";
+import * as podiumModule from "../PortalChampionsLastMonthPodium";
 import { PortalChampionsLastMonthPodium } from "../PortalChampionsLastMonthPodium";
+import { usePortalChallenge } from "../_lib/usePortalChallenge";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -20,11 +26,83 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("../_lib/usePortalChallenge", () => ({
-  usePortalChallenge: vi.fn(() => ({
-    data: null,
-    isLoading: false,
-  })),
+  usePortalChallenge: vi.fn(),
 }));
+
+const mockedHook = vi.mocked(usePortalChallenge);
+
+function mockQuery(data: PortalChallengeResponse | null, isLoading = false) {
+  mockedHook.mockReturnValue({
+    data,
+    isLoading,
+  } as unknown as ReturnType<typeof usePortalChallenge>);
+}
+
+/** Invented contenders only. */
+function contender(
+  rank: number,
+  displayName: string,
+  points: number,
+): PortalChallengeEntry {
+  return {
+    member: `contender-${rank}@example.test`,
+    display_name: displayName,
+    avatar_url: null,
+    department: "Setup",
+    is_tax: false,
+    is_me: false,
+    rank,
+    activations: 0,
+    invited: 0,
+    last_activation_at: null,
+    award_tier: null,
+    prize_idr: 0,
+    tax_bonus_idr: 0,
+    total_prize_idr: 0,
+    next_tier_threshold: null,
+    to_next_tier: null,
+    points,
+    carry_points: 0,
+    registrations: 0,
+    document_bonuses: 0,
+    unanswered_requests: 0,
+    unreviewed_documents: 0,
+    penalty_points: 0,
+    last_event_at: "2026-10-20T00:00:00Z",
+    sprint_points: 20,
+    sprint_reached: true,
+    sprint_penalty_idr: 0,
+  };
+}
+
+function liveRound(
+  over: Partial<PortalChallengeResponse> = {},
+): PortalChallengeResponse {
+  return {
+    status: "closed",
+    round: 2,
+    campaign: "Sample Campaign",
+    window_start: "2026-09-29T00:00:00+08:00",
+    window_end: "2026-10-30T00:00:00+08:00",
+    timezone: "Asia/Makassar",
+    generated_at: "2026-10-30T00:00:00Z",
+    tiers: [],
+    tax_rules: {
+      podium_super_bonus_idr: 0,
+      best_tax_fallback_idr: 0,
+      best_tax_fallback_threshold: 0,
+    },
+    team_total_activations: 0,
+    team_total_points: 77,
+    entries: [
+      contender(1, "Alpha Sample", 40),
+      contender(2, "Bravo Sample", 22),
+      contender(3, "Charlie Sample", 15),
+    ],
+    recent_activations: [],
+    ...over,
+  };
+}
 
 describe("TeamReelMonthlyHub & PortalChampionsLastMonthPodium", () => {
   it("renders the team reel with human non-technical copy and the 3 monthly highlight cards", () => {
@@ -68,26 +146,72 @@ describe("TeamReelMonthlyHub & PortalChampionsLastMonthPodium", () => {
     expect(hrBox.getAttribute("href")).toBe("/hr/me");
   });
 
-  it("renders the original blue ChampionArena podium with official October Round 2 winners (Damar #1, Krishna #2, Adit #3) as last month's news", () => {
-    render(<PortalChampionsLastMonthPodium identity="preview" />);
+  describe("PortalChampionsLastMonthPodium", () => {
+    beforeEach(() => {
+      mockedHook.mockReset();
+    });
 
-    const podiumSection = screen.getByTestId(
-      "portal-champions-last-month-podium",
-    );
-    expect(podiumSection).toBeInTheDocument();
+    it("the podium module exports its component and nothing else", () => {
+      expect(Object.keys(podiumModule)).toEqual([
+        "PortalChampionsLastMonthPodium",
+      ]);
+    });
 
-    const arena = within(podiumSection).getByTestId("champion-arena");
-    expect(arena).toBeInTheDocument();
-    expect(within(arena).getByText("Portal Champion")).toBeInTheDocument();
-    expect(within(arena).getByText("353")).toBeInTheDocument();
-    expect(
-      within(arena).getByRole("button", { name: "Lihat peluang Damar" }),
-    ).toBeInTheDocument();
-    expect(
-      within(arena).getByRole("button", { name: "Lihat peluang Krishna" }),
-    ).toBeInTheDocument();
-    expect(
-      within(arena).getByRole("button", { name: "Lihat peluang Adit" }),
-    ).toBeInTheDocument();
+    it("renders the podium from the live closed round", () => {
+      mockQuery(liveRound());
+      render(<PortalChampionsLastMonthPodium identity="fixture" />);
+
+      const podiumSection = screen.getByTestId(
+        "portal-champions-last-month-podium",
+      );
+      const arena = within(podiumSection).getByTestId("champion-arena");
+      expect(within(arena).getByText("Portal Champion")).toBeInTheDocument();
+      expect(within(arena).getByText("77")).toBeInTheDocument();
+      for (const name of ["Alpha Sample", "Bravo Sample", "Charlie Sample"]) {
+        expect(
+          within(arena).getByRole("button", { name: `Lihat peluang ${name}` }),
+        ).toBeInTheDocument();
+      }
+      expect(
+        screen.queryByTestId("portal-champions-last-month-podium-empty"),
+      ).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["the live request failed", null],
+      ["the round is still live", liveRound({ status: "live" })],
+      [
+        "the closed round has fewer than three entries",
+        liveRound({ entries: liveRound().entries.slice(0, 2) }),
+      ],
+    ])("shows a plain empty state when %s", (_label, data) => {
+      mockQuery(data);
+      render(<PortalChampionsLastMonthPodium identity="fixture" />);
+
+      const podiumSection = screen.getByTestId(
+        "portal-champions-last-month-podium",
+      );
+      expect(
+        within(podiumSection).getByTestId(
+          "portal-champions-last-month-podium-empty",
+        ),
+      ).toHaveTextContent(/no closed round to show yet/i);
+      expect(
+        within(podiumSection).queryByTestId("champion-arena"),
+      ).not.toBeInTheDocument();
+      expect(podiumSection.textContent ?? "").not.toMatch(/Rp\s?\d/);
+    });
+
+    it("shows a loading note, not the empty state, while the round is loading", () => {
+      mockQuery(null, true);
+      render(<PortalChampionsLastMonthPodium identity="fixture" />);
+
+      expect(
+        screen.getByTestId("portal-champions-last-month-podium-loading"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("portal-champions-last-month-podium-empty"),
+      ).not.toBeInTheDocument();
+    });
   });
 });

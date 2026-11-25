@@ -18,6 +18,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from backend.app.dependencies import get_current_user, get_database_pool
+from backend.app.services.hr.delivery_bonus import (
+    delivery_desk,
+    payroll_member,
+    resolve_delivery_bonus,
+)
 from backend.app.services.hr.hr_card_models import StaffCard, member_card
 from backend.app.services.hr.hr_leave_notifier import (
     notify_leave_request_pending,
@@ -389,6 +394,94 @@ async def upsert_bonus_rate(
     return {"success": True, "rate": result}
 
 
+class DeliveryGoal(BaseModel):
+    target: int = Field(ge=1, le=200)
+
+
+class DeliveryRateResolution(BaseModel):
+    employee_id: int | None = Field(default=None, gt=0)
+    amount_idr: int = Field(ge=0, le=100_000_000)
+    use_current_period: bool = False
+
+
+@router.get("/me/delivery-desk")
+async def my_delivery_desk(
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    async with db_pool.acquire() as conn:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            return await delivery_desk(conn, _get_user_id(current_user))
+
+
+@router.put("/me/delivery-goal")
+async def save_delivery_goal(
+    data: DeliveryGoal,
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    member = _get_user_id(current_user)
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            emp = await payroll_member(conn, member)
+            if not emp:
+                raise HTTPException(403, "An eligible staff account is required")
+            await conn.execute(
+                """INSERT INTO hr_delivery_goals(employee_id,month,target) VALUES ($1,$2,$3)
+                   ON CONFLICT (employee_id,month) DO UPDATE SET target=EXCLUDED.target""",
+                emp["id"],
+                business_today().replace(day=1),
+                data.target,
+            )
+            return await delivery_desk(conn, member)
+
+
+@router.get("/delivery-bonus-reviews")
+async def delivery_bonus_reviews(
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    _require_hr_admin(current_user)
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT e.practice_id, COALESCE(pt.name,e.service_code) AS service, e.earned_at,
+                      e.event_kind, e.employee_id, tm.full_name AS employee_name, e.amount_idr
+               FROM hr_delivery_bonus_events e LEFT JOIN hr_employees emp ON emp.id=e.employee_id
+               LEFT JOIN team_members tm ON tm.id=COALESCE(emp.team_member_id, e.original_team_member_id)
+               LEFT JOIN practice_types pt ON pt.code=e.service_code
+               WHERE e.ledger_id IS NULL AND NOT e.payroll_ineligible
+               ORDER BY e.earned_at, e.practice_id LIMIT 100"""
+        )
+    return {"viewer_team_member_id": _get_user_id(current_user), "items": [dict(r) for r in rows]}
+
+
+@router.post("/delivery-bonus-reviews/{practice_id}")
+async def resolve_delivery_rate(
+    practice_id: int,
+    data: DeliveryRateResolution,
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict:
+    _require_hr_admin(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                result = await resolve_delivery_bonus(
+                    conn,
+                    practice_id,
+                    data.amount_idr,
+                    _get_user_id(current_user),
+                    data.use_current_period,
+                    employee_id=data.employee_id,
+                )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (BonusPeriodLockedError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await invalidate_cache("zantara:hr_bonuses:*")
+    return {"bonus": result}
+
+
 # ─── BONUSES ─────────────────────────────────────────────────────────────
 
 
@@ -543,6 +636,10 @@ def _require_payroll_writer(current_user: dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail="Payroll write access required")
 
 
+# Texts of hr_enforce_period_lock (migration 068) for a period that is paid or approved.
+_PERIOD_LOCK_TEXTS = ("is paid and immutable", "only allows transition to paid")
+
+
 @router.post("/payroll/calculate")
 async def calculate_payroll(
     data: PayrollCalculateRequest,
@@ -552,11 +649,17 @@ async def calculate_payroll(
     """Calculate payroll for a month (admin only)."""
     _require_payroll_writer(current_user)
     service = _get_hr_service(db_pool)
-    result = await service.calculate_payroll(
-        data.month,
-        data.year,
-        _get_user_id(current_user),
-    )
+    try:
+        result = await service.calculate_payroll(
+            data.month,
+            data.year,
+            _get_user_id(current_user),
+        )
+    except asyncpg.exceptions.RaiseError as e:
+        # hr_enforce_period_lock refuses to reopen an approved or paid period
+        if not any(text in str(e) for text in _PERIOD_LOCK_TEXTS):
+            raise
+        raise HTTPException(status_code=409, detail="This payroll period is closed") from None
     await invalidate_cache("zantara:hr_payroll:*")
     return {"success": True, **result}
 
@@ -571,6 +674,10 @@ async def list_payroll_periods(
     service = _get_hr_service(db_pool)
     periods = await service.list_payroll_periods()
     return {"periods": periods, "count": len(periods)}
+
+
+# Period statuses from which a payslip is visible to someone other than an HR admin.
+_PAYSLIP_VISIBLE_STATUSES = ("approved", "paid")
 
 
 @router.get("/payslips")
@@ -590,6 +697,8 @@ async def list_payslips(
             return {"payslips": [], "count": 0}
 
     payslips = await service.get_payslips(employee_id, period_id)
+    if not is_hr_admin(current_user):  # a payslip is the member's only once its period is approved
+        payslips = [p for p in payslips if p.get("period_status") in _PAYSLIP_VISIBLE_STATUSES]
     return {"payslips": payslips, "count": len(payslips)}
 
 
@@ -607,6 +716,8 @@ async def get_payslip_detail(
 
     # Check access
     if not is_hr_admin(current_user):
+        if detail.get("period_status") not in _PAYSLIP_VISIBLE_STATUSES:
+            raise HTTPException(status_code=404, detail="Payslip not found")
         my_id = await _get_my_employee_id(service, current_user)
         if detail.get("employee_id") != my_id:
             raise HTTPException(status_code=403, detail="Access denied")

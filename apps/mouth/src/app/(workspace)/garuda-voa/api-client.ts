@@ -15,10 +15,10 @@
  * in `(workspace)/review/page.tsx`, are the established convention for
  * cookie-session-authenticated `(workspace)` calls): every request MUST go
  * through the Next.js same-origin proxy (`app/api/[...path]/route.ts`),
- * which is also the only place that promotes the `nz_csrf_token` cookie into
- * the `X-CSRF-Token` header for mutating methods. `NEXT_PUBLIC_API_URL`
+ * while browser code supplies `X-CSRF-Token` for mutating methods.
+ * `NEXT_PUBLIC_API_URL`
  * points at the Fly backend host directly in production — using it here sent
- * requests cross-origin, without the proxy's CSRF promotion and without the
+ * requests cross-origin, without the session cookie and without the
  * httpOnly session cookie (scoped to `.balizero.com`, never sent to
  * `nuzantara-rag.fly.dev`), which 401'd every staff call live.
  */
@@ -35,6 +35,23 @@ import type {
 } from "./types";
 
 const API_BASE_URL = "/api";
+
+function withCsrfHeader(init: RequestInit): RequestInit {
+  const headers = new Headers(init.headers);
+  const method = (init.method || "GET").toUpperCase();
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
+    typeof document !== "undefined"
+  ) {
+    const csrfCookie = document.cookie
+      .split("; ")
+      .find((row) => row.startsWith("nz_csrf_token="));
+    if (csrfCookie) {
+      headers.set("X-CSRF-Token", csrfCookie.slice("nz_csrf_token=".length));
+    }
+  }
+  return { ...init, headers };
+}
 
 export class GarudaStaffError extends Error {
   constructor(
@@ -90,7 +107,10 @@ function throwFromErrorBody(response: Response, body: unknown): never {
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(url, { credentials: "same-origin", ...init });
+    response = await fetch(url, {
+      credentials: "same-origin",
+      ...withCsrfHeader(init),
+    });
   } catch (cause) {
     throw new GarudaStaffUnexpectedError(null, cause);
   }
@@ -193,7 +213,7 @@ export async function transitionPractice({
   try {
     response = await fetch(
       `${API_BASE_URL}/visa/voa/staff/practices/${encodeURIComponent(practiceId)}/transitions`,
-      {
+      withCsrfHeader({
         method: "POST",
         credentials: "same-origin",
         headers: {
@@ -202,7 +222,7 @@ export async function transitionPractice({
         },
         body: JSON.stringify(request),
         signal,
-      },
+      }),
     );
   } catch (cause) {
     throw new GarudaStaffUnexpectedError(null, cause);

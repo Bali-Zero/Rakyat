@@ -51,6 +51,7 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -62,8 +63,8 @@ from backend.app.utils.crm_utils import is_crm_admin
 from backend.services.crm.e33_case_repository import E33CaseRepository
 from backend.services.crm.e33_guarantee_scanner import ScanSwitchState, resolve_scan_switch
 from backend.services.crm.e33_lifecycle import (
-    ACTIVE_PERMIT_STAGES,
     E33_ITAP_EVAL_ENABLED,
+    GUARANTEE_GATE_OPEN_STAGES,
     TERMINAL_STAGES,
     VALID_TRANSITIONS,
     CustodyViolationError,
@@ -75,8 +76,10 @@ from backend.services.crm.e33_lifecycle import (
     GuaranteeBasis,
     UnknownDependentCodeError,
     guarantee_alert_schedule,
+    guarantee_gate_open,
     severity_for_days_until,
     validate_dependent_code,
+    validate_transition,
 )
 
 logger = logging.getLogger(__name__)
@@ -164,6 +167,46 @@ async def _fetch_client_name_and_owner_conn(
     return row["full_name"], row["assigned_to"]
 
 
+async def _fetch_dependent_links(
+    conn: asyncpg.Connection, principal_case_id: str, current_user: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Dependents of a principal, read from the cases that point at it.
+
+    The source of truth is ``e33_cases.principal_case_id`` (set by ``create_case``); the
+    ``dependents`` JSONB column and ``E33Case.dependents`` are kept for compatibility but
+    nothing writes them, so the API never serves them. Same access rule as ``list_cases``:
+    a non-admin only sees dependents whose client is assigned to them (or a pool peer).
+    """
+    params: list[Any] = [principal_case_id]
+    access = ""
+    if not is_crm_admin(current_user):
+        access = "AND LOWER(clients.assigned_to) = ANY($2::text[])"
+        params.append(sorted(caller_pool_peers(current_user)))
+    rows = await conn.fetch(
+        f"""
+        SELECT e33_cases.case_id, e33_cases.client_id, e33_cases.dependent_code,
+               e33_cases.stage, clients.full_name AS client_name
+        FROM e33_cases
+        JOIN clients ON clients.id = e33_cases.client_id
+        WHERE e33_cases.principal_case_id = $1 {access}
+        ORDER BY e33_cases.created_at, e33_cases.case_id
+        """,
+        *params,
+    )
+    return [
+        {
+            "case_id": r["case_id"],
+            "code": r["dependent_code"],
+            "client_id": r["client_id"],
+            "client_name": r["client_name"],
+            "stage": r["stage"],
+            # No stored source for the relationship; the dependent code is what is known.
+            "relationship": None,
+        }
+        for r in rows
+    ]
+
+
 def _case_summary_dict(case: E33Case, *, client_name: str | None) -> dict[str, Any]:
     return {
         "case_id": case.case_id,
@@ -176,6 +219,7 @@ def _case_summary_dict(case: E33Case, *, client_name: str | None) -> dict[str, A
         if case.guarantee_deadline
         else None,
         "stayguard_eligible": case.stayguard_eligible,
+        "guarantee_gate_open": case.guarantee_gate_open,
         "dependent_code": case.dependent_code,
         "principal_case_id": case.principal_case_id,
         "created_at": case.created_at.isoformat(),
@@ -194,6 +238,12 @@ def _row_to_summary_dict(row: dict[str, Any]) -> dict[str, Any]:
         "owner_email": row.get("owner_email"),
         "guarantee_proof_deadline": deadline.isoformat() if deadline else None,
         "stayguard_eligible": row.get("stayguard_eligible", False),
+        # Same rule as E33Case.guarantee_gate_open: within the open stages the
+        # persisted stayguard_eligible column IS "evidence complete".
+        "guarantee_gate_open": guarantee_gate_open(
+            E33Stage(row["stage"]),
+            evidence_complete=bool(row.get("stayguard_eligible", False)),
+        ),
         "dependent_code": row.get("dependent_code"),
         "principal_case_id": row.get("principal_case_id"),
         "created_at": created_at.isoformat() if created_at else None,
@@ -226,13 +276,19 @@ def _guarantee_dict(case: E33Case, *, today: date) -> dict[str, Any] | None:
     }
 
 
-def _case_detail_dict(case: E33Case, *, client_name: str | None, today: date) -> dict[str, Any]:
+def _case_detail_dict(
+    case: E33Case,
+    *,
+    client_name: str | None,
+    today: date,
+    dependents: list[dict[str, Any]],
+) -> dict[str, Any]:
     detail = _case_summary_dict(case, client_name=client_name)
     detail.update(
         {
             "entry_date": case.entry_date.isoformat() if case.entry_date else None,
             "itas_date": case.itas_date.isoformat() if case.itas_date else None,
-            "dependents": _to_jsonable(case.dependents),
+            "dependents": dependents,
             "evidence": _to_jsonable(case.evidence),
             "stage_history": _to_jsonable(case.history),
             "allowed_next_stages": _allowed_next_stages(case.stage),
@@ -255,6 +311,14 @@ class CaseCreateBody(BaseModel):
     dependent_code: str | None = None
     principal_case_id: str | None = None
 
+    @field_validator("owner_email", mode="before")
+    @classmethod
+    def _blank_owner_email_is_unassigned(cls, v: object) -> object:
+        # A blank owner is "no owner", never an assigned empty-string owner.
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     @field_validator("dependent_code")
     @classmethod
     def _validate_dependent_code(cls, v: str | None) -> str | None:
@@ -272,6 +336,33 @@ class CaseCreateBody(BaseModel):
                 "dependent_code and principal_case_id must be provided together"
             )
         return self
+
+
+_OFFICE_TZ = ZoneInfo("Asia/Makassar")
+
+
+def _latest_occurred_on() -> date:
+    # Staff date events in Bali, which is ahead of the server's UTC clock.
+    return max(date.today(), datetime.now(_OFFICE_TZ).date())
+
+
+def _six_years_before(day: date) -> date:
+    # 29 February has no counterpart six years earlier unless that year is a leap year too.
+    try:
+        return day.replace(year=day.year - 6)
+    except ValueError:
+        return day.replace(year=day.year - 6, day=28)
+
+
+def _occurred_on_error(occurred_on: date, entry_date: date | None) -> str | None:
+    today = _latest_occurred_on()
+    if occurred_on > today:
+        return "occurred_on cannot be after today"
+    if occurred_on < _six_years_before(today):
+        return "occurred_on cannot be more than six years ago"
+    if entry_date is not None and occurred_on < entry_date:
+        return "occurred_on cannot be before the case entry date"
+    return None
 
 
 class AdvanceBody(BaseModel):
@@ -419,7 +510,8 @@ async def create_case(
             detail="Could not mint a unique E33 case id after 2 attempts",
         ) from last_error
 
-    return _case_detail_dict(case, client_name=client_name, today=today)
+    # A case that was just created has no dependents yet.
+    return _case_detail_dict(case, client_name=client_name, today=today, dependents=[])
 
 
 @router.get("/cases")
@@ -485,7 +577,11 @@ async def get_case(
     client_name, assigned_to = await _fetch_client_name_and_owner(db_pool, case.client_id)
     _assert_client_access(current_user, assigned_to)
 
-    return _case_detail_dict(case, client_name=client_name, today=date.today())
+    async with db_pool.acquire() as conn:
+        dependents = await _fetch_dependent_links(conn, case.case_id, current_user)
+    return _case_detail_dict(
+        case, client_name=client_name, today=date.today(), dependents=dependents
+    )
 
 
 @router.post("/cases/{case_id}/advance")
@@ -545,6 +641,22 @@ async def advance_case(
                     ),
                 )
 
+            if body.occurred_on is not None:
+                # A refused transition keeps its 409 whatever the date says.
+                try:
+                    validate_transition(
+                        case.stage, body.to_stage, itap_eval_enabled=E33_ITAP_EVAL_ENABLED
+                    )
+                except E33InvalidTransitionError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+                    ) from exc
+                date_error = _occurred_on_error(body.occurred_on, case.entry_date)
+                if date_error is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=date_error
+                    )
+
             try:
                 case.advance(
                     body.to_stage,
@@ -560,8 +672,11 @@ async def advance_case(
                 ) from exc
 
             await repo.save(case)
+            dependents = await _fetch_dependent_links(conn, case.case_id, current_user)
 
-    return _case_detail_dict(case, client_name=client_name, today=date.today())
+    return _case_detail_dict(
+        case, client_name=client_name, today=date.today(), dependents=dependents
+    )
 
 
 @router.post("/cases/{case_id}/evidence")
@@ -621,8 +736,11 @@ async def add_evidence(
 
             case.add_evidence(evidence)
             await repo.save(case)
+            dependents = await _fetch_dependent_links(conn, case.case_id, current_user)
 
-    return _case_detail_dict(case, client_name=client_name, today=date.today())
+    return _case_detail_dict(
+        case, client_name=client_name, today=date.today(), dependents=dependents
+    )
 
 
 @router.get("/summary")
@@ -646,18 +764,19 @@ async def get_summary(
             *rbac_params,
         )
 
-        # "due" must be scoped to the scanner's own active-permit stage set
-        # (itas_active / guarantee_proof_due / annual_maintenance) — a
-        # terminal-stage case with a stale deadline still on the row must
-        # NOT count as "due". Sourced from ACTIVE_PERMIT_STAGES, no string
-        # literals, so the two never drift apart.
+        # "due" counts only OPEN Day-90 gates (GUARANTEE_GATE_OPEN_STAGES, evidence
+        # not complete): annual_maintenance / renewal / terminal cases keep a stale
+        # deadline on the row with nothing owed. Overdue open gates still count
+        # (no lower bound) -- they are the most urgent. Within the open stages the
+        # stayguard_eligible column is exactly "evidence complete".
         due_params = list(rbac_params)
-        active_stage_values = sorted(s.value for s in ACTIVE_PERMIT_STAGES)
-        due_params.append(active_stage_values)
+        open_stage_values = sorted(s.value for s in GUARANTEE_GATE_OPEN_STAGES)
+        due_params.append(open_stage_values)
         due_conditions = [
             "guarantee_proof_deadline IS NOT NULL",
             "guarantee_proof_deadline <= CURRENT_DATE + 30",
             f"stage = ANY(${len(due_params)}::text[])",
+            "NOT stayguard_eligible",
         ]
         if rbac_clause:
             due_conditions.append(rbac_clause)

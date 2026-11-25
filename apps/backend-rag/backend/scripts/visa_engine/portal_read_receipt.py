@@ -177,6 +177,7 @@ def read_one(record: dict[str, Any], *, reader: str, text_dir: Path) -> dict[str
     short_id = record["source_record_id"][:8]
     text_path = _new_text_path(text_dir, short_id, fetched_at)
     text_path.write_text(text + "\n", encoding="utf-8")
+    redirected = final_url != record["canonical_url"]
     receipt.update(
         {
             "http_status": status,
@@ -184,13 +185,15 @@ def read_one(record: dict[str, Any], *, reader: str, text_dir: Path) -> dict[str
             "body_bytes": len(body),
             "visible_text_chars": len(text),
             "visible_text_sha256": fingerprint(text),
-            "key_phrase_found": found_at >= 0,
+            "key_phrase_found": found_at >= 0 and not redirected,
             "key_phrase_context": text[max(0, found_at - 80) : found_at + 160].replace("\n", " ")
             if found_at >= 0
             else None,
             "text_file": str(text_path),
         }
     )
+    if redirected:
+        receipt["error"] = "redirected away from canonical_url"
     return receipt
 
 

@@ -33,6 +33,7 @@ from backend.app.utils.crm_utils import (
     is_crm_admin,
     verify_client_access,
 )
+from backend.app.utils.json_utils import from_jsonb
 from backend.app.utils.logging_utils import get_logger
 from backend.core.cache import invalidate_cache
 from backend.db.repositories.client_repository import CORE_OWNER_IDS_SQL
@@ -45,6 +46,7 @@ from backend.services.crm.drive_taxonomy import (
     folder_for_category,
     physical_root_layout,
 )
+from backend.services.documents.ocr_dispatcher_service import is_passport_document_type
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
 logger = get_logger(__name__)
@@ -52,6 +54,11 @@ logger = get_logger(__name__)
 
 def _access_not_preverified() -> bool:
     return False
+
+
+def _no_delivery_repair_slot() -> None:
+    # Set only by the authenticated, in-process final-permit repair operation.
+    return None
 
 
 def _team_upload_source() -> str:
@@ -114,6 +121,8 @@ async def get_client_documents(
                 d.id, d.document_type, d.document_category,
                 d.file_name, d.file_id, d.file_url, d.google_drive_file_url,
                 d.status, d.expiry_date, d.notes, d.is_archived,
+                crm_passport_ocr_staff_status(d) AS ocr_status,
+                d.ocr_extracted_data->>'review_reason' AS ocr_review_reason,
                 d.family_member_id, d.practice_id, d.client_visible,
                 d.created_at, d.updated_at,
                 fm.full_name as family_member_name,
@@ -147,6 +156,25 @@ async def get_client_documents(
         return [dict(d) for d in docs]
 
 
+def _schedule_upload_ocr(
+    tasks: BackgroundTasks,
+    pool: Any,
+    client_id: int,
+    file_id: str,
+    folder: str,
+    name: str,
+    document_id: int,
+    document_type: str,
+) -> None:
+    # Typed passport uploads are enrolled by the pending write in the same transaction.
+    # Their provider work runs on the Drive machine.
+    if not is_passport_document_type(document_type):
+        tasks.add_task(
+            _dispatch_ocr_by_folder, pool, client_id, file_id, folder, name,
+            document_id, document_type,
+        )
+
+
 @router.post("/clients/{client_id}/documents")
 async def create_document(
     client_id: int,
@@ -177,8 +205,8 @@ async def create_document(
                 client_id, document_type, document_category,
                 file_name, file_id, file_url, google_drive_file_url,
                 expiry_date, notes, family_member_id, practice_id,
-                status, storage_type
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'google_drive', 'google_drive')
+                status, storage_type, ocr_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'google_drive', 'google_drive', $12)
             RETURNING id
             """,
             client_id,
@@ -192,6 +220,7 @@ async def create_document(
             data.notes,
             data.family_member_id,
             data.practice_id,
+            "pending" if data.file_id and data.document_type else None,
         )
 
         # Auto-trigger OCR via dispatcher
@@ -206,19 +235,15 @@ async def create_document(
                 folder_hint = "03_Tax"
             elif cat == "company":
                 folder_hint = "02_Company"
-            background_tasks.add_task(
-                _dispatch_ocr_by_folder,
+            _schedule_upload_ocr(
+                background_tasks,
                 pool,
                 client_id,
                 data.file_id,
                 folder_hint,
                 data.file_name or data.document_type,
                 doc_id,
-            )
-            # Mark document as pending OCR
-            await conn.execute(
-                "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
-                doc_id,
+                data.document_type,
             )
             ocr_triggered = True
 
@@ -431,14 +456,15 @@ async def create_documents_bulk(
                             folder_hint = "03_Tax"
                         elif cat == "company":
                             folder_hint = "02_Company"
-                        background_tasks.add_task(
-                            _dispatch_ocr_by_folder,
+                        _schedule_upload_ocr(
+                            background_tasks,
                             pool,
                             client_id,
                             doc.file_id,
                             folder_hint,
                             doc.file_name or doc.document_type,
                             doc_id,
+                            doc.document_type,
                         )
                         await conn.execute(
                             "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
@@ -661,6 +687,7 @@ async def get_client_ocr_status(
     client_id: int,
     pool: Any = Depends(get_database_pool),
     current_user: dict = Depends(get_current_user),
+    document_id: Annotated[int | None, Query(gt=0)] = None,
 ) -> dict[str, Any]:
     """
     Get OCR processing status for a client's documents.
@@ -670,27 +697,52 @@ async def get_client_ocr_status(
         await verify_client_access(client_id, current_user, conn, allow_assigned=True)
         docs = await conn.fetch(
             f"""
-            SELECT id, document_type, file_name, ocr_status, ocr_completed_at,
-                   ocr_extracted_data
-            FROM documents
-            WHERE client_id = $1
-              AND ocr_status IS NOT NULL
+            SELECT id, document_type, file_name, crm_passport_ocr_staff_status(d) AS ocr_status,
+                   ocr_completed_at, ocr_extracted_data
+            FROM documents d
+            WHERE client_id = $1 AND ocr_status IS NOT NULL
+              AND ($2::bigint IS NULL OR id = $2)
               AND {admin_document_not_deleted_clause()}
-            ORDER BY updated_at DESC
+            ORDER BY updated_at DESC, id DESC
             LIMIT 10
             """,
             client_id,
+            document_id,
         )
 
-        pending = sum(1 for d in docs if d["ocr_status"] in ("pending", "processing"))
-        completed = sum(1 for d in docs if d["ocr_status"] == "completed")
-
+        documents = [dict(row) for row in docs]
+        pending = sum(row["ocr_status"] in ("pending", "processing") for row in documents)
+        completed = sum(row["ocr_status"] == "completed" for row in documents)
+        for document in documents:
+            payload = document.get("ocr_extracted_data")
+            if isinstance(payload, str):
+                try:
+                    document["ocr_extracted_data"] = from_jsonb(payload)
+                except ValueError:
+                    pass  # Preserve a legacy scalar value.
         return {
             "client_id": client_id,
             "pending_ocr": pending,
             "completed_ocr": completed,
-            "documents": [dict(d) for d in docs],
+            "documents": documents,
         }
+
+
+# A document records its Drive file in file_id or in one of its two URLs (the
+# workspace sends the id it reads from google_drive_file_url): the same three
+# places, and the same two URL forms, as the ownership registry in documents_proxy.
+_CLIENT_DOCUMENT_OF_FILE_SQL = f"""
+    SELECT 1 FROM documents d
+    WHERE d.id = $1 AND d.client_id = $2
+      AND {admin_document_not_deleted_clause("d")}
+      AND (
+        d.file_id = $3
+        OR substring(d.google_drive_file_url from '/d/([A-Za-z0-9_-]+)') = $3
+        OR substring(d.google_drive_file_url from '[?&]id=([A-Za-z0-9_-]+)') = $3
+        OR substring(d.file_url from '/d/([A-Za-z0-9_-]+)') = $3
+        OR substring(d.file_url from '[?&]id=([A-Za-z0-9_-]+)') = $3
+      )
+"""
 
 
 class ExtractVisaRequest(BaseModel):
@@ -713,6 +765,16 @@ async def extract_visa_data(
     """
     async with pool.acquire() as conn:
         await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
+        # The OCR result is written onto the named document and synced to this
+        # client's visa fields, so the file must be this client's (the guard every
+        # other document write uses) and the document must be this client's live
+        # record of that same file.
+        await assert_drive_file_belongs_to_client(body.file_id, client_id, conn)
+        # 0 is a document id like any other: only an absent doc_id skips the check.
+        if body.doc_id is not None and not await conn.fetchval(
+            _CLIENT_DOCUMENT_OF_FILE_SQL, body.doc_id, client_id, body.file_id
+        ):
+            raise HTTPException(status_code=404, detail="Document not found")
 
     return await _auto_ocr_visa(pool, client_id, body.file_id, body.doc_id)
 
@@ -983,6 +1045,7 @@ async def _active_duplicate_document_id(
     *,
     practice_id: int | None = None,
     family_member_id: int | None = None,
+    missing_delivery_slot: str | None = None,
 ) -> int | None:
     """Id of a document this client already has with the same file content
     attached in the SAME context (practice, family member).
@@ -995,6 +1058,17 @@ async def _active_duplicate_document_id(
     attachment, not a duplicate. Application-level check; index 074 stays
     non-unique.
     """
+    exclusion = ""
+    repair_args = []
+    if missing_delivery_slot:
+        # A lost pointer is still an active database row. Exempt only that
+        # exact recorded case/slot during authenticated completed-permit repair.
+        exclusion = """ AND NOT (NULLIF(d.file_id,'') IS NULL AND EXISTS (
+            SELECT 1 FROM practice_delivery_slots s
+            JOIN practice_delivery_completions c ON c.practice_id=s.practice_id AND c.service_code=s.service_code
+            JOIN practices p ON p.id=s.practice_id AND p.status='completed'
+            WHERE s.document_id=d.id AND s.practice_id=d.practice_id AND s.slot_key=$5))"""
+        repair_args.append(missing_delivery_slot)
     return await conn.fetchval(
         "SELECT d.id FROM documents d"
         " WHERE d.client_id = $1 AND d.content_hash = $2"
@@ -1002,11 +1076,12 @@ async def _active_duplicate_document_id(
         " AND d.family_member_id IS NOT DISTINCT FROM $4"
         " AND COALESCE(d.is_archived, false) = false"
         f" AND {admin_document_not_deleted_clause('d')}"
-        " ORDER BY d.id LIMIT 1",
+        f"{exclusion} ORDER BY d.id LIMIT 1",
         client_id,
         content_hash,
         practice_id,
         family_member_id,
+        *repair_args,
     )
 
 
@@ -1019,6 +1094,7 @@ async def upload_document_base64(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     access_already_verified: bool = Depends(_access_not_preverified),
     uploaded_source: str = Depends(_team_upload_source),
+    missing_delivery_slot: str | None = Depends(_no_delivery_repair_slot),
 ) -> dict[str, Any]:
     """
     Upload a document via Base64 (for frontend integration).
@@ -1142,6 +1218,17 @@ async def upload_document_base64(
                     content_hash,
                     practice_id=practice_id,
                     family_member_id=data.family_member_id,
+                    missing_delivery_slot=(
+                        missing_delivery_slot
+                        if access_already_verified is True
+                        and source == "team"
+                        and practice_id is not None
+                        and isinstance(missing_delivery_slot, str)
+                        and (data.intake_idempotency_key or "").startswith(
+                            f"case-delivery:{practice_id}:0:{missing_delivery_slot}:"
+                        )
+                        else None
+                    ),
                 )
             if existing_doc_id is not None:
                 raise HTTPException(
@@ -1621,6 +1708,16 @@ async def upload_document_base64(
                                 )
                                 raise
 
+                intake_passport = bool(data.intake_idempotency_key) and is_passport_document_type(
+                    data.document_type
+                )
+                if not deduplicated_doc_in_tx:
+                    await conn.execute(
+                        "UPDATE documents SET ocr_status = $2 WHERE id = $1",
+                        doc_id,
+                        "intake" if intake_passport else "pending",
+                    )
+
             if deduplicated_doc_in_tx and (company_id is None or deduplicated_comp_in_tx):
                 dedup_resp: dict[str, Any] = {
                     "success": True,
@@ -1637,8 +1734,8 @@ async def upload_document_base64(
             # Trigger OCR via dispatcher only for newly inserted client document rows.
             if not deduplicated_doc_in_tx:
                 if folder_name is not None and effective_file_id is not None:
-                    background_tasks.add_task(
-                        _dispatch_ocr_by_folder,
+                    _schedule_upload_ocr(
+                        background_tasks,
                         pool,
                         client_id,
                         effective_file_id,
@@ -1647,18 +1744,13 @@ async def upload_document_base64(
                         doc_id,
                         data.document_type,
                     )
-                await conn.execute(
-                    "UPDATE documents SET ocr_status = 'pending' WHERE id = $1",
-                    doc_id,
-                )
-
             await invalidate_cache("zantara:crm_clients_stats:*")
             return {
                 "success": True,
                 "document_id": doc_id,
                 "file_id": effective_file_id,
                 "file_url": effective_file_url,
-                "ocr_triggered": not deduplicated_doc_in_tx,
+                "ocr_triggered": not deduplicated_doc_in_tx and not intake_passport,
                 "company_document_id": company_document_id,
             }
 

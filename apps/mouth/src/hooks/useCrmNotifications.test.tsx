@@ -30,14 +30,19 @@ const expiry = (
   alert_color: "yellow",
 });
 
-const portal = (id: number, status = "pending") => ({
+const portal = (
+  id: number,
+  status = "pending",
+  createdAt = "2026-06-01T10:00:00.000Z",
+  message = "Uploaded",
+) => ({
   id,
   client_id: 900100 + id,
   alert_type: "portal_upload",
   status,
-  message: "Uploaded",
+  message,
   email_subject: null,
-  created_at: "2026-06-01T10:00:00.000Z",
+  created_at: createdAt,
   sent_at: null,
 });
 
@@ -164,5 +169,58 @@ describe("useCrmNotifications read state across polls", () => {
       hook.result.current.markAsRead("expiry-client-1-passport");
     });
     expect(hook.result.current.unreadCount).toBe(1);
+  });
+
+  it("keeps a portal item read while its createdAt is the acknowledged one", async () => {
+    mockedExpiry.mockResolvedValue([] as never);
+    mockedRequest.mockResolvedValue([portal(7)] as never);
+    const { hook, poll } = setup();
+    await waitFor(() => expect(hook.result.current.unreadCount).toBe(1));
+    act(() => hook.result.current.markAsRead("portal-7"));
+    expect(hook.result.current.unreadCount).toBe(0);
+
+    await poll();
+    expect(hook.result.current.unreadCount).toBe(0);
+  });
+
+  it("shows a re-armed portal item (later createdAt, new message) unread again", async () => {
+    mockedExpiry.mockResolvedValue([] as never);
+    mockedRequest.mockResolvedValue([portal(7)] as never);
+    const { hook, poll } = setup();
+    await waitFor(() => expect(hook.result.current.unreadCount).toBe(1));
+    act(() => hook.result.current.markAsRead("portal-7"));
+    expect(hook.result.current.unreadCount).toBe(0);
+
+    mockedRequest.mockResolvedValue([
+      portal(
+        7,
+        "pending",
+        "2026-06-02T09:00:00.000Z",
+        "Client requested a contact change: phone",
+      ),
+    ] as never);
+    await poll();
+    await waitFor(() => expect(hook.result.current.unreadCount).toBe(1));
+    expect(hook.result.current.notifications[0].message).toBe(
+      "Client requested a contact change: phone",
+    );
+  });
+
+  it("after markAllAsRead only the re-armed item is unread", async () => {
+    mockedExpiry.mockResolvedValue([expiry(1)] as never);
+    mockedRequest.mockResolvedValue([portal(7), portal(8)] as never);
+    const { hook, poll } = setup();
+    await waitFor(() => expect(hook.result.current.unreadCount).toBe(3));
+    act(() => hook.result.current.markAllAsRead());
+    expect(hook.result.current.unreadCount).toBe(0);
+
+    mockedRequest.mockResolvedValue([
+      portal(7, "pending", "2026-06-02T09:00:00.000Z", "Re-armed"),
+      portal(8),
+    ] as never);
+    await poll();
+    await waitFor(() => expect(hook.result.current.unreadCount).toBe(1));
+    const unread = hook.result.current.notifications.filter((n) => !n.read);
+    expect(unread.map((n) => n.id)).toEqual(["portal-7"]);
   });
 });

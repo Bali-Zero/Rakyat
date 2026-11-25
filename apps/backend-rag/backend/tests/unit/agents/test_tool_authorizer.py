@@ -149,7 +149,7 @@ class TestAuthorizeDecisions:
         """ADMIN has empty allowed_* lists → is_tool_allowed returns True for all."""
         for tool in (
             "vector_search",
-            "image_generation",
+            "generate_image",
             "execute_plan",  # not blocked for admin
             "any_brand_new_tool",
         ):
@@ -181,11 +181,10 @@ class TestAuthorizeDecisions:
         # that were and remain plain ALLOWED (no confirmation gate).
         for tool in (
             "vector_search",
-            "pricing",
+            "get_pricing",
             "team_knowledge",
-            "knowledge_graph",
+            "knowledge_graph_search",
             "calculator",
-            "vision",
             "web_search",
         ):
             r = await authorizer.authorize(
@@ -200,7 +199,7 @@ class TestAuthorizeDecisions:
         r = await authorizer.authorize(
             user_email="damar@balizero.com",
             agent_role=ROLE_VISA_SPECIALIST,
-            tool_name="image_generation",
+            tool_name="generate_image",
             args={},
         )
         assert r.needs_confirmation, (
@@ -399,7 +398,7 @@ class TestSensitiveToolTourniquet:
         authorizer: ToolAuthorizer,
     ) -> None:
         """Blog/marketing flows must not regress — only SENSITIVE_TOOLS are gated."""
-        for tool in ("vector_search", "pricing", "knowledge_graph", "web_search"):
+        for tool in ("vector_search", "get_pricing", "knowledge_graph_search", "web_search"):
             r = await authorizer.authorize(
                 user_email=None,
                 agent_role=None,
@@ -714,7 +713,7 @@ class TestPrincipalPseudonymisation:
             await authorizer.authorize(
                 user_email=self.WA_USER,
                 agent_role=ROLE_VISA_SPECIALIST,
-                tool_name="pricing",
+                tool_name="get_pricing",
                 args={},
             )
             second_msg = [r for r in caplog.records if "tool_authz" in r.getMessage()][
@@ -832,12 +831,12 @@ class TestExecuteToolIntegration:
     @pytest.mark.asyncio
     async def test_user_id_injected_into_args_after_authz(self) -> None:
         """The existing _user_id injection must still happen for allowed tools."""
-        tool = _NoopTool("pricing")
-        tool_map = {"pricing": tool}
+        tool = _NoopTool("get_pricing")
+        tool_map = {"get_pricing": tool}
 
         await execute_tool(
             tool_map=tool_map,
-            tool_name="pricing",
+            tool_name="get_pricing",
             arguments={},
             user_id="damar@balizero.com",
             tool_execution_counter=None,

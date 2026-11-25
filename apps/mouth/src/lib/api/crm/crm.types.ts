@@ -21,6 +21,12 @@ export interface Practice {
   paid_amount?: number;
   payment_status: string;
   assigned_to?: string | null;
+  assignee_member_id?: string | null;
+  assignee_color_index?: number | null;
+  assignee_department?: "setup" | "tax" | null;
+  assignee_name?: string | null;
+  can_edit_process?: boolean;
+  can_manage_delivery?: boolean;
   start_date?: string | null;
   completion_date?: string | null;
   expiry_date?: string | null;

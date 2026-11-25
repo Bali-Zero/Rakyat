@@ -1313,7 +1313,7 @@
         "icon_id": "other-epo"
       },
       "ERP (Exit Re-entry Permit)": {
-        "name": "ERP (Exit Permit Only — Offshore)",
+        "name": "TSP (Termination Stay Permit)",
         "price": "800.000 IDR",
         "tier_range": null,
         "duration": "",

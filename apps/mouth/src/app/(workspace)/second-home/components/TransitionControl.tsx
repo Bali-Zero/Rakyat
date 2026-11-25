@@ -8,11 +8,16 @@ import { logger } from "@/lib/logger";
 import { toError } from "@/lib/types/common";
 import { ApiError } from "@/lib/api/error-handler";
 import { STAGE_LABELS } from "@/lib/api/secondhome/state-machine";
+import { workDayOf } from "@/lib/format/work-day";
 import type {
   E33Stage,
   GuaranteeBasis,
 } from "@/lib/api/secondhome/secondhome.types";
 import { useAdvanceSecondHomeCase } from "@/hooks/useSecondHome";
+
+/** Entry and ITAS activation are dated: the date anchors the Day-90 gate. */
+const needsDate = (stage: string) =>
+  stage === "entry" || stage === "itas_active";
 
 /**
  * Advance-stage control. `allowedNextStages` comes from the CaseDetail
@@ -29,6 +34,11 @@ import { useAdvanceSecondHomeCase } from "@/hooks/useSecondHome";
  * per team-lead direction, since client-side mirrors of domain logic drift.
  * The server message is still surfaced verbatim on any 409 regardless.
  * `basis` is kept only to word the helper text (which proof type is meant).
+ *
+ * Entry and ITAS activation anchor the Day-90 gate, so their date is never
+ * left to the server: the field is prefilled with today in Bali (the same
+ * civil day the backend files work under, never the UTC day, which is
+ * yesterday until 08:00 WITA), is required, and cannot be in the future.
  */
 export function TransitionControl({
   caseId,
@@ -56,6 +66,14 @@ export function TransitionControl({
   const annualMaintenanceGated =
     currentStage === "guarantee_proof_due" && !guaranteeEvidenceComplete;
 
+  // The stage actually submitted: the chosen one only while it is still
+  // offered and enabled (a refetch may drop it from the server list).
+  const effectiveTo =
+    (offeredStages as string[]).includes(toStage) &&
+    !(toStage === "annual_maintenance" && annualMaintenanceGated)
+      ? toStage
+      : "";
+
   if (offeredStages.length === 0) {
     return (
       <div className="rounded-xl border border-[var(--bz-border)] bg-[var(--bz-card)] p-4">
@@ -70,18 +88,31 @@ export function TransitionControl({
     );
   }
 
+  const needsOccurredOn = needsDate(effectiveTo);
+  const today = workDayOf();
+  // ISO days compare correctly as strings.
+  const dateInFuture = needsOccurredOn && occurredOn > today;
+  const dateInvalid = needsOccurredOn && (!occurredOn || dateInFuture);
+
+  const handleStageChange = (stage: string) => {
+    setToStage(stage);
+    if (needsDate(stage) && !occurredOn) setOccurredOn(workDayOf());
+  };
+
   const handleAdvance = async (e: FormEvent) => {
     e.preventDefault();
-    if (!toStage) return;
+    if (!effectiveTo) return;
+    // Re-read the day at submit: the form may have sat open past midnight.
+    if (needsOccurredOn && (!occurredOn || occurredOn > workDayOf())) return;
     try {
       await advance.mutateAsync({
-        to_stage: toStage as E33Stage,
+        to_stage: effectiveTo as E33Stage,
         note: note || undefined,
-        occurred_on: occurredOn || undefined,
+        occurred_on: needsOccurredOn ? occurredOn : undefined,
       });
       toast.success(
         "Stage Advanced",
-        `Case moved to ${STAGE_LABELS[toStage as E33Stage]}.`,
+        `Case moved to ${STAGE_LABELS[effectiveTo as E33Stage]}.`,
       );
       setToStage("");
       setNote("");
@@ -102,8 +133,6 @@ export function TransitionControl({
     }
   };
 
-  const needsOccurredOn = toStage === "entry" || toStage === "itas_active";
-
   return (
     <form
       onSubmit={handleAdvance}
@@ -114,8 +143,8 @@ export function TransitionControl({
       </h3>
       <div className="space-y-2">
         <select
-          value={toStage}
-          onChange={(e) => setToStage(e.target.value)}
+          value={effectiveTo}
+          onChange={(e) => handleStageChange(e.target.value)}
           className="w-full px-3 py-2 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-base)] text-[var(--bz-text-1)] focus:outline-none focus:ring-2 focus:ring-[var(--bz-accent)]/50"
         >
           <option value="">-- Select next stage --</option>
@@ -145,17 +174,31 @@ export function TransitionControl({
         {needsOccurredOn && (
           <div>
             <label className="text-xs text-[var(--bz-text-2)] block mb-1">
-              {toStage === "entry" ? "Entry date" : "ITAS activation date"}{" "}
+              {effectiveTo === "entry" ? "Entry date" : "ITAS activation date"}{" "}
               <span className="text-[var(--bz-text-2)]">
-                (defaults to today if left blank — anchors the Day-90 gate)
+                (required — today in Bali unless you change it; it anchors the
+                Day-90 gate and cannot be in the future)
               </span>
             </label>
             <input
               type="date"
               value={occurredOn}
+              max={today}
+              required
+              aria-invalid={dateInvalid || undefined}
               onChange={(e) => setOccurredOn(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-[var(--bz-border)] bg-[var(--bz-base)] text-[var(--bz-text-1)] focus:outline-none focus:ring-2 focus:ring-[var(--bz-accent)]/50"
             />
+            {dateInvalid && (
+              <p
+                role="alert"
+                className="text-xs text-[var(--state-danger)] mt-1"
+              >
+                {dateInFuture
+                  ? "The date cannot be in the future."
+                  : "The date is required."}
+              </p>
+            )}
           </div>
         )}
         <textarea
@@ -168,11 +211,7 @@ export function TransitionControl({
       </div>
       <Button
         type="submit"
-        disabled={
-          !toStage ||
-          advance.isPending ||
-          (toStage === "annual_maintenance" && annualMaintenanceGated)
-        }
+        disabled={!effectiveTo || dateInvalid || advance.isPending}
         className="w-full gap-2 bg-[var(--bz-accent)] text-[var(--accent-foreground)] hover:bg-[var(--bz-accent)]/90"
       >
         {advance.isPending ? (

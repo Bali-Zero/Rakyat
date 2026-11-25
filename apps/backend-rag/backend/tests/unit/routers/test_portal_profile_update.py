@@ -33,10 +33,20 @@ class _Tx:
         return False
 
 
-def _make_service(fetchrow_return: dict | None = None) -> tuple["PortalService", AsyncMock]:
+def _make_service(
+    fetchrow_return: dict | None = None, last_request: dict | None = None
+) -> tuple["PortalService", AsyncMock]:
+    """`last_request` is what the duplicate-request read returns (None = no earlier request)."""
     mock_conn = AsyncMock()
     mock_conn.execute.return_value = None
-    mock_conn.fetchrow.return_value = fetchrow_return or _PROFILE_ROW
+
+    async def _fetchrow(query, *args):
+        # The R4 read looks at portal_messages; every other read is the profile row.
+        if "FROM portal_messages pm" in str(query):
+            return last_request
+        return fetchrow_return or _PROFILE_ROW
+
+    mock_conn.fetchrow.side_effect = _fetchrow
     # conn.transaction() must be an async CM, not a coroutine (phone-lock TX).
     mock_conn.transaction = MagicMock(return_value=_Tx())
 
@@ -64,25 +74,23 @@ async def test_update_profile_updates_allowed_fields():
 
     assert result is not None
 
-    # Four execute calls: phone-core advisory lock (F12), UPDATE,
-    # notification_alerts, portal_messages
-    assert mock_conn.execute.call_count == 4
+    # The submitted phone/whatsapp equal the stored ones (no-op, no request
+    # row), so three execute calls: UPDATE (address only), notification_alerts,
+    # portal_messages. A client never writes phone/whatsapp.
+    assert mock_conn.execute.call_count == 3
 
-    lock_sql = mock_conn.execute.call_args_list[0][0][0]
-    assert "pg_advisory_xact_lock" in lock_sql
-
-    update_sql = mock_conn.execute.call_args_list[1][0][0]
-    assert "phone" in update_sql
-    assert "whatsapp" in update_sql
+    update_sql = mock_conn.execute.call_args_list[0][0][0]
+    assert "phone" not in update_sql
+    assert "whatsapp" not in update_sql
     assert "address" in update_sql
 
-    alert_sql = mock_conn.execute.call_args_list[2][0][0]
+    alert_sql = mock_conn.execute.call_args_list[1][0][0]
     assert "notification_alerts" in alert_sql
     assert "portal_profile_update" in alert_sql
     assert "ON CONFLICT (client_id, alert_type, created_date)" in alert_sql
     assert "ON CONSTRAINT" not in alert_sql
 
-    msg_sql = mock_conn.execute.call_args_list[3][0][0]
+    msg_sql = mock_conn.execute.call_args_list[2][0][0]
     assert "portal_messages" in msg_sql
     assert "is_system_generated" in msg_sql and ", TRUE)" in msg_sql
     assert "client_to_team" in msg_sql
@@ -90,26 +98,27 @@ async def test_update_profile_updates_allowed_fields():
 
 @pytest.mark.asyncio
 async def test_update_profile_rejects_sensitive_fields():
-    """update_profile ignores non-whitelisted fields; only allowed field triggers side effects."""
+    """update_profile ignores non-whitelisted fields; a new phone becomes a request, not a write."""
     service, mock_conn = _make_service(
         fetchrow_return={**_PROFILE_ROW, "phone": "+62999", "whatsapp": None, "address": None},
     )
 
     result = await service.update_profile(
         client_id=1,
-        fields={"full_name": "HACKED", "passport_number": "STOLEN", "phone": "+62999"},
+        fields={"full_name": "HACKED", "passport_number": "STOLEN", "phone": "+62 800 0000 999"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
-    assert result is not None
+    assert result["contact_change_requested"] == ["phone"]
 
-    # Still 3 calls: UPDATE (phone only), notification_alerts, portal_messages
-    assert mock_conn.execute.call_count == 3
-
-    update_sql = mock_conn.execute.call_args_list[0][0][0]
-    assert "full_name" not in update_sql
-    assert "passport_number" not in update_sql
-    assert "phone" in update_sql
+    # 2 calls: the change-request row, then the notification_alerts alert.
+    assert mock_conn.execute.call_count == 2
+    sqls = [c[0][0] for c in mock_conn.execute.call_args_list]
+    assert not any("UPDATE clients" in q for q in sqls)
+    assert "client_to_team" in sqls[0] and "portal_messages" in sqls[0]
+    assert "notification_alerts" in sqls[1]
+    assert "HACKED" not in str(mock_conn.execute.call_args_list)
+    assert "STOLEN" not in str(mock_conn.execute.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -139,10 +148,8 @@ async def test_update_profile_notification_failure_does_not_raise():
     async def execute_side_effect(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        # Call order with the F12 phone-core lock: #1 advisory lock (the OLD
-        # row's phone yields a core even though "+62888" does not), #2 UPDATE,
-        # #3 notification_alerts INSERT.
-        if call_count == 3:  # notification_alerts INSERT
+        # Call order: #1 UPDATE (address), #2 notification_alerts INSERT.
+        if call_count == 2:  # notification_alerts INSERT
             raise Exception("DB constraint error")
         return None
 
@@ -155,7 +162,7 @@ async def test_update_profile_notification_failure_does_not_raise():
     service = PortalService(mock_pool)
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+62888"},
+        fields={"address": "New street 1"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
@@ -174,9 +181,8 @@ async def test_update_profile_message_failure_does_not_raise() -> None:
     async def execute_side_effect(*args: object, **kwargs: object) -> None:
         nonlocal call_count
         call_count += 1
-        # With the F12 lock as call #1 (old row's phone core), portal_messages
-        # is now call #4 (#2 UPDATE, #3 notification_alerts).
-        if call_count == 4:  # portal_messages INSERT
+        # #1 UPDATE (address), #2 notification_alerts, #3 portal_messages.
+        if call_count == 3:  # portal_messages INSERT
             raise Exception("message insert failed")
 
     mock_conn.execute.side_effect = execute_side_effect
@@ -188,7 +194,7 @@ async def test_update_profile_message_failure_does_not_raise() -> None:
     service = PortalService(mock_pool)
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+62888"},
+        fields={"address": "New street 1"},
         current_user={"client_id": 1, "email": "c1@example.com"},
     )
 
@@ -199,6 +205,7 @@ async def test_update_profile_message_failure_does_not_raise() -> None:
 async def test_get_profile_data_returns_empty_when_client_missing() -> None:
     """_get_profile_data returns an empty dict for a missing/deleted client."""
     service, mock_conn = _make_service(fetchrow_return=None)
+    mock_conn.fetchrow.side_effect = None
     mock_conn.fetchrow.return_value = None
 
     result = await service._get_profile_data(mock_conn, client_id=404)
@@ -206,72 +213,113 @@ async def test_get_profile_data_returns_empty_when_client_missing() -> None:
     assert result == {}
 
 
+_USER = {"client_id": 1, "email": "c1@example.com"}
+
+
+def _sqls(mock_conn) -> list[str]:
+    return [str(c[0][0]) for c in mock_conn.execute.call_args_list]
+
+
 @pytest.mark.asyncio
-async def test_update_profile_phone_lock_fails_closed_on_nonconvergence():
-    """Round-12 F12 gap 2 guilt: a phone value oscillating across concurrent
-    cooperative writers for all 3 convergence rounds must abort the update
-    (fail CLOSED), never proceed while the row's current core is unlocked."""
+@pytest.mark.parametrize("field", ["phone", "whatsapp"])
+async def test_update_profile_contact_change_is_a_request_never_a_write(field):
+    """A new usable number is recorded as ONE client_to_team request row, never
+    written to clients, never locked, and DUP_OWNER_SQL is never consulted."""
+    from backend.db.repositories.client_repository import DUP_OWNER_SQL
+
     service, mock_conn = _make_service()
-    # First item is the audit-trail pre-update read (one call, always, before
-    # the transaction); the remaining three are the phone-lock convergence
-    # loop's re-reads. Every re-read there shows a DIFFERENT phone (fresh
-    # core each time) — the lock set can never cover the row's current cores.
-    mock_conn.fetchrow.side_effect = [
-        {**_PROFILE_ROW, "phone": "+62800000000", "phone_normalized": "62800000000"},
-        {**_PROFILE_ROW, "phone": "+62811111111", "phone_normalized": "62811111111"},
-        {**_PROFILE_ROW, "phone": "+62822222222", "phone_normalized": "62822222222"},
-        {**_PROFILE_ROW, "phone": "+62833333333", "phone_normalized": "62833333333"},
+
+    result = await service.update_profile(
+        client_id=1, fields={field: "+6281200000001"}, current_user=_USER
+    )
+
+    assert result["contact_change_requested"] == [field]
+    sqls = _sqls(mock_conn)
+    assert not any("UPDATE clients" in q for q in sqls)
+    assert not any("pg_advisory_xact_lock" in q for q in sqls)
+    requests = [c for c in mock_conn.execute.call_args_list if "client_to_team" in c[0][0]]
+    assert len(requests) == 1
+    text = requests[0][0][2]
+    assert text.startswith("Requested contact change: ")
+    assert "+6281200000001" in text
+    seen = [
+        str(c[0][0]) for c in mock_conn.fetchrow.call_args_list + mock_conn.fetch.call_args_list
     ]
-
-    with pytest.raises(RuntimeError, match="phone_lock_convergence_failed"):
-        await service.update_profile(
-            client_id=1,
-            fields={"phone": "+6281234567890"},
-            current_user={"client_id": 1, "email": "c1@example.com"},
-        )
-
-    # The UPDATE never ran: every execute call was an advisory lock.
-    for call in mock_conn.execute.call_args_list:
-        assert "pg_advisory_xact_lock" in call[0][0]
+    assert DUP_OWNER_SQL not in seen + sqls
 
 
 @pytest.mark.asyncio
-async def test_update_profile_phone_lock_converges_on_stable_row():
-    """Round-12 F12 gap 2 innocence: a stable row converges on the second
-    read and the update proceeds normally."""
+async def test_update_profile_unusable_new_number_is_refused_before_any_write():
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
+    service, mock_conn = _make_service()
+
+    for bad in ("", "   ", "12-3"):
+        with pytest.raises(ProfileContactRefused):
+            await service.update_profile(
+                client_id=1, fields={"phone": bad, "address": "Never saved"}, current_user=_USER
+            )
+    mock_conn.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_profile_same_core_value_is_a_no_op():
     service, mock_conn = _make_service()
 
     result = await service.update_profile(
         client_id=1,
-        fields={"phone": "+6281234567890"},
-        current_user={"client_id": 1, "email": "c1@example.com"},
+        fields={"phone": "081234567890", "whatsapp": "+62 812-3456-7890"},
+        current_user=_USER,
     )
 
-    assert result is not None
-    update_sqls = [c[0][0] for c in mock_conn.execute.call_args_list if "UPDATE clients" in c[0][0]]
-    assert update_sqls  # the write DID happen
+    assert result["contact_change_requested"] == []
+    mock_conn.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_update_profile_whatsapp_only_takes_phone_lock():
-    """Round-15 F21 guilt: a whatsapp-ONLY portal profile update must take
-    the phonecore advisory locks — whatsapp is an ownership column, and
-    before the fix this path bypassed the lock protocol entirely."""
+async def test_update_profile_address_save_survives_unusable_stored_contacts():
+    """A stored +62999 resubmitted unchanged is a no-op, so the address still saves."""
+    service, mock_conn = _make_service(
+        fetchrow_return={**_PROFILE_ROW, "phone": "+62999", "whatsapp": "+62999"}
+    )
+
+    result = await service.update_profile(
+        client_id=1,
+        fields={"phone": "+62999", "whatsapp": "+62999", "address": "New street 1"},
+        current_user=_USER,
+    )
+
+    assert result["contact_change_requested"] == []
+    sqls = _sqls(mock_conn)
+    assert any("UPDATE clients" in q and "address" in q for q in sqls)
+    assert not any("client_to_team" in q and "Contact change" in q for q in sqls)
+
+
+@pytest.mark.asyncio
+async def test_update_profile_two_requested_fields_make_one_request_row_and_the_alert():
     service, mock_conn = _make_service()
 
     result = await service.update_profile(
         client_id=1,
-        fields={"whatsapp": "+6281234567890"},
-        current_user={"client_id": 1, "email": "c1@example.com"},
+        fields={"phone": "+6281200000001", "whatsapp": "+6281200000002", "address": "A 1"},
+        current_user=_USER,
     )
 
-    assert result is not None
-    lock_sqls = [
-        c[0][0] for c in mock_conn.execute.call_args_list if "pg_advisory_xact_lock" in c[0][0]
-    ]
-    assert lock_sqls  # the whatsapp-only update DID take the phonecore lock
-    update_sqls = [c[0][0] for c in mock_conn.execute.call_args_list if "UPDATE clients" in c[0][0]]
-    assert update_sqls and "whatsapp" in update_sqls[0]
+    assert result["contact_change_requested"] == ["phone", "whatsapp"]
+    requests = [c for c in mock_conn.execute.call_args_list if "Contact change" in c[0][0]]
+    assert len(requests) == 1
+    assert "phone \u2192 +6281200000001; WhatsApp \u2192 +6281200000002" in requests[0][0][2]
+    alert = [c for c in mock_conn.execute.call_args_list if "notification_alerts" in c[0][0]]
+    assert len(alert) == 1
+    assert alert[0][0][2] == (
+        "Client requested a contact change: phone, WhatsApp; also updated: address"
+    )
+    sql = " ".join(alert[0][0][0].split())
+    assert "'pending'" in sql and "clock_timestamp()" in sql
+    assert (
+        "created_at = GREATEST( notification_alerts.created_at + interval '1 microsecond'," in sql
+    )
+    assert "EXCLUDED.created_at )" in sql
 
 
 # ============================================
@@ -361,3 +409,301 @@ async def test_update_profile_audit_log_failure_does_not_raise():
     assert mock_logger.error.called, "audit failure must be logged, not swallowed silently"
     logged = " ".join(str(c) for c in mock_logger.error.call_args_list)
     assert "crm_audit_log" in logged
+
+
+# ============================================
+# ROUND 3: a contact change request reaches staff as work, once, as asked
+# ============================================
+
+_PHONE_A = "+6281200000001"
+_PHONE_B = "+6281200000002"
+
+
+def _requests_in(mock_conn) -> list:
+    return [c for c in mock_conn.execute.call_args_list if "Contact change requested" in c[0][0]]
+
+
+@pytest.mark.asyncio
+async def test_r1_a_contact_is_compared_with_the_stored_value_of_its_own_field():
+    service, mock_conn = _make_service(
+        fetchrow_return={
+            **_PROFILE_ROW,
+            "phone": _PHONE_A,
+            "phone_normalized": None,
+            "whatsapp": _PHONE_B,
+        }
+    )
+
+    asked_whatsapp = await service.update_profile(
+        client_id=1, fields={"whatsapp": _PHONE_A}, current_user=_USER
+    )
+    asked_phone = await service.update_profile(
+        client_id=1, fields={"phone": _PHONE_A}, current_user=_USER
+    )
+
+    assert asked_whatsapp["contact_change_requested"] == ["whatsapp"]
+    assert asked_phone["contact_change_requested"] == []
+    assert len(_requests_in(mock_conn)) == 1
+
+
+@pytest.mark.asyncio
+async def test_r2_the_request_carries_the_trimmed_value_whole_and_over_long_is_refused():
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
+    service, mock_conn = _make_service()
+    forty = "+" + "-" * 27 + "628000000333"
+    assert len(forty) == 40
+
+    await service.update_profile(
+        client_id=1, fields={"phone": f"   {forty}   "}, current_user=_USER
+    )
+    assert forty in _requests_in(mock_conn)[0][0][2]
+
+    mock_conn.execute.reset_mock()
+    with pytest.raises(ProfileContactRefused):
+        await service.update_profile(
+            client_id=1, fields={"phone": "-" + forty, "address": "No"}, current_user=_USER
+        )
+    mock_conn.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_r2_order_an_unchanged_long_stored_value_is_a_no_op_not_a_refusal():
+    legacy = "+62 812 0000 0001 " + "ext " * 8
+    service, mock_conn = _make_service(fetchrow_return={**_PROFILE_ROW, "whatsapp": legacy})
+
+    result = await service.update_profile(
+        client_id=1, fields={"whatsapp": f" {legacy} "}, current_user=_USER
+    )
+
+    assert result["contact_change_requested"] == []
+    assert not _requests_in(mock_conn)
+
+
+@pytest.mark.asyncio
+async def test_r2_a_lone_surrogate_is_refused_before_any_statement():
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
+    service, mock_conn = _make_service()
+
+    with pytest.raises(ProfileContactRefused):
+        await service.update_profile(
+            client_id=1, fields={"phone": "+62\ud800812", "address": "No"}, current_user=_USER
+        )
+    mock_conn.execute.assert_not_called()
+    mock_conn.fetchrow.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_r2_the_router_answers_422_for_a_refused_contact():
+    from fastapi import HTTPException
+
+    from backend.app.routers.portal import UpdateProfileRequest, update_profile
+    from backend.services.portal._mixins.billing import ProfileContactRefused
+
+    service = MagicMock()
+    service.update_profile = AsyncMock(side_effect=ProfileContactRefused())
+
+    with pytest.raises(HTTPException) as exc:
+        await update_profile(
+            UpdateProfileRequest(phone="12-3"), client={"client_id": 1}, portal_service=service
+        )
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_r3_the_request_row_is_a_client_message_and_its_alert_is_unread():
+    service, mock_conn = _make_service()
+
+    await service.update_profile(client_id=1, fields={"phone": _PHONE_B}, current_user=_USER)
+
+    (request,) = _requests_in(mock_conn)
+    assert "FALSE)" in request[0][0] and "'client_to_team'" in request[0][0]
+    assert request[0][3] == "john@test.com"  # sent_by = clients.email
+    alert = [c for c in mock_conn.execute.call_args_list if "notification_alerts" in c[0][0]]
+    assert len(alert) == 1
+    assert "'pending'" in alert[0][0][0] and "DO UPDATE" in alert[0][0][0]
+    assert alert[0][0][2] == "Client requested a contact change: phone"
+
+
+@pytest.mark.asyncio
+async def test_r3_without_an_email_the_request_is_attributed_to_the_client_id():
+    service, mock_conn = _make_service(fetchrow_return={**_PROFILE_ROW, "email": None})
+
+    await service.update_profile(client_id=1, fields={"phone": _PHONE_B}, current_user=_USER)
+
+    assert _requests_in(mock_conn)[0][0][3] == "client-1"
+
+
+@pytest.mark.asyncio
+async def test_r4_an_identical_unanswered_request_is_not_filed_again_and_does_not_alert():
+    service, mock_conn = _make_service(
+        last_request={
+            "content": f"Requested contact change: phone \u2192 {_PHONE_B}",
+            "answered": False,
+        }
+    )
+
+    result = await service.update_profile(
+        client_id=1, fields={"phone": _PHONE_B}, current_user=_USER
+    )
+
+    assert result["contact_change_requested"] == ["phone"]
+    mock_conn.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "last",
+    [
+        {"content": f"Requested contact change: phone \u2192 {_PHONE_A}", "answered": False},
+        {"content": f"Requested contact change: phone \u2192 {_PHONE_B}", "answered": True},
+    ],
+)
+async def test_r4_a_different_or_answered_request_is_filed(last):
+    service, mock_conn = _make_service(last_request=last)
+
+    await service.update_profile(client_id=1, fields={"phone": _PHONE_B}, current_user=_USER)
+
+    assert len(_requests_in(mock_conn)) == 1
+
+
+@pytest.mark.asyncio
+async def test_r4_a_suppressed_repeat_with_an_address_writes_the_read_alert_not_a_rearm():
+    service, mock_conn = _make_service(
+        last_request={
+            "content": f"Requested contact change: phone \u2192 {_PHONE_B}",
+            "answered": False,
+        }
+    )
+
+    await service.update_profile(
+        client_id=1, fields={"phone": _PHONE_B, "address": "A 1"}, current_user=_USER
+    )
+
+    alert = [c for c in mock_conn.execute.call_args_list if "notification_alerts" in c[0][0]]
+    assert len(alert) == 1
+    assert "'sent'" in alert[0][0][0] and "DO NOTHING" in alert[0][0][0]
+    assert alert[0][0][2] == "Client updated their profile: address"
+    assert not _requests_in(mock_conn)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank", ["", "   "])
+async def test_r5_an_address_empty_after_trim_is_stored_as_null(blank):
+    service, mock_conn = _make_service()
+
+    await service.update_profile(client_id=1, fields={"address": blank}, current_user=_USER)
+
+    update = [c for c in mock_conn.execute.call_args_list if "UPDATE clients" in c[0][0]]
+    assert update[0][0][1] is None
+
+
+@pytest.mark.asyncio
+async def test_r7_the_first_statement_locks_the_client_row():
+    service, mock_conn = _make_service()
+
+    await service.update_profile(client_id=1, fields={"phone": _PHONE_B}, current_user=_USER)
+
+    first = str(mock_conn.fetchrow.call_args_list[0][0][0])
+    assert "FROM clients" in first and "deleted_at IS NULL" in first
+    assert "FOR NO KEY UPDATE" in first
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raised", [ValueError, RuntimeError])
+async def test_r8_a_failure_log_carries_the_class_and_client_id_never_the_text(raised, caplog):
+    import logging
+
+    from fastapi import HTTPException
+
+    from backend.app.routers.portal import UpdateProfileRequest, update_profile
+
+    service = MagicMock()
+    service.update_profile = AsyncMock(side_effect=raised("argument 2: 6281299998888 invalid"))
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(HTTPException):
+        await update_profile(
+            UpdateProfileRequest(phone="+6281299998888"),
+            client={"client_id": 77},
+            portal_service=service,
+        )
+
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert raised.__name__ in logged and "77" in logged
+    assert "6281299998888" not in logged and "invalid" not in logged
+
+
+# --- R8 (v4/v6): a validation error before the handler carries no submitted value -----------------
+
+_SYNTHETIC = "+62 800 0000 333"
+
+
+def _profile_client(stub):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.app.routers import portal as portal_module
+
+    application = FastAPI()
+    application.include_router(portal_module.router)
+    application.dependency_overrides[portal_module.get_current_client] = lambda: {"client_id": 7}
+    application.dependency_overrides[portal_module.get_portal_service] = lambda: stub
+    return TestClient(application, raise_server_exceptions=False)
+
+
+def _refusal_stub():
+    stub = MagicMock()
+    stub.update_profile = AsyncMock(
+        side_effect=AssertionError("a refused body reached the service")
+    )
+    return stub
+
+
+_JSON = {"content-type": "application/json"}
+_GUILT_BODIES = {
+    "list_phone": {"json": {"phone": [_SYNTHETIC]}},
+    "object_whatsapp": {"json": {"whatsapp": {"n": _SYNTHETIC}}},
+    "number_phone": {"json": {"phone": 628000000333}},
+    "malformed_json": {"content": '{"phone": "' + _SYNTHETIC + '"', "headers": _JSON},
+    "no_body": {},
+    "zero_bytes": {"content": b"", "headers": _JSON},
+    "json_null": {"content": "null", "headers": _JSON},
+    "empty_list": {"content": "[]", "headers": _JSON},
+    "string_body": {"content": '"x"', "headers": _JSON},
+}
+
+
+@pytest.mark.parametrize("case", sorted(_GUILT_BODIES))
+def test_r8_a_refused_profile_body_answers_loc_msg_type_only(case):
+    stub = _refusal_stub()
+
+    response = _profile_client(stub).patch("/api/portal/profile", **_GUILT_BODIES[case])
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail and all(set(entry) == {"loc", "msg", "type"} for entry in detail)
+    assert all(isinstance(e["loc"], list) and isinstance(e["msg"], str) for e in detail)
+    body = response.text
+    for run in ("800", "0000", "333", "628000000333"):
+        assert run not in body
+    stub.update_profile.assert_not_called()
+
+
+@pytest.mark.parametrize("body", [{}, {"unknown_key": 1}])
+def test_r8_an_empty_or_unknown_key_body_is_accepted_as_before(body):
+    stub = MagicMock()
+    stub.update_profile = AsyncMock(return_value={"id": 7, "contact_change_requested": []})
+
+    response = _profile_client(stub).patch("/api/portal/profile", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["contact_change_requested"] == []
+
+
+def test_r8_another_portal_route_keeps_the_default_422_with_input():
+    response = _profile_client(MagicMock()).get("/api/portal/messages", params={"limit": "abc"})
+
+    assert response.status_code == 422
+    assert "input" in response.json()["detail"][0]

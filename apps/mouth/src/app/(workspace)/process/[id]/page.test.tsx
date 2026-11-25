@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   back: vi.fn(),
   push: vi.fn(),
   useParams: vi.fn(),
+  session: vi.fn(),
   getProfile: vi.fn(),
   getPractice: vi.fn(),
   updatePractice: vi.fn(),
@@ -38,6 +39,13 @@ const mocks = vi.hoisted(() => ({
   trackQuickAction: vi.fn(),
 }));
 
+vi.mock("@/lib/auth/session-identity", async (load) => ({
+  ...(await load<typeof import("@/lib/auth/session-identity")>()),
+  useSessionIdentity: mocks.session,
+  acceptResponse: (res: { sentSub: string }, who: { sub: string }) =>
+    res.sentSub === who.sub && who.sub === mocks.session()?.sub,
+}));
+
 vi.mock("next/navigation", () => ({
   useParams: mocks.useParams,
   useRouter: () => ({
@@ -49,6 +57,11 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api", () => ({
   api: {
     getProfile: mocks.getProfile,
+    requestWithCredential: async (path: string) => {
+      const sentSub = mocks.session()?.sub;
+      const data = await mocks.getPractice(Number(path.split("/").pop()));
+      return { data, sentSub };
+    },
     isAdmin: mocks.isAdmin,
     crm: {
       getPractice: mocks.getPractice,
@@ -166,6 +179,8 @@ function makePractice(overrides: Partial<Practice> = {}): Practice {
         at: "2026-01-03T00:00:00.000Z",
       },
     ],
+    can_edit_process: true,
+    can_manage_delivery: true,
     ...overrides,
   };
 }
@@ -185,6 +200,7 @@ async function renderLoaded(practice: Practice = makePractice()) {
 describe("CaseDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.session.mockReturnValue({ sub: "42", epoch: 1 });
     mocks.useParams.mockReturnValue({ id: "42" });
     mocks.getProfile.mockResolvedValue(profile);
     mocks.isAdmin.mockReturnValue(true);
@@ -201,6 +217,47 @@ describe("CaseDetailPage", () => {
     mocks.invalidateClient.mockResolvedValue(undefined);
     vi.spyOn(window, "open").mockImplementation(() => null);
     vi.mocked(window.confirm).mockReturnValue(true);
+  });
+
+  it("shows the process without edit controls for a read-only viewer", async () => {
+    const user = await renderLoaded(
+      makePractice({ can_edit_process: false, can_manage_delivery: false }),
+    );
+    expect(
+      screen.queryByRole("button", { name: /^Edit$/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit notes" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More options" }));
+    expect(
+      screen.queryByRole("button", { name: "Delete process" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("discards a delayed detail response after an account switch", async () => {
+    let finish: (value: Practice) => void = () => {};
+    mocks.getPractice.mockImplementationOnce(
+      () =>
+        new Promise<Practice>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const page = render(<CaseDetailPage />);
+    mocks.session.mockReturnValue({ sub: "84", epoch: 2 });
+    mocks.getPractice.mockRejectedValueOnce(new Error("Practice not found"));
+    page.rerender(<CaseDetailPage />);
+    await screen.findByText("Failed to load process details");
+    finish(makePractice({ notes: "Private fixture note" }));
+    await waitFor(() => expect(mocks.getPractice).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Private fixture note")).not.toBeInTheDocument();
+  });
+
+  it("mounts the delivery destination for legacy completed practices", async () => {
+    await renderLoaded(makePractice({ status: "done" }));
+    expect(
+      screen.getByRole("region", { name: "Final delivery" }),
+    ).toHaveAttribute("id", "final-delivery");
   });
 
   it("shows loading until the practice request settles", async () => {
@@ -344,19 +401,12 @@ describe("CaseDetailPage", () => {
     );
   });
 
-  it("cycles payment and priority and updates the visible values", async () => {
+  it("shows the accounting-owned payment status and lets staff cycle priority", async () => {
     const user = await renderLoaded();
-
-    await user.click(
-      screen.getAllByRole("button", { name: "Cycle payment status" })[0],
-    );
-    await waitFor(() => {
-      expect(mocks.updatePractice).toHaveBeenCalledWith(42, {
-        payment_status: "partial",
-      });
-    });
-    expect(screen.getAllByText("partial").length).toBeGreaterThan(0);
-
+    expect(
+      screen.queryByRole("button", { name: "Cycle payment status" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("unpaid").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Cycle priority" }));
     await waitFor(() => {
       expect(mocks.updatePractice).toHaveBeenCalledWith(42, {
@@ -370,21 +420,14 @@ describe("CaseDetailPage", () => {
     );
   });
 
-  it("reports inline update failures without mutating the visible value", async () => {
-    mocks.updatePractice.mockRejectedValueOnce(new Error("payment denied"));
+  it("reports a failed priority change", async () => {
+    mocks.updatePractice.mockRejectedValueOnce(new Error("priority denied"));
     const user = await renderLoaded();
-
-    await user.click(
-      screen.getAllByRole("button", { name: "Cycle payment status" })[0],
+    await user.click(screen.getByRole("button", { name: "Cycle priority" }));
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "Failed to update priority",
+      "priority denied",
     );
-
-    await waitFor(() => {
-      expect(mocks.toastError).toHaveBeenCalledWith(
-        "Failed to update payment status",
-        "payment denied",
-      );
-    });
-    expect(screen.getAllByText("unpaid").length).toBeGreaterThan(0);
   });
 
   it("disables the Invoice step with the Indonesian reason when the Quoted Price is null", async () => {
@@ -563,20 +606,13 @@ describe("CaseDetailPage", () => {
     });
   });
 
-  it("jumps to another workflow state and persists it", async () => {
-    const user = await renderLoaded();
-
-    await user.click(screen.getByTitle("Jump to: Processing"));
-
-    await waitFor(() => {
-      expect(mocks.updatePractice).toHaveBeenCalledWith(42, {
-        status: "on_process",
-      });
-    });
-    expect(mocks.toastSuccess).toHaveBeenCalledWith(
-      "Status updated",
-      "→ on process",
-    );
+  it("reserves processing and completion for their dedicated workflows", async () => {
+    await renderLoaded();
+    expect(
+      screen.getByTitle("Started by Accounting after full settlement"),
+    ).toBeDisabled();
+    expect(screen.getByTitle("Complete from Final delivery")).toBeDisabled();
+    expect(mocks.updatePractice).not.toHaveBeenCalled();
   });
 
   it("saves notes and restores the read-only view", async () => {
@@ -728,44 +764,17 @@ describe("CaseDetailPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows server-derived completion data immediately after an edit", async () => {
-    const original = makePractice({ status: "on_process" });
-    const canonicalUpdateResponse = makePractice({
-      status: "completed",
-      completion_date: "2026-07-27T08:30:00.000Z",
-    });
-    mocks.getPractice.mockResolvedValueOnce(original);
-    mocks.updatePractice.mockResolvedValueOnce(canonicalUpdateResponse);
-    const user = userEvent.setup();
-    render(<CaseDetailPage />);
-    await screen.findByRole("heading", { name: "KITAS APPLICATION #42" });
-
+  it("omits completed from a practice's manual edit options", async () => {
+    const user = await renderLoaded(makePractice({ status: "on_process" }));
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const modal = screen.getByRole("heading", { name: "Edit Process #42" })
       .parentElement?.parentElement as HTMLElement;
-    await user.selectOptions(
-      within(modal).getAllByRole("combobox")[0],
-      "completed",
-    );
-    await user.click(
-      within(modal).getByRole("button", { name: "Save Changes" }),
-    );
-
-    await waitFor(() => {
-      expect(mocks.updatePractice).toHaveBeenCalledWith(42, {
-        status: "completed",
-      });
-    });
-    expect(screen.getByText("Completion Date")).toBeInTheDocument();
-    expect(screen.getByText("July 27, 2026")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "KITAS APPLICATION #42" }),
-    ).toBeInTheDocument();
+      within(modal).queryByRole("option", { name: "Completed" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.updatePractice).not.toHaveBeenCalled();
   });
 
-  // Covers the STATUS path: the api client throws ApiError, so this is what the
-  // page actually receives in production. The test below it keeps a plain Error
-  // to cover the fallback for errors that never went through the client.
   it("maps a 403 ApiError to a user-safe message by status", async () => {
     mocks.updatePractice.mockRejectedValueOnce(
       new ApiError("Operation not permitted for this role", 403, {}),

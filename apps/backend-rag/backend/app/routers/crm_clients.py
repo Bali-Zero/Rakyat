@@ -32,6 +32,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from backend.app.dependencies import get_current_user, get_database_pool
 from backend.app.deps.crm_access import get_crm_user_filter
 from backend.app.deps.crm_service_write import verify_crm_write_key
+from backend.app.deps.process_access import assignment_clause, process_assignees, process_session
 from backend.app.services.crm.audit_logger import audit_change, audit_logger
 from backend.app.services.crm.metrics import metrics_collector, track_client_creation
 from backend.app.utils.client_pools import caller_pool_peers
@@ -1961,7 +1962,7 @@ async def delete_client(
 async def get_client_summary(
     client_id: int = Path(..., gt=0, description="Client ID"),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(process_session),
 ) -> dict[str, Any]:
     """
     Get comprehensive client summary including:
@@ -1990,41 +1991,50 @@ async def get_client_summary(
             if not client_row:
                 raise HTTPException(status_code=404, detail="Client not found")
 
-            # Get practices
+            owners = await process_assignees(conn, current_user)
+            practice_params = [client_id]
+            scope = assignment_clause(owners, practice_params)
             practices_rows = await conn.fetch(
-                """
+                f"""
                 SELECT p.*, pt.name as practice_type_name, pt.category
                 FROM practices p
                 JOIN practice_types pt ON p.practice_type_id = pt.id
-                WHERE p.client_id = $1
+                WHERE p.client_id = $1{scope}
                 ORDER BY p.created_at DESC
                 """,
-                client_id,
+                *practice_params,
             )
+
+            # Client-level entries stay visible. Practice-linked entries follow the same scope.
+            related_params = [client_id]
+            related_scope = ""
+            if owners is not None:
+                related_params.append([row["id"] for row in practices_rows])
+                related_scope = " AND (practice_id IS NULL OR practice_id = ANY($2::integer[]))"
 
             # Get recent interactions
             interactions_rows = await conn.fetch(
-                """
+                f"""
                 SELECT id, client_id, practice_id, conversation_id, interaction_type, channel,
                        subject, summary, full_content, sentiment, team_member, direction,
                        duration_minutes, extracted_entities, action_items, interaction_date, created_at
                 FROM interactions
-                WHERE client_id = $1
+                WHERE client_id = $1{related_scope}
                 ORDER BY interaction_date DESC
                 LIMIT 10
                 """,
-                client_id,
+                *related_params,
             )
 
             # Get upcoming renewals
             renewals_rows = await conn.fetch(
-                """
+                f"""
                 SELECT *
                 FROM renewal_alerts
-                WHERE client_id = $1 AND status = 'pending'
+                WHERE client_id = $1 AND status = 'pending'{related_scope}
                 ORDER BY alert_date ASC
                 """,
-                client_id,
+                *related_params,
             )
 
             practices = [dict(row) for row in practices_rows]

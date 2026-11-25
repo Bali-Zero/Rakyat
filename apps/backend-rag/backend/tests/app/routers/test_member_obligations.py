@@ -52,6 +52,7 @@ def client(pool=None, user=None):
 @pytest.fixture(autouse=True)
 def explicit_supervisor_grant(monkeypatch):
     monkeypatch.setattr(settings, "member_obligations_supervisor_emails", "supervisor@example.test")
+    monkeypatch.setenv("PROCESS_VIEW_GRANTS_JSON", '{"administrator@example.test":"all"}')
 
 
 @pytest_asyncio.fixture
@@ -89,11 +90,12 @@ async def db():
                     notes text DEFAULT 'private fixture note', quoted_price numeric DEFAULT 123
                 );
                 CREATE TABLE team_members (
-                    id integer PRIMARY KEY, email text, full_name text, name text, active boolean
+                    id integer PRIMARY KEY, email text, full_name text, name text, active boolean, department text, role text, created_at timestamptz default now()
                 );
                 INSERT INTO team_members VALUES
-                    (1,'member-a@example.test','Member A','Member A',true),
-                    (2,'member-b@example.test','Member B','Member B',true);
+                    (1,'member-a@example.test','Member A','Member A',true,'setup','consultant'),
+                    (2,'member-b@example.test','Member B','Member B',true,'tax','tax consultant'),
+                    (3,'administrator@example.test','Reader','Reader',true,'accounting','accounting');
                 INSERT INTO practice_types (id,name,code,category) VALUES (1,'Fixture service','fixture','visa');
                 INSERT INTO clients (id,full_name,assigned_to,passport_expiry,deleted_at) VALUES
                     (1,'Client fixture A','member-a@example.test',CURRENT_DATE+30,NULL),
@@ -270,14 +272,15 @@ async def test_read_only_supervisor_has_overview_not_extra_detail_access(db):
         unassigned = (await http.get(URL + "?scope=team&assigned_to=__unassigned__")).json()
         member_b = (await http.get(URL + "?scope=team&assigned_to=member-b%40example.test")).json()
     assert body["can_view_team"] is True and body["can_view_register"] is False
-    assert body["total"] == 13
+    assert body["total"] == body["passport_count"] == 6
+    assert body["process_count"] == 0
     assert all(row["can_open_process"] is False for row in body["items"])
     assert detail.status_code == 404
-    assert unassigned["total"] == 2 and all(
+    assert unassigned["total"] == 1 and all(
         row["assigned_to"] is None for row in unassigned["items"]
     )
-    assert member_b["total"] == 3
-    assert sum(owner["total"] for owner in member_b["owners"]) == 13
+    assert member_b["total"] == 1
+    assert sum(owner["total"] for owner in member_b["owners"]) == 6
 
 
 @pytest.mark.asyncio

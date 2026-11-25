@@ -115,11 +115,12 @@ export const createCaseSchema = z
     client_id: z.number().positive("Select a client"),
     basis: guaranteeBasisEnum,
     practice_id: z.number().positive().optional(),
-    owner_email: z
-      .string()
-      .email("Invalid email address")
-      .optional()
-      .or(z.literal("")),
+    // A blank owner is "no owner": it is dropped from the body (like
+    // principal_case_id below), never posted as an assigned empty string.
+    owner_email: z.preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      z.string().email("Invalid email address").optional(),
+    ),
     dependent_code: dependentCodeEnum.optional(),
     principal_case_id: emptyToUndefined,
   })

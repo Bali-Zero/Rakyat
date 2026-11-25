@@ -112,6 +112,17 @@ def _outcome_from_row(row: asyncpg.Record) -> EligibilityCheckOutcome:
     )
 
 
+# garuda_voa_check_results.travellers is an int4 column (migration 286) while the
+# public contract admits any integer from 1. Only "one" against "more than one"
+# decides a verdict, so a larger count is stored at the column's maximum; the
+# payload digest above is taken on the request as sent, so a replay still matches.
+_TRAVELLERS_COLUMN_MAX = 2**31 - 1
+
+
+def _stored_travellers(value: object) -> int:
+    return min(int(value), _TRAVELLERS_COLUMN_MAX)
+
+
 class PostgresCheckStore:
     """Real ``CheckStore`` over ``garuda_voa_check_results``."""
 
@@ -234,7 +245,7 @@ class PostgresCheckStore:
                 voa_expiry_date,
                 bool(canonical_request.get("extension_already_used", False)),
                 purpose.value,
-                int(canonical_request["travellers"]),
+                _stored_travellers(canonical_request["travellers"]),
                 bool(canonical_request["self_pay"]),
                 "ACCEPT" if outcome.accepted else "DECLINE",
                 reason_codes_list,
