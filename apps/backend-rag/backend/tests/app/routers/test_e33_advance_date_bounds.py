@@ -130,6 +130,7 @@ def test_advance_accepts_today_and_recent_past_dates(mock_db_pool, admin_user, o
         "allowed_next_stages",
         "guarantee",
         "guarantee_evidence_complete",
+        "guarantee_gate_open",
         "forecasts",
     }
     assert body["stage"] == "entry"
