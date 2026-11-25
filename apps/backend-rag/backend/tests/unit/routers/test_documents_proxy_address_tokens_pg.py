@@ -18,6 +18,7 @@ from backend.app.routers import documents_proxy as mod
 
 X = "abcdefghijK"
 Y = "ZYXWVUTSRQp"
+Z = "abc_def-ghiK"  # both punctuation characters of the run
 
 # (reader, table, column): G1, G2, G3 for the global reader; P1, P2 for the portal reader.
 COLUMNS = [
@@ -92,6 +93,9 @@ ADMIT_FORMS = [
     f"https://drive.google.com/file/d/{X}/view",
     f"https://drive.google.com/open?id={X}",
     f"https://drive.google.com/file/d/{X}?usp=sharing",
+    # an empty run first: the read side takes the first NON-empty run
+    f"https://drive.google.com/file/d//d/{X}/view",
+    f"https://x.example.test/p?id=&id={X}",
 ]
 REFUSE_FORMS = [
     f"https://x.example.test/p?ouid={X}",
@@ -104,6 +108,15 @@ REFUSE_FORMS = [
     f"https://x.example.test/d/a/d/{X}",
     f"https://x.example.test/open?id=a&id={X}",
 ]
+
+
+@pytest.mark.parametrize("case", COLUMNS, ids=IDS)
+@pytest.mark.parametrize(
+    "url", [f"https://drive.google.com/file/d/{Z}/view", f"https://drive.google.com/open?id={Z}"]
+)
+async def test_an_id_with_underscore_and_hyphen_is_read_whole(conn, case, url):
+    assert await _admits(conn, case, url, Z)
+    assert not await _admits(conn, case, url, Z[:3])
 
 
 @pytest.mark.parametrize("case", COLUMNS, ids=IDS)

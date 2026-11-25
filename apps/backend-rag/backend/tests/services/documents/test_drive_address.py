@@ -8,6 +8,7 @@ from backend.services.documents.drive_address import address_drive_ids
 
 X = "abcdefghijK"
 Y = "lmnopqrstuV"
+Z = "abc_def-ghiK"  # both punctuation characters of the run
 D = "https://drive.google.com"
 
 # The read side takes the first match of each pattern per column (documents_proxy).
@@ -53,6 +54,8 @@ CORPUS = [
     (f"/d/{'a' * 257}", []),
     (f"?id={'a' * 257}", []),
     ("", []),
+    (f"{D}/file/d/{Z}/view", [Z]),
+    (f"{D}/open?id={Z}", [Z]),
 ]
 
 
@@ -73,3 +76,11 @@ def test_the_first_match_the_read_side_takes_is_named(address, _named):
 def test_addresses_are_read_in_order_and_each_id_is_named_once():
     assert address_drive_ids(f"/d/{X}", None, f"?id={Y}&id={X}") == [X, Y]
     assert address_drive_ids(None, "") == []
+
+
+def test_a_field_that_is_not_text_is_skipped_never_raised_on():
+    try:
+        named = address_drive_ids(None, 7, f"/d/{X}")
+    except Exception as exc:  # the parser must not fail on a missing or odd field
+        pytest.fail(f"raised {type(exc).__name__}")
+    assert named == [X]
