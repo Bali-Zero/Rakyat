@@ -286,3 +286,36 @@ describe("the transfer the dialog records: amount, date and memo of THAT transfe
     expect(labelled("Memo")).toHaveTextContent(/^\(no memo\)$/);
   });
 });
+
+describe("an instalment against what is still owed", () => {
+  const partly = {
+    invoice_amount_idr: 10000000,
+    paid_idr: 6000000,
+    balance_idr: 4000000,
+  };
+
+  it("a 4M transfer completing a 10M invoice with 6M paid reads Confirm paid", () => {
+    renderModal(partly, 4000000);
+    expect(confirmButton()).toHaveTextContent("Confirm paid");
+    expect(labelled("Already paid")).toHaveTextContent("Rp 6.000.000");
+    expect(labelled("Remaining")).toHaveTextContent("Rp 4.000.000");
+    expect(labelled("Delta")).toHaveTextContent(/^\+Rp 0$/);
+  });
+
+  it("a 3M transfer against the 4M balance is still partial", () => {
+    renderModal(partly, 3000000);
+    expect(confirmButton()).toHaveTextContent("Confirm partial");
+  });
+
+  it("with nothing paid there are no Already paid / Remaining lines", () => {
+    renderModal({}, 500000);
+    expect(labelled("Already paid")).toBeNull();
+    expect(labelled("Remaining")).toBeNull();
+    expect(confirmButton()).toHaveTextContent("Confirm paid");
+  });
+
+  it("an older backend (no balance field) is judged against the invoice amount", () => {
+    renderModal({ invoice_amount_idr: 10000000 }, 4000000);
+    expect(confirmButton()).toHaveTextContent("Confirm partial");
+  });
+});

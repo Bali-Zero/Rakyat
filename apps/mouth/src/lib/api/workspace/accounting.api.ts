@@ -91,6 +91,10 @@ export interface MatchCandidate {
   /** ISO 8601 stamp of the invoice's generated_at. */
   invoice_issued_at?: string | null;
   service_name?: string | null;
+  /** Already received on the invoice; absent from an older backend (read as 0). */
+  paid_idr?: number;
+  /** What is still owed (invoice amount - paid_idr); absent from an older backend. */
+  balance_idr?: number;
 }
 
 export interface MatchCandidatesResponse {

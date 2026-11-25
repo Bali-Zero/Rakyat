@@ -125,3 +125,36 @@ def test_the_inbox_classifies_each_transfer_against_its_own_companys_invoices(mo
         0,
         0,
     )
+
+
+def test_match_candidates_json_carries_paid_and_the_remaining_balance(mock_db_pool) -> None:
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(return_value=_txn(_account(DEFAULT)))
+    partly_paid = {**_inv(12, DEFAULT), "amount_idr": 10_000_000, "paid_idr": 6_000_000}
+    conn.fetch = AsyncMock(side_effect=[[partly_paid], []])
+    resp = _client(mock_db_pool).get(f"{BASE}/match-candidates/3")
+    assert resp.status_code == 200
+    (cand,) = resp.json()["candidates"]
+    assert (cand["paid_idr"], cand["balance_idr"], cand["amount_delta_idr"]) == (6_000_000, 4_000_000, 0)
+    assert cand["invoice_amount_idr"] == 10_000_000
+    assert cand["reasons"][0] == "exact remaining balance (Rp 6,000,000 already paid)"
+
+
+def test_a_pool_row_without_paid_reads_as_nothing_paid(mock_db_pool) -> None:
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(return_value=_txn(_account(DEFAULT)))
+    conn.fetch = AsyncMock(side_effect=[[_inv(12, DEFAULT)], []])
+    (cand,) = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()["candidates"]
+    assert (cand["paid_idr"], cand["balance_idr"]) == (0, 4_000_000)
+
+
+
+def test_a_recorded_invoice_is_matched_on_its_whole_amount_not_on_a_zero_balance(mock_db_pool) -> None:
+    _pool, conn = mock_db_pool
+    conn.fetchrow = AsyncMock(return_value=_txn(_account(DEFAULT)))
+    recorded = {**_inv(12, DEFAULT), "amount_idr": 4_000_000, "paid_idr": 4_000_000}
+    conn.fetch = AsyncMock(side_effect=[[], [recorded]])
+    body = _client(mock_db_pool).get(f"{BASE}/match-candidates/3").json()
+    (cand,) = body["recorded_candidates"]
+    assert (cand["paid_idr"], cand["balance_idr"], cand["amount_delta_idr"]) == (0, 4_000_000, 0)
+    assert cand["reasons"][0] == "exact amount match"

@@ -347,7 +347,8 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
         SELECT i.id AS invoice_id, i.practice_id, i.amount_idr,
                i.generated_at, COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr,
                c.full_name AS client_name, billed.company_name AS bill_to_company,
-               i.invoice_number, pt.name AS service_name, i.issuer_entity_key
+               i.invoice_number, pt.name AS service_name, i.issuer_entity_key,
+               GREATEST(COALESCE(i.paid_amount_idr, 0), COALESCE(p.paid_amount, 0)) AS paid_idr
         FROM invoices i
         JOIN practices p ON i.practice_id = p.id
         LEFT JOIN practice_types pt ON pt.id = p.practice_type_id
@@ -369,6 +370,9 @@ async def _fetch_invoice_pool(conn: asyncpg.Connection, *, recorded: bool) -> li
             service_name=r.get("service_name"),
             issuer_entity_key=r.get("issuer_entity_key"),
             bill_to_company=r.get("bill_to_company"),
+            # A recorded invoice is already paid: the transfer is matched against the payment that
+            # was recorded, so the whole invoice, never a balance of zero.
+            paid_idr=0 if recorded else _finite_int(r.get("paid_idr")),
         )
         for r in rows
     ]
@@ -398,6 +402,8 @@ def _candidate_json(c: MatchCandidate) -> dict[str, Any]:
         "invoice_number": c.invoice_number,
         "invoice_issued_at": c.invoice_issued_at,
         "service_name": c.service_name,
+        "paid_idr": c.paid_idr,
+        "balance_idr": c.balance_idr,
     }
 
 

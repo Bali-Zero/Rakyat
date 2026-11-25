@@ -40,7 +40,9 @@ export function ConfirmModal({
   // A second click in the same tick lands before React re-renders.
   const inFlight = useRef(false);
   const identity = candidateIdentityParts(candidate);
-  const delta = txn.amount_idr - candidate.invoice_amount_idr;
+  const paid = candidate.paid_idr ?? 0;
+  const balance = candidate.balance_idr ?? candidate.invoice_amount_idr - paid;
+  const delta = txn.amount_idr - balance;
   // A transfer net of PPh23 withholding (delta < 0 but flagged likely_withheld)
   // still SETTLES the invoice — the withheld tax is recorded separately, not a
   // shortfall. Only a genuine underpayment (short, NOT withholding) is 'partial'.
@@ -152,6 +154,22 @@ export function ConfirmModal({
               <Money value={candidate.invoice_amount_idr} />
             </dd>
           </div>
+          {paid > 0 && (
+            <>
+              <div className="flex justify-between">
+                <dt className="text-[var(--bz-text-2)]">Already paid</dt>
+                <dd className="tabular-nums">
+                  <Money value={paid} />
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-[var(--bz-text-2)]">Remaining</dt>
+                <dd className="tabular-nums">
+                  <Money value={balance} />
+                </dd>
+              </div>
+            </>
+          )}
           <div className="flex justify-between">
             <dt className="text-[var(--bz-text-2)]">Delta</dt>
             <dd

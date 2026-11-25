@@ -45,6 +45,8 @@ class OpenInvoice:
     amount_idr: int
     generated_at: date | None = None
     pph_expected_idr: int = 0
+    # Already received on this invoice (the larger of the invoice's and the practice's paid column).
+    paid_idr: int = 0
     # Identity of the invoice for a human; None when the source has no value.
     invoice_number: str | None = None
     invoice_issued_at: str | None = None
@@ -74,39 +76,48 @@ class MatchCandidate:
     invoice_number: str | None = None
     invoice_issued_at: str | None = None
     service_name: str | None = None
+    paid_idr: int = 0
+    balance_idr: int = 0  # what is still owed: invoice amount - paid_idr
 
 
 def _amount_signals(transfer_idr: int, inv: OpenInvoice) -> tuple[float, list[str], int, bool, str]:
     """Score the amount relationship. Returns (score, reasons, delta, withheld, relation)."""
     reasons: list[str] = []
-    delta = transfer_idr - inv.amount_idr
+    # An instalment is judged against what is still owed, not against the whole invoice.
+    due = inv.amount_idr - inv.paid_idr
+    delta = transfer_idr - due
 
-    # D6 guard: a zero/non-positive transfer or zero-amount invoice can never be
+    # D6 guard: a zero/non-positive transfer or an invoice with nothing left to pay can never be
     # a real payment match — never let 0==0 phantom-match as "exact".
-    if transfer_idr <= 0 or inv.amount_idr <= 0:
+    if transfer_idr <= 0 or due <= 0:
         return 0.0, reasons, delta, False, "none"
 
     # Exact (within tolerance)
     if abs(delta) <= EXACT_TOLERANCE_IDR:
-        reasons.append("exact amount match")
+        if inv.paid_idr > 0:
+            reasons.append(f"exact remaining balance (Rp {inv.paid_idr:,} already paid)")
+        else:
+            reasons.append("exact amount match")
         return 0.7, reasons, delta, False, "exact"
 
     # Net of expected PPh23: a B2B client transfers gross - 2% (or the
     # explicitly-recorded pph_expected). transfer ~= amount - withholding.
-    expected_wh = inv.pph_expected_idr or round(inv.amount_idr * PPH23_RATE)
-    net_expected = inv.amount_idr - expected_wh
-    if abs(transfer_idr - net_expected) <= EXACT_TOLERANCE_IDR:
-        reasons.append(f"matches amount net of PPh23 (withheld ~{expected_wh:,} IDR)")
-        return 0.6, reasons, delta, True, "net"
+    # Only on an unpaid invoice: the withholding is reckoned on the whole invoice.
+    if inv.paid_idr == 0:
+        expected_wh = inv.pph_expected_idr or round(inv.amount_idr * PPH23_RATE)
+        net_expected = inv.amount_idr - expected_wh
+        if abs(transfer_idr - net_expected) <= EXACT_TOLERANCE_IDR:
+            reasons.append(f"matches amount net of PPh23 (withheld ~{expected_wh:,} IDR)")
+            return 0.6, reasons, delta, True, "net"
 
-    # Partial payment: transfer is a meaningful fraction less than the invoice.
+    # Partial payment: transfer is a meaningful fraction less than what is owed.
     # Below MIN_PARTIAL_FRACTION it's noise, not a plausible installment.
-    if inv.amount_idr * MIN_PARTIAL_FRACTION <= transfer_idr < inv.amount_idr:
+    if due * MIN_PARTIAL_FRACTION <= transfer_idr < due:
         reasons.append("possible partial payment (transfer < invoice)")
         return 0.2, reasons, delta, False, "partial"
 
     # Overpayment / lump sum that exceeds this single invoice.
-    if transfer_idr > inv.amount_idr + EXACT_TOLERANCE_IDR:
+    if transfer_idr > due + EXACT_TOLERANCE_IDR:
         reasons.append("transfer exceeds this invoice (overpayment or covers several)")
         return 0.15, reasons, delta, False, "over"
 
@@ -279,6 +290,8 @@ def rank_candidates(
                 invoice_number=inv.invoice_number,
                 invoice_issued_at=inv.invoice_issued_at,
                 service_name=inv.service_name,
+                paid_idr=inv.paid_idr,
+                balance_idr=inv.amount_idr - inv.paid_idr,
             )
         )
 

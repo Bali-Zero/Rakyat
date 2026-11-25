@@ -362,6 +362,8 @@ def test_inbox_shape_and_each_light(mock_db_pool) -> None:
         "invoice_number",
         "invoice_issued_at",
         "service_name",
+        "paid_idr",
+        "balance_idr",
     }
     assert (
         recorded["recorded_candidates"],
@@ -476,6 +478,8 @@ def test_match_candidates_keeps_its_fields_and_gains_recorded_candidates(mock_db
             "invoice_number": None,
             "invoice_issued_at": "2026-06-20T00:00:00",
             "service_name": None,
+            "paid_idr": 0,
+            "balance_idr": 4_000_000,
         }
     ]
     assert body["recorded_candidates"] == [
@@ -876,7 +880,8 @@ def test_candidates_of_equal_confidence_keep_the_order_of_the_pool_rows_given(
 _POOL_SQL_HEAD = (
     "SELECT i.id AS invoice_id, i.practice_id, i.amount_idr, i.generated_at, "
     "COALESCE(i.pph_expected_idr, 0) AS pph_expected_idr, c.full_name AS client_name, "
-    "billed.company_name AS bill_to_company, i.invoice_number, pt.name AS service_name, i.issuer_entity_key "
+    "billed.company_name AS bill_to_company, i.invoice_number, pt.name AS service_name, i.issuer_entity_key, "
+    "GREATEST(COALESCE(i.paid_amount_idr, 0), COALESCE(p.paid_amount, 0)) AS paid_idr "
     "FROM invoices i JOIN practices p ON i.practice_id = p.id "
     "LEFT JOIN practice_types pt ON pt.id = p.practice_type_id "
     "LEFT JOIN clients c ON p.client_id = c.id "
