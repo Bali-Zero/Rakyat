@@ -11,12 +11,15 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from backend.services.accounting.cashout_service import (
     EXPORT_HEADERS,
     build_export_rows,
 )
 from backend.services.accounting.matcher import (
     OpenInvoice,
+    _amount_signals,
     rank_candidates,
 )
 
@@ -298,3 +301,79 @@ class TestEqualConfidenceClosestAmountFirst:
             open_invoices=invs,
         )
         assert [c.invoice_id for c in out] == [2, 3, 1]
+
+
+def _paid_inv(amount: int, paid: int, pph: int = 0) -> OpenInvoice:
+    return OpenInvoice(
+        invoice_id=1,
+        practice_id=10,
+        client_name="Contoh Klien",
+        amount_idr=amount,
+        pph_expected_idr=pph,
+        paid_idr=paid,
+    )
+
+
+class TestInstalmentAgainstWhatIsStillOwed:
+    """10M invoice, 6M already received: a transfer is judged against the 4M still owed."""
+
+    def test_the_remaining_balance_is_exact(self) -> None:
+        _, reasons, delta, withheld, relation = _amount_signals(4_000_000, _paid_inv(10_000_000, 6_000_000))
+        assert (relation, delta, withheld) == ("exact", 0, False)
+        assert reasons == ["exact remaining balance (Rp 6,000,000 already paid)"]
+
+    def test_less_than_the_balance_is_partial_with_delta_against_the_balance(self) -> None:
+        _, _, delta, _, relation = _amount_signals(3_000_000, _paid_inv(10_000_000, 6_000_000))
+        assert (relation, delta) == ("partial", -1_000_000)
+
+    def test_more_than_the_balance_is_over(self) -> None:
+        _, _, delta, _, relation = _amount_signals(5_000_000, _paid_inv(10_000_000, 6_000_000))
+        assert (relation, delta) == ("over", 1_000_000)
+
+    def test_the_old_whole_invoice_amount_is_no_longer_exact(self) -> None:
+        _, _, _, _, relation = _amount_signals(10_000_000, _paid_inv(10_000_000, 6_000_000))
+        assert relation == "over"
+
+    def test_the_net_of_pph_branch_is_off_once_something_is_paid(self) -> None:
+        # 9.8M = 10M - 2% would be "net" on an unpaid invoice; with 1M paid it is just an over-payment
+        _, _, _, withheld, relation = _amount_signals(9_800_000, _paid_inv(10_000_000, 1_000_000))
+        assert (relation, withheld) == ("over", False)
+        _, _, _, withheld, relation = _amount_signals(9_800_000, _paid_inv(10_000_000, 0))
+        assert (relation, withheld) == ("net", True)
+
+    @pytest.mark.parametrize("paid", [10_000_000, 12_000_000])
+    def test_nothing_left_to_pay_never_matches(self, paid: int) -> None:
+        score, _, _, _, relation = _amount_signals(4_000_000, _paid_inv(10_000_000, paid))
+        assert (score, relation) == (0.0, "none")
+
+    def test_paid_zero_keeps_every_relation(self) -> None:
+        inv = _paid_inv(10_000_000, 0)
+        for transfer, relation in [
+            (10_000_000, "exact"),
+            (9_800_000, "net"),
+            (6_000_000, "partial"),
+            (10_500_000, "over"),
+            (500_000, "none"),
+        ]:
+            assert _amount_signals(transfer, inv)[4] == relation
+        assert _amount_signals(10_000_000, inv)[1] == ["exact amount match"]
+
+    def test_the_candidate_carries_paid_and_balance(self) -> None:
+        out = rank_candidates(
+            transfer_amount_idr=4_000_000,
+            transfer_date=date(2026, 6, 25),
+            payer_memo="CONTOH KLIEN",
+            open_invoices=[_paid_inv(10_000_000, 6_000_000)],
+        )
+        assert (out[0].paid_idr, out[0].balance_idr, out[0].amount_relation) == (6_000_000, 4_000_000, "exact")
+        assert out[0].invoice_amount_idr == 10_000_000
+        assert out[0].amount_delta_idr == 0
+
+    def test_an_unpaid_candidate_balance_is_the_whole_invoice(self) -> None:
+        out = rank_candidates(
+            transfer_amount_idr=10_000_000,
+            transfer_date=date(2026, 6, 25),
+            payer_memo="CONTOH KLIEN",
+            open_invoices=[_paid_inv(10_000_000, 0)],
+        )
+        assert (out[0].paid_idr, out[0].balance_idr) == (0, 10_000_000)

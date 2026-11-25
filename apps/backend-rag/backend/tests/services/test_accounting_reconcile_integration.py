@@ -723,3 +723,109 @@ async def test_p2_a_non_finite_invoice_amount_is_refused_before_any_write() -> N
         assert await _snapshot(conn) == before
     finally:
         await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_an_instalment_is_judged_against_what_is_still_owed() -> None:
+    """10M invoice: confirm 6M as partial, then a 4M transfer is an exact candidate, and
+    confirming it as paid leaves the practice paid with paid_amount 10M."""
+    from backend.app.routers.accounting import _fetch_invoice_pool
+    from backend.services.accounting.matcher import rank_candidates
+
+    conn, dbname, user = await _fresh_db()
+    try:
+        cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Contoh Klien') RETURNING id")
+        pid = await conn.fetchval(
+            "INSERT INTO practices (client_id, payment_status) VALUES ($1, 'unpaid') RETURNING id", cid
+        )
+        iid = await conn.fetchval(
+            "INSERT INTO invoices (practice_id, invoice_number, amount_idr)"
+            " VALUES ($1, 'INV-3', 10000000) RETURNING id",
+            pid,
+        )
+        stmt = await conn.fetchval(DEFAULT_COMPANY_STATEMENT_SQL)
+        tx = []
+        for amount in (6_000_000, 4_000_000):
+            tx.append(
+                await conn.fetchval(
+                    """INSERT INTO bank_transactions (statement_id, txn_date, amount_idr, direction)
+                       VALUES ($1, $2, $3, 'credit') RETURNING id""",
+                    stmt, date(2026, 6, 25), amount,
+                )
+            )
+
+        await confirm_payment(
+            conn, bank_txn_id=tx[0], practice_id=pid, invoice_id=iid, amount_applied_idr=6_000_000,
+            new_status="partial", confirmed_by="accountant@example.test", payment_reference="REF-A",
+            movement_date=date(2026, 6, 25),
+        )
+
+        pool = await _fetch_invoice_pool(conn, recorded=False)
+        (inv,) = [i for i in pool if i.invoice_id == iid]
+        assert (inv.amount_idr, inv.paid_idr) == (10_000_000, 6_000_000)
+        (cand,) = rank_candidates(
+            transfer_amount_idr=4_000_000, transfer_date=date(2026, 6, 25),
+            payer_memo="CONTOH KLIEN", open_invoices=[inv],
+        )
+        assert (cand.amount_relation, cand.amount_delta_idr, cand.balance_idr) == ("exact", 0, 4_000_000)
+
+        await confirm_payment(
+            conn, bank_txn_id=tx[1], practice_id=pid, invoice_id=iid, amount_applied_idr=4_000_000,
+            new_status="paid", confirmed_by="accountant@example.test", payment_reference="REF-B",
+            movement_date=date(2026, 6, 25),
+        )
+        prac = await conn.fetchrow("SELECT payment_status, paid_amount FROM practices WHERE id=$1", pid)
+        assert prac["payment_status"] == "paid"
+        assert int(prac["paid_amount"]) == 10_000_000
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_the_pool_paid_is_the_larger_of_invoice_and_practice_never_their_sum() -> None:
+    from backend.app.routers.accounting import _fetch_invoice_pool
+
+    conn, dbname, user = await _fresh_db()
+    try:
+        cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Contoh Klien') RETURNING id")
+        ids = []
+        for practice_paid, invoice_paid in ((5_000_000, 6_000_000), (7_000_000, 0)):
+            pid = await conn.fetchval(
+                "INSERT INTO practices (client_id, payment_status, paid_amount)"
+                " VALUES ($1, 'partial', $2) RETURNING id",
+                cid, practice_paid,
+            )
+            ids.append(
+                await conn.fetchval(
+                    "INSERT INTO invoices (practice_id, invoice_number, amount_idr, paid_amount_idr)"
+                    " VALUES ($1, $3, 10000000, $2) RETURNING id",
+                    pid, invoice_paid, f"INV-P{pid}",
+                )
+            )
+        got = {i.invoice_id: i.paid_idr for i in await _fetch_invoice_pool(conn, recorded=False)}
+        assert got == {ids[0]: 6_000_000, ids[1]: 7_000_000}
+    finally:
+        await _drop_db(conn, dbname, user)
+
+
+@pytest.mark.asyncio
+async def test_a_recorded_invoice_keeps_its_whole_amount_in_the_recorded_pool() -> None:
+    from backend.app.routers.accounting import _fetch_invoice_pool
+
+    conn, dbname, user = await _fresh_db()
+    try:
+        cid = await conn.fetchval("INSERT INTO clients (full_name) VALUES ('Contoh Klien') RETURNING id")
+        pid = await conn.fetchval(
+            "INSERT INTO practices (client_id, payment_status, paid_amount)"
+            " VALUES ($1, 'paid', 10000000) RETURNING id",
+            cid,
+        )
+        iid = await conn.fetchval(
+            "INSERT INTO invoices (practice_id, invoice_number, amount_idr, paid_amount_idr)"
+            " VALUES ($1, 'INV-R1', 10000000, 10000000) RETURNING id",
+            pid,
+        )
+        (inv,) = [i for i in await _fetch_invoice_pool(conn, recorded=True) if i.invoice_id == iid]
+        assert (inv.amount_idr, inv.paid_idr) == (10_000_000, 0)
+    finally:
+        await _drop_db(conn, dbname, user)
