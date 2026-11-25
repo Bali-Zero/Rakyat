@@ -193,6 +193,23 @@ async def test_a_dropped_field_logs_one_line_with_the_proposal_and_the_field_onl
     assert Y not in lines[0] and X not in lines[0] and "drive.google.com" not in lines[0]
 
 
+DIGITS_URL = "https://x.example.test/open?id=12345678901"
+
+
+@pytest.mark.asyncio
+async def test_client_an_all_digit_run_beside_another_file_id_is_stored_null(has_ocr):
+    got = await _client_row(
+        has_ocr, file_id=X, file_url=DIGITS_URL, google_drive_file_url=DIGITS_URL
+    )
+    assert got == (None, None)  # `_client_row` also asserts the row keeps file_id X
+
+
+@pytest.mark.asyncio
+async def test_company_an_all_digit_run_beside_another_file_id_is_stored_null():
+    assert await _company_row(file_id=X, google_drive_file_url=DIGITS_URL) is None
+    assert await _company_row(file_id=X, file_url=DIGITS_URL) is None  # the fallback too
+
+
 def test_confine_addresses_keeps_both_when_nothing_is_foreign():
     payload = _payload(file_id=X, file_url=OWN_URL, google_drive_file_url=None)
     assert intake_writer.confine_addresses(payload) == (OWN_URL, None)
