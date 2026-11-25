@@ -28,6 +28,26 @@ describe("pathOnly", () => {
   });
 });
 
+describe("safeUpstreamError and credential paths", () => {
+  it("replaces the secret segment of a credential route in message and stack, keeping the message", () => {
+    const secret = "tkfixture42zz"; // pragma: allowlist secret
+    const raw = new TypeError(
+      `Failed to parse URL from http://backend/api/funnel_email/unsubscribe/${secret}; GET /api/visa/match/${secret} failed`,
+    );
+    const safe = safeUpstreamError(
+      raw,
+      `http://backend/api/funnel_email/unsubscribe/${secret}`,
+      `http://backend/api/funnel_email/unsubscribe/${secret}`,
+      "",
+    );
+    expect(safe.message).not.toContain(secret);
+    expect(String(safe.stack)).not.toContain(secret);
+    expect(safe.message).toContain("Failed to parse URL from");
+    expect(safe.message).toContain("/api/funnel_email/unsubscribe/[REDACTED]");
+    expect(safe.message).toContain("/api/visa/match/[REDACTED]");
+  });
+});
+
 describe("safeUpstreamError", () => {
   const target = `http://backend/api/crm/clients?search=${VALUE}`;
   const search = `?search=${VALUE}`;

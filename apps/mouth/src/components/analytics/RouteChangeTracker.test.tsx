@@ -62,6 +62,29 @@ describe("RouteChangeTracker", () => {
     expect(payload.page_location).toContain("/portal/register");
   });
 
+  it("sends neither a credential path nor any query text to GA4 (page_path, page_location)", () => {
+    window.history.replaceState({}, "", "/visa/clock/HASHLEAK1");
+    usePathnameMock.mockReturnValue("/visa/clock/HASHLEAK1");
+    const { rerender } = render(<RouteChangeTracker />);
+
+    window.history.replaceState(
+      {},
+      "",
+      "/prime/proposal/TKNLEAK2?search=zetaquorum&return_nonce=NONCELEAK3",
+    );
+    usePathnameMock.mockReturnValue("/prime/proposal/TKNLEAK2");
+    rerender(<RouteChangeTracker />);
+
+    expect(gtag).toHaveBeenCalledTimes(1);
+    const payload = gtag.mock.calls[0][2] as Record<string, string>;
+    const text = JSON.stringify(payload);
+    for (const leak of ["TKNLEAK2", "zetaquorum", "NONCELEAK3"]) {
+      expect(text).not.toContain(leak);
+    }
+    expect(payload.page_path).toBe("/prime/proposal/[redacted]");
+    expect(payload.page_location).toContain("/prime/proposal/[redacted]");
+  });
+
   it("is a no-op when gtag is not loaded", () => {
     delete (window as typeof window & { gtag?: unknown }).gtag;
     usePathnameMock.mockReturnValue("/a");
