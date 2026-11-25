@@ -82,6 +82,7 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
   const [gateStatus, setGateStatus] = useState<GateStatus | null>(null);
   const [gateChecked, setGateChecked] = useState(false);
   const [gateBypassed, setGateBypassed] = useState(false);
+  const latestGateProbe = useRef(0);
 
   // Product persona is independent from theme. On the production hostname it
   // is set before paint; this fallback keeps direct/local workspace routes in
@@ -188,18 +189,25 @@ export default function WorkspaceLayout({ children }: WorkspaceLayoutProps) {
   // (spec §8 Q4: a status outage must not lock everyone out) — clearing
   // gateStatus so the workspace renders, but still marking it checked.
   const refetchGate = useCallback(async () => {
+    const probeId = ++latestGateProbe.current;
     try {
       const status = await api.getGateStatus();
-      setGateStatus(status);
+      if (probeId === latestGateProbe.current) {
+        setGateStatus(status);
+      }
     } catch (error) {
-      logger.warn("Gate status probe failed — failing open", {
-        component: "WorkspaceLayout",
-        action: "gateStatus",
-        metadata: { error: String(error) },
-      });
-      setGateStatus(null);
+      if (probeId === latestGateProbe.current) {
+        logger.warn("Gate status probe failed — failing open", {
+          component: "WorkspaceLayout",
+          action: "gateStatus",
+          metadata: { error: String(error) },
+        });
+        setGateStatus(null);
+      }
     } finally {
-      setGateChecked(true);
+      if (probeId === latestGateProbe.current) {
+        setGateChecked(true);
+      }
     }
   }, []);
 
