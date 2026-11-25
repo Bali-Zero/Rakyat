@@ -176,7 +176,7 @@ async def test_client_upload_server_error_then_limited_spends_the_same_single_re
 
     assert result.status == "rejected"
     assert len(requests) == 3
-    assert waits == []  # the retry was already spent: nothing to wait for
+    assert waits == [2.0]  # the transient wait comes before the retry; no wait follows the 429
 
 
 @pytest.mark.parametrize(

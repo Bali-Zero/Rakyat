@@ -378,7 +378,7 @@ async def test_service_key_upsert_failure_fails_closed(mock_client, blob):
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/upsert-by-phone"):
-            return httpx.Response(500, json={"detail": "boom"})
+            return httpx.Response(422, json={"detail": "boom"})
         raise AssertionError("upload must not run without a resolved Fly id")
 
     requests = mock_client(handler)
