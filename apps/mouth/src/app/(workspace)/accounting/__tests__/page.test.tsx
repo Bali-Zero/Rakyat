@@ -177,6 +177,22 @@ describe("AccountingPage", () => {
   });
 
   it("shows no margin card: a confirmed payment carries no price decomposition", async () => {
+    // A margin total the server still sends, and a worksheet row whose own breakdown is recorded.
+    api.getSummary.mockResolvedValue({
+      income_idr: 0,
+      outgoing_idr: 0,
+      net_idr: 0,
+      margin_total_idr: 987654321,
+      by_type: [],
+    } as never);
+    api.getCashout.mockResolvedValue([
+      cashoutRow(1, {}),
+      cashoutRow(2, {
+        type: "cashout_worksheet",
+        pnbp_idr: 500000,
+        margin_idr: 1500000,
+      }),
+    ]);
     render(<AccountingPage />);
     await screen.findByText("CONTOH TRANSFER");
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
@@ -184,6 +200,20 @@ describe("AccountingPage", () => {
     expect(screen.getByText("Outgoing (out)")).toBeInTheDocument();
     expect(screen.getByText("Net")).toBeInTheDocument();
     expect(screen.queryByText("Bali Zero margin")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/987/);
+    const breakdown = async (name: string) =>
+      Array.from(
+        (await screen.findByText(name)).closest("tr")?.querySelectorAll("td") ??
+          [],
+      )
+        .slice(3, 7)
+        .map((td) => td.textContent);
+    // a confirmed payment has no breakdown: unknown, never a zero margin
+    expect(await breakdown("CONTOH KLIEN 1")).toEqual(["—", "—", "—", "—"]);
+    // a worksheet row keeps the breakdown recorded in Asya's sheet
+    const sheet = await breakdown("CONTOH KLIEN 2");
+    expect(sheet[0]).not.toBe("—");
+    expect(sheet[3]).not.toBe("—");
   });
 
   it("an outgoing cashout row carries a minus sign; an incoming one does not", async () => {
