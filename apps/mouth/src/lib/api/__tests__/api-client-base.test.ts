@@ -272,6 +272,20 @@ describe("ApiClientBase", () => {
       expect(client.isAdmin()).toBe(true);
     });
 
+    it.each(["CEO", "Board Member"])(
+      "should identify %s role as admin",
+      (role) => {
+        client.setUserProfile({
+          id: "1",
+          email: "workspace-admin@example.test",
+          name: "Workspace Admin",
+          role,
+        });
+
+        expect(client.isAdmin()).toBe(true);
+      },
+    );
+
     it("should identify owner role as admin", () => {
       client.setUserProfile({
         id: "1",

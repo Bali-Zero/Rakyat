@@ -36,6 +36,7 @@ import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { isWorkspaceAdminRole } from "@/lib/auth/workspace-admin";
 import { logger } from "@/lib/logger";
 import type { CreateClientParams } from "@/lib/api/crm/crm.types";
 import {
@@ -317,8 +318,7 @@ export default function ReviewPage() {
   // already uses elsewhere on this desk (dashboard/page.tsx:333).
   const profile = api.getUserProfile();
   const viewerEmail = profile?.email?.trim().toLowerCase() ?? "";
-  const viewerRole = profile?.role?.trim().toLowerCase() ?? "";
-  const viewerIsAdmin = viewerRole === "admin" || viewerRole === "owner";
+  const viewerIsAdmin = isWorkspaceAdminRole(profile?.role);
   function ownsRow(receivedBy: string | null | undefined): boolean {
     const rb = receivedBy?.trim().toLowerCase() ?? "";
     if (!viewerEmail) return false; // unknown viewer never earns copper

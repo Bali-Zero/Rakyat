@@ -211,6 +211,21 @@ describe("ReviewPage", () => {
     ).toBeVisible();
   });
 
+  it("treats a CEO as an admin for unassigned review rows", async () => {
+    getUserProfileMock.mockReturnValue({
+      email: "ceo@example.test",
+      role: "CEO",
+    });
+
+    render(<ReviewPage />);
+
+    expect(
+      (await screen.findAllByText("Needs you")).filter(
+        (element) => element.tagName !== "BUTTON",
+      ),
+    ).toHaveLength(2);
+  });
+
   it("leads a NO_MATCH proposal with a 'Create new client' CTA prefilled from the extracted fields", async () => {
     render(<ReviewPage />);
 
