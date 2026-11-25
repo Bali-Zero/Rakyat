@@ -164,6 +164,14 @@ async def test_company_an_own_address_is_stored():
     assert await _company_row(file_id=X, google_drive_file_url=OWN_URL) == OWN_URL
 
 
+@pytest.mark.asyncio
+async def test_company_both_own_addresses_store_the_drive_address_first():
+    other_own = f"{D}/open?id={X}"
+    assert (
+        await _company_row(file_id=X, google_drive_file_url=OWN_URL, file_url=other_own) == OWN_URL
+    )
+
+
 @pytest.mark.parametrize("file_id", ["absent", ""], ids=["file_id_absent", "file_id_empty"])
 @pytest.mark.asyncio
 async def test_company_standalone_without_a_file_id_an_address_naming_a_run_is_stored_null(file_id):

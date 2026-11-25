@@ -189,3 +189,29 @@ async def test_pa5_pa7_routes_answer_400_before_any_query(handler, bad):
 @pytest.mark.parametrize("ok", ["a" * 10, "a" * 256, X, "12345678901"])  # D4: digits too
 def test_pa5_shape_boundaries_pass(ok):
     mod._assert_file_id_shape(ok)
+
+
+EXPLICIT = [
+    ("global", "documents", "file_id", "client_id"),
+    ("portal", "documents", "file_id", "client_id"),
+    ("global", "company_documents", "google_drive_file_id", "company_id"),
+    ("global", "invoices", "drive_file_id", "client_id"),
+    ("portal", "invoices", "drive_file_id", "client_id"),
+    ("global", "lkpm_receipts", "file_drive_id", None),
+    ("global", "weekly_cashout", "receipt_drive_file_id", None),
+]
+
+
+@pytest.mark.parametrize("case", EXPLICIT, ids=[f"{r}:{t}.{c}" for r, t, c, _ in EXPLICIT])
+async def test_an_explicit_id_column_is_read_as_the_exact_id(conn, case):
+    reader, table, col, owner = case
+    await conn.execute(
+        "DELETE FROM documents; DELETE FROM company_documents; DELETE FROM invoices;"
+        " DELETE FROM lkpm_receipts; DELETE FROM weekly_cashout"
+    )
+    if owner:
+        await conn.execute(f"INSERT INTO {table}({owner}, {col}) VALUES (1, $1)", X)
+    else:
+        await conn.execute(f"INSERT INTO {table}({col}) VALUES ($1)", X)
+    assert await _ask(conn, reader, X)
+    assert not await _ask(conn, reader, Y)
