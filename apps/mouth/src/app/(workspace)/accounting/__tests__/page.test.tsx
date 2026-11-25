@@ -39,6 +39,37 @@ vi.mock("@/lib/api/workspace/accounting.api", () => ({
 
 const api = vi.mocked(accountingApi);
 
+const cashoutRow = (id: number, extra: Partial<CashoutRow>): CashoutRow => ({
+  id,
+  movement_date: "2026-06-25",
+  week_label: "2026-W26",
+  direction: "in",
+  type: "invoice_payment",
+  amount_idr: 1000000,
+  pnbp_idr: 0,
+  urgent_idr: 0,
+  rptka_imta_idr: 0,
+  margin_idr: 0,
+  final_price_idr: 1000000,
+  original_currency: null,
+  original_amount: null,
+  fx_rate: null,
+  fx_date: null,
+  pph_withheld_idr: 0,
+  bank_fee_idr: 0,
+  linked_practice_id: null,
+  linked_invoice_id: null,
+  category: null,
+  description: null,
+  counterparty: null,
+  payment_method: null,
+  recorded_by: null,
+  recorded_at: null,
+  reversed_by_id: null,
+  client_name: `CONTOH KLIEN ${id}`,
+  ...extra,
+});
+
 beforeEach(() => {
   vi.resetAllMocks();
   api.getSummary.mockResolvedValue({
@@ -126,36 +157,7 @@ describe("AccountingPage", () => {
   });
 
   it("the cashout Process column names the case's service before the raw type", async () => {
-    const row = (id: number, extra: Partial<CashoutRow>): CashoutRow => ({
-      id,
-      movement_date: "2026-06-25",
-      week_label: "2026-W26",
-      direction: "in",
-      type: "invoice_payment",
-      amount_idr: 1000000,
-      pnbp_idr: 0,
-      urgent_idr: 0,
-      rptka_imta_idr: 0,
-      margin_idr: 0,
-      final_price_idr: 1000000,
-      original_currency: null,
-      original_amount: null,
-      fx_rate: null,
-      fx_date: null,
-      pph_withheld_idr: 0,
-      bank_fee_idr: 0,
-      linked_practice_id: null,
-      linked_invoice_id: null,
-      category: null,
-      description: null,
-      counterparty: null,
-      payment_method: null,
-      recorded_by: null,
-      recorded_at: null,
-      reversed_by_id: null,
-      client_name: `CONTOH KLIEN ${id}`,
-      ...extra,
-    });
+    const row = cashoutRow;
     api.getCashout.mockResolvedValue([
       row(1, { service_name: "Contoh Layanan" }),
       row(2, { category: "Contoh Kategori", service_name: "Contoh Layanan" }),
@@ -172,6 +174,39 @@ describe("AccountingPage", () => {
     expect((await cells("CONTOH KLIEN 1"))[2]).toBe("Contoh Layanan");
     expect((await cells("CONTOH KLIEN 2"))[2]).toBe("Contoh Kategori");
     expect((await cells("CONTOH KLIEN 3"))[2]).toBe("invoice_payment");
+  });
+
+  it("shows no margin card: a confirmed payment carries no price decomposition", async () => {
+    render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(await screen.findByText("Income (in)")).toBeInTheDocument();
+    expect(screen.getByText("Outgoing (out)")).toBeInTheDocument();
+    expect(screen.getByText("Net")).toBeInTheDocument();
+    expect(screen.queryByText("Bali Zero margin")).toBeNull();
+  });
+
+  it("an outgoing cashout row carries a minus sign; an incoming one does not", async () => {
+    api.getCashout.mockResolvedValue([
+      cashoutRow(1, {}),
+      cashoutRow(2, { direction: "out", type: "manual" }),
+    ]);
+    render(<AccountingPage />);
+    await screen.findByText("CONTOH TRANSFER");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    const finalPrice = async (name: string) => {
+      const cells = (await screen.findByText(name))
+        .closest("tr")
+        ?.querySelectorAll("td");
+      return cells?.[7] as HTMLElement;
+    };
+    const incoming = await finalPrice("CONTOH KLIEN 1");
+    const outgoing = await finalPrice("CONTOH KLIEN 2");
+    expect(outgoing.textContent).toMatch(/^Money out: −/);
+    expect(outgoing.className).toContain("--state-danger");
+    expect(incoming.textContent).not.toContain("−");
+    expect(incoming.textContent).not.toContain("Money out");
+    expect(incoming.className).not.toContain("--state-danger");
   });
 
   it("U6: the cashout import still calls importCashout with the chosen file", async () => {
