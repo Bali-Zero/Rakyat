@@ -148,7 +148,7 @@ interface Props {
   evidenceRefs: Record<number, string>;
   declarations: Record<number, boolean>;
   rowError: Record<number, string>;
-  busyId: number | null;
+  busyIds: ReadonlySet<number>;
   onNoteChange: (id: number, value: string) => void;
   onApprove: (row: ObligationOut) => void;
   onReject: (row: ObligationOut) => void;
@@ -166,7 +166,7 @@ export function ObligationsTable({
   evidenceRefs,
   declarations,
   rowError,
-  busyId,
+  busyIds,
   onNoteChange,
   onApprove,
   onReject,
@@ -195,7 +195,7 @@ export function ObligationsTable({
     const isOpen = openDetail === row.id;
     const clientName = clientNames[row.client_id];
     const ruleLabel = rule?.name ?? row.rule_id;
-    const verifiedLabel = rule?.verified ? "verified" : "unverified";
+    const isBusy = busyIds.has(row.id);
 
     return (
       <Fragment key={row.id}>
@@ -238,7 +238,8 @@ export function ObligationsTable({
                 >
                   {ruleLabel} ({row.rule_id})
                 </button>{" "}
-                — {rule?.authority ?? "—"} · {verifiedLabel}
+                — {rule?.authority ?? "—"}
+                {rule ? ` · ${rule.verified ? "verified" : "unverified"}` : ""}
               </span>
               <span style={TABULAR}>
                 {row.period_key} · due {row.due_date}
@@ -269,21 +270,23 @@ export function ObligationsTable({
                 same warning-adjacent treatment, which made a rule and its
                 opposite look alike; now only the state that needs a look
                 carries the warning tone, and both keep their word. */}
-            <span
-              className="ml-2 rounded px-1.5 py-0.5 text-xs"
-              style={{
-                border: `1px solid ${
-                  rule?.verified
-                    ? "var(--line-control)"
-                    : "var(--state-warning)"
-                }`,
-                color: rule?.verified
-                  ? "var(--tx-secondary)"
-                  : "var(--state-warning)",
-              }}
-            >
-              {verifiedLabel}
-            </span>
+            {rule && (
+              <span
+                className="ml-2 rounded px-1.5 py-0.5 text-xs"
+                style={{
+                  border: `1px solid ${
+                    rule.verified
+                      ? "var(--line-control)"
+                      : "var(--state-warning)"
+                  }`,
+                  color: rule.verified
+                    ? "var(--tx-secondary)"
+                    : "var(--state-warning)",
+                }}
+              >
+                {rule.verified ? "verified" : "unverified"}
+              </span>
+            )}
             {rule?.name && (
               <span className="block text-xs text-[var(--tx-secondary)]">
                 {row.rule_id}
@@ -306,9 +309,12 @@ export function ObligationsTable({
           <span
             className="max-md:hidden"
             style={{
-              color: isDueSoon(row.due_date)
-                ? "var(--state-warning)"
-                : "var(--tx-pure)",
+              color:
+                isDueSoon(row.due_date) &&
+                row.status !== "done" &&
+                row.status !== "rejected"
+                  ? "var(--state-warning)"
+                  : "var(--tx-pure)",
               ...TABULAR,
             }}
           >
@@ -355,7 +361,7 @@ export function ObligationsTable({
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    disabled={busyId === row.id}
+                    disabled={isBusy}
                     onClick={() => onApprove(row)}
                     // Outlined, not filled. The ledger has no filled
                     // buttons, and a solid green Approve beside an outlined
@@ -366,9 +372,9 @@ export function ObligationsTable({
                       "min-h-8 border border-[var(--state-success)] bg-transparent px-3 text-xs font-[650] text-[var(--state-success)]",
                       FOCUS,
                     )}
-                    style={{ opacity: busyId === row.id ? 0.6 : 1 }}
+                    style={{ opacity: isBusy ? 0.6 : 1 }}
                   >
-                    {busyId === row.id ? "…" : "Approve"}
+                    {isBusy ? "…" : "Approve"}
                   </button>
                   {/* Neutral outline, not copper. Copper on this row already
                       says "you are the next actor" through the STATUS pill;
@@ -376,15 +382,15 @@ export function ObligationsTable({
                       "the negative choice", which is not what it means. */}
                   <button
                     type="button"
-                    disabled={busyId === row.id}
+                    disabled={isBusy}
                     onClick={() => onReject(row)}
                     className={cn(
                       "min-h-8 border border-[var(--line-control)] bg-transparent px-3 text-xs font-[650] text-[var(--tx-pure)]",
                       FOCUS,
                     )}
-                    style={{ opacity: busyId === row.id ? 0.6 : 1 }}
+                    style={{ opacity: isBusy ? 0.6 : 1 }}
                   >
-                    {busyId === row.id ? "…" : "Reject"}
+                    {isBusy ? "…" : "Reject"}
                   </button>
                 </div>
                 {rowError[row.id] && (
@@ -425,7 +431,7 @@ export function ObligationsTable({
                 <button
                   type="button"
                   disabled={
-                    busyId !== null ||
+                    busyIds.size !== 0 ||
                     !evidenceRefs[row.id]?.trim() ||
                     !declarations[row.id]
                   }
@@ -436,7 +442,7 @@ export function ObligationsTable({
                     FOCUS,
                   )}
                 >
-                  {busyId === row.id ? "Recording…" : "Record completion"}
+                  {isBusy ? "Recording…" : "Record completion"}
                 </button>
                 <span id={`completion-help-${row.id}`} className="sr-only">
                   Obligation {row.id}: enter an evidence reference and confirm

@@ -652,6 +652,166 @@ describe("ObligationsPage", () => {
   });
 });
 
+describe("ObligationsPage — concurrent decisions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reloads and shows the server message when approve conflicts", async () => {
+    const { listCalls } = installApiGet();
+    apiMock.post.mockRejectedValueOnce(
+      new ApiError("Conflict", 409, {
+        detail: "Already decided by another reviewer.",
+      }),
+    );
+    render(<ObligationsPage />);
+    await screen.findByRole("button", { name: "Approve" });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(
+      await screen.findByText("Already decided by another reviewer."),
+    ).toBeVisible();
+    await waitFor(() => expect(listCalls.length).toBe(2));
+  });
+
+  it("reloads and shows the server message when reject conflicts", async () => {
+    const { listCalls } = installApiGet();
+    apiMock.post.mockRejectedValueOnce(
+      new ApiError("Conflict", 409, {
+        detail: "Already decided by another reviewer.",
+      }),
+    );
+    render(<ObligationsPage />);
+    await screen.findByRole("button", { name: "Reject" });
+    fireEvent.change(screen.getByLabelText("Note for obligation 101"), {
+      target: { value: "synthetic reason" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(
+      await screen.findByText("Already decided by another reviewer."),
+    ).toBeVisible();
+    await waitFor(() => expect(listCalls.length).toBe(2));
+  });
+
+  it("keeps the newest filter response when requests resolve out of order", async () => {
+    const { listCalls } = installApiGet();
+    const baseGet = apiMock.get.getMockImplementation();
+    const resolvers: Array<(value: typeof LIST_RESPONSE) => void> = [];
+    apiMock.get.mockImplementation((url: string) => {
+      const isCounter =
+        new URLSearchParams(url.split("?")[1] ?? "").get("limit") === "1";
+      if (url.startsWith("/api/compliance/obligations?") && !isCounter) {
+        listCalls.push(url);
+        return new Promise((resolve) => resolvers.push(resolve));
+      }
+      return baseGet?.(url);
+    });
+    render(<ObligationsPage />);
+    fireEvent.change(screen.getByPlaceholderText("all clients"), {
+      target: { value: "9" },
+    });
+    await waitFor(() => expect(resolvers).toHaveLength(2));
+    resolvers[1]({
+      ...LIST_RESPONSE,
+      items: [{ ...PROPOSED_ROW, id: 202, client_id: 9 }],
+    });
+    expect(await screen.findByTestId("obligation-row-202")).toBeVisible();
+    resolvers[0]({ ...LIST_RESPONSE, items: [{ ...PROPOSED_ROW, id: 201 }] });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByTestId("obligation-row-202")).toBeVisible();
+    expect(screen.queryByTestId("obligation-row-201")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["a counter tile", "Filter by approved"],
+    ["a status pill", "approved"],
+  ])(
+    "sends one request at offset zero when %s changes the status on page 2",
+    async (_label, name) => {
+      const { listCalls } = installApiGet({
+        list: { ...LIST_RESPONSE, total: 100 },
+      });
+      render(<ObligationsPage />);
+      await screen.findByRole("button", { name: "Next" });
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      await waitFor(() =>
+        expect(listCalls.some((url) => url.includes("offset=50"))).toBe(true),
+      );
+      const before = listCalls.length;
+      fireEvent.click(screen.getByRole("button", { name }));
+      await waitFor(() => expect(listCalls.length).toBe(before + 1));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(listCalls).toHaveLength(before + 1);
+      const last = new URLSearchParams(
+        listCalls[listCalls.length - 1].split("?")[1],
+      );
+      expect(last.get("status")).toBe("approved");
+      expect(last.get("offset")).toBe("0");
+    },
+  );
+
+  it("resets a page to offset zero in the same filter update", async () => {
+    const { listCalls } = installApiGet({
+      list: { ...LIST_RESPONSE, total: 100 },
+    });
+    render(<ObligationsPage />);
+    await screen.findByRole("button", { name: "Next" });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() =>
+      expect(listCalls.some((url) => url.includes("offset=50"))).toBe(true),
+    );
+    const before = listCalls.length;
+    fireEvent.change(screen.getByPlaceholderText("all clients"), {
+      target: { value: "9" },
+    });
+    await waitFor(() => expect(listCalls.length).toBe(before + 1));
+    expect(listCalls[listCalls.length - 1]).toContain("offset=0");
+  });
+
+  it("keeps each row disabled until its own decision completes", async () => {
+    installApiGet({
+      list: {
+        ...LIST_RESPONSE,
+        total: 2,
+        items: [PROPOSED_ROW, { ...PROPOSED_ROW, id: 102 }],
+      },
+    });
+    const resolvePosts: Array<() => void> = [];
+    apiMock.post.mockImplementation(
+      () => new Promise<void>((resolve) => resolvePosts.push(resolve)),
+    );
+    render(<ObligationsPage />);
+    await screen.findByTestId("obligation-row-101");
+    fireEvent.click(
+      within(screen.getByTestId("obligation-row-101")).getByRole("button", {
+        name: "Approve",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByTestId("obligation-row-102")).getByRole("button", {
+        name: "Approve",
+      }),
+    );
+    const rowButtons = (id: number) =>
+      within(screen.getByTestId(`obligation-row-${id}`)).getAllByRole(
+        "button",
+        {
+          name: "…",
+        },
+      );
+    expect(rowButtons(101).length).toBeGreaterThan(0);
+    rowButtons(101).forEach((button) => expect(button).toBeDisabled());
+    const approveIn = (id: number) =>
+      within(screen.getByTestId(`obligation-row-${id}`)).getByRole("button", {
+        name: "Approve",
+      });
+    resolvePosts[1]();
+    await waitFor(() => expect(approveIn(102)).toBeEnabled());
+    rowButtons(101).forEach((button) => expect(button).toBeDisabled());
+    resolvePosts[0]();
+    await waitFor(() => expect(approveIn(101)).toBeEnabled());
+  });
+});
+
 describe("ObligationsPage — completion", () => {
   const alerted = {
     ...PROPOSED_ROW,
