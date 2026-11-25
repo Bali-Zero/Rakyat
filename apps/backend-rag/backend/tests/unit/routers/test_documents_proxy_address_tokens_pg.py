@@ -1,10 +1,13 @@
 """The file registries match a document address by its exact Drive id token.
 
 Runs the two registry SQL constants themselves against TEMP tables that shadow every table
-they name, with the explicit-id columns empty so only the address branch under test can admit.
+they name, with the explicit-id columns empty so only the address branch under test can admit
+(one test fills each explicit-id column instead). The last test checks the id shape the folder
+walk applies before it asks Drive for a folder's parents.
 """
 
 import os
+from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import urlsplit
 
 import asyncpg
@@ -97,6 +100,9 @@ REFUSE_FORMS = [
     f"https://x.example.test/p?ID={X}",
     f"https://drive.google.com/file/D/{X}/view",
     f"https://x.example.test/%2Fd%2F{X}",
+    f"https://x.example.test/abcd/{X}",
+    f"https://x.example.test/d/a/d/{X}",
+    f"https://x.example.test/open?id=a&id={X}",
 ]
 
 
@@ -145,13 +151,16 @@ async def test_pa4_all_digit_run_is_read_like_any_run(conn, case):
     assert await _admits(conn, case, "https://x.example.test/d/12345678901", "12345678901")
 
 
+@pytest.mark.parametrize(
+    "form", ["https://x.example.test/d/{}", "https://x.example.test/open?id={}"], ids=["d", "id"]
+)
 @pytest.mark.parametrize("case", COLUMNS, ids=IDS)
-async def test_pa5_stored_lengths(conn, case):
+async def test_pa5_stored_lengths(conn, case, form):
     ten, full, long = "a" * 10, "b" * 256, "c" * 257
-    assert await _admits(conn, case, f"https://x.example.test/d/{ten}", ten)
-    assert await _admits(conn, case, f"https://x.example.test/d/{full}", full)
-    assert not await _admits(conn, case, f"https://x.example.test/d/{long}", long[:256])
-    assert not await _admits(conn, case, f"https://x.example.test/d/{long}", long[:10])
+    assert await _admits(conn, case, form.format(ten), ten)
+    assert await _admits(conn, case, form.format(full), full)
+    assert not await _admits(conn, case, form.format(long), long[:256])
+    assert not await _admits(conn, case, form.format(long), long[:10])
 
 
 @pytest.mark.parametrize("case", COLUMNS, ids=IDS)
@@ -215,3 +224,27 @@ async def test_an_explicit_id_column_is_read_as_the_exact_id(conn, case):
         await conn.execute(f"INSERT INTO {table}({col}) VALUES ($1)", X)
     assert await _ask(conn, reader, X)
     assert not await _ask(conn, reader, Y)
+
+
+FOLDER_BAD = ["a" * 9, "a" * 257, "a" * 10 + "\n", "x/" + "a" * 10, ""]
+FOLDER_OK = ["a" * 10, "a" * 256, "12345678901"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "folder_id",
+    FOLDER_BAD + FOLDER_OK,
+    ids=["nine", "257", "newline", "slash", "empty", "ten", "256", "digits"],
+)
+async def test_pa5_pa7_the_folder_walk_asks_drive_only_for_a_well_formed_id(folder_id):
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"parents": ["p"]}
+    client = MagicMock()
+    client.get = AsyncMock(return_value=response)
+    got = await mod._drive_parent_fetcher(client, "token")(folder_id)
+    if folder_id in FOLDER_OK:
+        assert got == ["p"]
+        client.get.assert_awaited_once()
+    else:
+        assert got == []
+        client.get.assert_not_awaited()

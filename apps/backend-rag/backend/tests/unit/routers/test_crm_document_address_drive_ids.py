@@ -48,6 +48,17 @@ def pool():
     return pool
 
 
+def _inserted(awaited):
+    """The values an awaited ``INSERT … VALUES (…)`` call binds, by column name."""
+    sql, *args = awaited.args
+    head, values = sql.split("VALUES", 1)
+    columns = [c.strip() for c in head.split("(", 1)[1].rsplit(")", 1)[0].split(",")]
+    slots = [v.strip() for v in values.split("(", 1)[1].split(")", 1)[0].split(",")]
+    return {
+        c: args[int(s[1:]) - 1] for c, s in zip(columns, slots, strict=True) if s.startswith("$")
+    }
+
+
 OWN_DIGITS = "12345678901"
 FOREIGN_DIGITS = "98765432109"
 
@@ -157,6 +168,12 @@ async def test_create_with_own_or_no_drive_addresses_is_written(
     assert result["success"] is True
     assert result["id"] == 42
     assert guard.await_args_list == [call(drive_id, 1, pool.conn) for drive_id in checked]
+    row = _inserted(pool.conn.fetchval.await_args)
+    assert (row["file_id"], row["file_url"], row["google_drive_file_url"]) == (
+        file_id,
+        file_url,
+        google_drive_file_url,
+    )
 
 
 @pytest.mark.parametrize("field", ["file_url", "google_drive_file_url"])
@@ -576,3 +593,64 @@ async def test_patch_checks_every_run_of_a_multi_token_address(pool, field):
     assert exc.value.status_code == 403
     assert guard.await_args_list == [call(OWN, 1, pool.conn), call(FOREIGN, 1, pool.conn)]
     pool.conn.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bulk_stores_each_item_with_its_own_file_id(pool):
+    documents = [
+        DocumentCreate(
+            document_type="other",
+            file_id=OWN,
+            google_drive_file_url=f"https://drive.google.com/file/d/{OWN}/view",
+        )
+    ]
+    pool.conn.fetchval.return_value = 7
+    with (
+        patch(f"{MODULE}.verify_client_access", new=AsyncMock()),
+        patch(f"{MODULE}.assert_drive_file_belongs_to_client", new=_guard()),
+        patch(f"{MODULE}.invalidate_cache", new=AsyncMock()),
+        patch(f"{MODULE}._dispatch_ocr_by_folder", new=AsyncMock()),
+    ):
+        result = await create_documents_bulk(
+            client_id=1,
+            documents=documents,
+            background_tasks=MagicMock(),
+            pool=pool,
+            current_user=ADMIN,
+        )
+
+    assert result["inserted"] == 1
+    row = _inserted(pool.conn.fetchval.await_args_list[0])
+    assert row["file_id"] == OWN
+
+
+@pytest.mark.asyncio
+async def test_archive_inserts_a_new_row_with_its_file_id(pool):
+    data = ClientArchiveDocumentCreate(
+        file_id=OWN,
+        document_type="passport",
+        google_drive_file_url=f"https://drive.google.com/file/d/{OWN}/view",
+        client_visible=False,
+    )
+    pool.conn.fetchval.side_effect = [None, 11]
+    with (
+        patch(f"{MODULE}.verify_client_access", new=AsyncMock()),
+        patch(f"{MODULE}.assert_drive_file_belongs_to_client", new=_guard()),
+    ):
+        result = await register_archive_document(7, data, pool, ADMIN)
+
+    assert result["id"] == 11
+    row = _inserted(pool.conn.fetchval.await_args_list[1])
+    assert (row["file_id"], row["google_drive_file_url"]) == (OWN, data.google_drive_file_url)
+
+
+@pytest.mark.asyncio
+async def test_the_company_route_stores_its_explicit_file_id(pool):
+    guard = _company_guard()
+    address = f"https://drive.google.com/file/d/{OWN}/view"
+    await _create_company_document(
+        pool, guard, google_drive_file_id=OWN, google_drive_file_url=address
+    )
+
+    row = _inserted(pool.conn.fetchrow.await_args)
+    assert (row["google_drive_file_id"], row["google_drive_file_url"]) == (OWN, address)

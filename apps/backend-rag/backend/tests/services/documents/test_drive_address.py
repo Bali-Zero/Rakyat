@@ -42,6 +42,7 @@ CORPUS = [
     ("?id=id=abcdefghij", []),
     ("&id=?id=abcdefghij", ["abcdefghij"]),
     ("id=abcdefghij", []),
+    ("/abcd/abcdefghij", []),
     ("/d/abcdefghi", []),
     ("/d/abcdefghij", ["abcdefghij"]),
     (f"/d/{'a' * 10}", ["a" * 10]),
