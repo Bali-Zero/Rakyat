@@ -187,7 +187,7 @@ describe("what the article composer says about a publication", () => {
     expect(everySuccessToast()).not.toMatch(/is live|Published!/i);
   });
 
-  it("still sends the article, the position and no slug, and no key of any kind", async () => {
+  it("still sends the article, the position and no slug, with its publication key", async () => {
     render(<ArticleComposerPage />);
     const publish = await compose(article(FIRST));
     apiMock.publish.mockResolvedValueOnce(opened(4321, FIRST_URL));
@@ -200,10 +200,12 @@ describe("what the article composer says about a publication", () => {
       article: article(FIRST),
       position: "normal",
       slug: undefined,
+      publication_key: expect.stringMatching(/^composer-/),
     });
     expect(Object.keys(request).sort()).toEqual([
       "article",
       "position",
+      "publication_key",
       "slug",
     ]);
   });
@@ -224,7 +226,7 @@ describe("what the article composer says about a publication", () => {
     expect(request.cover_image_filename).toBe("zz-cover.png");
     expect(typeof request.cover_image_base64).toBe("string");
     expect(request.cover_image_base64.length).toBeGreaterThan(0);
-    expect(Object.keys(request)).not.toContain("publication_key");
+    expect(request.publication_key).toMatch(/^composer-/);
   });
 
   it("names the article and the address under Publish, and leaves every control usable", async () => {

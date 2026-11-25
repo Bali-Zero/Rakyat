@@ -67,6 +67,30 @@ const POSITIONS: { value: ArticlePublishPosition; label: string }[] = [
   { value: "main_featured", label: "Main Featured (Legacy Unpinned)" },
 ];
 
+function withoutEmptyEditorialFields(
+  article: EnrichedArticle,
+): EnrichedArticle {
+  return {
+    ...article,
+    ai_tags: article.ai_tags.map((tag) => tag.trim()).filter(Boolean),
+    next_steps: {
+      expat: article.next_steps.expat
+        .map((step) => step.trim())
+        .filter(Boolean),
+      investor: article.next_steps.investor
+        .map((step) => step.trim())
+        .filter(Boolean),
+      ...(article.next_steps.general === undefined
+        ? {}
+        : {
+            general: article.next_steps.general
+              .map((step) => step.trim())
+              .filter(Boolean),
+          }),
+    },
+  };
+}
+
 const DRAFT_KEY = "bz_composer_draft_v2";
 
 // Warm Depth glassmorphism reusable styles
@@ -140,6 +164,12 @@ export default function ArticleComposerPage() {
   const [editedResult, setEditedResult] = useState<EnrichedArticle | null>(
     null,
   );
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [rawAiTags, setRawAiTags] = useState("");
+  const [rawNextSteps, setRawNextSteps] = useState<{
+    expat: string;
+    investor: string;
+  } | null>(null);
 
   // Publish State
   const [position, setPosition] = useState<ArticlePublishPosition>("normal");
@@ -256,6 +286,11 @@ export default function ArticleComposerPage() {
 
       if (res.success && res.article) {
         setResult(res.article);
+        setDraftId(crypto.randomUUID());
+        setIsEditing(false);
+        setEditedResult(null);
+        setRawAiTags("");
+        setRawNextSteps(null);
         setApiCost(res.api_cost_cents);
         toast.success(
           "Article Enriched!",
@@ -285,8 +320,11 @@ export default function ArticleComposerPage() {
 
   const handlePublish = async () => {
     if (!result) return;
+    if (!draftId) return;
     setPublishing(true);
-    const articleToPublish = isEditing && editedResult ? editedResult : result;
+    const articleToPublish = withoutEmptyEditorialFields(
+      isEditing && editedResult ? editedResult : result,
+    );
 
     try {
       logger.info("Publishing article", {
@@ -297,6 +335,7 @@ export default function ArticleComposerPage() {
         article: articleToPublish,
         position,
         slug: customSlug || undefined,
+        publication_key: `composer-${draftId}`,
       };
       if (coverImage) {
         req.cover_image_base64 = await fileToBase64(coverImage);
@@ -322,7 +361,15 @@ export default function ArticleComposerPage() {
         { component: "ArticleComposerPage" },
         err as Error,
       );
-      toast.error("Publish Error", msg);
+      const fingerprintRefusals = [
+        "Existing publication pull request fingerprint does not match",
+        "Existing publication pull request head does not match its fingerprint",
+        "Existing publication branch fingerprint does not match",
+      ];
+      const detail = fingerprintRefusals.includes(msg)
+        ? `${msg} The existing GitHub publication for this composition could not be verified against this request (the publish date counts). Check its pull request or branch before publishing again.`
+        : msg;
+      toast.error("Publish Error", detail);
     } finally {
       setPublishing(false);
     }
@@ -353,14 +400,22 @@ export default function ArticleComposerPage() {
   const startEditing = () => {
     if (result) {
       setEditedResult(JSON.parse(JSON.stringify(result)));
+      setRawAiTags(result.ai_tags.join(", "));
+      setRawNextSteps({
+        expat: result.next_steps.expat.join("\n"),
+        investor: result.next_steps.investor.join("\n"),
+      });
       setIsEditing(true);
     }
   };
 
   const saveEdits = () => {
     if (editedResult) {
-      setResult(editedResult);
+      setResult(withoutEmptyEditorialFields(editedResult));
       setIsEditing(false);
+      setEditedResult(null);
+      setRawAiTags("");
+      setRawNextSteps(null);
       toast.success("Saved", "Changes updated locally.");
     }
   };
@@ -368,6 +423,8 @@ export default function ArticleComposerPage() {
   const cancelEditing = () => {
     setEditedResult(null);
     setIsEditing(false);
+    setRawAiTags("");
+    setRawNextSteps(null);
   };
 
   const updateEditedField = (path: string, value: unknown) => {
@@ -1123,15 +1180,24 @@ export default function ArticleComposerPage() {
                         </div>
                         {isEditing ? (
                           <AutoResizeTextarea
-                            value={activeArticle.next_steps[
-                              type as "expat" | "investor"
-                            ].join("\n")}
-                            onChange={(e) =>
+                            value={
+                              rawNextSteps?.[type as "expat" | "investor"] ?? ""
+                            }
+                            onChange={(e) => {
+                              const nextType = type as "expat" | "investor";
+                              setRawNextSteps((current) => ({
+                                expat: current?.expat ?? "",
+                                investor: current?.investor ?? "",
+                                [nextType]: e.target.value,
+                              }));
                               updateEditedField(
                                 `next_steps.${type}`,
-                                e.target.value.split("\n"),
-                              )
-                            }
+                                e.target.value
+                                  .split("\n")
+                                  .map((step) => step.trim())
+                                  .filter(Boolean),
+                              );
+                            }}
                             className={`${inputClass} min-h-[100px] resize-none`}
                             style={getInputStyle(`ns_${type}`)}
                             onFocus={() => setFocusedInput(`ns_${type}`)}
@@ -1179,14 +1245,18 @@ export default function ArticleComposerPage() {
                   </div>
                   {isEditing ? (
                     <input
-                      value={activeArticle.ai_tags.join(", ")}
+                      value={rawAiTags}
                       aria-label="AI Tags"
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setRawAiTags(e.target.value);
                         updateEditedField(
                           "ai_tags",
-                          e.target.value.split(",").map((s) => s.trim()),
-                        )
-                      }
+                          e.target.value
+                            .split(",")
+                            .map((tag) => tag.trim())
+                            .filter(Boolean),
+                        );
+                      }}
                       className={inputClass}
                       style={getInputStyle("ai_tags")}
                       onFocus={() => setFocusedInput("ai_tags")}
