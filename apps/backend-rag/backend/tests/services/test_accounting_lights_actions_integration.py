@@ -725,6 +725,72 @@ async def _race(c: _Conns, park_sql: str, make_a, make_b, *, b_waits_on_bank: bo
     return await asyncio.gather(task_a, task_b, return_exceptions=True)
 
 
+async def test_a5_a_confirmation_that_waited_sees_what_the_first_applied_of_the_transfer(
+    db,
+) -> None:
+    conn, dbname = db
+    p1, i1 = await _practice(conn, "unpaid", amount=10_000_000)
+    p2, i2 = await _practice(conn, "unpaid", amount=20_000_000)
+    txid = await _bank(conn, amount=25_000_000)
+
+    def confirm(practice, invoice, amount):
+        return lambda x: confirm_payment(
+            x,
+            bank_txn_id=txid,
+            practice_id=practice,
+            invoice_id=invoice,
+            amount_applied_idr=amount,
+            new_status="paid",
+            confirmed_by=WHO,
+            movement_date=date(2026, 6, 25),
+        )
+
+    async with _Conns(conn, dbname) as c:
+        a, b = await _race(c, _LOG_PARK, confirm(p1, i1, 10_000_000), confirm(p2, i2, 20_000_000))
+    assert not isinstance(a, BaseException), a
+    assert isinstance(b, ReconcileError), b
+    assert str(b) == f"bank transaction {txid} has only 15000000 left to apply, not 20000000"
+    assert (
+        await conn.fetchval(
+            "SELECT sum(amount_applied_idr) FROM reconciliation_log WHERE bank_txn_id = $1", txid
+        )
+        == 10_000_000
+    )
+    assert (
+        await conn.fetchval("SELECT reconciled_status FROM bank_transactions WHERE id = $1", txid)
+        == "unmatched"
+    )
+
+
+async def test_a5_an_ignore_that_waited_sees_the_part_confirmed_meanwhile(db) -> None:
+    conn, dbname = db
+    p1, i1 = await _practice(conn, "unpaid", amount=10_000_000)
+    txid = await _bank(conn, amount=25_000_000)
+    async with _Conns(conn, dbname) as c:
+        a, b = await _race(
+            c,
+            _LOG_PARK,
+            lambda x: confirm_payment(
+                x,
+                bank_txn_id=txid,
+                practice_id=p1,
+                invoice_id=i1,
+                amount_applied_idr=10_000_000,
+                new_status="paid",
+                confirmed_by=WHO,
+                movement_date=date(2026, 6, 25),
+            ),
+            lambda x: ignore_transaction(x, bank_txn_id=txid, ignored_by=WHO, reason="contoh"),
+        )
+    assert not isinstance(a, BaseException), a
+    assert isinstance(b, ReconcileError), b
+    assert "has confirmations" in str(b)
+    assert (
+        await conn.fetchval("SELECT reconciled_status FROM bank_transactions WHERE id = $1", txid)
+        == "unmatched"
+    )
+
+
 async def test_a5_link_vs_link_on_one_bank_transaction_succeeds_exactly_once(db) -> None:
     conn, dbname = db
     p1, i1 = await _practice(conn, "paid")

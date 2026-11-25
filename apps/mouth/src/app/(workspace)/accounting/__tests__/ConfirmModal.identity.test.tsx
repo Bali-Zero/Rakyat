@@ -319,3 +319,74 @@ describe("an instalment against what is still owed", () => {
     expect(confirmButton()).toHaveTextContent("Confirm partial");
   });
 });
+
+describe("an overpayment applies at most the balance", () => {
+  const invoice = { invoice_amount_idr: 10000000 };
+
+  it("a 25M transfer against a 10M invoice applies 10M and says what stays in the inbox", async () => {
+    renderModal(invoice, 25000000);
+    expect(confirmButton()).toHaveTextContent("Confirm paid");
+    expect(labelled("Applied here")).toHaveTextContent("Rp 10.000.000");
+    expect(
+      screen.getByText(/stays in the inbox to be matched/),
+    ).toHaveTextContent("Rp 15.000.000 stays in the inbox to be matched.");
+    expect(screen.getByText(/stays in the inbox/).className).toContain(
+      "text-[var(--state-warning)]",
+    );
+    // never the success tone while something stays unapplied
+    expect(labelled("Delta")?.className).not.toContain("state-success");
+    expect(labelled("Delta")?.className).toContain("state-warning");
+    fireEvent.click(confirmButton());
+    await waitFor(() => expect(accountingApi.confirm).toHaveBeenCalled());
+    expect(accountingApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount_applied_idr: 10000000,
+        new_status: "paid",
+        pph_withheld_idr: 0,
+      }),
+    );
+  });
+
+  it("the cap is the balance of an instalment, not the invoice amount", async () => {
+    renderModal(
+      { invoice_amount_idr: 10000000, paid_idr: 6000000, balance_idr: 4000000 },
+      9000000,
+    );
+    expect(screen.getByText(/stays in the inbox/)).toHaveTextContent(
+      "Rp 5.000.000",
+    );
+    fireEvent.click(confirmButton());
+    await waitFor(() => expect(accountingApi.confirm).toHaveBeenCalled());
+    expect(accountingApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ amount_applied_idr: 4000000 }),
+    );
+  });
+
+  it("a transfer within the 1000 tolerance above the balance is applied whole, no excess", async () => {
+    renderModal(invoice, 10000500);
+    expect(screen.queryByText(/stays in the inbox/)).toBeNull();
+    expect(labelled("Applied here")).toBeNull();
+    fireEvent.click(confirmButton());
+    await waitFor(() => expect(accountingApi.confirm).toHaveBeenCalled());
+    expect(accountingApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ amount_applied_idr: 10000500 }),
+    );
+  });
+
+  it("an exact transfer keeps the success tone and no excess line", () => {
+    renderModal(invoice, 10000000);
+    expect(screen.queryByText(/stays in the inbox/)).toBeNull();
+    expect(labelled("Delta")?.className).toContain("state-success");
+  });
+
+  it("a short transfer is applied whole and stays partial", async () => {
+    renderModal(invoice, 3000000);
+    expect(confirmButton()).toHaveTextContent("Confirm partial");
+    expect(screen.queryByText(/stays in the inbox/)).toBeNull();
+    fireEvent.click(confirmButton());
+    await waitFor(() => expect(accountingApi.confirm).toHaveBeenCalled());
+    expect(accountingApi.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ amount_applied_idr: 3000000 }),
+    );
+  });
+});

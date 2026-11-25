@@ -48,6 +48,22 @@ _CASH_APPLIED = """
 # reconciled now. The practice listener sends no email for the change it made.
 HISTORICAL_NOTE = "historical: recorded without notifications"
 
+# A standing confirmation: a confirmation log row (it names a case, and its note is none or the
+# historical one) that nothing reverses. Written for an alias `r` over reconciliation_log.
+STANDING_CONFIRMATION_SQL = f"""
+    r.reversal_of_id IS NULL AND r.practice_id IS NOT NULL
+    AND (r.note IS NULL OR r.note = '{HISTORICAL_NOTE}')
+    AND NOT EXISTS (SELECT 1 FROM reconciliation_log u WHERE u.reversal_of_id = r.id)
+"""
+
+# What a transfer has already applied: the sum of its standing confirmations, derived from the
+# log and never stored. A scalar subquery over an alias `bt` of bank_transactions, so every
+# reader (confirm, inbox, done today) reads the amount one way. Remaining = amount_idr - this.
+TRANSFER_APPLIED_SQL = f"""(
+    SELECT COALESCE(SUM(r.amount_applied_idr), 0)::bigint FROM reconciliation_log r
+    WHERE r.bank_txn_id = bt.id AND {STANDING_CONFIRMATION_SQL}
+)"""
+
 
 @dataclass
 class ConfirmResult:
@@ -166,7 +182,9 @@ async def confirm_payment(
 
     `new_status` must be one of PAYMENT_STATUS_VALUES. `amount_applied_idr` is
     what actually landed (net of withholding/fees); the gross is recorded via
-    the decomposition + pph/fee fields. `historical` records the same rows and
+    the decomposition + pph/fee fields. On the bank path it is at most what is left of the
+    transfer (TRANSFER_APPLIED_SQL); the transfer becomes `matched` only when that leaves
+    nothing (within the matcher's tolerance), else it stays `unmatched`, ids NULL. `historical` records the same rows and
     marks the audit row with HISTORICAL_NOTE, so no email follows the change
     (see recorded_without_notifications). A historical confirmation runs in a transaction of
     its own: the listener recognises its change by the transaction's instant, which another
@@ -206,7 +224,8 @@ async def confirm_payment(
         #    so a concurrent confirmation of the same row waits and then sees it matched.
         if bank_txn_id is not None:
             bank = await conn.fetchrow(
-                "SELECT direction, reconciled_status FROM bank_transactions WHERE id = $1 FOR UPDATE",
+                "SELECT direction, reconciled_status, amount_idr FROM bank_transactions"
+                " WHERE id = $1 FOR UPDATE",
                 bank_txn_id,
             )
             if bank is None:
@@ -215,6 +234,21 @@ async def confirm_payment(
                 raise ReconcileError(f"bank transaction {bank_txn_id} is not a credit")
             if bank["reconciled_status"] != "unmatched":
                 raise ReconcileError(f"bank transaction {bank_txn_id} is not unmatched")
+            # A transfer is applied in parts, never beyond what is left of it: the excess of an
+            # overpayment stays in the inbox to be matched.
+            # Read once the lock is held, in a statement of its own: its snapshot then counts a
+            # confirmation that committed while this one waited (a partly applied transfer stays
+            # `unmatched`, so nothing on the locked row itself would show it).
+            applied = await conn.fetchval(
+                f"SELECT {TRANSFER_APPLIED_SQL} FROM bank_transactions bt WHERE bt.id = $1",
+                bank_txn_id,
+            )
+            remaining = Decimal(bank["amount_idr"]) - Decimal(applied)
+            if amount_applied_idr > remaining:
+                raise ReconcileError(
+                    f"bank transaction {bank_txn_id} has only {remaining} left to apply,"
+                    f" not {amount_applied_idr}"
+                )
 
         # 1. Read current practice state (lock the row) — verify it exists.
         prac = await conn.fetchrow(
@@ -344,8 +378,9 @@ async def confirm_payment(
                 prior_recorded_idr,
             )
 
-        # 4. Mark the bank transaction reconciled + link.
-        if bank_txn_id is not None:
+        # 4. Mark the bank transaction reconciled + link: only once its last part is applied
+        #    (within the matcher's tolerance). A partly applied transfer stays `unmatched`, ids NULL.
+        if bank_txn_id is not None and remaining - amount_applied_idr <= EXACT_TOLERANCE_IDR:
             await conn.execute(
                 """
                 UPDATE bank_transactions
@@ -545,6 +580,21 @@ async def _lock_bank_row(conn: asyncpg.Connection, bank_txn_id: int) -> asyncpg.
     return bank
 
 
+async def _refuse_if_applied(conn: asyncpg.Connection, bank_txn_id: int) -> None:
+    """A partly applied transfer is `unmatched` yet money was recorded against it: it is neither
+    linked nor ignored until its confirmations are undone. Called with the bank row locked, as a
+    statement of its own, so a confirmation that committed while the caller waited is seen."""
+    applied = await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM reconciliation_log r"
+        f" WHERE r.bank_txn_id = $1 AND {STANDING_CONFIRMATION_SQL})",
+        bank_txn_id,
+    )
+    if applied is True:
+        raise ReconcileError(
+            f"bank transaction {bank_txn_id} has confirmations: undo its confirmations first"
+        )
+
+
 async def link_recorded(
     conn: asyncpg.Connection,
     *,
@@ -570,6 +620,7 @@ async def link_recorded(
             raise ReconcileError(f"bank transaction {bank_txn_id} is not a credit")
         if bank["reconciled_status"] != "unmatched":
             raise ReconcileError(f"bank transaction {bank_txn_id} is not unmatched")
+        await _refuse_if_applied(conn, bank_txn_id)
 
         prac = await conn.fetchrow(
             "SELECT payment_status FROM practices WHERE id = $1 FOR UPDATE", practice_id
@@ -693,6 +744,7 @@ async def ignore_transaction(
         bank = await _lock_bank_row(conn, bank_txn_id)
         if bank["reconciled_status"] != "unmatched":
             raise ReconcileError(f"bank transaction {bank_txn_id} is not unmatched")
+        await _refuse_if_applied(conn, bank_txn_id)
 
         await conn.execute(
             """
@@ -851,8 +903,9 @@ async def undo_confirmation(
 ) -> ActionResult:
     """Owner rule (b): a payment confirmed today (WITA) is taken back, in one transaction.
 
-    The transfer's newest log row must be a confirmation of today, still standing, and the
-    newest standing payment entry of its case, whose payment status must still be the one the
+    The transfer's newest standing confirmation (of a closed transfer, its newest log row too;
+    a partly applied transfer, `unmatched`, unwinds its applications last-first) must be of
+    today, and the newest standing payment entry of its case, whose payment status must still be the one the
     confirmation set: then `status_before` is still the state to go back to. Everything the
     confirmation wrote goes back: the transfer is unmatched again, its cash-out row is reversed
     (append-only, as a reopened link's), the invoice loses the amount and gets back the paid date
@@ -870,23 +923,34 @@ async def undo_confirmation(
         raise ReconcileError("an undo runs in a transaction of its own, not inside another")
     async with conn.transaction():
         bank = await _lock_bank_row(conn, bank_txn_id)
-        if bank["reconciled_status"] != "matched":
+        if bank["reconciled_status"] not in ("matched", "unmatched"):
             raise ReconcileError(f"bank transaction {bank_txn_id} is not confirmed")
-        # Safe to read now: every writer of this transfer's log rows holds its lock.
+        # Safe to read now: every writer of this transfer's log rows holds its lock. The newest
+        # standing confirmation: of a closed transfer the newest log row too; of a partly applied
+        # one (`unmatched`, a standing confirmation) the newest application, so they unwind last-first.
         log = await conn.fetchrow(
-            "SELECT id, invoice_ids, practice_id, cashout_id, confirmed_at, status_before,"
-            " status_after, amount_applied_idr, note, reversal_of_id, before_state,"
-            f" (confirmed_at AT TIME ZONE '{_UNDO_TZ}')::date"
+            "SELECT r.id, r.invoice_ids, r.practice_id, r.cashout_id, r.confirmed_at, r.status_before,"
+            " r.status_after, r.amount_applied_idr, r.note, r.reversal_of_id, r.before_state,"
+            f" (r.confirmed_at AT TIME ZONE '{_UNDO_TZ}')::date"
             f" = (now() AT TIME ZONE '{_UNDO_TZ}')::date AS today"
-            " FROM reconciliation_log WHERE bank_txn_id = $1 ORDER BY id DESC LIMIT 1",
+            f" FROM reconciliation_log r WHERE r.bank_txn_id = $1 AND {STANDING_CONFIRMATION_SQL}"
+            " ORDER BY r.id DESC LIMIT 1",
             bank_txn_id,
         )
+        if bank["reconciled_status"] == "unmatched" and log is None:
+            raise ReconcileError(f"bank transaction {bank_txn_id} is not confirmed")
         if (
             log is None
-            or log["practice_id"] is None
-            or log["reversal_of_id"] is not None
-            or log["note"] not in (None, HISTORICAL_NOTE)
-            or log["practice_id"] != bank["matched_practice_id"]
+            or (
+                bank["reconciled_status"] == "matched"
+                and (
+                    log["practice_id"] != bank["matched_practice_id"]
+                    or log["id"]
+                    != await conn.fetchval(
+                        "SELECT max(id) FROM reconciliation_log WHERE bank_txn_id = $1", bank_txn_id
+                    )
+                )
+            )
             or len(log["invoice_ids"] or []) > 1
         ):
             raise ReconcileError(f"bank transaction {bank_txn_id} has no confirmation to undo")

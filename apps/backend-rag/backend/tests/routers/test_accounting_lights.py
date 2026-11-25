@@ -331,6 +331,7 @@ def test_inbox_shape_and_each_light(mock_db_pool) -> None:
             "txn_id",
             "txn_date",
             "amount_idr",
+            "applied_idr",
             "description",
             "payer_name",
             "company_key",

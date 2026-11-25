@@ -172,6 +172,8 @@ export interface ReconciliationInboxItem {
   txn_id: number;
   txn_date: string;
   amount_idr: number;
+  /** Already applied by confirmations; what is left to match is amount_idr - applied_idr (absent from an older backend, read as 0). */
+  applied_idr?: number;
   description: string;
   /** The payer the bank line names, "" when it names none (absent from an older backend). */
   payer_name?: string;
