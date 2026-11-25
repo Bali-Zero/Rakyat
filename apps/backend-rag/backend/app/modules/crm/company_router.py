@@ -45,6 +45,29 @@ def _require_crm_admin(current_user: dict) -> None:
         raise HTTPException(status_code=403, detail="CRM admin access required")
 
 
+# companies.nib and companies.npwp_company are unique. The constraint is named
+# companies_<col>_key (plain UNIQUE) or ix_companies_<col> (SQLModel unique index),
+# so it is matched on the column stem. NPWP first: "nib" is not a substring of it.
+_COMPANY_IDENTIFIERS = (
+    (
+        "npwp",
+        "npwp_company",
+        "NPWP",
+        "SELECT id FROM companies WHERE npwp_company = $1 ORDER BY id LIMIT 1",
+    ),
+    ("nib", "nib", "NIB", "SELECT id FROM companies WHERE nib = $1 ORDER BY id LIMIT 1"),
+)
+
+
+def _identifier_in_violation(exc: asyncpg.UniqueViolationError) -> tuple[str, str, str] | None:
+    """(column, label, owner query) of the NIB/NPWP unique key the insert hit, else None."""
+    constraint = (getattr(exc, "constraint_name", None) or "").lower()
+    for stem, column, label, owner_sql in _COMPANY_IDENTIFIERS:
+        if stem in constraint:
+            return column, label, owner_sql
+    return None
+
+
 async def _require_company_editor(conn, company_id: int, current_user: dict, action: str) -> None:
     """403/404 unless the caller may change this company (``client_pools.can_edit_company``)."""
     await ensure_client_pools_validated(conn)
@@ -187,20 +210,51 @@ async def create_company(
     """
 
     async with db.acquire() as conn:
-        row = await conn.fetchrow(
-            query,
-            data.company_name,
-            data.company_type,
-            data.kbli_code,
-            data.nib,
-            data.npwp_company,
-            data.registered_address,
-            data.city,
-            data.province,
-            data.company_email,
-            data.company_phone,
-            user_email,
-        )
+        try:
+            row = await conn.fetchrow(
+                query,
+                data.company_name,
+                data.company_type,
+                data.kbli_code,
+                data.nib,
+                data.npwp_company,
+                data.registered_address,
+                data.city,
+                data.province,
+                data.company_email,
+                data.company_phone,
+                user_email,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            identifier = _identifier_in_violation(exc)
+            if identifier is None:
+                raise
+            column, label, owner_sql = identifier
+            value = getattr(data, column)
+            owner_id = await conn.fetchval(owner_sql, value) if value else None
+            # Column and owner id only: the NIB/NPWP value and the name stay out of the log.
+            logger.info("create_company: %s already in use by company id=%s", column, owner_id)
+            owner = f"company #{owner_id}" if owner_id is not None else "another company"
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": f"duplicate_{column}",
+                    "field": column,
+                    "message": (
+                        f"This {label} is already used by {owner}. "
+                        "Open that company instead of creating a new one."
+                    ),
+                    "existing_company_id": owner_id,
+                },
+            ) from None
+        except asyncpg.StringDataRightTruncationError:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "value_too_long",
+                    "message": "One of the values is longer than the field allows.",
+                },
+            ) from None
 
         return {
             "id": row["id"],
