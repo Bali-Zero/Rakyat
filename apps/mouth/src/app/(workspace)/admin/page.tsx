@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,7 @@ export default function AdminPage() {
   const [dailyHours, setDailyHours] = useState<DailyHours[]>([]);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(() => workDayOf());
+  const dailyHoursRequest = useRef(0);
 
   const loadTeamStatus = useCallback(async () => {
     try {
@@ -67,15 +68,23 @@ export default function AdminPage() {
       setTeamStatus(status);
     } catch (err) {
       logger.error("Failed to load team status", {}, err as Error);
+      throw err;
     }
   }, []);
 
   const loadDailyHours = useCallback(async (date?: string) => {
+    const request = ++dailyHoursRequest.current;
+    setDailyHours((current) => (current.length === 0 ? current : []));
     try {
       const hours = await api.getDailyHours(date);
-      setDailyHours(hours);
+      if (request === dailyHoursRequest.current) {
+        setDailyHours(hours);
+      }
     } catch (err) {
       logger.error("Failed to load daily hours", {}, err as Error);
+      if (request === dailyHoursRequest.current) {
+        throw err;
+      }
     }
   }, []);
 
@@ -85,6 +94,7 @@ export default function AdminPage() {
       setWeeklySummary(summary);
     } catch (err) {
       logger.error("Failed to load weekly summary", {}, err as Error);
+      throw err;
     }
   }, []);
 
@@ -139,9 +149,8 @@ export default function AdminPage() {
     }
   };
 
-  const handleDateChange = async (date: string) => {
+  const handleDateChange = (date: string) => {
     setSelectedDate(date);
-    await loadDailyHours(date);
   };
 
   const onlineCount = teamStatus.filter((m) => m.is_online).length;
