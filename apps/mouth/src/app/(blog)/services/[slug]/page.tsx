@@ -41,7 +41,7 @@ export async function generateMetadata({
       title:
         "Bali Visa Agency 2026 | KITAS, Visit & Working Visa Indonesia | Bali Zero",
       description:
-        "Trusted visa agency in Bali. KITAS, KITAP, Visit Visa, Investor Visa & Working Permits handled end-to-end. 1000+ expats served. Fast processing, transparent pricing.",
+        "Bali visas and KITAS handled end to end by a licensed Indonesian team: visit visas, investor, working, family and retirement KITAS, documents, timelines.",
       keywords: [
         "bali visa agency",
         "visa agent bali",
