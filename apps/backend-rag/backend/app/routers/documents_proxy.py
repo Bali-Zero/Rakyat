@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/documents", tags=["Documents Proxy"])
 # `https://www.googleapis.com/drive/v3/files/{file_id}`, so a value carrying
 # `/`, `?` or `..` does not address a FILE — it rewrites the API path and can
 # reach other Drive endpoints entirely (CodeQL py/partial-ssrf).
-_DRIVE_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,256}$")
+_DRIVE_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,256}\Z")
 
 # Fields the metadata call must return. `parents` is load-bearing: it is what
 # ties a file to the client folder that authorises reading it.
@@ -113,13 +113,11 @@ def _assert_file_id_shape(file_id: str) -> None:
 # carry `google_drive_file_id` — the registry is the surface that actually
 # answers.
 #
-# The URL branches cover the 10 `documents` rows whose ID survives only inside a
-# URL, and they are ANCHORED to `/d/` and `id=` — the two forms the frontend
-# itself parses. A bare `strpos(url, $1)` would authorise any ID that merely
-# occurs inside a stored URL, which is a shorter ID passing on the strength of a
-# longer one. (Anchored `strpos`, never `LIKE '%'||$1||'%'`: a Drive ID
-# legitimately contains `_`, which LIKE reads as a single-character wildcard.)
-# Verified on live data: all 10 rows still authorise under the anchored form.
+# The URL branches cover the rows whose ID survives only inside a URL. They
+# read the address's exact Drive id token (`/d/<id>` or `?id=<id>` / `&id=<id>`),
+# the same tokens `_CLIENT_FILE_OWNERSHIP_SQL` uses, and compare it whole.
+# (Never `LIKE '%'||$1||'%'`: a Drive ID legitimately contains `_`, which LIKE
+# reads as a single-character wildcard.)
 _REGISTERED_FILE_SQL = """
     SELECT 1
     WHERE EXISTS (SELECT 1 FROM documents WHERE file_id = $1)
@@ -129,15 +127,15 @@ _REGISTERED_FILE_SQL = """
        OR EXISTS (SELECT 1 FROM weekly_cashout WHERE receipt_drive_file_id = $1)
        OR EXISTS (
             SELECT 1 FROM documents
-             WHERE strpos(coalesce(google_drive_file_url, ''), '/d/' || $1) > 0
-                OR strpos(coalesce(google_drive_file_url, ''), 'id=' || $1) > 0
-                OR strpos(coalesce(file_url, ''), '/d/' || $1) > 0
-                OR strpos(coalesce(file_url, ''), 'id=' || $1) > 0
+             WHERE substring(google_drive_file_url from '/d/([A-Za-z0-9_-]+)') = $1
+                OR substring(google_drive_file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
+                OR substring(file_url from '/d/([A-Za-z0-9_-]+)') = $1
+                OR substring(file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
           )
        OR EXISTS (
             SELECT 1 FROM company_documents
-             WHERE strpos(coalesce(google_drive_file_url, ''), '/d/' || $1) > 0
-                OR strpos(coalesce(google_drive_file_url, ''), 'id=' || $1) > 0
+             WHERE substring(google_drive_file_url from '/d/([A-Za-z0-9_-]+)') = $1
+                OR substring(google_drive_file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
           )
 """
 
@@ -546,10 +544,10 @@ _CLIENT_REGISTERED_FILE_SQL = f"""
                AND {document_visibility_clause("d")}
                AND (
                    d.file_id = $1
-                   OR strpos(coalesce(d.google_drive_file_url, ''), '/d/' || $1) > 0
-                   OR strpos(coalesce(d.google_drive_file_url, ''), 'id=' || $1) > 0
-                   OR strpos(coalesce(d.file_url, ''), '/d/' || $1) > 0
-                   OR strpos(coalesce(d.file_url, ''), 'id=' || $1) > 0
+                   OR substring(d.google_drive_file_url from '/d/([A-Za-z0-9_-]+)') = $1
+                   OR substring(d.google_drive_file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
+                   OR substring(d.file_url from '/d/([A-Za-z0-9_-]+)') = $1
+                   OR substring(d.file_url from '[?&]id=([A-Za-z0-9_-]+)') = $1
                )
           )
        OR EXISTS (
