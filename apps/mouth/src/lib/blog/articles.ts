@@ -1414,14 +1414,17 @@ export interface HomepageLayoutValidation {
 
 /**
  * Pure validator: assert every curated slug in `layout` resolves to a real
- * article slug in `knownSlugs`. No I/O — feed it a fixture in tests or the
- * real MDX slug index (via {@link validateHomepageLayoutFromDisk}) in CI.
+ * article slug in `knownSlugs`. When supplied, `pinnableSlugs` is used for
+ * `insight_` keys. No I/O — feed it a fixture in tests or the real MDX index
+ * (via {@link validateHomepageLayoutFromDisk}) in CI.
  */
 export function validateHomepageLayout(
   layout: Record<string, unknown>,
   knownSlugs: Iterable<string>,
+  pinnableSlugs?: Iterable<string>,
 ): HomepageLayoutValidation {
   const slugSet = new Set(knownSlugs);
+  const pinnableSlugSet = pinnableSlugs ? new Set(pinnableSlugs) : undefined;
   const missing: { key: string; slug: string }[] = [];
   let checked = 0;
 
@@ -1429,7 +1432,10 @@ export function validateHomepageLayout(
     if (!isCuratedSlugKey(key)) continue;
     if (typeof value !== "string" || value.length === 0) continue;
     checked += 1;
-    if (!slugSet.has(value)) {
+    const allowedSlugs = key.startsWith("insight_")
+      ? (pinnableSlugSet ?? slugSet)
+      : slugSet;
+    if (!allowedSlugs.has(value)) {
       missing.push({ key, slug: value });
     }
   }
@@ -1439,16 +1445,43 @@ export function validateHomepageLayout(
 
 /**
  * Offline/deterministic CI helper: validate `layout` against the canonical
- * MDX slug index on disk (no network, no backend). Throws with a readable
- * message listing every drifted slug so a build/test fails loudly.
+ * MDX articles the homepage can show on disk (no network, no backend). Throws
+ * with a readable message listing every unavailable slug so a build/test fails
+ * loudly.
  */
 export async function validateHomepageLayoutFromDisk(
   layout: Record<string, unknown>,
 ): Promise<HomepageLayoutValidation> {
-  const slugs = await getAllMdxSlugs();
+  const curated = Object.entries(layout).filter(
+    (entry): entry is [string, string] =>
+      isCuratedSlugKey(entry[0]) &&
+      typeof entry[1] === "string" &&
+      entry[1].length > 0,
+  );
+  const isInsight = ([key]: [string, string]) => key.startsWith("insight_");
+  const feedSlugs = new Set(
+    curated.filter((entry) => !isInsight(entry)).map(([, slug]) => slug),
+  );
+  // The rule of the MDX loop of getAllArticles: some file of the slug reads,
+  // is published and is not kept out of search.
+  const knownSlugs = new Set<string>();
+  for (const { folderCategory, slug } of await getAllMdxSlugs()) {
+    if (!feedSlugs.has(slug) || knownSlugs.has(slug)) continue;
+    let article: Article | null;
+    try {
+      article = await getMdxArticleBySlug(folderCategory, slug);
+    } catch {
+      article = null;
+    }
+    if (article && !article.noIndex) knownSlugs.add(slug);
+  }
+  const pins = await getPinnedMdxArticles(
+    curated.filter(isInsight).map(([, slug]) => slug),
+  );
   const result = validateHomepageLayout(
     layout,
-    slugs.map((s) => s.slug),
+    knownSlugs,
+    pins.map((pin) => pin.slug),
   );
   if (!result.ok) {
     const detail = result.missing
@@ -1456,7 +1489,7 @@ export async function validateHomepageLayoutFromDisk(
       .join("\n");
     throw new Error(
       `homepage-layout.json references ${result.missing.length} ` +
-        `slug(s) that no longer resolve to a real article:\n${detail}\n` +
+        `slug(s) the homepage cannot show (no article file, unpublished, kept out of search, or unreadable):\n${detail}\n` +
         `Fix the slug(s) in apps/mouth/src/content/homepage-layout.json.`,
     );
   }
