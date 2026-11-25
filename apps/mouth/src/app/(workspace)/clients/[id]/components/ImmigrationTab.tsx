@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import type { ClientDocument } from "@/lib/api/crm/crm.types";
 import { extractDriveFileId } from "./utils";
 import { isImmigrationDocType } from "./immigration-doc-type";
-import { permitDisplay } from "./permit-label";
+import { documentPermitLabel } from "./permit-label";
 import { COMPLETED_PILL, CURRENT_PILL } from "./permit-status-pills";
 import { AiRecap } from "./AiRecap";
 import {
@@ -104,14 +104,7 @@ function permitDisplayLabel(doc: ClientDocument): string {
       ? "EPO · Exit permit"
       : formatDocType(doc.document_type);
   }
-  // A label that leads with its own visa index ("E23 — Working KITAS") reads
-  // "E23 · Working KITAS" even when the backend sent no separate code.
-  const code =
-    doc.permit_code ||
-    doc.permit_label.match(/^([A-Z][A-Z0-9]{1,7})\s*[—–-]\s/)?.[1];
-  return (
-    permitDisplay(code, doc.permit_label) || formatDocType(doc.document_type)
-  );
+  return documentPermitLabel(doc) || formatDocType(doc.document_type);
 }
 
 /** An EPO (Exit Permit Only) document, matched case-insensitively on its

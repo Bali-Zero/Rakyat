@@ -7,6 +7,7 @@ import {
   Eye,
   Loader2,
   Plus,
+  RefreshCw,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -33,7 +34,14 @@ import {
 } from "@/lib/upload/base64UploadLimit";
 import { extractDriveFileId } from "./utils";
 import { expiryWording, isLive } from "./documentValidity";
-import { familyPassport, familyPermit, levelPill } from "./familyValidity";
+import {
+  familyPassport,
+  familyPermit,
+  levelPill,
+  pickMemberPassport,
+} from "./familyValidity";
+import { documentPermitLabel } from "./permit-label";
+import { pickCurrentPermitFor } from "./pickCurrentVisa";
 import { resolveCardDay } from "./witaClock";
 import { RemovedSignpost } from "./RemovedSignpost";
 
@@ -45,12 +53,22 @@ function FamilyMemberUploadButton({
   memberName,
   documentType,
   onRefresh,
+  replace,
 }: {
   clientId: number;
   memberId: number;
   memberName: string;
   documentType: DocumentKind;
   onRefresh: () => Promise<void> | void;
+  /**
+   * The "Replace stay permit" control: the same upload (a new permit file
+   * for the member, `document_type: "visa"`), with a visible label. Nothing
+   * is deleted or archived: the newer upload becomes the current permit
+   * (`pickCurrentPermitFor`) and the old one stays on file as history.
+   * `fieldTyped` = the member's own visa fields set the shown permit, so
+   * they keep winning until staff edit them.
+   */
+  replace?: { fieldTyped: boolean };
 }) {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -67,11 +85,14 @@ function FamilyMemberUploadButton({
   // carries the full context on the accessible name; `statusWord` is the
   // short word rendered next to the spinner ONLY while a state is active, so
   // the idle control stays icon-only.
+  const what = replace ? "stay permit" : documentType;
   const statusLabel = isUploading
-    ? `Uploading ${documentType} for ${memberName}`
+    ? `Uploading ${what} for ${memberName}`
     : ocrPolling
       ? `OCR in corso for ${memberName}`
-      : `Upload ${documentType} for ${memberName}`;
+      : replace
+        ? `Replace stay permit for ${memberName}`
+        : `Upload ${documentType} for ${memberName}`;
   const statusWord = isUploading
     ? "Uploading..."
     : ocrPolling
@@ -113,7 +134,20 @@ function FamilyMemberUploadButton({
         },
       )) as { success: boolean; message?: string };
       if (response.success) {
-        toast.success(`${label} uploaded for ${memberName} — OCR in corso...`);
+        if (replace) {
+          toast.success(
+            `New stay permit uploaded for ${memberName} — OCR in corso...`,
+            {
+              description: replace.fieldTyped
+                ? "The previous permit stays on file. The visa type and expiry typed on this member still show until you edit the member."
+                : "The previous permit stays on file as history.",
+            },
+          );
+        } else {
+          toast.success(
+            `${label} uploaded for ${memberName} — OCR in corso...`,
+          );
+        }
         pollOcrStatus();
       } else {
         toast.error("Upload failed", { description: response.message });
@@ -139,17 +173,24 @@ function FamilyMemberUploadButton({
       <Button
         type="button"
         variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-[var(--tx-secondary)] hover:text-[var(--tx-pure)]"
+        size={replace ? "sm" : "icon"}
+        className={
+          replace
+            ? "h-8 gap-1.5 px-2 text-xs text-[var(--tx-secondary)] hover:text-[var(--tx-pure)]"
+            : "h-8 w-8 text-[var(--tx-secondary)] hover:text-[var(--tx-pure)]"
+        }
         aria-label={statusLabel}
         onClick={() => fileInputRef.current?.click()}
         disabled={isUploading || ocrPolling}
       >
         {isUploading || ocrPolling ? (
           <Loader2 className="h-4 w-4 animate-spin" />
+        ) : replace ? (
+          <RefreshCw className="h-3.5 w-3.5" />
         ) : (
           <Upload className="h-4 w-4" />
         )}
+        {replace && !statusWord ? "Replace stay permit" : null}
       </Button>
       {statusWord ? (
         <span className="text-[11px] text-[var(--tx-secondary)]">
@@ -265,7 +306,15 @@ function MemberActions({
     documentType: DocumentKind,
     document?: ClientDocument,
   ) => (
-    <React.Fragment key={documentType}>
+    <div
+      key={documentType}
+      role="group"
+      aria-label={documentType === "passport" ? "Passport" : "Visa"}
+      className="ml-2 flex items-center gap-0.5"
+    >
+      <span className="pr-1 text-[11px] text-[var(--tx-secondary)]">
+        {documentType === "passport" ? "Passport" : "Visa"}
+      </span>
       {document?.google_drive_file_url ? (
         <>
           <DocumentActionButton
@@ -289,7 +338,7 @@ function MemberActions({
         documentType={documentType}
         onRefresh={onRefresh}
       />
-    </React.Fragment>
+    </div>
   );
 
   return (
@@ -414,26 +463,35 @@ export function FamilyTab({
           </HairlineHead>
           <HairlineBody>
             {familyMembers.map((member) => {
-              const memberDocuments = documents.filter(
-                (document) =>
-                  document.family_member_id === member.id && isLive(document),
+              // The SAME documents `familyPermit` / `familyPassport` date
+              // from, so the type, the date and the file icons describe one
+              // permit (the main client's `pickCurrentVisa` rule).
+              const passportDocument = pickMemberPassport(documents, member.id);
+              const visaDocument = pickCurrentPermitFor(
+                [...documents],
+                member.id,
               );
-              const passportDocument = memberDocuments.find((document) =>
-                document.document_type?.toLowerCase().includes("passport"),
-              );
-              const visaDocument = memberDocuments.find((document) => {
-                const type = document.document_type?.toLowerCase();
-                return type?.includes("kitas") || type?.includes("visa");
-              });
               const permit = familyPermit(member, documents, day);
               const passport = familyPassport(member, documents, day);
-              // No `?? visaDocument?.document_type` fallback: a document on
+              // The type follows the date's source: the member's typed field
+              // when the date is typed (or there is none), else the permit
+              // the server resolved on the document (as the Immigration
+              // panel shows it). Never the raw `document_type`: a document on
               // file with nothing extracted yet is not a visa TYPE, it is
               // OCR pending — see the note rendered below.
-              const visaType = member.current_visa_type;
+              const documentPermit = visaDocument
+                ? documentPermitLabel(visaDocument)
+                : "";
+              const visaType =
+                (permit.source === "document"
+                  ? documentPermit || member.current_visa_type
+                  : member.current_visa_type || documentPermit) || undefined;
               const pill = permit.level
                 ? levelPill(permit.level)
-                : undatedVisaPill(Boolean(visaType));
+                : undatedVisaPill(Boolean(visaType || visaDocument));
+              const hasPermit = Boolean(
+                visaDocument || member.current_visa_type || permit.expiry,
+              );
               const visaUrgencyInfo = expiryLine(permit);
               const passportUrgencyInfo = expiryLine(passport);
               const personalDetails = [
@@ -492,6 +550,18 @@ export function FamilyTab({
                         Document on file — upload to extract data via OCR
                       </p>
                     ) : null}
+                    {hasPermit ? (
+                      <div className="-ml-2 mt-1 flex items-center gap-1">
+                        <FamilyMemberUploadButton
+                          clientId={clientId}
+                          memberId={member.id}
+                          memberName={member.full_name}
+                          documentType="visa"
+                          onRefresh={onRefresh}
+                          replace={{ fieldTyped: permit.source === "field" }}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                   <div className="space-y-1 px-2.5 py-3 text-[13px] text-[var(--tx-pure)]">
                     {permit.expiry ? (
@@ -509,6 +579,14 @@ export function FamilyTab({
                         }}
                       >
                         {visaUrgencyInfo.label}
+                      </p>
+                    ) : null}
+                    {passport.expiry ? (
+                      <p className="pt-1 text-xs text-[var(--tx-secondary)]">
+                        Passport expires{" "}
+                        <span className="text-[var(--tx-pure)]">
+                          {formatDate(passport.expiry)}
+                        </span>
                       </p>
                     ) : null}
                     {passportUrgencyInfo ? (
