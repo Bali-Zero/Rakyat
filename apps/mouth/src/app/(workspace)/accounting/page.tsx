@@ -3,9 +3,10 @@
 /**
  * Accounting — cash-control workspace for Asya (the agency accountant).
  *
- * Modelled on Asya's own "Weekly Cashout" Google Sheet: each invoice-payment
- * row carries the price decomposition (PNBP / URGENT / RPTKA-IMTA / MARGIN /
- * FINAL PRICE). Three surfaces:
+ * Modelled on Asya's own "Weekly Cashout" Google Sheet, whose rows carry the
+ * price decomposition (PNBP / URGENT / RPTKA-IMTA / MARGIN / FINAL PRICE). A
+ * confirmed payment records no decomposition yet (its source is undecided), so
+ * the page shows no margin total. Three surfaces:
  *   1. Weekly Cashout — the money-log table (read), grouped newest-first.
  *   2. Reconciliation inbox — unmatched incoming bank transfers; pick the
  *      matching invoice (candidate ranking from the backend matcher) and
@@ -23,7 +24,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Loader2,
   Wallet,
-  CheckCircle2,
   ArrowDownToLine,
   ArrowUpFromLine,
   ArrowLeft,
@@ -88,15 +88,12 @@ function SummaryCards({ summary }: { summary: CashbookSummary | null }) {
       icon: Wallet,
       tone: "text-[var(--bz-text-1)]",
     },
-    {
-      label: "Bali Zero margin",
-      value: summary?.margin_total_idr ?? 0,
-      icon: CheckCircle2,
-      tone: "text-[var(--bz-accent)]",
-    },
+    // No margin card: a confirmed payment carries no price decomposition, so a margin total
+    // would read zero (or old worksheet data) whatever was earned. It returns once the
+    // decomposition has a source.
   ];
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
       {cards.map((c) => {
         const Icon = c.icon;
         return (
@@ -186,7 +183,16 @@ function CashoutTable({ rows }: { rows: CashoutRow[] }) {
               <td className="px-3 py-2 text-right tabular-nums text-[var(--bz-accent)]">
                 {r.margin_idr ? <Money value={r.margin_idr} /> : "—"}
               </td>
-              <td className="px-3 py-2 text-right font-medium tabular-nums">
+              <td
+                className={`px-3 py-2 text-right font-medium tabular-nums${r.direction === "out" ? " text-[var(--state-danger)]" : ""}`}
+                data-direction={r.direction}
+              >
+                {r.direction === "out" && (
+                  <>
+                    <span className="sr-only">Money out: </span>
+                    <span aria-hidden="true">−</span>
+                  </>
+                )}
                 <Money value={r.final_price_idr || r.amount_idr} />
               </td>
               <td className="max-w-[200px] truncate px-3 py-2 text-[var(--bz-text-2)]">
