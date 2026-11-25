@@ -186,6 +186,6 @@ async def test_pa5_pa7_routes_answer_400_before_any_query(handler, bad):
     assert exc.value.status_code == 400
 
 
-@pytest.mark.parametrize("ok", ["a" * 10, "a" * 256, X])
+@pytest.mark.parametrize("ok", ["a" * 10, "a" * 256, X, "12345678901"])  # D4: digits too
 def test_pa5_shape_boundaries_pass(ok):
     mod._assert_file_id_shape(ok)

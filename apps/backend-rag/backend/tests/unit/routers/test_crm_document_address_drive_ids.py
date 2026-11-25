@@ -48,9 +48,15 @@ def pool():
     return pool
 
 
-def _guard():
+OWN_DIGITS = "12345678901"
+FOREIGN_DIGITS = "98765432109"
+
+
+def _guard(*owned):
+    owned = owned or (OWN,)
+
     async def guard(file_id, client_id, conn):
-        if file_id != OWN:
+        if file_id not in owned:
             raise HTTPException(
                 status_code=403, detail="Drive file is not in this client's own folder tree"
             )
@@ -153,8 +159,9 @@ async def test_create_with_own_or_no_drive_addresses_is_written(
     assert guard.await_args_list == [call(drive_id, 1, pool.conn) for drive_id in checked]
 
 
+@pytest.mark.parametrize("field", ["file_url", "google_drive_file_url"])
 @pytest.mark.asyncio
-async def test_bulk_fails_only_the_item_whose_address_names_a_foreign_file(pool):
+async def test_bulk_fails_only_the_item_whose_address_names_a_foreign_file(pool, field):
     documents = [
         DocumentCreate(
             document_type="other",
@@ -162,7 +169,7 @@ async def test_bulk_fails_only_the_item_whose_address_names_a_foreign_file(pool)
         ),
         DocumentCreate(
             document_type="other",
-            file_url=f"https://drive.google.com/open?id={FOREIGN}",
+            **{field: f"https://drive.google.com/open?id={FOREIGN}"},
         ),
     ]
     pool.conn.fetchval.return_value = 7
@@ -294,13 +301,38 @@ async def test_a_copy_link_and_a_sheets_address_are_written_with_one_check(pool,
     assert guard.await_args_list == [call(OWN, 1, pool.conn)]
 
 
-@pytest.mark.parametrize("digits", ["12345678901", "98765432109"])
 @pytest.mark.asyncio
-async def test_an_all_digit_run_is_checked_like_any_run(pool, digits):
+async def test_an_owned_all_digit_run_is_checked_and_written(pool):
     data = DocumentCreate(
-        document_type="other", file_url=f"https://x.example.test/open?id={digits}"
+        document_type="other", file_url=f"https://x.example.test/open?id={OWN_DIGITS}"
     )
-    guard = _guard()
+    pool.conn.fetchval.return_value = 42
+    guard = _guard(OWN, OWN_DIGITS)
+    with (
+        patch(f"{MODULE}.verify_client_access", new=AsyncMock()),
+        patch(f"{MODULE}.assert_drive_file_belongs_to_client", new=guard),
+        patch(f"{MODULE}.invalidate_cache", new=AsyncMock()),
+        patch(f"{MODULE}._dispatch_ocr_by_folder", new=AsyncMock()),
+        patch(
+            "backend.services.portal.portal_notification_service.PortalNotificationService",
+            side_effect=Exception("skip"),
+        ),
+    ):
+        result = await create_document(
+            client_id=1, data=data, background_tasks=MagicMock(), pool=pool, current_user=ADMIN
+        )
+
+    assert result["success"] is True
+    assert result["id"] == 42
+    assert guard.await_args_list == [call(OWN_DIGITS, 1, pool.conn)]
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_all_digit_run_is_refused(pool):
+    data = DocumentCreate(
+        document_type="other", file_url=f"https://x.example.test/open?id={FOREIGN_DIGITS}"
+    )
+    guard = _guard(OWN, OWN_DIGITS)
     with (
         patch(f"{MODULE}.verify_client_access", new=AsyncMock()),
         patch(f"{MODULE}.assert_drive_file_belongs_to_client", new=guard),
@@ -311,7 +343,8 @@ async def test_an_all_digit_run_is_checked_like_any_run(pool, digits):
         )
 
     assert exc.value.status_code == 403
-    assert guard.await_args_list == [call(digits, 1, pool.conn)]
+    assert guard.await_args_list == [call(FOREIGN_DIGITS, 1, pool.conn)]
+    pool.conn.fetchval.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -371,9 +404,11 @@ async def test_patch_checks_a_run_the_addresses_name_beside_the_file_id(pool):
 COMPANY_MODULE = "backend.app.modules.crm.company_router"
 
 
-def _company_guard():
+def _company_guard(*owned):
+    owned = owned or (OWN,)
+
     async def guard(file_id, company_id, conn):
-        if file_id != OWN:
+        if file_id not in owned:
             raise HTTPException(
                 status_code=403, detail="Drive file is not in this company's own folder tree"
             )
@@ -462,15 +497,26 @@ async def test_the_company_route_writes_an_address_that_names_no_drive_file(pool
     pool.conn.fetchrow.assert_awaited_once()
 
 
-@pytest.mark.parametrize("digits", ["12345678901", "98765432109"])
 @pytest.mark.asyncio
-async def test_the_company_route_checks_an_all_digit_run_like_any_run(pool, digits):
-    guard = _company_guard()
+async def test_the_company_route_writes_an_owned_all_digit_run_after_its_check(pool):
+    guard = _company_guard(OWN, OWN_DIGITS)
+    result = await _create_company_document(
+        pool, guard, google_drive_file_url=f"https://x.example.test/open?id={OWN_DIGITS}"
+    )
+
+    assert result["id"] == 10
+    assert guard.await_args_list == [call(OWN_DIGITS, 7, pool.conn)]
+    pool.conn.fetchrow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_the_company_route_refuses_a_foreign_all_digit_run(pool):
+    guard = _company_guard(OWN, OWN_DIGITS)
     with pytest.raises(HTTPException) as exc:
         await _create_company_document(
-            pool, guard, google_drive_file_url=f"https://x.example.test/open?id={digits}"
+            pool, guard, google_drive_file_url=f"https://x.example.test/open?id={FOREIGN_DIGITS}"
         )
 
     assert exc.value.status_code == 403
-    assert guard.await_args_list == [call(digits, 7, pool.conn)]
+    assert guard.await_args_list == [call(FOREIGN_DIGITS, 7, pool.conn)]
     pool.conn.fetchrow.assert_not_called()
