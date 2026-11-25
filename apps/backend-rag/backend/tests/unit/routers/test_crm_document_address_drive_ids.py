@@ -59,6 +59,15 @@ def _inserted(awaited):
     }
 
 
+def _updated(awaited):
+    """The values an awaited ``UPDATE … SET col = $n`` call binds, by column name."""
+    sql, *args = awaited.args
+    pairs = [
+        p.strip().split(" = ", 1) for p in sql.split("SET", 1)[1].split("WHERE", 1)[0].split(",")
+    ]
+    return {c: args[int(s[1:]) - 1] for c, s in pairs if s.startswith("$")}
+
+
 OWN_DIGITS = "12345678901"
 FOREIGN_DIGITS = "98765432109"
 
@@ -654,3 +663,24 @@ async def test_the_company_route_stores_its_explicit_file_id(pool):
 
     row = _inserted(pool.conn.fetchrow.await_args)
     assert (row["google_drive_file_id"], row["google_drive_file_url"]) == (OWN, address)
+
+
+@pytest.mark.asyncio
+async def test_patch_binds_the_document_s_own_file_id(pool):
+    address = f"https://drive.google.com/file/d/{OWN}/view"
+    data = DocumentUpdate(file_id=OWN, google_drive_file_url=address)
+    pool.conn.execute.return_value = "UPDATE 1"
+    guard = _guard()
+    with (
+        patch(f"{MODULE}.verify_client_access", new=AsyncMock()),
+        patch(f"{MODULE}.assert_drive_file_belongs_to_client", new=guard),
+        patch(f"{MODULE}.invalidate_cache", new=AsyncMock()),
+    ):
+        result = await update_document(
+            client_id=1, doc_id=10, data=data, pool=pool, current_user=ADMIN
+        )
+
+    assert result["success"] is True
+    assert guard.await_args_list == [call(OWN, 1, pool.conn)]
+    row = _updated(pool.conn.execute.await_args)
+    assert (row.get("file_id"), row.get("google_drive_file_url")) == (OWN, address)
