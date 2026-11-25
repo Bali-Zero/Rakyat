@@ -56,6 +56,7 @@ from typing import Any
 import asyncpg
 
 from backend.core.cache import invalidate_crm_stats
+from backend.services.documents.drive_address import address_drive_ids
 from backend.services.intake.client_enricher import (
     _IDENTITY_FILL_ONLY_COLUMNS,
     ENRICHMENT_MAP,
@@ -944,6 +945,28 @@ async def _record_commit_corrections(
 # --------------------------------------------------------------------------- #
 # write_client_document — PURE-DB writer (P0#8). Real path only (5C).
 # --------------------------------------------------------------------------- #
+def confine_addresses(
+    payload: dict[str, Any], proposal_id: int | None = None
+) -> tuple[str | None, str | None]:
+    """Return the payload's ``(file_url, google_drive_file_url)`` confined to its file.
+
+    An address that names a Drive id other than the payload's own non-empty
+    ``file_id``, or any Drive id when there is no ``file_id``, is dropped (None).
+    An address naming no Drive id is kept. No Drive call: the writers run inside
+    the commit transaction.
+    """
+    file_id = payload.get("file_id")
+    confined: list[str | None] = []
+    for name in ("file_url", "google_drive_file_url"):
+        address = payload.get(name)
+        runs = address_drive_ids(address)
+        if runs and (not file_id or any(run != file_id for run in runs)):
+            logger.warning("intake address dropped: proposal=%s field=%s", proposal_id, name)
+            address = None
+        confined.append(address)
+    return confined[0], confined[1]
+
+
 async def write_client_document(
     conn: asyncpg.Connection,
     client_id: int,
@@ -995,6 +1018,7 @@ async def write_client_document(
     client_visible = payload.get("client_visible")
     visible_column = "" if client_visible is None else ", client_visible"
     visible_args = [] if client_visible is None else [bool(client_visible)]
+    file_url, google_drive_file_url = confine_addresses(payload, proposal_id)
     if has_ocr:
         visible_value = "" if client_visible is None else ", $14"
         doc_id = await conn.fetchval(
@@ -1016,8 +1040,8 @@ async def write_client_document(
             payload.get("document_category"),
             payload.get("file_name"),
             payload.get("file_id"),
-            payload.get("file_url"),
-            payload.get("google_drive_file_url"),
+            file_url,
+            google_drive_file_url,
             payload.get("notes"),
             payload.get("family_member_id"),
             payload.get("practice_id"),
@@ -1047,8 +1071,8 @@ async def write_client_document(
             payload.get("document_category"),
             payload.get("file_name"),
             payload.get("file_id"),
-            payload.get("file_url"),
-            payload.get("google_drive_file_url"),
+            file_url,
+            google_drive_file_url,
             payload.get("notes"),
             payload.get("family_member_id"),
             payload.get("practice_id"),
@@ -1130,15 +1154,13 @@ async def write_company_document(
         marker = _intake_company_marker(idempotency_key)
         notes_value = f"{raw_notes} {marker}".strip() if raw_notes else marker
 
+    file_url, google_drive_file_url = confine_addresses(payload, proposal_id)
     col_values: list[tuple[str, Any]] = [
         ("company_id", company_id),
         ("document_type", payload["document_type"]),
         ("file_name", payload.get("file_name")),
         ("google_drive_file_id", payload.get("file_id")),
-        (
-            "google_drive_file_url",
-            payload.get("google_drive_file_url") or payload.get("file_url"),
-        ),
+        ("google_drive_file_url", google_drive_file_url or file_url),
         ("notes", notes_value),
         ("uploaded_by", committed_by),
         ("status", "active"),

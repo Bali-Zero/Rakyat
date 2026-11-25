@@ -709,7 +709,9 @@ def test_write_guard_is_actually_wired_into_all_four_call_sites():
     from backend.app.routers import crm_enhanced_documents
 
     client_src = inspect.getsource(crm_enhanced_documents)
-    assert client_src.count("await assert_drive_file_belongs_to_client(") >= 3
+    assert client_src.count("await _assert_document_drive_files(") == 4
+    helper_src = inspect.getsource(crm_enhanced_documents._assert_document_drive_files)
+    assert "await assert_drive_file_belongs_to_client(" in helper_src
 
     company_src = inspect.getsource(company_router)
     assert "await assert_drive_file_belongs_to_company(" in company_src
