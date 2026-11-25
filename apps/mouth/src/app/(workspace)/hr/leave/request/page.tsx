@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Send, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import * as hrApi from "@/lib/api/hr/hr";
 import type { LeaveTypeOption } from "@/lib/api/hr/hr";
+import { countWorkingDays } from "./leave-days";
 
 /** Dashboard panel recipe — mirrors the day/dark-aware Kita surfaces. */
 const PANEL: React.CSSProperties = {
@@ -309,16 +310,7 @@ export default function LeaveRequestPage() {
   };
 
   const updateDays = useCallback((start: string, end: string) => {
-    if (start && end) {
-      const diff =
-        Math.ceil(
-          (new Date(end + "T00:00:00").getTime() -
-            new Date(start + "T00:00:00").getTime()) /
-            (1000 * 60 * 60 * 24),
-        ) + 1;
-      return Math.max(1, diff);
-    }
-    return 1;
+    return countWorkingDays(start, end);
   }, []);
 
   const setStartDate = (date: string) => {
@@ -399,6 +391,11 @@ export default function LeaveRequestPage() {
               {form.total_days}
             </span>
           </label>
+          {form.start_date && form.end_date && form.total_days === 0 && (
+            <p className="text-sm text-[var(--bz-text-2)]">
+              These dates contain no working day.
+            </p>
+          )}
         </div>
 
         <div>
@@ -425,7 +422,13 @@ export default function LeaveRequestPage() {
 
         <button
           type="submit"
-          disabled={submitting || leaveTypes.length === 0}
+          disabled={
+            submitting ||
+            leaveTypes.length === 0 ||
+            (form.start_date !== "" &&
+              form.end_date !== "" &&
+              form.total_days === 0)
+          }
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--bz-accent)] text-[var(--bz-on-warm)] hover:opacity-90 text-sm font-medium transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Send size={16} />
