@@ -366,7 +366,13 @@ async def test_twin_innocence_a_real_looking_id_gets_past_the_shape_check(monkey
 
     monkeypatch.setattr(crm_enhanced, "ServiceAccountDriveService", _reached)
     with pytest.raises(_Marker):
-        await crm_enhanced._download_drive_file("1MUzGL73pcbY")
+        try:
+            await crm_enhanced._download_drive_file("1MUzGL73pcbY")
+        except RuntimeError as exc:
+            # The twin refuses with RuntimeError; refusing this id is the defect.
+            if str(exc) == "Malformed Drive file id":
+                pytest.fail("the shape check refused a real-looking Drive id")
+            raise
 
 
 def test_twin_does_not_block_the_event_loop_on_a_cold_token(monkeypatch):
