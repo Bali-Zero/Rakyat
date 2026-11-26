@@ -240,7 +240,7 @@ async def hybrid_oracle_query(
         return OracleQueryResponse(
             success=False,
             query=request.query,
-            error=f"response_validation_error: {e}",
+            error="oracle_validation_error",
             execution_time_ms=0,
             document_count=0,
         )
@@ -250,7 +250,7 @@ async def hybrid_oracle_query(
         return OracleQueryResponse(
             success=False,
             query=request.query,
-            error=str(e),
+            error="oracle_error",
             execution_time_ms=0,
             document_count=0,
         )
@@ -266,7 +266,7 @@ async def submit_user_feedback(feedback: FeedbackRequest) -> dict[str, Any]:
         return {"success": success}
     except Exception as e:
         logger.error("Feedback error: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": "feedback_error"}
 
 
 @router.get("/health")
