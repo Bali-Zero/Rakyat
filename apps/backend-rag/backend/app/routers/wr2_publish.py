@@ -48,6 +48,7 @@ same key format, ledger-compatible with the CLI.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -431,11 +432,12 @@ async def upload_slide(
     if not safe_draft:
         raise HTTPException(status_code=400, detail="draft_id must be alphanumeric/-/_")
 
-    try:
+    def _do_upload() -> tuple[str, str]:
         s3 = get_s3_client()
-        public_url, key = upload_png(
-            s3, body, draft_id=safe_draft, slide_index=slide_index
-        )
+        return upload_png(s3, body, draft_id=safe_draft, slide_index=slide_index)
+
+    try:
+        public_url, key = await asyncio.to_thread(_do_upload)
     except TigrisError as exc:
         logger.error("wr2_publish: slide upload to Tigris failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"Tigris upload failed: {exc}") from exc
