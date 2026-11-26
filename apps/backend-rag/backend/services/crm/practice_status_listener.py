@@ -73,6 +73,8 @@ class EmailNotDelivered(RuntimeError):
 
 
 _RECONNECT_DELAY_S = 5  # seconds to wait before reconnecting after error
+_CONNECT_TIMEOUT_S = 10  # seconds before a half-open connect is given up
+_PING_TIMEOUT_S = 5  # seconds before the keep-alive ping is treated as a dead connection
 
 
 class PracticeStatusListener:
@@ -87,6 +89,7 @@ class PracticeStatusListener:
         self._conn: asyncpg.Connection | None = None
         self._running = False
         self._task: asyncio.Task | None = None
+        self._handler_tasks: set[asyncio.Task] = set()
         self._process_svc = ProcessAutomationService(db_pool)
 
     # ── Public lifecycle ──────────────────────────────────────────────────
@@ -134,7 +137,7 @@ class PracticeStatusListener:
 
     async def _connect_and_listen(self) -> None:
         """Open a dedicated connection, LISTEN, and block until cancelled."""
-        self._conn = await asyncpg.connect(self._db_dsn)
+        self._conn = await asyncpg.connect(self._db_dsn, timeout=_CONNECT_TIMEOUT_S)
         await self._conn.add_listener("practice_changed", self._on_notification)
         logger.info("📡 Listening on PostgreSQL channel 'practice_changed'")
 
@@ -143,7 +146,7 @@ class PracticeStatusListener:
             await asyncio.sleep(30)
             # Lightweight ping to detect dropped connections
             try:
-                await self._conn.execute("SELECT 1")
+                await self._conn.execute("SELECT 1", timeout=_PING_TIMEOUT_S)
             except Exception:
                 raise  # triggers reconnect in _run_loop
 
@@ -172,9 +175,12 @@ class PracticeStatusListener:
     ) -> None:
         """
         asyncpg calls this synchronously on the event loop; dispatch async work
-        via asyncio.ensure_future so we never block the LISTEN connection.
+        via a tracked task so we never block the LISTEN connection, and keep a
+        strong reference so the handler cannot be garbage-collected mid-flight.
         """
-        asyncio.ensure_future(self._handle_notification(payload))
+        task = asyncio.get_running_loop().create_task(self._handle_notification(payload))
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
 
     async def _handle_notification(self, payload: str) -> None:
         """Parse payload and dispatch to the right handler."""
