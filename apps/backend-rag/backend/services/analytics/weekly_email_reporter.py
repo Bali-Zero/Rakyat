@@ -9,14 +9,11 @@ import asyncio
 import contextlib
 import logging
 from datetime import datetime, timedelta
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
-import aiosmtplib
 import asyncpg
 
-from backend.app.core.config import settings
+from backend.app.services.internal_email import send_internal_email
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +22,8 @@ ADMIN_EMAIL = "zero@balizero.com"
 CHECK_TIME_HOUR = 16  # 4:00 PM Bali time
 CHECK_TIME_MINUTE = 0
 SUNDAY = 6  # datetime.weekday() returns 6 for Sunday
+SEND_WINDOW_HOURS = 2  # the report is due from 16:00 until 18:00, then the day is given up
+RETRY_INTERVAL = timedelta(minutes=10)
 
 
 class WeeklyEmailReporter:
@@ -63,25 +62,34 @@ class WeeklyEmailReporter:
     async def _scheduler_loop(self) -> None:
         """Background loop that checks every minute if it's time to send."""
         last_sent_date = None
+        next_attempt_at: datetime | None = None
 
         while self.running:
             try:
                 now = datetime.now(BALI_TZ)
                 today = now.date()
 
-                # Check if it's Sunday at 4:00 PM and we haven't sent today
-                if (
+                # Due on Sunday from the check time, for a two-hour window (a restart late
+                # on Sunday does not send), once per day, retrying no sooner than 10 minutes
+                due = (
                     now.weekday() == SUNDAY
-                    and now.hour == CHECK_TIME_HOUR
-                    and now.minute == CHECK_TIME_MINUTE
+                    and (now.hour, now.minute) >= (CHECK_TIME_HOUR, CHECK_TIME_MINUTE)
+                    and now.hour < CHECK_TIME_HOUR + SEND_WINDOW_HOURS
                     and last_sent_date != today
-                ):
-                    await self._send_weekly_report()
-                    last_sent_date = today
-                    logger.info("📧 Weekly email activity report sent for week ending %s", today)
+                )
+                if due and (next_attempt_at is None or now >= next_attempt_at):
+                    if await self._send_weekly_report():
+                        last_sent_date = today
+                        next_attempt_at = None
+                        logger.info(
+                            "📧 Weekly email activity report sent for week ending %s", today
+                        )
+                    else:
+                        next_attempt_at = now + RETRY_INTERVAL
+                        logger.error("❌ Weekly email activity report was not sent; will retry")
 
             except Exception as e:
-                logger.error("❌ Weekly reporter error: %s", e)
+                logger.error("❌ Weekly reporter error: %s", type(e).__name__)
 
             # Check every minute
             try:
@@ -97,7 +105,7 @@ class WeeklyEmailReporter:
                 """
                 SELECT id, email, full_name, department
                 FROM team_members
-                WHERE is_active = TRUE
+                WHERE active = TRUE
                 ORDER BY department, full_name
                 """,
             )
@@ -118,7 +126,7 @@ class WeeklyEmailReporter:
                 GROUP BY operation
                 """,
                 user_id,
-                f"{days} days",
+                timedelta(days=days),
             )
 
             activity = {
@@ -330,13 +338,8 @@ class WeeklyEmailReporter:
         </html>
         """
 
-    async def _send_weekly_report(self) -> None:
-        """Send the weekly email activity report."""
-        # Check SMTP config
-        if not settings.smtp_host or not settings.smtp_user:
-            logger.warning("⚠️ SMTP not configured, skipping weekly email report")
-            return
-
+    async def _send_weekly_report(self) -> bool:
+        """Send the weekly report through the sanctioned send-email door; True only when delivered."""
         try:
             # Get data
             team_members = await self._get_team_members()
@@ -353,34 +356,24 @@ class WeeklyEmailReporter:
             subject = f"[REPORT] 📊 Weekly Email Report - {now.strftime('%d/%m/%Y')}"
             html_content = self._build_html_email(team_activities, summary, now)
 
-            # Create message
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = subject
-            msg["From"] = settings.smtp_from or settings.smtp_user
-            msg["To"] = ADMIN_EMAIL
-
-            # Attach HTML
-            msg.attach(MIMEText(html_content, "html"))
-
-            # Send via async SMTP
-            await aiosmtplib.send(
-                msg,
-                hostname=settings.smtp_host,
-                port=settings.smtp_port,
-                username=settings.smtp_user,
-                password=settings.smtp_password,
-                use_tls=False,
-                start_tls=bool(settings.smtp_use_tls),
+            # No pool/email_type: no audit row, so the health monitor does not add its own retry
+            delivered = await send_internal_email(
+                to=ADMIN_EMAIL,
+                subject=subject,
+                body=html_content,
+                log_context="weekly_email_report",
             )
-
-            logger.info("✅ Weekly email report sent to %s", ADMIN_EMAIL)
+            if delivered:
+                logger.info("✅ Weekly email report sent")
+            return delivered
 
         except Exception as e:
-            logger.error("❌ Failed to send weekly email report: %s", e)
+            logger.error("❌ Failed to send weekly email report: %s", type(e).__name__)
+            return False
 
-    async def send_now(self) -> None:
+    async def send_now(self) -> bool:
         """Send the report immediately (for testing)."""
-        await self._send_weekly_report()
+        return await self._send_weekly_report()
 
 
 # Singleton
