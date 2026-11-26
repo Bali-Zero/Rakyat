@@ -15,6 +15,7 @@ import re as regex
 from datetime import datetime, timezone
 from typing import Any
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator
 
@@ -571,7 +572,8 @@ async def _auto_ocr_npwp(
 ) -> dict:
     """
     OCR on NPWP (tax ID) document → extract NPWP number, address, KPP.
-    Updates clients or companies table.
+    Fills the linked company's empty NPWP, or the client's custom_fields when
+    there is no company; a family member's document updates neither.
     Uses the shared app-level pool passed in to avoid connection churn.
     """
     try:
@@ -608,35 +610,63 @@ async def _auto_ocr_npwp(
                     doc_id,
                 )
 
-            # Update client NPWP fields
+            # Update client NPWP fields. A family member's document carries the
+            # family member's NPWP, so its OCR stays on the document only: each
+            # write below skips a document with `family_member_id`, in the same
+            # statement, whichever caller ran the OCR. No doc_id (NULL) matches
+            # no document and keeps the write as before.
             if extracted.get("npwp_number"):
                 # Check if this is a company NPWP (linked company exists)
                 company = await conn.fetchrow(
                     """SELECT c.id FROM companies c
                     JOIN client_company_links ccl ON ccl.company_id = c.id
-                    WHERE ccl.client_id = $1 LIMIT 1""",
+                    WHERE ccl.client_id = $1 ORDER BY c.id LIMIT 1""",
                     client_id,
                 )
                 if company:
-                    update_parts = ["npwp_company = $1"]
-                    params: list[Any] = [extracted["npwp_number"]]
-                    param_idx = 2
-                    params.append(company["id"])
-                    await conn.execute(
-                        f"UPDATE companies SET {', '.join(update_parts)}, updated_at = NOW() WHERE id = ${param_idx}",
-                        *params,
-                    )
+                    # Fill an empty company NPWP; never replace one already set.
+                    try:
+                        result = await conn.execute(
+                            """UPDATE companies SET npwp_company = $1, updated_at = NOW()
+                            WHERE id = $2
+                              AND (npwp_company IS NULL OR npwp_company = '')
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM documents
+                                  WHERE id = $3 AND family_member_id IS NOT NULL
+                              )""",
+                            extracted["npwp_number"],
+                            company["id"],
+                            doc_id,
+                        )
+                        if result == "UPDATE 0":
+                            logger.info(
+                                "NPWP OCR not written to company %s: family member document "
+                                "or NPWP already set",
+                                company["id"],
+                            )
+                    except asyncpg.UniqueViolationError:
+                        # npwp_company is unique: another company already holds
+                        # this NPWP. The value stays out of the log.
+                        logger.warning(
+                            "NPWP OCR not written to company %s: NPWP already used by another company",
+                            company["id"],
+                        )
                 else:
                     # Personal NPWP → update clients custom_fields
                     await conn.execute(
                         """UPDATE clients
                         SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::text::jsonb,
                             updated_at = NOW()
-                        WHERE id = $2""",
+                        WHERE id = $2
+                          AND NOT EXISTS (
+                              SELECT 1 FROM documents
+                              WHERE id = $3 AND family_member_id IS NOT NULL
+                          )""",
                         to_jsonb(
                             {"npwp": extracted["npwp_number"], "kpp": extracted.get("kpp_name")},
                         ),
                         client_id,
+                        doc_id,
                     )
 
         logger.info(
