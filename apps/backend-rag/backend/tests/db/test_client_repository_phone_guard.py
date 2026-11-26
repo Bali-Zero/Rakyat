@@ -123,3 +123,60 @@ def test_client_repository_does_not_range_check_date_of_birth():
 def test_client_repository_document_date_accepts_a_datetime():
     assert _parse_document_date(datetime(2030, 1, 1, 12, 0)) == datetime(2030, 1, 1, 12, 0)
     assert _parse_document_date(datetime(1, 1, 1)) is None
+
+
+_ATTRIBUTION_COLUMNS = ("referrer_url", "landing_page", "first_touch_at")
+
+
+@pytest.mark.asyncio
+async def test_create_keeps_an_explicit_lead_source_unchanged():
+    """Innocence: an explicit lead_source reaches the INSERT as given."""
+    repo, conn = _make_repo(dup_row=None)
+
+    await repo.create_client_with_details(
+        {"full_name": "New Client", "lead_source": "referral"},
+    )
+
+    args = conn.fetchrow.await_args_list[0].args
+    assert "referral" in args[1:]
+    assert args[1:].count("referral") == 1
+
+
+@pytest.mark.asyncio
+async def test_create_without_lead_source_stores_none():
+    """Innocence: no lead_source and no attribution keys -> NULL lead_source."""
+    repo, conn = _make_repo(dup_row=None)
+
+    await repo.create_client_with_details({"full_name": "New Client"})
+
+    sql = conn.fetchrow.await_args_list[0].args[0]
+    values = conn.fetchrow.await_args_list[0].args[1:]
+    columns = sql.split("INSERT INTO clients (", 1)[1].split(")", 1)[0]
+    lead_source = [c.strip() for c in columns.split(",")].index("lead_source")
+    assert values[lead_source] is None
+
+
+@pytest.mark.asyncio
+async def test_create_insert_names_no_attribution_column_and_ignores_the_keys():
+    """Guard: the INSERT no longer names the dead attribution columns, and a
+    dict that still carries those keys does not turn them into values."""
+    repo, conn = _make_repo(dup_row=None)
+
+    await repo.create_client_with_details(
+        {
+            "full_name": "New Client",
+            "landing_page": "/visa?utm_source=whatsapp",
+            "referrer_url": "https://example.test/ref",
+            "first_touch_at": "2026-01-01T00:00:00",
+        },
+    )
+
+    args = conn.fetchrow.await_args_list[0].args
+    for column in _ATTRIBUTION_COLUMNS:
+        assert column not in args[0]
+    assert args[0].count("$") == len(args) - 1
+    assert "/visa?utm_source=whatsapp" not in args[1:]
+    values = args[1:]
+    columns = args[0].split("INSERT INTO clients (", 1)[1].split(")", 1)[0]
+    assert [c.strip() for c in columns.split(",")].count("lead_source") == 1
+    assert values[[c.strip() for c in columns.split(",")].index("lead_source")] is None

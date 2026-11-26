@@ -104,30 +104,6 @@ class DuplicatePhoneError(Exception):
 logger = logging.getLogger(__name__)
 
 
-def _infer_lead_source(client_data: dict[str, Any]) -> str | None:
-    """Infer CRM lead_source from explicit field or UTM params on landing_page.
-
-    Priority:
-      1. Explicit ``lead_source`` field (caller already classified)
-      2. UTM medium ``whatsapp_cta`` OR utm_source ``whatsapp`` → ``whatsapp_inbound``
-      3. ``landing_page`` present without UTM → ``website_organic``
-      4. Otherwise None (caller must decide)
-
-    Used by Plan A SEO Cell pre-natal Sprint 0 to differentiate web→WhatsApp
-    leads from organic web→form leads. Migration 118 added the supporting
-    ``referrer_url`` and ``landing_page`` columns.
-    """
-    if client_data.get("lead_source"):
-        return client_data["lead_source"]
-
-    landing = client_data.get("landing_page") or ""
-    if "utm_medium=whatsapp_cta" in landing or "utm_source=whatsapp" in landing:
-        return "whatsapp_inbound"
-    if landing:
-        return "website_organic"
-    return None
-
-
 def _normalize_email(value: str | None) -> str | None:
     """Normalize client email before storing it in the CRM table."""
     if value is None:
@@ -240,18 +216,6 @@ class ClientRepository(BaseRepository):
             # anche il cliente venga rimosso, evitando dati orfani.
             try:
                 # Inserimento del Cliente — tutti i campi dalla tabella clients
-                # SEO attribution (migration 118): referrer_url, landing_page,
-                # first_touch_at populated when present in payload. lead_source
-                # inferred from UTM params on landing_page if caller did not set
-                # it explicitly. See _infer_lead_source above.
-                inferred_lead_source = _infer_lead_source(client_data)
-                first_touch_at = client_data.get("first_touch_at")
-                if first_touch_at and not isinstance(first_touch_at, datetime):
-                    try:
-                        first_touch_at = datetime.fromisoformat(str(first_touch_at))
-                    except (ValueError, TypeError):
-                        first_touch_at = None
-
                 client_query = """
                     INSERT INTO clients (
                         full_name, email, phone, status, client_type,
@@ -260,7 +224,6 @@ class ClientRepository(BaseRepository):
                         tags, custom_fields, created_by,
                         lead_source, service_interest, tax_id,
                         passport_expiry, date_of_birth, company_name,
-                        referrer_url, landing_page, first_touch_at,
                         gender,
                         created_at, updated_at
                     ) VALUES (
@@ -270,8 +233,7 @@ class ClientRepository(BaseRepository):
                         $13, $14, $15,
                         $16, $17, $18,
                         $19, $20, $21,
-                        $22, $23, $24,
-                        $25,
+                        $22,
                         NOW(), NOW()
                     )
                     RETURNING *
@@ -317,15 +279,12 @@ class ClientRepository(BaseRepository):
                     client_data.get("tags", []),
                     client_data.get("custom_fields", {}),
                     client_data.get("created_by"),
-                    inferred_lead_source,
+                    client_data.get("lead_source"),
                     client_data.get("service_interest", []),
                     client_data.get("tax_id"),
                     _parse_document_date(client_data.get("passport_expiry")),
                     _parse_date(client_data.get("date_of_birth")),
                     client_data.get("company_name"),
-                    client_data.get("referrer_url"),
-                    client_data.get("landing_page"),
-                    first_touch_at,
                     client_data.get("gender"),
                 )
 
