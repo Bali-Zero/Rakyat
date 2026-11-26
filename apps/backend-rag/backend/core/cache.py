@@ -334,6 +334,7 @@ def cached(
     ttl: int = DEFAULT_CACHE_TTL,
     prefix: str = "default",
     cache_service: CacheService | None = None,
+    should_cache: Callable[[Any], bool] | None = None,
 ) -> Any:
     """
     Decorator to cache function results
@@ -342,6 +343,9 @@ def cached(
         ttl: Time to live in seconds (default: 5 minutes)
         prefix: Cache key prefix
         cache_service: Optional CacheService instance (for dependency injection/testing)
+        should_cache: Optional predicate on the result. When it returns False the
+            result is returned to the caller but not stored (e.g. an error payload
+            must not be frozen for the whole TTL). Default None stores every result.
 
     Example:
         @cached(ttl=600, prefix="agents")
@@ -370,8 +374,9 @@ def cached(
             logger.debug("❌ Cache MISS: %s", sanitized_key)
             result = await func(*args, **kwargs)
 
-            # Store in cache
-            await cache_inst.set(cache_key, result, ttl)
+            # Store in cache (unless the caller's predicate refuses this result)
+            if should_cache is None or should_cache(result):
+                await cache_inst.set(cache_key, result, ttl)
 
             return result
 
