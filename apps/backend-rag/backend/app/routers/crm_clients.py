@@ -95,6 +95,24 @@ def _row_str(row: object, key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _comparable(value: object) -> object:
+    """Normalise a stored or submitted value for "did it really change?":
+    blank and NULL are the same, surrounding spaces do not count."""
+    if isinstance(value, str):
+        value = value.strip()
+    return value if value not in ("", None) else None
+
+
+def _row_value(row: object, key: str) -> object:
+    """Subscript a DB row (asyncpg Record / dict), tolerating missing keys."""
+    if row is None:
+        return None
+    try:
+        return row[key]  # type: ignore[index]
+    except (KeyError, TypeError):
+        return None
+
+
 # Core-equivalence matcher for upsert-by-phone: matches every stored row whose
 # phone columns collapse to the same canonical core as the payload — 0812… and
 # 62812… are ONE identity (Codex 2026-07-19 round 10, F15). The predicate
@@ -1711,6 +1729,7 @@ async def update_client(
             # Fields that are allowed to be explicitly set to NULL (clearing a value).
             # Without this, the loop below would silently drop None values.
             nullable_fields = {"tax_consultant"}
+            written: dict[str, Any] = {}
 
             for field, value in updates.dict(exclude_unset=True).items():
                 if field not in field_mapping:
@@ -1749,9 +1768,33 @@ async def update_client(
                     update_fields.append(f"{column_name} = ${param_index}")
                     params.append(value)
                     param_index += 1
+                    written[field] = value
 
             if not update_fields:
                 raise HTTPException(status_code=400, detail="No fields to update")
+
+            # The Edit Client modal resubmits fields it did not change (status
+            # always), so the client used to get "Profile updated" for nothing.
+            # Read what the significant fields hold BEFORE the update; only
+            # those whose value really changes reach the portal (DAI-217).
+            from backend.services.portal.portal_notification_service import (
+                SIGNIFICANT_FIELDS,
+            )
+
+            _significant_written = [f for f in written if f in SIGNIFICANT_FIELDS]
+            _before: Any = None
+            if _significant_written:
+                # Column names are from the field_mapping whitelist
+                _cols = ", ".join(field_mapping[f] for f in _significant_written)
+                _before = await conn.fetchrow(
+                    f"SELECT {_cols} FROM clients WHERE id = $1",  # nosemgrep
+                    client_id,
+                )
+            changed_significant = {
+                f: written[f]
+                for f in _significant_written
+                if _comparable(_row_value(_before, field_mapping[f])) != _comparable(written[f])
+            }
 
             # If strategic_recap was edited by a human AND the value actually changed,
             # bump source -> 'manual' + timestamp. Guard against full-payload saves: the
@@ -1855,19 +1898,20 @@ async def update_client(
 
             # Notify client via portal about significant profile changes
             try:
-                updated_field_names = list(updates.dict(exclude_unset=True).keys())
                 from backend.services.portal.portal_notification_service import (
                     PortalNotificationService,
                 )
 
                 notif_service = PortalNotificationService(db_pool)
-                spawn(
-                    notif_service.notify_profile_updated(
-                        client_id=client_id,
-                        updated_fields=updated_field_names,
-                        sent_by=user_email,
-                    ),
-                )
+                if changed_significant:
+                    spawn(
+                        notif_service.notify_profile_updated(
+                            client_id=client_id,
+                            updated_fields=list(changed_significant),
+                            sent_by=user_email,
+                            new_values=changed_significant,
+                        ),
+                    )
             except Exception as e:
                 logger.error("Portal notification for profile update failed: %s", type(e).__name__)
 

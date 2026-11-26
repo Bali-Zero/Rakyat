@@ -547,6 +547,34 @@ describe("PortalApi", () => {
         unreadCount: 0,
       });
     });
+
+    it("carries is_system through as isSystem, and only when the API says true (DAI-217)", async () => {
+      const row = {
+        content: "x",
+        from_team: true,
+        sent_by: "Bali Zero",
+        created_at: "2026-11-26T06:00:00+00:00",
+      };
+      mockRequest.mockResolvedValue({
+        data: {
+          messages: [
+            { ...row, id: 1, is_system: true },
+            { ...row, id: 2, is_system: false },
+            { ...row, id: 3 },
+          ],
+          total: 3,
+          unread_count: 0,
+        },
+      });
+
+      const result = await portalApi.getMessages();
+
+      expect(result.messages.map((m) => m.isSystem)).toEqual([
+        true,
+        undefined,
+        undefined,
+      ]);
+    });
   });
 
   describe("sendMessage", () => {

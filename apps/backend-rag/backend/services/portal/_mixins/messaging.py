@@ -16,16 +16,25 @@ from backend.services.portal._rbac import ClientContext, require_client_access
 TEAM_SENDER_FALLBACK = "Bali Zero"
 
 
+def _is_system(row: Any) -> bool:
+    """True for a notification the platform wrote, not a person."""
+    return bool(row.get("is_system_generated"))
+
+
 def _display_sender(row: Any) -> str | None:
     """Sender line the client sees.
 
     Team messages store the staff email in ``sent_by``; the client sees the
     staff name instead, or "Bali Zero" when no name is on file (Antonello,
     30 Sep 2026). The stored ``sent_by`` is not changed. Client messages keep
-    their own sender.
+    their own sender. Automatic notifications (``is_system_generated``) are
+    events, not a staff member writing: they always read "Bali Zero"
+    (DAI-217), whoever triggered them.
     """
     if row["direction"] != "team_to_client":
         return row["sent_by"]
+    if _is_system(row):
+        return TEAM_SENDER_FALLBACK
     name = (row.get("sender_name") or "").strip()
     return name or TEAM_SENDER_FALLBACK
 
@@ -69,6 +78,7 @@ class PortalMessagingMixin:
                 """
                 SELECT m.id, m.subject, m.content, m.direction, m.sent_by,
                        m.read_at, m.created_at, m.practice_id,
+                       m.is_system_generated,
                        p.id as practice_id, pt.name as practice_name,
                        tm.sender_name
                 FROM portal_messages m
@@ -115,6 +125,7 @@ class PortalMessagingMixin:
                         "content": m["content"],
                         "from_team": m["direction"] == "team_to_client",
                         "sent_by": _display_sender(m),
+                        "is_system": _is_system(m),
                         "is_read": m["read_at"] is not None,
                         "practice_id": m["practice_id"],
                         "practice_name": m["practice_name"],

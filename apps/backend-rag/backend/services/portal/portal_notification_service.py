@@ -4,10 +4,11 @@ Portal Notification Service — inserts portal_messages for client-facing notifi
 Used when the team takes actions that the client should see in their portal:
 - Team uploads a document → client sees "New document: passport"
 - Practice status changes → client sees "Your KITAS status updated to on_process"
-- Profile fields updated → client sees "Your profile has been updated"
+- Profile fields updated → client sees "Your profile has been updated. Status: Active."
 """
 
 from collections.abc import Mapping
+from datetime import date, datetime
 from typing import Any
 
 import asyncpg
@@ -41,6 +42,53 @@ INTERNAL_FIELDS = {
     "avatar_url",
     "service_interest",
 }
+
+
+# How each significant field reads in a client-facing message. Personal data
+# (passport number, birth date, address) is named but never quoted: portal
+# messages are kept for good, and the portal API masks the passport number
+# (K107 / DAI-140).
+_FIELD_LABELS = {
+    "status": "Status",
+    "passport_number": "Passport number",
+    "passport_expiry": "Passport expiry",
+    "visa_type": "Visa type",
+    "visa_expiry": "Visa expiry",
+    "address": "Address",
+    "city": "City",
+    "province": "Province",
+    "date_of_birth": "Date of birth",
+}
+_VALUE_SHOWN_FIELDS = {"status", "passport_expiry", "visa_expiry", "visa_type"}
+_DATE_FIELDS = {"passport_expiry", "visa_expiry"}
+
+
+def _display_value(field: str, value: Any) -> str | None:
+    """The new value as a client reads it, or None when it is not shown."""
+    if field not in _VALUE_SHOWN_FIELDS or value is None:
+        return None
+    if field in _DATE_FIELDS:
+        if isinstance(value, datetime):
+            value = value.date()
+        elif isinstance(value, str):
+            try:
+                value = date.fromisoformat(value.strip()[:10])
+            except ValueError:
+                return None
+        if isinstance(value, date):
+            return f"{value.day} {value:%b %Y}"
+        return None
+    text = str(value).strip().replace("_", " ")
+    if not text:
+        return None
+    return text.title() if field == "status" else text
+
+
+def describe_profile_change(field: str, value: Any = None) -> str:
+    """One line per changed field: "Status: Active" or "Passport number updated"."""
+    label = _FIELD_LABELS.get(field) or field.replace("_", " ").capitalize()
+    shown = _display_value(field, value)
+    return f"{label}: {shown}" if shown else f"{label} updated"
 
 
 def practice_display_name(practice: Mapping[str, Any]) -> str:
@@ -105,18 +153,24 @@ class PortalNotificationService:
         client_id: int,
         updated_fields: list[str],
         sent_by: str,
+        new_values: Mapping[str, Any] | None = None,
     ) -> int | None:
-        """Notify client that their profile was updated (significant fields only)."""
+        """Notify client that their profile was updated (significant fields only).
+
+        ``new_values`` carries the values just written; status and the
+        expiry/visa fields show theirs, personal data only its label.
+        """
         significant = [f for f in updated_fields if f in SIGNIFICANT_FIELDS]
         if not significant:
             return None
 
-        fields_display = ", ".join(f.replace("_", " ") for f in significant)
+        values = new_values or {}
+        changes = ". ".join(describe_profile_change(f, values.get(f)) for f in significant)
         return await self._insert_message(
             client_id=client_id,
             practice_id=None,
             subject="Profile updated",
-            content=f"Your profile has been updated: {fields_display}.",
+            content=f"Your profile has been updated. {changes}.",
             sent_by=sent_by,
         )
 

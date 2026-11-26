@@ -53,6 +53,7 @@ type RawPortalMessage = {
   readAt?: string | null;
   read_at?: string | null;
   is_read?: boolean;
+  is_system?: boolean;
 };
 
 type RawMessagesResponse = {
@@ -108,6 +109,7 @@ function normalizePortalMessage(message: RawPortalMessage): PortalMessage {
         ? (message.createdAt ?? message.created_at)
         : undefined) ??
       undefined,
+    isSystem: message.is_system === true ? true : undefined,
   };
 }
 

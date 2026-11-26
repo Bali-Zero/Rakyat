@@ -664,6 +664,29 @@ function MessageBubble({
   const isFromTeam = message.direction === "team_to_client";
   const isUnread = isFromTeam && !message.readAt;
 
+  // Automatic notifications are events in the thread, not a person writing:
+  // a small centred line with its time, no avatar, no name, no bubble
+  // (DAI-217). The content carries the whole event ("Your profile has been
+  // updated. Status: Active."), so the subject is not repeated.
+  if (message.isSystem) {
+    return (
+      <div className="flex justify-center" data-testid="portal-system-event">
+        <p
+          className="max-w-[85%] text-center text-xs px-3 py-1 rounded-full border"
+          style={{
+            borderColor: "var(--bz-border)",
+            color: "var(--tx-secondary)",
+          }}
+        >
+          {message.content}
+          <span className="ml-2 text-[10px]">
+            {formatTime(message.createdAt)}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn("flex gap-2", isFromTeam ? "justify-start" : "justify-end")}

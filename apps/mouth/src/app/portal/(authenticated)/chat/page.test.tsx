@@ -364,6 +364,73 @@ describe("ChatPage – day-theme semantic tokens (WS3 slice 6)", () => {
   });
 });
 
+// ─── System events are not staff chat (DAI-217) ───────────────────────────────
+//
+// "Profile updated" used to appear as a chat bubble signed by the staff member
+// whose edit triggered it. The API now flags those rows `is_system`; the
+// thread shows them as a centred event line with no name and no bubble.
+
+const WITH_SYSTEM_EVENT: MessagesResponse = {
+  messages: [
+    {
+      id: "s1",
+      subject: "Profile updated",
+      content: "Your profile has been updated. Status: Active.",
+      direction: "team_to_client",
+      sentBy: "Bali Zero",
+      createdAt: new Date().toISOString(),
+      readAt: new Date().toISOString(),
+      isSystem: true,
+    },
+    {
+      id: "t2",
+      content: "We received your passport scan.",
+      direction: "team_to_client",
+      sentBy: "Staff Fake",
+      createdAt: new Date().toISOString(),
+      readAt: new Date().toISOString(),
+    },
+  ],
+  total: 2,
+  unreadCount: 0,
+};
+
+describe("ChatPage – system events (DAI-217)", () => {
+  async function renderThread() {
+    mockGetMessages.mockResolvedValue(WITH_SYSTEM_EVENT);
+    await act(async () => {
+      render(<ChatPage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  it("renders a system message as a centred event without sender, subject or bubble", async () => {
+    await renderThread();
+    const events = screen.getAllByTestId("portal-system-event");
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.textContent).toContain(
+      "Your profile has been updated. Status: Active.",
+    );
+    expect(event.textContent).not.toContain("Bali Zero");
+    expect(event.textContent).not.toContain("Profile updated");
+    expect(event.querySelector("div.rounded-2xl")).toBeNull();
+    expect(event.querySelector("svg")).toBeNull();
+    expect(event.closest("div.rounded-2xl")).toBeNull();
+  });
+
+  it("keeps staff messages as named bubbles", async () => {
+    await renderThread();
+    const staffText = screen.getByText("We received your passport scan.");
+    const bubble = staffText.closest("div.rounded-2xl") as HTMLElement;
+    expect(bubble).not.toBeNull();
+    expect(bubble.textContent).toContain("Staff Fake");
+    expect(staffText.closest('[data-testid="portal-system-event"]')).toBeNull();
+  });
+});
+
 function render(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
