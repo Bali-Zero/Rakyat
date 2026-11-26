@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from backend.llm.claude_oauth_client import ClaudeOAuthResponse
+from backend.services.oracle import cross_oracle_synthesis_service as service_module
 from backend.services.oracle.cross_oracle_synthesis_service import (
     CrossOracleSynthesisService,
     OracleQuery,
@@ -82,6 +84,21 @@ IDR 120 million minimum operating setup.
 - Wrong license scope
 - Underestimated tax obligations
 """
+
+
+@pytest.fixture(autouse=True)
+def claude_lane(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Synthesis runs on the Claude lane; the tests never reach a model."""
+    calls: list[dict[str, Any]] = []
+
+    async def fake_complete_async(prompt: str, **kwargs: Any) -> ClaudeOAuthResponse:
+        calls.append({"prompt": prompt, **kwargs})
+        return ClaudeOAuthResponse(
+            text=SYNTHESIS_TEXT, token_label="synthetic", elapsed_s=0.0, attempts=1
+        )
+
+    monkeypatch.setattr(service_module, "complete_async", fake_complete_async)
+    return calls
 
 
 def make_service(
@@ -189,9 +206,10 @@ async def test_query_all_oracles_returns_results_keyed_by_collection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_synthesize_with_zantara_includes_successful_oracle_context() -> None:
-    zantara = FakeZantaraClient(SYNTHESIS_TEXT)
-    service = make_service(zantara=zantara)
+async def test_synthesize_with_zantara_includes_successful_oracle_context(
+    claude_lane: list[dict[str, Any]],
+) -> None:
+    service = make_service()
 
     result = await service.synthesize_with_zantara(
         query="open a restaurant",
@@ -206,9 +224,8 @@ async def test_synthesize_with_zantara_includes_successful_oracle_context() -> N
     )
 
     assert result == SYNTHESIS_TEXT
-    assert "KBLI 56101 restaurant classification" in zantara.calls[0]["prompt"]
-    assert "TAX GENIUS" not in zantara.calls[0]["prompt"]
-    assert zantara.calls[0]["max_tokens"] == 8192
+    assert "KBLI 56101 restaurant classification" in claude_lane[0]["prompt"]
+    assert "TAX GENIUS" not in claude_lane[0]["prompt"]
 
 
 @pytest.mark.asyncio

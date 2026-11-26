@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from backend.llm.claude_oauth_client import complete_async
+
 logger = logging.getLogger(__name__)
 
 
@@ -408,14 +410,13 @@ Keep the response comprehensive but concise (max 800 words).
         logger.info("🧠 Synthesizing with ZANTARA AI...")
 
         try:
-            # Call ZANTARA AI
-            response = await self.zantara.generate_text(
-                prompt=synthesis_prompt,
-                max_tokens=8192,
-                temperature=0.7,
+            # Claude through the console door of the linked organizations
+            response = await complete_async(
+                synthesis_prompt,
+                endpoint="cross_oracle_synthesis",
             )
 
-            synthesis_text = response.get("text", "")
+            synthesis_text = response.text
             logger.info(f"✅ Synthesis complete ({len(synthesis_text)} chars)")
 
             return synthesis_text
