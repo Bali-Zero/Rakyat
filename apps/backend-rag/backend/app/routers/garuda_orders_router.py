@@ -63,6 +63,11 @@ from backend.services.payments.port import (
 
 _FLAG_ENV_VAR = "GARUDA_PUBLIC_ENABLED"
 
+# The form of an order id, as the orders table's own CHECK states it
+# (migration 284). The payment webhook reads an order id from the body BEFORE
+# the signature is verified, and hands it to the database only in this form.
+_ORDER_ID_FORM = re.compile(r"[A-Za-z0-9_-]{16,128}")
+
 
 def _flag_enabled() -> bool:
     # CORRECTED (Gear-3 gate finding D, PR #4959): this used to read
@@ -658,9 +663,16 @@ async def receive_payment_webhook(
             routing_order_id = _routing_body.get("order_id") or _routing_body.get(
                 "external_id"
             )
-        except (ValueError, UnicodeDecodeError, AttributeError):
+        except (ValueError, UnicodeDecodeError, AttributeError, RecursionError):
+            # RecursionError: a deeply nested body. This parse runs BEFORE the
+            # signature check, so it must not be able to raise.
             routing_order_id = None
-        if isinstance(routing_order_id, str) and routing_order_id:
+        # Only an id in the form the orders table accepts is looked up. No
+        # other string can be an order of ours, and one that the driver or
+        # the server cannot take as text (a lone surrogate, a NUL) must not
+        # be able to fail the request before the signature check. Anything
+        # else is an unknown order: it stays with the selected provider.
+        if isinstance(routing_order_id, str) and _ORDER_ID_FORM.fullmatch(routing_order_id):
             order_provider = await repository.provider_name_for_order(routing_order_id)
             if order_provider and order_provider in providers:
                 provider = providers[order_provider]
