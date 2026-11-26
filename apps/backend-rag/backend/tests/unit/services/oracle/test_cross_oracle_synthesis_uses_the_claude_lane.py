@@ -68,7 +68,7 @@ async def test_synthesis_returns_the_model_text_from_the_claude_lane(
     lane.assert_awaited_once()
     args, kwargs = lane.await_args
     assert "Synthetic KBLI snippet" in args[0]
-    assert kwargs == {"endpoint": "cross_oracle_synthesis"}
+    assert kwargs == {"endpoint": "cross_oracle_synthesis", "max_output_tokens": 8192}
     assert "model" not in kwargs
     assert zantara.method_calls == []
 
@@ -87,3 +87,24 @@ async def test_lane_failure_falls_back_to_the_simple_synthesis(
     assert "Synthetic KBLI snippet" in out
     lane.assert_awaited_once()
     assert zantara.method_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("length", "expected"), [(10_000, 2000), (1999, 1999)])
+async def test_the_query_in_the_prompt_is_cut_to_the_bound(
+    monkeypatch: pytest.MonkeyPatch, length: int, expected: int
+) -> None:
+    lane = _patch_lane(
+        monkeypatch,
+        result=ClaudeOAuthResponse(
+            text=MODEL_TEXT, token_label="synthetic", elapsed_s=0.1, attempts=1
+        ),
+    )
+    service, _ = _service()
+    query = "q" * length
+
+    await service.synthesize_with_zantara(query, "business_setup", ORACLE_RESULTS)
+
+    prompt = lane.await_args.args[0]
+    line = next(x for x in prompt.splitlines() if x.startswith("User Query: "))
+    assert line == "User Query: " + "q" * expected

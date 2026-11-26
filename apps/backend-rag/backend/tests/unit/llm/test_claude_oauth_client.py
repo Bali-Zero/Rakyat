@@ -785,6 +785,53 @@ async def test_complete_async_argv_is_hardened(
         await mod.complete_async("ping", model="--evil-flag")
 
 
+@pytest.mark.asyncio
+async def test_complete_async_max_output_tokens_reaches_the_child_env(
+    monkeypatch: pytest.MonkeyPatch,
+    clear_oauth_env: None,
+) -> None:
+    from backend.llm import claude_oauth_client as mod
+
+    _seat(monkeypatch, 1, "tok1")
+    monkeypatch.delenv("CLAUDE_CODE_MAX_OUTPUT_TOKENS", raising=False)
+    envs: list[dict[str, str]] = []
+
+    async def fake_create(*args: Any, **kwargs: Any) -> Any:
+        envs.append(dict(kwargs["env"]))
+        return _fake_proc(stdout=b"ok", returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+    await mod.complete_async("ping", max_output_tokens=8192)
+    await mod.complete_async("ping")
+
+    assert envs[0].get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == "8192"
+    assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in envs[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [0, -1, True, "8192", 128001])
+async def test_complete_async_rejects_a_bad_max_output_tokens_before_any_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    clear_oauth_env: None,
+    bad: Any,
+) -> None:
+    from backend.llm import claude_oauth_client as mod
+
+    _seat(monkeypatch, 1, "tok1")
+    started: list[Any] = []
+
+    async def fake_create(*args: Any, **kwargs: Any) -> Any:
+        started.append(args)
+        return _fake_proc(stdout=b"ok", returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+    with pytest.raises(ValueError):
+        await mod.complete_async("ping", max_output_tokens=bad)
+    assert started == []
+
+
 def test_module_imports_without_anthropic_sdk() -> None:
     """Integrity test: the OAuth client must not import the Anthropic SDK.
 

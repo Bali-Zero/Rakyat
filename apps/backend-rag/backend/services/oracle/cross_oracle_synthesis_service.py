@@ -21,6 +21,10 @@ from backend.llm.claude_oauth_client import complete_async
 
 logger = logging.getLogger(__name__)
 
+# The synthesis call is bounded in output tokens and in query size.
+_SYNTHESIS_MAX_OUTPUT_TOKENS = 8192
+_SYNTHESIS_MAX_QUERY_CHARS = 2000
+
 
 @dataclass
 class OracleQuery:
@@ -369,7 +373,7 @@ class CrossOracleSynthesisService:
         synthesis_prompt = f"""You are synthesizing information from multiple specialized Oracle knowledge bases to answer a complex business query.
 
 Scenario Type: {scenario_type}
-User Query: {query}
+User Query: {query[:_SYNTHESIS_MAX_QUERY_CHARS]}
 
 Oracle Results:
 {context}
@@ -414,6 +418,7 @@ Keep the response comprehensive but concise (max 800 words).
             response = await complete_async(
                 synthesis_prompt,
                 endpoint="cross_oracle_synthesis",
+                max_output_tokens=_SYNTHESIS_MAX_OUTPUT_TOKENS,
             )
 
             synthesis_text = response.text
