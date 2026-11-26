@@ -23,6 +23,11 @@ logger = get_logger(__name__)
 
 _OFFICER_ROLES = frozenset({"director", "commissioner", "president_director"})
 
+# Practice statuses that mean the client actually obtained the permit. The
+# Visa History lists only these: an application still in progress or one that
+# was cancelled/rejected is not part of the client's permit history.
+_VISA_HISTORY_OBTAINED_STATUSES = ["completed", "expiring_soon", "pending_renewal", "expired"]
+
 
 def _link_role(link: Any) -> str:
     """client_company_links.role normalised: kita stores "Director", older rows "director"."""
@@ -546,9 +551,11 @@ class PortalDashboardMixin:
                     WHERE p.client_id = $1
                     AND pt.category = 'visa'
                     AND (p.client_visible IS TRUE OR p.client_visible IS NULL)
+                    AND p.status = ANY($2::text[])
                     ORDER BY p.start_date DESC
                     """,
                     client_id,
+                    _VISA_HISTORY_OBTAINED_STATUSES,
                 )
             except Exception as e:
                 if self._is_undefined_column_error(e):
@@ -560,9 +567,11 @@ class PortalDashboardMixin:
                         JOIN practice_types pt ON pt.id = p.practice_type_id
                         WHERE p.client_id = $1
                         AND pt.category = 'visa'
+                        AND p.status = ANY($2::text[])
                         ORDER BY p.start_date DESC
                         """,
                         client_id,
+                        _VISA_HISTORY_OBTAINED_STATUSES,
                     )
                 else:
                     raise
@@ -644,7 +653,7 @@ class PortalDashboardMixin:
                 period = f"{start} - {end}" if start and end else start or end or "-"
 
                 # Map status to frontend expected values
-                hist_status = "completed" if v["status"] == "completed" else "expired"
+                hist_status = "expired" if v["status"] == "expired" else "completed"
 
                 history.append(
                     {
