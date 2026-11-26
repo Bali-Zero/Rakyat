@@ -109,7 +109,7 @@ async def _mark_read(
 async def get_notifications(
     client: dict = Depends(get_current_client),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
-    limit: int = Query(default=50, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
 ) -> dict[str, Any]:
     """Get notifications for the authenticated client."""
     result = await _get_notifications(db_pool, client["client_id"], limit)
