@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { QdrantCollection, QdrantPoint } from "@/lib/api/admin/admin.types";
 import {
@@ -21,6 +21,8 @@ export function VectorExplorer() {
   const [selectedCol, setSelectedCol] = useState<string>("");
   const [points, setPoints] = useState<QdrantPoint[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadSequence = useRef(0);
 
   useEffect(() => {
     loadCollections();
@@ -38,19 +40,31 @@ export function VectorExplorer() {
   };
 
   const loadPoints = async (collection: string) => {
+    const sequence = ++loadSequence.current;
     setIsLoading(true);
     try {
       const data = await api.getQdrantPoints(collection, 20); // Limit 20
-      setPoints(data.points || []);
+      if (sequence === loadSequence.current) {
+        setPoints(data.points || []);
+        setLoadError(null);
+      }
     } catch (err) {
       logger.error("Failed to load points", {}, err as Error);
+      if (sequence === loadSequence.current) {
+        setPoints([]);
+        setLoadError(`Could not load ${collection}.`);
+      }
     } finally {
-      setIsLoading(false);
+      if (sequence === loadSequence.current) {
+        setIsLoading(false);
+      }
     }
   };
 
   const handleCollectionChange = (value: string) => {
     setSelectedCol(value);
+    setPoints([]);
+    setLoadError(null);
     loadPoints(value);
   };
 
@@ -92,7 +106,11 @@ export function VectorExplorer() {
 
       {/* Points Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {points.length > 0 ? (
+        {loadError ? (
+          <div className="col-span-full h-[300px] flex flex-col items-center justify-center border border-white/5 rounded-lg border-dashed text-muted-foreground gap-2">
+            {loadError}
+          </div>
+        ) : points.length > 0 ? (
           points.map((point) => (
             <Card
               key={point.id}
