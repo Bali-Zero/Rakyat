@@ -56,6 +56,10 @@ from backend.services.portal.upload_validation import DuplicateDocumentError
 
 logger = get_logger(__name__)
 
+# The stamp both upload paths put before a file's name in Drive: UTC
+# ``%Y%m%d_%H%M%S`` and an underscore.
+_UPLOAD_STAMP = re.compile(r"[0-9]{8}_[0-9]{6}_")
+
 
 class PortalDocumentsMixin:
     """Client-portal document listing + upload pipeline (Drive / OCR / virus scan)."""
@@ -301,9 +305,24 @@ class PortalDocumentsMixin:
 
         return {
             "content": drive_file.content,
-            "file_name": drive_file.file_name,
+            "file_name": self._name_without_upload_stamp(drive_file.file_name, row["file_name"]),
             "mime_type": drive_file.mime_type,
         }
+
+    @staticmethod
+    def _name_without_upload_stamp(drive_name: str, listed_name: str | None) -> str:
+        """The name a download carries.
+
+        A portal upload is stored in Drive as ``<YYYYMMDD_HHMMSS>_<name>`` (see the two
+        upload paths below), while its row, and so the vault, keeps ``<name>``. When the
+        Drive name is exactly that stamp followed by the listed name, the client gets the
+        listed name back: the stamp is ours, not theirs. Any other Drive name, a file the
+        team renamed for instance, is kept as it is.
+        """
+        stamp = _UPLOAD_STAMP.match(drive_name)
+        if listed_name and stamp and drive_name[stamp.end() :] == listed_name:
+            return listed_name
+        return drive_name
 
     async def _record_timeline_event(
         self,
