@@ -21,19 +21,20 @@ def _is_system(row: Any) -> bool:
     return bool(row.get("is_system_generated"))
 
 
-def _display_sender(row: Any) -> str | None:
+def _display_sender(row: Any, *, team_view: bool = False) -> str | None:
     """Sender line the client sees.
 
     Team messages store the staff email in ``sent_by``; the client sees the
     staff name instead, or "Bali Zero" when no name is on file (Antonello,
     30 Sep 2026). The stored ``sent_by`` is not changed. Client messages keep
     their own sender. Automatic notifications (``is_system_generated``) are
-    events, not a staff member writing: they always read "Bali Zero"
-    (DAI-217), whoever triggered them.
+    events, not a staff member writing: the client reads "Bali Zero"
+    (DAI-217), whoever triggered them. The staff view keeps the name of the
+    staff member whose edit triggered it (its own redesign is a separate task).
     """
     if row["direction"] != "team_to_client":
         return row["sent_by"]
-    if _is_system(row):
+    if _is_system(row) and not team_view:
         return TEAM_SENDER_FALLBACK
     name = (row.get("sender_name") or "").strip()
     return name or TEAM_SENDER_FALLBACK
@@ -56,8 +57,12 @@ class PortalMessagingMixin:
         offset: int = 0,
         *,
         current_user: ClientContext,
+        team_view: bool = False,
     ) -> dict[str, Any]:
         """Get message threads for client.
+
+        ``team_view`` is the staff route (``/api/crm/portal/clients/{id}/messages``):
+        same rows, but automatic notifications keep the triggering staff name.
 
         `send_message` has always refused a soft-deleted client; READING the
         thread did not, so a deleted client's session could still pull their
@@ -124,7 +129,7 @@ class PortalMessagingMixin:
                         "subject": m["subject"],
                         "content": m["content"],
                         "from_team": m["direction"] == "team_to_client",
-                        "sent_by": _display_sender(m),
+                        "sent_by": _display_sender(m, team_view=team_view),
                         "is_system": _is_system(m),
                         "is_read": m["read_at"] is not None,
                         "practice_id": m["practice_id"],

@@ -198,8 +198,7 @@ def _message_row(**overrides: object) -> dict[str, object]:
     }
 
 
-@pytest.mark.asyncio
-async def test_get_messages_marks_system_rows_and_signs_them_bali_zero() -> None:
+def _messages_service() -> tuple[PortalService, AsyncMock]:
     conn = AsyncMock()
     conn.fetchrow.return_value = {"id": CLIENT_ID}
     conn.fetch.return_value = [
@@ -210,8 +209,14 @@ async def test_get_messages_marks_system_rows_and_signs_them_bali_zero() -> None
     pool = MagicMock()
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    return PortalService(pool), conn
 
-    result = await PortalService(pool).get_messages(
+
+@pytest.mark.asyncio
+async def test_get_messages_marks_system_rows_and_signs_them_bali_zero() -> None:
+    service, conn = _messages_service()
+
+    result = await service.get_messages(
         CLIENT_ID,
         current_user={"client_id": CLIENT_ID, "email": "fake.client@example.test"},
     )
@@ -223,3 +228,29 @@ async def test_get_messages_marks_system_rows_and_signs_them_bali_zero() -> None
     assert system["from_team"] is True
     assert staff["is_system"] is False
     assert staff["sent_by"] == "Staff Fake"
+
+
+@pytest.mark.asyncio
+async def test_staff_view_keeps_the_triggering_staff_name() -> None:
+    """The kita thread is not redesigned here: same rows, same sender as before."""
+    service, _conn = _messages_service()
+
+    result = await service.get_messages(
+        CLIENT_ID,
+        current_user={"client_id": CLIENT_ID, "email": STAFF_EMAIL, "impersonating": True},
+        team_view=True,
+    )
+
+    system, staff = result["messages"]
+    assert system["is_system"] is True
+    assert system["sent_by"] == "Staff Fake"
+    assert staff["sent_by"] == "Staff Fake"
+
+
+def test_the_staff_route_asks_for_the_staff_view() -> None:
+    import inspect
+
+    from backend.app.routers import team_invites_messaging
+
+    source = inspect.getsource(team_invites_messaging.get_client_messages)
+    assert "team_view=True" in source

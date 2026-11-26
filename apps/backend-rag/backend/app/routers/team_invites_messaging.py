@@ -489,6 +489,7 @@ async def get_client_messages(
             limit=limit,
             offset=offset,
             current_user=ctx,
+            team_view=True,
         )
         return {
             "success": True,
