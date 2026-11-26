@@ -75,6 +75,42 @@ def _row_to_alert(record: asyncpg.Record) -> AlertRow:
     )
 
 
+# Lowest first: the order alert_dedup.should_promote ranks severities by.
+_SEVERITY_ORDER: tuple[str, ...] = ("info", "warning", "urgent", "critical")
+
+_INSERT_SQL = """
+    INSERT INTO compliance_alerts (
+      alert_id, client_id, category, severity, status,
+      deadline, days_until, compliance_item_ref, dedup_key,
+      message_it, message_en, message_id,
+      suggested_action, estimated_cost_idr, evidence_refs, nb2_ref
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16
+    ) RETURNING *
+"""
+
+
+def _insert_args(row: AlertRow) -> tuple[Any, ...]:
+    return (
+        row.alert_id,
+        row.client_id,
+        row.category,
+        row.severity,
+        row.status,
+        row.deadline,
+        row.days_until,
+        row.compliance_item_ref,
+        row.dedup_key,
+        row.message_it,
+        row.message_en,
+        row.message_id,
+        row.suggested_action,
+        row.estimated_cost_idr,
+        json.dumps(row.evidence_refs or []),
+        row.nb2_ref,
+    )
+
+
 class AlertRepository(BaseRepository):
     """CRUD for compliance_alerts."""
 
@@ -98,36 +134,21 @@ class AlertRepository(BaseRepository):
             return await getattr(conn, fn_name)(query, *args)
 
     async def insert(self, row: AlertRow) -> AlertRow:
-        record = await self._exec(
-            "fetchrow",
-            """
-            INSERT INTO compliance_alerts (
-              alert_id, client_id, category, severity, status,
-              deadline, days_until, compliance_item_ref, dedup_key,
-              message_it, message_en, message_id,
-              suggested_action, estimated_cost_idr, evidence_refs, nb2_ref
-            ) VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16
-            ) RETURNING *
-            """,
-            row.alert_id,
-            row.client_id,
-            row.category,
-            row.severity,
-            row.status,
-            row.deadline,
-            row.days_until,
-            row.compliance_item_ref,
-            row.dedup_key,
-            row.message_it,
-            row.message_en,
-            row.message_id,
-            row.suggested_action,
-            row.estimated_cost_idr,
-            json.dumps(row.evidence_refs or []),
-            row.nb2_ref,
-        )
+        record = await self._exec("fetchrow", _INSERT_SQL, *_insert_args(row))
         return _row_to_alert(record)
+
+    async def replace_passed(self, stored_alert_id: str, row: AlertRow) -> AlertRow | None:
+        """Close an open alert whose deadline has passed and insert ``row`` in its place.
+
+        Both statements run in one transaction, so an insert that fails leaves the stored
+        alert open. The stored alert is closed as ``expired`` only while it is open, its
+        deadline is before today on the database clock (the clock the forecast window is
+        read with) and before ``row.deadline``; otherwise nothing changes and None is returned.
+        """
+        if self._conn is not None:
+            return await _replace_passed_on(self._conn, stored_alert_id, row)
+        async with self.db_pool.acquire() as conn:
+            return await _replace_passed_on(conn, stored_alert_id, row)
 
     async def find_active_by_dedup_key(self, dedup_key: str) -> AlertRow | None:
         record = await self._exec(
@@ -156,22 +177,52 @@ class AlertRepository(BaseRepository):
         *,
         new_severity: str,
         new_days_until: int,
-    ) -> AlertRow:
+        deadline: date | None = None,
+        message_it: str | None = None,
+        message_en: str | None = None,
+        message_id: str | None = None,
+        suggested_action: str | None = None,
+        estimated_cost_idr: int | None = None,
+    ) -> AlertRow | None:
+        """Raise an open alert's severity; every other value left as None keeps the stored one.
+
+        The rise is decided by the statement itself, against the row as it is when written:
+        only an open alert whose stored severity is strictly lower changes. Returns None when
+        that is not so (another run raised it first, or it was closed), and raises
+        LookupError when the alert does not exist.
+        """
         record = await self._exec(
             "fetchrow",
             """
             UPDATE compliance_alerts
                SET severity = $2,
                    days_until = $3,
+                   deadline = COALESCE($4::date, deadline),
+                   message_it = COALESCE($5::text, message_it),
+                   message_en = COALESCE($6::text, message_en),
+                   message_id = COALESCE($7::text, message_id),
+                   suggested_action = COALESCE($8::text, suggested_action),
+                   estimated_cost_idr = COALESCE($9::bigint, estimated_cost_idr),
                    upgrade_count = upgrade_count + 1
              WHERE alert_id = $1
+               AND status IN ('pending','sent','acknowledged')
+               AND array_position($10::text[], severity) < array_position($10::text[], $2::text)
             RETURNING *
             """,
             alert_id,
             new_severity,
             new_days_until,
+            deadline,
+            message_it,
+            message_en,
+            message_id,
+            suggested_action,
+            estimated_cost_idr,
+            list(_SEVERITY_ORDER),
         )
         if record is None:
+            if await self.get(alert_id) is not None:
+                return None
             raise LookupError(f"alert_id {alert_id} not found")
         return _row_to_alert(record)
 
@@ -221,6 +272,29 @@ class AlertRepository(BaseRepository):
             offset,
         )
         return [_row_to_alert(r) for r in records]
+
+
+async def _replace_passed_on(
+    conn: asyncpg.Connection, stored_alert_id: str, row: AlertRow
+) -> AlertRow | None:
+    async with conn.transaction():
+        closed = await conn.fetchval(
+            """
+            UPDATE compliance_alerts
+               SET status = 'expired'
+             WHERE alert_id = $1
+               AND status IN ('pending','sent','acknowledged')
+               AND deadline < CURRENT_DATE
+               AND deadline < $2::date
+            RETURNING alert_id
+            """,
+            stored_alert_id,
+            row.deadline,
+        )
+        if closed is None:
+            return None
+        record = await conn.fetchrow(_INSERT_SQL, *_insert_args(row))
+    return _row_to_alert(record)
 
 
 __all__ = ["AlertRepository", "AlertRow"]

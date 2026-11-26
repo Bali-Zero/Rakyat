@@ -44,6 +44,13 @@ _DOCTYPE_TO_CATEGORY: dict[str, str] = {
     "e33_maintenance": "guarantee_proof",
 }
 
+# Categories whose dedup key stands for a document date of the client row (the visa and KITAS
+# dates share the visa key, the passport has its own). A later date under such a key means the
+# document was renewed, so an open alert whose deadline has passed gives way to it. License and
+# E33 guarantee keys gather several obligations of one client, and a passed one may still be
+# outstanding: those keep their alert.
+_ONE_DOCUMENT_CATEGORIES: frozenset[str] = frozenset({"visa_expiry", "document_expiry"})
+
 
 def _urgency_to_severity(urgency: str) -> str:
     # PredictiveEngine.urgency_level strings: "info" | "warning" | "urgent" | "critical"
@@ -154,28 +161,82 @@ class AlertsEngine:
 
         existing = await self._repo.find_active_by_dedup_key(dedup_key)
         new_severity_str = _urgency_to_severity(fc.urgency_level)
-
-        if existing is not None:
-            old_sev = AlertSeverity(existing.severity)
-            new_sev = AlertSeverity(new_severity_str)
-            if should_promote(old_sev, new_sev):
-                promoted = await self._repo.promote(
-                    existing.alert_id,
-                    new_severity=new_severity_str,
-                    new_days_until=fc.days_until_expiry,
-                )
-                await self._safe_dispatch(promoted)
-                return promoted
-            # Same/lower severity → return existing, no dispatch.
-            return existing
-
-        # Build new alert
-        alert_id = f"alert_{category}_{fc.client_id}_{uuid.uuid4().hex[:8]}"
         # Language ENFORCED ENGLISH-ONLY 2026-05-26 per operator decree (was IT default).
         # client_lang_resolver kept for backward compat but ignored for email dispatch.
         lang: str = "en"
         _ = client_lang_resolver  # silence unused warning
 
+        if (
+            existing is not None
+            and category in _ONE_DOCUMENT_CATEGORIES
+            and fc.expiry_date > existing.deadline
+        ):
+            # The stored alert may be about a deadline that has passed. The new alert is
+            # rendered first, so a failed render leaves the stored one open; the repository
+            # then closes the stored alert and inserts this one together, or changes nothing.
+            row = self._new_row(fc, category, dedup_key, reporting_period, new_severity_str, lang)
+            if row is not None:
+                try:
+                    replaced = await self._repo.replace_passed(existing.alert_id, row)
+                except asyncpg.UniqueViolationError:
+                    return await self._repo.find_active_by_dedup_key(dedup_key)
+                if replaced is not None:
+                    await self._safe_dispatch(replaced)
+                    return replaced
+                # Nothing was replaced: the stored alert is not passed, or another run has
+                # replaced or closed it since this run read it. The key is read once more. A
+                # run writes to, and sends for, only the alert it read, or a new one when the
+                # key has none: an alert another run wrote is returned as found.
+                current = await self._repo.find_active_by_dedup_key(dedup_key)
+                if current is not None and current.alert_id != existing.alert_id:
+                    return current
+                existing = current
+
+        if existing is not None:
+            old_sev = AlertSeverity(existing.severity)
+            new_sev = AlertSeverity(new_severity_str)
+            if should_promote(old_sev, new_sev):
+                # A promoted alert is dispatched, so it carries this forecast's deadline, texts
+                # and cost; a failed render (logged) or an unknown cost keeps the stored value.
+                texts = self._render(fc, category, reporting_period, lang) or {}
+                promoted = await self._repo.promote(
+                    existing.alert_id,
+                    new_severity=new_severity_str,
+                    new_days_until=fc.days_until_expiry,
+                    deadline=fc.expiry_date,
+                    estimated_cost_idr=self._cost(fc),
+                    **texts,
+                )
+                if promoted is None:
+                    # Refused by the statement: another run raised it as high or higher, or
+                    # closed it, after this one read it. Nothing is sent.
+                    return await self._repo.find_active_by_dedup_key(dedup_key)
+                await self._safe_dispatch(promoted)
+                return promoted
+            # Same/lower severity → return existing, no dispatch.
+            return existing
+
+        row = self._new_row(fc, category, dedup_key, reporting_period, new_severity_str, lang)
+        if row is None:
+            return None
+
+        try:
+            inserted = await self._repo.insert(row)
+        except asyncpg.UniqueViolationError:
+            # Race: someone else inserted the same dedup_key. Re-query and return.
+            existing = await self._repo.find_active_by_dedup_key(dedup_key)
+            return existing
+        await self._safe_dispatch(inserted)
+        return inserted
+
+    def _render(
+        self,
+        fc: ComplianceForecast,
+        category: str,
+        reporting_period: str | None,
+        lang: str,
+    ) -> dict[str, str] | None:
+        """The alert texts of this forecast, or None (logged) when a template fails."""
         # Render messages in all three langs (column-per-lang snapshot).
         render_kwargs: dict[str, Any] = {
             "days_until": fc.days_until_expiry,
@@ -200,7 +261,14 @@ class AlertsEngine:
                 exc,
             )
             return None
+        return {
+            "message_it": message_it,
+            "message_en": message_en,
+            "message_id": message_id,
+            "suggested_action": action,
+        }
 
+    def _cost(self, fc: ComplianceForecast) -> int | None:
         # Pricing — PricingTool only, NEVER hardcoded.
         cost: int | None = None
         if fc.renewal_pricing_key and self._pricing is not None:
@@ -208,37 +276,37 @@ class AlertsEngine:
                 cost = self._pricing.get_price(fc.renewal_pricing_key)
             except Exception as exc:
                 logger.warning("pricing lookup failed for %s: %s", fc.renewal_pricing_key, exc)
+        return cost
 
-        # NB-2 ref (if rule carries one)
-        nb2_ref = self._lookup_nb2_ref(compliance_item_ref)
-
-        row = AlertRow(
-            alert_id=alert_id,
+    def _new_row(
+        self,
+        fc: ComplianceForecast,
+        category: str,
+        dedup_key: str,
+        reporting_period: str | None,
+        severity: str,
+        lang: str,
+    ) -> AlertRow | None:
+        """A new pending alert for this forecast, or None when its texts cannot be rendered."""
+        texts = self._render(fc, category, reporting_period, lang)
+        if texts is None:
+            return None
+        return AlertRow(
+            alert_id=f"alert_{category}_{fc.client_id}_{uuid.uuid4().hex[:8]}",
             client_id=fc.client_id,
             category=category,
-            severity=new_severity_str,
+            severity=severity,
             status="pending",
             deadline=fc.expiry_date,
             days_until=fc.days_until_expiry,
-            compliance_item_ref=compliance_item_ref,
+            compliance_item_ref=fc.matched_rule_id,
             dedup_key=dedup_key,
-            message_it=message_it,
-            message_en=message_en,
-            message_id=message_id,
-            suggested_action=action,
-            estimated_cost_idr=cost,
+            estimated_cost_idr=self._cost(fc),
             evidence_refs=[],
-            nb2_ref=nb2_ref,
+            # NB-2 ref (if rule carries one)
+            nb2_ref=self._lookup_nb2_ref(fc.matched_rule_id),
+            **texts,
         )
-
-        try:
-            inserted = await self._repo.insert(row)
-        except asyncpg.UniqueViolationError:
-            # Race: someone else inserted the same dedup_key. Re-query and return.
-            existing = await self._repo.find_active_by_dedup_key(dedup_key)
-            return existing
-        await self._safe_dispatch(inserted)
-        return inserted
 
     async def _safe_dispatch(self, alert: AlertRow) -> None:
         if self._dispatcher is None:
