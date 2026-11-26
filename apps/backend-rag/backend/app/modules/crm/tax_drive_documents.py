@@ -535,33 +535,36 @@ async def _sync_trashed_registrations(
 ) -> None:
     """Mark matching CRM client/company document registrations deleted & archived after Drive trash."""
     async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            UPDATE documents
-            SET status = 'deleted',
-                is_archived = true,
-                updated_at = NOW()
-            WHERE client_id = $1
-              AND file_id = $2
-              AND (COALESCE(is_archived, false) = false OR COALESCE(status, '') <> 'deleted')
-            """,
-            client_id,
-            file_id,
-        )
-        if linked_company_ids:
+        # One transaction: both registrations retire together or not at all, so a
+        # retried delete never meets a half-synced pair.
+        async with conn.transaction():
             await conn.execute(
                 """
-                UPDATE company_documents
+                UPDATE documents
                 SET status = 'deleted',
                     is_archived = true,
                     updated_at = NOW()
-                WHERE company_id = ANY($1::int[])
-                  AND google_drive_file_id = $2
+                WHERE client_id = $1
+                  AND file_id = $2
                   AND (COALESCE(is_archived, false) = false OR COALESCE(status, '') <> 'deleted')
                 """,
-                linked_company_ids,
+                client_id,
                 file_id,
             )
+            if linked_company_ids:
+                await conn.execute(
+                    """
+                    UPDATE company_documents
+                    SET status = 'deleted',
+                        is_archived = true,
+                        updated_at = NOW()
+                    WHERE company_id = ANY($1::int[])
+                      AND google_drive_file_id = $2
+                      AND (COALESCE(is_archived, false) = false OR COALESCE(status, '') <> 'deleted')
+                    """,
+                    linked_company_ids,
+                    file_id,
+                )
 
 
 async def _fetch_metadata_or_deny(
@@ -645,8 +648,14 @@ async def _verify_target_file(
     drive: ServiceAccountDriveService,
     file_id: str,
     allowed_roots: set[str],
+    *,
+    allow_trashed: bool = False,
 ) -> dict[str, Any]:
-    """Confirm `file_id` is an active non-folder file strictly under `allowed_roots`."""
+    """Confirm `file_id` is an active non-folder file strictly under `allowed_roots`.
+
+    `allow_trashed` lets the DELETE route retry a delete whose Drive trash succeeded but
+    whose CRM sync failed; the scope checks above it are unchanged.
+    """
     if file_id in allowed_roots:
         raise HTTPException(status_code=400, detail="Folders cannot be modified or deleted here")
 
@@ -657,7 +666,7 @@ async def _verify_target_file(
             status_code=403,
             detail="Document does not belong to this client.",
         )
-    if meta.get("trashed") is True:
+    if meta.get("trashed") is True and not allow_trashed:
         raise HTTPException(status_code=404, detail="Document not found")
     mime = meta.get("mimeType")
     if mime == _FOLDER_MIME:
@@ -895,20 +904,25 @@ async def delete_client_tax_document(
     clean_file_id = _assert_drive_id(file_id, "file_id")
 
     drive = drive_factory()
-    await _verify_target_file(drive, clean_file_id, scope.allowed_roots)
+    meta = await _verify_target_file(drive, clean_file_id, scope.allowed_roots, allow_trashed=True)
 
-    try:
-        await drive.trash_file(clean_file_id)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error(
-            "tax_drive.trash_failed client_id=%s file_id=%s error=%s",
-            client_id,
-            clean_file_id,
-            type(exc).__name__,
-        )
-        raise HTTPException(status_code=502, detail="Failed to delete document in Drive") from None
+    # Already trashed: an earlier delete trashed it but its CRM sync failed. Skip the Drive
+    # call and only re-run the sync.
+    if meta.get("trashed") is not True:
+        try:
+            await drive.trash_file(clean_file_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(
+                "tax_drive.trash_failed client_id=%s file_id=%s error=%s",
+                client_id,
+                clean_file_id,
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=502, detail="Failed to delete document in Drive"
+            ) from None
 
     try:
         await _sync_trashed_registrations(
