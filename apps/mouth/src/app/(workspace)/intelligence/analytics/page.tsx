@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   intelligenceApi,
   IntelligenceAnalytics,
@@ -35,6 +35,7 @@ export default function IntelligenceAnalyticsPage() {
   );
   const [loading, setLoading] = useState(true);
   const [periodDays, setPeriodDays] = useState(30);
+  const requestSequence = useRef(0);
   const toast = useToast();
 
   useEffect(() => {
@@ -47,6 +48,7 @@ export default function IntelligenceAnalyticsPage() {
   }, [periodDays]);
 
   const loadAnalytics = async () => {
+    const sequence = ++requestSequence.current;
     logger.info("Loading analytics", {
       component: "IntelligenceAnalyticsPage",
       action: "load_analytics",
@@ -56,6 +58,7 @@ export default function IntelligenceAnalyticsPage() {
 
     try {
       const data = await intelligenceApi.getAnalytics(periodDays);
+      if (sequence !== requestSequence.current) return;
       setAnalytics(data);
 
       logger.info("Analytics loaded successfully", {
@@ -67,6 +70,8 @@ export default function IntelligenceAnalyticsPage() {
         },
       });
     } catch (error) {
+      if (sequence !== requestSequence.current) return;
+      setAnalytics(null);
       logger.error(
         "Failed to load analytics",
         {
@@ -81,7 +86,7 @@ export default function IntelligenceAnalyticsPage() {
         "Could not fetch analytics data. Please try again.",
       );
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   };
 
@@ -247,6 +252,7 @@ export default function IntelligenceAnalyticsPage() {
                     {new Date(day.date).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
+                      timeZone: "UTC",
                     })}
                   </div>
                   <div className="flex-1 flex items-end gap-1 h-32">
