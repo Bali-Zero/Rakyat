@@ -640,6 +640,11 @@ async def create_eligibility_check(
             sanitize_for_log(payload.case_type),
         )
         return _error("PRICE_UNRESOLVABLE")
+    except OverflowError:
+        # The engine adds and subtracts days before any window check, so a date
+        # at the very edge of the calendar cannot be computed with. That is an
+        # invalid request, not a verdict, and it used to escape as a 500.
+        return _error("INVALID_REQUEST")
 
     canonical_request = payload.model_dump(mode="json")
     try:
