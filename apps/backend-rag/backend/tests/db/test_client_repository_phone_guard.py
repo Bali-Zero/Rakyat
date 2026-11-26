@@ -180,3 +180,17 @@ async def test_create_insert_names_no_attribution_column_and_ignores_the_keys():
     columns = args[0].split("INSERT INTO clients (", 1)[1].split(")", 1)[0]
     assert [c.strip() for c in columns.split(",")].count("lead_source") == 1
     assert values[[c.strip() for c in columns.split(",")].index("lead_source")] is None
+
+
+@pytest.mark.asyncio
+async def test_create_with_an_empty_lead_source_stores_none():
+    """Innocence: an empty-string lead_source is stored as NULL, as on main."""
+    repo, conn = _make_repo(dup_row=None)
+
+    await repo.create_client_with_details({"full_name": "New Client", "lead_source": ""})
+
+    sql = conn.fetchrow.await_args_list[0].args[0]
+    values = conn.fetchrow.await_args_list[0].args[1:]
+    columns = sql.split("INSERT INTO clients (", 1)[1].split(")", 1)[0]
+    lead_source = [c.strip() for c in columns.split(",")].index("lead_source")
+    assert values[lead_source] is None

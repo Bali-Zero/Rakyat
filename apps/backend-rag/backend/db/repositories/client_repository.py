@@ -279,7 +279,7 @@ class ClientRepository(BaseRepository):
                     client_data.get("tags", []),
                     client_data.get("custom_fields", {}),
                     client_data.get("created_by"),
-                    client_data.get("lead_source"),
+                    client_data.get("lead_source") or None,
                     client_data.get("service_interest", []),
                     client_data.get("tax_id"),
                     _parse_document_date(client_data.get("passport_expiry")),
