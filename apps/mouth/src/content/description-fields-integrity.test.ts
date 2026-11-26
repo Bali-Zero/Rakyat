@@ -67,7 +67,18 @@ const KEY_LEAK = new RegExp(`\\b(${SCHEMA_KEYS.join("|")})\\s*:`);
 
 const FIELDS = ["seoDescription", "excerpt"] as const;
 
-function descriptions(): { rel: string; field: string; value: string }[] {
+// `description` is a third way in: generate-llms-full.ts:106 reads
+// `frontmatter.excerpt || frontmatter.description`, so an article without an
+// excerpt hands its `description` to the AI-ingestion export as its summary.
+// Measured 2026-11-26: 104 Indonesian files (.id.mdx) opened that
+// value with a markdown heading, and 21 published Indonesian articles among them
+// have no excerpt, so llms-id.txt opened their "RINGKASAN AI ZANTARA" with `#`. The
+// heading rule covers it; the other rules still judge the two meta fields.
+const HEADING_FIELDS = [...FIELDS, "description"] as const;
+
+function descriptions(
+  fields: readonly string[] = FIELDS,
+): { rel: string; field: string; value: string }[] {
   const out: { rel: string; field: string; value: string }[] = [];
   for (const folder of fs.readdirSync(ARTICLES_PATH)) {
     const dir = path.join(ARTICLES_PATH, folder);
@@ -81,7 +92,7 @@ function descriptions(): { rel: string; field: string; value: string }[] {
       } catch {
         data = { seoDescription: "<<UNPARSEABLE FRONTMATTER>>" };
       }
-      for (const field of FIELDS) {
+      for (const field of fields) {
         const value = data[field];
         // An ABSENT value is legal — the page falls back, and for the files
         // whose value was corrupt beyond recovery that absence IS the cure.
@@ -103,7 +114,7 @@ describe("description field integrity", () => {
   });
 
   it("no meta description opens with a markdown heading", () => {
-    const offenders = rows
+    const offenders = descriptions(HEADING_FIELDS)
       .filter((r) => /^\s*#{1,6}\s/.test(r.value))
       .map(
         (r) =>
