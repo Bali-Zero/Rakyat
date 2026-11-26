@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from datetime import datetime, timezone
+from html import escape
 from typing import Any
 
 import httpx
@@ -336,7 +337,7 @@ class LKPMDeadlineNotifier:
 <html>
 <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
 
-<p>Halo {name}! \U0001f44b</p>
+<p>Halo {escape(str(name))}! \U0001f44b</p>
 
 <p>Mau ngingetin aja \u2014 ada <strong>{n}</strong> laporan LKPM yang belum selesai.
 Yuk dicek biar nggak kelewat deadline!</p>
@@ -372,10 +373,10 @@ Yuk dicek biar nggak kelewat deadline!</p>
         bg = _row_color(days)
         return (
             f'<tr style="background:{bg};">'
-            f"<td style='padding:8px;'>{row['company_name']}</td>"
-            f"<td style='padding:8px;'>{row.get('oss_username', '')}</td>"
-            f"<td style='padding:8px;'>{row.get('status', '')}</td>"
-            f"<td style='padding:8px; font-weight:bold;'>{days} hari</td>"
+            f"<td style='padding:8px;'>{escape(str(row['company_name']))}</td>"
+            f"<td style='padding:8px;'>{escape(str(row.get('oss_username', '')))}</td>"
+            f"<td style='padding:8px;'>{escape(str(row.get('status', '')))}</td>"
+            f"<td style='padding:8px; font-weight:bold;'>{escape(str(days))} hari</td>"
             f"</tr>"
         )
 
