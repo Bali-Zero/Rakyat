@@ -195,6 +195,7 @@ class IGPublisher(Publisher):
         self.graph_base = (graph_base or DEFAULT_GRAPH_BASE).rstrip("/")
         self._client = http_client
         self.timeout = timeout or DEFAULT_TIMEOUT
+        self._publish_status: int | None = None
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -258,6 +259,9 @@ class IGPublisher(Publisher):
             )
 
         client = self._client or _get_module_client(self.timeout)
+        # Set just before the media_publish request goes out: any failure
+        # after that point may hide a post that is already live.
+        publish_sent = False
 
         try:
             items = _build_items(draft)
@@ -287,13 +291,20 @@ class IGPublisher(Publisher):
                     error="create_parent failed",
                 )
 
+            publish_sent = True
+            self._publish_status = None
             media_id = await self._publish_parent(client, parent_id)
             if not media_id:
+                status = self._publish_status
+                # A 4xx is Meta refusing the request: nothing was published.
+                # Anything else (5xx, 200 without a usable id) is unknown.
+                rejected = status is not None and 400 <= status < 500
                 return PublishResult(
                     ok=False,
                     platform=Platform.INSTAGRAM,
                     draft_id=draft.draft_id,
                     error="media_publish failed",
+                    ambiguous=not rejected,
                 )
 
             permalink = await self._fetch_permalink(client, media_id)
@@ -315,6 +326,7 @@ class IGPublisher(Publisher):
                 platform=Platform.INSTAGRAM,
                 draft_id=draft.draft_id,
                 error=f"{type(exc).__name__}: {exc}",
+                ambiguous=publish_sent,
             )
 
     async def delete(self, post_external_id: str) -> bool:
@@ -384,6 +396,7 @@ class IGPublisher(Publisher):
             params=params,
             timeout=self.timeout,
         )
+        self._publish_status = resp.status_code
         return _parse_id(resp)
 
     async def _fetch_permalink(

@@ -93,6 +93,9 @@ class PublishResult:
     attempts: int = 0
     error: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    # True when the failure happened once the final publish request had been
+    # sent, so the post may be live although the call reported an error.
+    ambiguous: bool = False
 
 
 class Publisher(ABC):

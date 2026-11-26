@@ -73,6 +73,9 @@ logger = get_logger(__name__)
 _IG_GRAPH_BASE = "https://graph.instagram.com/v22.0"
 
 _PLATFORM = "instagram"
+# Ledger state for a publish that failed once media_publish had been sent: the
+# post may be live, so the precondition refuses a re-arm until a human checks.
+_STATE_AMBIGUOUS = "blocked_manual_gate"
 
 # Deterministic namespace so the same slug always maps to the same draft UUID
 # (mirrors scripts/wr2_ig_publish.py:_WR2_DRAFT_NAMESPACE).
@@ -268,6 +271,9 @@ async def _ledger_precondition(
 
     action == "proceed" -> a 'planned' row was written; caller may publish.
     action == "refuse"  -> already published/recorded; caller MUST NOT publish.
+    action == "hold"    -> a prior attempt failed AFTER media_publish was sent
+                           (state 'blocked_manual_gate'): the post may be live,
+                           a human must check Instagram; caller MUST NOT publish.
 
     Fails closed (raises HTTPException 503) if the ledger DB is unreachable or
     the carousel_runs FK can't be satisfied — NEVER silently skips the guard.
@@ -322,6 +328,14 @@ async def _ledger_precondition(
             )
             return carousel_id, "refuse", prior_url
 
+        if prior is not None and prior["state"] == _STATE_AMBIGUOUS:
+            logger.warning(
+                "wr2_publish: HOLD key=%s prior publish outcome unknown (%s)",
+                idempotency_key,
+                prior["state"],
+            )
+            return carousel_id, "hold", None
+
         await conn.execute(
             "INSERT INTO wr2_publish_attempts "
             "(carousel_id, platform, content_hash, state, idempotency_key) "
@@ -341,6 +355,14 @@ async def _ledger_precondition(
         return carousel_id, "proceed", None
     finally:
         await conn.close()
+
+
+def _affected_rows(status: object) -> int | None:
+    """Row count from an asyncpg command tag ('UPDATE 1'); None if unreadable."""
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except (ValueError, IndexError):
+        return None
 
 
 async def _ledger_record_result(
@@ -363,15 +385,24 @@ async def _ledger_record_result(
         conn = await asyncpg.connect(dsn)
         try:
             idempotency_key = f"{carousel_id}:{_PLATFORM}:{content_hash[:16]}"
-            await conn.execute(
+            status = await conn.execute(
                 "UPDATE wr2_publish_attempts "
                 "SET state = $1, provider_response = $2::text::jsonb, updated_at = now() "
-                "WHERE idempotency_key = $3",
+                "WHERE idempotency_key = $3 AND state NOT IN ('published', 'recorded')",
                 state,
                 json.dumps(provider_response or {}),
                 idempotency_key,
             )
-            logger.info("wr2_publish: ledger updated state=%s key=%s", state, idempotency_key)
+            if _affected_rows(status) == 0:
+                # A terminal success is never overwritten by a later record.
+                logger.warning(
+                    "wr2_publish: ledger update skipped, row already terminal "
+                    "or missing (wanted state=%s) key=%s",
+                    state,
+                    idempotency_key,
+                )
+            else:
+                logger.info("wr2_publish: ledger updated state=%s key=%s", state, idempotency_key)
         finally:
             await conn.close()
     except Exception as exc:  # bookkeeping must never crash a live post
@@ -530,6 +561,18 @@ async def publish_ig(body: PublishIGRequest) -> dict[str, Any]:
     carousel_id, action, prior_url = await _ledger_precondition(
         slug=slug, content_hash=content_hash
     )
+    if action == "hold":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "publish_outcome_unknown",
+                "message": (
+                    "A prior attempt for this carousel+content failed after the "
+                    "Instagram publish request was sent; the post may already be "
+                    "live. Check the Instagram account before publishing again."
+                ),
+            },
+        )
     if action == "refuse":
         raise HTTPException(
             status_code=409,
@@ -569,8 +612,8 @@ async def publish_ig(body: PublishIGRequest) -> dict[str, Any]:
         await _ledger_record_result(
             carousel_id=carousel_id,
             content_hash=content_hash,
-            state="failed",
-            provider_response={"error": result.error},
+            state=_STATE_AMBIGUOUS if result.ambiguous else "failed",
+            provider_response={"error": result.error, "ambiguous": result.ambiguous},
         )
         # The publisher's approval-gate refusal and validation failures both
         # surface here as result.ok == False — return a clear 4xx, not a 500.
