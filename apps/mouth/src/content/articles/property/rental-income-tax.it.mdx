@@ -75,7 +75,7 @@ tableOfContents: true
 canonicalUrl: "https://balizero.com/it/property/rental-income-tax"
 ogImage: "/static/insights/property/rental-tax.jpg"
 twitterCard: "summary_large_image"
-source_sha256: "c7fac600d656f49e409f9788919df19d7ede5a0c4309b0ac334e251eaba0b1ae"
+source_sha256: "c62a887a1c2ce0fd0e8dd56bc22daa120991db92d566b7bf16d5643c8f609fdc"
 ---
 
 import {
@@ -86,16 +86,16 @@ import {
   AskZantara,
 } from "@/components/insights/interactive";
 
-# Tassa sul Reddito da Locazione in Indonesia 2026: Guida per il Proprietario
+# Imposta sui Redditi da Locazione in Indonesia 2026: Guida per Proprietari
 
-Se affitti una proprietà in Indonesia, devi capire come viene tassato il reddito da locazione. Ecco cosa devono sapere i proprietari di immobili.
+Se affitti un immobile in Indonesia, devi capire come viene tassato il reddito da locazione. Ecco cosa devono sapere i proprietari di immobili.
 
-## Panoramica sulla Tassa del Reddito da Locazione
+## Panoramica dell'Imposta sui Redditi da Locazione
 
-<InfoCard variant="note" title="Tassa Finale del 10%">
-Il reddito da locazione di terreni e fabbricati in Indonesia è soggetto alla **tassa finale sul reddito del 10% (PPh Final)** sull'importo lordo dell'affitto.
+<InfoCard variant="note" title="10% Final Tax">
+Il reddito da locazione di terreni e fabbricati in Indonesia è soggetto a un'**imposta finale sul reddito del 10% (PPh Final)** sull'importo lordo del canone.
 
-\"Finale\" significa che questa è l'imposta completa: non va aggiunta agli altri redditi per le aliquote progressive.
+"Finale" significa che questa è l'imposta completa: non devi aggiungerla agli altri redditi ai fini delle aliquote progressive.
 
 </InfoCard>
 
@@ -105,31 +105,31 @@ Il reddito da locazione di terreni e fabbricati in Indonesia è soggetto alla **
 
 ### Aliquota e Base Imponibile
 
-| Elemento     | Dettaglio                 |
-| ------------ | ------------------------- |
-| Aliquota     | 10%                       |
-| Base imp.    | Affitto lordo ricevuto    |
-| Tipo imposta | PPh Final (Articolo 4(2)) |
-| Detrazioni   | Nessuna consentita        |
+| Elemento    | Dettaglio                   |
+| ---------- | ------------------------ |
+| Aliquota fiscale   | 10%                      |
+| Base imponibile   | Canone lordo ricevuto      |
+| Tipo di imposta   | PPh Final (Articolo 4(2)) |
+| Detrazioni | Nessuna consentita             |
 
 ### Punti Importanti
 
-- Calcolata sull'**affitto lordo** (nessuna detrazione per le spese)
-- Tassa **Finale**: non cumulabile con altri redditi
-- Si applica a tutti i tipi di affitto (residenziale, commerciale)
-- Stessa aliquota per individui e società
+- Calcolata sul **canone lordo** (nessuna deduzione delle spese)
+- Imposta **finale**: non viene combinata con altri redditi
+- Si applica a tutti i tipi di locazione (residenziale, commerciale)
+- Stessa aliquota per persone fisiche e società
 
 ---
 
-## Calcolatore Tasse
+## Calcolatore dell'Imposta
 
 <Calculator
-  title="Calcolatore Tassa Reddito da Locazione"
-  description="Calcola il tuo debito d'imposta per l'affitto"
+  title="Rental Income Tax Calculator"
+  description="Calculate your rental tax liability"
   fields={[
     {
       id: "monthlyRent",
-      label: "Affitto Mensile (IDR)",
+      label: "Monthly Rent (IDR)",
       type: "number",
       defaultValue: 25000000,
       min: 0,
@@ -138,7 +138,7 @@ Il reddito da locazione di terreni e fabbricati in Indonesia è soggetto alla **
     },
     {
       id: "occupancy",
-      label: "Tasso di Occupazione (%)",
+      label: "Occupancy Rate (%)",
       type: "number",
       defaultValue: 80,
       min: 0,
@@ -159,14 +159,14 @@ Il reddito da locazione di terreni e fabbricati in Indonesia è soggetto alla **
     return {
       total: annualTax,
       breakdown: [
-        { label: "Affitto Mensile", amount: monthly },
-        { label: "Mesi Occupati", amount: monthsOccupied },
-        { label: "Affitto Lordo Annuo", amount: annualRent },
-        { label: "Tassa Annua (10%)", amount: annualTax },
-        { label: "Reddito Netto Annuo", amount: netIncome }
+        { label: "Monthly Rent", amount: monthly },
+        { label: "Months Occupied", amount: monthsOccupied },
+        { label: "Annual Gross Rent", amount: annualRent },
+        { label: "Annual Tax (10%)", amount: annualTax },
+        { label: "Net Annual Income", amount: netIncome }
       ],
       currency: "IDR",
-      note: `Tassa mensile effettiva: IDR ${Math.round(monthlyTax).toLocaleString()}`
+      note: `Effective monthly tax: IDR ${Math.round(monthlyTax).toLocaleString()}`
     };
 
 }}
@@ -174,131 +174,131 @@ Il reddito da locazione di terreni e fabbricati in Indonesia è soggetto alla **
 
 ---
 
-## Chi Riscute l'Imposta?
+## Chi Riscuote l'Imposta?
 
-### Inquilini Aziendali (Ritenuta)
+### Conduttori Societari (Ritenuta alla Fonte)
 
-Se il tuo inquilino è una società (soggetto fiscale):
+Se il tuo conduttore è una società (soggetto d'imposta):
 
-1. L'inquilino trattiene il 10% dal pagamento dell'affitto
-2. L'inquilino versa la tassa al governo
-3. L'inquilino ti consegna il **Bukti Potong** (ricevuta fiscale)
-4. Tu ricevi l'affitto netto (90%)
+1. Il conduttore trattiene il 10% dal pagamento del canone
+2. Il conduttore versa l'imposta al governo
+3. Il conduttore ti consegna il **Bukti Potong** (certificato di ritenuta)
+4. Ricevi il canone netto (90%)
 
-<InfoCard variant="note" title="Il Bukti Potong è la tua Prova">
+<InfoCard variant="note" title="Bukti Potong is Your Proof">
 
-  Il Bukti Potong prova che la tua tassa è stata pagata. Conservalo per i tuoi
-  registri e includilo nella dichiarazione dei redditi annuale.
+  Il Bukti Potong dimostra che la tua imposta è stata pagata. Conservalo per i
+  tuoi archivi e includilo nella dichiarazione dei redditi annuale.
 </InfoCard>
 
-### Inquilini Individuali (Autopagamento)
+### Conduttori Privati (Pagamento Diretto)
 
-Se il tuo inquilino è un individuo:
+Se il tuo conduttore è una persona fisica:
 
-1. Ricevi l'affitto intero (100%)
-2. **Tu** devi pagare la tassa del 10%
-3. Paghi tramite banca o ufficio delle imposte
-4. Dichiari nella dichiarazione dei redditi annuale
+1. Ricevi il canone completo (100%)
+2. **Tu** devi pagare l'imposta del 10%
+3. Paga tramite banca o ufficio delle imposte
+4. Riporta l'importo nella dichiarazione dei redditi annuale
 
 ---
 
-## Pagamento e Rendicontazione
+## Pagamento e Dichiarazione
 
-### Se paghi autonomamente
+### Se Paghi Direttamente
 
 <Checklist
-  title="Obblighi Fiscali Autopagamento"
-  description="Quando devi pagare la tassa da solo"
+  title="Self-Pay Tax Obligations"
+  description="When you must pay the tax yourself"
   persistKey="rental-tax-checklist"
   items={[
     {
       id: "calculate",
-      label: "Calcola il 10% di tasse sull'affitto ricevuto",
-      description: "Ogni periodo di pagamento",
+      label: "Calculate 10% tax on rent received",
+      description: "Each payment period",
       required: true,
       category: "calculate",
     },
     {
       id: "payment",
-      label: "Paga la tassa entro il 15 del mese successivo",
-      description: "Tramite banca o e-filing",
+      label: "Pay tax by 15th of following month",
+      description: "Via bank or e-filing",
       required: true,
       category: "payment",
     },
     {
       id: "spt-monthly",
-      label: "Dichiara sull'SPT mensile (se applicabile)",
-      description: "Per locatori aziendali",
+      label: "Report on monthly SPT (if applicable)",
+      description: "For business landlords",
       required: false,
       category: "reporting",
     },
     {
       id: "spt-annual",
-      label: "Includi nell'SPT annuale",
-      description: "Dichiara il reddito da locazione totale e le tasse pagate",
+      label: "Include in annual SPT",
+      description: "Report total rental income and tax paid",
       required: true,
       category: "reporting",
     },
     {
       id: "records",
-      label: "Conserva le ricevute di pagamento",
-      description: "Numeri NTPN per la verifica",
+      label: "Keep payment receipts",
+      description: "NTPN numbers for verification",
       required: true,
       category: "records",
     },
   ]}
   categories={[
-    { id: "calculate", label: "Calcola", color: "blue" },
-    { id: "payment", label: "Pagamento", color: "green" },
-    { id: "reporting", label: "Rendicontazione", color: "amber" },
-    { id: "records", label: "Registri", color: "purple" },
+    { id: "calculate", label: "Calculate", color: "blue" },
+    { id: "payment", label: "Payment", color: "green" },
+    { id: "reporting", label: "Reporting", color: "amber" },
+    { id: "records", label: "Records", color: "purple" },
   ]}
   showProgress={true}
 />
 
 ---
 
-## Diversi Scenari di Affitto
+## Diversi Scenari di Locazione
 
 <ComparisonTable
-  title="Tasse per Tipo di Affitto"
-  description="Come si applica l'imposta alle diverse situazioni"
+  title="Tax by Rental Type"
+  description="How tax applies to different situations"
   items={[
     {
-      name: "Residenziale Lungo Termine",
-      subtitle: "Affitto di casa o appartamento",
+      name: "Residential Long-Term",
+      subtitle: "House or apartment rental",
       values: {
-        Aliquota: "10%",
-        Riscossione: "Solitamente autopagamento",
-        Rendicontazione: "SPT Annuale",
+        "Tax Rate": "10%",
+        Collection: "Usually self-pay",
+        Reporting: "Annual SPT",
       },
     },
     {
-      name: "Proprietà Commerciale",
-      subtitle: "Ufficio, negozio, magazzino",
+      name: "Commercial Property",
+      subtitle: "Office, retail, warehouse",
       values: {
-        Aliquota: "10%",
-        Riscossione: "Spesso trattenuta",
-        Rendicontazione: "SPT Annuale",
+        "Tax Rate": "10%",
+        Collection: "Often withheld",
+        Reporting: "Annual SPT",
       },
       highlight: true,
     },
     {
-      name: "Affitto Ville",
-      subtitle: "Affitto vacanze a breve termine",
+      name: "Villa Rental",
+      subtitle: "Short-term vacation rental",
       values: {
-        Aliquota: "10%",
-        Riscossione: "Autopagamento",
-        Rendicontazione: "SPT Annuale",
+        "Tax Rate": "10%",
+        Collection: "Self-pay",
+        Reporting: "Annual SPT",
       },
     },
     {
-      name: "Tramite PT PMA",
-      subtitle: "La società possiede la proprietà",
+      name: "Through PT PMA",
+      subtitle: "Company owns property",
       values: {
-        Aliquota: "10%",
-        Riscossione: "La società paga",
-        Rendicontazione: "SPT Societario",
+        "Tax Rate": "10%",
+        Collection: "Company pays",
+        Reporting: "Corporate SPT",
       },
     },
   ]}
@@ -306,106 +306,112 @@ Se il tuo inquilino è un individuo:
 
 ---
 
-## Tassazione Affitto Ville
+## Tassazione della Locazione di Ville
 
-Per affitti a breve termine/vacanze:
+Per le locazioni a breve termine/vacanza:
 
-### La tassa si applica ad ogni affitto
+### L'Imposta Si Applica a Ogni Locazione
 
-- 10% su ogni pagamento dell'affitto
-- Si applica anche alle tariffe notturne
+- 10% su ogni pagamento di locazione
+- Si applica anche alle tariffe per notte
 - La società di gestione può riscuotere e pagare
 
-### Se utilizzi una società di gestione
+### Se Utilizzi una Società di Gestione
 
 Molti proprietari di ville utilizzano società di gestione che:
 
-1. Riscottono l'affitto dagli ospiti
-2. Trattengono e pagano la tassa del 10%
+1. Riscuotono il canone dagli ospiti
+2. Trattengono e pagano l'imposta del 10%
 3. Ti forniscono la documentazione
-4. Gestiscono la rendicontazione
+4. Gestiscono la dichiarazione
 
-<InfoCard variant="tip" title="Chiarire la Gestione Fiscale">
+<InfoCard variant="tip" title="Clarify Tax Handling">
 
-  Quando assumi una società di gestione per ville, chiarisci: - Chi paga la
-  tassa del 10% sull'affitto? - Forniranno il Bukti Potong? - La tassa è inclusa
-  nella loro struttura commissionale?
+  Quando incarichi una società di gestione di ville, chiarisci: - Chi paga
+  l'imposta di locazione del 10%? - Forniranno il Bukti Potong? - L'imposta è
+  inclusa nella struttura delle loro commissioni?
 </InfoCard>
 
 ---
 
-## Altre Tasse sulla Proprietà
+## Altre Imposte sugli Immobili
 
-Oltre alla tassa sul reddito da locazione, i proprietari pagano anche:
+Oltre all'imposta sui redditi da locazione, i proprietari immobiliari pagano anche:
 
-### PBB (Tassa su Terreni e Fabbricati)
+### PBB (Imposta su Terreni e Fabbricati)
 
-| Aspetto   | Dettaglio            |
-| --------- | -------------------- |
-| Aliquota  | 0,1% - 0,3% del NJOP |
+| Aspetto    | Dettaglio              |
+| --------- | ------------------- |
+| Aliquota      | 0,1% - 0,3% del NJOP |
 | Frequenza | Annuale              |
-| Pagamento | Entro il 31 agosto   |
-| Chi paga  | Proprietario         |
+| Pagamento   | Entro il 31 agosto        |
+| Chi paga  | Proprietario dell'immobile      |
 
-**NJOP** = Nilai Jual Objek Pajak (valore imponibile, spesso inferiore al mercato)
+**NJOP** = Nilai Jual Objek Pajak (valore imponibile, spesso inferiore al valore di mercato)
 
-### BPHTB (Tassa di Trasferimento)
+### BPHTB (Imposta di Trasferimento)
 
-- 5% all'acquisto della proprietà
+- 5% all'acquisto dell'immobile
 - Pagata dall'acquirente
-- Una tantum all'acquisto
+- Una tantum al momento dell'acquisto
 
 ---
 
 ## Considerazioni per Proprietari Stranieri
 
-### Se sei residente fiscale
+### Se Sei Residente Fiscale
 
-Dichiara il reddito da locazione sul tuo SPT annuale (Modulo 1770):
+Riporta il reddito da locazione nel tuo SPT annuale (Modulo 1770):
 
-- Includi nella sezione reddito
-- Dichiara le tasse già pagate
-- Nessuna tassa aggiuntiva (è finale)
+- Includilo nella sezione dei redditi
+- Riporta l'imposta già pagata
+- Nessuna imposta aggiuntiva (è finale)
 
-### Se sei non residente
+### Se Non Sei Residente
 
-- Si applica comunque la tassa finale del 10%
-- Potrebbero esserci implicazioni legate ai trattati
-- Considera l'ottenimento del modulo DGT per una ritenuta ridotta su altri redditi
+- L'imposta finale del 10% si applica comunque
+- Potrebbero esserci implicazioni derivanti dalle convenzioni fiscali
+- Valuta di ottenere il modulo DGT per una ritenuta ridotta su altri redditi
 
-<InfoCard variant="warning" title="Non Ignorare le Tasse sull'Affitto">
+<InfoCard variant="warning" title="Don't Ignore Rental Tax">
 
-  Il mancato pagamento della tassa sul reddito da locazione può comportare: -
-  Tasse arretrate più interessi - Sanzioni fino al 200% - Problemi con future
+  Il mancato pagamento dell'imposta sui redditi da locazione può comportare: -
+  Imposte arretrate più interessi - Sanzioni fino al 200% - Problemi con future
   transazioni immobiliari - Problemi con il rinnovo del visto (se applicabile)
 </InfoCard>
 
 ---
 
-## Tenuta dei Registri
+## Conservazione dei Documenti
 
 Conserva questi documenti:
 
-- Contratti di affitto
-- Ricevute di pagamento degli inquilini
-- Bukti Potong degli inquilini aziendali
-- Ricevute di pagamento delle tasse (NTPN)
-- Documenti di proprietà
+- Contratti di locazione
+- Ricevute di pagamento dei conduttori
+- Bukti Potong dei conduttori societari
+- Ricevute di pagamento delle imposte (NTPN)
+- Documenti di proprietà dell'immobile
 
-**Conservazione**: Conservare per 10 anni (periodo di accertamento fiscale)
+**Conservazione**: conserva per 10 anni (periodo di accertamento fiscale)
 
 ---
+
+<InfoCard variant="tip" title="Need your Indonesian tax filing handled?">
+
+La registrazione NPWP, la dichiarazione mensile e lo SPT annuale fanno parte dei nostri servizi fiscali. [Scopri il nostro servizio fiscale e BPJS](/services/tax).
+
+</InfoCard>
 
 ## Domande Comuni
 
 <AskZantara
-  context="Tassa reddito da locazione Indonesia, PPh final proprietà, tasse locatore, tassa affitto ville"
-  placeholder="Chiedi informazioni sulla tassa del reddito da locazione..."
+  context="Rental income tax Indonesia, PPh final property, landlord tax, villa rental tax"
+  placeholder="Ask about rental income tax..."
   suggestedQuestions={[
-    "Posso detrarre le spese della proprietà?",
-    "E se l'inquilino non effettua la ritenuta?",
-    "Come si paga la tassa online?",
-    "Il reddito da Airbnb è tassato diversamente?",
+    "Can I deduct property expenses?",
+    "What if tenant doesn't withhold?",
+    "How do I pay the tax online?",
+    "Is Airbnb income taxed differently?",
   ]}
 />
 
@@ -413,6 +419,6 @@ Conserva questi documenti:
 
 ## Articoli Correlati
 
-- [Guida Investimenti Immobiliari](/it/insights/property/property-investment-guide)
-- [Guida Investimento Ville](/it/insights/property/villa-investment-guide)
-- [Guida Fiscale Indonesia per Stranieri](/it/insights/tax-legal/indonesia-tax-guide-for-foreigners)
+- [Guida agli Investimenti Immobiliari](/insights/property/property-investment-guide)
+- [Guida agli Investimenti in Ville](/insights/property/villa-investment-guide)
+- [Guida Fiscale dell'Indonesia per Stranieri](/insights/tax-legal/indonesia-tax-guide-for-foreigners)
