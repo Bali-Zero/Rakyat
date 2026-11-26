@@ -12,6 +12,7 @@ degrades to an empty list / zero instead of 500-ing the whole dashboard.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import asyncpg
@@ -27,6 +28,22 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/portal/dashboard", tags=["portal-dashboard"])
 
 
+def _pending_documents(raw: Any) -> list[str]:
+    """`practices.missing_documents` (JSONB) as a list of document names.
+
+    A pool without the jsonb codec hands back JSON text; JSON null, a non-array
+    value or unparseable text carry no documents.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, str)]
+
+
 async def _fetch_open_actions(conn: asyncpg.Connection, client_id: int) -> list[dict[str, Any]]:
     try:
         rows = await conn.fetch(
@@ -39,7 +56,8 @@ async def _fetch_open_actions(conn: asyncpg.Connection, client_id: int) -> list[
             WHERE p.client_id = $1
               AND (p.client_visible IS TRUE OR p.client_visible IS NULL)
               AND p.status IN ('inquiry', 'in_progress', 'waiting_documents')
-              AND (p.missing_documents IS NOT NULL
+              AND ((jsonb_typeof(p.missing_documents::jsonb) = 'array'
+                    AND jsonb_array_length(p.missing_documents::jsonb) > 0)
                    OR p.status = 'waiting_documents')
             ORDER BY p.updated_at DESC NULLS LAST
             LIMIT 10
@@ -54,7 +72,7 @@ async def _fetch_open_actions(conn: asyncpg.Connection, client_id: int) -> list[
             "id": r["id"],
             "title": r["title"],
             "type": r["type"],
-            "pending_from_client": r["pending_from_client"],
+            "pending_from_client": _pending_documents(r["pending_from_client"]),
             "status": r["status"],
         }
         for r in rows
