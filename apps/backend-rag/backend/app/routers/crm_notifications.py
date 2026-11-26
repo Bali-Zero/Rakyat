@@ -95,24 +95,51 @@ async def mark_notification_read(
     pool: asyncpg.Pool = Depends(get_database_pool),
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Mark a notification as read (status = 'sent')."""
+    """Mark a bell notification as read (status = 'sent').
+
+    Applies exactly the visibility of ``GET /notifications``: a BELL_ALERT_TYPES row of a
+    live client the caller may see. Anything else — a delivery-queue row (email/WhatsApp
+    alert not yet sent), another member's client, an unknown id — is a 404 and stays
+    untouched: ``status = 'pending'`` is also the queue the notification service delivers.
+    """
+    assigned_filter = get_crm_user_filter(current_user)
+    scope = ""
+    params: list = [notification_id, list(BELL_ALERT_TYPES)]
+    if assigned_filter:
+        scope = " AND LOWER(c.assigned_to) = ANY($3::text[])"
+        params.append(assigned_filter)
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                """
-                UPDATE notification_alerts
+                f"""
+                UPDATE notification_alerts na
                 SET status = 'sent', sent_at = NOW()
-                WHERE id = $1 AND status = 'pending'
-                RETURNING id, status
+                FROM clients c
+                WHERE na.id = $1 AND na.status = 'pending'
+                  AND na.alert_type = ANY($2::text[])
+                  AND c.id = na.client_id AND c.deleted_at IS NULL{scope}
+                RETURNING na.id, na.status
                 """,
-                notification_id,
+                *params,
             )
+            visible = None
+            if row is None:
+                visible = await conn.fetchval(
+                    f"""
+                    SELECT 1 FROM notification_alerts na
+                    JOIN clients c ON c.id = na.client_id AND c.deleted_at IS NULL
+                    WHERE na.id = $1 AND na.alert_type = ANY($2::text[]){scope}
+                    """,
+                    *params,
+                )
     except Exception as e:
         logger.error("Failed to mark notification %s as read: %s", notification_id, e)
         raise HTTPException(status_code=500, detail="Database error")
-    if not row:
+    if row:
+        return {"id": row["id"], "status": row["status"]}
+    if visible:
         return {"id": notification_id, "status": "already_read"}
-    return {"id": row["id"], "status": row["status"]}
+    raise HTTPException(status_code=404, detail="Notification not found")
 
 
 @router.get("/notifications/count")
