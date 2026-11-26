@@ -735,7 +735,8 @@ class MigrationManager:
                     applied.append(1)
                     pending = [m for m in pending if m["number"] != 1]
 
-        for migration_info in sorted(pending, key=lambda x: x["number"]):
+        ordered_pending = sorted(pending, key=lambda x: x["number"])
+        for index, migration_info in enumerate(ordered_pending):
             migration_number = migration_info["number"]
             sql_file = migration_info["file"]
 
@@ -758,6 +759,18 @@ class MigrationManager:
             except Exception as e:
                 logger.error("Failed to apply migration %s: %s", migration_number, e)
                 failed.append({"number": migration_number, "error": str(e)})
+
+            if failed:
+                # Stop at the first failure: a later migration must never commit
+                # after an earlier one failed (out-of-order ledger gap, and it
+                # would run against a schema missing the failed one).
+                not_attempted = [m["number"] for m in ordered_pending[index + 1 :]]
+                logger.error(
+                    "Migration %s failed; stopping. Not attempted: %s",
+                    migration_number,
+                    not_attempted,
+                )
+                break
 
         return {"applied": applied, "skipped": [], "failed": failed, **warning_result}
 
