@@ -248,15 +248,15 @@ def test_the_folder_query_includes_the_tax_department_folder(mod):
     assert "drive_folder_id" in mod._FOLDER_REGISTERED_SQL
 
 
-def test_the_url_fallback_is_anchored_to_a_drive_url_boundary(mod):
-    """A bare `strpos(url, $1)` authorises any id that merely OCCURS inside a
-    stored URL — a shorter id riding on a longer one. Anchoring to the two forms
-    the frontend itself parses removes that. And never LIKE: a Drive id contains
-    `_`, which LIKE reads as a single-character wildcard."""
-    sql = mod._REGISTERED_FILE_SQL
-    assert "'/d/' || $1" in sql and "'id=' || $1" in sql
-    assert "), $1)" not in sql, "an unanchored substring branch is still present"
-    assert "LIKE" not in sql.upper()
+def test_the_url_fallback_reads_the_exact_drive_id_token(mod):
+    """The registries compare the requested id with the address's whole Drive id
+    token (`/d/<id>` or `?id=<id>` / `&id=<id>`), never a substring of the
+    address. And never LIKE: a Drive id contains `_`, which LIKE reads as a
+    single-character wildcard."""
+    for sql in (mod._REGISTERED_FILE_SQL, mod._CLIENT_REGISTERED_FILE_SQL):
+        assert "strpos" not in sql
+        assert "'/d/([A-Za-z0-9_-]+)'" in sql and "'[?&]id=([A-Za-z0-9_-]+)'" in sql
+        assert "LIKE" not in sql.upper()
 
 
 # --- no existence oracle -----------------------------------------------------
@@ -709,7 +709,9 @@ def test_write_guard_is_actually_wired_into_all_four_call_sites():
     from backend.app.routers import crm_enhanced_documents
 
     client_src = inspect.getsource(crm_enhanced_documents)
-    assert client_src.count("await assert_drive_file_belongs_to_client(") >= 3
+    assert client_src.count("await _assert_document_drive_files(") == 4
+    helper_src = inspect.getsource(crm_enhanced_documents._assert_document_drive_files)
+    assert "await assert_drive_file_belongs_to_client(" in helper_src
 
     company_src = inspect.getsource(company_router)
     assert "await assert_drive_file_belongs_to_company(" in company_src

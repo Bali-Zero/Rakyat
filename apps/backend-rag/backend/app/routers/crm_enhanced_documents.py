@@ -46,6 +46,7 @@ from backend.services.crm.drive_taxonomy import (
     folder_for_category,
     physical_root_layout,
 )
+from backend.services.documents.drive_address import address_drive_ids
 from backend.services.documents.ocr_dispatcher_service import is_passport_document_type
 from backend.services.integrations.service_account_drive_service import ServiceAccountDriveService
 
@@ -90,6 +91,25 @@ def _row_get(row: Any, key: str) -> Any:
         return row[key]
     except (KeyError, TypeError):
         return None
+
+
+
+async def _assert_document_drive_files(
+    file_id: str | None,
+    addresses: tuple[str | None, ...],
+    client_id: int,
+    conn: Any,
+    *,
+    always_check_file_id: bool = False,
+) -> None:
+    """A document may name only its client's Drive files: its ``file_id`` and every
+    Drive id its address fields name (a run equal to ``file_id`` is checked once)."""
+    checked: list[str] = []
+    if file_id or always_check_file_id:
+        checked.append(file_id)  # type: ignore[arg-type]
+    checked += [run for run in address_drive_ids(*addresses) if run != file_id]
+    for drive_id in checked:
+        await assert_drive_file_belongs_to_client(drive_id, client_id, conn)
 
 
 router = APIRouter(prefix="/api/crm", tags=["crm-enhanced-documents"])
@@ -188,8 +208,9 @@ async def create_document(
     """
     async with pool.acquire() as conn:
         await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
-        if data.file_id:
-            await assert_drive_file_belongs_to_client(data.file_id, client_id, conn)
+        await _assert_document_drive_files(
+            data.file_id, (data.file_url, data.google_drive_file_url), client_id, conn
+        )
         # Sanitize date field - convert string to date object for asyncpg
         expiry_date = None
         if data.expiry_date:
@@ -302,7 +323,13 @@ async def register_archive_document(
         raise HTTPException(status_code=403, detail="Admin access required")
     async with pool.acquire() as conn:
         await verify_client_access(client_id, current_user, conn, allow_assigned=True, write=True)
-        await assert_drive_file_belongs_to_client(data.file_id, client_id, conn)
+        await _assert_document_drive_files(
+            data.file_id,
+            (data.google_drive_file_url,),
+            client_id,
+            conn,
+            always_check_file_id=True,
+        )
         async with conn.transaction():
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(742021, hashtext($1))",
@@ -405,8 +432,9 @@ async def create_documents_bulk(
         async with conn.transaction():
             for doc in documents:
                 try:
-                    if doc.file_id:
-                        await assert_drive_file_belongs_to_client(doc.file_id, client_id, conn)
+                    await _assert_document_drive_files(
+                        doc.file_id, (doc.file_url, doc.google_drive_file_url), client_id, conn
+                    )
                     # Sanitize expiry_date: convert string to date object
                     expiry_date = None
                     if doc.expiry_date:
@@ -547,8 +575,12 @@ async def update_document(
                 status_code=403,
                 detail="You don't have permission to change document client visibility.",
             )
-        if data.file_id:
-            await assert_drive_file_belongs_to_client(data.file_id, client_id, conn)
+        await _assert_document_drive_files(
+            data.file_id,
+            (payload.get("file_url"), payload.get("google_drive_file_url")),
+            client_id,
+            conn,
+        )
         async with conn.transaction():
             if new_visible is not None:
                 old_row = await conn.fetchrow(
