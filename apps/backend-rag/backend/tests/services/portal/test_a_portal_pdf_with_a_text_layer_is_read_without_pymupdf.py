@@ -80,7 +80,7 @@ async def test_pymupdf_branch_does_not_use_new_helper(monkeypatch):
 
     monkeypatch.setattr(dp, "PYMUPDF_AVAILABLE", True)
     monkeypatch.setattr(dp, "fitz", FakeFitz, raising=False)
-    monkeypatch.setattr(DocumentOCR, "_extract_pdf_text_layer_sync", forbidden)
+    monkeypatch.setattr(DocumentOCR, "_extract_pdf_text_layer_sync", forbidden, raising=False)
     res = await DocumentOCR._extract_from_pdf(_pdf(SENTENCE))
     assert res["success"] is True
     assert res["text"] == "fitz text"

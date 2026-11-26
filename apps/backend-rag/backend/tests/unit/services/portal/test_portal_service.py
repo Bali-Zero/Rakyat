@@ -139,7 +139,7 @@ class TestDocumentOCR:
             with patch("backend.services.portal.document_processing.PYMUPDF_AVAILABLE", False):
                 result = await self.ocr._extract_from_pdf(b"%PDF-content")
                 assert result["success"] is False
-                assert "not available" in result["error"]
+                assert "text-layer extraction failed" in result["error"]
 
     @pytest.mark.asyncio
     async def test_extract_from_image_no_vision(self) -> None:
