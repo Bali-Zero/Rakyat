@@ -152,16 +152,30 @@ class LeadIntentRepository:
                 intent_id,
             )
 
-    async def purge_expired(self) -> int:
-        """Hard-delete intents past their TTL that never matched.
-        Returns count. Safe to run periodically."""
+    async def purge_expired(self, limit: int = 500, grace: timedelta = timedelta(0)) -> int:
+        """Hard-delete at most `limit` intents past their TTL that never matched.
+
+        Returns the count deleted. Bounded so one call never holds a long
+        DELETE; a caller drains a backlog by calling again while the count
+        equals `limit`. Matched intents are never touched. `grace` keeps rows
+        that expired less than that long ago."""
+        if limit <= 0:
+            return 0
         async with self._pool.acquire() as conn:
             result = await conn.execute(
                 """
                 DELETE FROM lead_intents
-                 WHERE expires_at < NOW()
+                 WHERE id IN (
+                       SELECT id FROM lead_intents
+                        WHERE expires_at < NOW() - $2::interval
+                          AND matched_client_id IS NULL
+                        LIMIT $1
+                 )
+                   AND expires_at < NOW() - $2::interval
                    AND matched_client_id IS NULL
-                """
+                """,
+                limit,
+                grace,
             )
         # asyncpg returns "DELETE <count>".
         try:
