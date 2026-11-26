@@ -1308,8 +1308,11 @@ class PortalDashboardMixin:
         practice and no NPWP saw three dated obligations marked "Pending" on
         their Taxes page and a live countdown on their dashboard — statutory
         dates that are not, as far as this system knows, theirs to file
-        (portal audit finding F-05). A footprint is one company link, one
-        tax-category practice, or an NPWP on the client record.
+        (portal audit finding F-05). A footprint is one live company link, one
+        tax-category practice, or an NPWP on the client record. A link is live
+        as every other reader of this mixin has it: active and not ended. A
+        company the client has left is not shown to them, so it cannot be the
+        reason for a countdown either.
 
         FAILS OPEN on a query error (returns True, i.e. keep showing the
         calendar): hiding a real deadline from a real taxpayer is the worse
@@ -1321,7 +1324,12 @@ class PortalDashboardMixin:
                 await conn.fetchval(
                     """
                     SELECT
-                        EXISTS (SELECT 1 FROM client_company_links WHERE client_id = $1)
+                        EXISTS (
+                            SELECT 1 FROM client_company_links
+                            WHERE client_id = $1
+                              AND status = 'active'
+                              AND end_date IS NULL
+                        )
                         OR EXISTS (
                             SELECT 1 FROM practices p
                             JOIN practice_types pt ON pt.id = p.practice_type_id
