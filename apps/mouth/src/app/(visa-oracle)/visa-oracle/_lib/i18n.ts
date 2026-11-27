@@ -1065,7 +1065,7 @@ const en = {
   // condition, whose submission-time check absolutely can change it. State
   // the engine fact only: a condition attached, checked with the visitor.
   "outcome.conditions.intro":
-    "The result above was reached with these conditions attached. Our team checks each one with you before submission.",
+    "Our team checks the following items with you before you submit an application.",
   "outcome.review_group_case.title":
     "What a Bali Zero advisor will check about your case",
   "outcome.review_group_system.title":
@@ -1280,7 +1280,7 @@ const id: Record<Keys, string> = {
   "lane.bridging.notice":
     "Tanggal yang Anda masukkan tinggal tujuh hari atau kurang. Kami tetap memeriksa pilihan Anda; segera bicarakan langkah berikutnya dengan konsultan Bali Zero.",
   "lane.extend.notice":
-    "Anda masih punya waktu untuk membandingkan Extend dan Convert.",
+    "Anda masih punya waktu untuk membandingkan perpanjangan izin tinggal dan alih status.",
   "lane.planning.notice":
     "Waktu masih longgar — ini perencanaan, bukan hal mendesak.",
 
@@ -2137,7 +2137,7 @@ const id: Record<Keys, string> = {
     "Kasus Anda perlu ditinjau konsultan Bali Zero — kami tidak menebak apa pun untuk Anda.",
   "outcome.conditions.title": "Sebelum Anda mengajukan",
   "outcome.conditions.intro":
-    "Hasil di atas diperoleh dengan kondisi-kondisi berikut yang menyertainya. Tim kami akan memeriksa setiap kondisi bersama Anda sebelum pengajuan.",
+    "Tim kami akan memeriksa hal-hal berikut bersama Anda sebelum permohonan diajukan.",
   "outcome.review_group_case.title":
     "Yang akan diperiksa konsultan Bali Zero pada kasus Anda",
   "outcome.review_group_system.title":

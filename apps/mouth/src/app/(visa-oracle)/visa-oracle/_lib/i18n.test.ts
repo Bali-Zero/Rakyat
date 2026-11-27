@@ -56,6 +56,11 @@ describe("i18n.ts — EN/ID key parity", () => {
     }
   });
 
+  it("lane.extend.notice ID uses onshore extend and status-change terms", () => {
+    expect(dict.id["lane.extend.notice"]).toMatch(/perpanjangan izin tinggal/);
+    expect(dict.id["lane.extend.notice"]).toMatch(/alih status/);
+  });
+
   it("pins q.investment_vehicle.opt.property in both languages and keeps the ID label figure-free", () => {
     expect(dict.en["q.investment_vehicle.opt.property"]).toBe(
       "A qualifying property arrangement",
