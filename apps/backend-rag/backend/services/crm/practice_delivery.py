@@ -97,12 +97,20 @@ def require_open(p: dict) -> None:
 
 
 async def legacy_cohort(conn: Any, practice_id: int) -> bool:
-    """Completed in the cohort window, with no Final delivery completion record."""
+    """Completed in the cohort window, with no Final delivery completion record.
+
+    The window is anchored on the status log (trigger-written, so it cannot be edited through a
+    practice PATCH): the LATEST row that moved the practice to completed. A practice completed
+    without a log row (inserted already completed) is not in the cohort.
+    """
     return bool(
         await conn.fetchval(
             """SELECT p.status='completed'
-                  AND (p.completion_date AT TIME ZONE 'Asia/Makassar')::date >= $2
-                  AND (p.completion_date AT TIME ZONE 'Asia/Makassar')::date < $3
+                  AND COALESCE((SELECT (l.changed_at AT TIME ZONE 'Asia/Makassar')::date >= $2
+                                    AND (l.changed_at AT TIME ZONE 'Asia/Makassar')::date < $3
+                                FROM practice_status_log l
+                                WHERE l.practice_id=p.id AND l.new_status='completed'
+                                ORDER BY l.changed_at DESC, l.id DESC LIMIT 1), false)
                   AND NOT EXISTS (SELECT 1 FROM practice_delivery_completions c WHERE c.practice_id=p.id)
                FROM practices p WHERE p.id=$1""",
             practice_id,

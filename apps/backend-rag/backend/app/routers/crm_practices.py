@@ -428,6 +428,41 @@ class PphSelection(BaseModel):
         return validate_pph(self.type, self.rate_percent)
 
 
+def _same_instant(new: datetime | None, old: datetime | None) -> bool:
+    if new is None or old is None:
+        return new is old
+    # A naive value is read the way asyncpg writes it to timestamptz (local time).
+    new = new if new.tzinfo else new.astimezone()
+    old = old if old.tzinfo else old.astimezone()
+    return new == old
+
+
+def _same_assignee(new: str | None, old: str | None) -> bool:
+    return (new or "").strip().lower() == (old or "").strip().lower()
+
+
+def _refuse_completed_anchor_edit(updates: "PracticeUpdate", old_row: Any) -> None:
+    """A completed practice anchors the delivery bonus: only an admin may move its date or owner."""
+    fields = updates.model_fields_set
+    if "completion_date" in fields and not _same_instant(
+        updates.completion_date, old_row.get("completion_date")
+    ):
+        changed = "completion_date"
+    elif "assigned_to" in fields and not _same_assignee(
+        updates.assigned_to, old_row.get("assigned_to")
+    ):
+        changed = "assigned_to"
+    else:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"A completed practice's {changed} can only be changed by an admin: "
+            "it decides who earns the delivery bonus."
+        ),
+    )
+
+
 def _require_pph_role(current_user: dict) -> None:
     """Only the tax team and CRM admins may set or clear a process's PPh (K127)."""
     if is_crm_admin(current_user) or (
@@ -1764,6 +1799,8 @@ async def update_practice(
                         status_code=403,
                         detail="You don't have permission to update this practice",
                     )
+            if not user_is_admin and normalize_state(old_status or "") == "completed":
+                _refuse_completed_anchor_edit(updates, old_row)
             pph_touched = "pph" in updates.model_fields_set
             if pph_touched:
                 _require_pph_role(current_user)
