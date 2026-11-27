@@ -1,32 +1,56 @@
 """
-ZANTARA AI Client - Primary engine for all conversational AI
+ZANTARA AI Client - conversational engine behind ``app.state.ai_client``.
 
-AI Models Architecture:
-- PRIMARY: Google Gemini 2.0 Flash (production)
+Since Wave 2 Stage 3 (2026-11-27, owner order) every call goes through the
+Claude Console door (``backend.llm.claude_oauth_client``: the linked-organization
+keys pinned to their workspaces, included monthly Ultra credit, no card spend).
+There is no Gemini route left in this module and no Google credential is read.
 
-Configuration:
-- GOOGLE_API_KEY: API key for Gemini (primary)
+Cost ledger: ``complete_async`` already records every call (real envelope usage,
+provider ``claude_console``, endpoint ``zantara_ai.chat``); this module writes
+no second row.
 
-UPDATED 2025-12-23:
-- Migrated to new google-genai SDK (replaced deprecated google-generativeai)
-- Using genai_client.py wrapper for centralized client management
-- Improved async support with client.aio
+Logging: counts and exception class names only. A prompt, a message or a model
+answer is client data and never reaches a log record from here.
 """
 
 import asyncio
 import logging
+import os
+import re
 from typing import Any
 
 from backend.app.core.config import settings
-
-# Import helper modules
+from backend.app.core.constants import HttpTimeoutConstants
+from backend.llm.claude_oauth_client import (
+    LEDGER_PROVIDER,
+    ClaudeOAuthError,
+    ClaudeOAuthNotAvailable,
+    collect_seats,
+    complete_async,
+)
+from backend.llm.claude_oauth_client import default_model as claude_default_model
 from backend.llm.fallback_messages import get_fallback_message
-from backend.llm.genai_client import GENAI_AVAILABLE, GenAIClient
 from backend.llm.prompt_manager import PromptManager
 from backend.llm.retry_handler import RetryHandler, _classify_error, _compute_delay
 from backend.llm.token_estimator import TokenEstimator
 
 logger = logging.getLogger(__name__)
+
+# The endpoint every call of this client is attributed to in the cost ledger.
+ZANTARA_ENDPOINT = "zantara_ai.chat"
+
+# A model slug override is honoured only when it is a plain ``claude-*`` slug
+# (the shape ``claude_oauth_client`` forwards to ``--model``). A legacy Gemini
+# slug left in an env var or a caller argument is ignored, never an error.
+_ALLOWED_CLAUDE_MODEL_RE = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
+
+# One argv string may not exceed ~128 KiB on Linux: keep the whole prompt under
+# it by dropping the OLDEST history entries first.
+_MAX_PROMPT_BYTES = 120_000
+
+# The structured tail ``claude_oauth_client`` puts on ``ClaudeOAuthError``.
+_LAST_ERROR_MARKER = "last error class:"
 
 
 # Constants
@@ -49,85 +73,131 @@ class ZantaraAIClientConstants:
     MIN_MAX_TOKENS = 1
 
 
+def _resolve_model(explicit_model: str | None) -> str:
+    """A ``claude-*`` slug from the caller or ``CHANNEL_MODEL_NAME``, else the default."""
+    if explicit_model:
+        if _ALLOWED_CLAUDE_MODEL_RE.match(explicit_model):
+            return explicit_model
+        logger.info("ZantaraAIClient: ignoring a non claude-* model argument")
+    raw = os.getenv("CHANNEL_MODEL_NAME", "").strip()
+    if raw:
+        if _ALLOWED_CLAUDE_MODEL_RE.match(raw):
+            return raw
+        logger.info("ZantaraAIClient: CHANNEL_MODEL_NAME is not a claude-* slug; ignored")
+    return claude_default_model()
+
+
+def _is_terminal_auth_or_quota_error(exc: Exception) -> bool:
+    """True for a durable Console-seat failure (auth, model access, depleted quota).
+
+    A transient rate limit is NOT terminal: it clears in seconds and is retried.
+    Only :class:`ClaudeOAuthError` qualifies, read from its structured tail.
+    """
+    if not isinstance(exc, ClaudeOAuthError):
+        return False
+    _, marker, tail = str(exc).lower().partition(_LAST_ERROR_MARKER)
+    if not marker:
+        return False
+    if "rate limited" in tail or "rate_limit" in tail:
+        return False
+    return "authentication" in tail or "model_access" in tail or "quota" in tail
+
+
+def _utf8_len(text: str) -> int:
+    try:
+        return len(text.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError("prompt contains invalid UTF-8 surrogates") from exc
+
+
+def _build_prompt(system: str, messages: list[dict[str, str]]) -> str:
+    """One prompt: system, history, then the last message verbatim and last.
+
+    Raises ``ValueError`` (before any CLI is spawned) for a prompt the CLI can
+    never accept: no non-system message, blank, over the argv limit even with no
+    history, an embedded NUL byte, or invalid UTF-8.
+    """
+    turns: list[tuple[str, str]] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role == "system":
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        turns.append(("User" if role == "user" else "Assistant", content))
+    if not turns:
+        raise ValueError("messages must contain at least one non-system message")
+
+    last_message = turns[-1][1]
+    if not last_message.strip():
+        # A system prompt alone must never make a blank question a valid prompt.
+        raise ValueError("prompt must be non-empty")
+    entries = turns[:-1]
+    head: list[str] = []
+    if system and system.strip():
+        head.append(f"<system_instructions>\n{system}\n</system_instructions>")
+
+    def _render(history: list[tuple[str, str]]) -> str:
+        sections = list(head)
+        if history:
+            lines = "\n".join(f"{label}: {text}" for label, text in history)
+            sections.append(f"<conversation_history>\n{lines}\n</conversation_history>")
+        sections.append(last_message)
+        return "\n\n".join(sections)
+
+    prompt = _render(entries)
+    while entries and _utf8_len(prompt) > _MAX_PROMPT_BYTES:
+        entries.pop(0)
+        prompt = _render(entries)
+    if _utf8_len(prompt) > _MAX_PROMPT_BYTES:
+        raise ValueError(f"prompt exceeds {_MAX_PROMPT_BYTES} bytes without history")
+    if "\x00" in prompt:
+        raise ValueError("prompt contains embedded NUL byte")
+    if not prompt.strip():
+        raise ValueError("prompt must be non-empty")
+    return prompt
+
+
 class ZantaraAIClient:
     """
-    ZANTARA AI Client – primary engine for all conversational AI.
+    ZANTARA AI Client – conversational engine for the chat surfaces.
 
-    AI Models:
-    - PRIMARY: Google Gemini 2.0 Flash (production) - unlimited quota, fast, cost-effective
-
-    Provider: Google AI (Gemini) - using new google-genai SDK
-
-    This client handles:
-    - Chat completion (async)
-    - Streaming responses
-    - Tool calling (when needed)
-    - Error handling with retry logic
-    - Token estimation for cost tracking
+    Runs on the Claude Console lane (``claude_oauth_client``). Handles chat
+    completion, streaming (the answer arrives whole, then is yielded), error
+    handling with retry logic and token estimation for the response payload.
     """
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         """
         Initialize ZantaraAIClient.
 
-        Supports two authentication methods:
-        1. Service Account (preferred) - via GOOGLE_CREDENTIALS_JSON env var
-        2. API Key (fallback) - via GOOGLE_API_KEY env var
-
         Args:
-            api_key: Google API key (defaults to settings.google_api_key)
-            model: Model name (defaults to gemini-2.0-flash-lite)
+            api_key: Accepted for backward compatibility and ignored: the Console
+                seats come from ``ANTHROPIC_CONSOLE_KEY_<n>`` /
+                ``ANTHROPIC_CONSOLE_WORKSPACE_<n>``.
+            model: ``claude-*`` model slug (defaults to the lane default).
 
         Raises:
-            ValueError: If no valid credentials in production environment
+            ValueError: If no Console seat is configured in production.
         """
-        import os
-
-        self.api_key = api_key or settings.google_api_key
         self.mock_mode = False
 
-        # Check if Service Account credentials are available
-        has_service_account = bool(
-            os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-            or os.environ.get("GOOGLE_CREDENTIALS_JSON")
-            or getattr(settings, "google_credentials_json", None),
-        )
-
-        # Initialize GenAI client using new SDK wrapper
-        # GenAIClient will try Service Account (ADC) first, then API key
-        if GENAI_AVAILABLE and (self.api_key or has_service_account):
-            try:
-                # GenAIClient handles auth method selection internally
-                self._genai_client = GenAIClient(api_key=self.api_key if self.api_key else None)
-                if not self._genai_client.is_available:
-                    raise RuntimeError("GenAI client initialization failed")
-                auth_method = getattr(self._genai_client, "_auth_method", "unknown")
-                logger.info("✅ Gemini AI Client initialized (auth: %s)", auth_method)
-            except Exception as e:
-                logger.error("❌ Failed to configure Gemini: %s", e)
-                if settings.environment == "production":
-                    raise ValueError(f"CRITICAL: Failed to configure Gemini in production: {e}")
-                self.mock_mode = True
-                self._genai_client = None
-        else:
-            if settings.environment == "production":
-                logger.critical(
-                    "❌ CRITICAL: No Gemini credentials found in PRODUCTION environment",
-                )
+        if not collect_seats():
+            if (settings.environment or "").lower() == "production":
+                logger.critical("No Claude Console seat configured in PRODUCTION environment")
                 raise ValueError(
-                    "GOOGLE_API_KEY or GOOGLE_CREDENTIALS_JSON is required in production",
+                    "No Claude Console seats configured in production "
+                    "(set ANTHROPIC_CONSOLE_KEY_<n> and ANTHROPIC_CONSOLE_WORKSPACE_<n>)"
                 )
-
             logger.warning(
-                "⚠️ No Gemini credentials found - defaulting to MOCK MODE (Development only)",
+                "No Claude Console seat configured - defaulting to MOCK MODE (Development only)"
             )
             self.mock_mode = True
-            self._genai_client = None
 
-        # Use centralized model config (S04 solidification)
-        from backend.llm.config import ModelName
-
-        self.model = model or ModelName.CHANNEL
+        self.model = _resolve_model(model)
 
         # Initialize pricing even in mock mode
         self.pricing = {
@@ -144,37 +214,9 @@ class ZantaraAIClient:
         )
         self.token_estimator = TokenEstimator(model=self.model)
 
-        # Log configuration (without sensitive info)
-        logger.debug("🔧 ZantaraAIClient Configuration:")
-        logger.debug(f"   Model: {self.model}")
-        logger.debug(f"   Mock Mode: {self.mock_mode}")
-        logger.debug(
-            f"   System Prompt: {len(self.prompt_manager._base_system_prompt)} chars loaded",
-        )
-
         logger.info("✅ ZantaraAIClient initialized")
-        logger.info(f"   Engine model: {self.model}")
-        logger.info(f"   Mode: {'Mock' if self.mock_mode else 'google-genai SDK'}")
-
-    def _get_chat_session(self, system_instruction: str, history: list[dict] | None = None):
-        """
-        Create a chat session using the new GenAI wrapper.
-
-        Args:
-            system_instruction: System instruction for the model
-            history: Optional conversation history
-
-        Returns:
-            ChatSession instance from genai_client wrapper
-        """
-        if not self._genai_client or not self._genai_client.is_available:
-            return None
-
-        return self._genai_client.create_chat(
-            model=self.model,
-            system_instruction=system_instruction,
-            history=history,
-        )
+        logger.info("   Engine model: %s", self.model)
+        logger.info("   Mode: %s", "Mock" if self.mock_mode else LEDGER_PROVIDER)
 
     def get_model_info(self) -> dict[str, Any]:
         """
@@ -185,7 +227,7 @@ class ZantaraAIClient:
         """
         return {
             "model": self.model,
-            "provider": "mock" if self.mock_mode else "google_native",
+            "provider": "mock" if self.mock_mode else LEDGER_PROVIDER,
             "pricing": self.pricing,
         }
 
@@ -257,38 +299,8 @@ class ZantaraAIClient:
                     raise ValueError("Each message must be a dictionary")
                 if "role" not in msg or "content" not in msg:
                     raise ValueError("Each message must have 'role' and 'content' keys")
-
-    def _prepare_gemini_messages(self, messages: list[dict[str, str]]) -> tuple[list[dict], str]:
-        """
-        Prepare messages for Gemini API format.
-
-        Args:
-            messages: List of messages in standard format
-
-        Returns:
-            Tuple of (gemini_history, last_user_message)
-        """
-        gemini_history = []
-        last_user_message = ""
-
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content", "")
-
-            if role == "system":
-                continue
-
-            if role == "user":
-                last_user_message = content
-                gemini_history.append({"role": "user", "parts": [content]})
-            elif role == "assistant":
-                gemini_history.append({"role": "model", "parts": [content]})
-
-        # Remove the last user message from history as it's the prompt
-        if gemini_history and gemini_history[-1]["role"] == "user":
-            gemini_history.pop()
-
-        return gemini_history, last_user_message
+                if not isinstance(msg["content"], str):
+                    raise ValueError("Each message content must be a string")
 
     def _estimate_tokens(
         self,
@@ -324,19 +336,20 @@ class ZantaraAIClient:
 
         Args:
             messages: Chat messages [{"role": "user", "content": "..."}]
-            max_tokens: Max tokens to generate (default: 1500)
-            temperature: Sampling temperature (default: 0.7)
+            max_tokens: Max tokens to generate
+            temperature: Accepted for compatibility; the lane does not take one
             system: Optional system prompt override
             memory_context: Optional memory context to inject
             identity_context: Optional user identity context
-            safety_settings: Optional safety settings for Gemini
+            safety_settings: Accepted for compatibility; ignored
 
         Returns:
             Dictionary with 'text', 'model', 'provider', 'tokens', 'cost'
 
         Raises:
-            ValueError: If input validation fails
-            Exception: If API call fails
+            ValueError: If input validation fails or the prompt cannot be sent
+            ClaudeOAuthNotAvailable: If no Console seat is configured
+            ClaudeOAuthError: If every Console seat failed
         """
         # Validate inputs
         self._validate_inputs(max_tokens=max_tokens, temperature=temperature, messages=messages)
@@ -348,82 +361,48 @@ class ZantaraAIClient:
                 identity_context=identity_context,
             )
 
-        # Debug logging
-        logger.debug("=" * 80)
-        logger.debug("🔍 [DRY RUN] Full Prompt Assembly for chat_async")
-        logger.debug("=" * 80)
-        logger.debug(f"System Prompt ({len(system)} chars):\n{system}")
-        logger.debug(f"Messages ({len(messages)} messages):")
-        for i, msg in enumerate(messages):
-            if not isinstance(msg, dict):
-                logger.debug(f"  [{i}] (skipped non-dict: {type(msg).__name__})")
-                continue
-            role = msg.get("role", "unknown")
-            content_preview = msg.get("content", "")[:200] + (
-                "..." if len(msg.get("content", "")) > 200 else ""
-            )
-            logger.debug("  [%s] %s: %s", i, role, content_preview)
-        logger.debug("=" * 80)
+        # Validate the assembled prompt BEFORE any routing: a prompt the CLI can
+        # never accept is refused the same way whatever the seat state.
+        prompt = _build_prompt(system, messages)
+        logger.debug(
+            "chat_async prompt assembled (system_chars=%d, messages=%d)", len(system), len(messages)
+        )
 
         # Handle Mock Mode
         if self.mock_mode:
-            answer = "This is a MOCK response from ZantaraAIClient (Mock Mode)."
             return {
-                "text": answer,
+                "text": "This is a MOCK response from ZantaraAIClient (Mock Mode).",
                 "model": self.model,
                 "provider": "mock",
                 "tokens": {"input": 10, "output": 10},
                 "cost": 0.0,
             }
 
-        if not GENAI_AVAILABLE or not self._genai_client:
-            logger.error("❌ Gemini client library not available")
-            raise ValueError("Gemini client library is not available")
+        if not collect_seats():
+            raise ClaudeOAuthNotAvailable("No Claude Console seats configured")
 
         try:
-            # Prepare history and get last user message
-            gemini_history, last_user_message = self._prepare_gemini_messages(messages)
-
-            # Create chat session with new SDK wrapper
-            chat = self._get_chat_session(system, gemini_history)
-            if not chat:
-                raise RuntimeError("Failed to create chat session")
-
-            # Send message and get response
-            result = await chat.send_message(
-                last_user_message,
+            resp = await complete_async(
+                prompt,
+                model=self.model,
+                endpoint=ZANTARA_ENDPOINT,
                 max_output_tokens=max_tokens,
-                temperature=temperature,
+                timeout_s=HttpTimeoutConstants.MEDIUM_TIMEOUT,
+                total_timeout_s=HttpTimeoutConstants.LONG_TIMEOUT,
             )
-
-            answer = result.get("text", "")
-            tokens = self._estimate_tokens(messages, answer)
-            return {
-                "text": answer,
-                "model": self.model,
-                "provider": "google_genai",
-                "tokens": tokens,
-                "cost": 0.0,
-            }
-
-        except (ConnectionError, TimeoutError) as e:
-            logger.error("❌ GenAI Connection Error: %s", e)
-            raise
         except Exception as e:
-            error_msg = str(e).lower()
-            # Check for API key leaked error (403)
-            if "403" in error_msg or "leaked" in error_msg or "api key" in error_msg:
-                logger.critical(
-                    "🚨 CRITICAL: API key leaked or invalid (403). "
-                    "Please replace GOOGLE_API_KEY in environment variables.",
-                )
-                # Raise a specific exception that can be caught and handled gracefully
-                raise ValueError(
-                    "API key was reported as leaked. Please use another API key. "
-                    "Contact the technical team to update GOOGLE_API_KEY.",
-                ) from e
-            logger.error("❌ GenAI Error: %s", e, exc_info=True)
+            logger.error("❌ Claude Console call failed (%s)", type(e).__name__)
             raise
+
+        answer = resp.text or ""
+        tokens = self._estimate_tokens(messages, answer)
+        return {
+            "text": answer,
+            "model": self.model,
+            "provider": LEDGER_PROVIDER,
+            "tokens": tokens,
+            "cost": 0.0,
+        }
 
     async def stream(
         self,
@@ -436,7 +415,11 @@ class ZantaraAIClient:
         language: str = "en",
     ):
         """
-        Stream chat response token by token for SSE.
+        Stream chat response for SSE.
+
+        The Console lane answers whole: the text is yielded in one chunk once the
+        completion returns. Retries, fallback messages and mock mode keep the
+        contract the callers already rely on.
 
         Args:
             message: User message
@@ -444,13 +427,13 @@ class ZantaraAIClient:
             conversation_history: Optional chat history
             memory_context: Optional memory context
             identity_context: Optional user identity context
-            max_tokens: Max tokens (default: 150)
+            max_tokens: Max tokens
             language: Language for fallback messages (default: 'en')
 
         Yields:
-            str: Text chunks as they arrive from AI
+            str: Text chunks of the answer (or of a fallback message)
         """
-        logger.info("🌊 [ZantaraAI] Starting stream for user %s", user_id)
+        logger.info("🌊 [ZantaraAI] Starting stream")
 
         # Validate inputs
         self._validate_inputs(
@@ -464,128 +447,90 @@ class ZantaraAIClient:
             identity_context=identity_context,
         )
 
-        # Debug logging
-        logger.debug("=" * 80)
-        logger.debug("🔍 [DRY RUN] Full Prompt Assembly for stream")
-        logger.debug("=" * 80)
-        logger.debug(f"System Prompt ({len(system)} chars):\n{system}")
-        logger.debug("User Message: %s", message)
-        if conversation_history:
-            logger.debug(f"Conversation History ({len(conversation_history)} messages):")
-            for i, msg in enumerate(conversation_history):
-                if not isinstance(msg, dict):
-                    logger.debug(f"  [{i}] (skipped non-dict: {type(msg).__name__})")
-                    continue
-                role = msg.get("role", "unknown")
-                content_preview = msg.get("content", "")[:200] + (
-                    "..." if len(msg.get("content", "")) > 200 else ""
-                )
-                logger.debug("  [%s] %s: %s", i, role, content_preview)
-        else:
-            logger.debug("Conversation History: None")
-        logger.debug("=" * 80)
+        all_messages: list[dict[str, str]] = []
+        for msg in conversation_history or []:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content", "")
+            all_messages.append(
+                {
+                    "role": msg.get("role", "user"),
+                    "content": content if isinstance(content, str) else str(content),
+                }
+            )
+        all_messages.append({"role": "user", "content": message})
+
+        # An invalid prompt raises here, once, before any retry or routing.
+        prompt = _build_prompt(system, all_messages)
+        logger.debug(
+            "stream prompt assembled (system_chars=%d, messages=%d)", len(system), len(all_messages)
+        )
 
         # Mock Mode
         if self.mock_mode:
-            logger.info("🎭 [ZantaraAI] MOCK MODE streaming for user %s", user_id)
-            response = f"This is a MOCK stream response to: {message}. In production mode, this would be connected to Gemini AI."
-            words = response.split()
-            for word in words:
+            logger.info("🎭 [ZantaraAI] MOCK MODE streaming")
+            response = (
+                "This is a MOCK stream response. "
+                "In production mode, this runs on the Claude Console lane."
+            )
+            for word in response.split():
                 yield word + " "
                 await asyncio.sleep(ZantaraAIClientConstants.MOCK_STREAM_DELAY)
             return
 
-        if not GENAI_AVAILABLE or not self._genai_client:
-            logger.error("❌ GenAI not available for streaming")
-            fallback_response = get_fallback_message("service_unavailable", language)
-            words = fallback_response.split()
-            for word in words:
+        if not collect_seats():
+            logger.error("❌ No Claude Console seat available for streaming")
+            for word in get_fallback_message("service_unavailable", language).split():
                 yield word + " "
                 await asyncio.sleep(ZantaraAIClientConstants.FALLBACK_STREAM_DELAY)
             return
 
-        # Streaming retry: cannot use execute_with_retry (async generator incompatibility).
-        # Uses shared _classify_error / _compute_delay from retry_handler for consistent backoff.
-        last_exception = None
+        # Retry with the shared classification/delay logic of RetryHandler.
+        last_exception: Exception | None = None
         for attempt in range(self.retry_handler.max_retries):
             try:
-                # Prepare conversation history
-                gemini_history = []
-                if conversation_history:
-                    for msg in conversation_history:
-                        if not isinstance(msg, dict):
-                            continue
-                        gemini_history.append(
-                            {
-                                "role": msg.get("role", "user"),
-                                "content": msg.get("content", ""),
-                            },
-                        )
-
-                # Create chat session with new SDK wrapper
-                chat = self._get_chat_session(system, gemini_history)
-                if not chat:
-                    raise RuntimeError("Failed to create chat session")
-
-                # Stream response
-                stream_active = False
-                async for chunk in chat.send_message_stream(
-                    message,
+                resp = await complete_async(
+                    prompt,
+                    model=self.model,
+                    endpoint=ZANTARA_ENDPOINT,
                     max_output_tokens=max_tokens,
-                    temperature=ZantaraAIClientConstants.DEFAULT_TEMPERATURE,
-                ):
-                    stream_active = True
-                    yield chunk
+                    timeout_s=HttpTimeoutConstants.MEDIUM_TIMEOUT,
+                    total_timeout_s=HttpTimeoutConstants.LONG_TIMEOUT,
+                )
+                text = resp.text or ""
+                if text.strip():
+                    logger.info("✅ [ZantaraAI] Stream completed successfully")
+                    yield text
+                    return
+                logger.warning("⚠️ [ZantaraAI] No content received from completion")
+                last_exception = ValueError("No content received from completion")
 
-                if not stream_active:
-                    logger.warning("⚠️ [ZantaraAI] No content received in stream")
-                    raise ValueError("No content received from stream")
-
-                logger.info("✅ [ZantaraAI] Stream completed successfully for user %s", user_id)
+            except ClaudeOAuthNotAvailable:
+                logger.error("❌ [ZantaraAI] Claude Console unavailable")
+                for word in get_fallback_message("service_unavailable", language).split():
+                    yield word + " "
+                    await asyncio.sleep(ZantaraAIClientConstants.FALLBACK_STREAM_DELAY)
                 return
 
-            except ValueError as e:
-                # Handle API key leaked error specifically
-                error_msg = str(e).lower()
-                if "leaked" in error_msg or "api key" in error_msg:
-                    logger.critical("🚨 [ZantaraAI] API key error for user %s: %s", user_id, e)
-                    fallback_response = get_fallback_message("api_key_error", language)
-                    words = fallback_response.split()
-                    for word in words:
+            except ClaudeOAuthError as e:
+                if _is_terminal_auth_or_quota_error(e):
+                    logger.critical("🚨 [ZantaraAI] Console seats refused (auth or quota)")
+                    for word in get_fallback_message("api_key_error", language).split():
                         yield word + " "
                         await asyncio.sleep(ZantaraAIClientConstants.FALLBACK_STREAM_DELAY)
                     return
-                # For other ValueErrors (like no content), retry
                 last_exception = e
-                # Fall through to retry logic
 
             except Exception as e:
                 last_exception = e
-                error_msg = str(e).lower()
-                # Check for API key errors in exception message
-                if "403" in error_msg or "leaked" in error_msg or "api key" in error_msg:
-                    logger.critical("🚨 [ZantaraAI] API key error for user %s: %s", user_id, e)
-                    fallback_response = get_fallback_message("api_key_error", language)
-                    words = fallback_response.split()
-                    for word in words:
-                        yield word + " "
-                        await asyncio.sleep(ZantaraAIClientConstants.FALLBACK_STREAM_DELAY)
-                    return
 
-                # Check if retryable (using RetryHandler logic implicitly via similar checks)
-                # But here we just retry all exceptions except auth ones caught above
-
-            # Retry decision — use shared classification/delay logic from RetryHandler
+            # Retry decision — shared classification/delay logic from RetryHandler
             if attempt < self.retry_handler.max_retries - 1:
                 err_class = _classify_error(str(last_exception or ""))
                 if err_class == "permanent":
                     logger.error(
                         "LLM stream permanent error",
-                        extra={
-                            "user_id": user_id,
-                            "attempt": attempt + 1,
-                            "error": str(last_exception),
-                        },
+                        extra={"attempt": attempt + 1, "error_type": type(last_exception).__name__},
                     )
                     break
                 delay = _compute_delay(
@@ -597,25 +542,22 @@ class ZantaraAIClient:
                 logger.warning(
                     "LLM stream retry",
                     extra={
-                        "user_id": user_id,
                         "attempt": attempt + 1,
                         "max_retries": self.retry_handler.max_retries,
                         "error_class": err_class,
                         "delay_s": round(delay, 2),
-                        "error": str(last_exception),
+                        "error_type": type(last_exception).__name__,
                     },
                 )
                 await asyncio.sleep(delay)
             else:
                 logger.error(
                     "LLM stream exhausted",
-                    extra={"user_id": user_id, "error": str(last_exception)},
+                    extra={"error_type": type(last_exception).__name__},
                 )
 
         # If all retries failed, send fallback
-        fallback_response = get_fallback_message("connection_error", language)
-        words = fallback_response.split()
-        for word in words:
+        for word in get_fallback_message("connection_error", language).split():
             yield word + " "
             await asyncio.sleep(ZantaraAIClientConstants.FALLBACK_STREAM_DELAY)
 
@@ -637,7 +579,7 @@ class ZantaraAIClient:
             conversation_history: Optional chat history
             memory_context: Optional memory context
             identity_context: Optional user identity context
-            max_tokens: Max tokens (default: 150)
+            max_tokens: Max tokens
 
         Returns:
             Dictionary with 'text', 'model', 'provider', 'ai_used', 'tokens'
@@ -677,8 +619,8 @@ class ZantaraAIClient:
         """
         Compatible interface for IntelligentRouter - conversational WITH tool calling.
 
-        Note: Tool calling is not fully implemented for Gemini native mode.
-        Falls back to standard conversational if tools are provided.
+        Note: tool calling is not implemented on this client; it falls back to
+        the standard conversational answer when tools are provided.
 
         Args:
             message: User message
@@ -686,19 +628,17 @@ class ZantaraAIClient:
             conversation_history: Optional chat history
             memory_context: Optional memory context
             identity_context: Optional user identity context
-            tools: Optional list of tool definitions (not used in Gemini native)
+            tools: Optional list of tool definitions (not used)
             _tool_executor: Tool executor (unused, kept for compatibility)
-            max_tokens: Max tokens (default: 150)
+            max_tokens: Max tokens
             _max_tool_iterations: Max tool iterations (unused)
 
         Returns:
             Dictionary with 'text', 'model', 'provider', 'ai_used', 'tokens', 'tools_called', 'used_tools'
         """
-        # Gemini native doesn't support tool calling in the same way as OpenAI
-        # So we just use standard conversational
         if tools:
             logger.info(
-                "🔧 [ZantaraAI] Tool use requested but not supported in Gemini native mode, using standard conversational",
+                "🔧 [ZantaraAI] Tool use requested but not supported here, using standard conversational",
             )
 
         result = await self.conversational(
@@ -718,16 +658,12 @@ class ZantaraAIClient:
         Check if ZANTARA AI is configured and available.
 
         Returns:
-            True if API key is set and client is available
+            True in mock mode, else True when a Console seat is configured
         """
         if self.mock_mode:
             return True
-        return bool(self.api_key and GENAI_AVAILABLE)
+        return bool(collect_seats())
 
     async def close(self) -> None:
-        """
-        Shut down the AI client.
-        Google SDK handles pooling, but we null the reference for completeness.
-        """
-        self._genai_client = None
-        logger.info("✅ ZantaraAIClient: All clients shut down")
+        """Shut down the AI client (nothing is held open; kept for the lifecycle)."""
+        logger.info("✅ ZantaraAIClient: shut down")

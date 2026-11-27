@@ -155,10 +155,6 @@ class CrossOracleSynthesisService:
             golden_answer_service: Optional cache for common scenarios
         """
         self.search = search_service
-        if zantara_ai_client is None:
-            from backend.llm.zantara_ai_client import ZantaraAIClient
-
-            zantara_ai_client = ZantaraAIClient()
         self.zantara = zantara_ai_client
         self.golden_answers = golden_answer_service
 
@@ -321,10 +317,7 @@ class CrossOracleSynthesisService:
 
         # Query all in parallel (structured concurrency, Python 3.11+)
         async with asyncio.TaskGroup() as tg:
-            tasks = [
-                tg.create_task(self.query_oracle(oq, user_level))
-                for oq in oracle_queries
-            ]
+            tasks = [tg.create_task(self.query_oracle(oq, user_level)) for oq in oracle_queries]
         oracle_results = [t.result() for t in tasks]
 
         # Convert to dict

@@ -100,7 +100,7 @@ def get_ai_client(request: Request) -> Any:
                 "service": "ai",
                 "degraded_services": _degraded_services_list(request),
                 "troubleshooting": [
-                    "Verify OPENAI_API_KEY or GOOGLE_API_KEY is set",
+                    "Verify ANTHROPIC_CONSOLE_KEY_<n> and ANTHROPIC_CONSOLE_WORKSPACE_<n> are set",
                     "Check API key validity and quota",
                     "Review application startup logs for errors",
                 ],
