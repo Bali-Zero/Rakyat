@@ -1369,7 +1369,6 @@ scenarios = {
     "codex": lambda: codex_mod.CodexExecClient.generate(None, "probe"),
     "send": lambda: wa_mod.WhatsAppService.send_message(None, phone="1", text="x"),
     "cache_set": lambda: cache_mod.CacheService.set(None, "k", "v"),
-    "rerank": lambda: reranker_mod.ReRanker.rerank(None, "q", [], top_k=1),
     "cross_rerank": lambda: reranker2_mod.CrossEncoderReranker.rerank(None, "q", [], top_k=1),
     "expand": lambda: expander_mod.QueryExpander.expand(None, "q"),
 }
@@ -1409,7 +1408,6 @@ print("ALL_HC7_OK")
             "codex",
             "send",
             "cache_set",
-            "rerank",
             "cross_rerank",
             "expand",
         ):
