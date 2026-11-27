@@ -13,6 +13,12 @@
 -- NOTICE and handled by a follow-up explicit migration of the same shape. No ledger insert:
 -- payroll still goes through the normal writer or HR. The fixed recorded_at is the marker the
 -- rollback uses to find exactly these receipts.
+-- THIS MIGRATION NEVER WAITS. Every lock below is NOWAIT: a held lock raises 55P03, the runner
+-- (run_with_lock_retry) rolls the attempt back and retries the whole transaction with backoff,
+-- and since it never waits it can never be part of a deadlock cycle. Two live writers take
+-- opposite orders, so no waiting order is safe for both: confirm_payment locks the practice and
+-- then updates the invoice, _persist_invoice upserts the invoice and then updates the practice.
+-- Do not add an EXCEPTION handler to this block: it could swallow the 55P03.
 DO $$
 DECLARE
     marker CONSTANT timestamptz := '2026-11-27 11:00:00+00';
@@ -21,7 +27,7 @@ DECLARE
 BEGIN
     -- The invoice writer upserts the invoice BEFORE it updates its practice, so the practice
     -- lock below does not serialize it: block invoice writes (reads continue) until we commit.
-    LOCK TABLE invoices IN SHARE MODE;
+    LOCK TABLE invoices IN SHARE MODE NOWAIT;
     IF EXISTS (SELECT 1 FROM hr_delivery_bonus_events WHERE recorded_at = marker) THEN
         RAISE EXCEPTION 'The B2a receipt marker is already in use; stop and pick another value';
     END IF;
@@ -44,12 +50,12 @@ BEGIN
         -- concurrent write has committed and none can change before the insert. The rate, the
         -- employee (hr_bonus_rates.practice_type_code and hr_employees.team_member_id are UNIQUE,
         -- so no second row can appear) and the team member are locked against edits too.
-        PERFORM 1 FROM practices WHERE id = r.practice_id FOR UPDATE;
-        PERFORM 1 FROM documents WHERE id = r.document_id FOR UPDATE;
-        PERFORM 1 FROM practice_delivery_slots WHERE practice_id = r.practice_id FOR UPDATE;
-        PERFORM 1 FROM hr_bonus_rates WHERE id = r.rate_id FOR SHARE;
-        PERFORM 1 FROM hr_employees WHERE id = r.employee_id FOR SHARE;
-        PERFORM 1 FROM team_members WHERE id = r.member_id FOR SHARE;
+        PERFORM 1 FROM practices WHERE id = r.practice_id FOR UPDATE NOWAIT;
+        PERFORM 1 FROM documents WHERE id = r.document_id FOR UPDATE NOWAIT;
+        PERFORM 1 FROM practice_delivery_slots WHERE practice_id = r.practice_id FOR UPDATE NOWAIT;
+        PERFORM 1 FROM hr_bonus_rates WHERE id = r.rate_id FOR SHARE NOWAIT;
+        PERFORM 1 FROM hr_employees WHERE id = r.employee_id FOR SHARE NOWAIT;
+        PERFORM 1 FROM team_members WHERE id = r.member_id FOR SHARE NOWAIT;
         IF NOT EXISTS (
             SELECT 1 FROM practices p JOIN practice_types pt ON pt.id = p.practice_type_id
             WHERE p.id = r.practice_id AND p.status = 'completed' AND pt.code = r.code

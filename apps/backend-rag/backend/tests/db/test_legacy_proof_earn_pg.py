@@ -5,6 +5,7 @@ fixture of the delivery suite). Only the file sink and the cache invalidation ar
 """
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from backend.app.services.hr.hr_service import business_today
+from backend.db import migration_base
 from backend.db.migration_base import split_migration_sql
 from backend.services.crm import practice_delivery as service
 from backend.tests.db.test_kita_document_delivery_pg import STAFF, final_file, pool  # noqa: F401
@@ -672,18 +674,20 @@ async def written(conn):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", [ARCHIVE, DELETE, INVOICE, RATE])
-async def test_391_waits_for_a_concurrent_change_and_then_sees_it(pool, change):  # noqa: F811
+async def test_391_never_waits_for_a_held_lock_and_applies_once_it_is_free(pool, change):  # noqa: F811
     async with pool.acquire() as setup:
         await seed_f4(setup)
     async with pool.acquire() as writer, pool.acquire() as migrator:
         tx = writer.transaction()
         await tx.start()
         await writer.execute(change)
-        run = asyncio.create_task(migrator.execute(FORWARD))
-        await asyncio.sleep(0.5)
-        assert not run.done()  # blocked on the changed fact, not validating a stale one
+        started = time.monotonic()
+        with pytest.raises(asyncpg.LockNotAvailableError):  # 55P03, the one the runner retries
+            await asyncio.wait_for(migrator.execute(FORWARD), 5)  # a waiting migration fails here
+        assert time.monotonic() - started < 1
+        assert await written(migrator) == set()
         await tx.commit()
-        await asyncio.wait_for(run, 10)
+        await migrator.execute(FORWARD)  # the retry now reads the committed change
         assert await written(migrator) == OUTCOMES[change]
 
 
@@ -730,19 +734,55 @@ async def test_the_waiver_is_promised_only_for_a_conditional_bonus_slot(pool, co
 
 
 @pytest.mark.asyncio
-async def test_391_does_not_deadlock_with_a_permanent_document_delete(pool):  # noqa: F811
+@pytest.mark.parametrize("bump", [True, False])
+async def test_391_cannot_deadlock_with_the_payment_confirmation_order(pool, bump):  # noqa: F811
+    # confirm_payment locks the practice and then updates its invoice; the migration holding
+    # the invoice table first and then waiting for the practice would be a deadlock cycle.
     async with pool.acquire() as setup:
         await seed_f4(setup)
     async with pool.acquire() as writer, pool.acquire() as migrator:
         tx = writer.transaction()
         await tx.start()
-        # The staff delete holds the document first and then cascades into the slot.
-        await writer.execute("SELECT 1 FROM documents WHERE id=21162 FOR UPDATE")
-        run = asyncio.create_task(migrator.execute(FORWARD))
-        await asyncio.sleep(0.5)
-        assert not run.done()
-        # Locking the slot before the document would hold the slot here and deadlock.
-        await writer.execute(DELETE)
+        await writer.execute("SELECT 1 FROM practices WHERE id=1378 FOR UPDATE")
+        started = time.monotonic()
+        with pytest.raises(asyncpg.LockNotAvailableError) as refused:
+            await asyncio.wait_for(migrator.execute(FORWARD), 5)
+        assert not isinstance(refused.value, asyncpg.DeadlockDetectedError)
+        assert time.monotonic() - started < 0.5  # at once, far below deadlock_timeout
+        if bump:
+            await asyncio.wait_for(
+                writer.execute(
+                    "UPDATE invoices SET amount_idr=amount_idr+1 WHERE practice_id=1378"
+                ),
+                5,
+            )
         await tx.commit()
-        await asyncio.wait_for(run, 10)
-        assert await written(migrator) == set(LISTED) - {1378}
+        await migrator.execute(FORWARD)
+        assert await written(migrator) == (set(LISTED) - {1378} if bump else set(LISTED))
+
+
+@pytest.mark.asyncio
+async def test_391_through_the_real_runner_retries_until_the_lock_is_released(pool, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(migration_base, "LOCK_RETRY_BACKOFF_BASE_SECONDS", 0.05)
+    async with pool.acquire() as setup:
+        await seed_f4(setup)
+    attempts = []
+    async with pool.acquire() as writer, pool.acquire() as migrator:
+        tx = writer.transaction()
+        await tx.start()
+        await writer.execute("SELECT 1 FROM practices WHERE id=1411 FOR UPDATE")
+
+        async def release():
+            await asyncio.sleep(1)
+            await tx.commit()
+
+        async def attempt():
+            attempts.append(1)
+            await migrator.execute(FORWARD)
+            return True
+
+        freed = asyncio.create_task(release())
+        assert await migration_base.run_with_lock_retry(migrator, "391", attempt) is True
+        await freed
+        assert len(attempts) >= 2
+        assert await written(migrator) == set(LISTED)
