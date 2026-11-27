@@ -639,6 +639,60 @@ describe("Final delivery", () => {
       expect(await screen.findByText("Not applicable")).toBeVisible();
       expect(screen.queryByText(/to record the bonus/)).toBeNull();
     });
+    it.each([
+      {
+        day: 30,
+        extras: { can_postpone: true, status: "overdue" },
+        open: "Client has not entered · postpone once",
+        label: "Private staff note about the client’s entry",
+        send: /Confirm postponement/,
+        action: "postpone",
+        done: "Postponement recorded.",
+      },
+      {
+        day: 60,
+        extras: {
+          can_postpone: false,
+          can_escalate: true,
+          status: "escalation_due",
+        },
+        open: "Prepare official email to Zero",
+        label: "Note to Zero about the missing permit",
+        send: "Confirm and send email to Zero",
+        action: "escalate",
+        done: "Escalation status updated.",
+      },
+    ])(
+      "manages the permit follow-up of a cohort practice at day $day",
+      async ({ extras, open, label, send, action, done }) => {
+        const tracked = { ...followup, ...extras };
+        requests.get.mockResolvedValue(
+          legacy({
+            bonus_instruction: null,
+            visa_followup: tracked,
+            slots: [
+              slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+              slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+            ],
+          }),
+        );
+        requests.post.mockResolvedValue({
+          ...tracked,
+          status: "awaiting_permit",
+        });
+        const { user } = setup();
+        await user.click(await screen.findByRole("button", { name: open }));
+        await user.type(screen.getByLabelText(label), "Client is abroad.");
+        await user.click(screen.getByRole("button", { name: send }));
+        await waitFor(() =>
+          expect(requests.post).toHaveBeenCalledWith(
+            `${base}/visa-followup/${action}`,
+            { note: "Client is abroad." },
+          ),
+        );
+        expect(await screen.findByText(done)).toBeVisible();
+      },
+    );
     it("says the bonus document is required once the waiver can no longer help, and says nothing otherwise", async () => {
       requests.get.mockResolvedValue(legacy({ bonus_instruction: "upload" }));
       setup();

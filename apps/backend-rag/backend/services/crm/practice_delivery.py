@@ -130,6 +130,11 @@ async def has_ledger(conn: Any, practice_id: int) -> bool:
     )
 
 
+def can_waive(slot: dict) -> bool:
+    """Only an unfilled conditional slot may be marked inapplicable (waive() and the card hint)."""
+    return bool(slot["condition"]) and not slot["document_id"]
+
+
 async def bonus_instruction(
     conn: Any, p: dict, slots: list[dict], bonus_slot: str | None
 ) -> str | None:
@@ -141,7 +146,9 @@ async def bonus_instruction(
     if slot["key"] in prior:
         return None
     # Waiving the bonus slot only helps while no other document has been accepted.
-    return "upload" if prior or any(s["document_id"] for s in slots) else "upload_or_waive"
+    if prior or any(s["document_id"] for s in slots) or not can_waive(slot):
+        return "upload"
+    return "upload_or_waive"
 
 
 async def require_writable(conn: Any, p: dict) -> None:
@@ -294,7 +301,7 @@ async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) 
         p = await practice(conn, practice_id, user, lock=True)
         await require_writable(conn, p)
         slot = slot_for(await state(conn, p, user), key)
-        if not slot["condition"] or slot["document_id"]:
+        if not can_waive(slot):
             raise HTTPException(409, "Only unfilled conditional slots may be marked inapplicable")
         await conn.execute(
             """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,waiver_reason,updated_by)

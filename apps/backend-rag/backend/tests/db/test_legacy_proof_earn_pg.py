@@ -649,39 +649,100 @@ def test_the_migration_carries_no_staff_or_client_identity():
     assert "@" not in text
 
 
+ARCHIVE = "UPDATE documents SET is_archived=true WHERE id=21162"
+# A permanent delete: the FK cascade removes the slot too. The migration must lock in the
+# upload path's order (practice, document, slots) or the two would deadlock.
+DELETE = "DELETE FROM documents WHERE id=21162"
+INVOICE = "UPDATE invoices SET amount_idr=amount_idr+1 WHERE practice_id=1378"
+RATE = "UPDATE hr_bonus_rates SET amount_idr=16000 WHERE id=68"
+OUTCOMES = {
+    ARCHIVE: set(LISTED) - {1378},
+    DELETE: set(LISTED) - {1378},
+    INVOICE: set(LISTED) - {1378},
+    RATE: {1414},  # the eight ext_b1_voa rows read rate 68, 1414 reads rate 70
+}
+
+
+async def written(conn):
+    return {
+        r["practice_id"]
+        for r in await conn.fetch("SELECT practice_id FROM hr_delivery_bonus_events")
+    }
+
+
 @pytest.mark.asyncio
-async def test_391_waits_for_a_concurrent_change_and_then_sees_it(pool):  # noqa: F811
+@pytest.mark.parametrize("change", [ARCHIVE, DELETE, INVOICE, RATE])
+async def test_391_waits_for_a_concurrent_change_and_then_sees_it(pool, change):  # noqa: F811
     async with pool.acquire() as setup:
         await seed_f4(setup)
     async with pool.acquire() as writer, pool.acquire() as migrator:
         tx = writer.transaction()
         await tx.start()
-        await writer.execute("UPDATE documents SET is_archived=true WHERE id=21162")
+        await writer.execute(change)
         run = asyncio.create_task(migrator.execute(FORWARD))
         await asyncio.sleep(0.5)
-        assert not run.done()  # blocked on the proof document, not validating stale facts
+        assert not run.done()  # blocked on the changed fact, not validating a stale one
         await tx.commit()
         await asyncio.wait_for(run, 10)
-        listed = {
-            r["practice_id"]
-            for r in await migrator.fetch("SELECT practice_id FROM hr_delivery_bonus_events")
-        }
-    assert listed == set(LISTED) - {1378}
+        assert await written(migrator) == OUTCOMES[change]
 
 
 @pytest.mark.asyncio
-async def test_391_holds_its_facts_until_it_commits(pool):  # noqa: F811
+@pytest.mark.parametrize("change", [ARCHIVE, DELETE, INVOICE, RATE])
+async def test_391_holds_its_facts_until_it_commits(pool, change):  # noqa: F811
     async with pool.acquire() as setup:
         await seed_f4(setup)
     async with pool.acquire() as writer, pool.acquire() as migrator:
         tx = migrator.transaction()
         await tx.start()
         await migrator.execute(FORWARD)
-        change = asyncio.create_task(
-            writer.execute("UPDATE documents SET is_archived=true WHERE id=21162")
-        )
+        late = asyncio.create_task(writer.execute(change))
         await asyncio.sleep(0.5)
-        assert not change.done()  # the change cannot slip in between validation and insert
+        assert not late.done()  # the change cannot slip in between validation and insert
         await tx.commit()
-        await asyncio.wait_for(change, 10)
-        assert await writer.fetchval("SELECT count(*) FROM hr_delivery_bonus_events") == len(LISTED)
+        await asyncio.wait_for(late, 10)  # no deadlock error, the change then succeeds
+        # Every receipt was written on the facts as measured. After a delete the receipt of
+        # that practice outlives its document, which is fine: the receipt is history.
+        assert await written(writer) == set(LISTED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("visa_b1_voa", "upload_or_waive"),
+        ("visa_c1_tourism", "upload"),
+        ("kitas_working_extend", "upload"),
+    ],
+)
+async def test_the_waiver_is_promised_only_for_a_conditional_bonus_slot(pool, code, expected):  # noqa: F811
+    async with pool.acquire() as conn:
+        await types(conn)
+        type_id = await conn.fetchval("SELECT id FROM practice_types WHERE code=$1", code)
+        await practice(conn, 60, type_id)
+        shown = await view(conn, 60)
+        bonus = next(s for s in shown["slots"] if s["key"] == shown["bonus_slot"])
+    assert shown["bonus_instruction"] == expected
+    assert (expected == "upload_or_waive") is bool(bonus["condition"])
+    if expected == "upload":
+        with pytest.raises(HTTPException):
+            await service.waive(pool, 60, bonus["key"], STAFF, "Not in this order")
+
+
+@pytest.mark.asyncio
+async def test_391_does_not_deadlock_with_a_permanent_document_delete(pool):  # noqa: F811
+    async with pool.acquire() as setup:
+        await seed_f4(setup)
+    async with pool.acquire() as writer, pool.acquire() as migrator:
+        tx = writer.transaction()
+        await tx.start()
+        # The staff delete holds the document first and then cascades into the slot.
+        await writer.execute("SELECT 1 FROM documents WHERE id=21162 FOR UPDATE")
+        run = asyncio.create_task(migrator.execute(FORWARD))
+        await asyncio.sleep(0.5)
+        assert not run.done()
+        # Locking the slot before the document would hold the slot here and deadlock.
+        await writer.execute(DELETE)
+        await tx.commit()
+        await asyncio.wait_for(run, 10)
+        assert await written(migrator) == set(LISTED) - {1378}

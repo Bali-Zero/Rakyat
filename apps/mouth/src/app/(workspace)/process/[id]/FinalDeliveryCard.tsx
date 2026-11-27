@@ -271,7 +271,10 @@ function StaffDeliveryCard({
         : action === "confirm-receipt"
           ? "Existing email receipt recorded."
           : "Escalation status updated.",
-      data.slots.find((s) => s.key === data.visa_followup?.slot_key),
+      // A cohort practice is authorised by staff-edit; the server judges each action.
+      legacyOpen
+        ? undefined
+        : data.slots.find((s) => s.key === data.visa_followup?.slot_key),
     );
   }
 
@@ -475,7 +478,7 @@ function StaffDeliveryCard({
                           practiceId={practice.id}
                           value={data.visa_followup}
                           busy={working}
-                          writable={Boolean(writable)}
+                          writable={staffEdit}
                           act={followupAction}
                         />
                       )}

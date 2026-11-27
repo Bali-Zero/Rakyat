@@ -19,6 +19,9 @@ DECLARE
     r record;
     forfeited boolean;
 BEGIN
+    -- The invoice writer upserts the invoice BEFORE it updates its practice, so the practice
+    -- lock below does not serialize it: block invoice writes (reads continue) until we commit.
+    LOCK TABLE invoices IN SHARE MODE;
     IF EXISTS (SELECT 1 FROM hr_delivery_bonus_events WHERE recorded_at = marker) THEN
         RAISE EXCEPTION 'The B2a receipt marker is already in use; stop and pick another value';
     END IF;
@@ -35,12 +38,18 @@ BEGIN
             (1414, 'ext_c1_tourism', 21170, '2026-11-27 06:52:12.022591+00'::timestamptz, 6, 'd76f5df0-d194-415c-86b3-9c3d38ad3cf1', 70, 20000, 1700000, 1600000)
         ) AS t(practice_id, code, document_id, slot_at, employee_id, member_id, rate_id, amount, floor_idr, invoice_total)
     LOOP
-        -- The new image is already serving: take the row locks first (practice, then its slots,
-        -- then the proof document, the order the upload path uses), so every fact below is read
-        -- after any concurrent write has committed and none can change before the insert.
+        -- The new image is already serving: take the row locks first, in the order the upload
+        -- path uses (practice, proof document, then its slots; a permanent document delete locks
+        -- the document and then cascades to the slot), so every fact below is read after any
+        -- concurrent write has committed and none can change before the insert. The rate, the
+        -- employee (hr_bonus_rates.practice_type_code and hr_employees.team_member_id are UNIQUE,
+        -- so no second row can appear) and the team member are locked against edits too.
         PERFORM 1 FROM practices WHERE id = r.practice_id FOR UPDATE;
-        PERFORM 1 FROM practice_delivery_slots WHERE practice_id = r.practice_id FOR UPDATE;
         PERFORM 1 FROM documents WHERE id = r.document_id FOR UPDATE;
+        PERFORM 1 FROM practice_delivery_slots WHERE practice_id = r.practice_id FOR UPDATE;
+        PERFORM 1 FROM hr_bonus_rates WHERE id = r.rate_id FOR SHARE;
+        PERFORM 1 FROM hr_employees WHERE id = r.employee_id FOR SHARE;
+        PERFORM 1 FROM team_members WHERE id = r.member_id FOR SHARE;
         IF NOT EXISTS (
             SELECT 1 FROM practices p JOIN practice_types pt ON pt.id = p.practice_type_id
             WHERE p.id = r.practice_id AND p.status = 'completed' AND pt.code = r.code
