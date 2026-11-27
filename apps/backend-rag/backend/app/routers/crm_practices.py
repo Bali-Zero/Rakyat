@@ -55,6 +55,7 @@ from backend.services.crm.practice_state_machine import (
     validate_service_selected,
     validate_transition,
 )
+from backend.services.crm.service_cards import seed_required_documents_from_card
 from backend.services.invoicing import InvoiceAutomationService
 from backend.services.invoicing import invoice_company as invoice_company_service
 from backend.services.invoicing.client_email_outcome import (
@@ -1051,12 +1052,21 @@ async def create_practice(
                     raise HTTPException(status_code=500, detail="Failed to create practice")
 
                 new_practice = dict(practice_row)
-                await _seed_practice_required_documents(
-                    conn,
-                    new_practice["id"],
-                    dict(practice_type_row).get("required_documents"),
-                    created_by,
-                )
+                if (
+                    await seed_required_documents_from_card(
+                        conn,
+                        new_practice["id"],
+                        dict(practice_type_row).get("id"),
+                        created_by,
+                    )
+                    is None
+                ):
+                    await _seed_practice_required_documents(
+                        conn,
+                        new_practice["id"],
+                        dict(practice_type_row).get("required_documents"),
+                        created_by,
+                    )
                 if practice.invoice_company_id is not None or practice.invoice_company_name:
                     new_practice["invoice_company_id"] = await _resolve_invoice_company_http(
                         conn,
@@ -2164,16 +2174,23 @@ async def update_practice(
                     raise HTTPException(status_code=404, detail="Practice not found")
 
                 if new_type_row is not None and new_practice_type_code != old_practice_type_code:
-                    await _seed_practice_required_documents(
-                        conn,
-                        practice_id,
-                        dict(new_type_row).get("required_documents"),
-                        (
-                            current_user.get("email", "system")
-                            if isinstance(current_user, dict)
-                            else "system"
-                        ).lower(),
-                    )
+                    seeded_by = (
+                        current_user.get("email", "system")
+                        if isinstance(current_user, dict)
+                        else "system"
+                    ).lower()
+                    if (
+                        await seed_required_documents_from_card(
+                            conn, practice_id, dict(new_type_row).get("id"), seeded_by
+                        )
+                        is None
+                    ):
+                        await _seed_practice_required_documents(
+                            conn,
+                            practice_id,
+                            dict(new_type_row).get("required_documents"),
+                            seeded_by,
+                        )
 
                 updated_practice = dict(row)
                 await _attach_invoice_company_name(conn, updated_practice)
