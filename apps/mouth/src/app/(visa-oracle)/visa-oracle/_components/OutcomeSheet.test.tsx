@@ -1512,6 +1512,37 @@ describe("OutcomeSheet — conditions on the verdict", () => {
     expect(screen.getByText(CONDITION_ONE.message.en)).toBeInTheDocument();
   });
 
+  it.each<Language>(["en", "id"])(
+    "renders NEEDS_INPUT with one condition and missing-input UI without a reached-result intro",
+    (language) => {
+      const outcome = outcomeFor("NEEDS_INPUT", [CONDITION_ONE]);
+      expect(outcome.candidates).toHaveLength(0);
+      const { container } = renderSheet("NEEDS_INPUT", language, { outcome });
+      expect(
+        screen.getByText(translate(language, "outcome.needs_input_body")),
+      ).toBeInTheDocument();
+      const conditions = container.querySelector(".oracle-outcome__conditions");
+      expect(conditions).toBeInTheDocument();
+      expect(conditions).toHaveTextContent(CONDITION_ONE.message[language]);
+      const intro = conditions?.querySelector("p");
+      expect(intro).toBeInTheDocument();
+      if (language === "en") {
+        expect(intro).toHaveTextContent(/following items with you before/i);
+      } else {
+        expect(intro).toHaveTextContent(/hal-hal berikut bersama Anda/i);
+      }
+      expect(intro?.textContent ?? "").not.toMatch(
+        language === "en" ? /result above/i : /hasil di atas/i,
+      );
+      expect(
+        screen.queryByRole("heading", { name: /test path/i }),
+      ).not.toBeInTheDocument();
+      expect(container.querySelectorAll(".oracle-candidate-card")).toHaveLength(
+        0,
+      );
+    },
+  );
+
   it("renders no conditions section when there are none", () => {
     const { container } = renderSheet("SUPPORTED_CANDIDATES");
     expect(
