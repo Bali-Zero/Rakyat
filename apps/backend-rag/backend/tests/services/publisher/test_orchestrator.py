@@ -518,3 +518,26 @@ async def test_db_kill_switch_fails_closed_on_db_error():
 
     check = build_db_kill_switch_check(pool)
     assert await check() is False
+
+
+@pytest.mark.asyncio
+async def test_retry_stops_on_ambiguous_result_and_propagates_it() -> None:
+    """GUILT: an ambiguous publish (may be live) is never retried: one call only."""
+    pub = _ScriptedPublisher(
+        platform_name=Platform.INSTAGRAM,
+        script=[
+            PublishResult(
+                ok=False,
+                platform=Platform.INSTAGRAM,
+                draft_id=uuid4(),
+                error="ReadTimeout after media_publish",
+                ambiguous=True,
+            ),
+            _ok(Platform.INSTAGRAM, "should-never-be-published"),
+        ],
+    )
+    orch = PublisherOrchestrator(publishers=[pub], max_retries=3, backoffs_s=_fast_backoffs())
+    result = await orch._publish_with_retry(pub, _draft())
+    assert pub.call_count == 1
+    assert result.ok is False
+    assert result.ambiguous is True

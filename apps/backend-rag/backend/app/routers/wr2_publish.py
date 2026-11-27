@@ -74,6 +74,9 @@ logger = get_logger(__name__)
 _IG_GRAPH_BASE = "https://graph.instagram.com/v22.0"
 
 _PLATFORM = "instagram"
+# Ledger state for a publish that failed once media_publish had been sent: the
+# post may be live, so the precondition refuses a re-arm until a human checks.
+_STATE_AMBIGUOUS = "blocked_manual_gate"
 
 # Deterministic namespace so the same slug always maps to the same draft UUID
 # (mirrors scripts/wr2_ig_publish.py:_WR2_DRAFT_NAMESPACE).
@@ -260,6 +263,67 @@ async def _resolve_carousel_id(conn: asyncpg.Connection, slug: str) -> str:
     return cid
 
 
+_SELECT_PRIOR_SQL = (
+    "SELECT state, provider_response FROM wr2_publish_attempts WHERE idempotency_key = $1"
+)
+# Insert the 'planned' row, or re-arm an existing one ONLY while it is not
+# terminal and not held. The WHERE makes the re-arm atomic with its state check.
+_ARM_PLANNED_SQL = (
+    "INSERT INTO wr2_publish_attempts "
+    "(carousel_id, platform, content_hash, state, idempotency_key) "
+    "VALUES ($1, $2, $3, 'planned', $4) "
+    "ON CONFLICT (idempotency_key) DO UPDATE "
+    "SET state = 'planned', updated_at = now() "
+    "WHERE wr2_publish_attempts.state NOT IN ('published', 'recorded', 'blocked_manual_gate') "
+    "RETURNING state"
+)
+# Post-attempt writes. A plain failure must never release a hold (a late result
+# of a request that started before the hold was written); an ambiguous result
+# or a success may still move a held row.
+_UPDATE_RESULT_SQL = (
+    "UPDATE wr2_publish_attempts "
+    "SET state = $1, provider_response = $2::text::jsonb, updated_at = now() "
+    "WHERE idempotency_key = $3 AND state NOT IN ('published', 'recorded')"
+)
+_UPDATE_FAILURE_SQL = (
+    "UPDATE wr2_publish_attempts "
+    "SET state = $1, provider_response = $2::text::jsonb, updated_at = now() "
+    "WHERE idempotency_key = $3 "
+    "AND state NOT IN ('published', 'recorded', 'blocked_manual_gate')"
+)
+
+
+def _prior_answer(
+    prior: Any, idempotency_key: str, carousel_id: str
+) -> tuple[str, str, str | None] | None:
+    """Map a published/recorded or held ledger row to its refusal; None = may arm."""
+    if prior is None:
+        return None
+    if prior["state"] in ("published", "recorded"):
+        prior_url = None
+        pr = prior["provider_response"]
+        if pr:
+            try:
+                pr_d = pr if isinstance(pr, dict) else json.loads(pr)
+                prior_url = pr_d.get("permalink") or pr_d.get("post_url")
+            except (ValueError, TypeError):
+                prior_url = None
+        logger.warning(
+            "wr2_publish: REFUSE double-publish key=%s already state=%s",
+            idempotency_key,
+            prior["state"],
+        )
+        return carousel_id, "refuse", prior_url
+    if prior["state"] == _STATE_AMBIGUOUS:
+        logger.warning(
+            "wr2_publish: HOLD key=%s prior publish outcome unknown (%s)",
+            idempotency_key,
+            prior["state"],
+        )
+        return carousel_id, "hold", None
+    return None
+
+
 async def _ledger_precondition(
     *,
     slug: str,
@@ -269,6 +333,9 @@ async def _ledger_precondition(
 
     action == "proceed" -> a 'planned' row was written; caller may publish.
     action == "refuse"  -> already published/recorded; caller MUST NOT publish.
+    action == "hold"    -> a prior attempt failed AFTER media_publish was sent
+                           (state 'blocked_manual_gate'): the post may be live,
+                           a human must check Instagram; caller MUST NOT publish.
 
     Fails closed (raises HTTPException 503) if the ledger DB is unreachable or
     the carousel_runs FK can't be satisfied — NEVER silently skips the guard.
@@ -302,38 +369,30 @@ async def _ledger_precondition(
         carousel_id = await _resolve_carousel_id(conn, slug)
         idempotency_key = f"{carousel_id}:{_PLATFORM}:{content_hash[:16]}"
 
-        prior = await conn.fetchrow(
-            "SELECT state, provider_response FROM wr2_publish_attempts "
-            "WHERE idempotency_key = $1",
-            idempotency_key,
-        )
-        if prior is not None and prior["state"] in ("published", "recorded"):
-            prior_url = None
-            pr = prior["provider_response"]
-            if pr:
-                try:
-                    pr_d = pr if isinstance(pr, dict) else json.loads(pr)
-                    prior_url = pr_d.get("permalink") or pr_d.get("post_url")
-                except (ValueError, TypeError):
-                    prior_url = None
-            logger.warning(
-                "wr2_publish: REFUSE double-publish key=%s already state=%s",
-                idempotency_key,
-                prior["state"],
-            )
-            return carousel_id, "refuse", prior_url
+        prior = await conn.fetchrow(_SELECT_PRIOR_SQL, idempotency_key)
+        answered = _prior_answer(prior, idempotency_key, carousel_id)
+        if answered is not None:
+            return answered
 
-        await conn.execute(
-            "INSERT INTO wr2_publish_attempts "
-            "(carousel_id, platform, content_hash, state, idempotency_key) "
-            "VALUES ($1, $2, $3, 'planned', $4) "
-            "ON CONFLICT (idempotency_key) DO UPDATE "
-            "SET state = 'planned', updated_at = now()",
+        # The state guard lives in the SQL so it is atomic with the write: a row
+        # that became published/recorded/blocked_manual_gate after the SELECT
+        # above is NOT re-armed (RETURNING yields no row), and is answered below
+        # exactly as the check above would have answered it.
+        armed = await conn.fetchrow(
+            _ARM_PLANNED_SQL,
             uuid.UUID(carousel_id),
             _PLATFORM,
             content_hash,
             idempotency_key,
         )
+        if armed is None:
+            current = await conn.fetchrow(_SELECT_PRIOR_SQL, idempotency_key)
+            answered = _prior_answer(current, idempotency_key, carousel_id)
+            if answered is not None:
+                return answered
+            # Not armed and no recognisable state: fail closed, send nothing.
+            logger.warning("wr2_publish: HOLD key=%s re-arm refused", idempotency_key)
+            return carousel_id, "hold", None
         logger.info(
             "wr2_publish: ledger 'planned' written key=%s carousel_id=%s",
             idempotency_key,
@@ -342,6 +401,14 @@ async def _ledger_precondition(
         return carousel_id, "proceed", None
     finally:
         await conn.close()
+
+
+def _affected_rows(status: object) -> int | None:
+    """Row count from an asyncpg command tag ('UPDATE 1'); None if unreadable."""
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except (ValueError, IndexError):
+        return None
 
 
 async def _ledger_record_result(
@@ -364,15 +431,22 @@ async def _ledger_record_result(
         conn = await asyncpg.connect(dsn)
         try:
             idempotency_key = f"{carousel_id}:{_PLATFORM}:{content_hash[:16]}"
-            await conn.execute(
-                "UPDATE wr2_publish_attempts "
-                "SET state = $1, provider_response = $2::text::jsonb, updated_at = now() "
-                "WHERE idempotency_key = $3",
+            status = await conn.execute(
+                _UPDATE_FAILURE_SQL if state == "failed" else _UPDATE_RESULT_SQL,
                 state,
                 json.dumps(provider_response or {}),
                 idempotency_key,
             )
-            logger.info("wr2_publish: ledger updated state=%s key=%s", state, idempotency_key)
+            if _affected_rows(status) == 0:
+                # A terminal success is never overwritten by a later record.
+                logger.warning(
+                    "wr2_publish: ledger update skipped, row already terminal "
+                    "or missing (wanted state=%s) key=%s",
+                    state,
+                    idempotency_key,
+                )
+            else:
+                logger.info("wr2_publish: ledger updated state=%s key=%s", state, idempotency_key)
         finally:
             await conn.close()
     except Exception as exc:  # bookkeeping must never crash a live post
@@ -532,6 +606,18 @@ async def publish_ig(body: PublishIGRequest) -> dict[str, Any]:
     carousel_id, action, prior_url = await _ledger_precondition(
         slug=slug, content_hash=content_hash
     )
+    if action == "hold":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "publish_outcome_unknown",
+                "message": (
+                    "A prior attempt for this carousel+content failed after the "
+                    "Instagram publish request was sent; the post may already be "
+                    "live. Check the Instagram account before publishing again."
+                ),
+            },
+        )
     if action == "refuse":
         raise HTTPException(
             status_code=409,
@@ -571,8 +657,8 @@ async def publish_ig(body: PublishIGRequest) -> dict[str, Any]:
         await _ledger_record_result(
             carousel_id=carousel_id,
             content_hash=content_hash,
-            state="failed",
-            provider_response={"error": result.error},
+            state=_STATE_AMBIGUOUS if result.ambiguous else "failed",
+            provider_response={"error": result.error, "ambiguous": result.ambiguous},
         )
         # The publisher's approval-gate refusal and validation failures both
         # surface here as result.ok == False — return a clear 4xx, not a 500.
