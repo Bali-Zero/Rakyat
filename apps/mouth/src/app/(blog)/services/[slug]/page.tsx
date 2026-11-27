@@ -72,7 +72,7 @@ export async function generateMetadata({
       title:
         "Indonesia Tax Compliance 2026 | NPWP, Tax Filing & Advisory | Bali Zero",
       description:
-        "Navigate Indonesia's tax system with expert guidance. NPWP registration, annual tax filing, tax planning for expats & businesses. Compliant, transparent, hassle-free.",
+        "Indonesia tax compliance for expats and companies in Bali: NPWP registration, monthly tax reporting, annual SPT filing and BPJS, by a licensed team.",
       keywords: [
         "indonesia tax compliance",
         "npwp registration bali",
