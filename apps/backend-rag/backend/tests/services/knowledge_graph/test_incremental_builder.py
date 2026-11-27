@@ -108,8 +108,8 @@ def test_get_gemini_client_returns_none_when_google_key_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("KG_GOOGLE_API_KEY", raising=False)
-    monkeypatch.setattr(builder_module.settings, "google_api_key", "")
-    monkeypatch.setattr(builder_module.settings, "google_ai_studio_key", "")
+    assert not hasattr(builder_module.settings, "google_api_key")
+    assert not hasattr(builder_module.settings, "google_ai_studio_key")
     builder = KGIncrementalBuilder(db_pool=None)
 
     assert builder._get_gemini_client() is None
@@ -120,7 +120,6 @@ def test_get_gemini_client_returns_none_even_when_legacy_google_keys_exist(
 ) -> None:
     """Gemini KG extraction is retired (Wave 2 Stage 3): Google keys are ignored."""
     monkeypatch.setenv("KG_GOOGLE_API_KEY", "kg-dedicated-key")
-    monkeypatch.setattr(builder_module.settings, "google_api_key", "shared-bot-key")
     builder = KGIncrementalBuilder(db_pool=None)
 
     assert builder._get_gemini_client() is None

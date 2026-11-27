@@ -931,7 +931,7 @@ async def main():
                 return
         else:
             logger.warning(
-                "Gemini KG extraction is retired (Wave 2 Stage 3); use --provider ollama or --provider openai."
+                "Gemini KG extraction is retired (Wave 2 Stage 3); use --provider openai."
             )
             await db_pool.close()
             return

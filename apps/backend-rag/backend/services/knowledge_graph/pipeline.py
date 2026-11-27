@@ -177,6 +177,10 @@ class KGPipeline:
         Returns:
             ExtractionResult with entities and relations
         """
+        if self.extractor is None:
+            raise RuntimeError(
+                "KGPipeline has no extractor configured (GeminiKGExtractor retired in Wave 2 Stage 3; inject an extractor explicitly)."
+            )
         try:
             # Stage 1: Extract entities and relations
             result = await self.extractor.extract(
