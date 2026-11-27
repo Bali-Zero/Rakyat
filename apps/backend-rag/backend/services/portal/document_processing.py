@@ -18,6 +18,8 @@ from backend.app.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+_MAX_TEXT_LAYER_PAGES = 100
+
 # Optional imports for advanced features (graceful degradation if not installed)
 try:
     from backend.services.multimodal.pdf_vision_service import PDFVisionService
@@ -190,15 +192,34 @@ class DocumentOCR:
         result: dict[str, Any] = {"text": "", "pages": 0, "success": False, "error": None}
         failures = 0
 
+        limit_errors: tuple[type[BaseException], ...] = ()
+        try:
+            from pypdf.errors import LimitReachedError
+
+            limit_errors = (LimitReachedError,)
+        except ImportError:  # no pypdf: nothing to tell apart, pdfplumber still runs
+            pass
+
         try:
             from pypdf import PdfReader
 
             reader = PdfReader(io.BytesIO(file_content))
+            page_count = len(reader.pages)
+            if page_count > _MAX_TEXT_LAYER_PAGES:
+                result["error"] = (
+                    f"PDF has too many pages to read ({page_count} > {_MAX_TEXT_LAYER_PAGES})"
+                )
+                return result
             texts = [page.extract_text() or "" for page in reader.pages]
             text = "\n".join(texts)
             if text.strip():
                 result.update(text=text, pages=len(texts), success=True)
                 return result
+        except limit_errors:
+            # pdfminer, under pdfplumber, does not bound FlateDecode output: the same
+            # bytes must not reach it once pypdf has refused them on a limit.
+            result["error"] = "PDF exceeds a decompression limit"
+            return result
         except Exception as e:
             failures += 1
             logger.warning("pypdf text-layer extraction failed: %s", type(e).__name__)
@@ -207,6 +228,12 @@ class DocumentOCR:
             import pdfplumber
 
             with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+                page_count = len(pdf.pages)
+                if page_count > _MAX_TEXT_LAYER_PAGES:
+                    result["error"] = (
+                        f"PDF has too many pages to read ({page_count} > {_MAX_TEXT_LAYER_PAGES})"
+                    )
+                    return result
                 texts = [page.extract_text() or "" for page in pdf.pages]
             text = "\n".join(texts)
             if text.strip():
