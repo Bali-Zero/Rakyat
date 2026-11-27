@@ -13,11 +13,7 @@ os.environ.setdefault("ENVIRONMENT", "test")
 import pytest
 from starlette.requests import Request
 
-from backend.llm.claude_oauth_client import (
-    ClaudeOAuthError,
-    ClaudeOAuthNotAvailable,
-    ClaudeOAuthResponse,
-)
+from backend.llm.claude_oauth_client import ClaudeOAuthResponse
 
 
 class _StrongSearch:
@@ -58,18 +54,23 @@ async def test_the_answer_comes_from_the_claude_lane_with_its_bounds(mod, monkey
     assert "C1 is the tourist visa." in seen["prompt"]
 
 
+# The failure is built at call time from the module as it is then: the route imports these
+# classes when it runs, and another test reloads claude_oauth_client.
 @pytest.mark.parametrize(
     "failure",
     [
-        ClaudeOAuthError("every seat failed"),
-        ClaudeOAuthNotAvailable("no Console seat configured"),
-        asyncio.TimeoutError(),
+        lambda oauth: oauth.ClaudeOAuthError("every seat failed"),
+        lambda oauth: oauth.ClaudeOAuthNotAvailable("no Console seat configured"),
+        lambda oauth: asyncio.TimeoutError(),
     ],
+    ids=["oauth_error", "not_available", "timeout"],
 )
 @pytest.mark.asyncio
 async def test_a_dead_lane_degrades_to_the_localized_fallback(mod, monkeypatch, caplog, failure):
+    from backend.llm import claude_oauth_client as oauth
+
     async def _complete(prompt, **_kw):
-        raise failure
+        raise failure(oauth)
 
     monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _complete)
     body = mod.ChatRequest(session_id="s1", message="How long can I stay on a C1?", language="it")
