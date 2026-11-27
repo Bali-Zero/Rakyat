@@ -334,16 +334,15 @@ def test_publish_landing_between_check_and_rearm_answers_already_published(rig) 
 
 def test_sql_guards_pin_the_hold_state() -> None:
     """The SQL text the router sends carries the guards the fake reads."""
-    assert "blocked_manual_gate" in _guard_states(wr2_publish._ARM_PLANNED_SQL)
-    assert "blocked_manual_gate" in _guard_states(wr2_publish._UPDATE_FAILURE_SQL)
-    assert "blocked_manual_gate" not in _guard_states(wr2_publish._UPDATE_RESULT_SQL)
-    for sql in (
-        wr2_publish._ARM_PLANNED_SQL,
-        wr2_publish._UPDATE_FAILURE_SQL,
-        wr2_publish._UPDATE_RESULT_SQL,
-    ):
+    arm = getattr(wr2_publish, "_ARM_PLANNED_SQL", "")
+    fail = getattr(wr2_publish, "_UPDATE_FAILURE_SQL", "")
+    result = getattr(wr2_publish, "_UPDATE_RESULT_SQL", "")
+    assert "blocked_manual_gate" in _guard_states(arm)
+    assert "blocked_manual_gate" in _guard_states(fail)
+    assert "blocked_manual_gate" not in _guard_states(result)
+    for sql in (arm, fail, result):
         assert {"published", "recorded"} <= set(_guard_states(sql))
-    assert "RETURNING state" in wr2_publish._ARM_PLANNED_SQL
+    assert "RETURNING state" in arm
 
 
 def test_failed_row_is_still_rearmed_and_retried(rig) -> None:
