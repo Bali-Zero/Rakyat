@@ -229,3 +229,27 @@ async def test_a_sweep_holding_the_advisory_lock_makes_the_other_tick_end(pool):
         ticked = await sweep.sweep_open_proofs(pool)
         assert ticked["examined"] == 0 and ticked["completed"] == []
     assert (await sweep.sweep_open_proofs(pool))["completed"] == [7]
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_without_proof_is_examined_and_not_locked(pool, monkeypatch):  # noqa: F811
+    async with pool.acquire() as conn:  # an ITK without the e-visa: a document, no proof
+        await accept(conn, 7, "document_2", NOV_30, history=False)
+    entered, release = asyncio.Event(), asyncio.Event()
+    real = sweep._has_proof
+
+    async def paused(conn, practice_id):
+        found = await real(conn, practice_id)
+        entered.set()  # the page transaction is open and the candidate was just examined
+        await asyncio.wait_for(release.wait(), 15)
+        return found
+
+    monkeypatch.setattr(sweep, "_has_proof", paused)
+    swept = asyncio.create_task(sweep.sweep_open_proofs(pool))
+    await asyncio.wait_for(entered.wait(), 15)
+    async with pool.acquire() as other, other.transaction():
+        # Staff writes on this practice must not wait for the page: NOWAIT would raise.
+        assert await other.fetchval("SELECT id FROM practices WHERE id=7 FOR UPDATE NOWAIT") == 7
+    release.set()
+    ticked = await asyncio.wait_for(swept, 15)
+    assert ticked["examined"] == 1 and ticked["completed"] == [] and ticked["busy"] == []

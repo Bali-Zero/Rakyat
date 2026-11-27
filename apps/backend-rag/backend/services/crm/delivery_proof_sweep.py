@@ -24,17 +24,25 @@ _OPEN_STATES = ["on_process", *(k for k, v in LEGACY_STATE_MAP.items() if v == "
 _cursor = 0
 
 
-async def _lock_practice(conn: Any, practice_id: int) -> dict | None:
+async def _lock_practice(conn: Any, practice_id: int, *, lock: bool = True) -> dict | None:
     row = await conn.fetchrow(
         """SELECT p.id, p.client_id, p.family_member_id, p.assigned_to, p.client_visible,
                   p.status, p.payment_status, pt.code, pt.name, pt.category
            FROM practices p JOIN practice_types pt ON pt.id = p.practice_type_id
            WHERE p.id = $1 AND (p.family_member_id IS NULL OR EXISTS (
                SELECT 1 FROM client_family_members f WHERE f.id=p.family_member_id AND f.client_id=p.client_id))
-           FOR UPDATE OF p""",
+           """
+        + (" FOR UPDATE OF p" if lock else ""),
         practice_id,
     )
     return dict(row) if row else None
+
+
+async def _has_proof(conn: Any, practice_id: int) -> bool:
+    """The lock-free pre-check: a candidate without proof is never locked, so staff writes on the
+    many open practices still waiting for their first proof do not wait for the page."""
+    p = await _lock_practice(conn, practice_id, lock=False)
+    return p is not None and delivery.proof_kind(await delivery.state(conn, p)) is not None
 
 
 async def _complete_one(conn: Any, practice_id: int) -> dict | None:
@@ -78,6 +86,8 @@ async def sweep_open_proofs(pool: Any, pages: int = 50) -> dict:
             ]
             for practice_id in ids:
                 examined += 1
+                if not await _has_proof(conn, practice_id):
+                    continue
                 try:
                     async with conn.transaction():  # a savepoint per candidate
                         p = await _complete_one(conn, practice_id)
