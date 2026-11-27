@@ -7,8 +7,10 @@ import sys
 from collections.abc import Mapping
 from copy import copy
 from datetime import date, time
+from decimal import Decimal
 from pathlib import PurePath
 from typing import Any
+from uuid import UUID
 
 from backend.app.setup.sentry_config import (
     PII_REDACTION_PLACEHOLDER,
@@ -24,6 +26,9 @@ _MAX_DEPTH = 12
 
 
 def _sensitive(key: Any, value: Any) -> bool:
+    # Preserve the CLI reporting boundary's existing redaction marker.
+    if isinstance(value, str) and value == "<withheld>":
+        return False
     return (
         _is_pii_key(key)
         or _is_credential_header_key(key)
@@ -56,7 +61,7 @@ def scrub_log_value(value: Any) -> Any:
             return tuple(items) if isinstance(item, tuple) else items
         if item is None or isinstance(item, (bool, int, float)):
             return item
-        if isinstance(item, (date, time, PurePath)):
+        if isinstance(item, (date, time, Decimal, PurePath, UUID)):
             return _redact_string(str(item))
         return PII_REDACTION_PLACEHOLDER
 
@@ -150,7 +155,11 @@ def install_api_log_redaction() -> None:
                 # group errors. Its payload crosses the existing before_send hook.
                 sdk_logging = sys.modules.get("sentry_sdk.integrations.logging")
                 if not isinstance(handler, getattr(sdk_logging, "EventHandler", ())):
-                    record.exc_info = None
+                    # Keep an exception-bearing record for downstream diagnostics,
+                    # without retaining the originating frames or exception object.
+                    summary = record._api_exception
+                    error = Exception(f"{summary['type']}: {summary['message']}")
+                    record.exc_info = (Exception, error, None)
         except Exception:
             record = logging.LogRecord(
                 "backend.logging",

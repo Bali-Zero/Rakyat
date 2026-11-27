@@ -7,7 +7,9 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -76,8 +78,9 @@ def _exercise_outputs(mode, log_file):
     assert enriched.getvalue().strip() == f"request completed contact={REDACTED}"
 
     logger = logging.getLogger("fixture.api")
-    structured = {"items": [{"name": HIDDEN, "attempt": 2}, EMAIL]}
+    structured = {"items": [{"name": HIDDEN, "attempt": 2}, EMAIL, {"name": "<withheld>"}]}
     structured.update(path=Path("/v1/jobs/42"), when=datetime(2025, 1, 2, tzinfo=timezone.utc))
+    structured.update(price=Decimal("1234.50"), trace=UUID(int=1))
     deep = {"code": "fixture-too-deep"}
     for _ in range(20):
         deep = {"next": deep}
@@ -104,7 +107,13 @@ def _exercise_outputs(mode, log_file):
         assert CONTROL in entry["message"]
         assert entry["exception"]["type"] == "ValueError"
         assert entry["exception"]["message"] == f"exception marker {REDACTED}"
-    assert row["context"]["items"] == [{"name": REDACTED, "attempt": 2}, REDACTED]
+    assert row["context"]["items"] == [
+        {"name": REDACTED, "attempt": 2},
+        REDACTED,
+        {"name": "<withheld>"},
+    ]
+    assert row["context"]["price"] == "1234.50"
+    assert row["context"]["trace"] == str(UUID(int=1))
     assert row["context"]["path"] == "/v1/jobs/42"
     assert row["context"]["when"] == "2025-01-02 00:00:00+00:00"
     assert row["user"] == REDACTED and row["duration_ms"] == 12.75

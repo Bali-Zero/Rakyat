@@ -689,8 +689,7 @@ def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] 
 
 
 def _before_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
-    # Scope.add_breadcrumb keeps the ORIGINAL if this hook raises. Drop a
-    # malformed crumb here before the SDK retains it for a subsequent event.
+    # Drop a malformed breadcrumb before the SDK can retain it for a later event.
     from datetime import datetime
 
     try:

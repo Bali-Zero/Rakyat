@@ -230,8 +230,16 @@ class TestPostEmail:
         self,
         monitor: AttendanceMonitor,
         caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import httpx
+
+        from backend.app.setup.log_redaction import install_api_log_redaction
+
+        # Scope the process-wide API boundary to this test when run in isolation.
+        monkeypatch.setattr(logging.Handler, "handle", logging.Handler.handle)
+        install_api_log_redaction()
+        address = "recipient@example.invalid"
 
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -250,10 +258,11 @@ class TestPostEmail:
             # Should not raise — the HTTP error must be swallowed and logged,
             # not propagated to the caller.
             with caplog.at_level(logging.ERROR):
-                await monitor._post_email(to="c@b.com", subject="Test", html_body="<p>x</p>")
+                await monitor._post_email(to=address, subject="Test", html_body="<p>x</p>")
 
-        assert "500" in caplog.text
-        assert "c@b.com" in caplog.text
+        assert mock_client.post.await_args.kwargs["json"]["to"] == address
+        assert "HTTP 500" in caplog.text and "Internal Server Error" in caplog.text
+        assert "[REDACTED]" in caplog.text and address not in caplog.text
 
     @pytest.mark.asyncio
     async def test_post_email_connection_error(
