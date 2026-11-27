@@ -147,7 +147,7 @@ class TestDocumentOCR:
         """PDF extraction fails gracefully without vision/pymupdf."""
         result = await DocumentOCR._extract_from_pdf(b"%PDF-1.4 content")
         assert result["success"] is False
-        assert "not available" in result["error"]
+        assert "text-layer extraction failed" in result["error"]
 
     @pytest.mark.asyncio
     @patch("backend.services.portal.document_processing.PDF_VISION_AVAILABLE", False)

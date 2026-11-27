@@ -185,8 +185,46 @@ class DocumentOCR:
         return cls._image_to_base64(image)
 
     @classmethod
+    def _extract_pdf_text_layer_sync(cls, file_content: bytes) -> dict[str, Any]:
+        """Read a PDF text layer with pypdf, then pdfplumber (no PyMuPDF needed)."""
+        result: dict[str, Any] = {"text": "", "pages": 0, "success": False, "error": None}
+        failures = 0
+
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(file_content))
+            texts = [page.extract_text() or "" for page in reader.pages]
+            text = "\n".join(texts)
+            if text.strip():
+                result.update(text=text, pages=len(texts), success=True)
+                return result
+        except Exception as e:
+            failures += 1
+            logger.warning("pypdf text-layer extraction failed: %s", type(e).__name__)
+
+        try:
+            import pdfplumber
+
+            with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+                texts = [page.extract_text() or "" for page in pdf.pages]
+            text = "\n".join(texts)
+            if text.strip():
+                result.update(text=text, pages=len(texts), success=True)
+                return result
+        except Exception as e:
+            failures += 1
+            logger.warning("pdfplumber text-layer extraction failed: %s", type(e).__name__)
+
+        if failures == 2:
+            result["error"] = "PDF text-layer extraction failed (pypdf and pdfplumber)"
+        else:
+            result["error"] = "PDF has no text layer and image OCR is unavailable (scanned PDF)"
+        return result
+
+    @classmethod
     async def _extract_from_pdf(cls, file_content: bytes) -> dict[str, Any]:
-        """Extract text from PDF using Gemini Vision (same as passport box)."""
+        """Extract text from PDF using Gemini Vision, else PyMuPDF, else the pypdf/pdfplumber text layer."""
         result = {"text": "", "pages": 0, "success": False, "error": None}
 
         if not PDF_VISION_AVAILABLE:
@@ -206,8 +244,8 @@ class DocumentOCR:
                     result["error"] = f"PyMuPDF extraction failed: {e}"
                     return result
             else:
-                result["error"] = "PDF Vision service not available"
-                return result
+                # No PyMuPDF in the image: read the text layer with pypdf / pdfplumber.
+                return await asyncio.to_thread(cls._extract_pdf_text_layer_sync, file_content)
 
         try:
             # Use PDFVisionService (same as passport box)
