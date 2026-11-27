@@ -8,8 +8,7 @@ import asyncio
 import random
 from typing import Any
 
-import asyncpg
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks
 
 from backend.app.utils.logging_utils import get_logger
 from backend.services.crm import practice_delivery as delivery
@@ -86,12 +85,22 @@ async def sweep_open_proofs(pool: Any, pages: int = 50) -> dict:
             ]
             for practice_id in ids:
                 examined += 1
-                if not await _has_proof(conn, practice_id):
-                    continue
                 try:
                     async with conn.transaction():  # a savepoint per candidate
-                        p = await _complete_one(conn, practice_id)
-                except (HTTPException, asyncpg.PostgresError):
+                        # The lock-free pre-check first: a candidate without proof is never locked.
+                        p = (
+                            await _complete_one(conn, practice_id)
+                            if await _has_proof(conn, practice_id)
+                            else None
+                        )
+                except Exception as exc:  # one failing practice never stalls the page behind it
+                    # Cancellation is a BaseException and still propagates. Type only: a message
+                    # could carry data.
+                    logger.warning(
+                        "first-proof sweep: practice %s left for the next cycle (%s)",
+                        practice_id,
+                        type(exc).__name__,
+                    )
                     busy.append(practice_id)
                     continue
                 if p is not None:

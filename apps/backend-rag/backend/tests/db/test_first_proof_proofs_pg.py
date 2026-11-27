@@ -172,26 +172,111 @@ async def test_a_fault_after_the_status_update_rolls_the_whole_upload_back(pool,
         assert await conn.fetchval("SELECT count(*) FROM practice_delivery_slots") == 0
 
 
+async def three_candidates(conn):
+    """A (7, visa), B (20) and C (22): three old-code proofs on one page, in id order."""
+    await old_visa_proof(conn, 7)
+    for pid in (PMA, 22):
+        await setup(conn, pid, PMA)
+        await accept(conn, pid, "document_1", NOV_2)  # a service_delivered proof: a receipt follows
+    return [dict(await written(conn, pid)) for pid in (7, PMA, 22)]
+
+
+def fail_for(monkeypatch, practice_id, error=ValueError):
+    real = service.audit
+
+    async def audit(conn, pid, actor, description):
+        if description.startswith("Final documents delivered") and pid == practice_id:
+            raise error("a secret client detail")
+        await real(conn, pid, actor, description)
+
+    monkeypatch.setattr(service, "audit", audit)
+
+
 @pytest.mark.asyncio
-async def test_a_fault_after_the_status_update_rolls_the_whole_sweep_page_back(  # noqa: F811
+async def test_a_candidate_that_raises_rolls_back_alone_and_the_page_goes_on(  # noqa: F811
+    pool,
+    monkeypatch,
+    fresh_cursor,
+    caplog,
+):
+    async with pool.acquire() as conn:
+        before = await three_candidates(conn)
+    fail_for(monkeypatch, PMA)  # B raises a ValueError inside finish(), after its status UPDATE
+    ticked = await sweep.sweep_open_proofs(pool)
+    assert ticked["completed"] == [7, 22] and ticked["busy"] == [PMA]
+    assert sweep._cursor == 0  # a short page ends the cycle
+    async with pool.acquire() as conn:
+        assert dict(await written(conn, PMA)) == before[1]  # B: its savepoint rolled back
+        assert (await written(conn, 7))["status"] == "completed"
+        assert (await written(conn, 22))["status"] == "completed"
+        assert (await written(conn, 22))["receipts"] == 1
+    assert sorted(fresh_cursor) == [
+        (7, "system:first-proof-sweep"),
+        (22, "system:first-proof-sweep"),
+    ]
+    warned = [r.getMessage() for r in caplog.records if "left for the next cycle" in r.getMessage()]
+    assert warned == [f"first-proof sweep: practice {PMA} left for the next cycle (ValueError)"]
+    assert "secret" not in caplog.text  # the type only, never the message
+
+
+@pytest.mark.asyncio
+async def test_the_cursor_advances_past_a_failing_candidate(pool, monkeypatch):  # noqa: F811
+    async with pool.acquire() as conn:
+        await three_candidates(conn)
+    monkeypatch.setattr(sweep, "_PAGE", 2)
+    fail_for(monkeypatch, PMA)
+    first = await sweep.sweep_open_proofs(pool, pages=1)
+    assert first["completed"] == [7] and first["busy"] == [PMA] and sweep._cursor == PMA
+    second = await sweep.sweep_open_proofs(pool, pages=1)  # the next page is not stuck behind B
+    assert second["completed"] == [22] and sweep._cursor == 0
+
+
+@pytest.mark.asyncio
+async def test_a_fault_on_the_page_itself_rolls_the_page_back_and_the_next_tick_retries(  # noqa: F811
     pool,
     monkeypatch,
     fresh_cursor,
 ):
     async with pool.acquire() as conn:
-        await old_visa_proof(conn, 7)  # an earlier candidate of the same page completes fine
-        await setup(conn, PMA, PMA)
-        await accept(conn, PMA, "document_1", NOV_2)  # a service_delivered proof: a receipt follows
-        before = await written(conn, PMA)
-        before_first = await written(conn, 7)
-    fail_after_the_status_update(monkeypatch, only=PMA)
-    with pytest.raises(RuntimeError, match="injected"):
-        await sweep.sweep_open_proofs(pool)
-    assert fresh_cursor == []  # no notice was queued
+        before = await three_candidates(conn)
+    real = service.queue_completed
+
+    def broken(pool, p, actor, tasks):  # outside every candidate: the page's own bookkeeping
+        raise RuntimeError("page fault")
+
+    monkeypatch.setattr(service, "queue_completed", broken)
+    with pytest.raises(RuntimeError, match="page fault"):
+        await sweep.sweep_open_proofs(pool)  # reaches the scheduler, which logs and sleeps
+    assert fresh_cursor == []
     async with pool.acquire() as conn:
-        assert dict(await written(conn, PMA)) == dict(before)
-        assert dict(await written(conn, 7)) == dict(before_first)  # the page is atomic
-        assert before["status"] == "on_process" and before["receipts"] == 0
+        assert [dict(await written(conn, pid)) for pid in (7, PMA, 22)] == before
+    monkeypatch.setattr(service, "queue_completed", real)
+    ticked = await sweep.sweep_open_proofs(pool)  # the next tick retries the whole page
+    assert ticked["completed"] == [7, PMA, 22] and ticked["busy"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_during_a_candidate_cancels_the_tick(pool, monkeypatch):  # noqa: F811
+    async with pool.acquire() as conn:
+        before = await three_candidates(conn)
+    inside = asyncio.Event()
+    real = sweep._complete_one
+
+    async def stuck(conn, practice_id):
+        await real(conn, practice_id)
+        inside.set()
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(sweep, "_complete_one", stuck)
+    tick = asyncio.create_task(sweep.sweep_open_proofs(pool))
+    await asyncio.wait_for(inside.wait(), 20)
+    tick.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await tick  # not swallowed as a failing candidate
+    async with pool.acquire() as conn:
+        assert [dict(await written(conn, pid)) for pid in (7, PMA, 22)] == before
+    monkeypatch.setattr(sweep, "_complete_one", real)
+    assert (await sweep.sweep_open_proofs(pool))["completed"] == [7, PMA, 22]
 
 
 @pytest.mark.asyncio
