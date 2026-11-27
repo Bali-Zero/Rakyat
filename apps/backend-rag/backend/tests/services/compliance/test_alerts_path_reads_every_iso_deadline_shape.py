@@ -71,6 +71,29 @@ def test_monitor_skips_invalid_deadline_and_checks_remaining_item(caplog) -> Non
     assert warned == [f"Skipping compliance item with invalid deadline: {invalid_item.item_id}"]
 
 
+@pytest.mark.parametrize("deadline", ["0001-01-01T00:00+01:00", "9999-12-31T23:59-01:00"])
+def test_monitor_skips_utc_overflow_deadline_and_checks_remaining_item(
+    caplog, deadline: str
+) -> None:
+    monitor = ProactiveComplianceMonitor()
+    invalid_item = monitor.add_compliance_item(
+        client_id="client-900002",
+        compliance_type=ComplianceType.DOCUMENT_EXPIRY,
+        title="Synthetic invalid deadline",
+        deadline=deadline,
+    )
+    monitor.add_compliance_item(
+        client_id="client-900003",
+        compliance_type=ComplianceType.DOCUMENT_EXPIRY,
+        title="Synthetic valid deadline",
+        deadline=_future_datetime(5).date().isoformat(),
+    )
+
+    assert len(monitor.check_compliance_items()) == 1
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warned == [f"Skipping compliance item with invalid deadline: {invalid_item.item_id}"]
+
+
 def test_explicit_offset_and_overdue_deadlines_keep_existing_classification() -> None:
     calculator = SeverityCalculatorService()
 
@@ -135,6 +158,33 @@ def test_parse_deadline_utc_reads_datetime_and_date_instances() -> None:
     assert _parsed(date(2026, 12, 20)) == expected
     assert _parsed(naive).utcoffset() == timedelta(0)
     assert _parsed(aware).utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize(
+    "deadline",
+    [
+        "0001-01-01T00:00+01:00",
+        "9999-12-31T23:59-01:00",
+        datetime.fromisoformat("0001-01-01T00:00+01:00"),
+        datetime.fromisoformat("9999-12-31T23:59-01:00"),
+    ],
+)
+def test_parse_deadline_utc_rejects_out_of_range_utc_instant(deadline) -> None:
+    with pytest.raises(ValueError) as error:
+        parse_deadline_utc(deadline)
+
+    assert isinstance(error.value.__cause__, OverflowError)
+
+
+@pytest.mark.parametrize(
+    ("deadline", "expected"),
+    [
+        ("0001-01-01T00:00-01:00", datetime(1, 1, 1, 1, tzinfo=timezone.utc)),
+        ("9999-12-31T23:59+01:00", datetime(9999, 12, 31, 22, 59, tzinfo=timezone.utc)),
+    ],
+)
+def test_parse_deadline_utc_keeps_in_range_boundary_offsets(deadline, expected) -> None:
+    assert parse_deadline_utc(deadline) == expected
 
 
 def test_parse_deadline_utc_rejects_other_types() -> None:

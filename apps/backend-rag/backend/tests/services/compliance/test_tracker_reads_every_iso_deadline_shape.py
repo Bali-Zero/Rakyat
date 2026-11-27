@@ -1,6 +1,8 @@
 import logging
 from datetime import UTC, datetime, timedelta, timezone
 
+import pytest
+
 from backend.services.compliance.compliance_tracker import ComplianceTrackerService
 
 
@@ -32,6 +34,20 @@ def test_get_upcoming_deadlines_reads_date_naive_and_z_deadlines() -> None:
 def test_get_upcoming_deadlines_skips_unparseable_deadline(caplog) -> None:
     service = ComplianceTrackerService()
     invalid = service.add_compliance_item("client-900001", "invalid", "Invalid", "not-a-deadline")
+    good = service.add_compliance_item("client-900001", "good", "Good", _deadline(2).isoformat())
+
+    with caplog.at_level(logging.WARNING):
+        upcoming = service.get_upcoming_deadlines(client_id="client-900001", days_ahead=10)
+
+    assert upcoming == [good]
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warned == [f"Skipping compliance item with invalid deadline: {invalid.item_id}"]
+
+
+@pytest.mark.parametrize("deadline", ["0001-01-01T00:00+01:00", "9999-12-31T23:59-01:00"])
+def test_get_upcoming_deadlines_skips_utc_overflow_deadline(caplog, deadline: str) -> None:
+    service = ComplianceTrackerService()
+    invalid = service.add_compliance_item("client-900001", "invalid", "Invalid", deadline)
     good = service.add_compliance_item("client-900001", "good", "Good", _deadline(2).isoformat())
 
     with caplog.at_level(logging.WARNING):
