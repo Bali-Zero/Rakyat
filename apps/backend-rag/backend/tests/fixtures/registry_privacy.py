@@ -355,11 +355,11 @@ def log_surface(
         text
         for r in records
         if not is_http_client_logger(r.name) and not any(r is e for e in skip)
-        for raw_text in record_texts(r)
+        for record_text in record_texts(r)
         for text in (
-            (_mask_volatile_log_text(raw_text, clock_window),)
+            (_mask_volatile_log_text(record_text, clock_window),)
             if clock_window is not None
-            else (raw_text,)
+            else (record_text,)
         )
     ).casefold()
 

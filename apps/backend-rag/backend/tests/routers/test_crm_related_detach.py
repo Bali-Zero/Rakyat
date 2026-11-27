@@ -4493,6 +4493,11 @@ def test_d30_teeth_nonvolatile_values_stay_scanned_when_clock_values_are_masked(
         "prefix-000377-suffix",
         "000377aa-0000-1000-8000-000000000000",
         "2020-01-02T03:04:05.000377+00:00",
+        "seen at 2030-01-02T03:04:06.000377+00:00 by the route",
+        "z000377aa-0000-4000-8000-000000000000",
+        "1000377aa-0000-4000-8000-000000000000",
+        "000377aa-0000-4000-8000-000000000000z",
+        "000377aa-0000-4000-c000-000000000000",
     ):
         record = _record(extra={"value": value})
         assert privacy.leaks({token}, privacy.log_surface([record])) == [token], value
