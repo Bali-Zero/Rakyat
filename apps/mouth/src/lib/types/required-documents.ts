@@ -26,6 +26,20 @@ export interface RequiredDocumentCreate {
   is_required?: boolean;
 }
 
+/** Ask the client for one more document, and say why this case needs it (V2). */
+export interface DocumentRequestCreate {
+  document_label: string;
+  client_text: string;
+  reason: string;
+  /** Only when the typed name equals a suggestion; otherwise the server derives it. */
+  document_type?: string;
+}
+
+export interface DocumentRequestResult {
+  request_id: number;
+  document: RequiredDocument;
+}
+
 export interface RequiredDocumentUpdate {
   status?: DocumentStatus;
   team_member_notes?: string;
