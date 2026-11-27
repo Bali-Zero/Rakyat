@@ -36,15 +36,32 @@ were collected between gwN and gwM" before executing a single test. See
 `_NONDETERMINISTIC_NAMES` below for the guard's own docstring on this half.
 
 What "in a decorator" covers (2026-11-28): the decorator expression itself; a
-lambda called on the spot and the default values of any lambda or def, which
+lambda called on the spot, and the default values of any lambda or def, which
 run when they are built; the module-level functions it calls by name and the
 functions those define and call, at any depth; and the module-level names it
-reads, with what their assignment computed at import. What it does NOT see:
-a helper imported from another module, an attribute or method call
-(`obj.helper()`), `functools.partial`, a helper passed by reference or through
-an alias, a bare `@helper` decorator, class attributes, and module-level
-constants read in test BODIES (frozen at collection too, but outside a
-decorator, so outside this guard).
+reads, with what their assignment computed at import.
+
+Known limits, as found by review (what is known, not a proof that nothing
+else escapes). The guard does not see:
+- a helper imported from another module, an attribute or method call
+  (`obj.helper()`), `functools.partial`, or a helper passed by reference or
+  through an alias, including a lambda bound to a module name and then
+  called (`make = lambda: now()`, then `[make()]`);
+- a bare `@helper` decorator, and class attributes;
+- a lambda handed to something that calls it at once (`map`,
+  `sorted(key=...)`): it is treated as deferred;
+- module-level names bound other than by a plain top-level `NAME = ...` or
+  `NAME: T = ...`: tuple unpacking (`A, B = now(), x`), and names or helpers
+  bound inside a module-level `if`, `try`, `with` or `for`. A name assigned
+  more than once is read from its LAST assignment, wherever the decorator is;
+- a nested def that calls a sibling nested def: that call is resolved
+  against the module-level helpers only;
+- module-level constants read in test BODIES (frozen at collection too, but
+  outside a decorator, so outside this guard).
+Local scope is read only in part: a comprehension variable in a decorator,
+a called lambda's parameters, and a nested def's closure over its helper's
+locals are not treated as local, so a name they share with a clock constant
+resolves to the module constant (an over-match, not a miss).
 """
 
 from __future__ import annotations
@@ -537,6 +554,30 @@ def test_guard_allows_a_static_constant_a_local_shadow_and_a_constant_used_in_a_
         """
     )
     assert _clock_calls_in_decorators(innocent) == []
+
+
+def test_guard_ends_on_module_constants_that_name_each_other() -> None:
+    """The value walk stops on a cycle of module constants: a cycle that reaches
+    the clock is flagged, one that reaches nothing is not, and both end."""
+    source = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        A = [B]
+        B = [A]
+        C = [D]
+        D = [C, datetime.now(timezone.utc)]
+
+        @pytest.mark.parametrize("still", A)
+        @pytest.mark.parametrize("ages", C)
+        def test_cycle(still, ages):
+            assert still and ages
+        """
+    )
+    assert _clock_calls_in_decorators(source) == [12]
+    assert _nondeterministic_calls_in_decorators(source) == []
 
 
 def test_guard_does_not_flag_the_clock_inside_a_test_or_fixture() -> None:
