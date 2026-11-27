@@ -170,7 +170,7 @@ async def llm_verify_grounding(
     try:
         response = await llm_gateway.generate(
             messages=[{"role": "user", "content": prompt}],
-            model_override="gemini-2.0-flash",
+            model_override="claude-sonnet-5-5",
             max_tokens=256,
         )
 

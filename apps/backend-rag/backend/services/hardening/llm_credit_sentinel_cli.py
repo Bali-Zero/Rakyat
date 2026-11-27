@@ -25,9 +25,7 @@ from backend.services.hardening.llm_credit_sentinel import (
     LLMCreditSentinel,
 )
 
-logging.basicConfig(
-    level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
 logger = logging.getLogger("llm_credit_sentinel_cli")
 
 # The cron parses `STATE=` / `DETAIL=` off stdout, so those lines need a bare
@@ -48,10 +46,17 @@ ALERT_WHATSAPP_FALLBACK_NAME = "Surya"
 
 
 async def _probe() -> str:
-    from backend.llm.genai_client import get_genai_client
+    from backend.llm.claude_oauth_client import complete_async
 
-    reply = await get_genai_client().generate_content("Reply with exactly: PONG")
-    return reply if isinstance(reply, str) else str(reply)[:120]
+    resp = await complete_async(
+        "Reply with exactly: PONG",
+        endpoint="hardening.credit_sentinel",
+        max_output_tokens=16,
+        timeout_s=15.0,
+        total_timeout_s=30.0,
+    )
+    reply = resp.text or ""
+    return reply[:120]
 
 
 async def _resolve_alert_number() -> str | None:

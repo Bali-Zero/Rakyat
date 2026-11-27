@@ -17,7 +17,6 @@ Architecture:
 Author: RIRI (original), refactored 2026-03-24
 """
 
-import asyncio
 import json
 import logging
 from typing import Any
@@ -66,29 +65,11 @@ class QueryExpander:
     def __init__(self) -> None:
         self._gemini: Any = None
 
-    async def _get_gemini(self) -> Any:
-        """Lazy init Gemini client."""
-        if self._gemini is None:
-            from backend.services.llm_clients.gemini_service import GeminiService
-
-            self._gemini = GeminiService()
-        return self._gemini
-
     async def _call_gemini(self, prompt: str, timeout_s: float = 3.0) -> str | None:
-        """Call Gemini with timeout. Returns None on any failure."""
-        try:
-            client = await self._get_gemini()
-            result = await asyncio.wait_for(
-                client.generate_response(prompt=prompt),
-                timeout=timeout_s,
-            )
-            return result if result and result.strip() else None
-        except asyncio.TimeoutError:
-            logger.warning("Gemini query expansion timed out (%.1fs)", timeout_s)
-            return None
-        except Exception as e:
-            logger.warning("Gemini query expansion failed: %s", type(e).__name__)
-            return None
+        """Gemini LLM query expansion is retired (Wave 2 Stage 3); always falls back
+        to deterministic KeywordTranslator expansion."""
+        _ = (prompt, timeout_s)
+        return None
 
     @staticmethod
     def _clean_json(response: str) -> str:

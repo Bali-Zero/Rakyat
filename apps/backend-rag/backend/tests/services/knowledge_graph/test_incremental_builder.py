@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -116,18 +115,12 @@ def test_get_gemini_client_returns_none_when_google_key_is_missing(
     assert builder._get_gemini_client() is None
 
 
-def test_get_gemini_client_prefers_kg_google_api_key_over_shared_settings(
+def test_get_gemini_client_returns_none_even_when_legacy_google_keys_exist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """KG extraction isolates its key from the WhatsApp bot's shared GOOGLE_API_KEY."""
+    """Gemini KG extraction is retired (Wave 2 Stage 3): Google keys are ignored."""
     monkeypatch.setenv("KG_GOOGLE_API_KEY", "kg-dedicated-key")
     monkeypatch.setattr(builder_module.settings, "google_api_key", "shared-bot-key")
     builder = KGIncrementalBuilder(db_pool=None)
 
-    mock_genai = MagicMock()
-    with patch.dict(
-        "sys.modules", {"google": MagicMock(genai=mock_genai), "google.genai": mock_genai}
-    ):
-        builder._get_gemini_client()
-
-    assert mock_genai.Client.call_args.kwargs["api_key"] == "kg-dedicated-key"
+    assert builder._get_gemini_client() is None

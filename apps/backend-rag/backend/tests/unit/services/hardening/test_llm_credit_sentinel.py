@@ -117,3 +117,26 @@ async def test_one_dead_channel_does_not_mute_the_others():
     verdict = await sentinel.check()
     assert verdict.state is CreditState.DEPLETED
     assert len(delivered) == 1
+
+
+@pytest.mark.asyncio
+async def test_cli_probe_uses_the_claude_console_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI probe uses the registered hardening.credit_sentinel Console lane."""
+    from unittest.mock import AsyncMock
+
+    from backend.llm.claude_oauth_client import ClaudeOAuthResponse
+    from backend.services.hardening import llm_credit_sentinel_cli
+
+    fake_complete = AsyncMock(
+        return_value=ClaudeOAuthResponse(
+            text="PONG", token_label="console_1", elapsed_s=0.1, attempts=1
+        )
+    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", fake_complete)
+
+    reply = await llm_credit_sentinel_cli._probe()
+
+    assert reply == "PONG"
+    fake_complete.assert_awaited_once()
+    assert fake_complete.await_args.kwargs["endpoint"] == "hardening.credit_sentinel"
+    assert fake_complete.await_args.kwargs["max_output_tokens"] == 16
