@@ -75,6 +75,7 @@ type Desk = {
     service: string;
     amount_idr: number | null;
     already_earned: boolean;
+    forfeits?: boolean;
   } | null;
 };
 type BoundDesk = {
@@ -106,6 +107,8 @@ const statusNames: Record<string, string> = {
   paid: "Paid",
   awaiting_rate: "Rate to confirm",
   payroll_locked: "Payroll review",
+  forfeited: "No bonus · paid below price",
+  no_bonus: "No bonus for this service",
   reversed: "Reversed",
   rejected: "Rejected",
 };
@@ -595,7 +598,11 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
                   ? "Bonus milestone already recorded"
                   : next.amount_idr === null
                     ? "Bonus rate to confirm"
-                    : `Potential bonus · ${money(next.amount_idr)}`}
+                    : next.forfeits
+                      ? "No bonus · the client paid less than the price"
+                      : next.amount_idr === 0
+                        ? "No bonus for this service"
+                        : `Potential bonus · ${money(next.amount_idr)}`}
               </p>
             </div>
           </section>
@@ -714,6 +721,8 @@ function RecentBonus({ row }: { row: Earned }) {
       : row.event_kind === "kitas_imk_uploaded"
         ? "Renewed IMK uploaded"
         : "Delivered";
+  // A receipt that carries no bonus or was forfeited never reaches a payroll.
+  const noPayroll = row.status === "no_bonus" || row.status === "forfeited";
   return (
     <div className={styles.entry}>
       <time className={styles.dateStamp} dateTime={row.earned_at}>
@@ -726,13 +735,23 @@ function RecentBonus({ row }: { row: Earned }) {
           <ArrowUpRight size={13} aria-hidden />
         </Link>
         <p className="text-xs leading-relaxed text-[var(--bz-text-2)]">
-          {milestone} ·{" "}
-          {baliDate(row.awarded_at, { month: "short", year: "numeric" })}{" "}
-          payroll
+          {milestone}
+          {!noPayroll && (
+            <>
+              {" "}
+              · {baliDate(row.awarded_at, {
+                month: "short",
+                year: "numeric",
+              })}{" "}
+              payroll
+            </>
+          )}
         </p>
       </div>
       <div className={styles.entryMoney}>
-        {row.amount_idr !== null && <strong>{money(row.amount_idr)}</strong>}
+        {row.amount_idr !== null && !noPayroll && (
+          <strong>{money(row.amount_idr)}</strong>
+        )}
         <span className="text-xs text-[var(--bz-text-2)]">
           {statusNames[row.status] ?? row.status}
         </span>

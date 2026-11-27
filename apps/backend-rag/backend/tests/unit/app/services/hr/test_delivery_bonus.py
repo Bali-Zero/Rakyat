@@ -26,7 +26,8 @@ def test_cutoff_uses_the_employee_business_day(instant, expected):
     ("receipt", "expected_writes"),
     [
         ({"employee_id": 1, "amount_idr": 100_000, "ledger_id": None}, 1),
-        ({"employee_id": 1, "amount_idr": 0, "ledger_id": None}, 1),
+        # A rate of 0 means the service carries no bonus: never a payroll line.
+        ({"employee_id": 1, "amount_idr": 0, "ledger_id": None}, 0),
         ({"employee_id": 1, "amount_idr": None, "ledger_id": None}, 0),
         ({"employee_id": None, "amount_idr": 100_000, "ledger_id": None}, 0),
         ({"employee_id": 1, "amount_idr": 100_000, "ledger_id": 22}, 0),
@@ -34,7 +35,9 @@ def test_cutoff_uses_the_employee_business_day(instant, expected):
     ],
 )
 @pytest.mark.asyncio
-async def test_only_new_eligible_priced_event_writes_payroll(monkeypatch, receipt, expected_writes):
+async def test_only_new_eligible_positively_priced_event_writes_payroll(
+    monkeypatch, receipt, expected_writes
+):
     at = datetime.now(timezone.utc)
     if receipt:
         receipt = {**receipt, "awarded_at": at}
@@ -151,3 +154,27 @@ async def test_known_off_payroll_claim_cannot_be_assigned_even_to_an_eligible_re
         await bonus.resolve_delivery_bonus(conn, 2, 175000, "hr-reviewer", employee_id=2)
     conn.fetchval.assert_not_awaited()
     conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolving_with_a_zero_amount_writes_no_ledger_row(monkeypatch):
+    conn = AsyncMock()
+    conn.fetchrow.side_effect = [
+        {
+            "ledger_id": None,
+            "amount_idr": None,
+            "employee_id": 1,
+            "payroll_ineligible": False,
+            "forfeited": False,
+            "original_team_member_id": "member-a",
+            "awarded_at": datetime.now(timezone.utc),
+        },
+        {"ledger_id": None, "amount_idr": 0, "employee_id": 1},
+        {"event_kind": "service_delivered", "status": "no_bonus"},
+    ]
+    conn.fetchval.return_value = True
+    write = AsyncMock()
+    monkeypatch.setattr(bonus, "_write_ledger", write)
+    result = await bonus.resolve_delivery_bonus(conn, 2, 0, "hr-reviewer")
+    assert result["status"] == "no_bonus"
+    write.assert_not_awaited()
