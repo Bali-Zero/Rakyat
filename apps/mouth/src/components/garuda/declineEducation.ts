@@ -46,7 +46,8 @@ export type DeclineCode =
   | "ARRIVAL_TOO_SOON"
   | "ARRIVAL_DATE_UNCONFIRMED"
   | "ARRIVAL_TOO_FAR"
-  | "EXTENSION_EXCEEDS_MAX_STAY";
+  | "EXTENSION_EXCEEDS_MAX_STAY"
+  | "EXTENSION_DATES_INCONSISTENT";
 
 export type CaseType = "issuance" | "extension";
 export type Purpose = "tourism" | "family" | "transit" | "business-meeting";
@@ -107,6 +108,7 @@ const ROUTE: Record<DeclineCode, RouteKind> = {
   ARRIVAL_DATE_UNCONFIRMED: "whatsapp",
   ARRIVAL_TOO_FAR: "whatsapp",
   EXTENSION_EXCEEDS_MAX_STAY: "oracle",
+  EXTENSION_DATES_INCONSISTENT: "oracle",
 };
 
 /**

@@ -104,6 +104,10 @@ class DeclineCode(str, Enum):
     # this neutral code, never a bare error.
     EXTENSION_EXCEEDS_MAX_STAY = "EXTENSION_EXCEEDS_MAX_STAY"
     # Not emitted by `screen()` either — layered on by `intake.build_verdict`
+    # when an extension's supplied entry and printed expiry dates cannot
+    # describe one coherent stay. Mirrors the owner-local CLI date checks.
+    EXTENSION_DATES_INCONSISTENT = "EXTENSION_DATES_INCONSISTENT"
+    # Not emitted by `screen()` either — layered on by `intake.build_verdict`
     # for G-FRESHNESS-FAIL-CLOSED (`freshness.py`, DECISIONS.md Q9): the
     # decree-sourced nationality list or the D-7/D-14/eVOA-window/passport-
     # validity rule bundle has gone unverified past its own re-verification

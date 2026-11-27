@@ -213,6 +213,12 @@ _MAX_STAY_EXCEEDED_REASON_TEMPLATE = (
     "hand off to the ordinary channel"
 )
 
+_EXTENSION_DATES_INCONSISTENT_REASON = (
+    "extension entry and printed expiry dates are inconsistent — the entry date "
+    "cannot be in the future and the printed expiry cannot precede it; hand off "
+    "to the ordinary channel"
+)
+
 _ELIGIBILITY_UNCONFIRMED_REASON_TEMPLATE = (
     "truth source '{source}' has not been re-verified within its "
     "{max_age_days}-day window (last stamp: {stamp}, age: {age_days}d) — "
@@ -320,12 +326,25 @@ def build_verdict(request: VoaIntakeRequest, *, today: date) -> VoaVerdict:
     ``date.today()`` internally) so this stays deterministic and
     unit-testable; the router passes the real wall-clock date.
     """
-    eligibility_input = _build_eligibility_input(request, today=today)
-    result = screen(eligibility_input)
-
-    decision = result.decision
-    reasons = list(result.decline_reasons)
-    codes = list(result.decline_codes)
+    extension_dates_inconsistent = request.case_type is CaseType.EXTENSION and (
+        request.entry_date > today
+        or (request.voa_expiry_date is not None and request.voa_expiry_date < request.entry_date)
+    )
+    if extension_dates_inconsistent:
+        # A date-order error makes the extension runway calculation meaningless.
+        # Return its closed, visitor-safe category rather than a derived runway
+        # outcome such as EXPIRES_TOO_SOON.
+        decision = Decision.DECLINE
+        reasons = []
+        codes = []
+        reasons.append(_EXTENSION_DATES_INCONSISTENT_REASON)
+        codes.append(DeclineCode.EXTENSION_DATES_INCONSISTENT.value)
+    else:
+        eligibility_input = _build_eligibility_input(request, today=today)
+        result = screen(eligibility_input)
+        decision = result.decision
+        reasons = list(result.decline_reasons)
+        codes = list(result.decline_codes)
 
     # G-FRESHNESS-FAIL-CLOSED (DECISIONS.md Q9, `freshness.py`): the two
     # truth sources every case shape depends on regardless of
@@ -384,7 +403,7 @@ def build_verdict(request: VoaIntakeRequest, *, today: date) -> VoaVerdict:
     # is the never-a-bare-error form for any caller — e.g. a future public
     # funnel — that must always DECLINE + WhatsApp-handoff rather than
     # reject the request outright.
-    if (
+    if not extension_dates_inconsistent and (
         request.case_type is CaseType.EXTENSION
         and request.voa_expiry_date is not None
         and b1_max_total_stay_exceeded(

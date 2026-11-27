@@ -617,7 +617,7 @@ export interface components {
         };
         PracticeTransitionRequest: components["schemas"]["BeginReviewTransition"] | components["schemas"]["BlockPracticeTransition"] | components["schemas"]["SubmitPracticeTransition"] | components["schemas"]["ApprovePracticeTransition"] | components["schemas"]["RejectPracticeTransition"] | components["schemas"]["ResumePracticeTransition"] | components["schemas"]["DeliverPracticeTransition"];
         /** @enum {string} */
-        DeclineCode: "NATIONALITY_NOT_ELIGIBLE" | "PURPOSE_NOT_ELIGIBLE" | "GROUP_CASE" | "PASSPORT_TYPE" | "PASSPORT_VALIDITY" | "NOT_SELF_PAY" | "FEEDBACK_REQUIRED" | "URGENT_CASE" | "SPECIAL_PASSPORT" | "PRIOR_ISSUE" | "ELIGIBILITY_UNCONFIRMED" | "FASTLANE_REQUEST" | "EXPIRY_UNKNOWN" | "EXPIRES_TOO_SOON" | "EXTENSION_ALREADY_USED" | "ARRIVAL_TOO_SOON" | "ARRIVAL_DATE_UNCONFIRMED" | "ARRIVAL_TOO_FAR" | "EXTENSION_EXCEEDS_MAX_STAY";
+        DeclineCode: "NATIONALITY_NOT_ELIGIBLE" | "PURPOSE_NOT_ELIGIBLE" | "GROUP_CASE" | "PASSPORT_TYPE" | "PASSPORT_VALIDITY" | "NOT_SELF_PAY" | "FEEDBACK_REQUIRED" | "URGENT_CASE" | "SPECIAL_PASSPORT" | "PRIOR_ISSUE" | "ELIGIBILITY_UNCONFIRMED" | "FASTLANE_REQUEST" | "EXPIRY_UNKNOWN" | "EXPIRES_TOO_SOON" | "EXTENSION_ALREADY_USED" | "ARRIVAL_TOO_SOON" | "ARRIVAL_DATE_UNCONFIRMED" | "ARRIVAL_TOO_FAR" | "EXTENSION_EXCEEDS_MAX_STAY" | "EXTENSION_DATES_INCONSISTENT";
         /** @description A closed catalog tuple. No rendered customer message, submitted value, identifier, or personal data is returned. */
         ErrorResponse: {
             /** @constant */

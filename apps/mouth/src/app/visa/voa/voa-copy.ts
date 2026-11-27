@@ -266,6 +266,12 @@ const en = {
     "That extension would take your stay past the maximum the Visa on Arrival allows.",
   "decline.EXTENSION_EXCEEDS_MAX_STAY.alternative":
     "Our Visa Match tool can find the right visa for the length of stay you actually need.",
+  "decline.EXTENSION_DATES_INCONSISTENT.mirror":
+    "You told us you want to {case}.",
+  "decline.EXTENSION_DATES_INCONSISTENT.forbids":
+    "The dates you gave do not fit together: an extension needs an entry date that is not in the future and a printed expiry date on or after it.",
+  "decline.EXTENSION_DATES_INCONSISTENT.alternative":
+    "Check your entry date and the expiry date printed on your Visa on Arrival, then try again.",
   "decline.FEEDBACK_REQUIRED.mirror":
     "Something in your answers needs a closer look.",
   "decline.FEEDBACK_REQUIRED.forbids":
@@ -601,6 +607,12 @@ const id: Record<VoaCopyKey, string> = {
     "Perpanjangan itu akan membuat masa tinggal Anda melewati batas maksimum yang diizinkan Visa on Arrival.",
   "decline.EXTENSION_EXCEEDS_MAX_STAY.alternative":
     "Alat Visa Match kami dapat menemukan visa yang tepat untuk lama tinggal yang benar-benar Anda perlukan.",
+  "decline.EXTENSION_DATES_INCONSISTENT.mirror":
+    "Anda memberi tahu kami bahwa Anda ingin {case}.",
+  "decline.EXTENSION_DATES_INCONSISTENT.forbids":
+    "Tanggal yang Anda berikan tidak konsisten: perpanjangan memerlukan tanggal masuk yang tidak di masa depan dan tanggal kedaluwarsa tercetak yang sama dengan atau setelah tanggal masuk.",
+  "decline.EXTENSION_DATES_INCONSISTENT.alternative":
+    "Periksa tanggal masuk Anda dan tanggal kedaluwarsa yang tercetak pada Visa on Arrival Anda, lalu coba lagi.",
   "decline.FEEDBACK_REQUIRED.mirror":
     "Ada bagian dari jawaban Anda yang perlu ditinjau lebih dekat.",
   "decline.FEEDBACK_REQUIRED.forbids":
