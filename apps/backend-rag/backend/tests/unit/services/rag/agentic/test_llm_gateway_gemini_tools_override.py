@@ -487,6 +487,10 @@ class TestOversizedPromptIsRefusedNotShipped:
         assert len(prompt.encode("utf-8")) <= 120_000
 
 
+_INVALID_PROMPTS = ["hello\x00world", "", "   ", "bad\ud800text", "x" * 140_000]
+_INVALID_IDS = ["nul", "empty", "blank", "lone_surrogate", "oversize"]
+
+
 class TestInvalidPromptDoesNotTripCircuitBreaker:
     """Fable gate (PR #1014, round 1, P2): an embedded NUL made the CLI spawn raise
     ``ValueError`` inside the generic branch, so 5 poisoned messages opened the
@@ -590,6 +594,97 @@ class TestInvalidPromptDoesNotTripCircuitBreaker:
                 )
 
         failed_metric.inc.assert_not_called()
+        call.assert_not_awaited()
+
+    @staticmethod
+    def _open_every_circuit(gateway) -> None:
+        for slug in gateway._get_fallback_chain(0):
+            for _ in range(gateway._circuit_breaker_threshold):
+                gateway._record_failure(slug, RuntimeError("provider outage"))
+            assert gateway._is_circuit_open(slug) is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", _INVALID_PROMPTS, ids=_INVALID_IDS)
+    async def test_invalid_prompt_with_every_circuit_open_is_not_counted_as_an_outage(
+        self, gateway_with_completion, bad
+    ):
+        """Codex gate (PR #1014, round 2, P2): validation ran after the circuit
+        check, so with the breakers open the refusal counted as a provider outage."""
+        gateway, call = gateway_with_completion
+        chat = gateway.create_chat_with_history([], system_instruction="")
+        self._open_every_circuit(gateway)
+
+        with (
+            patch(f"{_MODULE}.llm_all_models_failed_total") as failed_metric,
+            patch(f"{_MODULE}.llm_circuit_breaker_open_total") as breaker_metric,
+        ):
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(chat=chat, message=bad, enable_function_calling=False)
+
+        failed_metric.inc.assert_not_called()
+        breaker_metric.labels.assert_not_called()
+        call.assert_not_awaited()
+        assert chat.history == []
+
+    @pytest.mark.asyncio
+    async def test_a_valid_prompt_with_every_circuit_open_is_still_an_outage(
+        self, gateway_with_completion
+    ):
+        """Innocence control: the same state with a valid prompt IS an outage."""
+        gateway, call = gateway_with_completion
+        self._open_every_circuit(gateway)
+
+        with (
+            patch(f"{_MODULE}.llm_all_models_failed_total") as failed_metric,
+            patch(f"{_MODULE}.llm_circuit_breaker_open_total") as breaker_metric,
+        ):
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(
+                    chat=None, message="clean question", enable_function_calling=False
+                )
+
+        failed_metric.inc.assert_called_once()
+        breaker_metric.labels.assert_called()
+        call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", _INVALID_PROMPTS, ids=_INVALID_IDS)
+    async def test_invalid_prompt_without_a_seat_is_not_counted_as_an_outage(
+        self, gateway_with_completion, bad
+    ):
+        from backend.services.rag.agentic.llm_gateway import InvalidPromptError
+
+        gateway, call = gateway_with_completion
+        gateway._available = False
+
+        with patch(f"{_MODULE}.llm_all_models_failed_total") as failed_metric:
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(chat=None, message=bad, enable_function_calling=False)
+        with pytest.raises(InvalidPromptError):
+            await gateway._call_model("claude-sonnet-5-5", with_tools=False, chat=None, message=bad)
+
+        failed_metric.inc.assert_not_called()
+        call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_valid_prompt_without_a_seat_is_still_an_outage(self, gateway_with_completion):
+        """Innocence control: with no seat a valid prompt fails as before."""
+        from backend.llm.claude_oauth_client import ClaudeOAuthNotAvailable
+
+        gateway, call = gateway_with_completion
+        gateway._available = False
+
+        with patch(f"{_MODULE}.llm_all_models_failed_total") as failed_metric:
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(
+                    chat=None, message="clean question", enable_function_calling=False
+                )
+        with pytest.raises(ClaudeOAuthNotAvailable):
+            await gateway._call_model(
+                "claude-sonnet-5-5", with_tools=False, chat=None, message="clean question"
+            )
+
+        failed_metric.inc.assert_called_once()
         call.assert_not_awaited()
 
 

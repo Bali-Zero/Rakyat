@@ -731,6 +731,43 @@ class LLMGateway:
 
         return chain
 
+    def _prepare_prompt(
+        self,
+        *,
+        with_tools: bool,
+        chat: Any,
+        message: str,
+        system_prompt: str,
+        gemini_tools_override: list[dict] | None,
+        conversation_messages: list[dict] | None,
+    ) -> tuple[str, list[dict], bool]:
+        """Assemble and validate the prompt before routing or CLI spawn.
+
+        Returns ``(prompt, effective_tools, use_react_tools)``. Raises
+        :class:`InvalidPromptError` (or :class:`PromptTooLargeError`) when the
+        message is not a string, the prompt is blank, over ``_MAX_PROMPT_BYTES``,
+        carries an embedded NUL byte, or contains invalid UTF-8 surrogates.
+        """
+        if not isinstance(message, str):
+            raise InvalidPromptError("message must be a string")
+        # T-VIS: `gemini_tools_override` narrows the tool declarations for THIS call
+        # only. `None` -> the shared list; `[]` -> no tools (must NOT fall back).
+        effective_tools = (
+            self._gemini_tools if gemini_tools_override is None else gemini_tools_override
+        )
+        effective_system = system_prompt or getattr(chat, "system_instruction", "") or ""
+        use_react_tools = bool(with_tools and effective_tools)
+        history_entries = _extract_history_entries(chat, conversation_messages, message)
+        prompt = _build_claude_prompt(
+            message=message,
+            system_prompt=effective_system if isinstance(effective_system, str) else "",
+            history_entries=history_entries,
+            tools=effective_tools if use_react_tools else None,
+        )
+        if not prompt.strip():
+            raise InvalidPromptError("Prompt must be non-empty")
+        return prompt, effective_tools, use_react_tools
+
     async def _send_with_fallback(
         self,
         chat: Any,
@@ -755,6 +792,23 @@ class LLMGateway:
         Raises:
             RuntimeError: If all models in the chain fail.
         """
+        # Validate the assembled prompt ONCE before checking availability,
+        # circuit breakers, cost cap, or fallback depth: a caller-invalid
+        # prompt must never be misclassified as a provider outage or increment
+        # ``llm_all_models_failed_total`` or ``llm_circuit_breaker_open_total``.
+        try:
+            self._prepare_prompt(
+                with_tools=enable_function_calling,
+                chat=chat,
+                message=message,
+                system_prompt=system_prompt,
+                gemini_tools_override=gemini_tools_override,
+                conversation_messages=conversation_messages,
+            )
+        except InvalidPromptError as e:
+            logger.warning("LLMGateway: prompt rejected before routing (%s)", type(e).__name__)
+            raise
+
         models_to_try = self._get_fallback_chain(model_tier)
 
         for model_name in models_to_try:
@@ -857,14 +911,20 @@ class LLMGateway:
         conversation_messages: list[dict] | None = None,
     ) -> tuple[str, Any, TokenUsage]:
         """Call one model slug and return (text, response_object, token_usage)."""
+        # Validate first: an invalid prompt is the caller's fault whatever the
+        # seat state, so it must surface as InvalidPromptError, never as
+        # "no seats configured".
+        prompt, effective_tools, use_react_tools = self._prepare_prompt(
+            with_tools=with_tools,
+            chat=chat,
+            message=message,
+            system_prompt=_system_prompt,
+            gemini_tools_override=gemini_tools_override,
+            conversation_messages=conversation_messages,
+        )
+
         if not self._available:
             raise ClaudeOAuthNotAvailable("No Claude Console seats configured")
-
-        # T-VIS: `gemini_tools_override` narrows the tool declarations for THIS call
-        # only. `None` -> the shared list; `[]` -> no tools (must NOT fall back).
-        effective_tools = (
-            self._gemini_tools if gemini_tools_override is None else gemini_tools_override
-        )
 
         if images:
             # Cloud vision is disabled (local OCR only): never serialise or forward bytes.
@@ -872,18 +932,6 @@ class LLMGateway:
                 "LLMGateway: ignoring %d image attachment(s); cloud vision is disabled",
                 len(images),
             )
-
-        effective_system = _system_prompt or getattr(chat, "system_instruction", "") or ""
-        use_react_tools = bool(with_tools and effective_tools)
-        history_entries = _extract_history_entries(chat, conversation_messages, message)
-        prompt = _build_claude_prompt(
-            message=message,
-            system_prompt=effective_system if isinstance(effective_system, str) else "",
-            history_entries=history_entries,
-            tools=effective_tools if use_react_tools else None,
-        )
-        if not prompt.strip():
-            raise InvalidPromptError("Prompt must be non-empty")
 
         with trace_span(
             "backend.llm.call",
