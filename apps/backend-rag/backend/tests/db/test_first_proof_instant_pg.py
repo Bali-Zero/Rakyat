@@ -15,7 +15,7 @@ from fastapi import BackgroundTasks
 
 from backend.app.services.hr import delivery_bonus as bonus
 from backend.services.crm import practice_delivery as service
-from backend.tests.db.test_kita_document_delivery_pg import STAFF, pool  # noqa: F401
+from backend.tests.db.test_kita_document_delivery_pg import STAFF, final_file, pool  # noqa: F401
 
 OTHER = "former-assignee@example.test"
 PMA, ONSHORE = (
@@ -362,3 +362,115 @@ async def test_an_undated_assignment_row_leaves_the_receipt_to_hr(pool):  # noqa
     async with pool.acquire() as conn:
         row = await receipt(conn, PMA)
     assert row["earned_at"] == NOV_30 and row["employee_id"] is None
+
+
+# ── the history order is the order the practice lock was won, not the order transactions began ──
+
+NOV_20 = datetime(2026, 11, 20, 4, tzinfo=UTC)
+ADMIN = {"email": "admin@example.test", "role": "admin"}
+
+
+async def unrestricted(conn, user):
+    return None  # an admin sees every practice, whoever holds it now
+
+
+async def blocked_on_a_lock(pool, *, other_than):  # noqa: F811
+    async with pool.acquire() as probe:
+        for _ in range(150):
+            if await probe.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND pid<>$1",
+                other_than,
+            ):
+                return
+            await asyncio.sleep(0.1)
+    pytest.fail("nobody ever waited on the practice lock")
+
+
+async def patch_assignee(conn, pid, to):
+    """What the PATCH route does, in its order: lock the row, UPDATE, then write its stamped audit row."""
+    await conn.fetchrow("SELECT id FROM practices WHERE id=$1 FOR UPDATE", pid)
+    await conn.execute("UPDATE practices SET assigned_to=$2 WHERE id=$1", pid, to)
+    await conn.execute(
+        """INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,changes,performed_at)
+           VALUES('practice',$1,'updated','staff','Updated: assigned_to',$2::text::jsonb,clock_timestamp())""",
+        pid,
+        json.dumps({"assigned_to": to}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_waiver_that_waited_for_the_lock_is_dated_after_the_reassignment_that_won_it(
+    pool,
+    monkeypatch,  # noqa: F811
+):
+    monkeypatch.setattr(service, "process_assignees", unrestricted)
+    async with pool.acquire() as conn:
+        await setup(conn, ONSHORE, ONSHORE)
+        await assigned(conn, ONSHORE, STAFF["email"], NOV_20)
+        await accept(conn, ONSHORE, "document_2", NOV_20)
+        await accept(conn, ONSHORE, "document_3", NOV_20)
+    async with pool.acquire() as holder:
+        tx = holder.transaction()
+        await tx.start()
+        await holder.fetchrow("SELECT id FROM practices WHERE id=$1 FOR UPDATE", ONSHORE)
+        pid = await holder.fetchval("SELECT pg_backend_pid()")
+        waiver_task = asyncio.create_task(
+            service.waive(pool, ONSHORE, "electronic_visa", ADMIN, "Not on this route")
+        )
+        await blocked_on_a_lock(pool, other_than=pid)  # the waiver's transaction began, and waits
+        await asyncio.sleep(0.3)
+        await patch_assignee(holder, ONSHORE, OTHER)
+        await tx.commit()
+    await asyncio.wait_for(waiver_task, 15)
+    await service.complete(pool, ONSHORE, ADMIN, BackgroundTasks())
+    async with pool.acquire() as conn:
+        assert (await receipt(conn, ONSHORE))["employee_id"] == 2  # the NEW assignee held it at T
+
+
+@pytest.mark.asyncio
+async def test_a_reassignment_that_waited_behind_an_upload_is_dated_after_it(pool, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(service, "process_assignees", unrestricted)
+    async with pool.acquire() as conn:
+        await setup(conn, PMA, PMA)
+        await assigned(conn, PMA, STAFF["email"], NOV_20)
+        for key in ("document_2", "document_3", "document_4"):
+            await accept(conn, PMA, key, NOV_20, history=False)
+    audited, release = asyncio.Event(), asyncio.Event()
+    real = service.audit
+
+    async def held(conn, practice_id, actor, description):
+        if description.startswith("Final document uploaded"):
+            audited.set()  # the lock is held; the acceptance row is not written yet
+            await asyncio.wait_for(release.wait(), 15)
+        await real(conn, practice_id, actor, description)
+
+    monkeypatch.setattr(service, "audit", held)
+    upload = asyncio.create_task(
+        service.upload(pool, PMA, "document_1", STAFF, final_file("akta"), BackgroundTasks())
+    )
+    await asyncio.wait_for(audited.wait(), 15)
+
+    async def reassign():
+        async with pool.acquire() as conn, conn.transaction():
+            reassign.pid = await conn.fetchval("SELECT pg_backend_pid()")
+            await patch_assignee(conn, PMA, OTHER)
+
+    reassigning = asyncio.create_task(reassign())
+    await blocked_on_a_lock(pool, other_than=0)
+    await asyncio.sleep(0.3)
+    release.set()
+    await asyncio.wait_for(upload, 15)
+    await asyncio.wait_for(reassigning, 15)
+    monkeypatch.setattr(service, "audit", real)
+    await service.complete(pool, PMA, ADMIN, BackgroundTasks())
+    async with pool.acquire() as conn:
+        assert (await receipt(conn, PMA))["employee_id"] == 1  # the OLD assignee held it at T
+
+
+def test_the_practice_patch_stamps_its_activity_row_with_the_clock_not_the_transaction_start():
+    import inspect
+
+    from backend.app.routers import crm_practices
+
+    source = inspect.getsource(crm_practices)
+    assert "VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, clock_timestamp())" in source

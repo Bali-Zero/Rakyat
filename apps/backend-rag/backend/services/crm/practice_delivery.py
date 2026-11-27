@@ -361,8 +361,10 @@ def slot_for(view: dict, key: str) -> dict:
 
 async def audit(conn: Any, practice_id: int, actor: str, description: str) -> None:
     await conn.execute(
-        """INSERT INTO activity_log(entity_type, entity_id, action, performed_by, description)
-           VALUES ('practice', $1, 'updated', $2, $3)""",
+        # clock_timestamp(), not the default now() (the transaction START): every caller holds the
+        # practice row lock, so the stamp orders this row against a PATCH that took the lock first.
+        """INSERT INTO activity_log(entity_type, entity_id, action, performed_by, description, performed_at)
+           VALUES ('practice', $1, 'updated', $2, $3, clock_timestamp())""",
         practice_id,
         actor,
         description,
