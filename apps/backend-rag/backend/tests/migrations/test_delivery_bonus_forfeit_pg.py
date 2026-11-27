@@ -1,8 +1,10 @@
 """Migration 388 and the forfeit rule, on the real issuance writer and an isolated schema."""
 
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import asyncpg
 import pytest
 
 from backend.app.routers.hr import delivery_bonus_reviews
@@ -98,6 +100,31 @@ async def test_invoices_are_summed_and_unknown_payment_goes_to_hr(db):  # noqa: 
     assert not await db.fetchval(
         "SELECT forfeited FROM hr_delivery_bonus_events WHERE practice_id=$1", unknown
     )
+
+
+@pytest.mark.asyncio
+async def test_the_net_invoice_is_not_discounted_twice_and_cents_below_price_forfeit(db):  # noqa: F811
+    net = await _practice(db, quoted=1000000, discount=150000, invoices=(850000,))
+    assert (await _earn(db, net))["status"] == "pending"
+    cents = await _practice(db, quoted=Decimal("850000.00"), discount=Decimal("0.25"))
+    assert (await _earn(db, cents))["status"] == "forfeited"
+
+
+@pytest.mark.asyncio
+async def test_a_forfeited_practice_refuses_any_direct_ledger_write(db):  # noqa: F811
+    pid = await _practice(db, invoices=(800000,))
+    assert (await _earn(db, pid))["status"] == "forfeited"
+    employee = await db.fetchval(
+        "SELECT employee_id FROM hr_delivery_bonus_events WHERE practice_id=$1", pid
+    )
+    with pytest.raises(asyncpg.RaiseError, match="forfeited"):
+        await db.execute(
+            """INSERT INTO hr_bonus_ledger(practice_id, employee_id, practice_type_code,
+                   amount_idr, awarded_at, status)
+               VALUES ($1, $2, 'ext_b1_voa', 15000, now(), 'pending')""",
+            pid,
+            employee,
+        )
 
 
 @pytest.mark.asyncio

@@ -28,9 +28,9 @@ async def install_delivery_payroll_migrations(conn, *, forfeit_rule: bool = True
         await conn.execute(split_migration_sql((dir_path / name).read_text())[0])
     # The columns and table read by 388's forfeit rule (production has them already).
     await conn.execute("""
-        ALTER TABLE practices ADD COLUMN IF NOT EXISTS quoted_price bigint;
-        ALTER TABLE practices ADD COLUMN IF NOT EXISTS discount_amount bigint;
-        CREATE TABLE IF NOT EXISTS invoices(id serial PRIMARY KEY, practice_id integer, amount_idr bigint);
+        ALTER TABLE practices ADD COLUMN IF NOT EXISTS quoted_price numeric(12,2);
+        ALTER TABLE practices ADD COLUMN IF NOT EXISTS discount_amount numeric(12,2);
+        CREATE TABLE IF NOT EXISTS invoices(id serial PRIMARY KEY, practice_id integer, amount_idr numeric);
         ALTER TABLE hr_bonus_rates ADD COLUMN IF NOT EXISTS notes text;
         ALTER TABLE hr_bonus_rates ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
         CREATE UNIQUE INDEX IF NOT EXISTS hr_bonus_rates_code_key ON hr_bonus_rates(practice_type_code);

@@ -12,7 +12,7 @@ ALTER TABLE hr_delivery_bonus_events ADD CONSTRAINT hr_delivery_bonus_events_for
 -- the body unvalidated at creation, so the invoices table is only needed at call time.
 CREATE FUNCTION hr_practice_paid_below(p_practice_id integer, p_price bigint)
 RETURNS boolean LANGUAGE plpgsql STABLE AS $$
-DECLARE net bigint;
+DECLARE net numeric;
 BEGIN
     SELECT SUM(amount_idr) INTO net FROM invoices WHERE practice_id = p_practice_id;
     IF net IS NULL THEN
@@ -21,6 +21,25 @@ BEGIN
     RETURN net < p_price;
 END;
 $$;
+
+-- Like an excluded assignee, a forfeited receipt is terminal for every practice-linked
+-- ledger write, not only for the delivery writer.
+CREATE OR REPLACE FUNCTION hr_refuse_ineligible_delivery_bonus() RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM hr_delivery_bonus_events
+        WHERE practice_id = NEW.practice_id AND payroll_ineligible
+    ) THEN
+        RAISE EXCEPTION 'Original assignee was outside payroll at delivery';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM hr_delivery_bonus_events WHERE practice_id = NEW.practice_id AND forfeited
+    ) THEN
+        RAISE EXCEPTION 'The bonus was forfeited: the client paid less than the service price';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 INSERT INTO hr_bonus_rates (practice_type_code, amount_idr, forfeit_below_idr, effective_from, is_active, notes)
 VALUES
@@ -64,6 +83,17 @@ DO $$ BEGIN
         RAISE EXCEPTION 'Preserve forfeited bonus events before rolling back this migration';
     END IF;
 END $$;
+CREATE OR REPLACE FUNCTION hr_refuse_ineligible_delivery_bonus() RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM hr_delivery_bonus_events
+        WHERE practice_id = NEW.practice_id AND payroll_ineligible
+    ) THEN
+        RAISE EXCEPTION 'Original assignee was outside payroll at delivery';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 ALTER TABLE hr_delivery_bonus_events DROP CONSTRAINT hr_delivery_bonus_events_forfeited_clean;
 ALTER TABLE hr_delivery_bonus_events DROP COLUMN forfeited;
 DROP FUNCTION hr_practice_paid_below(integer, bigint);

@@ -28,8 +28,8 @@ SQL_BASE = """
 CREATE TABLE practice_types(id int primary key,code text,name text,category text);
 CREATE TABLE practices(id int primary key,client_id int,family_member_id int,assigned_to text,
     client_visible boolean, status text, payment_status text,practice_type_id int,
-    completion_date timestamptz,updated_at timestamptz,quoted_price bigint,discount_amount bigint);
-CREATE TABLE invoices(id serial primary key,practice_id int,amount_idr bigint);
+    completion_date timestamptz,updated_at timestamptz,quoted_price numeric(12,2),discount_amount numeric(12,2));
+CREATE TABLE invoices(id serial primary key,practice_id int,amount_idr numeric);
 CREATE TABLE client_family_members(id int primary key,client_id int);
 CREATE TABLE documents(id serial primary key,practice_id int,client_id int,family_member_id int,
     intake_idempotency_key text UNIQUE,file_id text,file_name text,content_hash text,document_type text,uploaded_source text,status text,
