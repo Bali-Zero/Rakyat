@@ -114,6 +114,7 @@ async def test_b2_a_closed_november_run_refuses_only_what_adds_money_to_november
 
 @pytest.mark.asyncio
 async def test_b4_the_bonus_month_key_is_independent_of_the_salary_key(env: Env) -> None:
+    """Proves key independence only: the salary key blocks no November bonus, the bonus key does."""
     pending = await _row(env, "pending", NOV)
     async with _BonusHold(env.pool, hr_service.payroll_month_lock_key(11, 2026)):
         assert (await env.quick.approve_bonus(pending, env.admin))["status"] == "approved"
@@ -169,7 +170,10 @@ async def test_b7_the_sql_and_python_first_month_and_lock_keys_agree(env) -> Non
 async def test_a_november_row_booked_after_the_november_salary_is_never_a_december_salary_input(
     env: Env,
 ) -> None:
-    """Guards double payment once PR3 pays the November run."""
+    """One step of the double-pay guard: the December salary inputs skip a booked November row.
+
+    It does not prove the later PR3 steps (run approval, payment).
+    """
     await _pay_salary(env, 11)
     await _row(env, "approved", NOV)
     inputs = "SELECT count(*) FROM hr_payroll_bonus_inputs('2026-12-01', NULL, '2026-12-31')"
@@ -177,11 +181,37 @@ async def test_a_november_row_booked_after_the_november_salary_is_never_a_decemb
     assert await env.pool.fetchval("SELECT hr_bonus_month_closed('2026-11-01')") is False
 
 
+async def _mark_applied(env: Env) -> None:
+    """Write the _schema_versions row the runner writes for 393 (the fixture applies the file directly)."""
+    await env.pool.execute(
+        "CREATE TABLE _schema_versions (id serial PRIMARY KEY, migration_name text UNIQUE, "
+        "migration_number int NOT NULL, executed_at timestamptz DEFAULT now())"
+    )
+    await env.pool.execute("SELECT pg_sleep(0.02)")
+    await env.pool.execute(
+        "INSERT INTO _schema_versions(migration_name, migration_number) "
+        "VALUES ('393_bonus_run_month_lock', 393)"
+    )
+    await env.pool.execute("SELECT pg_sleep(0.02)")
+
+
+def _split() -> tuple[str, str]:
+    return split_migration_sql(MIGRATION_393.read_text(encoding="utf-8"))
+
+
+async def _assert_rollback_refused(env: Env, match: str) -> None:
+    _, rollback = _split()
+    with pytest.raises(asyncpg.exceptions.RaiseError, match=match):
+        await env.pool.execute(rollback)
+    assert await env.pool.fetchval("SELECT to_regclass('hr_bonus_runs')") is not None
+    assert await env.pool.fetchval("SELECT to_regproc('hr_bonus_month_closed')") is not None
+
+
 @pytest.mark.asyncio
 async def test_b8_the_rollback_refuses_with_a_run_and_otherwise_drops_the_three_objects(
     env,
 ) -> None:
-    forward, rollback = split_migration_sql(MIGRATION_393.read_text(encoding="utf-8"))
+    forward, rollback = _split()
     async with env.pool.acquire() as conn:
         tx = conn.transaction()
         await tx.start()
@@ -198,3 +228,54 @@ async def test_b8_the_rollback_refuses_with_a_run_and_otherwise_drops_the_three_
         await conn.execute(forward)
         assert await conn.fetchval("SELECT to_regclass('hr_bonus_runs')") is not None
         assert await conn.fetchval("SELECT hr_bonus_month_closed('2026-11-01')") is False
+
+
+@pytest.mark.asyncio
+async def test_b8a_the_rollback_refuses_after_a_november_receipt_booked_by_the_new_code(
+    env: Env, monkeypatch
+) -> None:
+    from backend.app.services.hr import delivery_bonus as bonus
+    from backend.tests.migrations.test_delivery_bonus_events_pg import _freeze
+
+    await _mark_applied(env)
+    await _pay_salary(env, 11)
+    await env.pool.execute(
+        "INSERT INTO hr_bonus_rates(practice_type_code, amount_idr, effective_from) "
+        "VALUES ('visa_demo', 125000, '2020-01-01')"
+    )
+    practice = await env.pool.fetchval(
+        "INSERT INTO practices(status) VALUES ('completed') RETURNING id"
+    )
+    _freeze(monkeypatch, "2026-11-29T02:00:00+00:00")
+    async with env.pool.acquire() as conn:
+        async with conn.transaction():
+            booked = await bonus.record_delivery_bonus(
+                conn, practice, "visa_demo", "fake.a@example.com", "service_delivered"
+            )
+    assert booked["status"] == "pending"
+    await _assert_rollback_refused(env, "roll forward")
+
+
+@pytest.mark.asyncio
+async def test_b8b_the_rollback_refuses_after_approving_a_pre_existing_november_row(
+    env: Env,
+) -> None:
+    pending = await _row(env, "pending", NOV)
+    await _mark_applied(env)
+    await _pay_salary(env, 11)
+    assert (await env.svc.approve_bonus(pending, env.admin))["status"] == "approved"
+    await _assert_rollback_refused(env, "roll forward")
+
+
+@pytest.mark.asyncio
+async def test_b8c_the_rollback_succeeds_when_only_pre_393_rows_exist_and_forward_reapplies(
+    env: Env,
+) -> None:
+    forward, rollback = _split()
+    await _row(env, "pending", NOV)
+    await _row(env, "approved", NOV)
+    await _mark_applied(env)
+    await env.pool.execute(rollback)
+    assert await env.pool.fetchval("SELECT to_regclass('hr_bonus_runs')") is None
+    await env.pool.execute(forward)
+    assert await env.pool.fetchval("SELECT hr_bonus_month_closed('2026-11-01')") is False

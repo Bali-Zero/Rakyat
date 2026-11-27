@@ -5,7 +5,10 @@
 -- new objects, and every object here is new, so nothing waits on application traffic.
 -- Ownership: the runner assumes backend_rag_v2 (migration_base.py:39-56), so it owns every object, as in
 -- 384/386/388. Rollback: roll the IMAGE back first (the new code calls hr_bonus_month_closed on every
--- bonus write), then this file.
+-- bonus write), then this file. Roll the image back only while no new-cycle bonus activity happened:
+-- once a bonus awarded in November 2026 or later was booked or touched after this file applied, the old
+-- image could not approve or pay it (its salary month is paid), so the rollback below refuses and the
+-- way out is to roll forward.
 
 CREATE FUNCTION hr_bonus_run_first_month() RETURNS date
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT DATE '2026-11-01' $$;
@@ -56,9 +59,22 @@ END $$;
 
 -- === ROLLBACK ===
 -- Image first (see the header). A closed bonus month is history: roll forward instead.
-DO $$ BEGIN
+DO $$
+DECLARE
+    applied timestamptz := '-infinity'::timestamptz;  -- applied outside the runner: most conservative
+BEGIN
     IF EXISTS (SELECT 1 FROM hr_bonus_runs) THEN
         RAISE EXCEPTION 'Preserve closed bonus months before rolling back migration 393';
+    END IF;
+    IF to_regclass('_schema_versions') IS NOT NULL THEN
+        applied := COALESCE((SELECT max(executed_at) FROM _schema_versions WHERE migration_number = 393),
+                            '-infinity'::timestamptz);
+    END IF;
+    IF to_regclass('hr_bonus_ledger') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM hr_bonus_ledger
+        WHERE (awarded_at AT TIME ZONE 'Asia/Makassar') >= hr_bonus_run_first_month()
+          AND GREATEST(created_at, updated_at) >= applied) THEN
+        RAISE EXCEPTION 'Bonus activity for the new cycle happened after migration 393: roll forward instead';
     END IF;
 END $$;
 DROP FUNCTION hr_bonus_month_closed(date);
