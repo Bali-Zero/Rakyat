@@ -7,6 +7,7 @@ Refactored: Migrated to asyncpg with connection pooling (2025-12-07)
 
 import hashlib
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Literal
@@ -833,7 +834,7 @@ async def create_practice(
         async with db_pool.acquire() as conn:
             # Get practice_type_id from code
             practice_type_row = await conn.fetchrow(
-                "SELECT id, base_price, category, name FROM practice_types"
+                "SELECT id, base_price, category, name, required_documents FROM practice_types"
                 " WHERE code = $1 AND is_active = true",
                 practice_type_code,
             )
@@ -1006,6 +1007,12 @@ async def create_practice(
                     raise HTTPException(status_code=500, detail="Failed to create practice")
 
                 new_practice = dict(practice_row)
+                await _seed_practice_required_documents(
+                    conn,
+                    new_practice["id"],
+                    dict(practice_type_row).get("required_documents"),
+                    created_by,
+                )
                 if practice.invoice_company_id is not None or practice.invoice_company_name:
                     new_practice["invoice_company_id"] = await _resolve_invoice_company_http(
                         conn,
@@ -1810,6 +1817,7 @@ async def update_practice(
             if "practice_type_code" in updates.model_fields_set and not new_practice_type_code:
                 raise HTTPException(status_code=400, detail="practice_type_code cannot be null")
             service_base_price = None  # base price a chosen service back-fills into a NULL price
+            new_type_row = None
             if new_practice_type_code:
                 # A live practice may not be regressed to the placeholder: the
                 # status gate above only fires on a status CHANGE, so a PATCH
@@ -1828,7 +1836,8 @@ async def update_practice(
                         ),
                     )
                 new_type_row = await conn.fetchrow(
-                    "SELECT id, base_price FROM practice_types WHERE code = $1 AND is_active = true",
+                    "SELECT id, base_price, required_documents FROM practice_types"
+                    " WHERE code = $1 AND is_active = true",
                     new_practice_type_code,
                 )
                 if not new_type_row:
@@ -2084,6 +2093,18 @@ async def update_practice(
 
                 if not row:
                     raise HTTPException(status_code=404, detail="Practice not found")
+
+                if new_type_row is not None and new_practice_type_code != old_practice_type_code:
+                    await _seed_practice_required_documents(
+                        conn,
+                        practice_id,
+                        dict(new_type_row).get("required_documents"),
+                        (
+                            current_user.get("email", "system")
+                            if isinstance(current_user, dict)
+                            else "system"
+                        ).lower(),
+                    )
 
                 updated_practice = dict(row)
                 await _attach_invoice_company_name(conn, updated_practice)
@@ -2806,6 +2827,70 @@ async def regenerate_invoice(
 # ================================================
 # REQUIRED DOCUMENTS FOR PRACTICES
 # ================================================
+
+
+def _normalize_required_doc_slot(raw: str) -> tuple[str, str] | None:
+    """Normalize a practice_types.required_documents item into (document_type, document_label).
+
+    Respects practice_required_documents widths: document_type <= 50, document_label <= 100.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if ":" in text:
+        raw_type, raw_label = text.split(":", 1)
+        slug_src = raw_type.strip()
+        label = raw_label.strip() or slug_src
+    else:
+        slug_src = text
+        label = text.replace("_", " ").title() if "_" in text and " " not in text else text
+    slug = re.sub(r"[^a-z0-9]+", "_", slug_src.lower()).strip("_")[:50]
+    if not slug:
+        return None
+    return slug, label[:100]
+
+
+async def _seed_practice_required_documents(
+    conn: asyncpg.Connection,
+    practice_id: int,
+    required_documents: list[str] | tuple[str, ...] | None,
+    created_by: str,
+) -> int:
+    """Seed default required document slots from practice_types.required_documents.
+
+    Uses ON CONFLICT (practice_id, document_type) DO NOTHING so existing or already-uploaded
+    slots are never overwritten. No-ops without touching the connection when the service
+    defines no default checklist.
+    """
+    if not required_documents:
+        return 0
+    seen: set[str] = set()
+    doc_types: list[str] = []
+    doc_labels: list[str] = []
+    for item in required_documents:
+        slot = _normalize_required_doc_slot(str(item))
+        if slot is None or slot[0] in seen:
+            continue
+        seen.add(slot[0])
+        doc_types.append(slot[0])
+        doc_labels.append(slot[1])
+    if not doc_types:
+        return 0
+    await conn.execute(
+        """
+        INSERT INTO practice_required_documents (
+            practice_id, document_type, document_label, is_required, created_by
+        )
+        SELECT $1, doc_type, doc_label, true, $4
+        FROM UNNEST($2::varchar[], $3::varchar[]) AS t(doc_type, doc_label)
+        ON CONFLICT (practice_id, document_type) DO NOTHING
+        """,
+        practice_id,
+        doc_types,
+        doc_labels,
+        created_by or "system",
+    )
+    return len(doc_types)
 
 
 class RequiredDocumentCreate(BaseModel):
