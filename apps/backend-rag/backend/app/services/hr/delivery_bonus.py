@@ -31,6 +31,7 @@ async def get_delivery_bonus(conn: asyncpg.Connection, practice_id: int) -> dict
         """
         SELECT e.event_kind, e.earned_at, e.recorded_at, e.evidence_issued_on, e.awarded_at, e.amount_idr,
                COALESCE(b.status, CASE WHEN e.payroll_ineligible THEN 'ineligible'
+                                      WHEN e.forfeited THEN 'forfeited'
                                       WHEN e.employee_id IS NULL THEN 'awaiting_employee'
                                       WHEN e.amount_idr IS NULL THEN 'awaiting_rate'
                                       ELSE 'payroll_locked' END) AS status
@@ -97,12 +98,15 @@ async def record_delivery_bonus(
         INSERT INTO hr_delivery_bonus_events
             (practice_id, employee_id, service_code, event_kind, earned_at, awarded_at,
              bonus_rate_id, amount_idr, ledger_id, recorded_at, evidence_issued_on,
-             original_team_member_id, payroll_ineligible)
+             original_team_member_id, payroll_ineligible, forfeited)
         SELECT $1, COALESCE(old.employee_id, employee.id), $2, $4, $5, COALESCE(old.awarded_at, $6),
                CASE WHEN old.id IS NOT NULL THEN old.bonus_rate_id WHEN NOT employee.ineligible THEN rate.id END,
-               CASE WHEN old.id IS NOT NULL THEN old.amount_idr WHEN NOT employee.ineligible THEN rate.amount_idr END,
+               CASE WHEN old.id IS NOT NULL THEN old.amount_idr
+                    WHEN employee.ineligible THEN NULL
+                    WHEN rate.forfeit_below_idr IS NULL OR paid.below IS FALSE THEN rate.amount_idr END,
                old.id, $5, $8, CASE WHEN old.id IS NULL THEN employee.member_id END,
-               old.id IS NULL AND employee.ineligible
+               old.id IS NULL AND employee.ineligible,
+               old.id IS NULL AND NOT employee.ineligible AND COALESCE(paid.below, FALSE)
         FROM (SELECT 1) seed
         LEFT JOIN LATERAL (
             SELECT id, employee_id, awarded_at, bonus_rate_id, amount_idr FROM hr_bonus_ledger
@@ -120,6 +124,8 @@ async def record_delivery_bonus(
         ) employee ON TRUE
         LEFT JOIN hr_bonus_rates rate ON rate.practice_type_code = $2 AND rate.is_active
             AND rate.effective_from <= $7 AND (rate.effective_to IS NULL OR rate.effective_to >= $7)
+        -- A visa extension paid below its price forfeits the bonus; unknown payment goes to HR.
+        LEFT JOIN LATERAL (SELECT hr_practice_paid_below($1, rate.forfeit_below_idr) AS below) paid ON TRUE
         ON CONFLICT (practice_id) DO NOTHING RETURNING *
         """,
         practice_id,
@@ -166,6 +172,8 @@ async def resolve_delivery_bonus(
         return await get_delivery_bonus(conn, practice_id)
     if event["payroll_ineligible"]:
         raise ValueError("The original assignee was outside payroll at delivery")
+    if event["forfeited"]:
+        raise ValueError("The bonus was forfeited: the client paid less than the service price")
     if event["amount_idr"] is not None and amount_idr != event["amount_idr"]:
         raise ValueError("The recorded rate must be preserved")
     frozen_beneficiary = event["employee_id"]
@@ -226,8 +234,9 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
         SELECT COALESCE(sum(b.amount_idr) FILTER (WHERE b.status='pending'),0)::bigint AS pending,
                COALESCE(sum(b.amount_idr) FILTER (WHERE b.status='approved'),0)::bigint AS approved,
                COALESCE(sum(b.amount_idr) FILTER (WHERE b.status='paid'),0)::bigint AS paid,
-               count(*) FILTER (WHERE e.amount_idr IS NULL) AS awaiting_rate,
-               count(*) FILTER (WHERE e.ledger_id IS NULL AND e.amount_idr IS NOT NULL) AS payroll_locked
+               count(*) FILTER (WHERE e.amount_idr IS NULL AND NOT e.forfeited) AS awaiting_rate,
+               count(*) FILTER (WHERE e.ledger_id IS NULL AND e.amount_idr IS NOT NULL
+                                  AND NOT e.forfeited) AS payroll_locked
         FROM hr_delivery_bonus_events e LEFT JOIN hr_bonus_ledger b ON b.id=e.ledger_id
         WHERE e.employee_id=$1 AND date_trunc('month', e.awarded_at AT TIME ZONE 'Asia/Makassar')::date=$2
         """,
@@ -246,7 +255,8 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
     recent = await conn.fetch(
         """SELECT e.practice_id, COALESCE(pt.name,e.service_code) AS service,
                   e.event_kind, e.earned_at, e.awarded_at, e.amount_idr,
-                  COALESCE(b.status, CASE WHEN e.amount_idr IS NULL THEN 'awaiting_rate'
+                  COALESCE(b.status, CASE WHEN e.forfeited THEN 'forfeited'
+                                         WHEN e.amount_idr IS NULL THEN 'awaiting_rate'
                                          ELSE 'payroll_locked' END) AS status
            FROM hr_delivery_bonus_events e LEFT JOIN hr_bonus_ledger b ON b.id=e.ledger_id
            LEFT JOIN practice_types pt ON pt.code=e.service_code

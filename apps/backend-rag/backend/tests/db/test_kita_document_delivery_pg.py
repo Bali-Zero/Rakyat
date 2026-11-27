@@ -28,7 +28,8 @@ SQL_BASE = """
 CREATE TABLE practice_types(id int primary key,code text,name text,category text);
 CREATE TABLE practices(id int primary key,client_id int,family_member_id int,assigned_to text,
     client_visible boolean, status text, payment_status text,practice_type_id int,
-    completion_date timestamptz,updated_at timestamptz);
+    completion_date timestamptz,updated_at timestamptz,quoted_price numeric(12,2),discount_amount numeric(12,2));
+CREATE TABLE invoices(id serial primary key,practice_id int,amount_idr numeric);
 CREATE TABLE client_family_members(id int primary key,client_id int);
 CREATE TABLE documents(id serial primary key,practice_id int,client_id int,family_member_id int,
     intake_idempotency_key text UNIQUE,file_id text,file_name text,content_hash text,document_type text,uploaded_source text,status text,
@@ -41,8 +42,8 @@ CREATE TABLE timeline_events(client_id int,practice_id int,event_type text,title
     event_date timestamptz,client_visible boolean,color text,created_by text);
 CREATE TABLE team_members(id varchar(36) primary key,email text,role text,active boolean);
 CREATE TABLE hr_employees(id int primary key,team_member_id varchar(36) REFERENCES team_members(id),is_active boolean,profile jsonb);
-CREATE TABLE hr_bonus_rates(id int primary key,practice_type_code text,is_active boolean,
-    effective_from date,effective_to date,amount_idr bigint);
+CREATE TABLE hr_bonus_rates(id serial primary key,practice_type_code text unique,is_active boolean,
+    effective_from date,effective_to date,amount_idr bigint,notes text,updated_at timestamptz);
 CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text, payroll_period_id int,
     bonus_rate_id int,amount_idr bigint,awarded_at timestamptz,status text);
 CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY,period_start date,payroll_month int,payroll_year int,status text);
@@ -72,6 +73,7 @@ async def pool(monkeypatch):
                 "384_delivery_bonus.sql",
                 "385_practice_visa_followups.sql",
                 "386_visa_bonus_payout_hold.sql",
+                "388_bonus_rates_forfeit.sql",
             ):
                 await conn.execute((folder / filename).read_text().split("-- === ROLLBACK ===")[0])
             await conn.execute("""
@@ -81,7 +83,8 @@ async def pool(monkeypatch):
                 INSERT INTO hr_employees VALUES(1,'staff-1',true,'{}'::jsonb);
                 INSERT INTO practice_types VALUES(1,'visa_c1_tourism','C1','single_entry_visa'),
                     (2,'kitas_working_extend','Working KITAS renewal','kitas');
-                INSERT INTO hr_bonus_rates VALUES(1,'visa_c1_tourism',true,'2025-01-01',null,100000);
+                INSERT INTO hr_bonus_rates(practice_type_code,is_active,effective_from,amount_idr)
+                    VALUES('visa_c1_tourism',true,'2025-01-01',100000);
                 INSERT INTO practices VALUES(7,31,null,'consultant@example.test',true,'on_process','paid',1,null,now()),
                     (8,31,null,'consultant@example.test',true,'on_process','paid',2,null,now());
             """)

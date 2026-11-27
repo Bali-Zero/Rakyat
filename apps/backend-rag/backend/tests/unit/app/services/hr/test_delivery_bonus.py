@@ -84,7 +84,12 @@ async def test_hr_replay_is_idempotent_and_preserves_fixed_rate():
     conn.fetchrow.side_effect = [{"ledger_id": 12}, {"status": "pending"}]
     assert (await bonus.resolve_delivery_bonus(conn, 5, 10, "reviewer"))["status"] == "pending"
     conn = AsyncMock()
-    conn.fetchrow.return_value = {"ledger_id": None, "amount_idr": 123, "payroll_ineligible": False}
+    conn.fetchrow.return_value = {
+        "ledger_id": None,
+        "amount_idr": 123,
+        "payroll_ineligible": False,
+        "forfeited": False,
+    }
     with pytest.raises(ValueError, match="recorded rate"):
         await bonus.resolve_delivery_bonus(conn, 5, 456, "reviewer")
 
@@ -106,6 +111,7 @@ async def test_resolving_missing_rate_requires_current_payroll_eligibility():
         "amount_idr": None,
         "employee_id": 1,
         "payroll_ineligible": False,
+        "forfeited": False,
         "original_team_member_id": "member-a",
     }
     conn.fetchval.return_value = False
