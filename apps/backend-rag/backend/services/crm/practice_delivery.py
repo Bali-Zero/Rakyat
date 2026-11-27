@@ -306,7 +306,7 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
             ),
             None,
         )
-    return {
+    view = {
         "status": p["status"],
         "delivery_recorded": bool(delivered),
         "needs_titles": bool(needs_titles),
@@ -331,6 +331,16 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
             business_today(),
         ),
     }
+    view["proof_ready"] = proof_kind(view) is not None
+    return view
+
+
+def proof_kind(view: dict) -> str | None:
+    """The bonus event the saved documents prove: the bonus slot unless waived, else any final document."""
+    bonus = next((s for s in view["slots"] if s["key"] == view["bonus_slot"]), None)
+    if bonus and not bonus["waiver_reason"]:
+        return view["bonus_trigger"] if bonus["document_id"] else None
+    return "service_delivered" if any(s["document_id"] for s in view["slots"]) else None
 
 
 def slot_for(view: dict, key: str) -> dict:
@@ -376,10 +386,19 @@ async def set_titles(pool: Any, practice_id: int, user: dict, titles: list[str])
         return await state(conn, p, user)
 
 
-async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) -> dict:
+async def waive(
+    pool: Any,
+    practice_id: int,
+    key: str,
+    user: dict,
+    reason: str,
+    tasks: BackgroundTasks | None = None,
+) -> dict:
+    tasks = BackgroundTasks() if tasks is None else tasks
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        await require_writable(conn, p)
+        if not (p["status"] == "completed" and await delivered_practice(conn, p)):
+            await require_writable(conn, p)
         slot = slot_for(await state(conn, p, user), key)
         if not can_waive(slot):
             raise HTTPException(409, "Only unfilled conditional slots may be marked inapplicable")
@@ -396,7 +415,7 @@ async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) 
             user["email"],
         )
         await audit(conn, practice_id, user["email"], f"Delivery slot {key} inapplicable: {reason}")
-        return await state(conn, p, user)
+        return await finish_on_proof(pool, conn, p, user, tasks) or await state(conn, p, user)
 
 
 def upload_digest(encoded: str, file_name: str, mime_type: str) -> str:
@@ -529,7 +548,15 @@ def combined_permit(first: dict, second: dict) -> bool:
     return types in ({"imk", "itas"}, {"imk", "itap"})
 
 
-async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: int) -> dict:
+async def reuse(
+    pool: Any,
+    practice_id: int,
+    key: str,
+    user: dict,
+    document_id: int,
+    tasks: BackgroundTasks | None = None,
+) -> dict:
+    tasks = BackgroundTasks() if tasks is None else tasks
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
         repair = p["status"] == "completed"
@@ -580,7 +607,7 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
             await apply_document_milestone(conn, p, view, key)
         await retire_replaced_file(conn, p, previous)
         await audit(conn, practice_id, user["email"], f"Combined permit confirmed for slot: {key}")
-        updated = await state(conn, p, user)
+        updated = (await finish_on_proof(pool, conn, p, user, tasks)) or await state(conn, p, user)
     await invalidate_delivery_cache(p)
     return updated
 
@@ -837,7 +864,8 @@ async def upload(
         # Replaying an upload into the slot that already owns the file is safe,
         # even if the separate combined-permit action also referenced it.
         if row["document_id"] == slot["document_id"]:
-            return view
+            # The exact retry of a proof an older machine accepted without completing it completes it.
+            return await finish_on_proof(pool, conn, p, user, tasks) or view
         if any(
             other["key"] != key and other["document_id"] == row["document_id"]
             for other in view["slots"]
@@ -848,8 +876,14 @@ async def upload(
         ]:
             raise HTTPException(409, "Another operator changed this slot. Refresh and review.")
         previous = await previous_slot(conn, p, key)
-        if repair and await completed_company(conn, p, key, view, slot) != request.company_id:
-            raise HTTPException(409, "Permit destination changed. Refresh and review.")
+        # An upload sent with a company and overtaken by a completion keeps it when no slot names one
+        # (the link to this client was checked above): the case then names that company.
+        if repair:
+            company = await completed_company(conn, p, key, view, slot)
+            if company != request.company_id and not (
+                company is None and view["delivery_recorded"] and not slot["document_id"]
+            ):
+                raise HTTPException(409, "Permit destination changed. Refresh and review.")
         await conn.execute(
             """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,
                                                   company_id,company_document_id,updated_by,issued_on)
@@ -883,7 +917,7 @@ async def upload(
             else "Missing final permit repaired"
         )
         await audit(conn, practice_id, user["email"], f"{description}: {key}")
-        updated = await state(conn, p, user)
+        updated = (await finish_on_proof(pool, conn, p, user, tasks)) or await state(conn, p, user)
     await invalidate_delivery_cache(p)
     return updated
 
@@ -975,14 +1009,123 @@ async def completion_wording(conn: Any, practice_id: int) -> str:
         return NEUTRAL
 
 
+async def delivered_practice(conn: Any, p: dict) -> bool:
+    return bool(
+        await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM practice_delivery_completions WHERE practice_id=$1)",
+            p["id"],
+        )
+    )
+
+
+async def finish(conn: Any, p: dict, view: dict, actor: str, *, record: bool = True) -> None:
+    """Complete an open practice under its row lock and the lock of its slot documents (P2).
+
+    Publishes every filled slot, writes the completion row, the status (status-log row and NOTIFY come
+    from the triggers), the earning of a service_delivered receipt at the first proof's instant, the
+    audit and the client's timeline row.
+    """
+    practice_id = p["id"]
+    if await conn.fetchval(
+        """SELECT 1 FROM practice_delivery_slots s WHERE s.practice_id=$1 AND s.company_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM client_company_links l WHERE l.client_id=$2
+                           AND l.company_id=s.company_id)""",
+        practice_id,
+        p["client_id"],
+    ):
+        raise HTTPException(409, "The practice company is no longer linked to this client")
+    await publish(conn, p, [s["key"] for s in view["slots"] if s["document_id"]])
+    if record:
+        await conn.execute(
+            """INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by)
+               VALUES($1,$2,$3) ON CONFLICT (practice_id) DO NOTHING""",
+            practice_id,
+            p["code"],
+            actor,
+        )
+    await conn.execute(
+        """UPDATE practices SET status='completed',completion_date=COALESCE(completion_date,now()),
+           updated_at=CASE WHEN EXTRACT(DAY FROM now() AT TIME ZONE 'Asia/Makassar')>28
+             THEN (date_trunc('month', now() AT TIME ZONE 'Asia/Makassar') + interval '1 month') AT TIME ZONE 'Asia/Makassar'
+             ELSE now() END WHERE id=$1""",
+        practice_id,
+    )
+    if not view["bonus_slot"] or slot_for(view, view["bonus_slot"])["waiver_reason"]:
+        # Earned when the proof first existed, by whoever held the practice then; never before
+        # November 2026 (older months were settled by the status-change rule). The acceptance's own
+        # audit row is already written, so it is history too.
+        earned_at, beneficiary = await first_proof_instant(conn, p)
+        if earned_at.astimezone(WITA).date() >= _LEGACY_FROM:
+            await record_delivery_bonus(
+                conn,
+                practice_id,
+                p["code"],
+                beneficiary,
+                "service_delivered",
+                earned_at=earned_at,
+            )
+    await audit(conn, practice_id, actor, "Final documents delivered and practice completed")
+    if p["client_visible"] is not False:
+        await conn.execute(
+            """INSERT INTO timeline_events(client_id,practice_id,event_type,title,description,event_date,client_visible,color,created_by)
+               VALUES($1,$2,'completion','Case completed',$4,now(),true,'success',$3)""",
+            p["client_id"],
+            practice_id,
+            actor,
+            _COMPLETION_NOTE.get(
+                await completion_wording(conn, practice_id), "Final documents delivered"
+            ),
+        )
+
+
+async def lock_slot_documents(conn: Any, practice_id: int) -> None:
+    await conn.fetch(
+        """SELECT d.id FROM documents d JOIN practice_delivery_slots s ON s.document_id=d.id
+           WHERE s.practice_id=$1 ORDER BY d.id FOR UPDATE OF d""",
+        practice_id,
+    )
+
+
+def queue_completed(pool: Any, p: dict, actor: str, tasks: BackgroundTasks) -> None:
+    """After the completing transaction: the portal message and the team's completed-process run."""
+    from backend.services.crm.completed_process_service import CompletedProcessService
+    from backend.services.portal.portal_notification_service import PortalNotificationService
+
+    if p["client_visible"] is not False:
+        tasks.add_task(
+            PortalNotificationService(pool).notify_practice_status_changed,
+            client_id=p["client_id"],
+            practice_id=p["id"],
+            practice_type=p["name"],
+            new_status="completed",
+            sent_by=actor,
+        )
+        tasks.add_task(
+            CompletedProcessService(pool).trigger_on_completed,
+            practice_id=p["id"],
+            triggered_by=actor,
+        )
+
+
+async def finish_on_proof(
+    pool: Any, conn: Any, p: dict, user: dict, tasks: BackgroundTasks
+) -> dict | None:
+    """After an open write: the first proof completes the practice. The view when it did, else None."""
+    if normalize_state(p["status"] or "") != "on_process":
+        return None
+    await lock_slot_documents(conn, p["id"])
+    view = await state(conn, p, user)
+    if proof_kind(view) is None:
+        return None
+    await finish(conn, p, view, user["email"])
+    queue_completed(pool, p, user["email"], tasks)
+    return await state(conn, {**p, "status": "completed"}, user)
+
+
 async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTasks) -> dict:
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        await conn.fetch(
-            """SELECT d.id FROM documents d JOIN practice_delivery_slots s ON s.document_id=d.id
-               WHERE s.practice_id=$1 ORDER BY d.id FOR UPDATE OF d""",
-            practice_id,
-        )
+        await lock_slot_documents(conn, practice_id)
         view = await state(conn, p, user)
         prior_service = await conn.fetchval(
             "SELECT service_code FROM practice_delivery_completions WHERE practice_id=$1",
@@ -993,79 +1136,15 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
         if p["status"] == "completed" and prior_service is not None:
             return view
         require_open(p)
-        if not view["slots"] or any(
-            not (s["document_id"] or s["waiver_reason"]) for s in view["slots"]
+        # A proof completes it, whatever else is still to come; so does every slot resolved.
+        if not view["slots"] or (
+            proof_kind(view) is None
+            and any(not (s["document_id"] or s["waiver_reason"]) for s in view["slots"])
         ):
             raise HTTPException(409, "Upload every required final document first")
-        if await conn.fetchval(
-            """SELECT 1 FROM practice_delivery_slots s WHERE s.practice_id=$1 AND s.company_id IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM client_company_links l WHERE l.client_id=$2
-                               AND l.company_id=s.company_id)""",
-            practice_id,
-            p["client_id"],
-        ):
-            raise HTTPException(409, "The practice company is no longer linked to this client")
-        await publish(conn, p, [s["key"] for s in view["slots"] if s["document_id"]])
-        if prior_service is None:
-            await conn.execute(
-                """INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by)
-                   VALUES($1,$2,$3)""",
-                practice_id,
-                p["code"],
-                user["email"],
-            )
-        await conn.execute(
-            """UPDATE practices SET status='completed',completion_date=COALESCE(completion_date,now()),
-               updated_at=CASE WHEN EXTRACT(DAY FROM now() AT TIME ZONE 'Asia/Makassar')>28
-                 THEN (date_trunc('month', now() AT TIME ZONE 'Asia/Makassar') + interval '1 month') AT TIME ZONE 'Asia/Makassar'
-                 ELSE now() END WHERE id=$1""",
-            practice_id,
-        )
-        if not view["bonus_slot"] or slot_for(view, view["bonus_slot"])["waiver_reason"]:
-            # Earned when the proof first existed, by whoever held the practice then; never before
-            # November 2026 (older months were settled by the status-change rule).
-            earned_at, beneficiary = await first_proof_instant(conn, p)
-            if earned_at.astimezone(WITA).date() >= _LEGACY_FROM:
-                await record_delivery_bonus(
-                    conn,
-                    practice_id,
-                    p["code"],
-                    beneficiary,
-                    "service_delivered",
-                    earned_at=earned_at,
-                )
-        await audit(
-            conn, practice_id, user["email"], "Final documents delivered and practice completed"
-        )
-        if p["client_visible"] is not False:
-            await conn.execute(
-                """INSERT INTO timeline_events(client_id,practice_id,event_type,title,description,event_date,client_visible,color,created_by)
-                   VALUES($1,$2,'completion','Case completed',$4,now(),true,'success',$3)""",
-                p["client_id"],
-                practice_id,
-                user["email"],
-                _COMPLETION_NOTE.get(
-                    await completion_wording(conn, practice_id), "Final documents delivered"
-                ),
-            )
+        await finish(conn, p, view, user["email"], record=prior_service is None)
         updated = await state(conn, {**p, "status": "completed"}, user)
-    from backend.services.crm.completed_process_service import CompletedProcessService
-    from backend.services.portal.portal_notification_service import PortalNotificationService
-
-    if p["client_visible"] is not False:
-        tasks.add_task(
-            PortalNotificationService(pool).notify_practice_status_changed,
-            client_id=p["client_id"],
-            practice_id=practice_id,
-            practice_type=p["name"],
-            new_status="completed",
-            sent_by=user["email"],
-        )
-        tasks.add_task(
-            CompletedProcessService(pool).trigger_on_completed,
-            practice_id=practice_id,
-            triggered_by=user["email"],
-        )
+    queue_completed(pool, p, user["email"], tasks)
     await invalidate_delivery_cache(p)
     return updated
 

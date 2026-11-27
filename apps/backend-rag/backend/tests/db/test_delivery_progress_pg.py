@@ -223,8 +223,14 @@ async def timeline(conn):
 
 
 async def two_files(pool):
+    """Both files saved, the practice open: what an older machine left (the first proof completes it
+    now), so the completion and its timeline row are taken back."""
     for key, name in (("electronic_visa", "electronic-visa"), ("document_2", "itk")):
         await service.upload(pool, 7, key, STAFF, final_file(name), BackgroundTasks())
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM practice_delivery_completions WHERE practice_id=7")
+        await conn.execute("DELETE FROM timeline_events WHERE practice_id=7")
+        await conn.execute("UPDATE practices SET status='on_process' WHERE id=7")
 
 
 @pytest.mark.asyncio
@@ -245,6 +251,8 @@ def publishing_only(monkeypatch, keys):
 @pytest.mark.asyncio
 async def test_complete_writes_the_partial_text_when_a_file_is_not_visible(pool, monkeypatch):
     await two_files(pool)
+    async with pool.acquire() as conn:  # the later document is saved but not yet shown
+        await conn.execute("UPDATE documents SET client_visible=false WHERE file_name LIKE 'itk%'")
     publishing_only(monkeypatch, ["electronic_visa"])
     await service.complete(pool, 7, STAFF, BackgroundTasks())
     async with pool.acquire() as conn:

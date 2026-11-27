@@ -172,6 +172,9 @@ async def test_invalid_or_concurrent_destination_is_rechecked_after_storage(db, 
 @pytest.mark.asyncio
 async def test_visa_waits_for_itk_and_cannot_waive_it(db, writes):
     pool, conn = db
+    with pytest.raises(HTTPException) as incomplete:  # no proof at all: nothing to complete
+        await service.complete(pool, 7, STAFF, BackgroundTasks())
+    assert incomplete.value.status_code == 409
     conn.fetch.return_value = [
         {
             "slot_key": "electronic_visa",
@@ -180,9 +183,6 @@ async def test_visa_waits_for_itk_and_cannot_waive_it(db, writes):
             "waiver_reason": None,
         }
     ]
-    with pytest.raises(HTTPException) as incomplete:
-        await service.complete(pool, 7, STAFF, BackgroundTasks())
-    assert incomplete.value.status_code == 409
     with pytest.raises(HTTPException) as required:
         await service.waive(pool, 7, "itk", STAFF, "Pending arrival")
     assert required.value.status_code == 409
@@ -718,3 +718,30 @@ async def test_first_proof_instant_names_the_assignee_at_that_instant(db, moves,
     # The proof is at T2.
     _, assignee = await instant(db, [accepted(T2, "electronic_visa")], moves)
     assert assignee == who
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["waive", "reuse"])
+async def test_waive_and_reuse_routes_hand_their_background_tasks_to_the_service(
+    monkeypatch, action
+):
+    from backend.app.routers import crm_practice_delivery as routes
+
+    seen = {}
+
+    async def fake(*args):
+        seen["tasks"] = args[-1]
+        return {}
+
+    tasks = BackgroundTasks()
+    if action == "waive":
+        monkeypatch.setattr(routes.delivery, "waive", fake)
+        await routes.waive_slot(
+            7, "itk", routes.Waiver(reason="Pending arrival"), STAFF, None, tasks
+        )
+    else:
+        monkeypatch.setattr(routes.delivery, "reuse", fake)
+        await routes.use_combined_file(
+            7, "itk", routes.ReuseFile(document_id=3), STAFF, None, tasks
+        )
+    assert seen["tasks"] is tasks

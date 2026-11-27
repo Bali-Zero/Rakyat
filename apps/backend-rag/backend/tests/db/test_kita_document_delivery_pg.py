@@ -147,35 +147,40 @@ def final_file(name):
     )
 
 
+async def reopen(pool, pid):
+    """The state an older machine left: the proof saved, the practice still open."""
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM practice_delivery_completions WHERE practice_id=$1", pid)
+        await conn.execute("UPDATE practices SET status='on_process' WHERE id=$1", pid)
+
+
 @pytest.mark.asyncio
 async def test_concurrent_issue_one_bonus_and_post_entry_completion(pool):
-    # The same issuance submitted twice can neither pay twice nor prematurely close.
-    await asyncio.gather(
+    # The same issuance submitted twice pays once; the first proof completes the practice and the
+    # loser either replays or is refused with a 409, never a second receipt or a duplicate file.
+    results = await asyncio.gather(
         *[
             service.upload(
                 pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
             )
             for _ in range(2)
-        ]
+        ],
+        return_exceptions=True,
     )
+    assert any(isinstance(r, dict) for r in results)
+    assert all(isinstance(r, dict) or r.status_code == 409 for r in results)
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT p.status,b.status AS bonus,e.event_kind,b.amount_idr FROM practices p JOIN hr_delivery_bonus_events e ON e.practice_id=p.id JOIN hr_bonus_ledger b ON b.id=e.ledger_id WHERE p.id=7"
         )
-        assert tuple(row.values()) == ("on_process", "pending", "electronic_visa_issued", 100000)
+        assert tuple(row.values()) == ("completed", "pending", "electronic_visa_issued", 100000)
         assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger") == 1
         portal = await service.portal_files(conn, 7, 31)
         assert [r["file_name"] for r in portal["documents"]] == ["electronic-visa.pdf"]
         with pytest.raises(HTTPException):
             await service.portal_files(conn, 7, 32)
-    with pytest.raises(HTTPException, match="Upload every required"):
-        await service.complete(pool, 7, STAFF, BackgroundTasks())
     await service.upload(pool, 7, "document_2", STAFF, final_file("itk"), BackgroundTasks())
-    async with pool.acquire() as conn:
-        assert len((await service.portal_files(conn, 7, 31))["documents"]) == 1
-    result = await service.complete(pool, 7, STAFF, BackgroundTasks())
-    assert result["status"] == "completed"
-    await service.complete(pool, 7, STAFF, BackgroundTasks())
+    await service.complete(pool, 7, STAFF, BackgroundTasks())  # already completed: a no-op
     async with pool.acquire() as conn:
         assert len((await service.portal_files(conn, 7, 31))["documents"]) == 2
         assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger") == 1
@@ -188,7 +193,7 @@ async def test_combined_renewal_earns_on_imk_upload_and_keeps_rate_gap(pool):
         pool, 8, "document_1", STAFF, final_file("combined-permit"), BackgroundTasks()
     )
     assert result["bonus_event"] == "kitas_imk_uploaded"
-    assert result["status"] == "on_process"
+    assert result["status"] == "completed"  # the IMK is the first proof
     assert result["visa_followup"] is None
     doc_id = result["slots"][0]["document_id"]
     assert result["slots"][1]["reusable_document_id"] == doc_id
@@ -217,15 +222,6 @@ async def test_replaced_archived_and_deleted_evisa_never_counts_as_itk(pool):
     disguised = visa.model_copy(update={"issued_on": None, "file_name": "visit-stay-permit.pdf"})
     with pytest.raises(HTTPException, match="another output"):
         await service.upload(pool, 7, "document_2", STAFF, disguised, BackgroundTasks())
-    # An old upload might have left all current slot pointers after a correction.
-    await service.upload(
-        pool,
-        7,
-        "electronic_visa",
-        STAFF,
-        final_file("corrected-electronic-visa"),
-        BackgroundTasks(),
-    )
     async with pool.acquire() as conn:
         await conn.execute("UPDATE documents SET is_archived=true WHERE id=$1", first_id)
     with pytest.raises(HTTPException, match="another output"):
@@ -238,10 +234,9 @@ async def test_replaced_archived_and_deleted_evisa_never_counts_as_itk(pool):
         assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=7") == 1
         assert (
             await conn.fetchval("SELECT count(*) FROM practice_delivery_slots WHERE practice_id=7")
-            == 1
+            == 0  # the deleted document took its slot with it; document_2 never filled
         )
-    with pytest.raises(HTTPException, match="Upload every required"):
-        await service.complete(pool, 7, STAFF, BackgroundTasks())
+        assert await conn.fetchval("SELECT status FROM practices WHERE id=7") == "completed"
 
 
 @pytest.mark.asyncio
@@ -272,8 +267,6 @@ async def test_concurrent_different_slots_cannot_claim_same_content(pool):
             )
             == 1
         )
-    with pytest.raises(HTTPException, match="Upload every required"):
-        await service.complete(pool, 7, STAFF, BackgroundTasks())
 
 
 @pytest.mark.asyncio
@@ -434,6 +427,7 @@ async def test_company_slot_replacement_uses_previous_company_identity(pool, sha
         BackgroundTasks(),
     )
     old_doc = initial["slots"][0]["document_id"]
+    await reopen(pool, 8)
     async with pool.acquire() as conn:
         old_company_doc = await conn.fetchval(
             "SELECT company_document_id FROM practice_delivery_slots WHERE practice_id=8 AND slot_key='document_1'"
@@ -444,6 +438,7 @@ async def test_company_slot_replacement_uses_previous_company_identity(pool, sha
         )
     if shared:
         await service.reuse(pool, 8, "document_2", STAFF, old_doc)
+        await reopen(pool, 8)
     await service.upload(
         pool, 8, "document_1", STAFF, final_file("replaced-imk"), BackgroundTasks()
     )
