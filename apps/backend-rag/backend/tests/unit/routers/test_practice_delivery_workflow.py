@@ -401,7 +401,13 @@ def test_company_outputs_populate_the_existing_company_vault_cards(label, kind):
 @pytest.mark.asyncio
 async def test_same_service_reopened_practice_keeps_original_delivery_receipt(db, writes):
     pool, conn = db
-    conn.fetchval.side_effect = [PRACTICE["code"], None, True]
+    answers = iter([PRACTICE["code"], None, True])
+
+    async def lookup(sql, *args):
+        # The delivery view's bonus rate is not part of this completion sequence.
+        return None if "hr_bonus_rates" in sql else next(answers)
+
+    conn.fetchval.side_effect = lookup
     conn.fetch.return_value = [
         {"slot_key": key, "document_id": i, "file_name": "result.pdf", "waiver_reason": None}
         for i, key in enumerate(("electronic_visa", "itk"), 1)

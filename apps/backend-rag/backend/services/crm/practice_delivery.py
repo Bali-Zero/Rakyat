@@ -169,6 +169,12 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         ),
         "bonus_event": bonus["event_kind"] if bonus else None,
         "bonus_status": bonus.get("status") if bonus else None,
+        "bonus_rate": await conn.fetchval(
+            """SELECT amount_idr FROM hr_bonus_rates WHERE practice_type_code=$1 AND is_active
+               AND effective_from<=$2 AND (effective_to IS NULL OR effective_to>=$2)""",
+            p["code"],
+            business_today(),
+        ),
     }
 
 

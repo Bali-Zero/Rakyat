@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SWRConfig } from "swr";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -742,5 +748,46 @@ describe("Final delivery", () => {
     );
     expect(await screen.findByText(/Bonus recorded/)).toBeVisible();
     expect(requests.post.mock.calls[0][1]).not.toHaveProperty("issued_on");
+  });
+
+  it("tells the employee when a service carries no bonus or the bonus was forfeited", async () => {
+    const imk = slot("renewed_imk", "New IMK", { document_id: 17 });
+    const custom = { ...initial, bonus_slot: null, bonus_rate: 0, slots: [] };
+    requests.get.mockResolvedValue(custom);
+    setup();
+    expect(
+      await screen.findByText("This service carries no bonus."),
+    ).toBeVisible();
+    cleanup();
+
+    const earned = {
+      ...initial,
+      status: "completed",
+      bonus_slot: "renewed_imk",
+      bonus_event: "kitas_imk_uploaded",
+      bonus_status: "no_bonus",
+      slots: [imk],
+    };
+    requests.get.mockResolvedValue(earned);
+    setup();
+    expect(
+      await screen.findByText("This service carries no bonus."),
+    ).toBeVisible();
+    expect(screen.queryByText("Bonus recorded")).toBeNull();
+    cleanup();
+
+    requests.get.mockResolvedValue({
+      ...earned,
+      bonus_rate: 15000,
+      bonus_status: "forfeited",
+    });
+    setup();
+    expect(
+      await screen.findByText(
+        "No bonus: the client paid less than the service price.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("Bonus recorded")).toBeNull();
+    expect(screen.queryByText("This service carries no bonus.")).toBeNull();
   });
 });

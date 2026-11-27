@@ -36,6 +36,7 @@ interface Delivery {
   status: string;
   bonus_slot: string | null;
   bonus_status?: string | null;
+  bonus_rate?: number | null;
   bonus_event:
     | "electronic_visa_issued"
     | "kitas_imk_uploaded"
@@ -406,9 +407,9 @@ function StaffDeliveryCard({
                       )}
                       {slot.key === data.bonus_slot &&
                         data.bonus_event &&
-                        data.bonus_status !== "ineligible" && (
-                          <p className={styles.saved}>Bonus recorded</p>
-                        )}
+                        !["ineligible", "forfeited", "no_bonus"].includes(
+                          data.bonus_status ?? "",
+                        ) && <p className={styles.saved}>Bonus recorded</p>}
                       {slot.key === data.bonus_slot && slot.issued_on && (
                         <p className={styles.hint}>
                           Issued{" "}
@@ -532,6 +533,15 @@ function StaffDeliveryCard({
                 );
               })}
             </ul>
+          )}
+          {(data.bonus_status === "no_bonus" ||
+            (data.bonus_rate === 0 && !data.bonus_status)) && (
+            <p className={styles.hint}>This service carries no bonus.</p>
+          )}
+          {data.bonus_status === "forfeited" && (
+            <p className={styles.hint}>
+              No bonus: the client paid less than the service price.
+            </p>
           )}
           {writable && !practice.family_member_id && (
             <details className={styles.company}>
