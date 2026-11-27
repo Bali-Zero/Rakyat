@@ -3,19 +3,24 @@ Verification Service
 Implements the "Draft -> Verify" pattern for Agentic RAG.
 Acts as a judge to evaluate if the generated answer is supported by the retrieved context.
 
-UPDATED 2025-12-23:
-- Migrated to new google-genai SDK via GenAIClient wrapper
+UPDATED 2026-11-27: the judge runs on Claude through the linked-organization Console
+door (``claude_oauth_client``, endpoint ``rag.verifier``) instead of Gemini.
 """
 
 import logging
 import os
+import re
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-from backend.app.core.config import settings
-from backend.llm.genai_client import GENAI_AVAILABLE, GenAIClient, LLMStructuredOutputError
+from backend.llm.claude_oauth_client import (
+    ClaudeOAuthNotAvailable,
+    collect_seats,
+    complete_async,
+    default_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +114,48 @@ class VerifierVerdict(BaseModel):
     missing_citations: list[str] = []
 
 
+# JSON Schema handed to the Console client so the verdict comes back as a
+# ``structured_output`` object (same flat shape as the surface router's
+# classifier schema); ``VerifierVerdict`` still validates it locally.
+_VERIFIER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "reasoning": {"type": "string"},
+        "status": {
+            "type": "string",
+            "enum": ["verified", "partial", "unverified", "hallucination"],
+        },
+        "score": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "corrections": {"type": ["string", "null"]},
+        "missing_citations": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["reasoning", "status", "score", "corrections", "missing_citations"],
+    "additionalProperties": False,
+}
+
+_CLAUDE_MODEL_RE = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
+
+
+def _resolve_verifier_model() -> str:
+    """The Claude model the judge runs on.
+
+    ``VERIFIER_MODEL`` is honoured only when it names a ``claude-*`` model: until
+    the legacy Gemini value is unset from the deployment, a non-Claude value is
+    ignored (and said once) rather than forwarded to the CLI.
+    """
+    raw = os.getenv("VERIFIER_MODEL", "").strip()
+    if raw and _CLAUDE_MODEL_RE.match(raw):
+        return raw
+    fallback = default_model()
+    if raw:
+        logger.warning(
+            "🛡️ [VerificationService] Ignoring non-Claude VERIFIER_MODEL=%s; using %s",
+            raw,
+            fallback,
+        )
+    return fallback
+
+
 class VerificationService:
     """
     Service responsible for verifying RAG generated responses against source context.
@@ -116,11 +163,9 @@ class VerificationService:
     """
 
     def __init__(self) -> None:
-        self._genai_client: GenAIClient | None = None
-        # Default = the model this service has always used. Flipping via env
-        # is a deploy-time lever (increment-2, evidence-gated by
-        # scripts/verifier_model_ab.py) — default behavior is UNCHANGED.
-        self.model_name = os.getenv("VERIFIER_MODEL", "gemini-3.5-flash")
+        # A Claude model through the Console door; VERIFIER_MODEL overrides it
+        # only when it is a claude-* slug (see _resolve_verifier_model).
+        self.model_name = _resolve_verifier_model()
         logger.info("🛡️ [VerificationService] verifier model: %s", self.model_name)
         # Cost lever, default ON so behaviour is unchanged unless someone asks.
         # Measured 2026-08-12 on the live ledger: over 2026-08-10..11 this
@@ -137,28 +182,10 @@ class VerificationService:
                 "answers ship with verdict_available=False, never a false 'verified'"
             )
 
-    def _get_genai_client(self) -> GenAIClient | None:
-        """Lazy load GenAI client. Returns None when the service is switched off.
-
-        Gating HERE and not only in `verify_response` means a disabled verifier
-        never even constructs a client, so it cannot spend by any other path.
-        """
-        if not self._enabled:
-            return None
-        if self._genai_client is None and settings.google_api_key and GENAI_AVAILABLE:
-            try:
-                self._genai_client = GenAIClient(api_key=settings.google_api_key)
-                if self._genai_client.is_available:
-                    logger.debug("🛡️ [VerificationService] GenAI client loaded")
-            except Exception as e:
-                logger.warning("⚠️ [VerificationService] Failed to initialize client: %s", e)
-        return self._genai_client
-
     @property
     def _available(self) -> bool:
-        """Check availability dynamically."""
-        client = self._get_genai_client()
-        return client.is_available if client else False
+        """The judge can run: switched on AND a Console seat is configured."""
+        return bool(self._enabled and collect_seats())
 
     async def verify_response(
         self,
@@ -185,8 +212,7 @@ class VerificationService:
                 verdict_available=False,
             )
 
-        client = self._get_genai_client()
-        if not client or not client.is_available:
+        if not self._available:
             # No verdict path, same as the others below (round-2 red-team
             # fix, Codex): this used to mint a false "verified"
             # (score=1.0, verdict_available defaulting True) when the
@@ -209,6 +235,7 @@ class VerificationService:
                 status=VerificationStatus.PARTIALLY_VERIFIED,
                 score=0.5,
                 reasoning="No context provided for verification.",
+                verdict_available=False,
             )
 
         # Prepare context text
@@ -286,32 +313,42 @@ Return a JSON object with this exact structure:
         # LLMStructuredOutputError, caught below as verdict_available=False
         # — never a corrupted verdict silently gating downstream behavior.
         try:
-            verdict = await self._genai_client.generate_structured(
-                contents=prompt,
-                response_schema=VerifierVerdict,
+            response = await complete_async(
+                prompt,
                 model=self.model_name,
-                temperature=0.0,
-                max_output_tokens=VERIFIER_MAX_OUTPUT_TOKENS,
                 endpoint="rag.verifier",
+                json_schema=_VERIFIER_SCHEMA,
+                max_output_tokens=VERIFIER_MAX_OUTPUT_TOKENS,
+                timeout_s=30.0,
+                total_timeout_s=45.0,
             )
-        except LLMStructuredOutputError as exc:
-            # PII boundary (round-2 red-team fix, Codex — UU PDP /
-            # SYMBIOSIS Law 2 is ABSOLUTE): LLMStructuredOutputError's
-            # message embeds pydantic ValidationError's str(), which
-            # includes input_value=... — the model's malformed output,
-            # which can itself echo client PII from the verifier prompt
-            # (draft_answer/context_chunks). Never log or store the raw
-            # exception text.
-            #
-            # `.reason` is the closed-vocabulary cause carried out of band
-            # precisely so this line can say WHICH failure happened without
-            # crossing that boundary. Before it existed, every cause — safety
-            # block, output cap, malformed JSON — logged this same sentence,
-            # and 10 live failures over 7 days could not be told apart.
+            if response.structured is not None:
+                verdict = VerifierVerdict.model_validate(response.structured)
+            else:
+                raw_text = (response.text or "").strip()
+                if raw_text.startswith("```"):
+                    raw_text = re.sub(r"^```(?:json)?\s*\n?", "", raw_text)
+                    raw_text = re.sub(r"\n?```\s*$", "", raw_text).strip()
+                if not raw_text:
+                    raise ValueError("empty verifier output")
+                verdict = VerifierVerdict.model_validate_json(raw_text)
+        except ClaudeOAuthNotAvailable:
+            logger.warning("🛡️ [Verifier] Claude Console unavailable — verdict unavailable")
+            return VerificationResult(
+                is_valid=True,
+                status=VerificationStatus.PARTIALLY_VERIFIED,
+                score=0.5,
+                reasoning="Verification skipped (model unavailable) — verdict unavailable.",
+                verdict_available=False,
+            )
+        except ValidationError:
+            # PII boundary (UU PDP / SYMBIOSIS Law 2 is ABSOLUTE): a pydantic
+            # ValidationError's text embeds input_value=..., the model's malformed
+            # output, which can echo client PII from the verifier prompt. Never
+            # log or store the raw exception text.
             logger.warning(
                 "🛡️ [Verifier] Model failed to produce a schema-valid verdict "
-                "— verdict unavailable (reason=%s)",
-                getattr(exc, "reason", "") or "UNATTRIBUTED",
+                "— verdict unavailable (reason=SCHEMA_VALIDATION)",
             )
             return VerificationResult(
                 is_valid=True,
@@ -321,10 +358,9 @@ Return a JSON object with this exact structure:
                 verdict_available=False,
             )
         except Exception as e:
-            # Unexpected error (network, API, etc.). Fail safe: allow it but
-            # log error — and, same as above, never let the placeholder
-            # score gate self-correction. Same PII boundary as above: log
-            # the exception TYPE only, never str(e).
+            # Unexpected error (network, API, seats exhausted, empty output). Fail
+            # safe: allow it, never let the placeholder score gate self-correction.
+            # Same PII boundary: the exception TYPE only, never str(e).
             logger.error("❌ [Verifier] Error during verification: %s", type(e).__name__)
             return VerificationResult(
                 is_valid=True,

@@ -1,13 +1,23 @@
 """
 Tests for verification_service.py - RAG response verification against source context.
+
+The judge runs on Claude through the Console door (``claude_oauth_client``); the
+Gemini path it used to take is gone.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import logging
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
 
-from backend.llm.genai_client import LLMStructuredOutputError
+from backend.llm.claude_oauth_client import (
+    ClaudeOAuthError,
+    ClaudeOAuthNotAvailable,
+    ClaudeOAuthResponse,
+    default_model,
+)
+from backend.services.rag import verification_service as vs
 from backend.services.rag.verification_service import (
     VERIFIER_MAX_OUTPUT_TOKENS,
     VerificationResult,
@@ -16,55 +26,65 @@ from backend.services.rag.verification_service import (
     VerifierVerdict,
 )
 
+_SEAT = object()
+
+
+def _response(structured=None, text=""):
+    return ClaudeOAuthResponse(
+        text=text,
+        token_label="console_1",
+        elapsed_s=0.1,
+        attempts=1,
+        structured=structured,
+    )
+
+
+def _verdict_dict(**overrides):
+    base = {
+        "reasoning": "ok",
+        "status": "verified",
+        "score": 0.9,
+        "corrections": None,
+        "missing_citations": [],
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.fixture
+def lane(monkeypatch):
+    """A configured Console seat and a recording ``complete_async``."""
+    monkeypatch.delenv("VERIFIER_ENABLED", raising=False)
+    monkeypatch.setattr(vs, "collect_seats", lambda: [_SEAT])
+    mock = AsyncMock(return_value=_response(structured=_verdict_dict()))
+    monkeypatch.setattr(vs, "complete_async", mock)
+    return mock
+
 
 class TestVerifierOutputBudget:
     """The cap governs THINKING + verdict, not the verdict alone.
 
     Measured in production 2026-08-09: with the cap at 2048, `rag.verifier`
-    failed 10 of 44 calls over 7 days with LLMStructuredOutputError — the
-    fact-check gate silently off for ~23% of answers, since that path returns
-    verdict_available=False and self-correction is then skipped. The failing
-    rows report 4062/4064/4065 output tokens: halved, ~2032 each, i.e.
-    generate_structured's one retry with BOTH attempts truncated at the cap.
-    A successful gemini-3.5-flash call in the same window reports 1661 —
-    under 2048, but only just.
-
-    The cap had been trimmed 8192 → 2048 "for latency" because a sample
-    verdict measured ~95 tokens, "~20x headroom". The verdict really is ~95
-    tokens. It is simply not what the constant controls.
+    failed 10 of 44 calls over 7 days — the fact-check gate silently off for
+    ~23% of answers. The cap is the room a thinking judge needs.
     """
 
     def test_budget_leaves_room_for_a_thinking_judge(self):
-        """GUILT: 2048 is the value that was measured breaking the gate, and
-        1661 (a real successful verdict) already sits at 81% of it."""
         assert VERIFIER_MAX_OUTPUT_TOKENS > 2048, "2048 truncated 23% of live verdicts"
-        assert VERIFIER_MAX_OUTPUT_TOKENS >= 4096, (
-            "a verdict observed at 1661 tokens needs more than 2x headroom when the "
-            "same budget also has to hold the model's chain of thought"
-        )
+        assert VERIFIER_MAX_OUTPUT_TOKENS >= 4096
 
     @pytest.mark.asyncio
-    async def test_the_budget_actually_reaches_the_model(self):
-        """A constant nothing passes is a comment. Pin the call site.
-
-        Innocence-side value: this also catches someone re-inlining a literal
-        at the call site while leaving the constant looking correct.
-        """
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            return_value=VerifierVerdict(reasoning="ok", status="verified", score=0.9),
-        )
-        service._genai_client = mock_client
-
-        await service.verify_response(
+    async def test_the_budget_actually_reaches_the_model(self, lane):
+        """A constant nothing passes is a comment: pin the call site."""
+        await VerificationService().verify_response(
             query="What is KITAS?",
             draft_answer="A temporary stay permit.",
             context_chunks=["KITAS is a temporary stay permit."],
         )
-        kwargs = mock_client.generate_structured.await_args.kwargs
+        kwargs = lane.await_args.kwargs
         assert kwargs["max_output_tokens"] == VERIFIER_MAX_OUTPUT_TOKENS
+        assert kwargs["endpoint"] == "rag.verifier"
+        assert kwargs["json_schema"] is vs._VERIFIER_SCHEMA
 
 
 class TestVerificationStatus:
@@ -134,100 +154,68 @@ class TestVerifierVerdict:
 
 
 class TestVerificationServiceModelConfig:
-    """VERIFIER_MODEL env override (increment-1, self-correction latency —
-    self-correction-speed-design.md). Default behavior MUST be unchanged
-    until an operator sets the env var."""
+    """VERIFIER_MODEL only counts when it names a claude-* model."""
 
-    def test_honors_verifier_model_env(self, monkeypatch):
-        monkeypatch.setenv("VERIFIER_MODEL", "gemini-2.5-flash")
-        service = VerificationService()
-        assert service.model_name == "gemini-2.5-flash"
+    def test_honors_a_claude_verifier_model_env(self, monkeypatch):
+        monkeypatch.setenv("VERIFIER_MODEL", "claude-haiku-5-5")
+        assert VerificationService().model_name == "claude-haiku-5-5"
 
     def test_falls_back_to_default_when_unset(self, monkeypatch):
         monkeypatch.delenv("VERIFIER_MODEL", raising=False)
-        service = VerificationService()
-        assert service.model_name == "gemini-3.5-flash"
+        assert VerificationService().model_name == default_model()
+
+    def test_a_legacy_gemini_value_is_ignored(self, monkeypatch, caplog):
+        monkeypatch.setenv("VERIFIER_MODEL", "gemini-2.5-flash")
+        with caplog.at_level(logging.WARNING):
+            service = VerificationService()
+        assert service.model_name == default_model()
+        assert "Ignoring non-Claude VERIFIER_MODEL" in caplog.text
 
 
 class TestVerificationServiceFallbacks:
-    """Tests for VerificationService without LLM available."""
+    """VerificationService without a usable model."""
 
     @pytest.mark.asyncio
-    async def test_model_unavailable_is_no_verdict(self):
-        """Round-2 fix (Codex red-team, verified independently): renamed
-        from test_returns_verified_when_model_unavailable. The old behavior
-        minted a false "verified" (status=VERIFIED, score=1.0,
-        verdict_available defaulting True) when the verifier itself was
-        dead — inconsistent with every OTHER no-verdict path in this file
-        (empty/malformed verdict, generic error), which all correctly set
-        verdict_available=False. This is a deliberate behavior change, not
-        a regression: "model unavailable" is a no-verdict case like the
-        rest, never a real "verified" judgment."""
-        service = VerificationService()
-        # Patch google_api_key to None so _get_genai_client() returns None
-        # (simulates deployment environment where key is absent)
-        with patch("backend.services.rag.verification_service.settings") as mock_settings:
-            mock_settings.google_api_key = None
-            result = await service.verify_response(
-                query="What is KITAS?",
-                draft_answer="KITAS is a temporary stay permit.",
-                context_chunks=["KITAS is a temporary stay permit in Indonesia."],
-            )
+    async def test_model_unavailable_is_no_verdict(self, monkeypatch):
+        """No Console seat is a no-verdict case, never a false 'verified'."""
+        monkeypatch.delenv("VERIFIER_ENABLED", raising=False)
+        monkeypatch.setattr(vs, "collect_seats", lambda: [])
+        never = AsyncMock(side_effect=AssertionError("no seat, no call"))
+        monkeypatch.setattr(vs, "complete_async", never)
+        result = await VerificationService().verify_response(
+            query="What is KITAS?",
+            draft_answer="KITAS is a temporary stay permit.",
+            context_chunks=["KITAS is a temporary stay permit in Indonesia."],
+        )
         assert result.is_valid is True
         assert result.status == VerificationStatus.PARTIALLY_VERIFIED
         assert result.score == 0.5
         assert result.verdict_available is False
         assert "unavailable" in result.reasoning.lower()
+        never.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_empty_context_returns_partial(self):
-        service = VerificationService()
-        # Mock client as available
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        service._genai_client = mock_client
-
-        result = await service.verify_response(
+    async def test_empty_context_returns_partial(self, lane):
+        result = await VerificationService().verify_response(
             query="What is KITAS?",
             draft_answer="KITAS is a temporary stay permit.",
             context_chunks=[],
         )
         assert result.status == VerificationStatus.PARTIALLY_VERIFIED
         assert result.score == 0.5
-
-    # NOTE: the old empty-response / unparseable-JSON tests that lived here
-    # exercised generate_content()'s raw-text + json.loads() path — the
-    # exact markdown-fence bug this fix retires (see TestVerificationServiceWithLLM
-    # .test_structured_error_is_no_verdict for the replacement: generate_structured()
-    # now owns parsing/validation and raises LLMStructuredOutputError instead of
-    # ever handing back unparseable text).
+        assert result.verdict_available is False
+        lane.assert_not_called()
 
 
 class TestVerificationServiceWithLLM:
-    """Tests for VerificationService with mocked LLM — migrated to
-    generate_structured() (JSON mode, PR #311 pattern). generate_content()
-    + prompt-engineered JSON + json.loads() is RETIRED: Gemini wraps
-    unschematized JSON asks in a markdown ```json fence, which made
-    json.loads() raise Expecting value: line 1 column 1 (char 0) on every
-    call in prod — the fact-check gate was dead. generate_structured() sets
-    response_mime_type="application/json" + response_schema so the fence
-    can't happen."""
+    """VerificationService with a mocked Console door."""
 
     @pytest.mark.asyncio
-    async def test_structured_verdict_pass(self):
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            return_value=VerifierVerdict(
-                reasoning="All claims supported by context",
-                status="verified",
-                score=0.92,
-            )
+    async def test_structured_verdict_pass(self, lane):
+        lane.return_value = _response(
+            structured=_verdict_dict(reasoning="All claims supported by context", score=0.92)
         )
-        service._genai_client = mock_client
-
-        result = await service.verify_response(
+        result = await VerificationService().verify_response(
             query="What is KITAS?",
             draft_answer="KITAS is a temporary stay permit in Indonesia.",
             context_chunks=["KITAS is a temporary stay permit issued by Indonesian immigration."],
@@ -235,16 +223,12 @@ class TestVerificationServiceWithLLM:
         assert result.is_valid is True
         assert result.status == VerificationStatus.VERIFIED
         assert result.score == 0.92
-        # Innocence: a normal, schema-valid verdict is a REAL verdict.
         assert result.verdict_available is True
 
     @pytest.mark.asyncio
-    async def test_structured_verdict_fail_gates(self):
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            return_value=VerifierVerdict(
+    async def test_structured_verdict_fail_gates(self, lane):
+        lane.return_value = _response(
+            structured=_verdict_dict(
                 reasoning="Claims fabricated law UU 999/2025",
                 status="unverified",
                 score=0.3,
@@ -252,142 +236,110 @@ class TestVerificationServiceWithLLM:
                 missing_citations=["UU 999/2025"],
             )
         )
-        service._genai_client = mock_client
-
-        result = await service.verify_response(
+        result = await VerificationService().verify_response(
             query="test",
             draft_answer="According to UU 999/2025...",
             context_chunks=["Real context about immigration"],
         )
-        assert result.is_valid is False  # score < 0.7
+        assert result.is_valid is False
         assert result.status == VerificationStatus.UNVERIFIED
         assert result.score == 0.3
         assert result.verdict_available is True
-        assert len(result.missing_citations) == 1
+        assert result.missing_citations == ["UU 999/2025"]
+        assert result.corrected_answer == "Remove reference to UU 999/2025"
 
     @pytest.mark.asyncio
-    async def test_hallucination_detected(self):
-        """Coverage for the HALLUCINATION enum value specifically (distinct
-        from the generic below-threshold UNVERIFIED case above) — carried
-        over from the pre-fix suite, now via generate_structured."""
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            return_value=VerifierVerdict(
-                reasoning="Claims fabricated law UU 999/2025",
-                status="hallucination",
-                score=0.1,
-                corrections="Remove reference to UU 999/2025",
-                missing_citations=["UU 999/2025"],
-            )
+    async def test_hallucination_detected(self, lane):
+        lane.return_value = _response(
+            structured=_verdict_dict(status="hallucination", score=0.1, missing_citations=["x"])
         )
-        service._genai_client = mock_client
-
-        result = await service.verify_response(
-            query="test",
-            draft_answer="According to UU 999/2025...",
-            context_chunks=["Real context about immigration"],
+        result = await VerificationService().verify_response(
+            query="test", draft_answer="a", context_chunks=["ctx"]
         )
-        assert result.is_valid is False  # score < 0.7
+        assert result.is_valid is False
         assert result.status == VerificationStatus.HALLUCINATION
-        assert len(result.missing_citations) == 1
 
     @pytest.mark.asyncio
-    async def test_structured_error_is_no_verdict(self):
-        """REGRESSION for the prod markdown-fence bug: when the model can't
-        produce schema-valid JSON (generate_structured's own one retry
-        exhausted), it raises LLMStructuredOutputError — never a real
-        verdict. Must degrade SAFELY (verdict_available=False, score=0.5),
-        never gate self-correction on a fake/placeholder score."""
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            side_effect=LLMStructuredOutputError(
-                "Model failed to produce VerifierVerdict-valid JSON after 2 attempt(s)"
-            )
+    async def test_plain_text_json_is_accepted_when_no_structured_output(self, lane):
+        lane.return_value = _response(
+            text='{"reasoning":"ok","status":"verified","score":0.8,'
+            '"corrections":null,"missing_citations":[]}'
         )
-        service._genai_client = mock_client
+        result = await VerificationService().verify_response(
+            query="t", draft_answer="a", context_chunks=["c"]
+        )
+        assert result.verdict_available is True
+        assert result.score == 0.8
 
-        result = await service.verify_response(
-            query="test",
-            draft_answer="test answer",
-            context_chunks=["context"],
+    @pytest.mark.asyncio
+    async def test_fenced_json_text_is_accepted(self, lane):
+        lane.return_value = _response(
+            text='```json\n{"reasoning":"ok","status":"partial","score":0.6,'
+            '"corrections":null,"missing_citations":[]}\n```'
         )
-        assert result.is_valid is True
+        result = await VerificationService().verify_response(
+            query="t", draft_answer="a", context_chunks=["c"]
+        )
+        assert result.verdict_available is True
         assert result.status == VerificationStatus.PARTIALLY_VERIFIED
-        assert result.score == 0.5
-        assert result.verdict_available is False
 
     @pytest.mark.asyncio
-    async def test_structured_error_does_not_leak_exception_content(self):
-        """Round-2 fix (Codex red-team, verified independently — PII
-        boundary is ABSOLUTE per UU PDP / SYMBIOSIS Law 2): genai_client's
-        LLMStructuredOutputError embeds pydantic ValidationError's str(),
-        which includes input_value=... — the model's malformed output,
-        which can itself echo client PII from the verifier prompt
-        (draft_answer/context_chunks). Neither the log nor the stored
-        `reasoning` may contain the raw exception text."""
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            side_effect=LLMStructuredOutputError(
-                "schema error input_value='mario.rossi@example.com passport A9900001'"
+    async def test_empty_output_is_no_verdict(self, lane):
+        lane.return_value = _response(text="   ")
+        result = await VerificationService().verify_response(
+            query="t", draft_answer="a", context_chunks=["c"]
+        )
+        assert result.verdict_available is False
+        assert result.score == 0.5
+
+    @pytest.mark.asyncio
+    async def test_schema_violation_is_no_verdict_and_leaks_nothing(self, lane, caplog):
+        """PII boundary (UU PDP / SYMBIOSIS Law 2 is ABSOLUTE): a malformed verdict
+        raises a pydantic error whose text embeds the model's output. Neither the
+        log nor the stored reasoning may carry it."""
+        lane.return_value = _response(
+            structured=_verdict_dict(score=7, reasoning="mario.rossi@example.com passport A9900001")
+        )
+        with caplog.at_level(logging.DEBUG):
+            result = await VerificationService().verify_response(
+                query="test", draft_answer="test answer", context_chunks=["context"]
             )
-        )
-        service._genai_client = mock_client
-
-        result = await service.verify_response(
-            query="test",
-            draft_answer="test answer",
-            context_chunks=["context"],
-        )
-        assert "example.com" not in result.reasoning
-        assert "A9900001" not in result.reasoning
         assert result.verdict_available is False
         assert result.score == 0.5
+        assert result.status == VerificationStatus.PARTIALLY_VERIFIED
+        for text in (result.reasoning, caplog.text):
+            assert "example.com" not in text
+            assert "A9900001" not in text
 
     @pytest.mark.asyncio
-    async def test_calls_structured_not_generate_content(self):
-        """Guards against regressing to the fence-prone generate_content()
-        path: the verifier must always call generate_structured (JSON mode),
-        never generate_content."""
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            return_value=VerifierVerdict(reasoning="ok", status="verified", score=0.9)
-        )
-        mock_client.generate_content = AsyncMock(
-            side_effect=AssertionError("verify_response must not call generate_content")
-        )
-        service._genai_client = mock_client
-
-        await service.verify_response(
-            query="test",
-            draft_answer="answer",
-            context_chunks=["chunk 1", "chunk 2"],
-        )
-
-        mock_client.generate_structured.assert_awaited_once()
-        mock_client.generate_content.assert_not_called()
+    async def test_console_error_does_not_leak_exception_content(self, lane, caplog):
+        lane.side_effect = ClaudeOAuthError("seats failed echo mario.rossi@example.com A9900001")
+        with caplog.at_level(logging.DEBUG):
+            result = await VerificationService().verify_response(
+                query="test", draft_answer="test answer", context_chunks=["context"]
+            )
+        assert result.verdict_available is False
+        assert result.is_valid is True
+        assert "failed" in result.reasoning.lower()
+        for text in (result.reasoning, caplog.text):
+            assert "example.com" not in text
+            assert "A9900001" not in text
 
     @pytest.mark.asyncio
-    async def test_llm_error_returns_partial(self):
-        """Generic (non-schema) errors — network/API — also degrade safely,
-        never gating self-correction on a placeholder score."""
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(side_effect=Exception("LLM error"))
-        service._genai_client = mock_client
+    async def test_no_door_at_call_time_is_no_verdict(self, lane):
+        lane.side_effect = ClaudeOAuthNotAvailable("no Console seat configured")
+        result = await VerificationService().verify_response(
+            query="test", draft_answer="a", context_chunks=["c"]
+        )
+        assert result.verdict_available is False
+        assert "unavailable" in result.reasoning.lower()
 
-        result = await service.verify_response(
-            query="test",
-            draft_answer="test answer",
-            context_chunks=["context"],
+    @pytest.mark.asyncio
+    async def test_llm_error_returns_partial(self, lane):
+        """Any other error degrades safely, never gating self-correction."""
+        lane.side_effect = Exception("LLM error")
+        result = await VerificationService().verify_response(
+            query="test", draft_answer="test answer", context_chunks=["context"]
         )
         assert result.is_valid is True
         assert result.status == VerificationStatus.PARTIALLY_VERIFIED
@@ -395,75 +347,44 @@ class TestVerificationServiceWithLLM:
         assert result.verdict_available is False
 
     @pytest.mark.asyncio
-    async def test_validity_threshold_at_0_7(self):
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            return_value=VerifierVerdict(
-                reasoning="Mostly correct but one claim unsupported",
-                status="partial",
-                score=0.69,
+    async def test_validity_threshold_at_0_7(self, lane):
+        lane.return_value = _response(
+            structured=_verdict_dict(
+                reasoning="Mostly correct but one claim unsupported", status="partial", score=0.69
             )
         )
-        service._genai_client = mock_client
-
-        result = await service.verify_response(
-            query="test",
-            draft_answer="test",
-            context_chunks=["ctx"],
+        result = await VerificationService().verify_response(
+            query="test", draft_answer="test", context_chunks=["ctx"]
         )
         assert result.is_valid is False  # 0.69 < 0.7
 
     @pytest.mark.asyncio
-    async def test_context_chunks_formatted_in_prompt(self):
-        service = VerificationService()
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client.generate_structured = AsyncMock(
-            return_value=VerifierVerdict(reasoning="ok", status="verified", score=0.9)
+    async def test_context_chunks_formatted_in_prompt(self, lane):
+        await VerificationService().verify_response(
+            query="test", draft_answer="answer", context_chunks=["chunk 1", "chunk 2"]
         )
-        service._genai_client = mock_client
-
-        await service.verify_response(
-            query="test",
-            draft_answer="answer",
-            context_chunks=["chunk 1", "chunk 2"],
-        )
-
-        # Check the prompt contains formatted chunks
-        call_args = mock_client.generate_structured.call_args
-        prompt = call_args.kwargs.get("contents", call_args.args[0] if call_args.args else "")
+        prompt = lane.await_args.args[0]
         assert "[Source 1]" in prompt
         assert "[Source 2]" in prompt
 
 
 # --- VERIFIER_ENABLED cost lever (2026-08-12) -------------------------------
 #
-# Why this switch exists, measured on the live ledger rather than assumed:
-# over 2026-08-10..11 `rag.verifier` was 682 calls / $5.26 of $14.69 total
-# Gemini spend — 36% — firing IN ADDITION to every chat call and invisible to
-# the client. There was no way to turn it off short of editing code, so the
-# owner could not act on that number.
-#
-# The switch reuses the ALREADY-PROVEN no-verdict shape (a round-2 red-team fix
-# established that a dead verifier must never mint a false "verified"), so this
-# corpus asserts the two properties that make it safe: it really stops the
-# spend (no client is ever constructed, so it cannot bill by any path), and it
-# never claims an answer was verified.
-#
-# It is DELIBERATELY default-ON: absence of the variable changes nothing.
+# The switch reuses the proven no-verdict shape (a dead verifier must never mint
+# a false "verified"): it really stops the spend (no call is ever made) and it
+# never claims an answer was verified. DELIBERATELY default-ON.
 
 
 def _fresh_service():
-    from backend.services.rag.verification_service import VerificationService
-
     return VerificationService()
 
 
 @pytest.mark.asyncio
 async def test_guilt_disabled_verifier_makes_no_call_and_claims_no_verdict(monkeypatch):
     monkeypatch.setenv("VERIFIER_ENABLED", "0")
+    monkeypatch.setattr(vs, "collect_seats", lambda: [_SEAT])
+    never = AsyncMock(side_effect=AssertionError("a disabled verifier must never call the model"))
+    monkeypatch.setattr(vs, "complete_async", never)
     service = _fresh_service()
 
     result = await service.verify_response(
@@ -474,18 +395,13 @@ async def test_guilt_disabled_verifier_makes_no_call_and_claims_no_verdict(monke
 
     assert result.verdict_available is False, "a disabled verifier must never claim a verdict"
     assert "DISABLED" in result.reasoning
-    # The spend property: no client is constructed at all, so there is no path
-    # by which a disabled verifier can bill.
-    assert service._get_genai_client() is None
+    assert service._available is False
+    never.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_guilt_the_disabled_reason_does_not_blame_the_model(monkeypatch):
-    """A switched-off service must not report itself as broken.
-
-    Reusing the 'model unavailable' string would send whoever reads this at
-    07:30 hunting a fault that does not exist.
-    """
+    """A switched-off service must not report itself as broken."""
     monkeypatch.setenv("VERIFIER_ENABLED", "off")
     result = await _fresh_service().verify_response(
         query="q", draft_answer="a", context_chunks=["c"]
@@ -496,21 +412,17 @@ async def test_guilt_the_disabled_reason_does_not_blame_the_model(monkeypatch):
 
 @pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "off", " Off "])
 def test_guilt_every_documented_falsy_spelling_turns_it_off(monkeypatch, value):
-    """The falsy set is copied from main_api's switch on purpose: an operator
-    who learnt one spelling must not find this switch silently still ON."""
     monkeypatch.setenv("VERIFIER_ENABLED", value)
     assert _fresh_service()._enabled is False
 
 
 def test_innocence_unset_env_leaves_the_verifier_on(monkeypatch):
-    """Default ON — shipping this switch must change nothing by itself."""
     monkeypatch.delenv("VERIFIER_ENABLED", raising=False)
     assert _fresh_service()._enabled is True
 
 
 @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "", "banana"])
 def test_innocence_anything_not_in_the_falsy_set_leaves_it_on(monkeypatch, value):
-    """Fail-ON for unrecognised input: a typo must not silently disable a
-    quality gate. The cost lever is the LOUD direction, never the quiet one."""
+    """Fail-ON for unrecognised input: a typo must not silently disable a quality gate."""
     monkeypatch.setenv("VERIFIER_ENABLED", value)
     assert _fresh_service()._enabled is True
