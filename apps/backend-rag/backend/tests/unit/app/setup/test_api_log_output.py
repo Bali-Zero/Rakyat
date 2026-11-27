@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,12 @@ EMAIL = "fixture@example.invalid"
 HIDDEN = "fixture-hidden"
 PHONE = "+1 (202) 555-0100"
 REDACTED = "[REDACTED]"
+SAFE_ROUTE = "/v1/shared%2fdocs/meeting%20notes/caf%C3%A9"
+URL_FIELDS = urlencode({"contact": EMAIL, "callback": PHONE, "page": "a/b"})
+TARGET = f"{SAFE_ROUTE}/{quote(EMAIL, safe='')}?{URL_FIELDS}#section%202"
+SAFE_TARGET = (
+    f"{SAFE_ROUTE}/{REDACTED}?contact={REDACTED}&callback={REDACTED}&page=a%2Fb#section%202"
+)
 CONTROL = "elapsed=12.75 ms epoch=1700000000123 path=/v1/jobs/42"
 
 
@@ -57,7 +64,10 @@ def _exercise_outputs(mode, log_file):
             "1.1",
             200,
         )
+        access.warning('%s - "%s %s HTTP/%s" %d', "127.0.0.1", "GET", TARGET, "1.1", 200)
         text = stream.getvalue()
+        assert f"GET {SAFE_TARGET} HTTP/1.1" in text
+        assert quote(EMAIL, safe="") not in text and URL_FIELDS not in text
         assert f"{phase} worker 42" in text
         assert f"GET /{phase}/{REDACTED}?q=***&page=2 HTTP/1.1" in text
         assert "200" in text and EMAIL not in text and "private-fixture" not in text
@@ -78,6 +88,14 @@ def _exercise_outputs(mode, log_file):
     assert enriched.getvalue().strip() == f"request completed contact={REDACTED}"
 
     logger = logging.getLogger("fixture.api")
+    logger.warning(
+        "url marker https://example.invalid%s", TARGET, extra={"context": {"url": TARGET}}
+    )
+    url_row = json.loads(log_file.read_text().splitlines()[-1])
+    url_ring = get_ring_buffer_handler().snapshot(module=logger.name)[0]
+    for entry in (url_row, url_ring):
+        assert entry["message"] == f"url marker https://example.invalid{SAFE_TARGET}"
+    assert url_row["context"]["url"] == SAFE_TARGET
     structured = {"items": [{"name": HIDDEN, "attempt": 2}, EMAIL, {"name": "<withheld>"}]}
     structured.update(path=Path("/v1/jobs/42"), when=datetime(2025, 1, 2, tzinfo=timezone.utc))
     structured.update(price=Decimal("1234.50"), trace=UUID(int=1))
@@ -90,7 +108,7 @@ def _exercise_outputs(mode, log_file):
     for _ in range(20):
         deep = {"next": deep}
     try:
-        raise ValueError(f"exception marker {EMAIL}")
+        raise ValueError(f"exception marker {EMAIL} target={TARGET}")
     except ValueError:
         logger.exception(
             "case %s phone %s NPWP 0000000000000000 CL-000000 passport AA000000 %s",
@@ -111,7 +129,7 @@ def _exercise_outputs(mode, log_file):
         assert f"NPWP {REDACTED} {REDACTED} passport {REDACTED}" in entry["message"]
         assert CONTROL in entry["message"]
         assert entry["exception"]["type"] == "ValueError"
-        assert entry["exception"]["message"] == f"exception marker {REDACTED}"
+        assert entry["exception"]["message"] == f"exception marker {REDACTED} target={SAFE_TARGET}"
     assert row["context"]["items"] == [
         {"name": REDACTED, "attempt": 2},
         REDACTED,
@@ -200,19 +218,46 @@ def _exercise_sentry():
     assert saved["message"] == f"independent marker {REDACTED}"
     assert saved["data"]["token"] == REDACTED
     try:
-        raise ValueError(f"exception marker {EMAIL}")
+        raise ValueError(f"exception marker {EMAIL} target={TARGET}")
     except ValueError:
         logger.exception("event marker")
     (event,) = events
     assert event["logentry"]["formatted"] == "event marker"
     exc = event["exception"]["values"][-1]
-    assert exc["type"] == "ValueError" and exc["value"] == f"exception marker {REDACTED}"
+    assert (
+        exc["type"] == "ValueError"
+        and exc["value"] == f"exception marker {REDACTED} target={SAFE_TARGET}"
+    )
     assert exc["stacktrace"]["frames"]
     crumbs = [c["message"] for c in event["breadcrumbs"]["values"] if "message" in c]
     assert f"breadcrumb marker {REDACTED}" in crumbs
     assert f"independent marker {REDACTED}" in crumbs
     assert EMAIL not in json.dumps(event) and HIDDEN not in json.dumps(event)
     sentry_sdk.get_client().close()
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (f"{SAFE_ROUTE}?file=draft%2fv1+report&score=100%25", None),
+        ("/notes/%0aarchived%09items?state=in+review", None),
+        ("/notes/unfinished%2?flag=%", None),
+        (f"/notes#{quote(EMAIL)}", f"/notes#{REDACTED}"),
+        (
+            f"GET /notes/{quote(EMAIL)} next {SAFE_ROUTE}",
+            f"GET /notes/{REDACTED} next {SAFE_ROUTE}",
+        ),
+        (f"/lookup?{quote(EMAIL)}", f"/lookup?{REDACTED}"),
+        (f"/lookup?{quote(EMAIL)}=active", f"/lookup?{REDACTED}=active"),
+        ("/lookup?pass%70ort=AA000000&limit=2", f"/lookup?pass%70ort={REDACTED}&limit=2"),
+        ("/file/passport%20AA000000/summary", f"/file/{REDACTED}/summary"),
+        ("/file/CL%2D000042/summary", f"/file/{REDACTED}/summary"),
+    ],
+)
+def test_encoded_url_fields(source, expected):
+    from backend.app.setup.sentry_config import _redact_string
+
+    assert _redact_string(source) == (source if expected is None else expected)
 
 
 @pytest.mark.parametrize("mode", ["production", "development", "sentry"])
@@ -234,6 +279,8 @@ def test_api_outputs(tmp_path, mode):
     assert result.returncode == 0, result.stderr
     assert "Logging error" not in result.stderr and EMAIL not in result.stderr
     if mode != "sentry":
+        assert f"url marker https://example.invalid{SAFE_TARGET}" in result.stdout
+        assert quote(EMAIL, safe="") not in result.stdout and URL_FIELDS not in result.stdout
         assert CONTROL in result.stdout and f"exception marker {REDACTED}" in result.stdout
         assert all(v not in result.stdout for v in (EMAIL, PHONE, HIDDEN, "fixture-too-deep"))
         if mode == "production":

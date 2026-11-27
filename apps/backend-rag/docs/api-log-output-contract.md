@@ -5,6 +5,7 @@ The API logging bootstrap must protect patterned personal identifiers at each Py
 | Input or situation | Required observation |
 | --- | --- |
 | Patterned email, phone, NPWP, external client code or labelled document identifier | The original literal disappears from the emitted message, exception, stack text or structured field. A harmless event marker survives. |
+| Identifiers in URL paths, query fields and fragments | Inspect one layer of ordinary URL encoding, including form-encoded query values. Replace an affected field or path segment in the emitted target. Keep unaffected segments, query fields and escapes in their original spelling. |
 | Root console, rotating file, ring, Uvicorn or a standard handler attached or replaced after startup | The destination observes the protection, including fields its own filter adds. The ring retains its existing omission of structured context. |
 | Internal CRM row reference | A positive 32-bit integer under the exact `client_id` key survives. External `CL-…` codes, text and long identifier-shaped numbers under that key are masked. |
 | Invoice delivery state | The boolean values of `email_attempted`, `email_sent`, `accounting_notified`, `drive_uploaded` and `delivery_may_have_occurred` retain their type and value. The exemption applies only to booleans. Contact values keep their normal protection. |
