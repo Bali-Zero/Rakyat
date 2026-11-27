@@ -134,7 +134,12 @@ async def _refuse_if_payroll_closed(conn: Any, month: int, year: int) -> None:
 ANNUAL_LEAVE_CODE = "annual"
 
 
-async def _carry_annual_remainder(conn: Any, year: int, employee_id: int | None = None) -> None:
+async def _carry_annual_remainder(
+    conn: Any,
+    year: int,
+    employee_id: int | None = None,
+    employee_ids: list[int] | None = None,
+) -> None:
     """Set each annual balance of `year` to carry what the year before left, plus or minus.
 
     The remainder is allocated + carried_over - used of the year before; a year that ended
@@ -158,6 +163,9 @@ async def _carry_annual_remainder(conn: Any, year: int, employee_id: int | None 
     if employee_id is not None:
         query += " AND cur.employee_id = $3::int"
         params.append(employee_id)
+    elif employee_ids is not None:
+        query += " AND cur.employee_id = ANY($3::int[])"
+        params.append(employee_ids)
     await conn.execute(query, *params)
 
 
@@ -180,11 +188,15 @@ async def _lock_leave_balances(conn: Any, employee_id: int) -> None:
     )
 
 
-async def _lock_leave_balances_a_year_opens_from(conn: Any, year: int) -> None:
-    """Take _lock_leave_balances for every employee `year` opens from, in id order."""
-    await conn.execute(
+async def _lock_leave_balances_a_year_opens_from(conn: Any, year: int) -> list[int]:
+    """Take _lock_leave_balances for every employee `year` opens from, in id order.
+
+    Returns the ids it locked. The caller must open `year` for exactly those employees: an
+    employee whose prior-year row appears after this statement is not locked here.
+    """
+    rows = await conn.fetch(
         """
-        SELECT pg_advisory_xact_lock($2::int, prior.employee_id)
+        SELECT prior.employee_id, pg_advisory_xact_lock($2::int, prior.employee_id)
         FROM (
             SELECT DISTINCT employee_id FROM hr_leave_balances
             WHERE balance_year = $1::int - 1
@@ -194,6 +206,7 @@ async def _lock_leave_balances_a_year_opens_from(conn: Any, year: int) -> None:
         year,
         HR_LEAVE_LOCK_NS,
     )
+    return sorted(int(row["employee_id"]) for row in rows)
 
 
 async def _carry_forward(conn: Any, employee_id: int, from_year: int) -> None:
@@ -208,11 +221,18 @@ async def _carry_forward(conn: Any, employee_id: int, from_year: int) -> None:
         await _carry_annual_remainder(conn, year, employee_id)
 
 
-async def _open_year_balances(conn: Any, year: int, employee_id: int | None = None) -> None:
+async def _open_year_balances(
+    conn: Any,
+    year: int,
+    employee_id: int | None = None,
+    employee_ids: list[int] | None = None,
+) -> None:
     """Open a year's balances from the prior year's tracked leave types.
 
     Annual leave carries the signed remainder of the year before; every other type carries 0.
     A year opened earlier (a December request for January leave) is re-carried here too.
+    `employee_ids` limits every insert and re-carry to the employees whose lock the caller
+    holds; an employee outside it is left for its own next access to open under its own lock.
     """
     query = """
         INSERT INTO hr_leave_balances
@@ -226,11 +246,14 @@ async def _open_year_balances(conn: Any, year: int, employee_id: int | None = No
     if employee_id is not None:
         query += " AND employee_id = $2::int"
         params.append(employee_id)
+    elif employee_ids is not None:
+        query += " AND employee_id = ANY($2::int[])"
+        params.append(employee_ids)
     query += """
         ON CONFLICT (employee_id, leave_type_id, balance_year) DO NOTHING
     """
     await conn.execute(query, *params)
-    await _carry_annual_remainder(conn, year, employee_id)
+    await _carry_annual_remainder(conn, year, employee_id, employee_ids)
 
 
 def department_of(email: str | None, stored: str | None = None) -> str:
@@ -1674,12 +1697,17 @@ class HRService:
         self,
         year: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Get leave balance summary for all active employees."""
+        """Get leave balance summary for all active employees.
+
+        The year is opened only for the employees locked at the start of the call. One that
+        gains a prior-year row mid-call may be missing from this summary; its own next access
+        opens the year under its own lock.
+        """
         if year is None:
             year = date.today().year
         async with self.db_pool.acquire() as conn, conn.transaction():
-            await _lock_leave_balances_a_year_opens_from(conn, year)
-            await _open_year_balances(conn, year)
+            locked = await _lock_leave_balances_a_year_opens_from(conn, year)
+            await _open_year_balances(conn, year, employee_ids=locked)
             rows = await conn.fetch(
                 """
                 SELECT tm.full_name as employee_name, tm.email,

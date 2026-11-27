@@ -460,20 +460,39 @@ class _HeldConnection:
         return value
 
 
+class _HeldAlsoOnFetchAndExecute(_HeldConnection):
+    """Also pauses after a fetch or an execute, whichever form the statement under test takes."""
+
+    async def fetch(self, query: str, *args: Any) -> Any:
+        rows = await self._conn.fetch(query, *args)
+        await self._after(query)
+        return rows
+
+    async def execute(self, query: str, *args: Any) -> Any:
+        status = await self._conn.execute(query, *args)
+        await self._after(query)
+        return status
+
+
 class _HoldingPool:
     """Hands HRService connections that pause at a chosen statement."""
 
     def __init__(
-        self, pool: asyncpg.Pool, marker: str, reached: Callable[[], Awaitable[None]]
+        self,
+        pool: asyncpg.Pool,
+        marker: str,
+        reached: Callable[[], Awaitable[None]],
+        connection_class: type[_HeldConnection] = _HeldConnection,
     ) -> None:
         self._pool = pool
         self._marker = marker
         self._reached = reached
+        self._connection_class = connection_class
 
     @contextlib.asynccontextmanager
     async def acquire(self) -> AsyncIterator[_HeldConnection]:
         async with self._pool.acquire() as conn:
-            yield _HeldConnection(conn, self._marker, self._reached)
+            yield self._connection_class(conn, self._marker, self._reached)
 
 
 async def _wait_briefly(event: asyncio.Event) -> None:
@@ -575,3 +594,80 @@ async def test_an_approval_and_the_first_opening_of_next_year_do_not_cross(
     assert reached_the_year_lookup, "the approval never reached the year lookup"
     assert (await _row(pool, employee_id, annual_id, 2026))["used_days"] == 7
     assert (await _row(pool, employee_id, annual_id, 2027))["carried_over"] == 5
+
+
+async def _wait_bounded(event: asyncio.Event, seconds: float = 10.0) -> bool:
+    """Wait for an event for at most `seconds`; say whether it was set. Never waits unbounded."""
+    try:
+        await asyncio.wait_for(event.wait(), seconds)
+    except asyncio.TimeoutError:
+        return False
+    return True
+
+
+@pytest.mark.asyncio
+async def test_a_team_opening_writes_only_for_the_employees_it_locked(pool: asyncpg.Pool) -> None:
+    service = HRService(pool)
+    locked_employee = await _employee(pool, "Synthetic Already Open")
+    late_employee = await _employee(pool, "Synthetic Late Arrival")
+    reviewer = await _member(pool, "Synthetic Late Reviewer")
+    annual_id = await _leave_type(pool, "annual", 12)
+    await _balance(pool, locked_employee, annual_id, 2027, 12, 0)
+    await _balance(pool, late_employee, annual_id, 2026, 12, 0)
+    summary_locked = asyncio.Event()
+    approval_held = asyncio.Event()
+    summary_opened = asyncio.Event()
+    seen = {"summary": False, "approval": False}
+
+    async def after_the_summary_locks() -> None:
+        # The late employee has no 2027 row yet, so the summary has not locked it.
+        seen["summary"] = True
+        summary_locked.set()
+        await _wait_bounded(approval_held)
+
+    async def hold_the_approval() -> None:
+        seen["approval"] = True
+        approval_held.set()
+        await _wait_bounded(summary_opened)
+
+    summarizer = HRService(
+        _HoldingPool(
+            pool,
+            "pg_advisory_xact_lock($2::int, prior.employee_id)",
+            after_the_summary_locks,
+            _HeldAlsoOnFetchAndExecute,
+        )
+    )
+    approver = HRService(_HoldingPool(pool, "SELECT MAX(balance_year)", hold_the_approval))
+
+    async def summarize() -> None:
+        try:
+            await summarizer.get_team_leave_summary(2028)
+        finally:
+            summary_opened.set()
+
+    async def request_then_approve() -> None:
+        if not await _wait_bounded(summary_locked):
+            return
+        january = await service.request_leave(
+            {
+                "employee_id": late_employee,
+                "leave_type_id": annual_id,
+                "start_date": date(2027, 1, 11),
+                "end_date": date(2027, 1, 12),
+                "total_days": 2,
+            }
+        )
+        await approver.approve_leave(january["id"], reviewer)
+
+    await asyncio.gather(summarize(), request_then_approve())
+
+    assert seen == {"summary": True, "approval": True}, "the interleaving was not reached"
+    assert (await _row(pool, late_employee, annual_id, 2027))["used_days"] == 2
+    # 12 allocated + 12 carried from 2026 - 2 used: what 2028 must carry after the approval.
+    row = await _row(pool, late_employee, annual_id, 2028)
+    if not row:
+        await service.get_leave_balance(late_employee, 2028)
+        row = await _row(pool, late_employee, annual_id, 2028)
+    assert row["carried_over"] == 22
+    assert (await _row(pool, locked_employee, annual_id, 2028))["carried_over"] == 12
