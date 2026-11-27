@@ -977,6 +977,43 @@ test.describe("Visa Oracle v2 integration — page Page", () => {
     await expect(page.getByRole("button", { name: /^start$/i })).toBeVisible();
     await expect(page.locator(".oracle-constellation")).toHaveCount(0);
   });
+
+  test("privacy footer and back links preserve Bahasa via ?lang=id", async ({
+    page,
+  }) => {
+    await page.goto("/visa-oracle");
+    await page
+      .getByRole("button", { name: /switch to bahasa indonesia/i })
+      .click();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.lang))
+      .toBe("id");
+    await expect(
+      page.locator("footer a[href*='visa-oracle/privacy']"),
+    ).toHaveAttribute("href", "/visa-oracle/privacy?lang=id");
+    await page.locator("footer a[href*='visa-oracle/privacy']").click();
+    await expect(page).toHaveURL(/\/visa-oracle\/privacy\?lang=id$/);
+    await expect(
+      page.getByRole("heading", { name: "Data Visa Oracle Anda" }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Kembali ke Visa Oracle" }).click();
+    await expect(page).toHaveURL(/\/visa-oracle\?lang=id$/);
+    await expect(
+      page.getByRole("button", { name: /ganti ke bahasa inggris/i }),
+    ).toBeVisible();
+  });
+
+  test("direct /visa-oracle/privacy without ?lang= stays English", async ({
+    page,
+  }) => {
+    await page.goto("/visa-oracle/privacy");
+    await expect(
+      page.getByRole("heading", { name: "Your Visa Oracle data" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Back to Visa Oracle" }),
+    ).toHaveAttribute("href", "/visa-oracle");
+  });
 });
 
 test.describe("Visa Oracle noindex — served <head>, not just the metadata object", () => {

@@ -4,6 +4,7 @@ import {
   INTERNAL_ACCESS_COOKIE,
   verifyInternalAccessToken,
 } from "./_lib/internal-access";
+import { parseOracleLocale } from "./_lib/oracle-locale";
 
 /**
  * Reading the internal-access cookie opts this route into per-request
@@ -14,11 +15,22 @@ import {
  */
 export const dynamic = "force-dynamic";
 
-export default async function VisaOraclePage() {
+export default async function VisaOraclePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ lang?: string }>;
+}) {
   const cookieStore = await cookies();
   const internalMode = verifyInternalAccessToken(
     cookieStore.get(INTERNAL_ACCESS_COOKIE)?.value,
   );
+  const { lang } = await searchParams;
+  const initialLanguage = parseOracleLocale(lang);
 
-  return <OracleShell internalMode={internalMode} />;
+  return (
+    <OracleShell
+      internalMode={internalMode}
+      initialLanguage={initialLanguage}
+    />
+  );
 }

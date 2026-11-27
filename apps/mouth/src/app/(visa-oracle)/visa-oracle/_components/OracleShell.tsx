@@ -17,7 +17,9 @@ import {
   useOracleFlow,
   type BlockedAnswer,
   type InterviewSnapshot,
+  type Language,
 } from "../_lib/flow";
+import { oracleInternalHref } from "../_lib/oracle-locale";
 import { CATEGORY_KEYS, QUESTIONS, getLane } from "../_lib/tree";
 import { translate, type I18nKey } from "../_lib/i18n";
 import { prepareEvaluationRequest } from "../_lib/evaluation-request";
@@ -199,13 +201,18 @@ export interface OracleShellProps {
    * Defaults to the public experience.
    */
   internalMode?: boolean;
+  /** From the visit-scoped `?lang=id` query only — never stored server-side. */
+  initialLanguage?: Language;
 }
 
 /** Zantara reflecting while the verdict is computed (Linea 7, spec §2.1.1 Z2). */
 const ORACLE_Z2 = livingAsset("oracle-z2");
 
 /** Hydrate sessionStorage after mount so server and first client render match. */
-export function OracleShell({ internalMode = false }: OracleShellProps = {}) {
+export function OracleShell({
+  internalMode = false,
+  initialLanguage = "en",
+}: OracleShellProps = {}) {
   const [hydrated, setHydrated] = useState<HydratedShell | null>(null);
 
   useEffect(() => {
@@ -231,7 +238,7 @@ export function OracleShell({ internalMode = false }: OracleShellProps = {}) {
         data-scene-layout="stage"
       >
         <p className="oracle-subhead" role="status" aria-live="polite">
-          {SESSION_COPY.en.loading}
+          {SESSION_COPY[initialLanguage].loading}
         </p>
       </div>
     );
@@ -243,6 +250,7 @@ export function OracleShell({ internalMode = false }: OracleShellProps = {}) {
       restoreToday={hydrated.restoredAt}
       initialResumeExpiresAtIso={hydrated.resumeExpiresAtIso}
       internalMode={internalMode}
+      initialLanguage={initialLanguage}
     />
   );
 }
@@ -252,6 +260,7 @@ interface OracleShellRuntimeProps {
   restoreToday: Date;
   initialResumeExpiresAtIso: string | null;
   internalMode: boolean;
+  initialLanguage: Language;
 }
 
 /**
@@ -379,6 +388,7 @@ function OracleShellRuntime({
   restoreToday,
   initialResumeExpiresAtIso,
   internalMode,
+  initialLanguage,
 }: OracleShellRuntimeProps) {
   const [theme, setTheme] = useState<OracleTheme>("light");
   const [frozenToday, setFrozenToday] = useState<Date | null>(null);
@@ -485,6 +495,7 @@ function OracleShellRuntime({
   );
 
   const flow = useOracleFlow({
+    initialLanguage,
     initialSnapshot: initialSnapshot ?? undefined,
     onSnapshot: saveSnapshot,
     restoreToday,
@@ -1210,7 +1221,12 @@ function OracleShellRuntime({
                       asset={ORACLE_Z2}
                       paused={!motion}
                       className="oracle-living-z2"
-                      fallback={<span className="oracle-atlas-orbit" aria-hidden="true" />}
+                      fallback={
+                        <span
+                          className="oracle-atlas-orbit"
+                          aria-hidden="true"
+                        />
+                      }
                     />
                   </div>
                 ) : (
@@ -1316,7 +1332,7 @@ function OracleShellRuntime({
 
         <footer className="oracle-footer">
           <p>{translate(language, "footer.disclaimer")}</p>
-          <a href="/visa-oracle/privacy">
+          <a href={oracleInternalHref("/visa-oracle/privacy", language)}>
             {translate(language, "footer.privacy")}
           </a>
         </footer>
