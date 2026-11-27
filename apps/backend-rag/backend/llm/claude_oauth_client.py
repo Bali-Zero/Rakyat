@@ -978,6 +978,7 @@ async def complete_async(
     endpoint: str | None = None,
     request_id: str | None = None,
     json_schema: dict[str, Any] | None = None,
+    max_output_tokens: int | None = None,
 ) -> ClaudeOAuthResponse:
     """Run ``claude -p`` across the Console seats and return the completion.
 
@@ -1008,6 +1009,8 @@ async def complete_async(
         endpoint: Caller identifier for cost attribution. Strongly
             recommended.
         request_id: HTTP correlation id if available.
+        max_output_tokens: Optional per-request output cap (1..128000), passed
+            to the CLI as ``CLAUDE_CODE_MAX_OUTPUT_TOKENS``; None leaves it unset.
 
     Returns:
         :class:`ClaudeOAuthResponse` with the completion text and the label
@@ -1025,6 +1028,12 @@ async def complete_async(
         raise ValueError("timeout_s must be positive")
     if total_timeout_s <= 0:
         raise ValueError("total_timeout_s must be positive")
+    if max_output_tokens is not None and (
+        isinstance(max_output_tokens, bool)
+        or not isinstance(max_output_tokens, int)
+        or not 1 <= max_output_tokens <= 128000
+    ):
+        raise ValueError(f"max_output_tokens must be an int in 1..128000: {max_output_tokens!r}")
 
     seats = collect_seats()
     if not seats:
@@ -1163,6 +1172,8 @@ async def complete_async(
         cmd.append(prompt)
 
         env = build_seat_env(seat)
+        if max_output_tokens is not None:
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max_output_tokens)
 
         try:
             proc = await asyncio.wait_for(
