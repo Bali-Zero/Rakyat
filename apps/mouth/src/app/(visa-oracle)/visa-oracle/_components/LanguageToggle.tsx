@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { Language } from "../_lib/flow";
 import { translate } from "../_lib/i18n";
+import { syncVisitLocaleInAddressBar } from "../_lib/oracle-locale";
 
 export interface LanguageToggleProps {
   language: Language;
@@ -34,6 +35,7 @@ export function LanguageToggle({ language, onChange }: LanguageToggleProps) {
     // Update the accessibility tree synchronously with the interaction. The
     // flow callback then re-renders copy without ever translating fact keys.
     document.documentElement.lang = nextLanguage;
+    syncVisitLocaleInAddressBar(nextLanguage);
     onChange(nextLanguage);
   };
 
