@@ -525,16 +525,18 @@ async def test_explicit_combined_permit_can_satisfy_renewal_bonus_slot(db, write
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "completion,document,waiver,expected",
+    "status,completion,document,waiver,expected",
     [
-        (True, None, None, True),
-        (True, 12, None, False),
-        (False, None, None, False),
-        (True, None, "Out of scope", False),
+        ("completed", True, None, None, True),
+        ("completed", True, 12, None, False),
+        # Completed before Final delivery existed: no completion record.
+        ("completed", False, None, None, True),
+        ("completed", True, None, "Out of scope", False),
+        ("on_process", False, None, None, False),
     ],
 )
-async def test_completed_slot_repair_projection_requires_missing_previously_delivered_permit(
-    db, writes, completion, document, waiver, expected
+async def test_completed_slot_repair_projection_requires_missing_permit_on_completed_practice(
+    db, writes, status, completion, document, waiver, expected
 ):
     conn = db[1]
     conn.fetchval.return_value = completion
@@ -545,21 +547,23 @@ async def test_completed_slot_repair_projection_requires_missing_previously_deli
         "event_kind": "electronic_visa_issued",
         "status": "ineligible",
     }
-    view = await service.state(conn, {**PRACTICE, "status": "completed"})
+    view = await service.state(conn, {**PRACTICE, "status": status})
+    assert view["delivery_recorded"] is (status == "completed" and completion)
     assert view["slots"][1]["can_repair"] is expected
     assert not view["slots"][0]["can_repair"]
     assert view["bonus_status"] == "ineligible" and "amount_idr" not in view
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recorded", [True, False])
 async def test_repair_publishes_only_missing_permit_and_never_triggers_issuance_or_completion(
-    db, writes, monkeypatch
+    db, writes, monkeypatch, recorded
 ):
     pool, conn = db
     conn.fetchrow.return_value = {**PRACTICE, "status": "completed"}
 
     async def value(sql, *args):
-        return "practice_delivery_completions" in sql
+        return recorded and "practice_delivery_completions" in sql
 
     conn.fetchval.side_effect = value
     monkeypatch.setattr(service, "previous_slot", AsyncMock(return_value=None))
@@ -575,7 +579,9 @@ async def test_repair_publishes_only_missing_permit_and_never_triggers_issuance_
     assert writes["publish"].await_args.args[-1] == ["itk"]
     writes["record_delivery_bonus"].assert_not_awaited()
     assert all(
-        "UPDATE practices SET" not in c.args[0] and "INSERT INTO timeline_events" not in c.args[0]
+        "UPDATE practices SET" not in c.args[0]
+        and "INSERT INTO timeline_events" not in c.args[0]
+        and "practice_delivery_completions" not in c.args[0]
         for c in conn.execute.await_args_list
     )
     assert "repaired" in writes["audit"].await_args.args[-1]
