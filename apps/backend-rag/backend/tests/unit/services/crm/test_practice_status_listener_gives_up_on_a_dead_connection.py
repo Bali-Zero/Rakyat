@@ -1,8 +1,10 @@
 """be-crm-76: the practice status listener must survive a dead connection.
 
 Regression tests for three defects that let the listener die silently:
-  - ``asyncpg.connect`` had no timeout, so a half-open TCP path could hang it forever;
-  - the keep-alive ping had no timeout, same failure mode;
+  - ``asyncpg.connect`` waited asyncpg's default 60 s, now tightened to 10 s;
+  - the keep-alive ping had no timeout, so a half-open TCP path could hang it forever;
+  - the reconnect path awaited an untimed UNLISTEN/close, which waits forever on asyncpg's
+    cancel_waiter after a timed-out ping, so the listener never reconnected;
   - notification-handler tasks were dispatched with no retained reference and could
     be garbage-collected mid-email.
 
@@ -26,17 +28,30 @@ _HANG_GUARD_S = 2
 class _FakeConnection:
     """Minimal asyncpg.Connection stand-in (synthetic, no DB)."""
 
-    def __init__(self, ping_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        ping_error: Exception | None = None,
+        hang_on_close: bool = False,
+        listen_error: Exception | None = None,
+    ) -> None:
         self.ping_error = ping_error
+        self.hang_on_close = hang_on_close
+        self.listen_error = listen_error
+        self.terminated = False
+        self.graceful_calls: list[str] = []
         self.ping_timeouts: list[float | None] = []
         self.closed = False
         self.channels: list[str] = []
 
     async def add_listener(self, channel, callback) -> None:
+        if self.listen_error is not None:
+            raise self.listen_error
         self.channels.append(channel)
 
     async def remove_listener(self, channel, callback) -> None:
-        pass
+        self.graceful_calls.append("remove_listener")
+        if self.hang_on_close:
+            await asyncio.Event().wait()  # never set: asyncpg's cancel_waiter on a dead socket
 
     async def execute(self, query, *args, timeout=None):
         self.ping_timeouts.append(timeout)
@@ -48,6 +63,13 @@ class _FakeConnection:
         return self.closed
 
     async def close(self) -> None:
+        self.graceful_calls.append("close")
+        if self.hang_on_close:
+            await asyncio.Event().wait()
+        self.closed = True
+
+    def terminate(self) -> None:
+        self.terminated = True
         self.closed = True
 
 
@@ -185,6 +207,51 @@ async def test_ping_timeout_closes_connection_and_reconnects(listener, fast_cloc
     assert dead.closed, "the dead connection was not closed before reconnecting"
 
 
+async def _reconnects_despite_hanging_close(listener, monkeypatch, first: _FakeConnection):
+    """Run the retry loop; return (connects, first) — never hangs, never raises on a regression."""
+    healthy = _FakeConnection()
+    connects = 0
+
+    async def fake_connect(dsn, **kwargs):
+        nonlocal connects
+        connects += 1
+        return first if connects == 1 else healthy
+
+    monkeypatch.setattr(psl.asyncpg, "connect", fake_connect)
+
+    listener._running = True
+    task = asyncio.create_task(listener._run_loop())
+    try:
+        try:
+            await _wait_until(lambda: connects >= 2)
+        except asyncio.TimeoutError:
+            pass  # the assertion below reports it
+    finally:
+        listener._running = False
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, _HANG_GUARD_S)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+    return connects
+
+
+@pytest.mark.asyncio
+async def test_ping_timeout_reconnects_even_when_close_hangs(listener, fast_clock, monkeypatch):
+    dead = _FakeConnection(ping_error=asyncio.TimeoutError("synthetic"), hang_on_close=True)
+    connects = await _reconnects_despite_hanging_close(listener, monkeypatch, dead)
+    assert connects >= 2, "listener stuck awaiting an untimed UNLISTEN/close on a dead socket"
+    assert dead.terminated, "the dead connection was not terminated"
+
+
+@pytest.mark.asyncio
+async def test_failed_listen_reconnects_even_when_close_hangs(listener, fast_clock, monkeypatch):
+    dead = _FakeConnection(listen_error=OSError("synthetic"), hang_on_close=True)
+    connects = await _reconnects_despite_hanging_close(listener, monkeypatch, dead)
+    assert connects >= 2, "listener stuck awaiting an untimed close after a failed LISTEN"
+    assert dead.terminated, "the half-set-up connection was not terminated"
+
+
 # ── Guilt: handler tasks are retained ────────────────────────────────────────
 
 
@@ -234,3 +301,27 @@ async def test_healthy_connection_never_reconnects(listener, fast_clock, monkeyp
 
     assert calls == 1, f"healthy connection reconnected {calls - 1} extra time(s)"
     assert not conn.closed
+
+
+@pytest.mark.asyncio
+async def test_stop_closes_a_healthy_connection_gracefully(listener):
+    conn = _FakeConnection()
+    listener._conn = conn
+
+    await asyncio.wait_for(listener.stop(), _HANG_GUARD_S)
+
+    assert conn.graceful_calls == ["remove_listener", "close"]
+    assert not conn.terminated
+    assert listener._conn is None
+
+
+@pytest.mark.asyncio
+async def test_stop_on_a_dead_socket_returns_within_the_bound(listener, monkeypatch):
+    monkeypatch.setattr(psl, "_CLOSE_TIMEOUT_S", 0.05)
+    conn = _FakeConnection(hang_on_close=True)
+    listener._conn = conn
+
+    await asyncio.wait_for(listener.stop(), _HANG_GUARD_S)
+
+    assert conn.terminated, "stop() did not fall back to terminate()"
+    assert listener._conn is None

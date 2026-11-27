@@ -73,8 +73,11 @@ class EmailNotDelivered(RuntimeError):
 
 
 _RECONNECT_DELAY_S = 5  # seconds to wait before reconnecting after error
-_CONNECT_TIMEOUT_S = 10  # seconds before a half-open connect is given up
-_PING_TIMEOUT_S = 5  # seconds before the keep-alive ping is treated as a dead connection
+_CONNECT_TIMEOUT_S = 10  # asyncpg's own default is 60 s; a half-open connect is given up sooner
+# Seconds before the keep-alive ping is treated as a dead connection. Trade-off: a slow but
+# healthy DB (SELECT 1 > this) now forces a reconnect, and NOTIFYs in that window are lost.
+_PING_TIMEOUT_S = 5
+_CLOSE_TIMEOUT_S = 3  # seconds a graceful close may take on stop() before the socket is dropped
 
 
 class PracticeStatusListener:
@@ -111,7 +114,7 @@ class PracticeStatusListener:
                 await self._task
             except asyncio.CancelledError:
                 logger.debug("practice_status_listener task cancelled during stop() — expected")
-        await self._close_conn()
+        await self._close_conn(graceful=True)
         logger.info("✅ PracticeStatusListener stopped")
 
     # ── Internal loop ─────────────────────────────────────────────────────
@@ -131,7 +134,8 @@ class PracticeStatusListener:
                     exc,
                     exc_info=True,
                 )
-                await self._close_conn()
+                # The connection is suspect: drop it without a network round-trip.
+                await self._close_conn(graceful=False)
                 if self._running:
                     await asyncio.sleep(_RECONNECT_DELAY_S)
 
@@ -150,11 +154,21 @@ class PracticeStatusListener:
             except Exception:
                 raise  # triggers reconnect in _run_loop
 
-    async def _close_conn(self) -> None:
-        if self._conn and not self._conn.is_closed():
+    async def _close_conn(self, graceful: bool = False) -> None:
+        """Drop the dedicated connection.
+
+        On the error path (``graceful=False``) the socket is terminated synchronously: after a
+        timed-out query asyncpg holds a cancel_waiter that only a server reply clears, so an
+        UNLISTEN or close() on a half-open socket would wait forever. ``stop()`` asks for a
+        graceful close, bounded by ``_CLOSE_TIMEOUT_S`` with terminate() as the fallback.
+        """
+        conn, self._conn = self._conn, None
+        if conn is None or conn.is_closed():
+            return
+        if graceful:
             try:
-                await self._conn.remove_listener("practice_changed", self._on_notification)
-                await self._conn.close()
+                await asyncio.wait_for(self._graceful_close(conn), _CLOSE_TIMEOUT_S)
+                return
             except Exception as exc:
                 # UU PDP audit: cleanup failure must be visible so orphaned
                 # PG listener connections can be correlated with retries.
@@ -162,7 +176,17 @@ class PracticeStatusListener:
                     "practice_status_listener.close_failed",
                     extra={"error_type": type(exc).__name__, "error": str(exc)[:120]},
                 )
-        self._conn = None
+        try:
+            conn.terminate()
+        except Exception as exc:
+            logger.warning(
+                "practice_status_listener.terminate_failed",
+                extra={"error_type": type(exc).__name__, "error": str(exc)[:120]},
+            )
+
+    async def _graceful_close(self, conn: asyncpg.Connection) -> None:
+        await conn.remove_listener("practice_changed", self._on_notification)
+        await conn.close()
 
     # ── Notification callback ─────────────────────────────────────────────
 
