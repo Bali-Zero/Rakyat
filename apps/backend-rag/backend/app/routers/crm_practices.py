@@ -2296,8 +2296,8 @@ async def update_practice(
                 changes_json = to_jsonb(updates.dict(exclude_unset=True))
                 await conn.execute(
                     """
-                    INSERT INTO activity_log (entity_type, entity_id, action, performed_by, description, changes)
-                    VALUES ($1, $2, $3, $4, $5, $6::text::jsonb)
+                    INSERT INTO activity_log (entity_type, entity_id, action, performed_by, description, changes, performed_at)
+                    VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, clock_timestamp())
                     """,
                     "practice",
                     practice_id,

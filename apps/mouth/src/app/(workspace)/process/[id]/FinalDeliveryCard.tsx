@@ -5,6 +5,7 @@ import { CheckCircle2, ChevronDown, Loader2, UploadCloud } from "lucide-react";
 import styles from "./FinalDeliveryCard.module.css";
 import useSWR from "swr";
 import { api } from "@/lib/api";
+import { ApiError } from "@/lib/api/error-handler";
 import type { Practice } from "@/lib/api/crm/crm.types";
 import {
   isUnconfiguredDelivery,
@@ -44,6 +45,8 @@ interface Delivery {
     | null;
   visa_followup?: VisaFollowup | null;
   needs_titles: boolean;
+  // Final delivery completed this practice: its empty slots take a file, and say "Upload".
+  delivery_recorded?: boolean;
   // A November practice completed before Final delivery: it takes every empty document.
   legacy_proof?: boolean;
   bonus_instruction?: "upload" | "upload_or_waive" | null;
@@ -60,6 +63,15 @@ function bonusInstruction(data: Delivery, kind: "upload" | "upload_or_waive") {
 
 const actionStyle =
   "text-sm font-semibold text-[var(--bz-accent)] underline disabled:opacity-50";
+
+// After a response is LOST (no HTTP answer at all) the card trusts only state the operator chose:
+// a waiver on that slot, that document id in that slot, a completed status. An upload never claims success.
+type Recovery = {
+  confirmed?: (data: Delivery) => boolean;
+  unconfirmed?: string;
+};
+const UPLOAD_UNCONFIRMED =
+  "We could not confirm this upload. The slot below shows what is saved now; open it to check.";
 
 type DeliveryCardProps = { practice: Practice; onComplete: () => void };
 
@@ -166,6 +178,7 @@ function StaffDeliveryCard({
     request: () => Promise<Delivery>,
     message: string,
     repairSlot?: Slot,
+    recovery?: Recovery,
   ) {
     // An upload is authorised by its own slot; the titles and waiver forms of a cohort
     // practice carry no slot and are authorised by the staff-edit permission.
@@ -181,24 +194,33 @@ function StaffDeliveryCard({
     try {
       const result = await request();
       await mutate(result, { revalidate: false });
-      setFeedback(message);
+      const completed = writable && result.status === "completed";
+      setFeedback(
+        completed && !/completed/i.test(message)
+          ? `${message} The practice is completed.`
+          : message,
+      );
       window.dispatchEvent(new Event("kita:delivery-changed"));
       setWaiveKey("");
       setWaiver("");
-      if (writable && result.status === "completed") onComplete();
+      if (completed) onComplete();
     } catch (e) {
       setFailure(
         e instanceof Error
           ? e.message
           : "The change could not be saved. Please retry.",
       );
-      // A response can be lost after the server commits. Recover its actual state.
+      // A received error (409 and the like) is shown as it came. Only a LOST response is recovered.
       const refreshed = await mutate().catch(() => undefined);
-      if (writable && refreshed?.status === "completed") {
+      if (e instanceof ApiError || !recovery) {
+        // nothing more to say
+      } else if (refreshed && recovery.confirmed?.(refreshed)) {
         setFailure("");
-        setFeedback("Final documents delivered. Practice completed.");
+        setFeedback(message);
         window.dispatchEvent(new Event("kita:delivery-changed"));
-        onComplete();
+        if (writable && refreshed.status === "completed") onComplete();
+      } else if (recovery.unconfirmed) {
+        setFailure(recovery.unconfirmed);
       }
     } finally {
       pending.current = false;
@@ -248,11 +270,14 @@ function StaffDeliveryCard({
           },
         ),
       repairable(slot) && !legacyOpen
-        ? "Missing permit restored."
+        ? data?.delivery_recorded
+          ? "Document added."
+          : "Missing permit restored."
         : slot.key === data?.bonus_slot
           ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
           : "Document saved.",
       slot,
+      { unconfirmed: UPLOAD_UNCONFIRMED },
     ).finally(() => setUploadingKey(null));
   }
 
@@ -354,7 +379,9 @@ function StaffDeliveryCard({
                 const action = legacyOpen
                   ? "Upload"
                   : repairable(slot)
-                    ? "Restore"
+                    ? data.delivery_recorded
+                      ? "Upload"
+                      : "Restore"
                     : saved
                       ? "Replace"
                       : "Upload";
@@ -498,6 +525,12 @@ function StaffDeliveryCard({
                                   ),
                                 "Combined permit linked to both requirements.",
                                 slot,
+                                {
+                                  confirmed: (next) =>
+                                    next.slots.find((s) => s.key === slot.key)
+                                      ?.document_id ===
+                                    slot.reusable_document_id,
+                                },
                               )
                             }
                           >
@@ -521,6 +554,15 @@ function StaffDeliveryCard({
                                       { reason: waiver.trim() },
                                     ),
                                   "Requirement updated.",
+                                  undefined,
+                                  {
+                                    confirmed: (next) =>
+                                      Boolean(
+                                        next.slots.find(
+                                          (s) => s.key === slot.key,
+                                        )?.waiver_reason,
+                                      ),
+                                  },
                                 );
                             }}
                           >
@@ -638,6 +680,8 @@ function StaffDeliveryCard({
                   void change(
                     () => post<Delivery>(`${url}/complete`),
                     "Final documents delivered. Practice completed.",
+                    undefined,
+                    { confirmed: (next) => next.status === "completed" },
                   )
                 }
               >

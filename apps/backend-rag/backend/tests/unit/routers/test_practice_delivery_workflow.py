@@ -1,5 +1,5 @@
 import base64
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -154,6 +154,9 @@ async def test_same_issuance_file_retry_does_not_requalify_bonus(db, writes, mon
         pool, 7, "electronic_visa", STAFF, request(date(2026, 1, 15)), BackgroundTasks()
     )
     writes["record_delivery_bonus"].assert_not_awaited()
+    writes[
+        "stage"
+    ].assert_awaited_once()  # the lock phase returns the view; nothing else is written
 
 
 @pytest.mark.asyncio
@@ -204,6 +207,10 @@ async def test_final_delivery_uses_correct_bonus_event(
     if waived:
         policy["slots"][0]["condition"] = "Only if issued on the booked route"
     monkeypatch.setattr(service, "delivery_policy", lambda _code: policy)
+    instant = datetime(2026, 11, 30, 3, tzinfo=UTC)
+    monkeypatch.setattr(
+        service, "first_proof_instant", AsyncMock(return_value=(instant, "earlier@example.test"))
+    )
     conn.fetch.return_value = [
         {
             "slot_key": "electronic_visa",
@@ -216,8 +223,9 @@ async def test_final_delivery_uses_correct_bonus_event(
     result = await service.complete(pool, 7, STAFF, BackgroundTasks())
     assert result["status"] == "completed"
     if event:
+        # Earned when the proof first existed, for whoever held the practice then.
         writes["record_delivery_bonus"].assert_awaited_once_with(
-            conn, 7, "visa_c1_tourism", STAFF["email"], event
+            conn, 7, "visa_c1_tourism", "earlier@example.test", event, earned_at=instant
         )
     else:
         writes["record_delivery_bonus"].assert_not_awaited()
@@ -546,6 +554,7 @@ async def test_explicit_combined_permit_can_satisfy_renewal_bonus_slot(db, write
 async def test_completed_slot_repair_projection_requires_missing_permit_on_completed_practice(
     db, writes, status, completion, document, waiver, expected
 ):
+    # A delivered practice takes every empty, unwaived slot; any other completed one only a permit.
     conn = db[1]
     conn.fetchval.return_value = completion
     conn.fetch.return_value = [
@@ -558,7 +567,7 @@ async def test_completed_slot_repair_projection_requires_missing_permit_on_compl
     view = await service.state(conn, {**PRACTICE, "status": status})
     assert view["delivery_recorded"] is (status == "completed" and completion)
     assert view["slots"][1]["can_repair"] is expected
-    assert not view["slots"][0]["can_repair"]
+    assert view["slots"][0]["can_repair"] is bool(status == "completed" and completion)
     assert view["bonus_status"] == "ineligible" and "amount_idr" not in view
 
 
@@ -571,7 +580,7 @@ async def test_repair_publishes_only_missing_permit_and_never_triggers_issuance_
     conn.fetchrow.return_value = {**PRACTICE, "status": "completed"}
 
     async def value(sql, *args):
-        return recorded and "practice_delivery_completions" in sql
+        return True if recorded and "practice_delivery_completions" in sql else None
 
     conn.fetchval.side_effect = value
     monkeypatch.setattr(service, "previous_slot", AsyncMock(return_value=None))
@@ -592,7 +601,9 @@ async def test_repair_publishes_only_missing_permit_and_never_triggers_issuance_
         and "practice_delivery_completions" not in c.args[0]
         for c in conn.execute.await_args_list
     )
-    assert "repaired" in writes["audit"].await_args.args[-1]
+    assert ("added after completion" if recorded else "repaired") in writes[
+        "audit"
+    ].await_args.args[-1]
 
 
 @pytest.mark.asyncio
@@ -630,3 +641,80 @@ async def test_completion_wording_follows_the_helper(db, monkeypatch, answer, wo
 async def test_completion_wording_failure_is_neutral_never_full(db, monkeypatch):
     monkeypatch.setattr(service, "documents_pending", AsyncMock(side_effect=RuntimeError("x")))
     assert await service.completion_wording(db[1], 7) == "neutral"
+
+
+# ── content identity, the earning instant and the visa clock of a delivered practice ──────────────
+
+
+T1, T2, T3 = (datetime(2026, 11, d, 4, tzinfo=UTC) for d in (20, 25, 29))
+NOW_ISH = datetime.now(UTC)
+
+
+def accepted(at, key):
+    return {"performed_at": at, "accepted": key, "waived": None}
+
+
+def waived(at, key):
+    return {"performed_at": at, "accepted": None, "waived": key}
+
+
+def moved(at, to):
+    return {"performed_at": at, "assignee": to}
+
+
+async def instant(
+    db, history, moves, *, bonus_slot="electronic_visa", assignee="current@example.test"
+):
+    conn = db[1]
+    conn.fetch.side_effect = [history, moves]
+    policy = {**issued_policy(""), "bonus_slot": bonus_slot}
+    return await service.first_proof_instant(conn, {**PRACTICE, "assigned_to": assignee}, policy)
+
+
+@pytest.mark.parametrize(
+    ("history", "bonus_slot", "expected"),
+    [
+        # The bonus slot is the proof: an earlier other document is not.
+        ([accepted(T1, "itk"), accepted(T2, "electronic_visa")], "electronic_visa", T2),
+        # A waiver of the bonus slot makes an earlier upload the proof, at the waiver.
+        ([accepted(T1, "itk"), waived(T2, "electronic_visa")], "electronic_visa", T2),
+        # A waiver alone proves nothing.
+        ([waived(T1, "electronic_visa")], "electronic_visa", None),
+        # An upload accepted after the waiver is the proof, and a later acceptance of the waived key un-waives it.
+        ([waived(T1, "electronic_visa"), accepted(T2, "itk")], "electronic_visa", T2),
+        ([waived(T1, "electronic_visa"), accepted(T2, "electronic_visa")], "electronic_visa", T2),
+        # No bonus slot: any acceptance, whatever its key.
+        ([accepted(T2, "document_4"), accepted(T3, "document_1")], None, T2),
+        # Rows of the same instant are one event: the acceptance clears the waiver of its key.
+        ([waived(T1, "electronic_visa"), accepted(T1, "electronic_visa")], "electronic_visa", T1),
+        ([accepted(T1, "itk"), waived(T1, "electronic_visa")], "electronic_visa", T1),
+        # No rows at all: now.
+        ([], "electronic_visa", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_first_proof_instant_folds_acceptances_and_waivers(db, history, bonus_slot, expected):
+    when, _ = await instant(db, history, [], bonus_slot=bonus_slot)
+    if expected is None:
+        assert (datetime.now(UTC) - when).total_seconds() < 60
+    else:
+        assert when == expected
+
+
+@pytest.mark.parametrize(
+    ("moves", "who"),
+    [
+        ([], "current@example.test"),  # never reassigned: the current assignee held it
+        ([moved(T1, "early@example.test")], "current@example.test"),  # nothing after T
+        ([moved(T1, "early@example.test"), moved(T3, "late@example.test")], "early@example.test"),
+        ([moved(T2, "at@example.test"), moved(T3, "late@example.test")], "at@example.test"),
+        ([moved(T3, "late@example.test")], None),  # the value before the change is not recorded
+        ([moved(T1, "early@example.test"), moved(T3, None)], "early@example.test"),
+        ([moved(T1, None), moved(T3, "late@example.test")], None),  # an empty value
+    ],
+)
+@pytest.mark.asyncio
+async def test_first_proof_instant_names_the_assignee_at_that_instant(db, moves, who):
+    # The proof is at T2.
+    _, assignee = await instant(db, [accepted(T2, "electronic_visa")], moves)
+    assert assignee == who

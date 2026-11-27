@@ -37,14 +37,15 @@ CREATE TABLE documents(id serial primary key,practice_id int,client_id int,famil
 CREATE TABLE companies(id int primary key);
 CREATE TABLE company_documents(id serial primary key,company_id int,google_drive_file_id text,client_visible boolean);
 CREATE TABLE client_company_links(company_id int,client_id int);
-CREATE TABLE activity_log(entity_type text,entity_id int,action text,performed_by text,description text);
+CREATE TABLE activity_log(entity_type text,entity_id int,action text,performed_by text,description text,
+    performed_at timestamptz DEFAULT now(),changes jsonb);
 CREATE TABLE timeline_events(client_id int,practice_id int,event_type text,title text,description text,
     event_date timestamptz,client_visible boolean,color text,created_by text);
 CREATE TABLE team_members(id varchar(36) primary key,email text,role text,active boolean);
 CREATE TABLE hr_employees(id int primary key,team_member_id varchar(36) REFERENCES team_members(id),is_active boolean,profile jsonb);
 CREATE TABLE hr_bonus_rates(id serial primary key,practice_type_code text unique,is_active boolean,
     effective_from date,effective_to date,amount_idr bigint,notes text,updated_at timestamptz);
-CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text, payroll_period_id int,
+CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int NOT NULL REFERENCES practices(id) ON DELETE RESTRICT,employee_id int,practice_type_code text, payroll_period_id int,
     bonus_rate_id int,amount_idr bigint,awarded_at timestamptz,status text,notes text);
 CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY,period_start date,payroll_month int,payroll_year int,status text);
 """

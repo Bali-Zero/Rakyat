@@ -20,10 +20,6 @@ NOVEMBER = datetime(2026, 11, 20, 4, tzinfo=UTC)
 
 
 async def types(conn):
-    # Production's activity_log carries the time of every row; the delivery suite's stub does not.
-    await conn.execute(
-        "ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS performed_at timestamptz DEFAULT now()"
-    )
     await conn.execute("""
         INSERT INTO practice_types VALUES (3,'visa_b1_voa','B1 VOA','single_entry_visa'),
             (4,'ext_b1_voa','Extension B1','visa_extension'),
