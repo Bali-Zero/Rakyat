@@ -173,13 +173,13 @@ async def record_email_result(
 ) -> None:
     """Update the 'sending' row with terminal status.
 
-    status ∈ {'sent','failed','skipped_idempotent'}. On 'failed', computes
+    status ∈ {'sent','failed','escalated','skipped_idempotent'}. On 'failed', computes
     ``retry_after`` via :data:`_RETRY_BACKOFF`. If ``row_id`` is None
     (audit insert failed earlier), this is a no-op.
     """
     if row_id is None:
         return
-    if status not in {"sent", "failed", "skipped_idempotent"}:
+    if status not in {"sent", "failed", "escalated", "skipped_idempotent"}:
         logger.warning("email_audit: invalid status %r, coercing to failed", status)
         status = "failed"
 

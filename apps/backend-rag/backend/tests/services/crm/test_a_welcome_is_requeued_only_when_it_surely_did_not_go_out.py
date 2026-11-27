@@ -78,6 +78,15 @@ class FakeConn:
         return [dict(r) for r in self.s["queue"]]
 
     async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+        if "SELECT attempt_number, email_type FROM email_send_log" in sql:
+            return next(
+                (
+                    {"attempt_number": row["attempt_number"], "email_type": row["email_type"]}
+                    for row in self.s["log"]
+                    if row["id"] == args[0]
+                ),
+                None,
+            )
         assert "FROM clients" in sql
         return self.s["client"]
 
@@ -120,6 +129,11 @@ class FakeConn:
 
     async def execute(self, sql: str, *args: Any) -> None:
         if "UPDATE email_send_log" in sql:
+            if "SET status = $2" in sql:
+                for row in self.s["log"]:
+                    if row["id"] == args[0]:
+                        row["status"] = args[1]
+                return
             for row in self.s["log"]:
                 if row["id"] in args[0]:
                     row["status"] = "escalated"
@@ -195,16 +209,6 @@ def _wire(monkeypatch: pytest.MonkeyPatch, state: dict[str, Any], post: Any) -> 
         state["log"].append(row)
         return row["id"]
 
-    async def record(pool: Any, row_id: Any, *, status: str, **kw: Any) -> None:
-        # The audit's own contract: no row id, no-op; a status it does not know is a failure.
-        if row_id is None:
-            return
-        if status not in {"sent", "failed", "escalated", "skipped_idempotent"}:
-            status = "failed"
-        for row in state["log"]:
-            if row["id"] == row_id:
-                row["status"] = status
-
     def page(**kw: Any) -> None:
         state["paged"].append(kw)
 
@@ -213,7 +217,6 @@ def _wire(monkeypatch: pytest.MonkeyPatch, state: dict[str, Any], post: Any) -> 
     monkeypatch.setattr(welcome, "_BROCHURE_PATH", Path("/nonexistent/brochure.pdf"))
     monkeypatch.setattr(welcome, "get_email_client", AsyncMock(return_value=sender))
     monkeypatch.setattr(welcome, "log_email_attempt", log_attempt)
-    monkeypatch.setattr(welcome, "record_email_result", record)
     monkeypatch.setattr(welcome, "notify_email_failure_critical", page)
 
 
@@ -418,6 +421,31 @@ async def test_a_keyed_brevo_read_timeout_stays_uncertain_and_is_not_requeued(
     namespace = getattr(welcome, "WELCOME_IDEMPOTENCY_NAMESPACE", None)
     assert namespace is not None, "no welcome idempotency namespace"
     assert state["payloads"][0].get("idempotency_key") == str(uuid5(namespace, "welcome:1"))
+
+
+@pytest.mark.asyncio
+async def test_a_keyed_brevo_rate_limit_stays_uncertain_and_is_not_requeued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MagicMock()
+    client.post = AsyncMock(return_value=httpx.Response(429, request=REQUEST))
+    monkeypatch.setenv("SENDGRID_API_KEY", "xkeysib-synthetic-test-key")
+    monkeypatch.setattr(notifications_router, "get_email_client", AsyncMock(return_value=client))
+
+    endpoint_answer = await notifications_router.send_direct_email(
+        notifications_router.SendEmailRequest(
+            to="client@example.test",
+            subject="Welcome",
+            body="Synthetic welcome",
+            idempotency_key=UUID("12345678-1234-5678-1234-567812345678"),
+        )
+    )
+
+    assert endpoint_answer.success is False
+    assert endpoint_answer.delivery_uncertain is True
+    state = _state()
+    _wire(monkeypatch, state, _answers(200, endpoint_answer.model_dump()))
+    _assert_uncertain(state, await _drain(state))
 
 
 @pytest.mark.asyncio

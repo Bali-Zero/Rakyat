@@ -23,6 +23,7 @@ from backend.services.notifications.email_audit import (
     log_email_attempt,
     record_email_result,
 )
+from backend.services.notifications.email_health_monitor import EmailHealthMonitor
 
 pytestmark = pytest.mark.integration
 
@@ -93,6 +94,27 @@ async def test_failed_result_schedules_a_retry_without_sent_at(db_tx: asyncpg.Co
     assert row["sent_at"] is None
     assert row["retry_after"] is not None
     assert row["error_message"] == "HTTP 500"
+
+
+@pytest.mark.asyncio
+async def test_escalated_result_stays_escalated_and_is_not_paged_again(
+    db_tx: asyncpg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pool = _SingleConnectionPool(db_tx)
+    row_id = await _sending_row(pool, "welcome")
+    pages: list[str] = []
+    monkeypatch.setattr(
+        "backend.services.notifications.email_health_monitor._post_telegram",
+        lambda message: pages.append(message),
+    )
+    await record_email_result(pool, row_id, status="escalated")  # type: ignore[arg-type]
+    row = await db_tx.fetchrow(
+        "SELECT status, retry_after FROM email_send_log WHERE id = $1", row_id
+    )
+    assert row["status"] == "escalated"
+    assert row["retry_after"] is None
+    assert await EmailHealthMonitor(pool).escalate_unrecoverable() == {"escalated": 0}  # type: ignore[arg-type]
+    assert pages == []
 
 
 @pytest.mark.asyncio

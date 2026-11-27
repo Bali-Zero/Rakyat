@@ -38,6 +38,104 @@ def _cc_of(*args, **kwargs):
     return _enforce_balizero_cc(*args, **kwargs)[0]
 
 
+def _brevo_response(status_code: int, body: object = None) -> MagicMock:
+    response = MagicMock(status_code=status_code)
+    response.json.return_value = body
+    return response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    [
+        (408, {}),
+        (429, {}),
+        (302, {}),
+        (204, {}),
+        (400, ValueError("truncated body")),
+    ],
+)
+async def test_keyed_brevo_ambiguous_response_is_delivery_uncertain(monkeypatch, status_code, body):
+    monkeypatch.setenv("SENDGRID_API_KEY", "xkeysib-synthetic-test-key")
+    response = _brevo_response(status_code)
+    if isinstance(body, Exception):
+        response.json.side_effect = body
+    else:
+        response.json.return_value = body
+    client = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    request = SendEmailRequest(
+        to="recipient@example.test",
+        subject="Synthetic",
+        body="Body",
+        idempotency_key="12345678-1234-5678-1234-567812345678",
+    )
+    with patch(
+        "backend.app.modules.notifications.router.get_email_client",
+        new=AsyncMock(return_value=client),
+    ):
+        result = await send_direct_email(request, _auth={})
+    assert result.success is False
+    assert result.delivery_uncertain is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    [(401, {}), (400, {"code": "invalid_parameter"})],
+)
+async def test_keyed_brevo_refusal_is_not_delivery_uncertain(monkeypatch, status_code, body):
+    monkeypatch.setenv("SENDGRID_API_KEY", "xkeysib-synthetic-test-key")
+    client = MagicMock()
+    client.post = AsyncMock(return_value=_brevo_response(status_code, body))
+    request = SendEmailRequest(
+        to="recipient@example.test",
+        subject="Synthetic",
+        body="Body",
+        idempotency_key="12345678-1234-5678-1234-567812345678",
+    )
+    with patch(
+        "backend.app.modules.notifications.router.get_email_client",
+        new=AsyncMock(return_value=client),
+    ):
+        result = await send_direct_email(request, _auth={})
+    assert result.success is False
+    assert result.delivery_uncertain is False
+
+
+@pytest.mark.asyncio
+async def test_keyed_brevo_201_is_accepted(monkeypatch):
+    monkeypatch.setenv("SENDGRID_API_KEY", "xkeysib-synthetic-test-key")
+    client = MagicMock()
+    client.post = AsyncMock(return_value=_brevo_response(201, {}))
+    request = SendEmailRequest(
+        to="recipient@example.test",
+        subject="Synthetic",
+        body="Body",
+        idempotency_key="12345678-1234-5678-1234-567812345678",
+    )
+    with patch(
+        "backend.app.modules.notifications.router.get_email_client",
+        new=AsyncMock(return_value=client),
+    ):
+        result = await send_direct_email(request, _auth={})
+    assert result.success is True
+    assert result.delivery_uncertain is False
+
+
+@pytest.mark.asyncio
+async def test_unkeyed_brevo_429_still_returns_false(monkeypatch):
+    monkeypatch.setenv("SENDGRID_API_KEY", "xkeysib-synthetic-test-key")
+    client = MagicMock()
+    client.post = AsyncMock(return_value=_brevo_response(429, {}))
+    with patch(
+        "backend.app.modules.notifications.router.get_email_client",
+        new=AsyncMock(return_value=client),
+    ):
+        result = await _send_via_brevo("recipient@example.test", "Synthetic", "Body", None)
+    assert result is False
+
+
 class TestEnforceBalizeroCc:
     """Hard rule (Antonello 2026-06-17): a client never gets an email
     without a @balizero.com address copied in. Contextual CC:
