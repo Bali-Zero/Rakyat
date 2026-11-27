@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.services.compliance.severity_calculator import parse_deadline_utc
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,13 +118,7 @@ class ComplianceTrackerService:
 
     @staticmethod
     def _parse_deadline(deadline: str) -> datetime:
-        if deadline.endswith("Z"):
-            deadline = f"{deadline[:-1]}+00:00"
-
-        parsed = datetime.fromisoformat(deadline)
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=UTC)
-        return parsed.astimezone(UTC)
+        return parse_deadline_utc(deadline)
 
     def get_upcoming_deadlines(
         self,
