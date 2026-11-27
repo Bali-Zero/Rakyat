@@ -456,7 +456,7 @@ async def kbli_llm_health() -> Any:
                 health_status["test_generation"] = {"success": False, "error": str(test_err)}
         else:
             health_status["error"] = (
-                "LLM Gateway not available. Check GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS."
+                "LLM Gateway not available. Check ANTHROPIC_CONSOLE_KEY_<n> and ANTHROPIC_CONSOLE_WORKSPACE_<n>."
             )
 
     except Exception as e:

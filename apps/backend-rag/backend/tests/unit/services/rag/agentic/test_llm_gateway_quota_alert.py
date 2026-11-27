@@ -1,40 +1,32 @@
 """
-Unit tests for the Gemini quota-exhaustion operator alert (spec item O1).
+Unit tests for the Console-lane operator alert (spec item O1).
 
-Context (2026-07-22 real incident): the Gemini prepay balance hit zero, so
-BOTH the primary AND fallback tiers returned 429/RESOURCE_EXHAUSTED. The
-agentic LLM could not drive tool retrieval, the WhatsApp bot silently
-abstained on every question for hours, and nobody was paged — the failure
-was found by accident. The architecture is deliberately fail-closed on
-Gemini (no external LLM fallback), so the operator alert IS the mitigation.
+Context (2026-07-22 real incident, Gemini era): the prepay balance hit zero, the
+agentic LLM could not drive tool retrieval, the WhatsApp bot silently abstained
+for hours and nobody was paged. The architecture is deliberately fail-closed (no
+external LLM fallback), so the operator alert IS the mitigation. Since Wave 2 the
+lane is the Claude Console seats; the signal is the structured ``Last error
+class:`` tail that ``claude_oauth_client`` puts on ``ClaudeOAuthError``.
 
-These tests cover ``LLMGateway._call_model``'s two raw google-genai SDK call
-sites (``client._client.aio.models.generate_content`` — chat-history branch
-and no-history/"fallback" branch) and assert:
+These tests cover ``LLMGateway._call_model``'s completion call and assert:
 
-- GUILT: a real ``google.genai.errors.ClientError`` shaped like Gemini's
-  429/RESOURCE_EXHAUSTED response triggers exactly one alert, on both call
-  sites, and the original exception still propagates unchanged.
-- INNOCENCE: a generic error (ValueError, a 503 ServerError, a timeout)
-  triggers NO alert. A second quota error for the same subtype fired
-  immediately after the first (inside the AlertService cooldown window)
-  triggers NO second Telegram send. Alert-sending failures never break the
-  original exception's propagation.
-- The exception class is matched via the SDK's structured ``code``/``status``
-  attributes (not a bare substring on one sentence — cicatrix scar family #3,
-  guard-over-match), and the message text is used only to distinguish the
-  balance-depleted vs rate-limited subtype for the alert text.
-- No PII (user query text, phone number, client data) ever reaches the
-  alert metadata.
+- GUILT: a ``ClaudeOAuthError`` whose last class is quota / rate limit /
+  authentication triggers exactly one alert, and the ORIGINAL exception still
+  propagates unchanged (the same instance, never re-wrapped).
+- INNOCENCE: a timeout, an empty output, a CLI exit, a generic error or a missing
+  seat triggers NO alert; a second alert for the same subtype inside the
+  AlertService cooldown triggers NO second send; an alert-sending failure never
+  breaks the original exception's propagation.
+- The class is read from the structured tail, never from a substring of a user's
+  text, and rate-limit phrasing is checked before quota phrasing.
+- No PII (user query text, phone number, client data) ever reaches the alert.
 """
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from google.api_core.exceptions import ResourceExhausted
-from google.genai.errors import ClientError, ServerError
 
+from backend.llm.claude_oauth_client import ClaudeOAuthError, ClaudeOAuthNotAvailable
 from backend.services.monitoring.alert_service import AlertLevel
 from backend.services.rag.agentic.llm_gateway import (
     LLMGateway,
@@ -42,69 +34,26 @@ from backend.services.rag.agentic.llm_gateway import (
     _classify_quota_exhaustion,
 )
 
-
-class _FakeQuotaError(Exception):
-    """Minimal stand-in for an exception whose `.code`/`.status` shape
-    doesn't match the google-genai SDK's exact int/str convention —
-    used to pin defect-2 (widened 429 detection) without depending on
-    ClientError's internals."""
-
-    def __init__(self, message: str, code: object = None, status: object = None):
-        super().__init__(message)
-        self.message = message
-        self.code = code
-        self.status = status
+_MODULE = "backend.services.rag.agentic.llm_gateway"
 
 
-def _make_fake_response(prompt_tokens: int = 42, completion_tokens: int = 7) -> SimpleNamespace:
-    """Build a fake google-genai response with usage_metadata + text."""
-    return SimpleNamespace(
-        text="Hello from Gemini",
-        candidates=[],
-        usage_metadata=SimpleNamespace(
-            prompt_token_count=prompt_tokens,
-            candidates_token_count=completion_tokens,
-        ),
+def _seats_failed(last: str) -> ClaudeOAuthError:
+    """The error `complete_async` raises when every seat failed, with its real shape."""
+    return ClaudeOAuthError(
+        f"Claude Console seats failed after 3 attempt(s). Last error class: {last}"
     )
 
 
-def _make_client_error(
-    message: str = "Resource has been exhausted (e.g. check quota).",
-    status: str = "RESOURCE_EXHAUSTED",
-    code: int = 429,
-) -> ClientError:
-    """Build a real google.genai.errors.ClientError shaped like the SDK's
-    actual 429/RESOURCE_EXHAUSTED response body (verified live against the
-    installed google-genai==2.7.0: ClientError(code, response_json).status/
-    .message/.code are populated from response_json["error"])."""
-    return ClientError(code, {"error": {"status": status, "message": message, "code": code}})
-
-
-def _make_server_error(message: str = "model overloaded", status: str = "UNAVAILABLE") -> ServerError:
-    return ServerError(503, {"error": {"status": status, "message": message, "code": 503}})
-
-
 @pytest.fixture
-def gateway_with_raw_client():
-    """LLMGateway whose genai client exposes the raw SDK call path used by
-    _call_model (client._client.aio.models.generate_content)."""
-    with patch("backend.services.rag.agentic.llm_gateway.get_genai_client") as mock_get:
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_client._client.aio.models.generate_content = AsyncMock(
-            return_value=_make_fake_response(),
-        )
-        mock_get.return_value = mock_client
-        gw = LLMGateway()
-        gw._available = True
-        yield gw, mock_client
+def gateway():
+    gw = LLMGateway()
+    gw._available = True
+    return gw
 
 
 @pytest.fixture
 def mock_alert_service():
-    """Patch the alert service at its source module (llm_gateway imports it
-    lazily inside the alert helper, same pattern as the cost-recorder import
-    in _call_model — see test_llm_gateway_cost_recorder.py)."""
+    """Patch the alert service at its source module (the gateway imports it lazily)."""
     with patch("backend.services.monitoring.alert_service.get_alert_service") as mock_get_alert:
         mock_service = MagicMock()
         mock_service.send_alert = AsyncMock()
@@ -112,236 +61,142 @@ def mock_alert_service():
         yield mock_service
 
 
+async def _call(gateway: LLMGateway, message: str = "hi") -> None:
+    await gateway._call_model(
+        "claude-sonnet-5-5", with_tools=False, chat=None, message=message, images=None
+    )
+
+
 # ============================================================================
-# GUILT — real 429/RESOURCE_EXHAUSTED fires exactly one alert
+# GUILT — a durable seat failure fires exactly one alert
 # ============================================================================
 
 
 class TestQuotaExhaustionAlertsGuilt:
     @pytest.mark.asyncio
-    async def test_no_history_branch_triggers_one_alert_and_reraises(
-        self, gateway_with_raw_client, mock_alert_service,
+    @pytest.mark.parametrize("chat_history", [None, []])
+    async def test_both_call_shapes_trigger_one_alert_and_reraise(
+        self, gateway, mock_alert_service, chat_history
     ):
-        """chat=None takes the 'Fallback: Build content directly' raw call
-        site (~line 846) — must alert exactly once and re-raise the SAME
-        exception instance unchanged."""
-        gateway, mock_client = gateway_with_raw_client
-        err = _make_client_error()
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
+        err = _seats_failed("console_3: quota")
+        chat = None if chat_history is None else MagicMock(history=chat_history)
 
-        with pytest.raises(ClientError) as exc_info:
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
+        with patch(f"{_MODULE}.complete_async", new=AsyncMock(side_effect=err)):
+            with pytest.raises(ClaudeOAuthError) as exc_info:
+                await gateway._call_model(
+                    "claude-sonnet-5-5", with_tools=False, chat=chat, message="hi", images=None
+                )
 
         assert exc_info.value is err  # unchanged propagation, not re-wrapped
         mock_alert_service.send_alert.assert_awaited_once()
         kwargs = mock_alert_service.send_alert.call_args.kwargs
         assert kwargs["level"] == AlertLevel.CRITICAL
-        assert kwargs["metadata"]["model"] == "gemini-3-flash"
-        assert kwargs["metadata"]["error_code"] == 429
-        assert kwargs["metadata"]["error_status"] == "RESOURCE_EXHAUSTED"
-
-    @pytest.mark.asyncio
-    async def test_chat_history_branch_triggers_one_alert_and_reraises(
-        self, gateway_with_raw_client, mock_alert_service,
-    ):
-        """chat with a .history attribute takes the chat-session raw call
-        site (~line 737) — must also alert exactly once."""
-        gateway, mock_client = gateway_with_raw_client
-        err = _make_client_error()
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
-        chat = SimpleNamespace(history=[])
-
-        with pytest.raises(ClientError) as exc_info:
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=chat, message="hi", images=None,
-            )
-
-        assert exc_info.value is err
-        mock_alert_service.send_alert.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_legacy_api_core_resource_exhausted_also_alerts(
-        self, gateway_with_raw_client, mock_alert_service,
-    ):
-        """Defense-in-depth: google.api_core.exceptions.ResourceExhausted
-        (the class this file already imports/catches elsewhere in the
-        fallback cascade) must ALSO be recognised as quota-exhaustion, not
-        just the new SDK's google.genai.errors.ClientError."""
-        gateway, mock_client = gateway_with_raw_client
-        err = ResourceExhausted("429 Resource has been exhausted")
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
-
-        with pytest.raises(ResourceExhausted):
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
-
-        mock_alert_service.send_alert.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_balance_depleted_message_sets_that_subtype(
-        self, gateway_with_raw_client, mock_alert_service,
-    ):
-        """The 2026-07-22 real incident's exact phrasing must classify as
-        balance depletion, not a transient per-minute rate limit."""
-        gateway, mock_client = gateway_with_raw_client
-        err = _make_client_error(message="prepayment credits are depleted")
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
-
-        with pytest.raises(ClientError):
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
-
-        kwargs = mock_alert_service.send_alert.call_args.kwargs
+        assert kwargs["metadata"]["model"] == "claude-sonnet-5-5"
+        assert kwargs["metadata"]["error_class"] == "ClaudeOAuthError"
         assert kwargs["metadata"]["subtype"] == "balance_depleted"
-        assert "depleted" in kwargs["message"].lower() or "balance" in kwargs["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_rate_limit_message_sets_that_subtype(
-        self, gateway_with_raw_client, mock_alert_service,
-    ):
-        gateway, mock_client = gateway_with_raw_client
-        err = _make_client_error(
-            message="Quota exceeded for quota metric 'Generate content requests per minute'",
-        )
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
-
-        with pytest.raises(ClientError):
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
+    async def test_rate_limit_sets_that_subtype(self, gateway, mock_alert_service):
+        with patch(
+            f"{_MODULE}.complete_async",
+            new=AsyncMock(side_effect=_seats_failed("console_2: rate limited")),
+        ):
+            with pytest.raises(ClaudeOAuthError):
+                await _call(gateway)
 
         kwargs = mock_alert_service.send_alert.call_args.kwargs
         assert kwargs["metadata"]["subtype"] == "rate_limited"
 
     @pytest.mark.asyncio
-    async def test_alert_metadata_carries_no_pii(
-        self, gateway_with_raw_client, mock_alert_service,
+    @pytest.mark.parametrize("last", ["console_1: authentication", "console_1: model_access"])
+    async def test_a_refused_key_or_workspace_sets_the_auth_subtype(
+        self, gateway, mock_alert_service, last
     ):
-        """Hard legal boundary (UU PDP): the alert must never carry the
-        user's query text, phone number, or any client data — only model
-        name, error class, and counts."""
-        gateway, mock_client = gateway_with_raw_client
-        err = _make_client_error()
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
+        with patch(f"{_MODULE}.complete_async", new=AsyncMock(side_effect=_seats_failed(last))):
+            with pytest.raises(ClaudeOAuthError):
+                await _call(gateway)
 
-        with pytest.raises(ClientError):
-            await gateway._call_model(
-                "gemini-3-flash",
-                with_tools=False,
-                chat=None,
-                message="+62 840-0022-0000 my passport number is A9900001",
-                images=None,
-            )
+        kwargs = mock_alert_service.send_alert.call_args.kwargs
+        assert kwargs["metadata"]["subtype"] == "auth_failed"
+
+    @pytest.mark.asyncio
+    async def test_alert_metadata_carries_no_pii(self, gateway, mock_alert_service):
+        """Hard legal boundary (UU PDP): only model name, error class and subtype."""
+        user_text = "PLACEHOLDER-PHONE-0001 PLACEHOLDER-DOCUMENT-0002"
+        with patch(
+            f"{_MODULE}.complete_async",
+            new=AsyncMock(side_effect=_seats_failed("console_1: quota")),
+        ):
+            with pytest.raises(ClaudeOAuthError):
+                await _call(gateway, user_text)
 
         kwargs = mock_alert_service.send_alert.call_args.kwargs
         serialized = str(kwargs["metadata"]) + kwargs["message"] + kwargs["title"]
-        assert "+62 840-0022-0000" not in serialized
-        assert "A9900001" not in serialized
-        assert set(kwargs["metadata"].keys()) == {
-            "model", "error_class", "error_code", "error_status", "subtype",
-        }
+        assert "PLACEHOLDER-PHONE-0001" not in serialized
+        assert "PLACEHOLDER-DOCUMENT-0002" not in serialized
+        assert set(kwargs["metadata"].keys()) == {"model", "error_class", "subtype"}
 
 
 # ============================================================================
-# INNOCENCE — non-quota errors never alert; alerting never breaks the path
+# INNOCENCE — everything else never alerts; alerting never breaks the path
 # ============================================================================
 
 
 class TestQuotaExhaustionAlertsInnocence:
     @pytest.mark.asyncio
-    async def test_generic_value_error_triggers_no_alert(
-        self, gateway_with_raw_client, mock_alert_service,
-    ):
-        gateway, mock_client = gateway_with_raw_client
-        mock_client._client.aio.models.generate_content = AsyncMock(
-            side_effect=ValueError("something unrelated broke"),
-        )
-
-        with pytest.raises(ValueError):
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
-
-        mock_alert_service.send_alert.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_server_error_503_triggers_no_alert(
-        self, gateway_with_raw_client, mock_alert_service,
-    ):
-        """A 5xx ServerError (model overloaded) is a DIFFERENT failure class
-        from 429 quota exhaustion — must not be swept in by an over-broad
-        guard (cicatrix scar family #3)."""
-        gateway, mock_client = gateway_with_raw_client
-        mock_client._client.aio.models.generate_content = AsyncMock(
-            side_effect=_make_server_error(),
-        )
-
-        with pytest.raises(ServerError):
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
-
-        mock_alert_service.send_alert.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_timeout_triggers_no_alert(
-        self, gateway_with_raw_client, mock_alert_service,
-    ):
-        gateway, mock_client = gateway_with_raw_client
-        mock_client._client.aio.models.generate_content = AsyncMock(
-            side_effect=TimeoutError("deadline exceeded"),
-        )
-
-        with pytest.raises(TimeoutError):
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ValueError("something unrelated broke"),
+            TimeoutError("deadline exceeded"),
+            RuntimeError("quota in a stray sentence, no structured tail"),
+            ClaudeOAuthNotAvailable("no Console seat configured"),
+            _seats_failed("console_1: attempt_timeout"),
+            _seats_failed("console_1: cli_exit_1"),
+            _seats_failed("console_1: empty_output"),
+            _seats_failed("global_deadline"),
+        ],
+        ids=[
+            "value_error",
+            "timeout",
+            "runtime_error_with_quota_word",
+            "no_seat",
+            "attempt_timeout",
+            "cli_exit",
+            "empty_output",
+            "global_deadline",
+        ],
+    )
+    async def test_other_failures_trigger_no_alert(self, gateway, mock_alert_service, error):
+        with patch(f"{_MODULE}.complete_async", new=AsyncMock(side_effect=error)):
+            with pytest.raises(type(error)):
+                await _call(gateway)
 
         mock_alert_service.send_alert.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_alert_send_failure_does_not_break_original_exception(
-        self, gateway_with_raw_client, mock_alert_service,
+        self, gateway, mock_alert_service
     ):
-        """Best-effort contract: if send_alert itself raises, the ORIGINAL
-        429 must still propagate unchanged — never swallowed, never
-        replaced by the alerting error."""
-        gateway, mock_client = gateway_with_raw_client
-        err = _make_client_error()
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
-        mock_alert_service.send_alert.side_effect = RuntimeError("telegram is down")
+        """If send_alert itself raises, the ORIGINAL error still propagates unchanged."""
+        err = _seats_failed("console_1: quota")
+        mock_alert_service.send_alert.side_effect = RuntimeError("alert channel is down")
 
-        with pytest.raises(ClientError) as exc_info:
-            await gateway._call_model(
-                "gemini-3-flash", with_tools=False, chat=None, message="hi", images=None,
-            )
+        with patch(f"{_MODULE}.complete_async", new=AsyncMock(side_effect=err)):
+            with pytest.raises(ClaudeOAuthError) as exc_info:
+                await _call(gateway)
 
         assert exc_info.value is err
 
     @pytest.mark.asyncio
-    async def test_second_quota_alert_within_cooldown_is_suppressed(
-        self,
-        gateway_with_raw_client,
-    ):
-        """End-to-end dedup: reuses the REAL AlertService (not a mock) so its
-        existing escalating-cooldown/dedup logic actually runs. Simulates the
-        2026-07-22 shape — primary tier AND fallback tier both hit quota in
-        the same request window — and asserts only ONE mocked supported-channel send fires.
+    async def test_second_quota_alert_within_cooldown_is_suppressed(self, gateway):
+        """End-to-end dedup against the REAL AlertService (its cooldown logic runs).
 
-        Limitation stated per mandate requirement #3: AlertService's cooldown
-        state (`_last_alert_time`/`_alert_repeat`) is an in-memory dict on the
-        process-local singleton. Fly runs this app with `--workers 1`, so a
-        single machine dedups correctly; if Fly ever scales to N concurrent
-        machines, each machine's own singleton could independently alert once
-        within the same cooldown window (up to N alerts, not N*requests).
+        Limitation: AlertService's cooldown state is an in-memory dict on the
+        process-local singleton. Fly runs this app with `--workers 1`, so one
+        machine dedups correctly; with N machines each could alert once per window.
         """
-        gateway, mock_client = gateway_with_raw_client
-        err = _make_client_error()
-        mock_client._client.aio.models.generate_content = AsyncMock(side_effect=err)
+        err = _seats_failed("console_1: quota")
 
         from importlib import import_module
 
@@ -354,125 +209,60 @@ class TestQuotaExhaustionAlertsInnocence:
         real_service.enable_discord = False
 
         with (
-            patch.object(
-                alert_service,
-                "get_alert_service",
-                return_value=real_service,
-            ),
-            patch.object(
-                real_service,
-                "_send_slack_alert",
-                new_callable=AsyncMock,
-            ) as mock_send_slack,
-            patch.object(
-                real_service,
-                "_send_telegram_alert",
-                new_callable=AsyncMock,
-            ) as mock_send_telegram,
+            patch(f"{_MODULE}.complete_async", new=AsyncMock(side_effect=err)),
+            patch.object(alert_service, "get_alert_service", return_value=real_service),
+            patch.object(real_service, "_send_slack_alert", new_callable=AsyncMock) as slack,
+            patch.object(real_service, "_send_telegram_alert", new_callable=AsyncMock) as telegram,
         ):
-            for _ in range(2):  # primary tier fails, then fallback tier fails
-                with pytest.raises(ClientError) as exc_info:
-                    await gateway._call_model(
-                        "gemini-3-flash",
-                        with_tools=False,
-                        chat=None,
-                        message="hi",
-                        images=None,
-                    )
+            for _ in range(2):  # primary slug fails, then fallback slug fails
+                with pytest.raises(ClaudeOAuthError) as exc_info:
+                    await _call(gateway)
                 assert exc_info.value is err
 
-        mock_send_slack.assert_awaited_once()
-        mock_send_telegram.assert_not_awaited()
+        slack.assert_awaited_once()
+        telegram.assert_not_awaited()
         assert real_service.enable_telegram is False
 
 
 # ============================================================================
-# Defect 1 — subtype ordering: rate-limit phrasing beats a stray "credit"
-# mention. Family #3 (guard over-match): a transient 429 that happens to
-# mention billing must NOT raise a false CRITICAL "top up the prepay
-# balance" alert.
+# Classification — rate limit beats quota; only a ClaudeOAuthError qualifies
 # ============================================================================
 
 
-class TestQuotaSubtypeOrdering:
-    def test_message_with_both_rate_limit_and_credit_hints_classifies_rate_limited(self):
-        """INNOCENCE pin: 'credit' alone used to win regardless of position,
-        so a message containing BOTH families of hint must resolve to the
-        more specific, self-clearing signal — never balance_depleted."""
-        exc = _make_client_error(
-            message="Rate limit exceeded for requests per minute; check billing credit limit",
-        )
+class TestQuotaSubtypeClassification:
+    def test_rate_limit_phrasing_beats_quota_phrasing(self):
+        """A transient 429 must not raise a false CRITICAL 'balance depleted'."""
+        exc = _seats_failed("console_1: rate limited quota")
         assert _classify_quota_exhaustion(exc) == "rate_limited"
 
-    def test_real_2026_07_22_incident_shape_still_classifies_balance_depleted(self):
-        """GUILT pin: the shape that actually paged nobody must still
-        resolve to balance_depleted now that rate-limit hints are checked
-        first — it contains no rate-limit phrasing at all."""
-        exc = _make_client_error(message="prepayment credits are depleted")
-        assert _classify_quota_exhaustion(exc) == "balance_depleted"
+    def test_quota_alone_is_balance_depleted(self):
+        assert _classify_quota_exhaustion(_seats_failed("console_1: quota")) == "balance_depleted"
 
+    def test_only_the_structured_tail_counts(self):
+        """The same words in the head of the message, outside the tail, do not."""
+        exc = ClaudeOAuthError("quota exhausted rate limited authentication. Last error class: x")
+        assert _classify_quota_exhaustion(exc) is None
 
-# ============================================================================
-# Defect 2 — widened 429 detection: the signal can land as an int or a str,
-# on either `.code` or `.status`. A narrower check silently skips the alert
-# on these shapes, during the exact outage this guard exists to catch.
-# ============================================================================
+    def test_an_error_without_a_tail_is_not_classified(self):
+        assert _classify_quota_exhaustion(ClaudeOAuthError("quota")) is None
 
+    def test_a_foreign_exception_class_is_never_classified(self):
+        class _Imposter(Exception):
+            pass
 
-class TestQuotaDetectionWidened:
-    @pytest.mark.asyncio
-    async def test_integer_status_429_without_code_attribute_alerts(
-        self, mock_alert_service,
-    ):
-        exc = _FakeQuotaError("odd shape", status=429)
-        await _alert_quota_exhausted("gemini-3-flash", exc)
-        mock_alert_service.send_alert.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_string_code_429_alerts(self, mock_alert_service):
-        exc = _FakeQuotaError("odd shape", code="429")
-        await _alert_quota_exhausted("gemini-3-flash", exc)
-        mock_alert_service.send_alert.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_non_quota_500_error_does_not_alert(self, mock_alert_service):
-        """INNOCENCE pin: widening 429 detection must not sweep in an
-        unrelated 5xx server error."""
-        exc = _FakeQuotaError("server error", status=500)
-        await _alert_quota_exhausted("gemini-3-flash", exc)
-        mock_alert_service.send_alert.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_non_quota_400_invalid_argument_does_not_alert(
-        self, mock_alert_service,
-    ):
-        exc = _FakeQuotaError("bad request", code=400, status="INVALID_ARGUMENT")
-        await _alert_quota_exhausted("gemini-3-flash", exc)
-        mock_alert_service.send_alert.assert_not_awaited()
-
-
-# ============================================================================
-# Defect 3 — classification runs INSIDE the guarded region: if it raises,
-# the docstring's "never raises" promise must hold, and the caller's
-# original exception must remain what propagates.
-# ============================================================================
+        assert _classify_quota_exhaustion(_Imposter("Last error class: console_1: quota")) is None
 
 
 class TestClassificationFailureIsSwallowed:
     @pytest.mark.asyncio
-    async def test_classification_raising_is_swallowed_not_propagated(
-        self, mock_alert_service,
-    ):
-        class _Pathological(Exception):
-            code = 429  # trips is_quota_error before message-text classification
-
+    async def test_classification_raising_is_swallowed_not_propagated(self, mock_alert_service):
+        class _Pathological(ClaudeOAuthError):
             def __str__(self):  # noqa: D105 - deliberately pathological
                 raise RuntimeError("boom in __str__")
 
         exc = _Pathological()
         with pytest.raises(RuntimeError):
             str(exc)  # sanity: confirm __str__ really raises before relying on it
-        # Must not raise: _alert_quota_exhausted's whole body — including the
-        # _classify_quota_exhaustion() call — is the guarded region.
-        await _alert_quota_exhausted("gemini-3-flash", exc)
+        # Must not raise: the whole body, classification included, is the guarded region.
+        await _alert_quota_exhausted("claude-sonnet-5-5", exc)
         mock_alert_service.send_alert.assert_not_awaited()

@@ -22,8 +22,8 @@ class ChatSession:
 
     def __init__(
         self,
-        client: Any,
-        model: str,
+        client: Any = None,
+        model: str = "",
         history: list[dict] | None = None,
         system_instruction: str = "",
     ) -> None:
@@ -31,8 +31,10 @@ class ChatSession:
         Initialize ChatSession with model and history.
 
         Args:
-            client: GenAI client instance
-            model: Model name (e.g., "gemini-1.5-flash")
+            client: Optional provider client exposing ``start_chat``. With no client
+                the session is a pure in-memory history container (the gateway
+                rebuilds each prompt from it).
+            model: Model name
             history: Previous conversation history
             system_instruction: System prompt for the session
         """
@@ -42,8 +44,9 @@ class ChatSession:
         self.system_instruction = system_instruction
         self._chat_session = None
 
-        # Initialize the actual chat session
-        self._initialize_session()
+        # Initialize the actual chat session (only when a provider client is given)
+        if client is not None:
+            self._initialize_session()
 
     def _initialize_session(self) -> None:
         """Initialize the underlying Gemini chat session."""
