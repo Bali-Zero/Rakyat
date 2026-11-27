@@ -16,6 +16,7 @@ Example: "PT PMA Restaurant in Seminyak, 3 foreign directors"
 → Output: Detailed breakdown + total investment + timeline
 """
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -173,6 +174,43 @@ class DynamicPricingService:
 
         return costs
 
+    PRICING_COLLECTION = "bali_zero_pricing_hybrid"
+
+    @staticmethod
+    def _chunk_key(result: dict) -> str:
+        """Identity of a retrieved chunk: its id, else a hash of its text."""
+        for field in ("id", "chunk_id", "doc_id"):
+            value = result.get(field)
+            if value:
+                return f"{field}:{value}"
+        metadata = result.get("metadata") or {}
+        for field in ("id", "chunk_id", "doc_id"):
+            value = metadata.get(field)
+            if value:
+                return f"{field}:{value}"
+        normalized = " ".join(str(result.get("text", "")).lower().split())
+        return "text:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _dedupe_cost_items(tagged: list[tuple[str, int, CostItem]]) -> list[CostItem]:
+        """Drop a cost item already counted from the same chunk.
+
+        Two items are the same price when they come from the same chunk, at
+        the same position of that chunk's extraction, with the same
+        description and amount. Different chunks, or two prices of one chunk
+        whose context windows read the same, stay.
+        """
+        seen: set[tuple[str, int, str, float]] = set()
+        kept: list[CostItem] = []
+        for chunk_key, position, item in tagged:
+            line = " ".join(item.description.lower().split())
+            key = (chunk_key, position, line, item.amount)
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(item)
+        return kept
+
     def _categorize_cost(self, text: str) -> str:
         """Categorize a cost based on keywords in description"""
         text_lower = text.lower()
@@ -206,7 +244,7 @@ class DynamicPricingService:
         )
 
         # Step 2: Extract costs from all Oracle results
-        all_costs = []
+        tagged_costs: list[tuple[str, int, CostItem]] = []
 
         for oracle_name, oracle_data in synthesis_result.sources.items():
             if not oracle_data.get("success"):
@@ -214,25 +252,33 @@ class DynamicPricingService:
 
             for result in oracle_data.get("results", []):
                 text = result.get("text", "")
-                extracted_costs = self.extract_costs_from_text(text, oracle_name)
-                all_costs.extend(extracted_costs)
+                chunk_key = self._chunk_key(result)
+                for position, cost in enumerate(self.extract_costs_from_text(text, oracle_name)):
+                    tagged_costs.append((chunk_key, position, cost))
 
-        # Step 3: Also query bali_zero_pricing_hybrid directly
-        pricing_results = await self.search.search(
-            query=scenario,
-            user_level=user_level,
-            limit=5,
-            collection_override="bali_zero_pricing_hybrid",
-        )
+        # Step 3: Also query bali_zero_pricing_hybrid directly, unless the
+        # synthesis already carried that collection successfully.
+        pricing_source = synthesis_result.sources.get(self.PRICING_COLLECTION) or {}
+        if not pricing_source.get("success"):
+            pricing_results = await self.search.search(
+                query=scenario,
+                user_level=user_level,
+                limit=5,
+                collection_override=self.PRICING_COLLECTION,
+            )
 
-        for result in pricing_results.get("results", []):
-            text = result.get("text", "")
-            extracted_costs = self.extract_costs_from_text(text, "bali_zero_pricing_hybrid")
-            all_costs.extend(extracted_costs)
+            for result in pricing_results.get("results", []):
+                text = result.get("text", "")
+                chunk_key = self._chunk_key(result)
+                costs = self.extract_costs_from_text(text, self.PRICING_COLLECTION)
+                for position, cost in enumerate(costs):
+                    tagged_costs.append((chunk_key, position, cost))
+
+        # Step 4: Deduplicate (same chunk, same amount) and aggregate
+        all_costs = self._dedupe_cost_items(tagged_costs)
 
         logger.info(f"   Extracted {len(all_costs)} cost items from Oracles")
 
-        # Step 4: Deduplicate and aggregate
         setup_costs = [c for c in all_costs if not c.is_recurring]
         recurring_costs = [c for c in all_costs if c.is_recurring]
 
