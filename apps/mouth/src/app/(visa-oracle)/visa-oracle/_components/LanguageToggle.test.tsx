@@ -14,9 +14,27 @@ describe("LanguageToggle", () => {
     expect(screen.getByText("EN")).toBeInTheDocument();
     expect(screen.getByText("ID")).toBeInTheDocument();
 
+    const replaceState = vi
+      .spyOn(window.history, "replaceState")
+      .mockImplementation(() => {});
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        pathname: "/visa-oracle",
+        search: "",
+        hash: "",
+      },
+    });
+
     await user.click(screen.getByRole("button", { name: /bahasa indonesia/i }));
     expect(document.documentElement.lang).toBe("id");
     expect(onChange).toHaveBeenCalledWith("id");
+    expect(replaceState).toHaveBeenCalledWith(
+      window.history.state,
+      "",
+      "/visa-oracle?lang=id",
+    );
+    replaceState.mockRestore();
 
     view.rerender(<LanguageToggle language="id" onChange={onChange} />);
     expect(document.documentElement.lang).toBe("id");

@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { oracleInternalHref, parseOracleLocale } from "./oracle-locale";
+import { describe, expect, it, vi } from "vitest";
+import {
+  oracleInternalHref,
+  parseOracleLocale,
+  syncVisitLocaleInAddressBar,
+  visitLocaleUrlFromParts,
+} from "./oracle-locale";
 
 describe("oracle-locale", () => {
   it("defaults to English when lang is absent or unknown", () => {
@@ -24,5 +29,62 @@ describe("oracle-locale", () => {
       "/visa-oracle?lang=id",
     );
     expect(oracleInternalHref("/visa-oracle", "en")).toBe("/visa-oracle");
+  });
+
+  it("visitLocaleUrlFromParts changes only lang and keeps other query keys and hash", () => {
+    expect(
+      visitLocaleUrlFromParts("/visa-oracle", "?foo=bar", "#section", "id"),
+    ).toBe("/visa-oracle?foo=bar&lang=id#section");
+    expect(
+      visitLocaleUrlFromParts(
+        "/visa-oracle/privacy",
+        "?foo=bar&lang=id",
+        "",
+        "en",
+      ),
+    ).toBe("/visa-oracle/privacy?foo=bar");
+  });
+
+  it("syncVisitLocaleInAddressBar replaceState skips when URL is already correct", () => {
+    const replaceState = vi.fn();
+    const location = {
+      pathname: "/visa-oracle",
+      search: "?lang=id",
+      hash: "",
+    };
+    vi.stubGlobal("window", {
+      location,
+      history: { replaceState, state: { idx: 1 } },
+    });
+    syncVisitLocaleInAddressBar("id");
+    expect(replaceState).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("syncVisitLocaleInAddressBar replaceState sets or removes lang", () => {
+    const replaceState = vi.fn();
+    const location = {
+      pathname: "/visa-oracle",
+      search: "",
+      hash: "",
+    };
+    vi.stubGlobal("window", {
+      location,
+      history: { replaceState, state: { idx: 1 } },
+    });
+    syncVisitLocaleInAddressBar("id");
+    expect(replaceState).toHaveBeenCalledWith(
+      { idx: 1 },
+      "",
+      "/visa-oracle?lang=id",
+    );
+    location.search = "?lang=id&foo=bar";
+    syncVisitLocaleInAddressBar("en");
+    expect(replaceState).toHaveBeenLastCalledWith(
+      { idx: 1 },
+      "",
+      "/visa-oracle?foo=bar",
+    );
+    vi.unstubAllGlobals();
   });
 });

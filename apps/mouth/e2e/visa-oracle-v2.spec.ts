@@ -988,6 +988,7 @@ test.describe("Visa Oracle v2 integration — page Page", () => {
     await expect
       .poll(() => page.evaluate(() => document.documentElement.lang))
       .toBe("id");
+    await expect.poll(() => page.url()).toMatch(/\/visa-oracle\?lang=id$/);
     await expect(
       page.locator("footer a[href*='visa-oracle/privacy']"),
     ).toHaveAttribute("href", "/visa-oracle/privacy?lang=id");
@@ -1013,6 +1014,40 @@ test.describe("Visa Oracle v2 integration — page Page", () => {
     await expect(
       page.getByRole("link", { name: "Back to Visa Oracle" }),
     ).toHaveAttribute("href", "/visa-oracle");
+  });
+
+  test("native browser Back from privacy keeps Bahasa after ID toggle", async ({
+    page,
+  }) => {
+    await page.goto("/visa-oracle");
+    await page
+      .getByRole("button", { name: /switch to bahasa indonesia/i })
+      .click();
+    await expect.poll(() => page.url()).toMatch(/\/visa-oracle\?lang=id$/);
+    await page.locator("footer a[href*='visa-oracle/privacy']").click();
+    await expect(page).toHaveURL(/\/visa-oracle\/privacy\?lang=id$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/visa-oracle\?lang=id$/);
+    await expect(
+      page.getByRole("button", { name: /ganti ke bahasa inggris/i }),
+    ).toBeVisible();
+    await expect(page.locator("footer a[href*='privacy']")).toHaveAttribute(
+      "href",
+      "/visa-oracle/privacy?lang=id",
+    );
+  });
+
+  test("switching back to EN on privacy drops ?lang= via replaceState", async ({
+    page,
+  }) => {
+    await page.goto("/visa-oracle/privacy?lang=id");
+    await page
+      .getByRole("button", { name: /ganti ke bahasa inggris/i })
+      .click();
+    await expect(page).toHaveURL(/\/visa-oracle\/privacy$/);
+    await expect(
+      page.getByRole("heading", { name: "Your Visa Oracle data" }),
+    ).toBeVisible();
   });
 });
 
