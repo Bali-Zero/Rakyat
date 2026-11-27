@@ -379,14 +379,14 @@ describe("DeliveryBonusDesk", () => {
     ).toBeVisible();
     fireEvent.click(screen.getByText("View 1 earlier delivery"));
     expect(screen.getByText("No bonus for this service")).toBeVisible();
-    for (const name of [/Custom/, /Extension B1 - VOA/]) {
-      const entry = screen
-        .getAllByRole("link", { name })
-        .map((link) => link.parentElement?.parentElement)
-        .find((node) => node?.textContent?.includes("No bonus"));
-      expect(entry).toBeTruthy();
-      expect(within(entry as HTMLElement).queryByText(/Rp/)).toBeNull();
-      expect(within(entry as HTMLElement).queryByText(/payroll/)).toBeNull();
+    for (const practice of [49, 51]) {
+      const link = screen
+        .getAllByRole("link")
+        .find((node) => node.getAttribute("href") === `/process/${practice}`);
+      const entry = link?.parentElement?.parentElement as HTMLElement;
+      expect(within(entry).getByText(/^No bonus/)).toBeVisible();
+      expect(within(entry).queryByText(/Rp/)).toBeNull();
+      expect(within(entry).queryByText(/payroll/)).toBeNull();
     }
   });
   it("says a next case of a no-bonus service earns nothing", async () => {
