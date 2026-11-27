@@ -569,6 +569,76 @@ describe("Final delivery", () => {
       );
       expect(complete).not.toHaveBeenCalled();
     });
+    it("saves the document titles of a cohort custom practice", async () => {
+      const unnamed = legacy({
+        needs_titles: true,
+        bonus_slot: null,
+        bonus_instruction: null,
+        slots: [],
+      });
+      requests.get.mockResolvedValue(unnamed);
+      requests.post.mockResolvedValue(
+        legacy({
+          bonus_slot: null,
+          bonus_instruction: null,
+          slots: [
+            slot("custom_1", "Deed", { can_repair: true }),
+            slot("custom_2", "Receipt", { can_repair: true }),
+          ],
+        }),
+      );
+      const { user } = setup();
+      await user.type(
+        await screen.findByLabelText(
+          "Agreed final documents, one title per line",
+        ),
+        "Deed{Enter}Receipt",
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Save document titles" }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(base + "/titles", {
+          titles: ["Deed", "Receipt"],
+        }),
+      );
+      expect(await screen.findByText("Document titles saved.")).toBeVisible();
+      expect(screen.getByLabelText("Upload Deed")).toBeEnabled();
+      expect(screen.getByLabelText("Upload Receipt")).toBeEnabled();
+    });
+    it("saves the waiver of a cohort conditional document", async () => {
+      requests.get.mockResolvedValue(legacy());
+      requests.post.mockResolvedValue(
+        legacy({
+          bonus_instruction: null,
+          slots: [
+            slot("electronic_visa", "Electronic Visa", {
+              condition: "if issued online",
+              waiver_reason: "Issued at the border",
+            }),
+            slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+          ],
+        }),
+      );
+      const { user } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Mark as not applicable" }),
+      );
+      await user.type(
+        screen.getByLabelText("Reason this requirement does not apply"),
+        "Issued at the border",
+      );
+      await user.click(screen.getByRole("button", { name: "Save reason" }));
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/slots/electronic_visa/waive",
+          { reason: "Issued at the border" },
+        ),
+      );
+      expect(await screen.findByText("Requirement updated.")).toBeVisible();
+      expect(await screen.findByText("Not applicable")).toBeVisible();
+      expect(screen.queryByText(/to record the bonus/)).toBeNull();
+    });
     it("says the bonus document is required once the waiver can no longer help, and says nothing otherwise", async () => {
       requests.get.mockResolvedValue(legacy({ bonus_instruction: "upload" }));
       setup();

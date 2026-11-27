@@ -40,6 +40,10 @@ SLOT_AT = {
 
 
 async def types(conn):
+    # Production's activity_log carries the time of every row; the delivery suite's stub does not.
+    await conn.execute(
+        "ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS performed_at timestamptz DEFAULT now()"
+    )
     await conn.execute("""
         INSERT INTO practice_types VALUES (3,'visa_b1_voa','B1 VOA','single_entry_visa'),
             (4,'ext_b1_voa','Extension B1','visa_extension'),
@@ -382,14 +386,24 @@ async def test_a_double_submit_creates_one_receipt(pool):  # noqa: F811
     async with pool.acquire() as conn:
         await types(conn)
         await practice(conn, 46, 3)
-    await asyncio.gather(
+    results = await asyncio.gather(
         *[upload(pool, 46, "electronic_visa", "electronic-visa") for _ in range(2)],
         return_exceptions=True,
     )
-    await upload(pool, 46, "electronic_visa", "electronic-visa")
+    # A losing racer may be refused as a conflict; nothing else is acceptable.
+    assert any(isinstance(r, dict) for r in results)
+    assert all(
+        isinstance(r, dict) or (isinstance(r, HTTPException) and r.status_code == 409)
+        for r in results
+    ), results
     async with pool.acquire() as conn:
         assert len(await events(conn, 46)) == 1
         assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger") == 1
+        assert (
+            await conn.fetchval("SELECT count(*) FROM practice_delivery_slots WHERE practice_id=46")
+            == 1
+        )
+        assert await conn.fetchval("SELECT count(*) FROM documents WHERE practice_id=46") == 1
 
 
 @pytest.mark.asyncio
@@ -510,6 +524,13 @@ async def seed_f4(conn, *, only=LISTED):
             pid,
             1600000 if pid == 1414 else 850000,
         )
+        # The accepting write's own audit row carries the slot's transaction time.
+        await conn.execute(
+            """INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,performed_at)
+               VALUES('practice',$1,'updated','seed','Missing final permit repaired: document_1',$2)""",
+            pid,
+            datetime.fromisoformat(SLOT_AT[pid]),
+        )
 
 
 @pytest.mark.asyncio
@@ -552,6 +573,12 @@ async def test_391_records_the_measured_receipts_and_nothing_else(pool):  # noqa
         "UPDATE invoices SET amount_idr=amount_idr+1 WHERE practice_id=1378",
         "UPDATE team_members SET email='someone-else@example.test'",
         "UPDATE hr_bonus_rates SET amount_idr=16000 WHERE id=68",
+        "UPDATE practices SET completion_date='2026-10-31 15:59+00' WHERE id=1378",
+        "UPDATE practices SET completion_date='2026-11-30 16:00+00' WHERE id=1378",
+        "INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,performed_at)"
+        " VALUES('practice',1378,'updated','x','Updated: assigned_to','2026-11-27 07:00+00')",
+        "INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,performed_at)"
+        " VALUES('practice',1378,'updated','x','Final document uploaded: document_1','2026-11-27 06:05:30.006242+00')",
     ],
 )
 async def test_391_skips_a_row_whose_measured_fact_no_longer_holds(pool, spoil):  # noqa: F811
@@ -620,3 +647,41 @@ def test_the_migration_carries_no_staff_or_client_identity():
         Path(__file__).resolve().parents[2] / "db/migrations_v2/391_legacy_proof_receipts.sql"
     ).read_text()
     assert "@" not in text
+
+
+@pytest.mark.asyncio
+async def test_391_waits_for_a_concurrent_change_and_then_sees_it(pool):  # noqa: F811
+    async with pool.acquire() as setup:
+        await seed_f4(setup)
+    async with pool.acquire() as writer, pool.acquire() as migrator:
+        tx = writer.transaction()
+        await tx.start()
+        await writer.execute("UPDATE documents SET is_archived=true WHERE id=21162")
+        run = asyncio.create_task(migrator.execute(FORWARD))
+        await asyncio.sleep(0.5)
+        assert not run.done()  # blocked on the proof document, not validating stale facts
+        await tx.commit()
+        await asyncio.wait_for(run, 10)
+        listed = {
+            r["practice_id"]
+            for r in await migrator.fetch("SELECT practice_id FROM hr_delivery_bonus_events")
+        }
+    assert listed == set(LISTED) - {1378}
+
+
+@pytest.mark.asyncio
+async def test_391_holds_its_facts_until_it_commits(pool):  # noqa: F811
+    async with pool.acquire() as setup:
+        await seed_f4(setup)
+    async with pool.acquire() as writer, pool.acquire() as migrator:
+        tx = migrator.transaction()
+        await tx.start()
+        await migrator.execute(FORWARD)
+        change = asyncio.create_task(
+            writer.execute("UPDATE documents SET is_archived=true WHERE id=21162")
+        )
+        await asyncio.sleep(0.5)
+        assert not change.done()  # the change cannot slip in between validation and insert
+        await tx.commit()
+        await asyncio.wait_for(change, 10)
+        assert await writer.fetchval("SELECT count(*) FROM hr_delivery_bonus_events") == len(LISTED)

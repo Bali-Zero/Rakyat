@@ -167,7 +167,13 @@ function StaffDeliveryCard({
     message: string,
     repairSlot?: Slot,
   ) {
-    if (pending.current || !(writable || repairable(repairSlot))) return;
+    // An upload is authorised by its own slot; the titles and waiver forms of a cohort
+    // practice carry no slot and are authorised by the staff-edit permission.
+    const allowed =
+      writable ||
+      repairable(repairSlot) ||
+      (legacyOpen && repairSlot === undefined);
+    if (pending.current || !allowed) return;
     pending.current = true;
     setWorking(true);
     setFailure("");
