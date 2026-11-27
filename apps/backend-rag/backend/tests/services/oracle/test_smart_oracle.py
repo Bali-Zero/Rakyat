@@ -49,15 +49,8 @@ class FakeDownloader:
         return None, True
 
 
-def test_get_oracle_client_initializes_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_client = SimpleNamespace(is_available=True, _auth_method="api_key")
-
-    monkeypatch.setattr(smart_module, "_genai_client", None)
-    monkeypatch.setattr(smart_module, "GENAI_AVAILABLE", True)
-    monkeypatch.setattr(smart_module, "get_genai_client", lambda: fake_client)
-
-    assert smart_module.get_oracle_client() is fake_client
-    assert smart_module.get_oracle_client() is fake_client
+def test_get_oracle_client_returns_none_after_gemini_retirement() -> None:
+    assert smart_module.get_oracle_client() is None
 
 
 def test_get_drive_service_returns_none_without_credentials(
@@ -160,49 +153,19 @@ def test_download_pdf_from_drive_retries_with_spaces_when_first_query_misses(
 
 
 @pytest.mark.asyncio
-async def test_smart_oracle_uploads_downloaded_pdf_and_removes_temp_file(
+async def test_smart_oracle_returns_unavailable_and_removes_temp_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pdf_path = tmp_path / "source.pdf"
     pdf_path.write_bytes(b"%PDF fake")
-    captured: dict[str, Any] = {}
-
-    class FakeUploadFiles:
-        def upload(self, *, file: str) -> SimpleNamespace:
-            captured["uploaded_file"] = file
-            return SimpleNamespace(uri="gs://uploaded", mime_type="application/pdf")
-
-    class FakeGenAI:
-        def Client(self, *, api_key: str | None) -> SimpleNamespace:
-            captured["api_key"] = api_key
-            return SimpleNamespace(files=FakeUploadFiles())
-
-    class FakeClient:
-        is_available = True
-        _auth_method = "api_key"
-
-        async def generate_content(self, **kwargs: Any) -> dict[str, str]:
-            captured["generate_content"] = kwargs
-            return {"text": "Answer based on uploaded PDF"}
 
     monkeypatch.setattr(smart_module, "download_pdf_from_drive", lambda filename: str(pdf_path))
-    monkeypatch.setattr(smart_module, "get_oracle_client", lambda: FakeClient())
-    monkeypatch.setattr(smart_module, "genai", FakeGenAI())
-    monkeypatch.setattr(smart_module, "settings", SimpleNamespace(google_api_key="test-key"))
 
     result = await smart_module.smart_oracle("What does it require?", "source.pdf")
 
-    assert result == "Answer based on uploaded PDF"
+    assert result == "AI service not available. Please check configuration."
     assert not pdf_path.exists()
-    assert captured["uploaded_file"] == str(pdf_path)
-    assert captured["api_key"] == "test-key"
-    assert captured["generate_content"]["model"] == "gemini-2.0-flash-lite"
-    assert captured["generate_content"]["max_output_tokens"] == 8192
-    assert captured["generate_content"]["contents"][1]["file_data"] == {
-        "file_uri": "gs://uploaded",
-        "mime_type": "application/pdf",
-    }
 
 
 @pytest.mark.asyncio
@@ -216,7 +179,9 @@ async def test_smart_oracle_returns_missing_document_message(
 
     result = await smart_module.smart_oracle("What does it require?", "missing.pdf")
 
-    assert result == "Original document not found in Drive storage. Unable to perform deep analysis."
+    assert (
+        result == "Original document not found in Drive storage. Unable to perform deep analysis."
+    )
 
 
 def test_test_drive_connection_returns_boolean_status(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -255,4 +220,3 @@ def test_download_pdf_from_drive_escapes_single_quotes_in_filename(
     assert files_resource.list_calls[1]["q"] == (
         "name contains 'O\\'Reilly Tax\\'s' and mimeType = 'application/pdf' and trashed = false"
     )
-

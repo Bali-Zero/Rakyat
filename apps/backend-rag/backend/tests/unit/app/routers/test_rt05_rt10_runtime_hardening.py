@@ -85,7 +85,9 @@ class _FakePool:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad_name", ["../evil.pdf", "../../etc/passwd.pdf", "/etc/passwd.pdf", "a\\b.pdf"])
+@pytest.mark.parametrize(
+    "bad_name", ["../evil.pdf", "../../etc/passwd.pdf", "/etc/passwd.pdf", "a\\b.pdf"]
+)
 @pytest.mark.asyncio
 async def test_rt08_legal_ingest_rejects_path_traversal_400(bad_name: str) -> None:
     upload = _FakeUpload(bad_name, b"%PDF-1.4")
@@ -149,7 +151,9 @@ def _build_admin_drive_test_client(router_obj: Any, user: Any) -> TestClient:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("user", "expected"), [(None, 401), (_STAFF_USER, 403)])
 async def test_rt09_admin_drive_refresh_requires_admin(user: Any, expected: int) -> None:
-    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=None)), state=SimpleNamespace(user=user))
+    req = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(db_pool=None)), state=SimpleNamespace(user=user)
+    )
     with pytest.raises(HTTPException) as exc:
         await admin_drive_refresh_router.drive_refresh(req)  # type: ignore[arg-type]
     assert exc.value.status_code == expected
@@ -183,7 +187,9 @@ async def test_rt09_admin_drive_refresh_strips_token_preview() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("user", "expected"), [(None, 401), (_STAFF_USER, 403)])
 async def test_rt09_admin_drive_setup_routes_require_admin(user: Any, expected: int) -> None:
-    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=None)), state=SimpleNamespace(user=user))
+    req = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(db_pool=None)), state=SimpleNamespace(user=user)
+    )
     for fn in (
         admin_drive_setup_router.use_service_account,
         admin_drive_setup_router.service_account_status,
@@ -214,14 +220,18 @@ async def test_rt09_admin_drive_setup_offloads_sa_probe_to_thread(monkeypatch: A
 
     with (
         patch("os.path.exists", return_value=True),
-        patch("backend.app.routers.admin_drive_setup.asyncio.to_thread", side_effect=_fake_to_thread),
+        patch(
+            "backend.app.routers.admin_drive_setup.asyncio.to_thread", side_effect=_fake_to_thread
+        ),
     ):
         res = await admin_drive_setup_router.use_service_account(
             req,  # type: ignore[arg-type]
             current_user=dict(_ADMIN_USER),
         )
     assert res["status"] == "success"
-    assert thread_calls and thread_calls[0][0] is admin_drive_setup_router._probe_service_account_sync
+    assert (
+        thread_calls and thread_calls[0][0] is admin_drive_setup_router._probe_service_account_sync
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +240,9 @@ async def test_rt09_admin_drive_setup_offloads_sa_probe_to_thread(monkeypatch: A
 
 
 class _FakeStreamResponse:
-    def __init__(self, status_code: int, chunks: list[bytes], headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self, status_code: int, chunks: list[bytes], headers: dict[str, str] | None = None
+    ) -> None:
         self.status_code = status_code
         self._chunks = chunks
         self.headers = headers or {}
@@ -256,7 +268,12 @@ class _FakeMetaResponse:
 
 
 class _FakeStreamingHttpClient:
-    def __init__(self, meta_payload: dict[str, Any], chunks: list[bytes], headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        meta_payload: dict[str, Any],
+        chunks: list[bytes],
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self._meta_payload = meta_payload
         self._chunks = chunks
         self._headers = headers or {}
@@ -278,7 +295,13 @@ class _FakeStreamingHttpClient:
 
 @pytest.mark.parametrize(
     "dangerous_mime",
-    ["text/html", "text/html; charset=utf-8", "image/svg+xml", "application/xhtml+xml", "text/javascript"],
+    [
+        "text/html",
+        "text/html; charset=utf-8",
+        "image/svg+xml",
+        "application/xhtml+xml",
+        "text/javascript",
+    ],
 )
 @pytest.mark.asyncio
 async def test_rt10_documents_proxy_forces_attachment_and_nosniff_for_active_mimes(
@@ -286,12 +309,19 @@ async def test_rt10_documents_proxy_forces_attachment_and_nosniff_for_active_mim
     dangerous_mime: str,
 ) -> None:
     fake_client = _FakeStreamingHttpClient(
-        {"mimeType": dangerous_mime, "name": 'evil.svg\r\nX-Injected: "1', "size": "12", "parents": []},
+        {
+            "mimeType": dangerous_mime,
+            "name": 'evil.svg\r\nX-Injected: "1',
+            "size": "12",
+            "parents": [],
+        },
         [b"<svg onload=alert(1)>"],
     )
     monkeypatch.setattr(documents_proxy_router, "_assert_portal_caller_owns_file", AsyncMock())
     monkeypatch.setattr(documents_proxy_router, "_file_is_registered", AsyncMock(return_value=True))
-    monkeypatch.setattr(documents_proxy_router, "_get_drive_access_token", AsyncMock(return_value="tok"))
+    monkeypatch.setattr(
+        documents_proxy_router, "_get_drive_access_token", AsyncMock(return_value="tok")
+    )
     monkeypatch.setattr(documents_proxy_router.httpx, "AsyncClient", lambda **_k: fake_client)
 
     response = await documents_proxy_router.proxy_drive_file(
@@ -310,7 +340,9 @@ async def test_rt10_documents_proxy_forces_attachment_and_nosniff_for_active_mim
 async def test_rt10_documents_proxy_allows_safe_pdf_inline_and_caps_25mb(monkeypatch: Any) -> None:
     monkeypatch.setattr(documents_proxy_router, "_assert_portal_caller_owns_file", AsyncMock())
     monkeypatch.setattr(documents_proxy_router, "_file_is_registered", AsyncMock(return_value=True))
-    monkeypatch.setattr(documents_proxy_router, "_get_drive_access_token", AsyncMock(return_value="tok"))
+    monkeypatch.setattr(
+        documents_proxy_router, "_get_drive_access_token", AsyncMock(return_value="tok")
+    )
 
     safe_client = _FakeStreamingHttpClient(
         {"mimeType": "application/pdf", "name": "visa-permit.pdf", "size": "7", "parents": []},
@@ -336,7 +368,9 @@ async def test_rt10_documents_proxy_allows_safe_pdf_inline_and_caps_25mb(monkeyp
         },
         [b"never"],
     )
-    monkeypatch.setattr(documents_proxy_router.httpx, "AsyncClient", lambda **_k: meta_oversize_client)
+    monkeypatch.setattr(
+        documents_proxy_router.httpx, "AsyncClient", lambda **_k: meta_oversize_client
+    )
     with pytest.raises(HTTPException) as exc_meta:
         await documents_proxy_router.proxy_drive_file(
             "1MUzGL73pcbY",
@@ -352,7 +386,9 @@ async def test_rt10_documents_proxy_allows_safe_pdf_inline_and_caps_25mb(monkeyp
         {"mimeType": "application/pdf", "name": "stream-huge.pdf", "parents": []},
         [b"a" * half_plus, b"b" * half_plus],
     )
-    monkeypatch.setattr(documents_proxy_router.httpx, "AsyncClient", lambda **_k: stream_oversize_client)
+    monkeypatch.setattr(
+        documents_proxy_router.httpx, "AsyncClient", lambda **_k: stream_oversize_client
+    )
     with pytest.raises(HTTPException) as exc_stream:
         await documents_proxy_router.proxy_drive_file(
             "1MUzGL73pcbY",
@@ -373,7 +409,9 @@ async def test_runtime_sheets_service_uses_in_memory_sa_info_singleton_and_to_th
 ) -> None:
     assert "NamedTemporaryFile" not in inspect.getsource(sheets_service_module)
 
-    sa_payload = json.dumps({"type": "service_account", "project_id": "proj-1", "client_email": "sa-id"})
+    sa_payload = json.dumps(
+        {"type": "service_account", "project_id": "proj-1", "client_email": "sa-id"}
+    )
     encoded = base64.b64encode(sa_payload.encode("utf-8")).decode("utf-8")
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", encoded)
 
@@ -393,7 +431,9 @@ async def test_runtime_sheets_service_uses_in_memory_sa_info_singleton_and_to_th
             side_effect=AssertionError("must never write SA JSON to /tmp"),
         ),
         patch.object(sheets_service_module, "build", return_value=mock_google_svc),
-        patch.object(sheets_service_module.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_thread,
+        patch.object(
+            sheets_service_module.asyncio, "to_thread", wraps=asyncio.to_thread
+        ) as spy_thread,
     ):
         rows = await svc.read_range("sheet-id", "A1:A1")
 
@@ -410,8 +450,7 @@ async def test_runtime_sheets_service_uses_in_memory_sa_info_singleton_and_to_th
 async def test_runtime_intel_and_document_processing_and_accounting_offload_to_thread(
     monkeypatch: Any,
 ) -> None:
-    # 1. intel._assess_items offloads _score_item_with_gemini_sync
-    monkeypatch.setenv("GOOGLE_API_KEY", "dummy-api-key")
+    # 1. intel._assess_items marks pending items for human review without cloud Gemini calls
     state: dict[str, Any] = {
         "limit": 5,
         "item_type": "all",
@@ -422,18 +461,9 @@ async def test_runtime_intel_and_document_processing_and_accounting_offload_to_t
         "summary": "",
         "errors": [],
     }
-    with (
-        patch.object(
-            intel_chain,
-            "_score_item_with_gemini_sync",
-            return_value={"significant": True, "confidence": 0.9, "reason": "Relevant"},
-        ) as mock_score,
-        patch.object(intel_chain.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_intel_thread,
-    ):
-        out = await intel_chain._assess_items(state, None)  # type: ignore[arg-type]
-    assert out["assessments"][0]["significant"] is True
-    mock_score.assert_called_once()
-    spy_intel_thread.assert_awaited_once()
+    out = await intel_chain._assess_items(state, None)  # type: ignore[arg-type]
+    assert out["assessments"][0]["significant"] is False
+    assert out["assessments"][0]["reason"] == "no_llm_key"
 
     # 2. DocumentOCR keeps every PyMuPDF (fitz) call on the event-loop thread:
     #    fitz is not thread-safe, so it must never be handed to asyncio.to_thread.
@@ -454,7 +484,9 @@ async def test_runtime_intel_and_document_processing_and_accounting_offload_to_t
         patch.object(document_processing_module, "PDF_VISION_AVAILABLE", False),
         patch.object(document_processing_module, "PYMUPDF_AVAILABLE", True),
         patch.object(document_processing_module, "fitz", create=True) as mock_fitz,
-        patch.object(document_processing_module.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_ocr_thread,
+        patch.object(
+            document_processing_module.asyncio, "to_thread", wraps=asyncio.to_thread
+        ) as spy_ocr_thread,
     ):
         mock_fitz.open.side_effect = _open_text_doc
         ocr_res = await document_processing_module.DocumentOCR._extract_from_pdf(b"%PDF")
@@ -487,7 +519,9 @@ async def test_runtime_intel_and_document_processing_and_accounting_offload_to_t
             new_callable=AsyncMock,
             return_value="Page text",
         ),
-        patch.object(document_processing_module.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_render_thread,
+        patch.object(
+            document_processing_module.asyncio, "to_thread", wraps=asyncio.to_thread
+        ) as spy_render_thread,
     ):
         mock_fitz.open.side_effect = _open_render_doc
         vision_res = await document_processing_module.DocumentOCR._extract_pdf_via_vision(
@@ -528,7 +562,9 @@ async def test_runtime_intel_and_document_processing_and_accounting_offload_to_t
             new_callable=AsyncMock,
             return_value={"imported": 1, "weeks": ["6 MARCH 2026"], "deleted": 0},
         ),
-        patch.object(accounting_router.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_acc_thread,
+        patch.object(
+            accounting_router.asyncio, "to_thread", wraps=asyncio.to_thread
+        ) as spy_acc_thread,
     ):
         imp_res = await accounting_router.import_cashout_pdf(
             file=valid_pdf,  # type: ignore[arg-type]
@@ -541,10 +577,16 @@ async def test_runtime_intel_and_document_processing_and_accounting_offload_to_t
 
 
 @pytest.mark.asyncio
-async def test_runtime_upload_endpoints_enforce_max_bytes_and_media_offload(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_runtime_upload_endpoints_enforce_max_bytes_and_media_offload(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     # 1. team_drive.upload_file -> 413
-    with patch.object(team_drive_router, "check_write_permission", new_callable=AsyncMock, return_value=True):
-        td_upload = _FakeUpload("huge.bin", b"x", size=team_drive_router._MAX_DRIVE_UPLOAD_BYTES + 1)
+    with patch.object(
+        team_drive_router, "check_write_permission", new_callable=AsyncMock, return_value=True
+    ):
+        td_upload = _FakeUpload(
+            "huge.bin", b"x", size=team_drive_router._MAX_DRIVE_UPLOAD_BYTES + 1
+        )
         with pytest.raises(HTTPException) as exc_td:
             await team_drive_router.upload_file(
                 file=td_upload,  # type: ignore[arg-type]
@@ -557,7 +599,9 @@ async def test_runtime_upload_endpoints_enforce_max_bytes_and_media_offload(tmp_
 
     # 2. zoho_email.upload_attachment -> 413
     with patch.object(zoho_email_router, "_get_email_service", return_value=MagicMock()):
-        zoho_upload = _FakeUpload("huge.zip", b"x", size=zoho_email_router._MAX_ATTACHMENT_BYTES + 1)
+        zoho_upload = _FakeUpload(
+            "huge.zip", b"x", size=zoho_email_router._MAX_ATTACHMENT_BYTES + 1
+        )
         with pytest.raises(HTTPException) as exc_zoho:
             await zoho_email_router.upload_attachment(
                 file=zoho_upload,  # type: ignore[arg-type]
@@ -585,14 +629,18 @@ async def test_runtime_upload_endpoints_enforce_max_bytes_and_media_offload(tmp_
 
     monkeypatch.chdir(tmp_path)
     with patch.object(media_router, "_MAX_MEDIA_UPLOAD_BYTES", 10):
-        oversized_stream = _FakeUpload("photo.png", b"0123456789ABCDEF", size=None, content_type="image/png")
+        oversized_stream = _FakeUpload(
+            "photo.png", b"0123456789ABCDEF", size=None, content_type="image/png"
+        )
         with pytest.raises(HTTPException) as exc_media_413:
             await media_router.upload_file(file=oversized_stream)  # type: ignore[arg-type]
         assert exc_media_413.value.status_code == 413
         assert list((tmp_path / "static" / "uploads").glob("*")) == []
 
     good_media = _FakeUpload("photo.png", b"pngbytes", size=8, content_type="image/png")
-    with patch.object(media_router.asyncio, "to_thread", wraps=asyncio.to_thread) as spy_media_thread:
+    with patch.object(
+        media_router.asyncio, "to_thread", wraps=asyncio.to_thread
+    ) as spy_media_thread:
         media_res = await media_router.upload_file(file=good_media)  # type: ignore[arg-type]
     assert media_res["success"] is True
     spy_media_thread.assert_awaited_once()

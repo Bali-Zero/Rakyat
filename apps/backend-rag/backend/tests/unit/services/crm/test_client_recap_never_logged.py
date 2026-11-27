@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.services.crm import client_recap as r
-from backend.services.crm import client_recap_text as rt
 
 SENTINEL = "QQSENTINEL7731"
 ROUTER = "backend.app.routers.crm_enhanced"
@@ -198,20 +197,4 @@ async def test_endpoint_facts_failure_logs_type_only(caplog):
         )
     assert out["text"] is None
     assert _logged_from(caplog, ROUTER) == 1
-    assert _leaks(caplog) == []
-
-
-@pytest.mark.asyncio
-async def test_gemini_provider_failure_logs_type_only(caplog):
-    client = MagicMock()
-    client.is_available = True
-    client.generate_content = AsyncMock(side_effect=_failure())
-    with (
-        patch("backend.llm.genai_client.GENAI_AVAILABLE", True),
-        patch("backend.llm.genai_client.get_genai_client", return_value=client),
-        caplog.at_level(logging.DEBUG),
-    ):
-        text = await rt.GeminiProvider().generate("prompt")
-    assert text is None
-    assert _logged_from(caplog, rt.__name__) == 1
     assert _leaks(caplog) == []

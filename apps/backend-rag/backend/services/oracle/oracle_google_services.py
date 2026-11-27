@@ -1,9 +1,6 @@
 """
 Oracle Google Services
-Manages Google Gemini AI and Drive integration for Oracle endpoints
-
-UPDATED 2025-12-23:
-- Migrated to new google-genai SDK via GenAIClient wrapper
+Manages Google Drive integration for Oracle endpoints (Gemini AI retired in Wave 2 Stage 3).
 """
 
 import json
@@ -14,7 +11,6 @@ from typing import Any
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-from backend.llm.genai_client import GENAI_AVAILABLE, GenAIClient
 from backend.services.oracle.oracle_config import oracle_config
 
 logger = logging.getLogger(__name__)
@@ -26,37 +22,22 @@ _DRIVE_RETRY_SECONDS = 300.0
 
 
 class GoogleServices:
-    """Google Cloud services manager for Oracle endpoints"""
+    """Google Cloud Drive service manager for Oracle endpoints"""
 
     def __init__(self) -> None:
         self._initialized = False
         self._gemini_initialized = False
         self._drive_service = None
-        self._genai_client: GenAIClient | None = None
+        self._genai_client: Any = None
         self._drive_retry_at = 0.0
-        # Services are now lazily initialized to prevent gRPC fork safety issues
-        # self._initialize_services()
 
     def _ensure_services_initialized(self) -> None:
-        """Initialize Google Gemini and Drive services if not already done"""
+        """Initialize Google Drive service if not already done"""
         if self._initialized or time.monotonic() < self._drive_retry_at:
             return
         try:
-            if self._genai_client is None:
-                # Initialize GenAI client (only if API key is available)
-                api_key = oracle_config.google_api_key
-                if api_key and GENAI_AVAILABLE:
-                    from backend.llm.genai_client import GenAIClient
-
-                    self._genai_client = GenAIClient(api_key=api_key)
-                    self._gemini_initialized = self._genai_client.is_available
-                    if self._gemini_initialized:
-                        logger.info("✅ Google Gemini AI initialized successfully (new SDK)")
-                else:
-                    logger.warning(
-                        "⚠️ GOOGLE_API_KEY not set or SDK unavailable - Gemini AI services disabled",
-                    )
-                    self._gemini_initialized = False
+            self._gemini_initialized = False
+            self._genai_client = None
 
             # A Drive set-up that failed is tried again, after an interval.
             self._initialized = self._initialize_drive_service()
@@ -139,8 +120,8 @@ class GoogleServices:
         return self._drive_service
 
     @property
-    def genai_client(self) -> GenAIClient | None:
-        """Get the GenAI client instance for direct API calls"""
+    def genai_client(self) -> Any:
+        """GenAI client is retired (always None unless explicitly set in tests)."""
         self._ensure_services_initialized()
         return self._genai_client
 

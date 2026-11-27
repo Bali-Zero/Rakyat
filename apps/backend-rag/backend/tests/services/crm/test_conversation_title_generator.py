@@ -62,27 +62,13 @@ class TestGenerateConversationTitle:
 
     @pytest.mark.asyncio
     @patch("backend.services.crm.conversation_title_generator._generate_via_ollama")
-    @patch("backend.services.crm.conversation_title_generator._generate_via_gemini")
-    async def test_ollama_fails_gemini_fallback(self, mock_gemini, mock_ollama):
+    async def test_all_methods_fail_returns_none(self, mock_ollama):
         mock_ollama.return_value = None
-        mock_gemini.return_value = "Visa Requirements"
-        result = await generate_conversation_title(
-            "conv_1", "What are the requirements for a KITAS visa?"
-        )
-        assert result == "Visa Requirements"
-        mock_ollama.assert_called_once()
-        mock_gemini.assert_called_once()
-
-    @pytest.mark.asyncio
-    @patch("backend.services.crm.conversation_title_generator._generate_via_ollama")
-    @patch("backend.services.crm.conversation_title_generator._generate_via_gemini")
-    async def test_all_methods_fail_returns_none(self, mock_gemini, mock_ollama):
-        mock_ollama.return_value = None
-        mock_gemini.return_value = None
         result = await generate_conversation_title(
             "conv_1", "Tell me about Indonesian business regulations"
         )
         assert result is None
+        mock_ollama.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("backend.services.crm.conversation_title_generator._generate_via_ollama")
@@ -96,23 +82,14 @@ class TestGenerateConversationTitle:
 
     @pytest.mark.asyncio
     @patch("backend.services.crm.conversation_title_generator._generate_via_ollama")
-    @patch("backend.services.crm.conversation_title_generator._generate_via_gemini")
-    async def test_message_too_short_threshold(self, mock_gemini, mock_ollama):
-        """Messages under 10 chars are skipped; exactly 10 chars reach the providers.
-
-        Both providers are stubbed: the real Gemini path opened a TLS connection
-        with the conftest's dummy key, and the client it left behind failed a
-        later test when its ``__del__`` closed it on a closed event loop.
-        """
+    async def test_message_too_short_threshold(self, mock_ollama):
+        """Messages under 10 chars are skipped; exactly 10 chars reach the provider."""
         mock_ollama.return_value = None
-        mock_gemini.return_value = None
 
         result = await generate_conversation_title("conv_1", "short msg")
         assert result is None  # 9 chars
         mock_ollama.assert_not_called()
-        mock_gemini.assert_not_called()
 
         result = await generate_conversation_title("conv_1", "0123456789")
         assert result is None
         mock_ollama.assert_called_once()
-        mock_gemini.assert_called_once()

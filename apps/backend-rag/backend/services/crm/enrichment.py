@@ -458,7 +458,7 @@ async def generate_conversation_title(
     first_user_message: str,
     max_length: int = 50,
 ) -> str | None:
-    """Generate concise title from first user message. Tries Ollama first, falls back to Gemini."""
+    """Generate concise title from first user message via local Ollama."""
     if not first_user_message or len(first_user_message.strip()) < 10:
         logger.info(
             f"Skipping title generation for conv {conversation_id}: "
@@ -469,10 +469,6 @@ async def generate_conversation_title(
     prompt = _TITLE_PROMPT.format(max_length=max_length, message=first_user_message[:200])
 
     title = await _generate_title_via_ollama(conversation_id, prompt, max_length)
-    if title:
-        return title
-
-    title = await _generate_title_via_gemini(conversation_id, prompt, max_length)
     if title:
         return title
 
@@ -507,42 +503,6 @@ async def _generate_title_via_ollama(
     except Exception as e:
         logger.warning(
             "Ollama title generation unexpected error for conv %s: %s",
-            conversation_id,
-            type(e).__name__,
-        )
-        return None
-
-
-async def _generate_title_via_gemini(
-    conversation_id: str, prompt: str, max_length: int
-) -> str | None:
-    try:
-        from backend.llm.genai_client import get_genai_client
-
-        client = get_genai_client()
-        if not client or not client.is_available:
-            logger.warning("GenAI client not available, skipping Gemini fallback")
-            return None
-        logger.info("Generating title for conv %s via Gemini Flash...", conversation_id)
-        result = await client.generate_content(
-            contents=prompt,
-            model="gemini-2.0-flash-lite",
-            max_output_tokens=30,
-            temperature=0.3,
-        )
-        if not result or not result.get("text"):
-            return None
-        title = _clean_title(result["text"], max_length)
-        logger.info("Generated title for conv %s via Gemini", conversation_id)
-        return title
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.warning(
-            "Gemini title generation error for conv %s: %s", conversation_id, type(e).__name__
-        )
-        return None
-    except Exception as e:
-        logger.warning(
-            "Gemini title generation unexpected error for conv %s: %s",
             conversation_id,
             type(e).__name__,
         )

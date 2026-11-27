@@ -1,13 +1,8 @@
 """
-Zantara Smart Oracle - Enhanced PDF Analysis with Google Drive Integration
+Zantara Smart Oracle - Google Drive PDF Retrieval
 
-This module provides intelligent document analysis by:
-1. Downloading PDFs from Google Drive using Service Account
-2. Processing documents with Google Gemini AI
-3. Providing accurate answers based on full document content
-
-UPDATED 2025-12-23:
-- Migrated to new google-genai SDK via GenAIClient wrapper
+This module provides Google Drive PDF download using Service Account credentials.
+Gemini AI document upload/analysis was retired in Wave 2 Stage 3.
 """
 
 import io
@@ -20,29 +15,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-from backend.app.core.config import settings
-from backend.llm.genai_client import GENAI_AVAILABLE, GenAIClient, genai, get_genai_client
-
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION ---
 
-# Initialize GenAI client singleton for this module (supports API Key & Service Account)
-_genai_client: GenAIClient | None = None
-
-
-def get_oracle_client() -> GenAIClient | None:
-    """Lazy load GenAI client for Smart Oracle."""
-    global _genai_client
-    if _genai_client is None and GENAI_AVAILABLE:
-        try:
-            _genai_client = get_genai_client()
-            if _genai_client.is_available:
-                auth_method = getattr(_genai_client, "_auth_method", "unknown")
-                logger.info("✅ Smart Oracle GenAI client initialized (auth: %s)", auth_method)
-        except Exception as e:
-            logger.warning("Failed to initialize Smart Oracle GenAI client: %s", e)
-    return _genai_client
+def get_oracle_client() -> None:
+    """Gemini client for Smart Oracle is retired (Wave 2 Stage 3)."""
+    return None
 
 
 # 2. Google Drive Service (Using Service Account)
@@ -113,9 +91,7 @@ def download_pdf_from_drive(filename_from_qdrant: Any) -> Any:
             # TENTATIVO DISPERATO: Sostituisci underscore con spazi (es. "tasse_2024" -> "tasse 2024")
             alt_name = clean_name.replace("_", " ")
             escaped_alt = alt_name.replace("\\", "\\\\").replace("'", "\\'")
-            query_alt = (
-                f"name contains '{escaped_alt}' and mimeType = 'application/pdf' and trashed = false"
-            )
+            query_alt = f"name contains '{escaped_alt}' and mimeType = 'application/pdf' and trashed = false"
             results = (
                 service.files().list(q=query_alt, fields="files(id, name)", pageSize=1).execute()
             )
@@ -155,80 +131,19 @@ def download_pdf_from_drive(filename_from_qdrant: Any) -> Any:
 
 async def smart_oracle(query, best_filename_from_qdrant) -> str:
     """
-    Enhanced Oracle that downloads full PDF from Drive and analyzes with Gemini AI
-
-    Args:
-        query (str): User's question/query
-        best_filename_from_qdrant (str): Filename from Qdrant search results
-
-    Returns:
-        str: AI-generated answer based on full document analysis
+    Download PDF from Drive and clean up temporary file.
+    Gemini AI document upload/analysis is retired (Wave 2 Stage 3).
     """
-
-    # 1. Download the specific file identified by your Vector DB
+    _ = query
     pdf_path = download_pdf_from_drive(best_filename_from_qdrant)
 
     if pdf_path:
         try:
-            # --- AI PROCESSING BLOCK (New GenAI SDK Implementation) ---
             client = get_oracle_client()
-            if not client or not client.is_available:
+            if not client or not getattr(client, "is_available", False):
                 return "AI service not available. Please check configuration."
-
-            logger.info("Analyzing document: %s", best_filename_from_qdrant)
-
-            # Upload file to Gemini's temporary cache using new SDK
-            # The new SDK uses client.files.upload() via the underlying genai module
-            if genai:
-                # Use a fresh client for file upload if needed, or re-use existing if compatible
-                # Note: GenAIClient wrapper doesn't expose file upload, so we use SDK direct
-                # But careful about auth! If using Service Account, we should use that client.
-                # Re-using the initialized client's underlying object is best if possible.
-                # However, GenAIClient wrapper property _client exposes it.
-
-                # Check auth method to decide how to upload
-                # Ideally, add upload_file to GenAIClient wrapper.
-                # For now using API Key fallback as original code did, but safer to use _genai_client._client.files.upload if possible?
-                # Original code used: genai.Client(api_key=settings.google_api_key) which creates NEW client (safe)
-                # We'll keep it for now but it might fail if no API Key provided and relying on Vertex SA.
-                # BETTER: Use valid client
-
-                upload_client = None
-                if client._auth_method == "service_account_vertexai":
-                    # Use the existing underlying client which has SA auth
-                    upload_client = client._client
-                else:
-                    # Fallback to creating new one with API key
-                    upload_client = genai.Client(api_key=settings.google_api_key)
-
-                gemini_file = upload_client.files.upload(file=pdf_path)
-
-                # Generate content using uploaded file
-                result = await client.generate_content(
-                    contents=[
-                        {
-                            "text": "You are an expert consultant. Answer the user query based ONLY on the provided document.",
-                        },
-                        {
-                            "file_data": {
-                                "file_uri": gemini_file.uri,
-                                "mime_type": gemini_file.mime_type,
-                            },
-                        },
-                        {"text": f"User Query: {query}"},
-                    ],
-                    model="gemini-2.0-flash-lite",
-                    max_output_tokens=8192,
-                )
-
-                return result.get("text", "No response generated.")
-            return "GenAI SDK not available."
-
-        except Exception as ai_error:
-            logger.error("AI Processing Error: %s", ai_error)
-            return "Error processing the document with AI."
+            return "AI service not available. Please check configuration."
         finally:
-            # A file that cannot be removed must not replace the answer or the error answer.
             try:
                 os.remove(pdf_path)
             except OSError as cleanup_error:
@@ -237,7 +152,6 @@ async def smart_oracle(query, best_filename_from_qdrant) -> str:
                     type(cleanup_error).__name__,
                 )
     else:
-        # Fallback if the file is missing from Drive
         return "Original document not found in Drive storage. Unable to perform deep analysis."
 
 

@@ -431,35 +431,13 @@ class TestConversationTitleGenerator:
             )
         assert result == "KITAS Visa Inquiry"
 
-    async def test_falls_back_to_gemini(self):
-        from backend.services.crm.enrichment import generate_conversation_title
-
-        with (
-            patch(
-                "backend.services.crm.enrichment._generate_title_via_ollama", new_callable=AsyncMock
-            ) as m_o,
-            patch(
-                "backend.services.crm.enrichment._generate_title_via_gemini", new_callable=AsyncMock
-            ) as m_g,
-        ):
-            m_o.return_value = None
-            m_g.return_value = "Company Setup"
-            result = await generate_conversation_title("c1", "How do I set up a PT PMA company")
-        assert result == "Company Setup"
-
     async def test_all_methods_fail(self):
         from backend.services.crm.enrichment import generate_conversation_title
 
-        with (
-            patch(
-                "backend.services.crm.enrichment._generate_title_via_ollama", new_callable=AsyncMock
-            ) as m_o,
-            patch(
-                "backend.services.crm.enrichment._generate_title_via_gemini", new_callable=AsyncMock
-            ) as m_g,
-        ):
+        with patch(
+            "backend.services.crm.enrichment._generate_title_via_ollama", new_callable=AsyncMock
+        ) as m_o:
             m_o.return_value = None
-            m_g.return_value = None
             assert (
                 await generate_conversation_title("c1", "A long enough message for generation")
                 is None

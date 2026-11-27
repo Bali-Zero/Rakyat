@@ -275,43 +275,12 @@ def test_a_permanent_drive_failure_is_tried_once_per_interval_not_per_request(
     assert len(calls) == 2
 
 
-def test_a_failed_drive_set_up_is_retried_without_recreating_the_gemini_client(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import backend.llm.genai_client as genai_client_module
-
-    created: list[str] = []
-
-    class _GenAIClient:
-        is_available = True
-
-        def __init__(self, *, api_key: str) -> None:
-            created.append(api_key)
-
-    monkeypatch.setattr(genai_client_module, "GenAIClient", _GenAIClient)
-    monkeypatch.setattr(google_module, "GENAI_AVAILABLE", True)
-    clock = _fake_clock(monkeypatch)
-    service = GoogleServices()
-    drive_service = object()
-    _drive_config(monkeypatch, api_key=_SYNTHETIC_KEY)
-    calls = _flaky_build(monkeypatch, drive_service)
-
-    assert service.drive_service is None
-    assert service.gemini_available is True
-    clock.now += google_module._DRIVE_RETRY_SECONDS
-    assert service.drive_service is drive_service
-    assert len(calls) == 2
-    assert created == [_SYNTHETIC_KEY]
-
-
 def test_a_drive_without_credentials_is_settled_and_not_set_up_again(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     reads = 0
 
     class _Config:
-        google_api_key = ""
-
         @property
         def google_credentials_json(self) -> str:
             nonlocal reads
