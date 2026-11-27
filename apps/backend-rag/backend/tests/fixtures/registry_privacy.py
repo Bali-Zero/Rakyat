@@ -21,6 +21,9 @@ text only, the walker does not look for number literals in prose; renderings of 
 integer text, repr and positional expansion (digit grouping, another base, fewer significant digits,
 a locale's separators) are outside the rule; the six interpreter-measured attributes of a log record
 are left out by name and the audit columns of an unscanned TYPE by type.
+When a caller supplies its clock window, canonical UUID4 values and ISO datetimes inside that call
+are masked in log text because their digits are drawn or measured during the call, not derived from
+the body, for the same reason as the six interpreter-measured attributes.
 R8 suppression guard: the vocabulary filter must not silently remove a request string from a set.
 R9 teeth: pure tests (in the caller's module) that these functions can fail.
 """
@@ -33,7 +36,7 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -41,6 +44,13 @@ from backend.services.crm.related_identifiers import ID_TYPES, canonical_form
 
 MIN_LENGTH = 4
 RUN = re.compile(r"[A-Za-z0-9_]{4,}")
+UUID4 = re.compile(
+    r"(?<![0-9A-Za-z])"
+    r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-"
+    r"[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}"
+    r"(?![0-9A-Za-z])"
+)
+ISO_DATETIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 JSON_LITERALS = frozenset({"true", "false", "null"})
 
 # Audit columns whose digits are measured by the server, not derived from a body: scanned never,
@@ -305,8 +315,38 @@ def response_surface(text: str) -> str:
     return " ".join(out).casefold()
 
 
+def _utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _is_datetime_inside_clock_window(value: str, low: datetime, high: datetime) -> bool:
+    if ISO_DATETIME.fullmatch(value) is None:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (
+        _utc_naive(low) - timedelta(seconds=5)
+        <= _utc_naive(parsed)
+        <= _utc_naive(high) + timedelta(seconds=5)
+    )
+
+
+def _mask_volatile_log_text(text: str, clock_window: tuple[datetime, datetime]) -> str:
+    low, high = clock_window
+    text = UUID4.sub("<volatile-uuid>", text)
+    if _is_datetime_inside_clock_window(text, low, high):
+        return "<volatile-datetime>"
+    return text
+
+
 def log_surface(
-    records: Iterable[logging.LogRecord], excluded: Iterable[logging.LogRecord] = ()
+    records: Iterable[logging.LogRecord],
+    excluded: Iterable[logging.LogRecord] = (),
+    clock_window: tuple[datetime, datetime] | None = None,
 ) -> str:
     """Every record of every logger but the HTTP-client namespaces, except the record OBJECTS in
     ``excluded`` (compared by identity, never by what a message contains)."""
@@ -315,7 +355,12 @@ def log_surface(
         text
         for r in records
         if not is_http_client_logger(r.name) and not any(r is e for e in skip)
-        for text in record_texts(r)
+        for record_text in record_texts(r)
+        for text in (
+            (_mask_volatile_log_text(record_text, clock_window),)
+            if clock_window is not None
+            else (record_text,)
+        )
     ).casefold()
 
 
