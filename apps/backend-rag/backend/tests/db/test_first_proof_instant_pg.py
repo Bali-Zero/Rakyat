@@ -309,3 +309,56 @@ async def test_existing_receipt_is_read_not_reinserted_while_hr_resolves_it(pool
             )
             == 1
         )
+
+
+@pytest.mark.asyncio
+async def test_an_undated_acceptance_row_is_ignored(pool):  # noqa: F811
+    async with pool.acquire() as conn:
+        await setup(conn, PMA, PMA)
+        await accept(conn, PMA, "document_1", NOV_30)
+        await complete_pma(conn)
+        await conn.execute(
+            "INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,performed_at)"
+            " VALUES('practice',$1,'updated','seed','Final document uploaded: document_2',NULL)",
+            PMA,
+        )
+    await service.complete(pool, PMA, STAFF, BackgroundTasks())
+    async with pool.acquire() as conn:
+        assert (await receipt(conn, PMA))["earned_at"] == NOV_30
+
+
+@pytest.mark.asyncio
+async def test_only_undated_acceptances_earn_now(pool):  # noqa: F811
+    async with pool.acquire() as conn:
+        await setup(conn, PMA, PMA)
+        for key in ("document_1", "document_2", "document_3", "document_4"):
+            await accept(conn, PMA, key, DEC_1, history=False)
+        await conn.execute(
+            "INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,performed_at)"
+            " VALUES('practice',$1,'updated','seed','Final document uploaded: document_1',NULL)",
+            PMA,
+        )
+    before = datetime.now(UTC)
+    await service.complete(pool, PMA, STAFF, BackgroundTasks())
+    async with pool.acquire() as conn:
+        assert (await receipt(conn, PMA))["earned_at"] >= before
+
+
+@pytest.mark.asyncio
+async def test_an_undated_assignment_row_leaves_the_receipt_to_hr(pool):  # noqa: F811
+    async with pool.acquire() as conn:
+        await setup(conn, PMA, PMA)
+        await accept(conn, PMA, "document_1", NOV_30)
+        await complete_pma(conn)
+        await assigned(conn, PMA, OTHER, NOV_29)
+        await conn.execute(
+            "INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,performed_at,changes)"
+            " VALUES('practice',$1,'updated','staff','Updated: assigned_to',NULL,$2::text::jsonb)",
+            PMA,
+            json.dumps({"assigned_to": STAFF["email"]}),
+        )
+    result = await service.complete(pool, PMA, STAFF, BackgroundTasks())  # no TypeError
+    assert result["status"] == "completed"
+    async with pool.acquire() as conn:
+        row = await receipt(conn, PMA)
+    assert row["earned_at"] == NOV_30 and row["employee_id"] is None

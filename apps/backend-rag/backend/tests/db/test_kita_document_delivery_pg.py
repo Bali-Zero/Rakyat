@@ -38,7 +38,7 @@ CREATE TABLE companies(id int primary key);
 CREATE TABLE company_documents(id serial primary key,company_id int,google_drive_file_id text,client_visible boolean);
 CREATE TABLE client_company_links(company_id int,client_id int);
 CREATE TABLE activity_log(entity_type text,entity_id int,action text,performed_by text,description text,
-    performed_at timestamptz NOT NULL DEFAULT now(),changes jsonb);
+    performed_at timestamptz DEFAULT now(),changes jsonb);
 CREATE TABLE timeline_events(client_id int,practice_id int,event_type text,title text,description text,
     event_date timestamptz,client_visible boolean,color text,created_by text);
 CREATE TABLE team_members(id varchar(36) primary key,email text,role text,active boolean);

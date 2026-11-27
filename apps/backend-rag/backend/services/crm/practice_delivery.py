@@ -173,7 +173,8 @@ async def first_proof_instant(
         """SELECT performed_at, substring(description from $2) AS accepted,
                   substring(description from $3) AS waived
            FROM activity_log WHERE entity_type='practice' AND entity_id=$1
-             AND (description ~ $2 OR description ~ $3) ORDER BY performed_at""",
+             AND performed_at IS NOT NULL AND (description ~ $2 OR description ~ $3)
+           ORDER BY performed_at""",
         p["id"],
         _ACCEPTED,
         _WAIVED,
@@ -205,6 +206,8 @@ async def first_proof_instant(
                   OR description ~ '^Updated: .*assigned_to') ORDER BY performed_at""",
         p["id"],
     )
+    if any(m["performed_at"] is None for m in moves):
+        return when, None  # an undated move: who held it at that instant is unknowable
     if not any(m["performed_at"] > when for m in moves):
         return when, p["assigned_to"]
     before = [m for m in moves if m["performed_at"] <= when]
