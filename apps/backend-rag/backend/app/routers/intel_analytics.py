@@ -10,11 +10,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.core.config import settings
-from backend.app.core.constants import HttpTimeoutConstants, IntelConstants
+from backend.app.core.constants import IntelConstants
 from backend.app.dependencies import get_current_user
 from backend.app.routers.intel import (
     INTEL_COLLECTIONS,
@@ -26,11 +24,22 @@ from backend.app.routers.intel import (
 )
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.logging_utils import get_logger
-from backend.core.qdrant_db import QdrantClient
+from backend.core.qdrant_db import QdrantClient, QdrantScrollBoundExceeded
 
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["intel-analytics"])
+
+_CRITICAL_MAX_POINTS = 5000
+_DEFAULT_SEARCH_TIERS = frozenset({"T1", "T2", "T3"})
+_SEARCH_MAX_RESULTS = 50
+_SEARCH_FILTERED_OVERFETCH = 5
+_SEARCH_FETCH_CAP = 200
+
+# The collections whose points are classified by impact level. Empty: nothing writes
+# `metadata.impact_level` today, so no collection can answer "critical". A change that
+# adds such a producer adds its collection here (and the keyword index it needs).
+_CLASSIFIED_COLLECTIONS: frozenset[str] = frozenset()
 
 
 def _require_store_admin(user: dict[str, Any]) -> None:
@@ -151,97 +160,151 @@ async def get_system_metrics() -> Any:
         raise HTTPException(status_code=500, detail=f"Metrics calculation failed: {e!s}") from e
 
 
+def _target_collections(category: str | None) -> list[str]:
+    """The distinct collections a request reads.
+
+    A category selects a collection through the map and nothing else: the stored
+    `metadata.category` is never filtered on. Several categories map to one
+    collection, which is then read once.
+    """
+    if category:
+        names = [INTEL_COLLECTIONS.get(category)]
+    else:
+        names = list(INTEL_COLLECTIONS.values())
+    return [name for name in dict.fromkeys(names) if name]
+
+
+def _first_present(metadata: dict[str, Any], *keys: str) -> Any:
+    """The value of the first key that is present, else None."""
+    for key in keys:
+        value = metadata.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _publication(metadata: dict[str, Any]) -> tuple[Any, datetime | None]:
+    """The raw publication value read and its date.
+
+    `published_at`, else the legacy `published_date`; no other key is a publication
+    date. A naive value is read as UTC; a value that does not parse has no date.
+    """
+    raw = _first_present(metadata, "published_at", "published_date")
+    return raw, _parse_stored_date(raw)
+
+
+def _search_cutoff(date_range: str) -> datetime | None:
+    if date_range == "all":
+        return None
+    days_map = {
+        "today": 1,
+        "last_7_days": 7,
+        "last_30_days": 30,
+        "last_90_days": 90,
+    }
+    days = days_map.get(date_range, IntelConstants.DUPLICATE_CHECK_DAYS)
+    return datetime.now(tz=timezone.utc) - timedelta(days=days)
+
+
 @router.post("/api/intel/search")
 async def search_intel(request: IntelSearchRequest) -> dict[str, Any]:
-    """Search intel news with semantic search"""
+    """Search intel news with semantic search.
+
+    The store is asked with no filter, because it refuses conditions on keys it has
+    not indexed. A narrowed tier, an impact level and the date range are applied
+    here over the fetched points; a point without the field does not match. A
+    filtered search fetches a bounded window per collection and answers
+    `window_full: true` when a window came back full and the filter dropped points
+    from it. A collection that fails makes the answer `partial: true`; when every
+    collection fails the answer is 500.
+    """
     try:
-        # Generate query embedding
-        query_embedding = get_embedder().generate_single_embedding(request.query)
+        wanted = min(max(request.limit, 1), _SEARCH_MAX_RESULTS)
+        cutoff = _search_cutoff(request.date_range)
+        tiers = None if set(request.tier) == _DEFAULT_SEARCH_TIERS else set(request.tier)
+        impact = request.impact_level or None
+        filtered = cutoff is not None or tiers is not None or impact is not None
+        fetch = min(wanted * _SEARCH_FILTERED_OVERFETCH, _SEARCH_FETCH_CAP) if filtered else wanted
 
-        # Determine collections to search
-        if request.category:
-            collection_names = [INTEL_COLLECTIONS.get(request.category)]
-        else:
-            collection_names = list(INTEL_COLLECTIONS.values())
+        query_embedding = await get_embedder().generate_single_embedding(request.query)
 
-        all_results = []
+        all_results: list[dict[str, Any]] = []
+        searched = 0
+        failed = 0
+        window_full = False
 
-        for collection_name in collection_names:
-            if not collection_name:
-                continue
-
+        for collection_name in _target_collections(request.category):
+            searched += 1
             try:
                 client = QdrantClient(collection_name=collection_name)
-
-                # Build metadata filter
-                where_filter = {"tier": {"$in": request.tier}}
-
-                # Add date range filter
-                if request.date_range != "all":
-                    days_map = {
-                        "today": 1,
-                        "last_7_days": 7,
-                        "last_30_days": 30,
-                        "last_90_days": 90,
-                    }
-                    days = days_map.get(request.date_range, IntelConstants.DUPLICATE_CHECK_DAYS)
-                    cutoff_date = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
-                    where_filter["published_date"] = {"$gte": cutoff_date}
-
-                # Add impact level filter
-                if request.impact_level:
-                    where_filter["impact_level"] = request.impact_level
-
-                # Search (async)
                 results = await client.search(
                     query_embedding=query_embedding,
-                    filter=where_filter,
-                    limit=request.limit,
+                    limit=fetch,
+                    raise_on_error=True,
                 )
-
-                # Parse results
-                for doc, metadata, distance in zip(
-                    results.get("documents", []),
-                    results.get("metadatas", []),
-                    results.get("distances", []),
-                    strict=True,
-                ):
-                    similarity_score = 1 / (1 + distance)
-
-                    all_results.append(
-                        {
-                            "id": metadata.get("id"),
-                            "title": metadata.get("title"),
-                            "summary_english": doc[: IntelConstants.SUMMARY_PREVIEW_LENGTH],
-                            "summary_italian": metadata.get("summary_italian", ""),
-                            "source": metadata.get("source"),
-                            "tier": metadata.get("tier"),
-                            "published_date": metadata.get("published_date"),
-                            "category": collection_name.replace("bali_intel_", ""),
-                            "impact_level": metadata.get("impact_level"),
-                            "url": metadata.get("url"),
-                            "key_changes": metadata.get("key_changes"),
-                            "action_required": metadata.get("action_required") == "True",
-                            "deadline_date": metadata.get("deadline_date"),
-                            "similarity_score": similarity_score,
-                        },
-                    )
-
             except Exception as e:
-                logger.warning("Error searching collection %s: %s", collection_name, e)
+                failed += 1
+                logger.warning("Intel search failed for %s: %s", collection_name, e)
                 continue
 
-        # Sort by similarity score
+            ids = results.get("ids", [])
+            dropped = 0
+            collection_results: list[dict[str, Any]] = []
+            for point_id, doc, metadata, distance in zip(
+                ids,
+                results.get("documents", []),
+                results.get("metadatas", []),
+                results.get("distances", []),
+                strict=True,
+            ):
+                published, published_at = _publication(metadata)
+                if (
+                    (cutoff is not None and (published_at is None or published_at < cutoff))
+                    or (tiers is not None and metadata.get("tier") not in tiers)
+                    or (impact is not None and metadata.get("impact_level") != impact)
+                ):
+                    dropped += 1
+                    continue
+                collection_results.append(
+                    {
+                        "id": point_id,
+                        "title": metadata.get("title"),
+                        "summary_english": doc[: IntelConstants.SUMMARY_PREVIEW_LENGTH],
+                        "summary_italian": metadata.get("summary_italian", ""),
+                        "source": _first_present(metadata, "source_name", "source"),
+                        "tier": metadata.get("tier"),
+                        "published_date": published,
+                        "category": collection_name.replace("bali_intel_", ""),
+                        "impact_level": metadata.get("impact_level"),
+                        "url": _first_present(metadata, "source_url", "url"),
+                        "key_changes": metadata.get("key_changes"),
+                        "action_required": metadata.get("action_required") == "True",
+                        "deadline_date": metadata.get("deadline_date"),
+                        "similarity_score": 1 / (1 + distance),
+                    },
+                )
+            if dropped and len(ids) >= fetch:
+                window_full = True
+            all_results.extend(collection_results[:wanted])
+
+        if searched and failed == searched:
+            raise HTTPException(status_code=500, detail="Intel search unavailable")
+
         all_results.sort(key=lambda x: x["similarity_score"], reverse=True)
+        all_results = all_results[:wanted]
 
-        # Limit total results
-        all_results = all_results[: request.limit]
+        response: dict[str, Any] = {"results": all_results, "total": len(all_results)}
+        if failed:
+            response["partial"] = True
+        if window_full:
+            response["window_full"] = True
+        return response
 
-        return {"results": all_results, "total": len(all_results)}
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Intel search error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Intel search unavailable") from e
 
 
 @router.post("/api/intel/store")
@@ -272,113 +335,123 @@ async def store_intel(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def _stored_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Intel points keep their fields under a `metadata` object (flat payloads tolerated)."""
+    nested = payload.get("metadata")
+    if isinstance(nested, dict):
+        return nested
+    return {key: value for key, value in payload.items() if key not in {"text", "metadata"}}
+
+
+def _parse_stored_date(value: Any) -> datetime | None:
+    """Dates are stored as ISO-8601 text; naive values are read as UTC."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 @router.get("/api/intel/critical")
 async def get_critical_items(
     category: str | None = None,
     days: int = IntelConstants.DUPLICATE_CHECK_DAYS,
 ) -> dict[str, Any]:
-    """Get critical impact items"""
+    """Get critical impact items.
+
+    Only a collection named in `_CLASSIFIED_COLLECTIONS` can answer: its points are
+    matched on `metadata.impact_level` by a bounded strict scroll, and the date range
+    is applied here. Any other target collection is not read at all; it is listed
+    under `unclassified` with `classified: false`, so an empty list is not mistaken
+    for "no critical item". An overflow of the bound, or a classified collection
+    that fails, makes the answer `partial: true`; when every classified collection
+    fails the answer is 500.
+    """
     try:
-        if category:
-            collection_names = [INTEL_COLLECTIONS.get(category)]
-        else:
-            collection_names = list(INTEL_COLLECTIONS.values())
-
         critical_items = []
-        cutoff_date = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+        unclassified: list[str] = []
+        classified = 0
+        failed = 0
+        partial = False
 
-        for collection_name in collection_names:
-            if not collection_name:
+        for collection_name in _target_collections(category):
+            if collection_name not in _CLASSIFIED_COLLECTIONS:
+                unclassified.append(collection_name)
                 continue
 
+            classified += 1
             try:
                 client = QdrantClient(collection_name=collection_name)
-
-                # Use Qdrant scroll with filter for better performance
-                qdrant_filter = {
-                    "must": [
-                        {"key": "impact_level", "match": {"value": "critical"}},
-                        {"key": "published_date", "range": {"gte": cutoff_date}},
-                    ],
-                }
-
-                try:
-                    qdrant_url = settings.qdrant_url
-                    qdrant_api_key = settings.qdrant_api_key
-
-                    scroll_url = f"{qdrant_url}/collections/{collection_name}/points/scroll"
-                    headers = {}
-                    if qdrant_api_key:
-                        headers["api-key"] = qdrant_api_key
-
-                    scroll_payload = {
-                        "limit": 100,
-                        "with_payload": True,
-                        "with_vectors": False,
-                        "filter": qdrant_filter,
-                    }
-
-                    async with httpx.AsyncClient(
-                        timeout=HttpTimeoutConstants.INTEL_SCRAPER_TIMEOUT,
-                    ) as http_client:
-                        response = await http_client.post(
-                            scroll_url,
-                            json=scroll_payload,
-                            headers=headers,
-                        )
-                        response.raise_for_status()
-                        scroll_data = response.json().get("result", {})
-                        points = scroll_data.get("points", [])
-
-                        filtered_metadatas = [
-                            point.get("payload", {}).get("metadata", {}) for point in points
-                        ]
-                except Exception as scroll_error:
-                    logger.warning(
-                        "Qdrant scroll with filter failed, falling back to peek: %s",
-                        scroll_error,
-                    )
-                    results = await client.peek(limit=100)
-                    filtered_metadatas = []
-                    for metadata in results.get("metadatas", []):
-                        if (
-                            metadata.get("impact_level") == "critical"
-                            and metadata.get("published_date", "") >= cutoff_date
-                        ):
-                            filtered_metadatas.append(metadata)
-
-                for metadata in filtered_metadatas[:50]:
-                    critical_items.append(
-                        {
-                            "id": metadata.get("id"),
-                            "title": metadata.get("title"),
-                            "source": metadata.get("source"),
-                            "tier": metadata.get("tier"),
-                            "published_date": metadata.get("published_date"),
-                            "category": collection_name.replace("bali_intel_", ""),
-                            "url": metadata.get("url"),
-                            "action_required": metadata.get("action_required") == "True",
-                            "deadline_date": metadata.get("deadline_date"),
-                            "severity": "high",  # All critical items are high severity for chain compatibility
-                        },
-                    )
-
-            except Exception:
+                points = await client.scroll_strict(
+                    metadata_filter={"impact_level": "critical"},
+                    max_points=_CRITICAL_MAX_POINTS,
+                )
+            except QdrantScrollBoundExceeded as bound_error:
+                logger.warning(
+                    "Critical items read incomplete for %s: %s", collection_name, bound_error
+                )
+                partial = True
+                continue
+            except Exception as read_error:
+                logger.warning("Critical items read failed for %s: %s", collection_name, read_error)
+                failed += 1
+                partial = True
                 continue
 
+            collection_items = []
+            for point in points:
+                metadata = _stored_metadata(point.get("payload", {}))
+                if metadata.get("impact_level") != "critical":
+                    continue
+                published, published_at = _publication(metadata)
+                if published_at is None or published_at < cutoff:
+                    continue
+                collection_items.append(
+                    {
+                        "id": point.get("id"),
+                        "title": metadata.get("title"),
+                        "source": _first_present(metadata, "source_name", "source"),
+                        "tier": metadata.get("tier"),
+                        "published_date": published,
+                        "category": collection_name.replace("bali_intel_", ""),
+                        "url": _first_present(metadata, "source_url", "url"),
+                        "action_required": metadata.get("action_required") == "True",
+                        "deadline_date": metadata.get("deadline_date"),
+                        "severity": "high",  # All critical items are high severity for chain compatibility
+                    },
+                )
+            collection_items.sort(
+                key=lambda x: _parse_stored_date(x["published_date"]), reverse=True
+            )
+            critical_items.extend(collection_items[:50])
+
+        if classified and failed == classified:
+            raise HTTPException(status_code=500, detail="Critical items unavailable")
+
         # Sort by date (newest first)
-        critical_items.sort(key=lambda x: x.get("published_date", ""), reverse=True)
+        critical_items.sort(key=lambda x: _parse_stored_date(x["published_date"]), reverse=True)
 
         # Return with both 'items' and 'alerts' keys for backward compatibility
-        return {
+        response: dict[str, Any] = {
             "items": critical_items,
             "alerts": critical_items,  # Alias for chain_daily_ops_autopilot compatibility
             "count": len(critical_items),
         }
+        if unclassified:
+            response["classified"] = False
+            response["unclassified"] = unclassified
+        if partial:
+            response["partial"] = True
+        return response
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Get critical items error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Critical items unavailable") from e
 
 
 @router.get("/api/intel/trends")
@@ -386,41 +459,48 @@ async def get_trends(
     category: str | None = None,
     _days: int = IntelConstants.TRENDS_ANALYSIS_DAYS,
 ) -> dict[str, Any]:
-    """Get trending topics and keywords"""
+    """Get the item count of each collection read (each collection once).
+
+    A collection whose statistics fail is left out; when every read fails the
+    answer is 500. `_days` is accepted and not used, and `top_topics` is empty.
+    """
     try:
-        if category:
-            collection_names = [INTEL_COLLECTIONS.get(category)]
-        else:
-            collection_names = list(INTEL_COLLECTIONS.values())
-
         all_keywords = []
+        read = 0
+        failed = 0
 
-        for collection_name in collection_names:
-            if not collection_name:
-                continue
-
+        for collection_name in _target_collections(category):
+            read += 1
             try:
                 client = QdrantClient(collection_name=collection_name)
-                stats = client.get_collection_stats()
-
-                all_keywords.append(
-                    {
-                        "collection": collection_name.replace("bali_intel_", ""),
-                        "total_items": stats.get("total_documents", 0),
-                    },
-                )
-
-            except Exception:
+                stats = await client.get_stats()
+                if "error" in stats:
+                    raise RuntimeError(stats["error"])
+            except Exception as e:
+                failed += 1
+                logger.warning("Trends read failed for %s: %s", collection_name, e)
                 continue
+
+            all_keywords.append(
+                {
+                    "collection": collection_name.replace("bali_intel_", ""),
+                    "total_items": stats.get("total_documents", 0),
+                },
+            )
+
+        if read and failed == read:
+            raise HTTPException(status_code=500, detail="Intel trends unavailable")
 
         return {
             "trends": all_keywords,
             "top_topics": [],  # Would require NLP analysis
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Get trends error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Intel trends unavailable") from e
 
 
 @router.get("/api/intel/analytics")
@@ -448,7 +528,9 @@ async def get_collection_stats(collection: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=f"Collection not found: {collection}")
 
         client = QdrantClient(collection_name=collection_name)
-        stats = client.get_collection_stats()
+        stats = await client.get_stats()
+        if "error" in stats:
+            raise RuntimeError(stats["error"])
 
         return {
             "collection_name": collection_name,
@@ -456,6 +538,8 @@ async def get_collection_stats(collection: str) -> dict[str, Any]:
             "last_updated": datetime.now(tz=timezone.utc).isoformat(),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Get stats error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to read collection statistics") from e

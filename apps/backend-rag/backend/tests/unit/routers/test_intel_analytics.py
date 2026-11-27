@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from fastapi import HTTPException
 
+from backend.core.embeddings import EmbeddingsGenerator
+from backend.core.qdrant_db import QdrantClient
+
 # ---------------------------------------------------------------------------
 # Module-level patches: heavy deps that must never import for real
 # ---------------------------------------------------------------------------
+
+_RECENT = (datetime.now(tz=timezone.utc) - timedelta(days=1)).isoformat()
 
 _MOCK_INTEL_COLLECTIONS = {
     "visa": "bali_intel_visa",
@@ -33,7 +38,7 @@ def _patch_imports(monkeypatch):
     mock_staging.get_staging_dir.side_effect = lambda t: visa_dir if t == "visa" else news_dir
 
     mock_analytics = MagicMock()
-    mock_embedder = MagicMock()
+    mock_embedder = create_autospec(EmbeddingsGenerator, instance=True)
 
     # Patch the intel module references used by intel_analytics
     monkeypatch.setattr(
@@ -161,8 +166,9 @@ class TestSearchIntel:
 
         mock_client = AsyncMock()
         mock_client.search.return_value = {
+            "ids": ["1"],
             "documents": ["doc1"],
-            "metadatas": [{"id": "1", "title": "Test", "tier": "T1"}],
+            "metadatas": [{"id": "1", "title": "Test", "tier": "T1", "published_at": _RECENT}],
             "distances": [0.5],
         }
 
@@ -189,6 +195,7 @@ class TestSearchIntel:
 
         mock_client = AsyncMock()
         mock_client.search.return_value = {
+            "ids": [],
             "documents": [],
             "metadatas": [],
             "distances": [],
@@ -224,8 +231,11 @@ class TestSearchIntel:
                 m.search.side_effect = Exception("timeout")
             else:
                 m.search.return_value = {
+                    "ids": ["2"],
                     "documents": ["doc2"],
-                    "metadatas": [{"id": "2", "title": "News", "tier": "T2"}],
+                    "metadatas": [
+                        {"id": "2", "title": "News", "tier": "T2", "published_at": _RECENT}
+                    ],
                     "distances": [0.3],
                 }
             return m
@@ -253,10 +263,11 @@ class TestSearchIntel:
 
         mock_client = AsyncMock()
         mock_client.search.return_value = {
+            "ids": ["1", "2"],
             "documents": ["doc1", "doc2"],
             "metadatas": [
-                {"id": "1", "title": "A", "tier": "T1"},
-                {"id": "2", "title": "B", "tier": "T1"},
+                {"id": "1", "title": "A", "published_at": _RECENT},
+                {"id": "2", "title": "B", "tier": "T1", "published_at": _RECENT},
             ],
             "distances": [1.0, 0.1],
         }
@@ -331,6 +342,57 @@ class TestStoreIntel:
         # and re-raised as HTTPException(500), so we check for 500.
         assert exc_info.value.status_code == 500
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user", [{"role": "staff", "email": "member@example.test"}, {}])
+    async def test_store_refuses_a_caller_who_is_not_an_admin(self, _patch_imports, user):
+        client = create_autospec(QdrantClient, instance=True)
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import IntelStoreRequest, store_intel
+
+            request = IntelStoreRequest(
+                collection="visa",
+                id="test-1",
+                document="test doc",
+                embedding=[0.1] * 4,
+                metadata={},
+                full_data={},
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                await store_intel(request, current_user=user)
+
+        assert exc_info.value.status_code == 403
+        client.upsert_documents.assert_not_called()
+
+    def test_store_route_answers_403_to_a_non_admin_and_200_to_an_admin(self, _patch_imports):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from backend.app.dependencies import get_current_user
+        from backend.app.routers.intel_analytics import router
+
+        app = FastAPI()
+        app.include_router(router)
+        body = {
+            "collection": "visa",
+            "id": "test-1",
+            "document": "test doc",
+            "embedding": [0.1] * 4,
+            "metadata": {},
+            "full_data": {},
+        }
+        client = create_autospec(QdrantClient, instance=True)
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            app.dependency_overrides[get_current_user] = lambda: {"role": "staff"}
+            denied = TestClient(app).post("/api/intel/store", json=body)
+            app.dependency_overrides[get_current_user] = lambda: {"role": "admin"}
+            allowed = TestClient(app).post("/api/intel/store", json=body)
+
+        assert denied.status_code == 403
+        assert allowed.status_code == 200
+        client.upsert_documents.assert_awaited_once()
+
 
 # ---------------------------------------------------------------------------
 # /api/intel/critical
@@ -338,57 +400,25 @@ class TestStoreIntel:
 
 
 class TestGetCriticalItems:
-    """Tests for GET /api/intel/critical."""
+    """Tests for GET /api/intel/critical (store traffic: test_intel_routes_read_the_store_as_it_is.py)."""
 
     @pytest.mark.asyncio
     async def test_critical_items_returns_structure(self, _patch_imports):
-        with (
-            patch("backend.app.routers.intel_analytics.QdrantClient"),
-            patch("backend.app.routers.intel_analytics.httpx.AsyncClient") as mock_http,
-        ):
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"result": {"points": []}}
-            mock_ctx = MagicMock()
-            mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
-            mock_ctx.__aexit__ = AsyncMock(return_value=False)
-            mock_ctx.post = AsyncMock(return_value=mock_resp)
-            mock_http.return_value = mock_ctx
+        client = create_autospec(QdrantClient, instance=True)
 
-            with patch("backend.app.routers.intel_analytics.settings") as mock_settings:
-                mock_settings.qdrant_url = "http://localhost:6333"
-                mock_settings.qdrant_api_key = ""
-                from backend.app.routers.intel_analytics import get_critical_items
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_critical_items
 
-                result = await get_critical_items()
+            result = await get_critical_items()
 
-        assert "items" in result
-        assert "alerts" in result
-        assert "count" in result
-
-    @pytest.mark.asyncio
-    async def test_critical_items_with_category(self, _patch_imports):
-        with patch("backend.app.routers.intel_analytics.QdrantClient") as mock_qd_cls:
-            # Make scroll fail so it falls back to peek
-            mock_client = MagicMock()
-            mock_client.peek = AsyncMock(return_value={"metadatas": []})
-            mock_qd_cls.return_value = mock_client
-
-            with (
-                patch(
-                    "backend.app.routers.intel_analytics.httpx.AsyncClient",
-                    side_effect=Exception("scroll fails"),
-                ),
-                patch("backend.app.routers.intel_analytics.settings") as mock_settings,
-            ):
-                mock_settings.qdrant_url = "http://localhost:6333"
-                mock_settings.qdrant_api_key = ""
-                from backend.app.routers.intel_analytics import get_critical_items
-
-                result = await get_critical_items(category="visa")
-
-        assert result["count"] == 0
+        assert result == {
+            "items": [],
+            "alerts": [],
+            "count": 0,
+            "classified": False,
+            "unclassified": ["bali_intel_visa", "bali_intel_news"],
+        }
+        client.scroll_strict.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -399,37 +429,36 @@ class TestGetCriticalItems:
 class TestGetTrends:
     """Tests for GET /api/intel/trends."""
 
+    @staticmethod
+    def _client(stats):
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.return_value = stats
+        return client
+
     @pytest.mark.asyncio
     async def test_trends_returns_structure(self, _patch_imports):
-        mock_client = MagicMock()
-        mock_client.get_collection_stats.return_value = {"total_documents": 42}
+        client = self._client({"collection_name": "x", "total_documents": 42})
 
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            return_value=mock_client,
-        ):
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_trends
 
             result = await get_trends()
 
         assert "trends" in result
         assert "top_topics" in result
+        assert [t["total_items"] for t in result["trends"]] == [42, 42]
 
     @pytest.mark.asyncio
     async def test_trends_with_category(self, _patch_imports):
-        mock_client = MagicMock()
-        mock_client.get_collection_stats.return_value = {"total_documents": 10}
+        client = self._client({"collection_name": "x", "total_documents": 10})
 
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            return_value=mock_client,
-        ):
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_trends
 
             result = await get_trends(category="visa")
 
-        assert len(result["trends"]) == 1
-        assert result["trends"][0]["total_items"] == 10
+        client.get_stats.assert_awaited_once_with()
+        assert result["trends"] == [{"collection": "visa", "total_items": 10}]
 
 
 # ---------------------------------------------------------------------------
@@ -474,26 +503,57 @@ class TestGetCollectionStats:
 
     @pytest.mark.asyncio
     async def test_stats_success(self, _patch_imports):
-        mock_client = MagicMock()
-        mock_client.get_collection_stats.return_value = {"total_documents": 99}
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.return_value = {
+            "collection_name": "bali_intel_visa",
+            "total_documents": 99,
+        }
 
-        with patch(
-            "backend.app.routers.intel_analytics.QdrantClient",
-            return_value=mock_client,
-        ):
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
             from backend.app.routers.intel_analytics import get_collection_stats
 
             result = await get_collection_stats("visa")
 
+        client.get_stats.assert_awaited_once_with()
         assert result["collection_name"] == "bali_intel_visa"
         assert result["total_documents"] == 99
+        assert set(result) == {"collection_name", "total_documents", "last_updated"}
 
     @pytest.mark.asyncio
-    async def test_stats_unknown_collection(self, _patch_imports):
+    async def test_stats_unknown_collection_is_404(self, _patch_imports):
         from backend.app.routers.intel_analytics import get_collection_stats
 
         with pytest.raises(HTTPException) as exc_info:
             await get_collection_stats("nonexistent")
-        # The inner HTTPException(404) is caught by the outer try/except
-        # and re-raised as HTTPException(500).
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_stats_reported_error_is_500_without_internals(self, _patch_imports):
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.return_value = {
+            "collection_name": "bali_intel_visa",
+            "error": "connect to qdrant.internal:6333 refused",
+        }
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_collection_stats
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_collection_stats("visa")
+
         assert exc_info.value.status_code == 500
+        assert "qdrant.internal" not in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_stats_raised_error_is_500_without_internals(self, _patch_imports):
+        client = create_autospec(QdrantClient, instance=True)
+        client.get_stats.side_effect = RuntimeError("secret-host.internal exploded")
+
+        with patch("backend.app.routers.intel_analytics.QdrantClient", return_value=client):
+            from backend.app.routers.intel_analytics import get_collection_stats
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_collection_stats("visa")
+
+        assert exc_info.value.status_code == 500
+        assert "secret-host" not in str(exc_info.value.detail)
