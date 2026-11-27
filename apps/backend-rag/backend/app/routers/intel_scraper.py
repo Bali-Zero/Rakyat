@@ -1290,105 +1290,115 @@ async def _publish_staging_item(
             # Don't block publication if GitHub fails
             # Article is already in Qdrant
 
-        # Step 4: Write to news_items table (serves /api/news for balizero.com frontend)
-        try:
-            publish_pool = _resolve_publish_pool(pool, request)
-            if publish_pool:
-                slug = article_slug or item_id
-                summary = (data.get("content") or "")[:500]
-                content_full = data.get("content") or ""
-                ai_summary = (
-                    data.get("brief", {}).get("what", "")
-                    if isinstance(data.get("brief"), dict)
-                    else ""
-                )
-                ai_tags = data.get("tags") or []
-                if (
-                    (
-                        publish_result is not None
-                        and publish_result.success
-                        and publish_result.image_path
+        # Steps 4 and 4b write PUBLIC state: news_items serves /api/news to
+        # the balizero.com frontend and post_publish_queue drives the live
+        # slug's post-processing. They may run ONLY when the GitHub publish
+        # succeeded (github_commit_sha set, article_slug is the real slug).
+        # On a failed publish the staging item stays retryable (Step 5 below)
+        # and the retry reaches this point under the REAL slug — the
+        # NOT EXISTS guard in Step 4 is on slug, so an insert made here under
+        # the item_id fallback would leave a second, orphaned public row for
+        # an article that never went live.
+        if github_commit_sha:
+            # Step 4: Write to news_items table (serves /api/news for balizero.com frontend)
+            try:
+                publish_pool = _resolve_publish_pool(pool, request)
+                if publish_pool:
+                    slug = article_slug or item_id
+                    summary = (data.get("content") or "")[:500]
+                    content_full = data.get("content") or ""
+                    ai_summary = (
+                        data.get("brief", {}).get("what", "")
+                        if isinstance(data.get("brief"), dict)
+                        else ""
                     )
-                    or data.get("published_cover_path")
-                ):
-                    image_url = f"/static/news/{slug}.jpg"
-                else:
-                    image_url = data.get("image_url") or data.get("cover_image")
-                priority_val = data.get("priority", "medium")
-                if priority_val not in ("high", "medium", "low"):
-                    priority_val = "medium"
+                    ai_tags = data.get("tags") or []
+                    if (
+                        (
+                            publish_result is not None
+                            and publish_result.success
+                            and publish_result.image_path
+                        )
+                        or data.get("published_cover_path")
+                    ):
+                        image_url = f"/static/news/{slug}.jpg"
+                    else:
+                        image_url = data.get("image_url") or data.get("cover_image")
+                    priority_val = data.get("priority", "medium")
+                    if priority_val not in ("high", "medium", "low"):
+                        priority_val = "medium"
 
-                # Map category to valid news_items constraint values
-                valid_categories = {
-                    "immigration",
-                    "business",
-                    "tax",
-                    "property",
-                    "lifestyle",
-                    "tech",
-                    "legal",
-                }
-                news_category = category if category in valid_categories else "business"
+                    # Map category to valid news_items constraint values
+                    valid_categories = {
+                        "immigration",
+                        "business",
+                        "tax",
+                        "property",
+                        "lifestyle",
+                        "tech",
+                        "legal",
+                    }
+                    news_category = category if category in valid_categories else "business"
 
-                # news_items.slug has no unique constraint on prod (only a plain
-                # index), so ON CONFLICT (slug) raises; guard by existence instead.
+                    # news_items.slug has no unique constraint on prod (only a plain
+                    # index), so ON CONFLICT (slug) raises; guard by existence instead.
+                    async with publish_pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            INSERT INTO news_items (
+                                title, slug, summary, content, source, source_url,
+                                category, priority, status, image_url, published_at,
+                                ai_summary, ai_tags, external_id
+                            )
+                            SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'approved', $9, NOW(), $10, $11, $12
+                            WHERE NOT EXISTS (SELECT 1 FROM news_items WHERE slug = $2)
+                            """,
+                            title,
+                            slug,
+                            summary,
+                            content_full,
+                            data.get("source_name", ""),
+                            data.get("source_url", data.get("url", "")),
+                            news_category,
+                            priority_val,
+                            image_url,
+                            ai_summary,
+                            ai_tags,
+                            item_id,
+                        )
+
+                    logger.info(
+                        "Article written to news_items table",
+                        extra={"type": type, "item_id": item_id, "slug": slug},
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Failed to write to news_items (non-blocking): %s",
+                    e,
+                    extra={"type": type, "item_id": item_id},
+                )
+
+            # Step 4b: Enqueue for post-processing (translate + image + SEO) — DB-backed
+            try:
+                publish_pool = _resolve_publish_pool(pool, request)
+                if not publish_pool:
+                    raise RuntimeError("No DB pool available")
                 async with publish_pool.acquire() as conn:
                     await conn.execute(
                         """
-                        INSERT INTO news_items (
-                            title, slug, summary, content, source, source_url,
-                            category, priority, status, image_url, published_at,
-                            ai_summary, ai_tags, external_id
-                        )
-                        SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'approved', $9, NOW(), $10, $11, $12
-                        WHERE NOT EXISTS (SELECT 1 FROM news_items WHERE slug = $2)
+                        INSERT INTO post_publish_queue (slug, category, source)
+                        VALUES ($1, $2, 'intel')
+                        ON CONFLICT (slug) DO NOTHING
                         """,
-                        title,
-                        slug,
-                        summary,
-                        content_full,
-                        data.get("source_name", ""),
-                        data.get("source_url", data.get("url", "")),
-                        news_category,
-                        priority_val,
-                        image_url,
-                        ai_summary,
-                        ai_tags,
-                        item_id,
+                        article_slug,
+                        category,
                     )
-
                 logger.info(
-                    "Article written to news_items table",
-                    extra={"type": type, "item_id": item_id, "slug": slug},
+                    "📥 Enqueued for post-processing",
+                    extra={"slug": article_slug, "category": category},
                 )
-        except Exception as e:
-            logger.warning(
-                "Failed to write to news_items (non-blocking): %s",
-                e,
-                extra={"type": type, "item_id": item_id},
-            )
-
-        # Step 4b: Enqueue for post-processing (translate + image + SEO) — DB-backed
-        try:
-            publish_pool = _resolve_publish_pool(pool, request)
-            if not publish_pool:
-                raise RuntimeError("No DB pool available")
-            async with publish_pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO post_publish_queue (slug, category, source)
-                    VALUES ($1, $2, 'intel')
-                    ON CONFLICT (slug) DO NOTHING
-                    """,
-                    article_slug,
-                    category,
-                )
-            logger.info(
-                "📥 Enqueued for post-processing",
-                extra={"slug": article_slug, "category": category},
-            )
-        except Exception as e:
-            logger.warning("Failed to enqueue post-processing (non-blocking): %s", e)
+            except Exception as e:
+                logger.warning("Failed to enqueue post-processing (non-blocking): %s", e)
 
         # Step 5: Persist the publication attempt without turning a failed
         # GitHub write into an unretryable, falsely-published staging item.
