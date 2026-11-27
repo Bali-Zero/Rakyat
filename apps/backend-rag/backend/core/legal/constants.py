@@ -363,11 +363,9 @@ CONTEXT_TEMPLATE = (
 # `[^\S\n]*(?=\n|\Z)` is then the only whitespace quantifier left at that point.
 # Bagian ordinals are a closed vocabulary, so prose such as "Bagian Keuangan" is joined.
 _BAGIAN_ORDINAL = (
-    r"(?:Kesatu|KESATU|Pertama|PERTAMA"
-    r"|Ke(?:dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas)"
-    r"(?:[^\S\n]+(?:Belas|Puluh))?"
-    r"|KE(?:DUA|TIGA|EMPAT|LIMA|ENAM|TUJUH|DELAPAN|SEMBILAN|SEPULUH|SEBELAS)"
-    r"(?:[^\S\n]+(?:BELAS|PULUH))?"
+    r"(?i:(?:Pertama|Ke(?:satu|sepuluh|sebelas"
+    r"|(?:dua|tiga|empat|lima|enam|tujuh|delapan|sembilan)"
+    r"(?:[^\S\n]*(?:belas|puluh)(?:[^\S\n]*(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan))?)?))"
     r"|\d+)"
 )
 STRUCTURAL_HEADING_LINE = (

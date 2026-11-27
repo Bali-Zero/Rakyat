@@ -288,16 +288,32 @@ class TestNoAnchorAdjacentWhitespaceReturns:
             assert not self.DETECTOR.search(getattr(const, name)), name
 
 
-def _char_matcher(op, av):
+def _char_matcher(op, av, flags: int):
     """A predicate for ONE single-character regex node, or None if it is not one."""
+    ignore_case = bool(flags & re.IGNORECASE)
+
+    def literal_matches(ch: str, code: int) -> bool:
+        literal = chr(code)
+        return ch == literal or (ignore_case and ch.casefold() == literal.casefold())
+
+    def range_matches(ch: str, bounds: tuple[int, int]) -> bool:
+        if bounds[0] <= ord(ch) <= bounds[1]:
+            return True
+        if not ignore_case:
+            return False
+        return any(
+            len(candidate) == 1 and bounds[0] <= ord(candidate) <= bounds[1]
+            for candidate in (ch.lower(), ch.upper(), ch.casefold())
+        )
+
     if op is _sre_c.LITERAL:
-        return lambda ch: ord(ch) == av
+        return lambda ch: literal_matches(ch, av)
     if op is _sre_c.NOT_LITERAL:
-        return lambda ch: ord(ch) != av
+        return lambda ch: not literal_matches(ch, av)
     if op is _sre_c.ANY:
-        return lambda ch: ch != "\n"
+        return lambda ch: ch != "\n" or bool(flags & re.DOTALL)
     if op is _sre_c.CATEGORY:
-        return lambda ch: bool(re.match(_CATEGORY_RX[av], ch))
+        return lambda ch: bool(re.match(_CATEGORY_RX[av], ch, flags))
     if op is _sre_c.IN:
 
         def member(ch: str) -> bool:
@@ -306,11 +322,11 @@ def _char_matcher(op, av):
                 if sub_op is _sre_c.NEGATE:
                     negate = True
                 elif sub_op is _sre_c.LITERAL:
-                    hit = hit or ord(ch) == sub_av
+                    hit = hit or literal_matches(ch, sub_av)
                 elif sub_op is _sre_c.RANGE:
-                    hit = hit or sub_av[0] <= ord(ch) <= sub_av[1]
+                    hit = hit or range_matches(ch, sub_av)
                 elif sub_op is _sre_c.CATEGORY:
-                    hit = hit or bool(re.match(_CATEGORY_RX[sub_av], ch))
+                    hit = hit or bool(re.match(_CATEGORY_RX[sub_av], ch, flags))
             return hit != negate
 
         return member
@@ -328,27 +344,28 @@ _CATEGORY_RX = {
 _REPEATS = (_sre_c.MAX_REPEAT, _sre_c.MIN_REPEAT)
 
 
-def _edges(items, from_end: bool):
+def _edges(items, from_end: bool, flags: int):
     """Variable-width single-character repeats that can sit at the start (or end) of
     `items`, looking through anything that may match empty. Returns the matchers."""
     found = []
     for op, av in reversed(items) if from_end else items:
         if op in _REPEATS:
             low, high, body = av
-            inner = _char_matcher(*body.data[0]) if len(body.data) == 1 else None
+            inner = _char_matcher(*body.data[0], flags) if len(body.data) == 1 else None
             if inner is not None:
-                if high > 1:
+                if high > low:
                     found.append(inner)
                 if low == 0:
                     continue
                 break
-            sub, nullable = _edges(body.data, from_end)
+            sub, nullable = _edges(body.data, from_end, flags)
             found += sub
             if low == 0 or nullable:
                 continue
             break
         if op is _sre_c.SUBPATTERN:
-            sub, nullable = _edges(av[3].data, from_end)
+            scoped_flags = (flags | av[1]) & ~av[2]
+            sub, nullable = _edges(av[3].data, from_end, scoped_flags)
             found += sub
             if nullable:
                 continue
@@ -356,7 +373,7 @@ def _edges(items, from_end: bool):
         if op is _sre_c.BRANCH:
             nullable = False
             for branch in av[1]:
-                sub, empty = _edges(branch.data, from_end)
+                sub, empty = _edges(branch.data, from_end, flags)
                 found += sub
                 nullable = nullable or empty
             if nullable:
@@ -370,33 +387,38 @@ def _edges(items, from_end: bool):
     return found, False
 
 
-def _adjacent_overlaps(pattern: str) -> list[str]:
+def _adjacent_overlaps(pattern: str | re.Pattern, flags: int = 0) -> list[str]:
     """Every place where a variable-width character run is DIRECTLY followed by another
     (through only optional / zero-width nodes) and the two can match a common character:
     `X*Y*` with X and Y sharing one, e.g. `[^a-z\\n]*[^\\S\\n]*`. That is form (b) of the
     ReDoS note, in the shape the anchor-based DETECTOR cannot see."""
     out: list[str] = []
 
-    def walk(items) -> None:
+    if isinstance(pattern, re.Pattern):
+        flags |= pattern.flags
+        pattern = pattern.pattern
+
+    def walk(items, active_flags: int) -> None:
         for i in range(len(items)):
-            lefts, _ = _edges(items[: i + 1], True)
-            rights, _ = _edges(items[i + 1 :], False)
+            lefts, _ = _edges(items[: i + 1], True, active_flags)
+            rights, _ = _edges(items[i + 1 :], False, active_flags)
             if any(
                 left(chr(c)) and right(chr(c)) for left in lefts for right in rights for c in _PROBE
             ):
                 out.append(f"item {i}")
             op, av = items[i]
             if op in _REPEATS:
-                walk(av[2].data)
+                walk(av[2].data, active_flags)
             elif op is _sre_c.SUBPATTERN:
-                walk(av[3].data)
+                walk(av[3].data, (active_flags | av[1]) & ~av[2])
             elif op is _sre_c.BRANCH:
                 for branch in av[1]:
-                    walk(branch.data)
+                    walk(branch.data, active_flags)
             elif op in (_sre_c.ASSERT, _sre_c.ASSERT_NOT):
-                walk(av[1].data)
+                walk(av[1].data, active_flags)
 
-    walk(_sre_p.parse(pattern).data)
+    parsed = _sre_p.parse(pattern, flags)
+    walk(parsed.data, parsed.state.flags)
     return sorted(set(out))
 
 
@@ -423,6 +445,14 @@ class TestNoAdjacentOverlappingRunsInTheCleaner:
 
     def test_guilt_of_the_detector_flags_the_previous_head(self) -> None:
         assert _adjacent_overlaps(self.PREVIOUS_HEAD)
+
+    def test_guilt_of_the_detector_honours_case_flags(self) -> None:
+        assert _adjacent_overlaps(r"(?i:A*)a*x")
+        assert _adjacent_overlaps(r"(?i)A*a*x")
+
+    def test_innocence_of_the_detector_ignores_fixed_and_case_distinct_runs(self) -> None:
+        assert _adjacent_overlaps(r"a{2}a{2}") == []
+        assert _adjacent_overlaps(r"(?-i:A*)a*x") == []
 
     @pytest.mark.parametrize(
         "guilty",

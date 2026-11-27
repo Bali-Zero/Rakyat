@@ -135,7 +135,7 @@ RUN_CHARS = {
     "formfeed": "\f",
     "vtab": "\v",
     "cr": "\r",
-    "emspace": " ",
+    "emspace": " ",
     "space": " ",
 }
 RUN = 20_000
@@ -152,7 +152,10 @@ def _timed_clean(text: str) -> float:
 def test_guilt_signer_witness_penjelasan_umum_is_linear(ws: str) -> None:
     """`PENJELASAN UMUM` + a run of whitespace + a failing character, the shape that made
     the previous head's UMUM/ATAS tail `[^a-z\\n]*` overlap the shared `[^\\S\\n]*` tail."""
-    took = _timed_clean("a\nPENJELASAN UMUM" + RUN_CHARS[ws] * RUN + "x")
+    payload = "a\nPENJELASAN UMUM" + RUN_CHARS[ws] * RUN + "x"
+    if ws == "emspace":
+        assert " " in payload
+    took = _timed_clean(payload)
     assert took < BUDGET_SECONDS, f"{ws}: {took:.3f}s"
 
 
@@ -203,9 +206,17 @@ def test_guilt_bagian_ordinal_is_a_closed_vocabulary() -> None:
     assert (
         cleaner.clean("diatur dalam\nBagian Kedua Puluhan") == "diatur dalam Bagian Kedua Puluhan"
     )
+
+
+def test_guilt_keeps_compact_bagian_ordinals_on_their_own_lines() -> None:
+    cleaner = LegalCleaner()
     for heading in (
+        "Bagian Keduabelas",
+        "BAGIAN KEDUABELAS",
         "Bagian Kedua Belas",
         "Bagian Kedua Puluh",
+        "Bagian Kedua Puluh Satu",
+        "Bagian Ketigapuluh Dua",
         "BAGIAN KETIGA",
         "BAGIAN KEDUA BELAS",
         "Bagian Kesepuluh",
@@ -213,6 +224,41 @@ def test_guilt_bagian_ordinal_is_a_closed_vocabulary() -> None:
         "Bagian Kesatu",
         "Bagian Pertama",
         "Bagian 2",
+        "Bagian 12",
     ):
         cleaned = cleaner.clean(f"ketentuan umum\n{heading}\nisi")
         assert f"ketentuan umum\n{heading}\nisi" == cleaned, heading
+
+
+def test_innocence_joins_bagian_ordinal_prose() -> None:
+    cleaner = LegalCleaner()
+
+    assert (
+        cleaner.clean("ketentuan yang diatur dalam\nBagian kedua ini\nberlaku.")
+        == "ketentuan yang diatur dalam Bagian kedua ini\nberlaku."
+    )
+    assert (
+        cleaner.clean("diatur dalam\nBagian Kedua Belas ayat")
+        == "diatur dalam Bagian Kedua Belas ayat"
+    )
+
+
+@pytest.mark.parametrize(
+    "ordinal",
+    [
+        "Keduabelas",
+        "KEDUABELAS",
+        "Kedua Belas",
+        "Kedua Puluh",
+        "Kedua Puluh Satu",
+        "Ketigapuluh Dua",
+        "Kesebelas",
+        "Kesepuluh",
+        "Kesatu",
+        "Pertama",
+        "12",
+    ],
+)
+def test_guilt_bagian_ordinals_are_linear_on_failing_runs(ordinal: str) -> None:
+    took = _timed_clean(f"a\nBagian {ordinal}" + "\xa0" * RUN + "x")
+    assert took < BUDGET_SECONDS, f"{ordinal}: {took:.3f}s"
