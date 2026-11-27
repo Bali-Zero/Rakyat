@@ -1,4 +1,4 @@
-"""C1: a completed practice's date and owner anchor the delivery bonus; only an admin may move them."""
+"""C1: a completed practice's date, owner and service anchor the delivery bonus; only an admin may change them."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -72,6 +72,10 @@ def _wrote(conn):
     [
         {"completion_date": datetime(2026, 11, 5, 4, tzinfo=timezone.utc)},
         {"assigned_to": "someone.else@example.invalid"},
+        # readers match the owner on LOWER(BTRIM()): a tab is another identity
+        {"assigned_to": CREATOR["email"] + "\t"},
+        # a later proof upload prices the bonus by the current service
+        {"practice_type_code": "ext_c1_tourism"},
     ],
 )
 async def test_a_non_admin_cannot_move_the_date_or_owner_of_a_completed_practice(
@@ -103,6 +107,7 @@ async def test_an_admin_can_move_them(mock_db_pool, mock_db_conn, fields):
     [
         {"completion_date": COMPLETED_AT},
         {"assigned_to": CREATOR["email"].upper()},
+        {"assigned_to": "  " + CREATOR["email"] + " "},
         {"notes": "a note"},
     ],
 )
