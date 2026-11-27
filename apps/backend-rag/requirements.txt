@@ -159,7 +159,7 @@ lxml>=6.1.1  # Required by trafilatura, htmldate
 
 # Agentic RAG Dependencies
 pymupdf>=1.28.2  # For PDF rendering in Vision Service
-scikit-learn>=1.3.0  # For cosine similarity in Golden Router
+scikit-learn>=1.9.1  # For cosine similarity in Golden Router
 
 # Notification Services
 sendgrid>=6.11.0  # For email notifications via SendGrid API
