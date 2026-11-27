@@ -78,7 +78,14 @@ def reviewers_from_setting(raw: str | None) -> list[tuple[str, str]]:
         address, _, lang = entry.partition(":")
         address = address.strip()
         lang = lang.strip().lower() or DEFAULT_LANGUAGE
-        if "@" not in address or " " in address:
+        local, at, domain = address.partition("@")
+        if (
+            not at
+            or not local
+            or "." not in domain.strip(".")
+            or "@" in domain
+            or any(ch.isspace() for ch in address)
+        ):
             logger.warning("document request reviewers: entry %d is not an address", position)
             continue
         if lang not in LANGUAGES:
@@ -282,6 +289,20 @@ def build_email(
         "</div>"
     )
     return subject, body
+
+
+async def notify_reviewers_after_commit(db_pool: asyncpg.Pool, **request: Any) -> bool:
+    """What the endpoint calls once the request is committed. Never raises: the request is
+    already written, so neither a pool that cannot give a connection nor a failing email may
+    turn its answer into an error. Takes no connection when nobody is to be told."""
+    try:
+        if not reviewers_from_setting(getattr(settings, "service_card_reviewer_emails", "")):
+            return False
+        async with db_pool.acquire() as conn:
+            return await notify_reviewers(conn, **request)
+    except Exception as exc:
+        logger.warning("document request notification failed: %s", type(exc).__name__)
+        return False
 
 
 async def notify_reviewers(

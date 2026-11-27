@@ -126,12 +126,18 @@ class FakeConn:
 
 
 class FakePool:
-    def __init__(self, conn: FakeConn) -> None:
-        self.conn = conn
+    """Counts every acquire of a request; can refuse from the Nth on (a pool that times out)."""
+
+    def __init__(self, world: World) -> None:
+        self.world = world
 
     @asynccontextmanager
     async def acquire(self):
-        yield self.conn
+        self.world.acquires += 1
+        refuse_from = self.world.refuse_acquire_from
+        if refuse_from is not None and self.world.acquires >= refuse_from:
+            raise TimeoutError("pool exhausted")
+        yield self.world.conn
 
 
 class World:
@@ -142,6 +148,8 @@ class World:
         self.sent: list[dict[str, Any]] = []
         self.send_results: list[Any] = []
         self.cache = AsyncMock()
+        self.acquires = 0
+        self.refuse_acquire_from: int | None = None
 
     def client(self) -> TestClient:
         from backend.app.routers.crm_practices import router
@@ -149,7 +157,7 @@ class World:
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[get_current_user] = lambda: self.user
-        app.dependency_overrides[get_database_pool] = lambda: FakePool(self.conn)
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(self)
         return TestClient(app)
 
     async def _send(self, **kwargs: Any) -> bool:
@@ -415,11 +423,55 @@ def test_an_empty_setting_sends_nothing_and_the_request_succeeds(world: World, r
 
 def test_an_email_that_raises_does_not_fail_the_request(world: World, reviewers) -> None:
     reviewers("a@example.test:en,b@example.test:en")
-    world.send_results = [RuntimeError("provider down"), False]
+    world.send_results = [RuntimeError("provider down"), True]
     response = world.post(body())
     assert response.status_code == 201
     assert response.json()["request_id"] == 77
-    assert world.conn.sql_like("UPDATE practice_document_requests") == []
+    # The first send raised: the second reviewer is still told, and that one True marks the row.
+    assert [m["to"] for m in world.sent] == ["a@example.test", "b@example.test"]
+    assert len(world.conn.sql_like("UPDATE practice_document_requests")) == 1
+
+
+def test_a_pool_that_fails_after_the_commit_does_not_fail_the_request(reviewers) -> None:
+    reviewers("a@example.test:en")
+    healthy = World()
+    assert healthy.post(body()).status_code == 201
+    assert healthy.sent, "the healthy run must reach the email"
+
+    # The last acquire of a request is the one that tells the reviewers: refuse exactly that one.
+    broken = World()
+    broken.refuse_acquire_from = healthy.acquires
+    response = broken.post(body())
+    assert response.status_code == 201
+    assert response.json()["request_id"] == 77
+    assert "COMMIT" in broken.events and broken.sent == []
+
+
+def test_an_empty_setting_takes_no_connection_to_notify(reviewers) -> None:
+    reviewers("a@example.test:en")
+    armed = World()
+    assert armed.post(body()).status_code == 201
+    reviewers("")
+    idle = World()
+    assert idle.post(body()).status_code == 201
+    assert idle.acquires == armed.acquires - 1
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "@:en",
+        "a@:en",
+        "@example.test",
+        "a\tb@example.test:en",
+        "a b@example.test",
+        "a@b@example.test",
+    ],
+)
+def test_an_entry_that_is_not_an_address_is_skipped(world: World, reviewers, entry: str) -> None:
+    reviewers(f"{entry},ok@example.test:en")
+    assert world.post(body()).status_code == 201
+    assert [m["to"] for m in world.sent] == ["ok@example.test"]
 
 
 def test_one_email_per_valid_reviewer_in_their_language_to_that_address_only(

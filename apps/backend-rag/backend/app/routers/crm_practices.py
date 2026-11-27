@@ -42,7 +42,7 @@ from backend.services.crm.document_requests import (
     DocumentRequestRefused,
     create_document_request,
     derive_document_type,
-    notify_reviewers,
+    notify_reviewers_after_commit,
 )
 from backend.services.crm.entity_search import (
     build_practice_search,
@@ -3246,17 +3246,17 @@ async def request_additional_document(
                     detail={"code": refused.code, "message": refused.message},
                 ) from refused
 
-        # The transaction has committed: tell the reviewers (never raises), on a fresh connection.
-        async with db_pool.acquire() as notify_conn:
-            await notify_reviewers(
-                notify_conn,
-                practice_id=practice_id,
-                created=created,
-                requested_by=requester,
-                document_label=payload.document_label,
-                client_text=payload.client_text,
-                reason=payload.reason,
-            )
+        # The transaction has committed: tell the reviewers on a fresh connection. This never
+        # raises and takes no connection when nobody is to be told.
+        await notify_reviewers_after_commit(
+            db_pool,
+            practice_id=practice_id,
+            created=created,
+            requested_by=requester,
+            document_label=payload.document_label,
+            client_text=payload.client_text,
+            reason=payload.reason,
+        )
 
         row = created.slot
         logger.info("Document request %s made on practice %s", created.request_id, practice_id)
