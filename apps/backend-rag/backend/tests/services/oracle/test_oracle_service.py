@@ -348,7 +348,7 @@ async def test_process_query_records_error_analytics_on_runtime_failure() -> Non
     )
 
     assert result["success"] is False
-    assert result["error"] == "orchestrator failed"
+    assert result["error"] == "oracle_error"
     assert analytics.stored == [
         {"query_text": "bad query", "metadata": {"error": "orchestrator failed"}},
     ]

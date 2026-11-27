@@ -414,7 +414,7 @@ async def test_query_service_raises_generic_exception_returns_200_with_error() -
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False
-    assert body["error"] == "qdrant is down"
+    assert body["error"] == "oracle_error"
     assert body["query"] == "anything at all please"
     assert body["execution_time_ms"] == 0
     assert body["document_count"] == 0
@@ -542,7 +542,7 @@ async def test_feedback_service_raises_returns_200_with_error() -> None:
             )
     assert r.status_code == 200
     body = r.json()
-    assert body == {"success": False, "error": "postgres refused"}
+    assert body == {"success": False, "error": "feedback_error"}
 
 
 @pytest.mark.asyncio
@@ -743,9 +743,9 @@ async def test_query_upstream_timeout_is_swallowed_as_200_success_false() -> Non
     """`asyncio.TimeoutError` from OracleService must not leak a 500.
 
     It flows through the same generic-exception branch as any other upstream
-    failure, producing a 200 with `success=False`. The error string carries
-    the timeout marker so the caller can distinguish timeouts from other
-    failures without a stack trace.
+    failure, producing a 200 with `success=False`. The error field carries
+    the static code `oracle_error` (be-visa-32) — the exception text stays
+    in the logs, never in the body.
     """
     import asyncio
 
@@ -770,10 +770,11 @@ async def test_query_upstream_timeout_is_swallowed_as_200_success_false() -> Non
 
 
 @pytest.mark.asyncio
-async def test_query_upstream_timeout_with_message_surfaces_error_string() -> None:
+async def test_query_upstream_timeout_with_message_returns_error_code() -> None:
     """When the service raises a TimeoutError subclass with a message (e.g.
-    httpx.ReadTimeout-style), the router should surface the message in the
-    error field without wrapping or re-raising."""
+    httpx.ReadTimeout-style), the router must not surface the message in the
+    error field (be-visa-32): the client gets the static code, the detail
+    stays in the logs."""
     import asyncio
 
     class _NamedTimeout(asyncio.TimeoutError):
@@ -792,7 +793,8 @@ async def test_query_upstream_timeout_with_message_surfaces_error_string() -> No
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False
-    assert "qdrant upstream exceeded 5s" in body["error"]
+    assert body["error"] == "oracle_error"
+    assert "qdrant upstream exceeded 5s" not in r.text
 
 
 @pytest.mark.asyncio
@@ -820,9 +822,9 @@ async def test_query_simulated_wait_for_timeout_is_swallowed() -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False
-    # Do NOT assert on error string content — asyncio.TimeoutError's str()
-    # is "" on 3.11+, so the field may be empty. The contract we lock in
-    # is: no 500, no stack trace, success=False.
+    # The error field is now the static code "oracle_error" (be-visa-32),
+    # independent of the exception type. The contract we lock in here is:
+    # no 500, no stack trace, success=False.
 
 
 # ---------------------------------------------------------------------------
@@ -1078,9 +1080,10 @@ async def test_query_malformed_service_response_logs_validation_error(monkeypatc
     OracleQueryResponse, the router must:
     - still answer 200 (contract unchanged, no breaking caller impact),
     - set success=False (same as before),
-    - but tag the error string with `response_validation_error:` and emit
-      a WARN log — so Sentry can distinguish schema drift from a true
-      runtime fault.
+    - set the static error code `oracle_validation_error` (be-visa-32: the
+      raw ValidationError text can echo client data, so it no longer goes
+      into the body) and emit a WARN log — so Sentry can distinguish schema
+      drift from a true runtime fault.
 
     We assert the WARN log via monkeypatch on the router's `logger.warning`
     (same pattern as `test_dropped_fields_emit_sentry_tag`) instead of caplog,
@@ -1088,8 +1091,7 @@ async def test_query_malformed_service_response_logs_validation_error(monkeypatc
     test collection: some upstream test had already configured the
     `backend.app.routers.oracle_universal` logger with `propagate=False` or a
     higher level, making caplog blind to records emitted in this test even
-    though the WARN is produced (verified: the response body still carries
-    `error="response_validation_error: …"` in CI). monkeypatch on the bound
+    though the WARN is produced. monkeypatch on the bound
     method is immune to that interference.
     """
     captured: list[tuple[str, tuple]] = []
@@ -1119,7 +1121,7 @@ async def test_query_malformed_service_response_logs_validation_error(monkeypatc
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is False
-    assert body["error"].startswith("response_validation_error:")
+    assert body["error"] == "oracle_validation_error"
     validation_logs = [(msg, args) for msg, args in captured if "validation failed" in msg]
     assert len(validation_logs) == 1, (
         f"expected exactly 1 'validation failed' WARN, got {len(validation_logs)} "

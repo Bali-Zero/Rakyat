@@ -498,7 +498,7 @@ class OracleService:
                 "success": False,
                 "query": request_query,
                 "user_email": request_user_email,
-                "error": str(e),
+                "error": "oracle_error",
                 "execution_time_ms": execution_time,
             }
 
