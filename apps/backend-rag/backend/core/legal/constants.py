@@ -353,8 +353,35 @@ CONTEXT_TEMPLATE = (
 # ============================================================================
 
 # Common PDF extraction issues
+#
+# STRUCTURAL_HEADING_LINE is a WHOLE-LINE heading, tried in a lookahead at the start of
+# every wrapped line, so it must be linear (see the ReDoS NOTE): no two adjacent
+# quantifiers in any alternative may match a common character. `[^\S\n]` (horizontal
+# whitespace) is therefore only ever followed by a literal or by a class that excludes
+# whitespace, and the one repeated group, the UMUM/ATAS tail, is `(?:ws* non-ws)*`, whose
+# iterations are separated by a non-whitespace character. The shared tail
+# `[^\S\n]*(?=\n|\Z)` is then the only whitespace quantifier left at that point.
+# Bagian ordinals are a closed vocabulary, so prose such as "Bagian Keuangan" is joined.
+_BAGIAN_ORDINAL = (
+    r"(?:Kesatu|KESATU|Pertama|PERTAMA"
+    r"|Ke(?:dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas)"
+    r"(?:[^\S\n]+(?:Belas|Puluh))?"
+    r"|KE(?:DUA|TIGA|EMPAT|LIMA|ENAM|TUJUH|DELAPAN|SEMBILAN|SEPULUH|SEBELAS)"
+    r"(?:[^\S\n]+(?:BELAS|PULUH))?"
+    r"|\d+)"
+)
+STRUCTURAL_HEADING_LINE = (
+    r"[^\S\n]*(?:"
+    r"(?i:Pasal[^\S\n]+(?:[IVXLC]+|\d+[A-Z]?))"
+    r"|(?-i:BAB)[^\S\n]+(?:[IVXLCDM]+|\d+)"
+    r"|(?-i:Bagian|BAGIAN)[^\S\n]+" + _BAGIAN_ORDINAL + r"|(?i:Paragraf[^\S\n]+\d+)"
+    r"|(?-i:PENJELASAN(?:[^\S\n]+(?:(?:UMUM|ATAS)\b(?:[^\S\n]*[^a-z\s])*"
+    r"|PASAL[^\S\n]+\d+[A-Z]?))?)"
+    r")[^\S\n]*(?=\n|\Z)"
+)
+
 WHITESPACE_FIXES = [
     (r"[ \t]+", " "),  # Multiple spaces/tabs to single (PRESERVE NEWLINES!)
     (r"\n\s+\n", "\n\n"),  # Blank lines with spaces
-    (r"([a-z])\n([A-Z])", r"\1 \2"),  # Broken sentences
+    (r"([a-z])\n(?!" + STRUCTURAL_HEADING_LINE + r")([A-Z])", r"\1 \2"),  # Broken sentences
 ]

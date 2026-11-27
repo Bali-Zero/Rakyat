@@ -25,6 +25,8 @@ nothing downstream would notice — the chunker would just emit fewer chunks.
 """
 
 import re
+import re._constants as _sre_c
+import re._parser as _sre_p
 import sys
 import time
 
@@ -50,6 +52,11 @@ CURED = {
     "PAGE_NUMBER_LINE": re.compile(const.PAGE_NUMBER_LINE, re.MULTILINE),
     "BAB_PATTERN": const.BAB_PATTERN,
     **{f"NOISE_PATTERNS[{i}]": p for i, p in enumerate(const.NOISE_PATTERNS)},
+    # cleaner.py compiles these with no flags (`re.sub(pattern, repl, text)`).
+    **{
+        f"WHITESPACE_FIXES[{i}]": re.compile(pattern)
+        for i, (pattern, _repl) in enumerate(const.WHITESPACE_FIXES)
+    },
 }
 
 # The anchor-overlap forms eat a bare run of blank lines. The INTERIOR `\s*\n?\s*` form
@@ -279,6 +286,175 @@ class TestNoAnchorAdjacentWhitespaceReturns:
         quality_validators.py, neither of which is a `re.Pattern` here."""
         for name in ("PAGE_NUMBER_LINE", "AYAT_MARKER_PREFIX"):
             assert not self.DETECTOR.search(getattr(const, name)), name
+
+
+def _char_matcher(op, av):
+    """A predicate for ONE single-character regex node, or None if it is not one."""
+    if op is _sre_c.LITERAL:
+        return lambda ch: ord(ch) == av
+    if op is _sre_c.NOT_LITERAL:
+        return lambda ch: ord(ch) != av
+    if op is _sre_c.ANY:
+        return lambda ch: ch != "\n"
+    if op is _sre_c.CATEGORY:
+        return lambda ch: bool(re.match(_CATEGORY_RX[av], ch))
+    if op is _sre_c.IN:
+
+        def member(ch: str) -> bool:
+            hit, negate = False, False
+            for sub_op, sub_av in av:
+                if sub_op is _sre_c.NEGATE:
+                    negate = True
+                elif sub_op is _sre_c.LITERAL:
+                    hit = hit or ord(ch) == sub_av
+                elif sub_op is _sre_c.RANGE:
+                    hit = hit or sub_av[0] <= ord(ch) <= sub_av[1]
+                elif sub_op is _sre_c.CATEGORY:
+                    hit = hit or bool(re.match(_CATEGORY_RX[sub_av], ch))
+            return hit != negate
+
+        return member
+    return None
+
+
+_CATEGORY_RX = {
+    _sre_c.CATEGORY_SPACE: r"\s",
+    _sre_c.CATEGORY_NOT_SPACE: r"\S",
+    _sre_c.CATEGORY_DIGIT: r"\d",
+    _sre_c.CATEGORY_NOT_DIGIT: r"\D",
+    _sre_c.CATEGORY_WORD: r"\w",
+    _sre_c.CATEGORY_NOT_WORD: r"\W",
+}
+_REPEATS = (_sre_c.MAX_REPEAT, _sre_c.MIN_REPEAT)
+
+
+def _edges(items, from_end: bool):
+    """Variable-width single-character repeats that can sit at the start (or end) of
+    `items`, looking through anything that may match empty. Returns the matchers."""
+    found = []
+    for op, av in reversed(items) if from_end else items:
+        if op in _REPEATS:
+            low, high, body = av
+            inner = _char_matcher(*body.data[0]) if len(body.data) == 1 else None
+            if inner is not None:
+                if high > 1:
+                    found.append(inner)
+                if low == 0:
+                    continue
+                break
+            sub, nullable = _edges(body.data, from_end)
+            found += sub
+            if low == 0 or nullable:
+                continue
+            break
+        if op is _sre_c.SUBPATTERN:
+            sub, nullable = _edges(av[3].data, from_end)
+            found += sub
+            if nullable:
+                continue
+            break
+        if op is _sre_c.BRANCH:
+            nullable = False
+            for branch in av[1]:
+                sub, empty = _edges(branch.data, from_end)
+                found += sub
+                nullable = nullable or empty
+            if nullable:
+                continue
+            break
+        if op in (_sre_c.AT, _sre_c.ASSERT, _sre_c.ASSERT_NOT):
+            continue  # zero-width
+        break
+    else:
+        return found, True
+    return found, False
+
+
+def _adjacent_overlaps(pattern: str) -> list[str]:
+    """Every place where a variable-width character run is DIRECTLY followed by another
+    (through only optional / zero-width nodes) and the two can match a common character:
+    `X*Y*` with X and Y sharing one, e.g. `[^a-z\\n]*[^\\S\\n]*`. That is form (b) of the
+    ReDoS note, in the shape the anchor-based DETECTOR cannot see."""
+    out: list[str] = []
+
+    def walk(items) -> None:
+        for i in range(len(items)):
+            lefts, _ = _edges(items[: i + 1], True)
+            rights, _ = _edges(items[i + 1 :], False)
+            if any(
+                left(chr(c)) and right(chr(c)) for left in lefts for right in rights for c in _PROBE
+            ):
+                out.append(f"item {i}")
+            op, av = items[i]
+            if op in _REPEATS:
+                walk(av[2].data)
+            elif op is _sre_c.SUBPATTERN:
+                walk(av[3].data)
+            elif op is _sre_c.BRANCH:
+                for branch in av[1]:
+                    walk(branch.data)
+            elif op in (_sre_c.ASSERT, _sre_c.ASSERT_NOT):
+                walk(av[1].data)
+
+    walk(_sre_p.parse(pattern).data)
+    return sorted(set(out))
+
+
+# ASCII, Latin-1, the general-punctuation spaces and the CJK space: every character any
+# of the classes here can tell apart.
+_PROBE = [*range(0, 0x250), *range(0x2000, 0x2070), 0x3000]
+
+
+class TestNoAdjacentOverlappingRunsInTheCleaner:
+    """The heading lookahead of `WHITESPACE_FIXES[2]` runs at every wrapped line and is fed
+    OCR'd PDFs by `/api/legal/ingest`. The anchor DETECTOR above cannot express its shape."""
+
+    # The previous head's pattern, pasted: its UMUM/ATAS tail `[^a-z\n]*` and the shared
+    # `[^\S\n]*` tail match the same horizontal-space characters.
+    PREVIOUS_HEAD = (
+        r"([a-z])\n(?!(?:[^\S\n]*(?i:Pasal[^\S\n]+(?:[IVXLC]+|\d+[A-Z]?))[^\S\n]*(?=\n|\Z)"
+        r"|[^\S\n]*(?-i:BAB)[^\S\n]+(?:[IVXLCDM]+|\d+)[^\S\n]*(?=\n|\Z)"
+        r"|[^\S\n]*(?-i:Bagian|BAGIAN)[^\S\n]+(?:(?-i:Ke[a-z]+|KE[A-Z]+|Pertama|PERTAMA)|\d+)"
+        r"[^\S\n]*(?=\n|\Z)"
+        r"|[^\S\n]*(?i:Paragraf[^\S\n]+\d+)[^\S\n]*(?=\n|\Z)"
+        r"|[^\S\n]*(?-i:PENJELASAN(?:[^\S\n]+(?:UMUM|ATAS)\b[^a-z\n]*"
+        r"|[^\S\n]+PASAL[^\S\n]+\d+[A-Z]?)?)[^\S\n]*(?=\n|\Z)))([A-Z])"
+    )
+
+    def test_guilt_of_the_detector_flags_the_previous_head(self) -> None:
+        assert _adjacent_overlaps(self.PREVIOUS_HEAD)
+
+    @pytest.mark.parametrize(
+        "guilty",
+        [r"[^a-z\n]*[^\S\n]*", r"(?:a[^a-z\n]*)?[^\S\n]*$", r"x(?:[ \t]+|b)?\s*", r"\s*\n?\s*"]
+        + [r"[^\S\n]+(?:Belas|Puluh)?[^\S\n]*x"],
+    )
+    def test_guilt_of_the_detector_on_small_shapes(self, guilty: str) -> None:
+        assert _adjacent_overlaps(guilty), guilty
+
+    @pytest.mark.parametrize(
+        "safe",
+        [
+            r"[^\S\n]*Pasal[^\S\n]+\d+[^\S\n]*",
+            r"(?:[^\S\n]*[^a-z\s])*[^\S\n]*(?=\n|\Z)",
+            r"Kedua(?:[^\S\n]+(?:Belas|Puluh))?[^\S\n]*x",
+            r"\d+[^\S\n]*",
+            r"\n\s+\n",
+        ],
+    )
+    def test_innocence_of_the_detector(self, safe: str) -> None:
+        assert _adjacent_overlaps(safe) == [], safe
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [p for p, _repl in const.WHITESPACE_FIXES],
+        ids=[f"WHITESPACE_FIXES[{i}]" for i in range(len(const.WHITESPACE_FIXES))],
+    )
+    def test_no_whitespace_fix_has_adjacent_overlapping_runs(self, pattern: str) -> None:
+        assert _adjacent_overlaps(pattern) == [], pattern
+
+    def test_the_heading_line_has_none_either(self) -> None:
+        assert _adjacent_overlaps(const.STRUCTURAL_HEADING_LINE) == []
 
 
 class TestTheClassIsExactlyBackslashSMinusNewline:
@@ -651,9 +827,22 @@ SWEEP_PREFIXES = (
     "Halaman 1 dari 2",
 )
 SWEEP_PUMPS = (
-    "\n", "\n\n", " \n", "\n ", " ", "\t", "\r", "\xa0", "0", "00", "A", "x\n",
+    "\n",
+    "\n\n",
+    " \n",
+    "\n ",
+    " ",
+    "\t",
+    "\r",
+    "\xa0",
+    "0",
+    "00",
+    "A",
+    "x\n",
     # longer/mixed runs: a one-character pump cannot express an alternating interior
-    "\n \n\t", "\n\xa0", " \n\n ",
+    "\n \n\t",
+    "\n\xa0",
+    " \n\n ",
 )
 # A suffix is not decoration: `PASAL_PATTERN` terminates on a lookahead with FOUR branches
 # (`\nPasal`, `^BAB`, `^Penjelasan`, `\Z`), and a payload that only ever ends in `\Z`
@@ -702,7 +891,9 @@ def _sweep_verdict(rx: re.Pattern) -> str | None:
                         control_base_text = "\n" * _CONTROL_N
                         control_doubled_text = "\n" * (_CONTROL_N * 2)
                         control_elapsed = _elapsed_min(_LINEAR_CONTROL_PATTERN, control_base_text)
-                        control_doubled = _elapsed_min(_LINEAR_CONTROL_PATTERN, control_doubled_text)
+                        control_doubled = _elapsed_min(
+                            _LINEAR_CONTROL_PATTERN, control_doubled_text
+                        )
                         control_ratio = control_doubled / max(control_elapsed, 1e-9)
                         # Two-sided: see _LINEAR_CONTROL_MIN_RATIO above. The low side is
                         # the half that produced the 2026-08-09 false reds.
@@ -717,9 +908,7 @@ def _sweep_verdict(rx: re.Pattern) -> str | None:
                         # the n and 2n samples to cancel drift — a larger change to
                         # `_elapsed_min` that belongs on its own.
                         if not (
-                            _LINEAR_CONTROL_MIN_RATIO
-                            <= control_ratio
-                            <= _LINEAR_CONTROL_MAX_RATIO
+                            _LINEAR_CONTROL_MIN_RATIO <= control_ratio <= _LINEAR_CONTROL_MAX_RATIO
                         ):
                             continue
                         return (
@@ -768,7 +957,9 @@ class TestRatioConfirmation:
         """
         samples = iter([0.100, 0.002, 0.050])
         monkeypatch.setattr(
-            sys.modules[__name__], "_elapsed", lambda rx, text: next(samples),
+            sys.modules[__name__],
+            "_elapsed",
+            lambda rx, text: next(samples),
         )
         assert _elapsed_min(re.compile("x"), "y", repeats=3) == 0.002
 
@@ -788,8 +979,13 @@ class TestPayloadSweep:
 
     @staticmethod
     def _script(
-        monkeypatch, trigger, base_honest, doubled_first, doubled_honest,
-        control_base_honest=0.002, control_doubled_honest=0.004,
+        monkeypatch,
+        trigger,
+        base_honest,
+        doubled_first,
+        doubled_honest,
+        control_base_honest=0.002,
+        control_doubled_honest=0.004,
     ):
         """Drive the whole sweep on a scripted clock: reads answer by ROLE, not by ordinal.
 
@@ -809,8 +1005,11 @@ class TestPayloadSweep:
         not "the confirmation never ran".
         """
         state = {
-            "n": 0, "base_len": None, "d": 0,
-            "control_base_len": None, "control_seen": False,
+            "n": 0,
+            "base_len": None,
+            "d": 0,
+            "control_base_len": None,
+            "control_seen": False,
         }
 
         def fake_elapsed(rx, text):
@@ -844,8 +1043,11 @@ class TestPayloadSweep:
         instead of re-measuring and 0.005 -> 0.020 convicts at 4x.
         """
         state = self._script(
-            monkeypatch, trigger=0.005, base_honest=0.001,
-            doubled_first=0.020, doubled_honest=0.020,
+            monkeypatch,
+            trigger=0.005,
+            base_honest=0.001,
+            doubled_first=0.020,
+            doubled_honest=0.020,
         )
         assert _sweep_verdict(CURED["PASAL_PATTERN"]) is None
         assert state["n"] > 1, "the re-measurement was never asked — the trigger never fired"
@@ -860,8 +1062,11 @@ class TestPayloadSweep:
         reason that half of the change is not decoration.
         """
         self._script(
-            monkeypatch, trigger=0.006, base_honest=0.006,
-            doubled_first=0.050, doubled_honest=0.009,
+            monkeypatch,
+            trigger=0.006,
+            base_honest=0.006,
+            doubled_first=0.050,
+            doubled_honest=0.009,
         )
         assert _sweep_verdict(CURED["PASAL_PATTERN"]) is None
 
@@ -876,14 +1081,18 @@ class TestPayloadSweep:
         between a real regression and its verdict.
         """
         self._script(
-            monkeypatch, trigger=0.006, base_honest=0.006,
-            doubled_first=0.048, doubled_honest=0.048,
+            monkeypatch,
+            trigger=0.006,
+            base_honest=0.006,
+            doubled_first=0.048,
+            doubled_honest=0.048,
         )
         verdict = _sweep_verdict(CURED["PASAL_PATTERN"])
         assert verdict is not None and "8.0x for 2x input" in verdict, verdict
 
     def test_a_noisy_window_that_also_inflates_the_linear_control_does_not_convict(
-        self, monkeypatch,
+        self,
+        monkeypatch,
     ):
         """The false red of 2026-08-08, reproduced without a clock.
 
@@ -898,9 +1107,13 @@ class TestPayloadSweep:
         the false red that actually happened.
         """
         self._script(
-            monkeypatch, trigger=0.006, base_honest=0.006,
-            doubled_first=0.080, doubled_honest=0.080,
-            control_base_honest=0.002, control_doubled_honest=0.030,
+            monkeypatch,
+            trigger=0.006,
+            base_honest=0.006,
+            doubled_first=0.080,
+            doubled_honest=0.080,
+            control_base_honest=0.002,
+            control_doubled_honest=0.030,
         )
         assert _sweep_verdict(CURED["PASAL_PATTERN"]) is None
 
@@ -914,14 +1127,18 @@ class TestPayloadSweep:
         for the wrong reason.
         """
         self._script(
-            monkeypatch, trigger=0.006, base_honest=0.006,
-            doubled_first=0.080, doubled_honest=0.080,
+            monkeypatch,
+            trigger=0.006,
+            base_honest=0.006,
+            doubled_first=0.080,
+            doubled_honest=0.080,
         )
         verdict = _sweep_verdict(CURED["PASAL_PATTERN"])
         assert verdict is not None and "13.3x for 2x input" in verdict, verdict
 
     def test_the_real_false_red_a_control_below_the_band_does_not_convict(
-        self, monkeypatch,
+        self,
+        monkeypatch,
     ):
         """The false red of 2026-08-09, at the numbers it actually happened with.
 
@@ -937,9 +1154,13 @@ class TestPayloadSweep:
         remove the lower bound and this convicts at 13.3x.
         """
         state = self._script(
-            monkeypatch, trigger=0.006, base_honest=0.006,
-            doubled_first=0.080, doubled_honest=0.080,
-            control_base_honest=0.010, control_doubled_honest=0.007,  # 0.7x, as measured
+            monkeypatch,
+            trigger=0.006,
+            base_honest=0.006,
+            doubled_first=0.080,
+            doubled_honest=0.080,
+            control_base_honest=0.010,
+            control_doubled_honest=0.007,  # 0.7x, as measured
         )
         assert _sweep_verdict(CURED["PASAL_PATTERN"]) is None
         assert state["control_seen"], (
@@ -955,7 +1176,11 @@ class TestPayloadSweep:
         ],
     )
     def test_the_band_edges_are_inclusive(
-        self, monkeypatch, control_base, control_doubled, label,
+        self,
+        monkeypatch,
+        control_base,
+        control_doubled,
+        label,
     ):
         """Innocence for the bound itself: a control AT an edge is not a stand-down.
 
@@ -965,9 +1190,13 @@ class TestPayloadSweep:
         (min 1.26 over 60 contended rounds), so an edge excluding 1.2 would be pure loss.
         """
         self._script(
-            monkeypatch, trigger=0.006, base_honest=0.006,
-            doubled_first=0.080, doubled_honest=0.080,
-            control_base_honest=control_base, control_doubled_honest=control_doubled,
+            monkeypatch,
+            trigger=0.006,
+            base_honest=0.006,
+            doubled_first=0.080,
+            doubled_honest=0.080,
+            control_base_honest=control_base,
+            control_doubled_honest=control_doubled,
         )
         verdict = _sweep_verdict(CURED["PASAL_PATTERN"])
         assert verdict is not None, f"{label}: an in-band control must not suppress"
