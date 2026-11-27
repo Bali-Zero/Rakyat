@@ -54,18 +54,18 @@
     "workspace:reset": "npm run workspace:clean && npm install"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
-    "@vitest/coverage-istanbul": "5.1.0",
+    "@playwright/test": "1.65.1",
+    "@vitest/coverage-istanbul": "5.1.1",
     "@types/node": "^26.6.6",
     "esbuild": "^0.28.2",
     "husky": "^9.1.7",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   },
   "dependencies": {
-    "axios": "^1.21.0"
+    "axios": "^1.21.1"
   },
   "description": "**Production-ready AI platform powered by ZANTARA - Bali Zero's intelligent business assistant**",
   "main": "index.js",
