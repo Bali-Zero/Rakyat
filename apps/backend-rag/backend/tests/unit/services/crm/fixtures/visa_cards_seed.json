@@ -1,0 +1,3364 @@
+{
+  "generated_on": "2026-11-28",
+  "vocabulary": {
+    "passport": "Passport bio page (identity page of the passport)",
+    "photo": "Recent colour photo of the applicant",
+    "bank_statement": "Bank statement of the last 3 months, applicant's or sponsor's name",
+    "return_ticket": "Return or onward flight ticket out of Indonesia",
+    "itinerary": "Travel plan for the stay",
+    "cv": "Curriculum vitae of the applicant",
+    "application_letter": "Letter applying for the visa, signed by the applicant or prepared by us for signature",
+    "sponsor_letter": "Letter from the sponsor (company or person) guaranteeing or supporting the applicant",
+    "invitation_letter": "Letter or invitation from an Indonesian body, company or organiser explaining the purpose and relationship",
+    "family_tie_letter": "Letter from an Indonesian spouse or parent explaining the family tie and the activities in Indonesia",
+    "family_card": "Indonesian family card (Kartu Keluarga) of the Indonesian relative",
+    "reentry_permit": "Permit to return to the country of application, for stateless people or holders of a non-national travel document",
+    "current_stay_permit": "The applicant's current visa or stay permit",
+    "work_permit_rptka": "Manpower-ministry approval for the foreign worker's position (RPTKA)",
+    "share_ownership_proof": "Proof of the applicant's own shareholding in the Indonesian company, registered with the investment ministry",
+    "establishment_decree": "Law-ministry decree approving the company's establishment",
+    "company_bank_statement": "Company current-account statements of the last 2 months",
+    "income_proof": "Proof of income (salary account record or allowance)",
+    "employment_contract_foreign": "Employment agreement with a company established outside Indonesia",
+    "marriage_certificate": "Marriage certificate or marriage book",
+    "birth_certificate": "Birth certificate (reserved: appears only in candidates left out)",
+    "support_letter": "Evidence of the applicant's tie to Indonesia: a letter from an institution, or from an Indonesian spouse or parent"
+  },
+  "cards": [
+    {
+      "practice_type_id": 14,
+      "code": "visa_c1_tourism",
+      "block": "visa",
+      "visa_type_code": "C1",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.1: C1 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.1: C1 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.1: C1 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Your flight ticket out of Indonesia (a return or onward booking).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "house",
+          "source_note": "study A 2.1: house card + NB-2; official list asks it only of stateless holders"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.1: C1 official list"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "itinerary",
+          "reason": "Only the older house build and process steps ask for it; not in the official C1 list; the study notes the older generated cards were wrong"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 15,
+      "code": "visa_c2_business",
+      "block": "visa",
+      "visa_type_code": "C2",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.2: C2 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.2: C2 official list; amount contested (page none, NB-2 USD 2,000)"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.2: C2 official list"
+        },
+        {
+          "document_type": "invitation_letter",
+          "label": "Invitation / support letter from the Indonesian institution",
+          "client_text": "A letter from the Indonesian government body or private institution you are visiting, explaining its relationship with you and the purpose of your visit.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.2: C2 official list special requirement; house card agrees"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.2: C2 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "formal corporate sponsor letter",
+          "reason": "fb-bvk says a corporate sponsor is required; the official page and NB-2 ask only for the invitation letter"
+        },
+        {
+          "document": "bank statement amount (USD 2,000)",
+          "reason": "contested: official C2 page states no minimum, NB-2 says USD 2,000; number left out of the client text"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 17,
+      "code": "visa_c18_work_trial",
+      "block": "visa",
+      "visa_type_code": "C18",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.6: C18 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.6: C18 official list; no amount stated for C18"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.6: C18 official list"
+        },
+        {
+          "document_type": "invitation_letter",
+          "label": "Invitation letter to the competency trial",
+          "client_text": "A letter from an Indonesian government body or private institution inviting you to take the skills test.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.6: C18 official list"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.6: C18 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "sponsor statement letter",
+          "reason": "C18 is a sponsor-required visa but the official application list quoted in the study does not name a sponsor letter; ask the reviewers"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 20,
+      "code": "ext_c1_tourism",
+      "block": "visa",
+      "visa_type_code": "C1",
+      "stage": "extension",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport",
+          "client_text": "Your passport photo page (the current valid passport).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "house",
+          "source_note": "study A 2.10 EXT-C1: passport, current permit, photo from the house guide via NB-2"
+        },
+        {
+          "document_type": "current_stay_permit",
+          "label": "Current visa / stay permit",
+          "client_text": "Your current visa or stay permit (e-visa or entry stamp record) that we are extending.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "house",
+          "source_note": "study A 2.10 EXT-C1: house guide via NB-2"
+        },
+        {
+          "document_type": "photo",
+          "label": "Recent photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "house",
+          "source_note": "study A 2.10 EXT-C1: house guide via NB-2"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "guarantor change letters (objection and release)",
+          "reason": "only when changing guarantor, one source (fb-dseries), conditional"
+        },
+        {
+          "document": "bank statement / itinerary",
+          "reason": "not asked for an extension by any source"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 21,
+      "code": "visa_d12_business_1yr",
+      "block": "visa",
+      "visa_type_code": "D12",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 5,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 5,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list; page and house card agree"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "invitation_letter",
+          "label": "Letter from a government body or private institution explaining the relationship",
+          "client_text": "A letter, invitation or correspondence from an Indonesian government body or private institution that explains its relationship with you.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official support document"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "business plan / investment intent document",
+          "reason": "house card and process steps ask for it; the official page names a letter from a body or company instead: contradicted, not seeded"
+        },
+        {
+          "document": "sponsor_letter",
+          "reason": "older generated card required it; study says wrong; page says no sponsor to apply"
+        },
+        {
+          "document": "return_ticket",
+          "reason": "not stated for D12 beyond the stateless rule"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 22,
+      "code": "visa_d12_business_2yr",
+      "block": "visa",
+      "visa_type_code": "D12",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 5,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 5,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list; page and house card agree"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "invitation_letter",
+          "label": "Letter from a government body or private institution explaining the relationship",
+          "client_text": "A letter, invitation or correspondence from an Indonesian government body or private institution that explains its relationship with you.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official support document"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.9: D12 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "business plan / investment intent document",
+          "reason": "house card and process steps ask for it; the official page names a letter from a body or company instead: contradicted, not seeded"
+        },
+        {
+          "document": "sponsor_letter",
+          "reason": "older generated card required it; study says wrong; page says no sponsor to apply"
+        },
+        {
+          "document": "return_ticket",
+          "reason": "not stated for D12 beyond the stateless rule"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 23,
+      "code": "kitas_working_offshore",
+      "block": "visa",
+      "visa_type_code": "E23",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "application_letter",
+          "label": "Visa application letter",
+          "client_text": "The letter that applies for the visa. We prepare it.",
+          "provider": "us",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list: application letter AND guarantor's statement; split after the cross-family fact check, finding 1"
+        },
+        {
+          "document_type": "sponsor_letter",
+          "label": "Sponsor's guarantee letter",
+          "client_text": "A letter from the Indonesian company that will employ you, stating that it guarantees you. The company is your sponsor (the person or organisation guaranteeing your application). We prepare it with the company.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 1"
+        },
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 2"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 3"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 4"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 5"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 6"
+        },
+        {
+          "document_type": "work_permit_rptka",
+          "label": "Manpower ministry work approval (RPTKA)",
+          "client_text": "Approval from the Indonesian manpower ministry for your position. We and your employer arrange it; you do not need to prepare anything.",
+          "provider": "us",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1 item 7"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "return or onward ticket",
+          "reason": "legacy card stub (generic for all E codes) vs official list: required in practice unknown"
+        },
+        {
+          "document": "police clearance, health certificate",
+          "reason": "only the journey template asks; not on the official page"
+        },
+        {
+          "document": "educational certificates, job description",
+          "reason": "journey template IMTA step only; IMTA itself unconfirmed"
+        },
+        {
+          "document": "PT PMA deed, previous permits, sponsor letter or contract",
+          "reason": "welcome checklist keyed to the retired code KITAS only; its passport figure is 18 months"
+        },
+        {
+          "document": "BPJS proof",
+          "reason": "legacy card restriction and NB-2 at extension only; not an application document"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 24,
+      "code": "kitas_working_onshore",
+      "block": "visa",
+      "visa_type_code": "E23",
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The onshore (Altus) route is not defined in any source, so it is unknown whether the e-visa list applies; the list shown is the official e-visa list",
+      "documents": [
+        {
+          "document_type": "sponsor_letter",
+          "label": "Application letter and sponsor guarantee",
+          "client_text": "A letter from the Indonesian company that will employ you, confirming the job offer and that it guarantees you. We prepare it with the company.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 1"
+        },
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 2"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name, showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 3"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 4"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 5"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1: E23 official list item 6"
+        },
+        {
+          "document_type": "work_permit_rptka",
+          "label": "Manpower ministry work approval (RPTKA)",
+          "client_text": "Approval from the Indonesian manpower ministry for your position. We and your employer arrange it; you do not need to prepare anything.",
+          "provider": "us",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 1 item 7"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "return or onward ticket",
+          "reason": "legacy card stub (generic for all E codes) vs official list: required in practice unknown"
+        },
+        {
+          "document": "police clearance, health certificate",
+          "reason": "only the journey template asks; not on the official page"
+        },
+        {
+          "document": "educational certificates, job description",
+          "reason": "journey template IMTA step only; IMTA itself unconfirmed"
+        },
+        {
+          "document": "PT PMA deed, previous permits, sponsor letter or contract",
+          "reason": "welcome checklist keyed to the retired code KITAS only; its passport figure is 18 months"
+        },
+        {
+          "document": "BPJS proof",
+          "reason": "legacy card restriction and NB-2 at extension only; not an application document"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 25,
+      "code": "kitas_working_extend",
+      "block": "visa",
+      "visa_type_code": "E23",
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "No source lists the documents of an E23 extension: the official list is for the e-visa application",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        },
+        {
+          "document": "RPTKA extension, DKP-TKA proof, BPJS Ketenagakerjaan and Kesehatan proof, personal and company NPWP, WLKP report",
+          "reason": "only NB-2 (Art. 118 reading); neither an official list nor a house list"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 26,
+      "code": "kitas_investor_2yr_offshore",
+      "block": "visa",
+      "visa_type_code": "E28A",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "application_letter",
+          "label": "Visa application letter",
+          "client_text": "The letter that applies for the visa. We prepare it.",
+          "provider": "us",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 1"
+        },
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 2"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 3"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 4"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 5"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 6"
+        },
+        {
+          "document_type": "share_ownership_proof",
+          "label": "Own shareholding proof, IDR 10 billion+",
+          "client_text": "Proof that you personally own shares worth at least IDR 10 billion in the Indonesian company, registered with the investment ministry. It comes from the company file.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 7; amount per official page and NB-2, FB e28 figure rejected"
+        },
+        {
+          "document_type": "establishment_decree",
+          "label": "Company establishment decree",
+          "client_text": "The law ministry decree that approved the company. It comes from the company file.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 8"
+        },
+        {
+          "document_type": "company_bank_statement",
+          "label": "Company current-account statements, last 2 months",
+          "client_text": "The statements of the company's current account for the last 2 months. A newly established company may hand them to Immigration later, no later than 90 days after the stay permit is issued.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 9"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "return or onward ticket",
+          "reason": "legacy card stub vs official list"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 27,
+      "code": "kitas_investor_2yr_onshore",
+      "block": "visa",
+      "visa_type_code": "E28A",
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The onshore (Altus) route is not defined in any source; the list shown is the official e-visa list",
+      "documents": [
+        {
+          "document_type": "application_letter",
+          "label": "Visa application letter",
+          "client_text": "The letter that applies for the visa. We prepare it.",
+          "provider": "us",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 1"
+        },
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 2"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name, showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 3"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 4"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 5"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 6"
+        },
+        {
+          "document_type": "share_ownership_proof",
+          "label": "Own shareholding proof, IDR 10 billion+",
+          "client_text": "Proof that you personally own shares worth at least IDR 10 billion in the Indonesian company, registered with the investment ministry. It comes from the company file.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 7; amount per official page and NB-2, FB e28 figure rejected"
+        },
+        {
+          "document_type": "establishment_decree",
+          "label": "Company establishment decree",
+          "client_text": "The law ministry decree that approved the company. It comes from the company file.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 8"
+        },
+        {
+          "document_type": "company_bank_statement",
+          "label": "Company bank statements, last 2 months",
+          "client_text": "The company's bank statements for the last 2 months. A company less than 2 months old can hand them in later; we will tell you.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 3: E28A official list item 9"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "return or onward ticket",
+          "reason": "legacy card stub vs official list"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 28,
+      "code": "kitas_investor_2yr_extend",
+      "block": "visa",
+      "visa_type_code": "E28A",
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "No source lists the documents of an E28A extension",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        },
+        {
+          "document": "sponsor documents for an extension",
+          "reason": "none in any source"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 29,
+      "code": "kitas_spouse_1yr_offshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (E31A or E31B); the two lists differ and the E31B list in the law card is mismatched. Only items shared by both are shown",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "marriage_certificate",
+          "label": "Marriage certificate or marriage book",
+          "client_text": "Your marriage certificate (the Indonesian marriage book if you married in Indonesia).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4 items 7-8; E31A list"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "application / sponsor letter",
+          "reason": "from the WNI spouse (E31A) or from the permit-holding spouse (E31B): depends on the code"
+        },
+        {
+          "document": "proof the marriage is registered",
+          "reason": "E31A only, when married abroad (sworn translation and registration)"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 30,
+      "code": "kitas_spouse_1yr_onshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (E31A or E31B); the two lists differ and the E31B list in the law card is mismatched. Only items shared by both are shown; the onshore route is also undefined",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "marriage_certificate",
+          "label": "Marriage certificate or marriage book",
+          "client_text": "Your marriage certificate (the Indonesian marriage book if you married in Indonesia).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4 items 7-8; E31A list"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "application / sponsor letter",
+          "reason": "from the WNI spouse (E31A) or from the permit-holding spouse (E31B): depends on the code"
+        },
+        {
+          "document": "proof the marriage is registered",
+          "reason": "E31A only, when married abroad (sworn translation and registration)"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 31,
+      "code": "kitas_spouse_1yr_extend",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "Legal code not recorded (E31A or E31B) and no source lists extension documents",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 32,
+      "code": "kitas_spouse_2yr_offshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (E31A or E31B); the two lists differ and the E31B list in the law card is mismatched. Only items shared by both are shown",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "marriage_certificate",
+          "label": "Marriage certificate or marriage book",
+          "client_text": "Your marriage certificate (the Indonesian marriage book if you married in Indonesia).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4 items 7-8; E31A list"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "application / sponsor letter",
+          "reason": "from the WNI spouse (E31A) or from the permit-holding spouse (E31B): depends on the code"
+        },
+        {
+          "document": "proof the marriage is registered",
+          "reason": "E31A only, when married abroad (sworn translation and registration)"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 33,
+      "code": "kitas_spouse_2yr_onshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (E31A or E31B); the two lists differ and the E31B list in the law card is mismatched. Only items shared by both are shown; the onshore route is also undefined",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 4: E31A list, shared items"
+        },
+        {
+          "document_type": "marriage_certificate",
+          "label": "Marriage certificate or marriage book",
+          "client_text": "Your marriage certificate (the Indonesian marriage book if you married in Indonesia).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 4 items 7-8; E31A list"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "application / sponsor letter",
+          "reason": "from the WNI spouse (E31A) or from the permit-holding spouse (E31B): depends on the code"
+        },
+        {
+          "document": "proof the marriage is registered",
+          "reason": "E31A only, when married abroad (sworn translation and registration)"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 34,
+      "code": "kitas_spouse_2yr_extend",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "Legal code not recorded (E31A or E31B) and no source lists extension documents",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 35,
+      "code": "kitas_dependent_1yr_offshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (one of E31C to E31J); the lists differ and the law card lists are mismatched. Only items common to the standard official file are shown",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "birth certificate",
+          "reason": "in the E31E list; need depends on the code"
+        },
+        {
+          "document": "sponsor guarantee or parent commitment letter",
+          "reason": "differs by code"
+        },
+        {
+          "document": "parent's valid permit",
+          "reason": "E31E list only"
+        },
+        {
+          "document": "marriage certificate of the parents",
+          "reason": "E31E list only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 36,
+      "code": "kitas_dependent_1yr_onshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (one of E31C to E31J); the lists differ and the law card lists are mismatched. Only items common to the standard official file are shown; the onshore route is also undefined",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "birth certificate",
+          "reason": "in the E31E list; need depends on the code"
+        },
+        {
+          "document": "sponsor guarantee or parent commitment letter",
+          "reason": "differs by code"
+        },
+        {
+          "document": "parent's valid permit",
+          "reason": "E31E list only"
+        },
+        {
+          "document": "marriage certificate of the parents",
+          "reason": "E31E list only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 37,
+      "code": "kitas_dependent_1yr_extend",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "Legal code not recorded and no source lists extension documents",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 38,
+      "code": "kitas_dependent_2yr_offshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (one of E31C to E31J); the lists differ and the law card lists are mismatched. Only items common to the standard official file are shown",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "birth certificate",
+          "reason": "in the E31E list; need depends on the code"
+        },
+        {
+          "document": "sponsor guarantee or parent commitment letter",
+          "reason": "differs by code"
+        },
+        {
+          "document": "parent's valid permit",
+          "reason": "E31E list only"
+        },
+        {
+          "document": "marriage certificate of the parents",
+          "reason": "E31E list only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 39,
+      "code": "kitas_dependent_2yr_onshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal code behind the practice is not recorded (one of E31C to E31J); the lists differ and the law card lists are mismatched. Only items common to the standard official file are shown; the onshore route is also undefined",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 5: standard official file"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "birth certificate",
+          "reason": "in the E31E list; need depends on the code"
+        },
+        {
+          "document": "sponsor guarantee or parent commitment letter",
+          "reason": "differs by code"
+        },
+        {
+          "document": "parent's valid permit",
+          "reason": "E31E list only"
+        },
+        {
+          "document": "marriage certificate of the parents",
+          "reason": "E31E list only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 40,
+      "code": "kitas_dependent_2yr_extend",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "Legal code not recorded and no source lists extension documents",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 41,
+      "code": "kitas_remote_worker_offshore",
+      "block": "visa",
+      "visa_type_code": "E33G",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "income_proof",
+          "label": "Proof of annual income, USD 60,000+",
+          "client_text": "A bank account record showing salary or income of at least USD 60,000 a year.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "employment_contract_foreign",
+          "label": "Employment contract with the foreign company",
+          "client_text": "Your employment agreement with the company that is established outside Indonesia.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "return or onward ticket",
+          "reason": "legacy card stub vs official list"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 42,
+      "code": "kitas_remote_worker_onshore",
+      "block": "visa",
+      "visa_type_code": "E33G",
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The onshore (Altus) route is not defined in any source; the list shown is the official e-visa list",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name, showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "income_proof",
+          "label": "Proof of annual income, USD 60,000+",
+          "client_text": "A bank account record showing salary or income of at least USD 60,000 a year.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        },
+        {
+          "document_type": "employment_contract_foreign",
+          "label": "Employment contract with the foreign company",
+          "client_text": "Your employment agreement with the company that is established outside Indonesia.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 7: E33G official list"
+        }
+      ],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 43,
+      "code": "kitas_remote_worker_extend",
+      "block": "visa",
+      "visa_type_code": "E33G",
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "No source lists the documents of an E33G extension",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 44,
+      "code": "kitas_freelance_offshore",
+      "block": "visa",
+      "visa_type_code": "E23",
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The legal footing of the impresario sponsor model, and whether a manpower approval applies to it, are in no source; the official E23 list may not fit",
+      "documents": [
+        {
+          "document_type": "sponsor_letter",
+          "label": "Application letter and sponsor guarantee",
+          "client_text": "A letter from the Indonesian company that will employ you, confirming the job offer and that it guarantees you. We prepare it with the company.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 1"
+        },
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 2"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name, showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 3"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 4"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 5"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 6"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "work_permit_rptka",
+          "reason": "unknown whether needed for the impresario model"
+        },
+        {
+          "document": "contract with the impresario company, portfolio",
+          "reason": "study: UNKNOWN"
+        },
+        {
+          "document": "return or onward ticket",
+          "reason": "legacy card stub (generic for all E codes) vs official list: required in practice unknown"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 45,
+      "code": "kitas_freelance_onshore",
+      "block": "visa",
+      "visa_type_code": "E23",
+      "stage": "new",
+      "active": false,
+      "hold_reason": "Impresario sponsor model undefined and the onshore (Altus) route undefined",
+      "documents": [
+        {
+          "document_type": "sponsor_letter",
+          "label": "Application letter and sponsor guarantee",
+          "client_text": "A letter from the Indonesian company that will employ you, confirming the job offer and that it guarantees you. We prepare it with the company.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 1"
+        },
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 2"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name, showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 3"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 4"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 5"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 2: Freelance E23 (items 1-6 of the E23 list) item 6"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "work_permit_rptka",
+          "reason": "unknown whether needed for the impresario model"
+        },
+        {
+          "document": "contract with the impresario company, portfolio",
+          "reason": "study: UNKNOWN"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 46,
+      "code": "kitas_retirement_offshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The practice is called Retirement but no legal code is recorded (E33E needs a deposit and no sponsor, E33F needs a sponsor and no deposit); deposit and income may be cumulative or alternative (open). Only common items are shown",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "income_proof",
+          "label": "Proof of monthly income",
+          "client_text": "Proof of your regular monthly income or allowance.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: both E33E and E33F lists"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "sponsorship letter",
+          "reason": "E33F only"
+        },
+        {
+          "document": "commitment to hold the deposit at a state bank and proof of the deposit within 90 days of entry",
+          "reason": "E33E only"
+        },
+        {
+          "document": "other documents explaining the purpose of arrival",
+          "reason": "E33E only"
+        },
+        {
+          "document": "health insurance",
+          "reason": "legacy cards only, in no official list"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 47,
+      "code": "kitas_retirement_onshore",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The practice is called Retirement but no legal code is recorded (E33E needs a deposit and no sponsor, E33F needs a sponsor and no deposit); deposit and income may be cumulative or alternative (open). Only common items are shown; the onshore route is also undefined",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page",
+          "client_text": "Your passport photo page, with enough validity left for the permit. We will confirm the exact validity needed.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: E33E and E33F lists, shared items"
+        },
+        {
+          "document_type": "income_proof",
+          "label": "Proof of monthly income",
+          "client_text": "Proof of your regular monthly income or allowance.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study B sheet 6: both E33E and E33F lists"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "sponsorship letter",
+          "reason": "E33F only"
+        },
+        {
+          "document": "commitment to hold the deposit at a state bank and proof of the deposit within 90 days of entry",
+          "reason": "E33E only"
+        },
+        {
+          "document": "other documents explaining the purpose of arrival",
+          "reason": "E33E only"
+        },
+        {
+          "document": "health insurance",
+          "reason": "legacy cards only, in no official list"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 48,
+      "code": "kitas_retirement_extend",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "extension",
+      "active": false,
+      "hold_reason": "No legal code recorded and no source lists extension documents",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current stay permit, photo",
+          "reason": "no source lists extension documents for this permit"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 49,
+      "code": "kitap_retirement_merp",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "conversion",
+      "active": false,
+      "hold_reason": "The documents of a conversion to a permanent permit are in no official or house source",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current permit, photos, tax reports",
+          "reason": "only the generic list of the retired type 'KITAP Permanent Permit'; no official or house list for conversion"
+        },
+        {
+          "document": "language / Pancasila test",
+          "reason": "one legacy card only"
+        },
+        {
+          "document": "health insurance",
+          "reason": "retirement card only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 50,
+      "code": "kitap_investor_merp",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "conversion",
+      "active": false,
+      "hold_reason": "The documents of a conversion to a permanent permit are in no official or house source",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current permit, photos, tax reports",
+          "reason": "only the generic list of the retired type 'KITAP Permanent Permit'; no official or house list for conversion"
+        },
+        {
+          "document": "language / Pancasila test",
+          "reason": "one legacy card only"
+        },
+        {
+          "document": "health insurance",
+          "reason": "retirement card only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 51,
+      "code": "kitap_dependent_merp",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "conversion",
+      "active": false,
+      "hold_reason": "The documents of a conversion to a permanent permit are in no official or house source",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, current permit, photos, tax reports",
+          "reason": "only the generic list of the retired type 'KITAP Permanent Permit'; no official or house list for conversion"
+        },
+        {
+          "document": "language / Pancasila test",
+          "reason": "one legacy card only"
+        },
+        {
+          "document": "health insurance",
+          "reason": "retirement card only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 58,
+      "code": "other_reset_molina",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 60,
+      "code": "other_sktt",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "passport, e-ITAS, domicile letter, photos, police report (STM)",
+          "reason": "NB-2 only, no card or house document; the 14-day rule and the STM prerequisite are NLM-only"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 63,
+      "code": "other_epo",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 64,
+      "code": "other_erp",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 65,
+      "code": "other_mutation_passport",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 66,
+      "code": "other_mutation_address",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 70,
+      "code": "other_born_report",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 75,
+      "code": "other_cancel_rptka",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 76,
+      "code": "other_cancel_wajib_lapor",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 83,
+      "code": "visa_d1_tourism_1yr",
+      "block": "visa",
+      "visa_type_code": "D1",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "support_letter",
+          "label": "Letter showing your tie to Indonesia (institution or family)",
+          "client_text": "One of these two: a letter, invitation or correspondence from an Indonesian government body or private institution explaining its relationship with you; or a letter from your Indonesian spouse or parent.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list: institutional evidence OR letter from Indonesian spouse/parent; merged after the cross-family fact check, finding 3"
+        },
+        {
+          "document_type": "family_card",
+          "label": "Family register (Kartu Keluarga) of the Indonesian relative, or equivalent",
+          "client_text": "The family register (Kartu Keluarga) of your Indonesian spouse or parent, or an equivalent document.",
+          "provider": "sponsor",
+          "condition_text": "only when the letter comes from an Indonesian spouse or parent",
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list: goes with the family letter"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "sponsor letter",
+          "reason": "the page says no sponsor to apply but the extension text refers to a sponsor account (flagged TO_VERIFY on the card); not seeded"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 84,
+      "code": "visa_d1_tourism_2yr",
+      "block": "visa",
+      "visa_type_code": "D1",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "support_letter",
+          "label": "Letter showing your tie to Indonesia (institution or family)",
+          "client_text": "One of these two: a letter, invitation or correspondence from an Indonesian government body or private institution explaining its relationship with you; or a letter from your Indonesian spouse or parent.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list: institutional evidence OR letter from Indonesian spouse/parent; merged after the cross-family fact check, finding 3"
+        },
+        {
+          "document_type": "family_card",
+          "label": "Family register (Kartu Keluarga) of the Indonesian relative, or equivalent",
+          "client_text": "The family register (Kartu Keluarga) of your Indonesian spouse or parent, or an equivalent document.",
+          "provider": "sponsor",
+          "condition_text": "only when the letter comes from an Indonesian spouse or parent",
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list: goes with the family letter"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "sponsor letter",
+          "reason": "the page says no sponsor to apply but the extension text refers to a sponsor account (flagged TO_VERIFY on the card); not seeded"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 85,
+      "code": "visa_d1_tourism_5yr",
+      "block": "visa",
+      "visa_type_code": "D1",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "support_letter",
+          "label": "Letter showing your tie to Indonesia (institution or family)",
+          "client_text": "One of these two: a letter, invitation or correspondence from an Indonesian government body or private institution explaining its relationship with you; or a letter from your Indonesian spouse or parent.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list: institutional evidence OR letter from Indonesian spouse/parent; merged after the cross-family fact check, finding 3"
+        },
+        {
+          "document_type": "family_card",
+          "label": "Family register (Kartu Keluarga) of the Indonesian relative, or equivalent",
+          "client_text": "The family register (Kartu Keluarga) of your Indonesian spouse or parent, or an equivalent document.",
+          "provider": "sponsor",
+          "condition_text": "only when the letter comes from an Indonesian spouse or parent",
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list: goes with the family letter"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D1 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "sponsor letter",
+          "reason": "the page says no sponsor to apply but the extension text refers to a sponsor account (flagged TO_VERIFY on the card); not seeded"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 89,
+      "code": "visa_bridging",
+      "block": "visa",
+      "visa_type_code": "BRIDGING",
+      "stage": "new",
+      "active": false,
+      "hold_reason": "The full application list is not in the law card or any house source; the study did not reproduce the regulation list",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport",
+          "client_text": "Your passport photo page (the current valid passport).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "house",
+          "source_note": "study B sheet 10: fact base lists the passport"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "destination statement",
+          "reason": "fact base says required but the study does not reproduce the list"
+        },
+        {
+          "document": "guarantee proof",
+          "reason": "only if the foreigner has a guarantor (fact base)"
+        },
+        {
+          "document": "current stay permit",
+          "reason": "implied, no source states it"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 91,
+      "code": "visa_c10_speaker",
+      "block": "visa",
+      "visa_type_code": "C10",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "application_letter",
+          "label": "Visa application letter",
+          "client_text": "The letter that applies for the visa. We prepare it.",
+          "provider": "us",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.5: C10 official list"
+        },
+        {
+          "document_type": "sponsor_letter",
+          "label": "Sponsor's statement letter",
+          "client_text": "A letter from your sponsor (the person or organisation guaranteeing your visa application) in Indonesia, confirming that they support your visit.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.5: C10 official list"
+        },
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.5: C10 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.5: C10 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.5: C10 official list"
+        },
+        {
+          "document_type": "invitation_letter",
+          "label": "Organiser invitation with agenda and lecture material",
+          "client_text": "An invitation from the organiser of the lecture or seminar, describing the agenda and the material you will present.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.5: C10 official list"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.5: C10 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 92,
+      "code": "visa_d2_business_1yr",
+      "block": "visa",
+      "visa_type_code": "D2",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "support_letter",
+          "label": "Letter showing your tie to Indonesia (institution or family)",
+          "client_text": "One of these two: a letter, invitation or correspondence from an Indonesian government body or private institution explaining its relationship with you; or a letter from your Indonesian spouse or parent.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list: institutional evidence OR letter from Indonesian spouse/parent; merged after the cross-family fact check, finding 3"
+        },
+        {
+          "document_type": "family_card",
+          "label": "Family register (Kartu Keluarga) of the Indonesian relative, or equivalent",
+          "client_text": "The family register (Kartu Keluarga) of your Indonesian spouse or parent, or an equivalent document.",
+          "provider": "sponsor",
+          "condition_text": "only when the letter comes from an Indonesian spouse or parent",
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list: goes with the family letter"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "invitation from Indonesian business partner",
+          "reason": "house card wording; official page gives two alternatives (institution letter or family letter), which are seeded"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 93,
+      "code": "visa_d2_business_2yr",
+      "block": "visa",
+      "visa_type_code": "D2",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. A national passport must be valid for at least 6 more months; a temporary or emergency passport, or another travel document, for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or in the name of your sponsor (the person or organisation guaranteeing your visa application), showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "support_letter",
+          "label": "Letter showing your tie to Indonesia (institution or family)",
+          "client_text": "One of these two: a letter, invitation or correspondence from an Indonesian government body or private institution explaining its relationship with you; or a letter from your Indonesian spouse or parent.",
+          "provider": "sponsor",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list: institutional evidence OR letter from Indonesian spouse/parent; merged after the cross-family fact check, finding 3"
+        },
+        {
+          "document_type": "family_card",
+          "label": "Family register (Kartu Keluarga) of the Indonesian relative, or equivalent",
+          "client_text": "The family register (Kartu Keluarga) of your Indonesian spouse or parent, or an equivalent document.",
+          "provider": "sponsor",
+          "condition_text": "only when the letter comes from an Indonesian spouse or parent",
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list: goes with the family letter"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport (including a temporary or emergency passport): permission to return to the country where you apply.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Only if you are stateless or applying with a travel document that is not a national passport: your ticket out of Indonesia. Not needed for transport crew.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document (not for transport crew)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "official list, stateless / non-national provision; added after the cross-family fact check, finding 4"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "invitation from Indonesian business partner",
+          "reason": "house card wording; official page gives two alternatives (institution letter or family letter), which are seeded"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 94,
+      "code": "kitas_born",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "Documents and legal code of a stay permit for a child born in Indonesia are in no source",
+      "documents": [],
+      "candidates_left_out": [
+        {
+          "document": "birth certificate and parents' permit",
+          "reason": "no source lists them"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 119,
+      "code": "other_lapor_lahir_under",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 120,
+      "code": "other_lapor_lahir_up",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 121,
+      "code": "other_mutation_address_2_kanim",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 123,
+      "code": "other_imta_rptka_only_12mo",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 124,
+      "code": "other_imta_rptka_only_6mo_or_less",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 130,
+      "code": "other_create_user_rptka",
+      "block": "visa",
+      "visa_type_code": null,
+      "stage": "new",
+      "active": false,
+      "hold_reason": "No official or house source lists documents; minimum card of spec section 6",
+      "documents": [],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 134,
+      "code": "visa_b1_voa",
+      "block": "visa",
+      "visa_type_code": "B1",
+      "stage": "new",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. It must be valid for at least 6 more months; a temporary or emergency passport for at least 12.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.3: B1 official"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.3: B1 official"
+        },
+        {
+          "document_type": "return_ticket",
+          "label": "Return or onward ticket",
+          "client_text": "Your flight ticket out of Indonesia (a return or onward booking). Not needed if you are crew joining your vessel and continuing to another country.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.3: B1 official: ticket uploaded"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "bank_statement",
+          "reason": "house card says USD 1,000, the official B1 list has none: contested, not seeded"
+        },
+        {
+          "document": "card payment",
+          "reason": "not a document: a payment step handled by us"
+        }
+      ]
+    },
+    {
+      "practice_type_id": 135,
+      "code": "ext_b1_voa",
+      "block": "visa",
+      "visa_type_code": "B1",
+      "stage": "extension",
+      "active": true,
+      "hold_reason": null,
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport",
+          "client_text": "Your passport photo page (the current valid passport).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "house",
+          "source_note": "study A 2.11 EXT-B1: passport, current permit, photo from the house guide via NB-2"
+        },
+        {
+          "document_type": "current_stay_permit",
+          "label": "Current visa / stay permit",
+          "client_text": "Your current visa or stay permit (e-visa or entry stamp record) that we are extending.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "house",
+          "source_note": "study A 2.11 EXT-B1: house guide via NB-2"
+        },
+        {
+          "document_type": "photo",
+          "label": "Recent photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "house",
+          "source_note": "study A 2.11 EXT-B1: house guide via NB-2"
+        }
+      ],
+      "candidates_left_out": []
+    },
+    {
+      "practice_type_id": 169,
+      "code": "visa_d2_business_5yr",
+      "block": "visa",
+      "visa_type_code": "D2",
+      "stage": "new",
+      "active": false,
+      "hold_reason": "NB-2 reads Pasal 24(2) as a mandatory sponsor for 5-year validity, the official page says none: whether a sponsor letter belongs on the card is unresolved",
+      "documents": [
+        {
+          "document_type": "passport",
+          "label": "Passport bio page, valid 6+ months",
+          "client_text": "Your passport photo page. The passport must be valid for at least 6 more months.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "bank_statement",
+          "label": "Bank statement, last 3 months, USD 2,000+",
+          "client_text": "Your bank statements for the last 3 months, in your name or your sponsor's name, showing at least USD 2,000 or the equivalent.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "photo",
+          "label": "Colour photo",
+          "client_text": "A recent colour photo.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "cv",
+          "label": "CV",
+          "client_text": "Your CV (a short summary of your work and education).",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "itinerary",
+          "label": "Travel itinerary",
+          "client_text": "Your travel plan for the stay: where you will be and when.",
+          "provider": "client",
+          "condition_text": null,
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        },
+        {
+          "document_type": "invitation_letter",
+          "label": "Letter from a government body or company explaining the relationship",
+          "client_text": "A letter from an Indonesian government body or company explaining why you are visiting.",
+          "provider": "sponsor",
+          "condition_text": "when a government body or company supports your visit (instead of the family letter)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list: one of two alternatives"
+        },
+        {
+          "document_type": "family_tie_letter",
+          "label": "Letter from Indonesian spouse or parent",
+          "client_text": "A letter from your Indonesian spouse or parent explaining your family tie and what you will do in Indonesia.",
+          "provider": "sponsor",
+          "condition_text": "when an Indonesian spouse or parent supports your visit (instead of the company letter)",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list: one of two alternatives"
+        },
+        {
+          "document_type": "family_card",
+          "label": "Family card (Kartu Keluarga) of the Indonesian relative",
+          "client_text": "The family card (Kartu Keluarga, the Indonesian government family register) of your Indonesian spouse or parent.",
+          "provider": "sponsor",
+          "condition_text": "when an Indonesian spouse or parent supports your visit",
+          "reuse": "client_file",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list: goes with the family letter"
+        },
+        {
+          "document_type": "reentry_permit",
+          "label": "Re-entry permit (stateless / non-national document)",
+          "client_text": "Only if you have no national passport (you are stateless or hold a travel document issued by an organisation): a permit to return to the country you apply from. We will tell you if this applies to you.",
+          "provider": "client",
+          "condition_text": "only when the applicant is stateless or holds a non-national travel document",
+          "reuse": "fresh",
+          "source": "official",
+          "source_note": "study A 2.7/2.8: D2 official list"
+        }
+      ],
+      "candidates_left_out": [
+        {
+          "document": "invitation from Indonesian business partner",
+          "reason": "house card wording; official page gives two alternatives (institution letter or family letter), which are seeded"
+        },
+        {
+          "document": "sponsor_letter",
+          "reason": "5-year validity only, per NB-2; contradicts the official page, no official snapshot confirms it"
+        }
+      ]
+    }
+  ],
+  "factcheck": {
+    "by": "gpt-6.1-sol",
+    "on": "2026-11-28",
+    "findings": 10,
+    "disposition": "evidence/V1/factcheck.disposition.md"
+  }
+}

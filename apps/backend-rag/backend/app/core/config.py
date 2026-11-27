@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     # is Zero's decision. Flip via CLIENT_NURTURING_OUTBOUND_ENABLED=true.
     client_nurturing_outbound_enabled: bool = False
 
+    # Service cards feed the practice checklist (spec BLOCK-1-VISA). Empty = off: every
+    # new practice is seeded from practice_types.required_documents as before.
+    # Comma-separated practice type codes, or "*" for every active card.
+    # Set via SERVICE_CARDS_SEEDING_CODES.
+    service_cards_seeding_codes: str = ""
+
     deepseek_api_key: str | None = Field(default=None, description="DeepSeek API Key")
     ollama_url: str = Field(
         default="http://localhost:11434",
