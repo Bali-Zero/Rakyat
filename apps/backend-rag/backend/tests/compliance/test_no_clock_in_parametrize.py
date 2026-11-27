@@ -53,9 +53,7 @@ _TEST_ROOTS = (
 # `datetime.now()` / `datetime.utcnow()` / `date.today()` / `time.time()` /
 # `time.monotonic()` / `time.perf_counter()`. Matched on the attribute name so a
 # renamed import (`import datetime as dt`) is still caught.
-_CLOCK_ATTRS = frozenset(
-    {"now", "utcnow", "today", "time", "monotonic", "perf_counter"}
-)
+_CLOCK_ATTRS = frozenset({"now", "utcnow", "today", "time", "monotonic", "perf_counter"})
 
 # The clock's twin (2026-07-27, found while probing pytest-xdist): a decorator
 # argument that mints a RANDOM value is non-deterministic in the same way a
@@ -90,47 +88,96 @@ _NONDETERMINISTIC_NAMES = frozenset(
 )
 
 
-def _nondeterministic_calls_in_decorators(source: str) -> list[int]:
-    """Line numbers of random-value reads inside any decorator expression."""
+def _module_helpers(tree: ast.Module) -> dict[str, ast.AST]:
+    """Functions defined at module level, by name: a decorator that calls one
+    runs its body at collection, exactly as if it were written inline."""
+    return {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _eager_nodes(roots: list[ast.AST]) -> list[ast.AST]:
+    """The nodes that run when their roots are evaluated. A lambda or a nested
+    def runs later, when a test calls it, so nothing inside it is returned."""
+    nodes: list[ast.AST] = []
+    stack = list(roots)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        nodes.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return nodes
+
+
+def _eager_calls(helper: ast.AST | None) -> list[ast.Call]:
+    """The calls a module helper makes when it is called, one level deep."""
+    if helper is None:
+        return []
+    return [node for node in _eager_nodes(list(helper.body)) if isinstance(node, ast.Call)]
+
+
+def _called_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    return None
+
+
+def _reads_the_clock(call: ast.Call) -> bool:
+    return isinstance(call.func, ast.Attribute) and call.func.attr in _CLOCK_ATTRS
+
+
+def _reads_a_random_value(call: ast.Call) -> bool:
+    return _called_name(call) in _NONDETERMINISTIC_NAMES
+
+
+def _helper_reads(name: str, helpers: dict[str, ast.AST], reads, seen: set[str]) -> bool:
+    """Whether calling the module helper `name` makes a call `reads` matches,
+    itself or through the module helpers it calls when it runs, at any depth."""
+    if name in seen or name not in helpers:
+        return False
+    seen.add(name)
+    for call in _eager_calls(helpers[name]):
+        if reads(call):
+            return True
+        if isinstance(call.func, ast.Name) and _helper_reads(call.func.id, helpers, reads, seen):
+            return True
+    return False
+
+
+def _decorator_reads(source: str, reads) -> list[int]:
+    """Line numbers of calls in any decorator expression that read a source
+    `reads` matches when the decorator is evaluated, i.e. at collection."""
     tree = ast.parse(source)
+    helpers = _module_helpers(tree)
     found: list[int] = []
     for node in ast.walk(tree):
-        if not isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
         for decorator in node.decorator_list:
-            for sub in ast.walk(decorator):
+            for sub in _eager_nodes([decorator]):
                 if not isinstance(sub, ast.Call):
                     continue
-                name = None
-                if isinstance(sub.func, ast.Attribute):
-                    name = sub.func.attr
-                elif isinstance(sub.func, ast.Name):
-                    name = sub.func.id
-                if name in _NONDETERMINISTIC_NAMES:
+                if reads(sub) or (
+                    isinstance(sub.func, ast.Name)
+                    and _helper_reads(sub.func.id, helpers, reads, set())
+                ):
                     found.append(sub.lineno)
     return sorted(set(found))
+
+
+def _nondeterministic_calls_in_decorators(source: str) -> list[int]:
+    """Line numbers of random-value reads inside any decorator expression."""
+    return _decorator_reads(source, _reads_a_random_value)
 
 
 def _clock_calls_in_decorators(source: str) -> list[int]:
     """Line numbers of clock reads inside any decorator expression."""
-    tree = ast.parse(source)
-    found: list[int] = []
-    for node in ast.walk(tree):
-        if not isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ):
-            continue
-        for decorator in node.decorator_list:
-            for sub in ast.walk(decorator):
-                if (
-                    isinstance(sub, ast.Call)
-                    and isinstance(sub.func, ast.Attribute)
-                    and sub.func.attr in _CLOCK_ATTRS
-                ):
-                    found.append(sub.lineno)
-    return sorted(set(found))
+    return _decorator_reads(source, _reads_the_clock)
 
 
 def _iter_test_sources() -> list[Path]:
@@ -163,6 +210,155 @@ def test_guard_flags_a_frozen_timestamp_in_parametrize() -> None:
         """
     )
     assert _clock_calls_in_decorators(guilty) == [8]
+
+
+def test_guard_flags_a_parametrize_helper_that_reads_the_clock() -> None:
+    """GUILT: a module helper does not make collection-time clock reads safe."""
+    guilty = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def live_deadline():
+            return datetime.now(timezone.utc)
+
+        @pytest.mark.parametrize("deadline", live_deadline())
+        def test_deadline(deadline):
+            assert deadline
+        """
+    )
+    assert _clock_calls_in_decorators(guilty) == [9]
+
+
+def test_guard_flags_a_parametrize_helper_that_reads_a_random_value() -> None:
+    guilty = textwrap.dedent(
+        """
+        import uuid
+
+        import pytest
+
+        def tokens():
+            return [uuid.uuid4()]
+
+        @pytest.mark.parametrize("token", tokens())
+        def test_token(token):
+            assert token
+        """
+    )
+    assert _nondeterministic_calls_in_decorators(guilty) == [9]
+
+
+def test_guard_follows_a_helper_that_reads_the_clock_through_another_helper() -> None:
+    """GUILT: the clock read two helpers down still happens at collection."""
+    guilty = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def soon():
+            return datetime.now(timezone.utc)
+
+        def deadlines():
+            return [soon().date().isoformat()]
+
+        @pytest.mark.parametrize("deadline", deadlines())
+        def test_deadline(deadline):
+            assert deadline
+        """
+    )
+    assert _clock_calls_in_decorators(guilty) == [12]
+
+
+def test_guard_ends_on_helpers_that_call_each_other() -> None:
+    """INNOCENCE: mutually recursive helpers that read no clock are not flagged."""
+    innocent = textwrap.dedent(
+        """
+        import pytest
+
+        def even(n):
+            return n == 0 or odd(n - 1)
+
+        def odd(n):
+            return n != 0 and even(n - 1)
+
+        @pytest.mark.parametrize("flag", [even(4)])
+        def test_flag(flag):
+            assert flag
+        """
+    )
+    assert _clock_calls_in_decorators(innocent) == []
+    assert _nondeterministic_calls_in_decorators(innocent) == []
+
+
+def test_guard_allows_a_static_parametrize_helper_and_a_body_clock_helper() -> None:
+    innocent = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def deadline_shapes():
+            return ["naive", "aware"]
+
+        def live_deadline():
+            return datetime.now(timezone.utc)
+
+        @pytest.mark.parametrize("shape", deadline_shapes())
+        def test_deadline(shape):
+            deadline = live_deadline()
+            assert shape and deadline
+        """
+    )
+    assert _clock_calls_in_decorators(innocent) == []
+    assert _nondeterministic_calls_in_decorators(innocent) == []
+
+
+def test_guard_allows_a_helper_whose_clock_read_is_deferred_to_the_test() -> None:
+    """INNOCENCE: a helper that returns factories reads no clock at collection."""
+    innocent = textwrap.dedent(
+        """
+        import uuid
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def factories():
+            def later():
+                return uuid.uuid4()
+            return [lambda: datetime.now(timezone.utc), later]
+
+        @pytest.mark.parametrize("make", factories())
+        def test_deadline(make):
+            assert make()
+        """
+    )
+    assert _clock_calls_in_decorators(innocent) == []
+    assert _nondeterministic_calls_in_decorators(innocent) == []
+
+
+def test_guard_allows_a_lambda_in_the_decorator_that_reads_the_clock_later() -> None:
+    """INNOCENCE: a lambda in the parametrize list runs inside the test body."""
+    innocent = textwrap.dedent(
+        """
+        import uuid
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def live():
+            return datetime.now(timezone.utc)
+
+        @pytest.mark.parametrize(
+            "make", [lambda: datetime.now(timezone.utc), lambda: live(), lambda: uuid.uuid4()]
+        )
+        def test_deadline(make):
+            assert make()
+        """
+    )
+    assert _clock_calls_in_decorators(innocent) == []
+    assert _nondeterministic_calls_in_decorators(innocent) == []
 
 
 def test_guard_does_not_flag_the_clock_inside_a_test_or_fixture() -> None:
@@ -324,6 +520,5 @@ def test_no_test_decorator_reads_a_random_value() -> None:
         "generated test ID) in every process, which is exactly what makes "
         "pytest-xdist refuse the run with 'Different tests were collected "
         "between gwN and gwM'. Use a fixed constant in parametrize and mint "
-        "the real random value inside the test body:\n  "
-        + "\n  ".join(offenders)
+        "the real random value inside the test body:\n  " + "\n  ".join(offenders)
     )

@@ -81,18 +81,19 @@ def test_explicit_offset_and_overdue_deadlines_keep_existing_classification() ->
     assert overdue_severity == AlertSeverity.CRITICAL
 
 
-def _router_shaped_deadlines() -> list[datetime]:
+def _router_shaped_deadline(shape: str) -> datetime:
     # The track endpoint stores datetime.fromisoformat(request.deadline).
     day = (_future_datetime(5)).date().isoformat()
-    return [
-        datetime.fromisoformat(f"{day}T00:00:00"),
-        datetime.fromisoformat(f"{day}T00:00:00+08:00"),
-    ]
+    suffix = "" if shape == "naive" else "+08:00"
+    return datetime.fromisoformat(f"{day}T00:00:00{suffix}")
 
 
-@pytest.mark.parametrize("deadline", _router_shaped_deadlines())
-def test_monitor_returns_alert_for_datetime_deadline_as_router_stores_it(deadline) -> None:
+@pytest.mark.parametrize("deadline_shape", ["naive", "aware"])
+def test_monitor_returns_alert_for_datetime_deadline_as_router_stores_it(
+    deadline_shape,
+) -> None:
     monitor = ProactiveComplianceMonitor()
+    deadline = _router_shaped_deadline(deadline_shape)
     monitor.add_compliance_item(
         client_id="client-900004",
         compliance_type=ComplianceType.DOCUMENT_EXPIRY,
@@ -103,11 +104,12 @@ def test_monitor_returns_alert_for_datetime_deadline_as_router_stores_it(deadlin
     assert len(monitor.check_compliance_items()) == 1
 
 
-@pytest.mark.parametrize("deadline", _router_shaped_deadlines())
-def test_tracker_lists_datetime_deadline_as_router_stores_it(deadline) -> None:
+@pytest.mark.parametrize("deadline_shape", ["naive", "aware"])
+def test_tracker_lists_datetime_deadline_as_router_stores_it(deadline_shape) -> None:
     from backend.services.compliance.compliance_tracker import ComplianceTrackerService
 
     tracker = ComplianceTrackerService()
+    deadline = _router_shaped_deadline(deadline_shape)
     tracker.add_compliance_item(
         client_id="client-900005",
         compliance_type=ComplianceType.DOCUMENT_EXPIRY,

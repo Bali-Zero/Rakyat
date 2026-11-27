@@ -871,31 +871,40 @@ async def test_the_public_invitation_answer_names_no_other_account_or_staff_logi
         assert disclosure not in words
 
 
-def _every_outcome() -> list:
+def _invitation_for(spec: tuple[str | None, tuple[str, ...]] | None) -> dict | None:
+    """The invitation row of one case, built when the test runs: an expiry read
+    at collection ages while the suite runs, and the open case would expire."""
+    if spec is None:
+        return None
+    email, flags = spec
     now = datetime.now(timezone.utc)
-    used, expired = {"used_at": now}, {"expires_at": now - timedelta(seconds=1)}
+    changes: dict[str, object] = {}
+    if "used" in flags:
+        changes["used_at"] = now
+    if "expired" in flags:
+        changes["expires_at"] = now - timedelta(seconds=1)
+    return _open_invitation(email, **changes)
+
+
+def _every_outcome() -> list:
     cases = [
         pytest.param(None, _state(), "invalid_token", id="unknown"),
+        pytest.param(("a@example.test", ("used",)), _state(), "already_used", id="used"),
+        pytest.param(("a@example.test", ("expired",)), _state(), "expired", id="expired"),
         pytest.param(
-            _open_invitation("a@example.test", **used), _state(), "already_used", id="used"
-        ),
-        pytest.param(
-            _open_invitation("a@example.test", **expired), _state(), "expired", id="expired"
-        ),
-        pytest.param(
-            _open_invitation("a@example.test", **used, **expired),
+            ("a@example.test", ("used", "expired")),
             _state(),
             "already_used",
             id="used-and-expired",
         ),
         pytest.param(
-            _open_invitation("a@example.test", **used),
+            ("a@example.test", ("used",)),
             _state(_STAFF_LOGIN),
             "already_used",
             id="staff-and-used",
         ),
         pytest.param(
-            _open_invitation("a@example.test", **expired),
+            ("a@example.test", ("expired",)),
             _state(None, 77),
             "expired",
             id="held-and-expired",
@@ -903,21 +912,20 @@ def _every_outcome() -> list:
     ]
     for number, (email, linked, holder, code) in enumerate(_REGISTRATION_CASES):
         cases.append(
-            pytest.param(
-                _open_invitation(email), _state(linked, holder), code or "valid", id=f"case{number}"
-            )
+            pytest.param((email, ()), _state(linked, holder), code or "valid", id=f"case{number}")
         )
     return cases
 
 
-@pytest.mark.parametrize(("invitation", "state", "outcome"), _every_outcome())
+@pytest.mark.parametrize(("invitation_spec", "state", "outcome"), _every_outcome())
 @pytest.mark.asyncio
 async def test_every_token_costs_the_same_two_statements(
-    invitation: dict | None, state: dict, outcome: str
+    invitation_spec: tuple | None, state: dict, outcome: str
 ) -> None:
     """Query work must not tell the outcomes apart: an unknown link, a used or
     an expired one, a refusal and a registrable invitation all run the token
     lookup and then the registration state, and nothing else."""
+    invitation = _invitation_for(invitation_spec)
     answer, conn = await _validate(invitation, state)
 
     assert [q.split("FROM", 1)[1].split()[0] for q, _ in conn.fetchrow_calls] == [
@@ -931,14 +939,14 @@ async def test_every_token_costs_the_same_two_statements(
         assert answer["error"] == outcome
 
 
-@pytest.mark.parametrize(("invitation", "state", "outcome"), _every_outcome())
+@pytest.mark.parametrize(("invitation_spec", "state", "outcome"), _every_outcome())
 @pytest.mark.asyncio
 async def test_every_outcome_writes_one_log_line_of_one_shape(
-    caplog: pytest.LogCaptureFixture, invitation: dict | None, state: dict, outcome: str
+    caplog: pytest.LogCaptureFixture, invitation_spec: tuple | None, state: dict, outcome: str
 ) -> None:
     caplog.set_level(logging.DEBUG)
 
-    await _validate(invitation, state)
+    await _validate(_invitation_for(invitation_spec), state)
 
     lines = [r for r in caplog.records if r.name == "backend.services.portal.invite_service"]
     assert len(lines) == 1
