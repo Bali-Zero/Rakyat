@@ -458,7 +458,7 @@ async def test_get_visa_status_falls_back_when_client_visible_column_missing() -
                 "start_date": now,
                 "completion_date": None,
                 "expiry_date": None,
-                "status": "in_progress",
+                "status": "expired",
             },
         ],
         [],
@@ -466,6 +466,9 @@ async def test_get_visa_status_falls_back_when_client_visible_column_missing() -
 
     result = await service.get_visa_status(1, current_user=_ctx())
 
+    fallback_call = conn.fetch.await_args_list[1]
+    assert "p.status = ANY($2::text[])" in fallback_call.args[0]
+    assert fallback_call.args[2] == ["completed", "expiring_soon", "pending_renewal", "expired"]
     assert result["current"] is None
     assert result["history"] == [
         {
