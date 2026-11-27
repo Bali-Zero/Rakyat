@@ -3260,7 +3260,15 @@ async def request_additional_document(
 
         row = created.slot
         logger.info("Document request %s made on practice %s", created.request_id, practice_id)
-        await invalidate_cache("zantara:crm_practices_stats:*")
+        try:
+            await invalidate_cache("zantara:crm_practices_stats:*")
+        except Exception as cache_error:
+            # The request is written: a cache that cannot be cleared must not answer 500.
+            logger.warning(
+                "Document request %s: stats cache not invalidated (%s)",
+                created.request_id,
+                type(cache_error).__name__,
+            )
         return {
             "request_id": created.request_id,
             "document": {

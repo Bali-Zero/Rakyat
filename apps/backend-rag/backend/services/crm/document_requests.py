@@ -79,11 +79,13 @@ def reviewers_from_setting(raw: str | None) -> list[tuple[str, str]]:
         address = address.strip()
         lang = lang.strip().lower() or DEFAULT_LANGUAGE
         local, at, domain = address.partition("@")
+        labels = domain.removesuffix(".").split(".")
         if (
             not at
             or not local
-            or "." not in domain.strip(".")
             or "@" in domain
+            or len(labels) < 2
+            or not all(labels)
             or any(ch.isspace() for ch in address)
         ):
             logger.warning("document request reviewers: entry %d is not an address", position)

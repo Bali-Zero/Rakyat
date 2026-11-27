@@ -447,6 +447,29 @@ def test_a_pool_that_fails_after_the_commit_does_not_fail_the_request(reviewers)
     assert "COMMIT" in broken.events and broken.sent == []
 
 
+def test_a_cache_that_cannot_be_cleared_does_not_fail_the_request(world: World, reviewers) -> None:
+    reviewers("")
+    world.cache = AsyncMock(side_effect=RuntimeError("cache down"))
+    response = world.post(body())
+    assert response.status_code == 201
+    assert response.json()["request_id"] == 77
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "user+tag@example.test",
+        "user@sub.domain.example.test",
+        "User.Name@Example.TEST",
+        "a@example.test.",
+    ],
+)
+def test_a_legitimate_address_is_kept(world: World, reviewers, entry: str) -> None:
+    reviewers(f"{entry}:en")
+    assert world.post(body()).status_code == 201
+    assert [m["to"] for m in world.sent] == [entry]
+
+
 def test_an_empty_setting_takes_no_connection_to_notify(reviewers) -> None:
     reviewers("a@example.test:en")
     armed = World()
@@ -466,6 +489,9 @@ def test_an_empty_setting_takes_no_connection_to_notify(reviewers) -> None:
         "a\tb@example.test:en",
         "a b@example.test",
         "a@b@example.test",
+        "a@.example.test",
+        "a@example..test",
+        "a@example.test..",
     ],
 )
 def test_an_entry_that_is_not_an_address_is_skipped(world: World, reviewers, entry: str) -> None:
