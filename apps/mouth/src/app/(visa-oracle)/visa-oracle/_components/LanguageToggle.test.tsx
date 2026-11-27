@@ -17,6 +17,13 @@ describe("LanguageToggle", () => {
     const replaceState = vi
       .spyOn(window.history, "replaceState")
       .mockImplementation(() => {});
+    const store: Record<string, string> = {};
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) => store[key] ?? null,
+      setItem: (key: string, value: string) => {
+        store[key] = value;
+      },
+    });
     Object.defineProperty(window, "location", {
       configurable: true,
       value: {
@@ -29,12 +36,9 @@ describe("LanguageToggle", () => {
     await user.click(screen.getByRole("button", { name: /bahasa indonesia/i }));
     expect(document.documentElement.lang).toBe("id");
     expect(onChange).toHaveBeenCalledWith("id");
-    expect(replaceState).toHaveBeenCalledWith(
-      window.history.state,
-      "",
-      "/visa-oracle?lang=id",
-    );
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/visa-oracle?lang=id");
     replaceState.mockRestore();
+    vi.unstubAllGlobals();
 
     view.rerender(<LanguageToggle language="id" onChange={onChange} />);
     expect(document.documentElement.lang).toBe("id");

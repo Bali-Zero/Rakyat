@@ -85,6 +85,7 @@ import { OutcomeSheet } from "./OutcomeSheet";
 import { ConsentHandoff, type ConsentHandoffProps } from "./ConsentHandoff";
 import { ThemeToggle, type OracleTheme } from "./ThemeToggle";
 import { LanguageToggle } from "./LanguageToggle";
+import { useOracleVisitLocale } from "./useOracleVisitLocale";
 import { AtlasBranchCaption, AtlasGlyph, OracleScenery } from "./OracleScenery";
 import { AtlasRoute, type AtlasRouteHandle } from "./AtlasRoute";
 
@@ -518,6 +519,7 @@ function OracleShellRuntime({
     setLanguage,
   } = flow;
   const language = state.language;
+  useOracleVisitLocale(language, setLanguage);
   const sessionCopy = SESSION_COPY[language];
 
   const scene = useMemo(

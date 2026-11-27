@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Language } from "../_lib/flow";
 import { LanguageToggle } from "../_components/LanguageToggle";
 import { ThemeToggle, type OracleTheme } from "../_components/ThemeToggle";
+import { useOracleVisitLocale } from "../_components/useOracleVisitLocale";
 import { oracleInternalHref } from "../_lib/oracle-locale";
 
 const COPY = {
@@ -75,6 +76,7 @@ export function VisaOraclePrivacyClient({
   initialLanguage,
 }: VisaOraclePrivacyClientProps) {
   const [language, setLanguage] = useState<Language>(initialLanguage);
+  useOracleVisitLocale(language, setLanguage);
   const [theme, setTheme] = useState<OracleTheme>("light");
   const copy = COPY[language];
 

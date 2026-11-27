@@ -978,6 +978,19 @@ test.describe("Visa Oracle v2 integration — page Page", () => {
     await expect(page.locator(".oracle-constellation")).toHaveCount(0);
   });
 
+  async function waitLanguageToggleHydrated(
+    page: import("@playwright/test").Page,
+  ) {
+    await page.waitForFunction(() => {
+      const btn = document.querySelector(
+        ".oracle-toggle-group button[aria-pressed]",
+      );
+      return (
+        !!btn && Object.keys(btn).some((k) => k.startsWith("__reactFiber$"))
+      );
+    });
+  }
+
   test("privacy footer and back links preserve Bahasa via ?lang=id", async ({
     page,
   }) => {
@@ -1048,6 +1061,112 @@ test.describe("Visa Oracle v2 integration — page Page", () => {
     await expect(
       page.getByRole("heading", { name: "Your Visa Oracle data" }),
     ).toBeVisible();
+  });
+
+  const staleHistoryPrivacyToggleBack = [
+    {
+      label: "EN start, toggle ID on privacy",
+      startUrl: "/visa-oracle",
+      privacyUrl: /\/visa-oracle\/privacy$/,
+      toggleButton: /switch to bahasa indonesia/i,
+      privacyAfterToggle: /\/visa-oracle\/privacy\?lang=id$/,
+      oracleAfterBack: /\/visa-oracle\?lang=id$/,
+      oracleUi: /ganti ke bahasa inggris/i,
+    },
+    {
+      label: "ID start, toggle EN on privacy",
+      startUrl: "/visa-oracle?lang=id",
+      privacyUrl: /\/visa-oracle\/privacy\?lang=id$/,
+      toggleButton: /ganti ke bahasa inggris|switch to english/i,
+      privacyAfterToggle: /\/visa-oracle\/privacy$/,
+      oracleAfterBack: /\/visa-oracle$/,
+      oracleUi: /switch to bahasa indonesia/i,
+    },
+  ] as const;
+
+  for (const walk of staleHistoryPrivacyToggleBack) {
+    test(`visit locale survives privacy toggle then native Back — ${walk.label}`, async ({
+      page,
+    }) => {
+      await page.goto(walk.startUrl);
+      if (walk.startUrl.includes("lang=id")) {
+        await expect(
+          page.getByRole("button", { name: /ganti ke bahasa inggris/i }),
+        ).toBeVisible();
+      }
+      await page.locator("footer a[href*='privacy']").click();
+      await expect(page).toHaveURL(walk.privacyUrl);
+      await waitLanguageToggleHydrated(page);
+      await page.getByRole("button", { name: walk.toggleButton }).click();
+      await expect.poll(() => page.url()).toMatch(walk.privacyAfterToggle);
+      await page.goBack();
+      await expect(page).toHaveURL(walk.oracleAfterBack);
+      await expect(
+        page.getByRole("button", { name: walk.oracleUi }),
+      ).toBeVisible();
+    });
+  }
+
+  const staleHistoryOracleToggleForward = [
+    {
+      label: "EN start, toggle ID on oracle",
+      startUrl: "/visa-oracle",
+      oracleAfterToggle: /\/visa-oracle\?lang=id$/,
+      privacyAfterForward: /\/visa-oracle\/privacy\?lang=id$/,
+      toggleButton: /switch to bahasa indonesia/i,
+      privacyHeading: "Data Visa Oracle Anda",
+    },
+    {
+      label: "ID start, toggle EN on oracle",
+      startUrl: "/visa-oracle?lang=id",
+      oracleAfterToggle: /\/visa-oracle$/,
+      privacyAfterForward: /\/visa-oracle\/privacy$/,
+      toggleButton: /ganti ke bahasa inggris|switch to english/i,
+      privacyHeading: "Your Visa Oracle data",
+    },
+  ] as const;
+
+  for (const walk of staleHistoryOracleToggleForward) {
+    test(`visit locale survives oracle toggle then native Forward — ${walk.label}`, async ({
+      page,
+    }) => {
+      await page.goto(walk.startUrl);
+      await page.locator("footer a[href*='privacy']").click();
+      await page.goBack();
+      await waitLanguageToggleHydrated(page);
+      await page.getByRole("button", { name: walk.toggleButton }).click();
+      await expect(page).toHaveURL(walk.oracleAfterToggle);
+      await page.goForward();
+      await expect(page).toHaveURL(walk.privacyAfterForward);
+      await expect(
+        page.getByRole("heading", { name: walk.privacyHeading }),
+      ).toBeVisible();
+    });
+  }
+
+  test("fresh bare navigation in same tab resets visit locale after ID session", async ({
+    page,
+  }) => {
+    await page.goto("/visa-oracle?lang=id");
+    await expect(
+      page.getByRole("button", { name: /ganti ke bahasa inggris/i }),
+    ).toBeVisible();
+    await page.goto("/visa-oracle");
+    await expect(
+      page.getByRole("button", { name: /switch to bahasa indonesia/i }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/\/visa-oracle$/);
+  });
+
+  test("fresh ?lang=id navigation after EN session honors URL", async ({
+    page,
+  }) => {
+    await page.goto("/visa-oracle");
+    await page.goto("/visa-oracle?lang=id");
+    await expect(
+      page.getByRole("button", { name: /ganti ke bahasa inggris/i }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/lang=id/);
   });
 });
 
