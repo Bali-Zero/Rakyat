@@ -16,7 +16,7 @@ python-multipart>=0.0.31  # Security fix: arbitrary file write (CVE-2024-47874)
 qdrant-client>=1.20.0,<1.21.0  # Match Qdrant server 1.12.x; avoid client/server minor-drift warnings.
 
 # Google Cloud Integration (Core for v5.3 Hybrid) - Use compatible versions
-google-genai>=2.18.1  # Unified SDK with MCP support
+google-genai>=3.3.0  # Unified SDK with MCP support
 google-api-python-client>=2.198.0
 google-auth>=2.56.3
 google-auth-oauthlib>=1.1.0
