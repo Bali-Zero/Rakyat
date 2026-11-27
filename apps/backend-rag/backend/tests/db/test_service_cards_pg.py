@@ -92,6 +92,9 @@ async def _world(conn):
     await _doc(conn, a, "doc_off", "Label Off", "Text off", 3, active=False)
     await _doc(conn, a, "doc_two", "Label Two", "Text for the client two", 4)
     await _doc(conn, b, "doc_b", "Label B", "Text for the client B", 1)
+    # B shares a document type with A, with another name and text: a change of service must
+    # leave the slot A already made (and a person may have verified) exactly as it is.
+    await _doc(conn, b, "doc_one", "Label One of B", "Another text from B", 2)
     return a, b, await _practice(conn, a)
 
 
@@ -153,9 +156,11 @@ async def test_change_of_service_adds_the_new_documents_and_removes_none(
         practice,
     )
     before = await _rows(db_tx, practice)
-    assert await seed_required_documents_from_card(db_tx, practice, b, "staff") == 1
+    assert await seed_required_documents_from_card(db_tx, practice, b, "staff") == 2
     after = await _rows(db_tx, practice)
     assert after[: len(before)] == before
+    assert before[0]["document_type"] == "doc_one" and before[0]["status"] == "verified"
+    assert before[0]["document_label"] == "Label One"
     assert [r["document_type"] for r in after[len(before) :]] == ["doc_b"]
 
 
