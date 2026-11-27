@@ -28,6 +28,7 @@ $defs:
       - ARRIVAL_DATE_UNCONFIRMED
       - ARRIVAL_TOO_FAR
       - EXTENSION_EXCEEDS_MAX_STAY
+      - EXTENSION_DATES_INCONSISTENT
     x-public-notes:
       NATIONALITY_NOT_ELIGIBLE: Neutral eligibility category; it discloses no private rule or list.
       PURPOSE_NOT_ELIGIBLE: Neutral purpose category; it discloses no internal decision prose.
@@ -47,3 +48,4 @@ $defs:
       ARRIVAL_DATE_UNCONFIRMED: Neutral calendar-coverage outcome; it contains no guessed date.
       ARRIVAL_TOO_FAR: Neutral arrival-window outcome; it discloses no internal duration.
       EXTENSION_EXCEEDS_MAX_STAY: Neutral stay-boundary outcome; it discloses no literal limit.
+      EXTENSION_DATES_INCONSISTENT: Neutral date-consistency outcome; it contains no submitted date.

@@ -213,6 +213,53 @@ class TestB1MaxTotalStayBoundary:
         assert "EXTENSION_EXCEEDS_MAX_STAY" not in verdict.decline_codes
 
 
+class TestExtensionDateConsistency:
+    def test_future_entry_with_expiry_before_it_declines_with_only_date_code(self) -> None:
+        req = _extension(
+            entry_date=_TODAY + timedelta(days=30),
+            voa_expiry_date=_TODAY + timedelta(days=10),
+        )
+        verdict = build_verdict(req, today=_TODAY)
+        assert verdict.decision is Decision.DECLINE
+        assert verdict.decline_codes == ["EXTENSION_DATES_INCONSISTENT"]
+
+    def test_future_entry_with_later_expiry_declines_with_only_date_code(self) -> None:
+        req = _extension(
+            entry_date=_TODAY + timedelta(days=5),
+            voa_expiry_date=_TODAY + timedelta(days=20),
+        )
+        verdict = build_verdict(req, today=_TODAY)
+        assert verdict.decision is Decision.DECLINE
+        assert verdict.decline_codes == ["EXTENSION_DATES_INCONSISTENT"]
+
+    def test_expiry_before_past_entry_declines_with_only_date_code(self) -> None:
+        req = _extension(
+            entry_date=_TODAY - timedelta(days=3),
+            voa_expiry_date=_TODAY - timedelta(days=5),
+        )
+        verdict = build_verdict(req, today=_TODAY)
+        assert verdict.decision is Decision.DECLINE
+        assert verdict.decline_codes == ["EXTENSION_DATES_INCONSISTENT"]
+
+    def test_entry_today_with_consistent_expiry_accepts(self) -> None:
+        req = _extension(
+            entry_date=_TODAY,
+            voa_expiry_date=_TODAY + timedelta(days=20),
+        )
+        verdict = build_verdict(req, today=_TODAY)
+        assert verdict.accepted is True
+        assert "EXTENSION_DATES_INCONSISTENT" not in verdict.decline_codes
+
+    def test_consistent_max_stay_decline_keeps_its_own_code(self) -> None:
+        req = _extension(
+            entry_date=date(2026, 7, 1),
+            voa_expiry_date=date(2026, 8, 30),
+        )
+        verdict = build_verdict(req, today=_TODAY)
+        assert verdict.decline_codes == ["EXTENSION_EXCEEDS_MAX_STAY"]
+        assert "EXTENSION_DATES_INCONSISTENT" not in verdict.decline_codes
+
+
 class TestIssuanceSubmissionWindowGate:
     """Owner ruling (2026-07-27): a VOA is issued in a few hours, so the
     online funnel accepts an issuance request up to the day BEFORE arrival

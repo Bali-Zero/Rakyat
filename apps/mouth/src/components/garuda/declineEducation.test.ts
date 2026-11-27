@@ -32,6 +32,7 @@ const ALL_CODES: DeclineCode[] = [
   "ARRIVAL_DATE_UNCONFIRMED",
   "ARRIVAL_TOO_FAR",
   "EXTENSION_EXCEEDS_MAX_STAY",
+  "EXTENSION_DATES_INCONSISTENT",
 ];
 
 const baseAnswers: EligibilitySubmission = {
