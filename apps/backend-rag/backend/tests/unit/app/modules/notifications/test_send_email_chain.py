@@ -277,6 +277,28 @@ async def test_external_brevo_succeeds_no_fallback(req_external):
 
 
 @pytest.mark.asyncio
+async def test_external_success_response_does_not_expose_recipient(req_external):
+    with patch(
+        "backend.app.modules.notifications.router._send_via_brevo",
+        new=AsyncMock(return_value=True),
+    ):
+        resp = await send_direct_email(req_external, _auth={})
+    assert req_external.to not in resp.message
+    assert req_external.to.split("@", 1)[0] not in resp.message
+
+
+@pytest.mark.asyncio
+async def test_external_success_response_identifies_provider(req_external):
+    with patch(
+        "backend.app.modules.notifications.router._send_via_brevo",
+        new=AsyncMock(return_value=True),
+    ):
+        resp = await send_direct_email(req_external, _auth={})
+    assert resp.success is True
+    assert resp.message == "Email sent via brevo"
+
+
+@pytest.mark.asyncio
 async def test_external_brevo_fail_resend_succeeds(req_external):
     """Brevo failure must fall through to Resend (the new NB-E layer) before Zoho."""
     with (
@@ -712,7 +734,7 @@ class TestRecipientRedirectAtTheChokePoint:
         assert resp.success is True
         assert zoho.call_args.args[0] == "angel.tax@balizero.com"
         assert zoho.call_args.args[3] is None
-        assert "angel.tax@balizero.com" in resp.message
+        assert resp.message == "Email sent via zoho"
 
     @pytest.mark.asyncio
     async def test_cc_retired_address_on_a_client_email_becomes_cc_the_tax_supervisor(self):
