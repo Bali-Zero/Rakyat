@@ -1,24 +1,27 @@
 """
-Unit tests for backend/services/rag/agentic/llm_gateway.py
+Unit tests for backend/services/rag/agentic/llm_gateway.py (Claude Console lane)
 
-Covers: LLMGateway init, _available property, set_gemini_tools,
-        _get_model_for_tier, _get_fallback_chain, _get_circuit_breaker,
-        _is_circuit_open, _record_success, _record_failure,
-        create_chat_with_history, send_message, _get_openrouter_client,
-        _send_with_fallback, tier constants.
+Covers: init, _available, set_gemini_tools, _get_model_for_tier, _get_fallback_chain,
+        circuit breaker, create_chat_with_history, send_message, _send_with_fallback,
+        history extraction, prompt building, tier constants.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.llm.claude_oauth_client import ClaudeOAuthError, ClaudeOAuthNotAvailable
 from backend.services.rag.agentic.llm_gateway import (
     TIER_FALLBACK,
     TIER_FLASH,
     TIER_LITE,
     TIER_PRO,
     LLMGateway,
+    _build_claude_prompt,
+    _extract_history_entries,
 )
+
+_MODULE = "backend.services.rag.agentic.llm_gateway"
 
 # ============================================================================
 # Fixtures
@@ -27,22 +30,17 @@ from backend.services.rag.agentic.llm_gateway import (
 
 @pytest.fixture
 def gateway():
-    """LLMGateway with mocked GenAI."""
-    with patch("backend.services.rag.agentic.llm_gateway.get_genai_client") as mock_get:
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        mock_get.return_value = mock_client
-        gw = LLMGateway()
-        gw._available = True
-        yield gw
+    """LLMGateway with a (mocked) Console seat."""
+    gw = LLMGateway()
+    gw._available = True
+    return gw
 
 
 @pytest.fixture
-def gateway_no_genai():
-    """LLMGateway without GenAI available."""
-    with patch("backend.services.rag.agentic.llm_gateway.GENAI_AVAILABLE", False):
-        gw = LLMGateway()
-        yield gw
+def gateway_no_seat():
+    """LLMGateway with no Console seat configured."""
+    with patch(f"{_MODULE}.collect_seats", return_value=[]):
+        yield LLMGateway()
 
 
 # ============================================================================
@@ -66,16 +64,18 @@ class TestTierConstants:
 class TestInit:
     def test_init_default(self, gateway):
         assert gateway._gemini_tools == []
-        assert gateway._openrouter_client is None
         assert gateway._circuit_breaker_threshold == 5
         assert gateway._max_fallback_depth == 3
         assert gateway._max_fallback_cost_usd == 0.10
 
+    def test_no_gemini_or_openrouter_client_is_held(self, gateway):
+        assert not hasattr(gateway, "_genai_client")
+        assert not hasattr(gateway, "_openrouter_client")
+
     def test_init_with_tools(self):
-        with patch("backend.services.rag.agentic.llm_gateway.get_genai_client"):
-            tools = [{"name": "tool1"}]
-            gw = LLMGateway(gemini_tools=tools)
-            assert gw._gemini_tools == tools
+        tools = [{"name": "tool1"}]
+        gw = LLMGateway(gemini_tools=tools)
+        assert gw._gemini_tools == tools
 
 
 # ============================================================================
@@ -90,9 +90,8 @@ class TestAvailable:
         gateway._available = False
         assert gateway._available is False
 
-    def test_available_without_override(self, gateway_no_genai):
-        # Without override, checks actual client
-        assert gateway_no_genai._available is False
+    def test_available_without_override(self, gateway_no_seat):
+        assert gateway_no_seat._available is False
 
 
 # ============================================================================
@@ -121,24 +120,23 @@ class TestGeminiTools:
 
 class TestGetModelForTier:
     def test_flash_tier(self, gateway):
-        model = gateway._get_model_for_tier(TIER_FLASH)
-        assert model == gateway.model_name_flash
+        assert gateway._get_model_for_tier(TIER_FLASH) == gateway.model_name_flash
 
     def test_pro_tier(self, gateway):
-        model = gateway._get_model_for_tier(TIER_PRO)
-        assert model == gateway.model_name_pro
+        assert gateway._get_model_for_tier(TIER_PRO) == gateway.model_name_pro
 
     def test_lite_tier(self, gateway):
-        model = gateway._get_model_for_tier(TIER_LITE)
-        assert model == gateway.model_name_fallback
+        assert gateway._get_model_for_tier(TIER_LITE) == gateway.model_name_fallback
 
     def test_fallback_tier(self, gateway):
-        model = gateway._get_model_for_tier(TIER_FALLBACK)
-        assert model == gateway.model_name_fallback
+        assert gateway._get_model_for_tier(TIER_FALLBACK) == gateway.model_name_fallback
 
     def test_unknown_tier_defaults_flash(self, gateway):
-        model = gateway._get_model_for_tier(99)
-        assert model == gateway.model_name_flash
+        assert gateway._get_model_for_tier(99) == gateway.model_name_flash
+
+    def test_every_tier_is_a_claude_slug(self, gateway):
+        for tier in (TIER_FLASH, TIER_LITE, TIER_PRO, TIER_FALLBACK):
+            assert gateway._get_model_for_tier(tier).startswith("claude-")
 
 
 # ============================================================================
@@ -150,12 +148,10 @@ class TestGetFallbackChain:
     def test_flash_chain(self, gateway):
         chain = gateway._get_fallback_chain(TIER_FLASH)
         assert gateway.model_name_flash in chain
-        assert gateway.model_name_fallback in chain
 
     def test_pro_chain(self, gateway):
         chain = gateway._get_fallback_chain(TIER_PRO)
         assert gateway.model_name_pro in chain
-        assert gateway.model_name_fallback in chain
 
     def test_no_duplicates(self, gateway):
         chain = gateway._get_fallback_chain(TIER_FLASH)
@@ -173,8 +169,7 @@ class TestGetFallbackChain:
 
 class TestCircuitBreaker:
     def test_get_circuit_breaker_creates(self, gateway):
-        cb = gateway._get_circuit_breaker("test_model")
-        assert cb is not None
+        assert gateway._get_circuit_breaker("test_model") is not None
 
     def test_get_circuit_breaker_reuses(self, gateway):
         cb1 = gateway._get_circuit_breaker("test_model")
@@ -193,16 +188,15 @@ class TestCircuitBreaker:
 
         assert circuit.failure_count == 0
 
-    @patch("backend.services.rag.agentic.llm_gateway.ErrorClassifier")
-    @patch("backend.services.rag.agentic.llm_gateway.get_error_context")
+    @patch(f"{_MODULE}.ErrorClassifier")
+    @patch(f"{_MODULE}.get_error_context")
     def test_record_failure(self, mock_ctx, mock_classifier, gateway):
         mock_classifier.classify_error.return_value = ("transient", "low")
         mock_ctx.return_value = {}
 
         gateway._record_failure("test_model", Exception("test error"))
 
-        circuit = gateway._get_circuit_breaker("test_model")
-        assert circuit.failure_count == 1
+        assert gateway._get_circuit_breaker("test_model").failure_count == 1
         mock_classifier.classify_error.assert_called_once()
 
 
@@ -212,62 +206,79 @@ class TestCircuitBreaker:
 
 
 class TestCreateChatWithHistory:
-    def test_no_client_returns_mock(self, gateway_no_genai):
-        session = gateway_no_genai.create_chat_with_history(
+    def test_no_seat_returns_mock(self, gateway_no_seat):
+        session = gateway_no_seat.create_chat_with_history(
             history_to_use=[{"role": "user", "content": "Hello"}],
         )
         assert session is not None
+        assert session.history == [{"role": "user", "content": "Hello"}]
 
-    def test_with_none_history(self, gateway_no_genai):
-        session = gateway_no_genai.create_chat_with_history(history_to_use=None)
-        assert session is not None
+    def test_with_none_history(self, gateway_no_seat):
+        assert gateway_no_seat.create_chat_with_history(history_to_use=None) is not None
 
-    def test_with_empty_history(self, gateway_no_genai):
-        session = gateway_no_genai.create_chat_with_history(history_to_use=[])
-        assert session is not None
+    def test_with_empty_history(self, gateway_no_seat):
+        assert gateway_no_seat.create_chat_with_history(history_to_use=[]) is not None
 
-    def test_with_client(self, gateway):
-        mock_client = MagicMock()
-        mock_client.is_available = True
-        gateway._genai_client = mock_client
-
+    def test_with_seat(self, gateway):
         session = gateway.create_chat_with_history(
             history_to_use=[{"role": "user", "content": "Hi"}],
             model_tier=TIER_FLASH,
             system_instruction="You are helpful.",
         )
-        assert session is not None
+        assert session.history == [{"role": "user", "parts": [{"text": "Hi"}]}]
+        assert session.system_instruction == "You are helpful."
 
 
 # ============================================================================
-# _get_openrouter_client
+# history extraction + prompt building
 # ============================================================================
 
 
-class TestGetOpenRouterClient:
-    @patch("backend.services.rag.agentic.llm_gateway.OpenRouterClient")
-    def test_lazy_init(self, mock_or, gateway):
-        mock_instance = MagicMock()
-        mock_or.return_value = mock_instance
-        client = gateway._get_openrouter_client()
-        assert client is mock_instance
+class TestPromptBuilding:
+    def test_history_comes_from_the_chat_session_in_either_shape(self):
+        chat = MagicMock()
+        chat.history = [
+            {"role": "user", "parts": [{"text": "first"}]},
+            {"role": "model", "content": "second"},
+            {"role": "user", "parts": []},
+        ]
+        assert _extract_history_entries(chat, None, "now") == [
+            ("User", "first"),
+            ("Assistant", "second"),
+        ]
 
-    @patch("backend.services.rag.agentic.llm_gateway.OpenRouterClient")
-    def test_reuses_instance(self, mock_or, gateway):
-        mock_instance = MagicMock()
-        mock_or.return_value = mock_instance
-        c1 = gateway._get_openrouter_client()
-        c2 = gateway._get_openrouter_client()
-        assert c1 is c2
-        assert mock_or.call_count == 1
+    def test_without_a_chat_the_trailing_current_message_is_not_duplicated(self):
+        messages = [
+            {"role": "user", "content": "earlier"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "now"},
+        ]
+        assert _extract_history_entries(None, messages, "now") == [
+            ("User", "earlier"),
+            ("Assistant", "reply"),
+        ]
 
-    @patch("backend.services.rag.agentic.llm_gateway.OpenRouterClient")
-    def test_init_failure(self, mock_or, gateway):
-        import httpx
+    def test_the_message_is_the_last_section_verbatim(self):
+        message = "question?\n\n[CRM NOTE] keep this exact suffix"
+        prompt = _build_claude_prompt(
+            message=message,
+            system_prompt="sys",
+            history_entries=[("User", "earlier")],
+            tools=None,
+        )
+        assert prompt.endswith(message)
+        assert prompt.startswith("<system_instructions>\nsys\n</system_instructions>")
+        assert "<available_tools>" not in prompt
 
-        mock_or.side_effect = httpx.HTTPError("fail")
-        client = gateway._get_openrouter_client()
-        assert client is None
+    def test_oversized_history_is_dropped_oldest_first(self):
+        entries = [("User", "old " + "x" * 90_000), ("Assistant", "keep me " + "y" * 40_000)]
+        prompt = _build_claude_prompt(
+            message="now", system_prompt="", history_entries=entries, tools=None
+        )
+        assert len(prompt.encode("utf-8")) <= 120_000
+        assert "keep me" in prompt
+        assert "old " not in prompt
+        assert prompt.endswith("now")
 
 
 # ============================================================================
@@ -283,7 +294,7 @@ class TestSendMessage:
         gateway._send_with_fallback = AsyncMock(
             return_value=("response text", "model-name", MagicMock(), mock_usage),
         )
-        text, model, obj, usage = await gateway.send_message(
+        text, model, _obj, _usage = await gateway.send_message(
             chat=None,
             message="Hello",
             tier=TIER_FLASH,
@@ -330,31 +341,9 @@ class TestSendMessage:
         call_kwargs = gateway._send_with_fallback.call_args[1]
         assert len(call_kwargs["conversation_messages"]) == 1
 
-    @pytest.mark.asyncio
-    async def test_send_message_with_images(self, gateway):
-        mock_usage = MagicMock()
-        mock_usage.cost_usd = 0.0
-        gateway._send_with_fallback = AsyncMock(
-            return_value=("r", "m", None, mock_usage),
-        )
-        await gateway.send_message(
-            chat=None,
-            message="What is this?",
-            images=[{"base64": "data:image/png;base64,abc", "name": "test.png"}],
-        )
-        call_kwargs = gateway._send_with_fallback.call_args[1]
-        assert call_kwargs["images"] is not None
-
 
 # ============================================================================
 # send_message latency telemetry (2026-07-18)
-#
-# The two biggest single LLM calls in the ReAct loop (final-answer synthesis
-# + self-correction rephrase) go through send_message, which previously had
-# ZERO latency logging — unlike genai_client.generate_content's "LLM call"
-# logger. Mirror that pattern: one INFO line with model/tier/latency_ms on
-# success, and latency_ms in the "All LLM models failed" log on total
-# failure.
 # ============================================================================
 
 
@@ -366,7 +355,7 @@ class TestSendMessageTelemetry:
         mock_usage.prompt_tokens = 42
         mock_usage.completion_tokens = 7
         gateway._send_with_fallback = AsyncMock(
-            return_value=("response text", "gemini-3-flash", MagicMock(), mock_usage),
+            return_value=("response text", "claude-sonnet-5-5", MagicMock(), mock_usage),
         )
 
         with caplog.at_level("INFO"):
@@ -375,8 +364,8 @@ class TestSendMessageTelemetry:
         records = [r for r in caplog.records if r.message == "LLM gateway call"]
         assert len(records) == 1
         assert records[0].latency_ms >= 0
-        assert records[0].model == "gemini-3-flash"
-        assert records[0].provider == "gemini"
+        assert records[0].model == "claude-sonnet-5-5"
+        assert records[0].provider == "claude_console"
         assert records[0].prompt_tokens == 42
         assert records[0].completion_tokens == 7
 
@@ -387,18 +376,15 @@ class TestSendMessageTelemetry:
         mock_usage.prompt_tokens = 10
         mock_usage.completion_tokens = 5
         gateway._send_with_fallback = AsyncMock(
-            return_value=("response text", "openrouter", None, mock_usage),
+            return_value=("response text", "claude-sonnet-5-5", None, mock_usage),
         )
 
-        with patch(
-            "backend.services.rag.agentic.llm_gateway.emit_llm_metric",
-            new_callable=AsyncMock,
-        ) as mock_emit:
+        with patch(f"{_MODULE}.emit_llm_metric", new_callable=AsyncMock) as mock_emit:
             await gateway.send_message(chat=None, message="Hello", tier=TIER_FLASH)
 
         mock_emit.assert_awaited_once()
-        assert mock_emit.call_args.kwargs["provider"] == "openrouter"
-        assert mock_emit.call_args.kwargs["model"] == "openrouter"
+        assert mock_emit.call_args.kwargs["provider"] == "claude_console"
+        assert mock_emit.call_args.kwargs["model"] == "claude-sonnet-5-5"
         assert mock_emit.call_args.kwargs["prompt_tokens"] == 10
         assert mock_emit.call_args.kwargs["completion_tokens"] == 5
         assert mock_emit.call_args.kwargs["latency_ms"] >= 0
@@ -416,33 +402,43 @@ class TestSendMessageTelemetry:
 
 
 # ============================================================================
-# _get_genai_client
+# _send_with_fallback — fail-closed cascade, no third-party route
 # ============================================================================
 
 
-class TestGetGenAIClient:
-    def test_lazy_load(self, gateway):
-        gateway._genai_client = None
-        with patch("backend.services.rag.agentic.llm_gateway.GENAI_AVAILABLE", True):
-            with patch("backend.services.rag.agentic.llm_gateway.get_genai_client") as mock_get:
-                mock_client = MagicMock()
-                mock_client.is_available = True
-                mock_get.return_value = mock_client
-                result = gateway._get_genai_client()
-                assert result is not None
+class TestSendWithFallback:
+    @pytest.mark.asyncio
+    async def test_a_failing_slug_falls_through_to_the_next(self, gateway):
+        gateway.model_name_flash = "claude-first"
+        gateway.model_name_fallback = "claude-second"
+        usage = MagicMock(cost_usd=0.0)
+        gateway._call_model = AsyncMock(
+            side_effect=[ClaudeOAuthError("seats failed"), ("ok", MagicMock(), usage)]
+        )
 
-    def test_not_available(self):
-        with patch("backend.services.rag.agentic.llm_gateway.GENAI_AVAILABLE", False):
-            gw = LLMGateway()
-            result = gw._get_genai_client()
-            assert result is None
+        text, model, _obj, _usage = await gateway._send_with_fallback(
+            chat=None,
+            message="hi",
+            system_prompt="",
+            model_tier=TIER_FLASH,
+            enable_function_calling=False,
+            conversation_messages=[],
+            query_cost_tracker={"cost": 0.0, "depth": 0},
+        )
 
-    def test_init_error(self, gateway):
-        gateway._genai_client = None
-        with patch("backend.services.rag.agentic.llm_gateway.GENAI_AVAILABLE", True):
-            with patch(
-                "backend.services.rag.agentic.llm_gateway.get_genai_client",
-                side_effect=Exception("fail"),
-            ):
-                result = gateway._get_genai_client()
-                assert result is None
+        assert (text, model) == ("ok", "claude-second")
+
+    @pytest.mark.asyncio
+    async def test_when_every_slug_fails_it_fails_closed(self, gateway):
+        gateway._call_model = AsyncMock(side_effect=ClaudeOAuthNotAvailable("none"))
+
+        with pytest.raises(RuntimeError, match="fallback chain failed"):
+            await gateway._send_with_fallback(
+                chat=None,
+                message="hi",
+                system_prompt="",
+                model_tier=TIER_FLASH,
+                enable_function_calling=False,
+                conversation_messages=[],
+                query_cost_tracker={"cost": 0.0, "depth": 0},
+            )

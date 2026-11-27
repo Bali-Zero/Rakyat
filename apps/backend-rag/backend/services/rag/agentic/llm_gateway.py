@@ -1,47 +1,37 @@
 """
-LLM Gateway - Unified interface for LLM interactions with automatic fallback.
+LLM Gateway - Unified interface for the agentic RAG chat model calls.
 
-This module provides a centralized gateway for all Language Model interactions,
-handling model initialization, tier-based routing, and automatic fallback cascades.
+Since Wave 2 (2026-11-27, owner order) every call goes through the Claude
+Console door (``backend.llm.claude_oauth_client``: the linked-organization
+keys pinned to their workspaces, included monthly Ultra credit, no card spend).
+There is no Gemini and no OpenRouter route left in this module.
 
 Key Features:
-- Multi-tier Gemini model support (Pro, Flash, Flash-Lite)
-- Automatic fallback cascade on quota/service errors
-- OpenRouter integration as final fallback
-- Native function calling support
-- Error handling and retry logic
-- Health check capabilities
+- Plain completions (``enable_function_calling=False``): one prompt in, text out.
+- Structured ReAct turns (``enable_function_calling=True`` with tools): the CLI is
+  asked for a schema-validated turn (thought / tool calls / final answer) and the
+  result is wrapped in a duck-typed response object whose
+  ``candidates[0].content.parts[*].function_call`` carries the calls, so the
+  sync and streaming ReAct loops parse it unchanged (``native`` mode).
+- Per-call tool narrowing (T-VIS): ``gemini_tools`` overrides the shared list for
+  one call only; ``None`` falls back to the shared list, ``[]`` means no tools.
+- Circuit breaker, per-query cost cap and fallback chain over model slugs.
+- Operator alert when the Console seats report a durable failure (quota/auth).
+- Images are NOT forwarded: cloud vision is disabled (local OCR only).
 
-Architecture:
-    LLMGateway acts as the single source of truth for all LLM operations,
-    abstracting model complexity from business logic. It ensures high
-    availability through intelligent fallback routing.
-
-Example:
-    >>> gateway = LLMGateway(gemini_tools=[...])
-    >>> response, model, obj = await gateway.send_message(
-    ...     chat=chat_session,
-    ...     message="What is KITAS?",
-    ...     tier=TIER_FLASH,
-    ... )
-    >>> logger.info(f"Response from {model}: {response}")
-
-Author: Nuzantara Team
-Date: 2025-12-17
-Version: 1.2.0
-
-UPDATED 2025-12-23:
-- Migrated to new google-genai SDK (replaced deprecated google-generativeai)
-- Using GenAIClient wrapper for centralized client management
+Cost ledger: ``complete_async`` already records every call (real envelope usage,
+provider ``claude_console``, endpoint ``rag.gateway.chat``); this module does not
+record a second row.
 """
 
 import asyncio
+import json
 import logging
+import os
+import re
 import time
+from types import SimpleNamespace
 from typing import Any
-
-import httpx
-from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable
 
 from backend.app.core.circuit_breaker import CircuitBreaker
 from backend.app.core.constants import HttpTimeoutConstants
@@ -60,111 +50,150 @@ from backend.app.metrics import (
     metrics_collector,
 )
 from backend.app.utils.tracing import set_span_attribute, set_span_status, trace_span
-from backend.llm.genai_client import GENAI_AVAILABLE, GenAIClient, get_genai_client, types
-from backend.llm.metrics_emitter import emit_llm_metric
-from backend.services.llm_clients.openrouter_client import ModelTier, OpenRouterClient
-from backend.services.llm_clients.pricing import (
-    TokenUsage,
-    create_token_usage,
-    extract_gemini_usage,
+from backend.llm.claude_oauth_client import (
+    LEDGER_PROVIDER,
+    ClaudeOAuthError,
+    ClaudeOAuthNotAvailable,
+    collect_seats,
+    complete_async,
 )
+from backend.llm.claude_oauth_client import default_model as claude_default_model
+from backend.llm.metrics_emitter import emit_llm_metric
+from backend.services.llm_clients.pricing import TokenUsage, create_token_usage
 from backend.services.rag.agentic.chat_session import ChatSession, MockChatSession
 
 logger = logging.getLogger(__name__)
 
 # Model Tier Constants
-TIER_FLASH = 0  # Fast, cost-effective (default) - gemini-3-flash
+TIER_FLASH = 0  # Default tier
 TIER_LITE = 1  # Alias for FLASH
 TIER_PRO = 2  # Alias for FLASH (no separate pro tier)
-TIER_FALLBACK = 3  # Stable fallback - gemini-2.5-flash
+TIER_FALLBACK = 3  # Fallback slug (same as primary unless FALLBACK_MODEL_NAME is set)
+
+# The endpoint every gateway call is attributed to in the cost ledger.
+GATEWAY_ENDPOINT = "rag.gateway.chat"
+
+# A model slug env override is honoured only when it is a plain ``claude-*``
+# slug (the same shape ``claude_oauth_client`` forwards to ``--model``). A
+# legacy Gemini slug left in ``PRIMARY_MODEL_NAME`` is ignored, never an error.
+_ALLOWED_CLAUDE_MODEL_RE = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
+
+# One argv string may not exceed ~128 KiB on Linux (MAX_ARG_STRLEN); keep the
+# whole prompt under it by dropping the OLDEST history entries first.
+_MAX_PROMPT_BYTES = 120_000
 
 
-# --- O1 (2026-07-25): Gemini quota-exhaustion operator alert -------------
-# Real incident 2026-07-22: the Gemini prepay balance hit zero, so BOTH the
-# primary and fallback tiers returned 429/RESOURCE_EXHAUSTED. The agentic
-# LLM couldn't drive tool retrieval, the WhatsApp bot silently abstained on
-# every question for hours, and nobody was paged. Zero has ruled the
-# architecture stays fail-closed on Gemini (no external LLM fallback), so
-# this alert IS the mitigation (spec item O1). Matched on the SDK's
-# structured `code`/`status` attributes, never a bare substring on one
-# sentence — cicatrix scar family #3 (guard-over-match) has bitten this
-# repo repeatedly on exactly that pattern.
-_QUOTA_ALERT_DEDUP_KEY = "gemini_quota_exhausted"
+class InvalidPromptError(ValueError):
+    """The prompt itself cannot be sent to the CLI (empty, oversized, embedded
+    NUL byte, or invalid UTF-8). Not a provider failure: it must never count
+    against a model's circuit breaker or trigger fallback."""
 
 
-def _is_429_signal(value: object) -> bool:
-    """True if `value` plausibly encodes an HTTP 429, whether the SDK/
-    exception put it there as an int or as a str, on whichever attribute
-    it chose (`.code` or `.status` both observed in the wild — see
-    `_classify_quota_exhaustion`). `bool` is excluded even though it's an
-    `int` subclass in Python (never a meaningful 429 signal).
+class PromptTooLargeError(InvalidPromptError):
+    """The prompt cannot fit the argv limit even with no history. Not a provider
+    failure: it must never count against a model's circuit breaker."""
+
+
+# The ReAct loops also read a call out of free text (``ACTION: tool(...)``, a
+# ``{"tool_name": ...}`` object, in any fencing or escaping the parsers accept).
+# Spelling-based filters on that text were bypassed (JSON escapes, nested fences),
+# so the check asks the SAME parser the loops use what it would execute.
+
+
+def _defuse_unoffered_calls(text: str, allowed_tool_names: set[str]) -> str:
+    """Return ``text``, or "" when the loops' own text parser would execute a tool
+    outside ``allowed_tool_names`` from it.
+
+    The probe response carries no structured parts, so only the text modes
+    (regex, regex_degraded) are exercised: exactly what the loops fall back to.
     """
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, int):
-        return value == 429
-    if isinstance(value, str):
-        return value.strip() == "429"
-    return False
+    if not text:
+        return text
+    from backend.services.rag.agentic._reasoning_loop_helpers import (
+        parse_tool_calls_from_response,
+    )
+
+    # silent=True: the probe writes no log record, so a blocked call's argument
+    # values (model-controlled, possibly client data) never reach the logs.
+    tool_calls, _mode = parse_tool_calls_from_response(_plain_response(text), text, silent=True)
+    if any(getattr(call, "tool_name", None) not in allowed_tool_names for call in tool_calls):
+        return ""
+    return text
+
+
+# Structured ReAct turn. ``arguments_json`` is a JSON object serialised as a
+# string so the schema stays flat and strict for every tool signature.
+_REACT_TURN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "thought": {"type": "string"},
+        "tool_calls": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "arguments_json": {"type": "string"},
+                },
+                "required": ["name", "arguments_json"],
+                "additionalProperties": False,
+            },
+        },
+        "final_answer": {"type": ["string", "null"]},
+    },
+    "required": ["thought", "tool_calls", "final_answer"],
+    "additionalProperties": False,
+}
+
+_TOOL_PROTOCOL = """<tool_calling_protocol>
+You may call the tools listed in <available_tools>. Answer ONLY with the JSON object required by the output schema:
+- "thought": one short sentence on what you will do next.
+- "tool_calls": the tools to call now, each with "name" (exactly one of the listed tool names) and "arguments_json" (a JSON object, serialised as a string, using only the parameters that tool declares). Use [] when you need no tool.
+- "final_answer": null while you are calling tools; when "tool_calls" is [] and you have what you need, the complete final answer for the user.
+Never invent a tool that is not listed.
+</tool_calling_protocol>"""
+
+# --- O1 (2026-07-25): operator alert on a durable lane failure -------------
+# Real incident 2026-07-22 (Gemini prepay at zero): the agentic LLM could not
+# drive retrieval, the WhatsApp bot silently abstained for hours and nobody was
+# paged. The architecture stays fail-closed (no external LLM fallback), so this
+# alert IS the mitigation. After Wave 2 the lane is the Claude Console seats;
+# the signal is the structured ``Last error class:`` tail ``claude_oauth_client``
+# puts on ``ClaudeOAuthError`` -- never a substring of a user's text, and a
+# timeout, an empty output or a CLI crash is NOT a quota event (cicatrix #3).
+_QUOTA_ALERT_DEDUP_KEY = "claude_console_quota_exhausted"
+_LAST_ERROR_MARKER = "last error class:"
 
 
 def _classify_quota_exhaustion(exc: Exception) -> str | None:
-    """Return a quota-exhaustion subtype if `exc` represents a Gemini
-    429/RESOURCE_EXHAUSTED failure, else None (not a quota error at all).
+    """Return ``rate_limited`` / ``balance_depleted`` / ``auth_failed`` for a
+    durable Console-seat failure, else None (not a quota/auth event at all).
 
-    Primary signal (structured, not text): the new google-genai SDK raises
-    `google.genai.errors.ClientError` (a subclass of `APIError`) for 4xx
-    responses, exposing `.code` (int HTTP status) and `.status` (the API's
-    error status string, e.g. "RESOURCE_EXHAUSTED") — verified live against
-    the installed google-genai==2.7.0. A 429 signal alone is sufficient:
-    HTTP 429 has no other meaning for this API. Some code paths have been
-    observed carrying the 429 as a string (`code = "429"`) or the status as
-    an int, so both attributes are checked for either representation
-    (`_is_429_signal`) rather than assuming the SDK's exact int/str
-    convention — a narrower check silently skips the alert on those shapes,
-    during the exact outage this guard exists to catch. The legacy
-    `google.api_core.exceptions.ResourceExhausted` class (already imported/
-    caught elsewhere in this file's fallback cascade) is matched too, for
-    defense-in-depth against any code path still raising it.
-
-    The exception message is used ONLY as a secondary signal, to pick a
-    human-readable subtype for the alert text (balance depletion vs a
-    transient per-minute rate limit) — never to decide whether to alert at
-    all. Rate-limit phrasing is checked BEFORE balance phrasing: a
-    transient 429 can mention "credit" in passing (e.g. a billing-quota
-    footnote), but "rate limit"/"per minute" is the more specific signal
-    that this is self-clearing, not a depleted prepay balance — matching on
-    the wrong order previously raised a false CRITICAL "top up the prepay
-    balance" alert for an ordinary rate-limit blip (cicatrix family #3,
-    guard over-match).
+    Only :class:`ClaudeOAuthError` qualifies. Rate-limit phrasing is checked
+    BEFORE quota phrasing: a transient 429 clears in seconds, a depleted
+    balance does not, and the wrong order raised a false CRITICAL once.
     """
-    code = getattr(exc, "code", None)
-    status = getattr(exc, "status", None)
-    is_quota_error = (
-        _is_429_signal(code)
-        or _is_429_signal(status)
-        or (isinstance(status, str) and status.upper() == "RESOURCE_EXHAUSTED")
-        or isinstance(exc, ResourceExhausted)
-    )
-    if not is_quota_error:
+    if not isinstance(exc, ClaudeOAuthError):
         return None
-
-    message = str(getattr(exc, "message", None) or exc).lower()
-    if any(hint in message for hint in ("per minute", "per-minute", "rate limit", "rate_limit")):
+    text = str(exc).lower()
+    _, marker, tail = text.partition(_LAST_ERROR_MARKER)
+    if not marker:
+        return None
+    if "rate limited" in tail or "rate_limit" in tail:
         return "rate_limited"
-    if any(hint in message for hint in ("prepay", "balance", "credit")):
+    if "quota" in tail:
         return "balance_depleted"
-    return "quota_exhausted"
+    if "authentication" in tail or "model_access" in tail:
+        return "auth_failed"
+    return None
 
 
 async def _alert_quota_exhausted(model_name: str, exc: Exception) -> None:
-    """Best-effort operator alert on Gemini quota exhaustion. Never raises —
-    alerting failures must never affect the original exception's propagation
-    (the caller always re-raises `exc` unchanged, alert or no alert).
+    """Best-effort operator alert on a durable Console-seat failure. Never
+    raises: the caller re-raises ``exc`` unchanged, alert or no alert.
 
-    No PII: metadata carries only the model name, error class/code/status,
-    and the derived subtype — never the user's query text, phone number, or
-    any client data (UU PDP hard boundary).
+    No PII: metadata carries only the model slug, the error class name and the
+    derived subtype -- never the user's query, a phone number or client data.
     """
     try:
         subtype = _classify_quota_exhaustion(exc)
@@ -175,106 +204,297 @@ async def _alert_quota_exhausted(model_name: str, exc: Exception) -> None:
 
         subtype_text = {
             "balance_depleted": (
-                "prepay balance appears DEPLETED — this fails EVERY request "
-                "until topped up (2026-07-22 incident shape)"
+                "the Console org balance appears DEPLETED -- this fails EVERY request "
+                "on that seat until topped up"
             ),
-            "rate_limited": "transient per-minute rate limit — should self-clear shortly",
-            "quota_exhausted": "quota exhausted (subtype undetermined from message text)",
+            "rate_limited": "transient rate limit -- should self-clear shortly",
+            "auth_failed": "authentication or workspace pairing refused by the Console door",
         }[subtype]
 
         await get_alert_service().send_alert(
-            title="Gemini quota exhausted",
+            title="Claude Console lane failing",
             message=(
-                f"Model {model_name} returned 429/RESOURCE_EXHAUSTED. {subtype_text}. "
-                "Architecture is fail-closed by design (no external LLM fallback) — "
+                f"Model {model_name} failed on every Console seat: {subtype_text}. "
+                "Architecture is fail-closed by design (no external LLM fallback) -- "
                 "this alert IS the mitigation (spec O1)."
             ),
             level=AlertLevel.CRITICAL,
             metadata={
                 "model": model_name,
                 "error_class": type(exc).__name__,
-                "error_code": getattr(exc, "code", None),
-                "error_status": getattr(exc, "status", None),
                 "subtype": subtype,
             },
             dedup_key=f"{_QUOTA_ALERT_DEDUP_KEY}:{subtype}",
         )
     except Exception as alert_exc:  # pragma: no cover - defensive, must never break the call path
         logger.warning(
-            "Failed to send quota-exhaustion alert for %s: %s", model_name, alert_exc,
+            "Failed to send Console-lane alert for %s: %s", model_name, type(alert_exc).__name__
         )
+
+
+def _resolve_gateway_model(env_var: str, fallback: str) -> str:
+    """A ``claude-*`` slug from ``env_var``, else ``fallback``.
+
+    Fly still carries ``PRIMARY_MODEL_NAME=gemini-2.5-flash`` until the legacy
+    secrets are unset; a non-Claude value must be ignored quietly.
+    """
+    raw = os.getenv(env_var, "").strip()
+    if not raw:
+        return fallback
+    if _ALLOWED_CLAUDE_MODEL_RE.match(raw):
+        return raw
+    logger.info("%s is not a claude-* slug; using %s", env_var, fallback)
+    return fallback
+
+
+def _entry_text(item: dict) -> str:
+    """The text of one history item, whether it uses ``parts`` or ``content``."""
+    parts = item.get("parts")
+    if isinstance(parts, list):
+        texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")]
+        if texts:
+            return "\n".join(str(t) for t in texts)
+    content = item.get("content")
+    return str(content) if content else ""
+
+
+def _role_label(role: Any) -> str:
+    return "User" if role == "user" else "Assistant"
+
+
+def _extract_history_entries(
+    chat: Any,
+    conversation_messages: list[dict] | None,
+    current_message: str,
+) -> list[tuple[str, str]]:
+    """Prior turns as ``(label, text)``; never includes ``current_message``."""
+    entries: list[tuple[str, str]] = []
+    history = getattr(chat, "history", None) if chat is not None else None
+    if isinstance(history, list):
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            text = _entry_text(item)
+            if text:
+                entries.append((_role_label(item.get("role")), text))
+        return entries
+
+    messages = list(conversation_messages or [])
+    if (
+        messages
+        and isinstance(messages[-1], dict)
+        and messages[-1].get("role") == "user"
+        and messages[-1].get("content") == current_message
+    ):
+        messages = messages[:-1]
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        text = _entry_text(item)
+        if text:
+            entries.append((_role_label(item.get("role")), text))
+    return entries
+
+
+def _compact_tool_specs(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict) or not tool.get("name"):
+            continue
+        specs.append(
+            {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get("parameters", {}),
+            }
+        )
+    return specs
+
+
+def _build_claude_prompt(
+    *,
+    message: str,
+    system_prompt: str,
+    history_entries: list[tuple[str, str]],
+    tools: list[dict[str, Any]] | None,
+) -> str:
+    """One prompt: system, tools, history, then ``message`` verbatim and last.
+
+    ``message`` stays the final section byte for byte: the CRM scope note is a
+    suffix of it and must reach the provider on every send.
+    """
+    head: list[str] = []
+    if system_prompt and system_prompt.strip():
+        head.append(f"<system_instructions>\n{system_prompt}\n</system_instructions>")
+    if tools:
+        head.append(
+            "<available_tools>\n"
+            f"{json.dumps(_compact_tool_specs(tools), ensure_ascii=False)}\n"
+            "</available_tools>"
+        )
+        head.append(_TOOL_PROTOCOL)
+
+    def _render(entries: list[tuple[str, str]]) -> str:
+        sections = list(head)
+        if entries:
+            lines = "\n".join(f"{label}: {text}" for label, text in entries)
+            sections.append(f"<conversation_history>\n{lines}\n</conversation_history>")
+        sections.append(message)
+        return "\n\n".join(sections)
+
+    def _utf8_len(text: str) -> int:
+        try:
+            return len(text.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise InvalidPromptError("prompt contains invalid UTF-8 surrogates") from exc
+
+    entries = list(history_entries)
+    prompt = _render(entries)
+    while entries and _utf8_len(prompt) > _MAX_PROMPT_BYTES:
+        entries.pop(0)
+        prompt = _render(entries)
+    prompt_bytes = _utf8_len(prompt)
+    if prompt_bytes > _MAX_PROMPT_BYTES:
+        # System prompt, tools and message alone are over the argv limit. Nothing
+        # of them is cut (the CRM scope note is a suffix of the message): the call
+        # is refused outright instead of failing later with E2BIG.
+        raise PromptTooLargeError(
+            f"prompt is {prompt_bytes} bytes without history; limit {_MAX_PROMPT_BYTES}"
+        )
+    if "\x00" in prompt:
+        # Subprocess argv rejects embedded NUL bytes with ValueError at spawn;
+        # reject here before the CLI runs so it never counts as a model strike.
+        raise InvalidPromptError("prompt contains embedded NUL byte")
+    return prompt
+
+
+def _plain_response(text: str) -> Any:
+    return SimpleNamespace(text=text, candidates=[], function_calls=None)
+
+
+def _parse_react_response(response: Any, allowed_tool_names: set[str]) -> tuple[str, Any, bool]:
+    """Turn a structured ReAct completion into ``(text, response_obj, has_calls)``.
+
+    Tool calls become ``response_obj.candidates[0].content.parts[*].function_call``
+    (``name``/``args``) so ``parse_tool_calls_from_response`` reads them as
+    ``native``. A call to a tool outside ``allowed_tool_names`` is dropped (the
+    per-request scoping is enforced here as well as in the prompt). With no
+    call, a non-empty ``final_answer`` is returned as ``Final Answer: ...``.
+    """
+    raw_text = getattr(response, "text", "") or ""
+    payload = getattr(response, "structured", None)
+    if payload is None and raw_text.strip():
+        candidate = raw_text.strip()
+        if candidate.startswith("```"):
+            candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate).strip()
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict) and ("tool_calls" in parsed or "final_answer" in parsed):
+            payload = parsed
+    if not isinstance(payload, dict):
+        return raw_text, _plain_response(raw_text), False
+
+    thought = str(payload.get("thought") or "").strip()
+    parts: list[Any] = []
+    raw_calls = payload.get("tool_calls")
+    if isinstance(raw_calls, list):
+        for call in raw_calls:
+            if not isinstance(call, dict):
+                continue
+            tool_name = call.get("name")
+            if not isinstance(tool_name, str) or not tool_name:
+                continue
+            if tool_name not in allowed_tool_names:
+                logger.warning("LLMGateway: dropped a call to a tool outside this request's scope")
+                continue
+            raw_args = call.get("arguments_json")
+            if isinstance(raw_args, dict):
+                args = raw_args
+            elif raw_args is None or (isinstance(raw_args, str) and not raw_args.strip()):
+                args = {}
+            else:
+                try:
+                    args = json.loads(raw_args)
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                    logger.warning("LLMGateway: malformed tool arguments (%s)", type(exc).__name__)
+                    continue
+                if not isinstance(args, dict):
+                    logger.warning("LLMGateway: tool arguments were not a JSON object")
+                    continue
+            parts.append(
+                SimpleNamespace(function_call=SimpleNamespace(name=tool_name, args=args), text=None)
+            )
+
+    if parts:
+        response_obj = SimpleNamespace(
+            text=thought,
+            candidates=[SimpleNamespace(content=SimpleNamespace(parts=parts))],
+            function_calls=[p.function_call for p in parts],
+        )
+        return thought, response_obj, True
+
+    final_answer = payload.get("final_answer")
+    if isinstance(final_answer, str) and final_answer.strip():
+        clean = final_answer.strip()
+        text_out = clean if "Final Answer:" in clean else f"Final Answer: {clean}"
+        return text_out, _plain_response(text_out), False
+    return thought, _plain_response(thought), False
+
+
+def _tool_turn_summary(thought: str, response_obj: Any) -> str:
+    """What the model asked for, for the chat history of the next ReAct step."""
+    calls: list[str] = []
+    for part in response_obj.candidates[0].content.parts:
+        fc = part.function_call
+        try:
+            args = json.dumps(fc.args, ensure_ascii=False)
+        except (TypeError, ValueError):
+            args = "{}"
+        calls.append(f"{fc.name}({args})")
+    summary = f"{thought}\n[called tools: {', '.join(calls)}]".strip()
+    return summary[:2000]
 
 
 class LLMGateway:
     """
-    Unified gateway for LLM interactions with intelligent fallback routing.
+    Unified gateway for LLM interactions over the Claude Console seats.
 
     Responsibilities:
-    - Initialize and manage Gemini models (Pro, Flash, Flash-Lite) via GenAIClient
-    - Handle OpenRouter fallback for high availability
-    - Route requests to appropriate model tier
-    - Cascade fallback on quota/service errors: Flash → Flash-Lite → OpenRouter
-    - Support native function calling and regex fallback
-    - Provide health check capabilities
-
-    The gateway ensures that user requests are always served, even when
-    primary models are unavailable, by automatically falling back to
-    alternative models.
+    - Route requests to a model slug by tier (all tiers resolve to claude-* slugs)
+    - Turn a ReAct step with tools into a structured, schema-validated turn
+    - Cascade over the fallback chain with a circuit breaker and a cost cap
+    - Provide a cheap health check
 
     Attributes:
-        gemini_tools (list): Function declarations for native tool calling
-        _genai_client (GenAIClient): Centralized GenAI client instance
-        model_name_pro (str): Gemini 2.5 Flash (same as flash tier)
-        model_name_flash (str): Gemini 2.5 Flash (primary model)
-        model_name_fallback (str): Gemini 2.0 Flash (stable fallback)
-        thinking_level (str): Gemini reasoning depth ("minimal", "low", "medium", "high")
-        _openrouter_client (OpenRouterClient): Lazy-loaded OpenRouter client
-
-    Note:
-        - Uses new google-genai SDK via GenAIClient wrapper
-        - OpenRouter client is lazy-loaded to avoid unnecessary initialization
+        gemini_tools (list): Tool declarations (kept under their historical name)
+        model_name_pro / model_name_flash / model_name_fallback (str): claude-* slugs
     """
 
-    def __init__(self, gemini_tools: list = None) -> None:
-        """Initialize LLM Gateway with Gemini models and OpenRouter fallback.
-
-        Sets up all Gemini model instances and prepares for automatic fallback
-        to OpenRouter if needed. Configures native function calling if tools
-        are provided.
+    def __init__(self, gemini_tools: list | None = None) -> None:
+        """Initialize the gateway.
 
         Args:
-            gemini_tools: Optional list of Gemini function declarations for tool use.
-                These enable native function calling in Gemini models.
+            gemini_tools: Optional tool declarations for the ReAct loop. The
+                name is historical; the declarations are provider-neutral dicts.
 
         Note:
-            - Requires GOOGLE_API_KEY in settings
-            - OpenRouter client is initialized lazily on first use
-            - GenAI client handles connection pooling
+            ``PRIMARY_MODEL_NAME`` / ``FALLBACK_MODEL_NAME`` are honoured only
+            when they are plain ``claude-*`` slugs.
         """
         self._gemini_tools = gemini_tools or []
 
-        # Initialize GenAI client (new SDK)
-        # Uses singleton client that supports both API Key and Service Account (Vertex AI)
-        self._genai_client: GenAIClient | None = None
-
-        # Model names from centralized config (S04 solidification)
-        from backend.llm.config import ModelName
-
-        self.model_name_pro = ModelName.PRIMARY
-        self.model_name_flash = ModelName.PRIMARY
-        self.model_name_fallback = ModelName.FALLBACK
+        default_claude = claude_default_model()
+        primary = _resolve_gateway_model("PRIMARY_MODEL_NAME", default_claude)
+        fallback = _resolve_gateway_model("FALLBACK_MODEL_NAME", primary)
+        self.model_name_pro = primary
+        self.model_name_flash = primary
+        self.model_name_fallback = fallback
 
         logger.info(
-            f"✅ LLMGateway: Model configuration ready ({ModelName.PRIMARY} primary, "
-            f"{ModelName.FALLBACK} fallback)",
+            "LLMGateway: Claude Console lane ready (%s primary, %s fallback)", primary, fallback
         )
-
-        # Future 3-tier models (when implemented)
-        # Tier 2: claude-3-5-haiku (Anthropic) - complex reasoning
-        # Tier 3: gpt-4o-mini (OpenAI) - reliable fallback
-
-        # Lazy-loaded OpenRouter client (fallback)
-        self._openrouter_client: OpenRouterClient | None = None
 
         # Circuit breaker configuration using CircuitBreaker class
         self._circuit_breakers: dict[str, CircuitBreaker] = {}
@@ -283,86 +503,30 @@ class LLMGateway:
         self._max_fallback_depth = 3
         self._max_fallback_cost_usd = 0.10  # Max $0.10 per query
 
-    def _get_genai_client(self) -> GenAIClient | None:
-        """Lazy load GenAI client."""
-        if self._genai_client is None and GENAI_AVAILABLE:
-            try:
-                # Use singleton client - it handles both API key and Service Account auth
-                client = get_genai_client()
-                if client.is_available:
-                    self._genai_client = client
-                    auth_method = getattr(self._genai_client, "_auth_method", "unknown")
-                    logger.debug("✅ LLMGateway: GenAI client loaded (auth: %s)", auth_method)
-            except Exception as e:
-                logger.warning("Failed to initialize GenAI client: %s", e)
-        return self._genai_client
-
     @property
     def _available(self) -> bool:
-        """Check availability dynamically.
+        """Whether this process has a Console seat to call.
 
-        Returns the actual client availability unless a test override is set.
-        Tests can set gateway._available = True/False to mock availability.
+        Tests can set ``gateway._available = True/False`` to override.
         """
-        # Check if test override is set
         if "_available_override" in self.__dict__:
             return self.__dict__["_available_override"]
-        # Return actual availability
-        client = self._get_genai_client()
-        return client.is_available if client else False
+        return bool(collect_seats())
 
     @_available.setter
     def _available(self, value: bool) -> None:
-        """Set availability for testing purposes.
-
-        This setter allows tests to mock the availability state.
-        In production, availability is determined by the GenAI client state.
-        """
+        """Set availability for testing purposes."""
         self.__dict__["_available_override"] = value
 
     @property
     def gemini_tools(self) -> list:
-        """Get the Gemini function declarations for tool calling.
-
-        Returns:
-            List of Gemini function declarations
-        """
+        """Get the tool declarations used for the ReAct loop."""
         return self._gemini_tools
 
     def set_gemini_tools(self, tools: list) -> None:
-        """Set or update Gemini function declarations for tool calling.
-
-        Allows tools to be set after initialization, useful when tools
-        are created after the LLMGateway instance.
-
-        Args:
-            tools: List of Gemini function declarations for native tool calling
-        """
+        """Set or update the tool declarations (after construction)."""
         self._gemini_tools = tools or []
         logger.debug(f"LLMGateway: Updated gemini_tools ({len(self.gemini_tools)} tools)")
-
-    def _get_openrouter_client(self) -> OpenRouterClient | None:
-        """Lazy load OpenRouter client for third-party fallback.
-
-        Creates OpenRouter client only when needed to avoid unnecessary API calls.
-        Used as final fallback when all Gemini models are unavailable.
-
-        Returns:
-            OpenRouterClient instance or None if initialization fails
-
-        Note:
-            - Requires user consent for third-party processing in production
-            - Logs warnings for audit trail compliance
-            - Uses ModelTier.RAG for cost-optimized model selection
-        """
-        if self._openrouter_client is None:
-            try:
-                self._openrouter_client = OpenRouterClient(default_tier=ModelTier.RAG)
-                logger.info("✅ LLMGateway: OpenRouter client initialized (lazy)")
-            except (httpx.HTTPError, ValueError, KeyError) as e:
-                logger.error("❌ LLMGateway: Failed to initialize OpenRouter: %s", e, exc_info=True)
-                return None
-        return self._openrouter_client
 
     def create_chat_with_history(
         self,
@@ -373,7 +537,8 @@ class LLMGateway:
         """
         Create a ChatSession with conversation history for multi-turn chat.
 
-        Best Practice 2026: Use startChat() with history for context persistence.
+        The session is a pure in-memory history container: each call rebuilds
+        its prompt from it, so no provider client is held.
 
         Args:
             history_to_use: Previous conversation messages [{role, content}, ...]
@@ -381,28 +546,28 @@ class LLMGateway:
             system_instruction: System prompt for the session
 
         Returns:
-            ChatSession object with history
+            ChatSession with history, or MockChatSession when no seat is configured
         """
-        client = self._get_genai_client()
-        if not client or not client.is_available:
-            logger.warning("GenAI client not available, returning mock session")
-            return MockChatSession(history=history_to_use or [])
+        model_name = self._get_model_for_tier(model_tier)
+        if not self._available:
+            logger.warning("No Claude Console seat available, returning mock session")
+            return MockChatSession(
+                history=history_to_use or [],
+                model=model_name,
+                system_instruction=system_instruction,
+            )
 
-        # Convert history to Gemini format
-        gemini_history = []
+        history: list[dict] = []
         for msg in history_to_use or []:
             if not isinstance(msg, dict):
                 continue
             role = "user" if msg.get("role") == "user" else "model"
-            gemini_history.append({"role": role, "parts": [{"text": msg.get("content", "")}]})
-
-        # Create chat session with history
-        model_name = self._get_model_for_tier(model_tier)
+            history.append({"role": role, "parts": [{"text": str(msg.get("content", ""))}]})
 
         return ChatSession(
-            client=client,
+            client=None,
             model=model_name,
-            history=gemini_history,
+            history=history,
             system_instruction=system_instruction,
         )
 
@@ -422,67 +587,34 @@ class LLMGateway:
         tier: int = TIER_FLASH,
         enable_function_calling: bool = True,
         conversation_messages: list[dict] | None = None,
-        images: list[dict]
-        | None = None,  # Vision: [{"base64": "data:image/...", "name": "file.jpg"}]
+        images: list[dict] | None = None,  # Accepted for compatibility; never forwarded.
         gemini_tools: list[dict] | None = None,
     ) -> tuple[str, str, Any, TokenUsage]:
-        """Send message to LLM with tier-based routing and automatic fallback.
-
-        Main public API for sending messages to language models. Implements
-        intelligent cascade fallback to ensure high availability.
-
-        Fallback Chain:
-            1. Try requested tier (Pro/Flash/Lite)
-            2. On quota/error → fall back to next cheaper tier
-            3. Final fallback → OpenRouter
+        """Send a message with tier-based routing and a fallback chain.
 
         Args:
-            chat: Active Gemini chat session (or None to create new)
-            message: User message or continuation prompt
-            system_prompt: System instructions (used for OpenRouter fallback)
+            chat: Active chat session (history container) or None
+            message: User message or continuation prompt (sent verbatim, last)
+            system_prompt: System instructions
             tier: Requested model tier (TIER_PRO=2, TIER_FLASH=0, TIER_LITE=1)
-            enable_function_calling: Enable native function calling for Gemini models
-            conversation_messages: Conversation history for OpenRouter fallback
-            images: List of images for vision (base64 encoded with data URI prefix)
-            gemini_tools: Optional PER-CALL override of the function
-                declarations sent to Gemini (T-VIS, W0 safety pre-arm,
-                2026-07-25). `self._gemini_tools` is set ONCE at
-                orchestrator-construction time and this gateway instance is
-                SHARED across every concurrent request — mutating
-                `self._gemini_tools` per request would leak one caller's
-                tool schema into another's. Passing `gemini_tools` here
-                sends exactly that list for THIS call only, without
-                touching shared state. `None` (the default) reproduces
-                today's behaviour exactly (falls back to
-                `self._gemini_tools`); `[]` explicitly means "send no
-                tools" and does NOT fall back.
+            enable_function_calling: Ask for a structured ReAct turn when tools exist
+            conversation_messages: Conversation history when no ``chat`` is given
+            images: Ignored. Cloud vision is disabled; nothing is forwarded.
+            gemini_tools: PER-CALL override of the tool declarations (T-VIS).
+                ``self._gemini_tools`` is shared by every concurrent request, so
+                a caller narrows the tools for ONE call here instead of mutating
+                it. ``None`` (default) uses the shared list; ``[]`` sends no tools
+                and does NOT fall back.
 
         Returns:
-            Tuple of (response_text, model_name_used, response_object, token_usage)
-            - response_text (str): Generated response content
-            - model_name_used (str): Model that generated the response
-            - response_object (Any): Full response object (for function call parsing)
-            - token_usage (TokenUsage): Token counts and cost information
+            (response_text, model_name_used, response_object, token_usage). The
+            response object exposes ``candidates[0].content.parts[*].function_call``
+            when the model asked for tools.
 
         Raises:
-            RuntimeError: If all models fail (including OpenRouter)
-
-        Example:
-            >>> response, model, obj, usage = await gateway.send_message(
-            ...     chat=chat_session,
-            ...     message="What is the capital of Indonesia?",
-            ...     tier=TIER_FLASH,
-            ... )
-            >>> logger.info(f"[{model}] {response} (cost: ${usage.cost_usd:.6f})")
+            RuntimeError: If every model in the fallback chain fails.
         """
         query_cost_tracker = {"cost": 0.0, "depth": 0}
-        # Latency telemetry (2026-07-18): this call and the rephrase/
-        # self-correction retry are the two biggest single LLM calls in the
-        # ReAct loop (~15-17s each in the live timeout repro), yet had ZERO
-        # latency logging — unlike genai_client.generate_content's "LLM
-        # call" logger. Mirror that pattern here at the gateway level so the
-        # duration is visible regardless of which tier/model actually served
-        # the request.
         t0 = time.perf_counter()
         try:
             text_content, model_used, response_obj, token_usage = await self._send_with_fallback(
@@ -497,7 +629,7 @@ class LLMGateway:
                 gemini_tools_override=gemini_tools,
             )
             latency_ms = round((time.perf_counter() - t0) * 1000)
-            provider = "openrouter" if model_used == "openrouter" else "gemini"
+            provider = LEDGER_PROVIDER
             logger.info(
                 "LLM gateway call",
                 extra={
@@ -517,6 +649,18 @@ class LLMGateway:
                 completion_tokens=token_usage.completion_tokens,
             )
             return (text_content, model_used, response_obj, token_usage)
+        except InvalidPromptError as e:
+            latency_ms = round((time.perf_counter() - t0) * 1000)
+            logger.warning(
+                "LLM prompt rejected before dispatch (%s)",
+                type(e).__name__,
+                extra={
+                    "tier": tier,
+                    "fallback_depth": query_cost_tracker["depth"],
+                    "latency_ms": latency_ms,
+                },
+            )
+            raise RuntimeError(f"All LLM models failed: {e}") from None
         except Exception as e:
             latency_ms = round((time.perf_counter() - t0) * 1000)
             logger.exception(
@@ -587,6 +731,43 @@ class LLMGateway:
 
         return chain
 
+    def _prepare_prompt(
+        self,
+        *,
+        with_tools: bool,
+        chat: Any,
+        message: str,
+        system_prompt: str,
+        gemini_tools_override: list[dict] | None,
+        conversation_messages: list[dict] | None,
+    ) -> tuple[str, list[dict], bool]:
+        """Assemble and validate the prompt before routing or CLI spawn.
+
+        Returns ``(prompt, effective_tools, use_react_tools)``. Raises
+        :class:`InvalidPromptError` (or :class:`PromptTooLargeError`) when the
+        message is not a string, the prompt is blank, over ``_MAX_PROMPT_BYTES``,
+        carries an embedded NUL byte, or contains invalid UTF-8 surrogates.
+        """
+        if not isinstance(message, str):
+            raise InvalidPromptError("message must be a string")
+        # T-VIS: `gemini_tools_override` narrows the tool declarations for THIS call
+        # only. `None` -> the shared list; `[]` -> no tools (must NOT fall back).
+        effective_tools = (
+            self._gemini_tools if gemini_tools_override is None else gemini_tools_override
+        )
+        effective_system = system_prompt or getattr(chat, "system_instruction", "") or ""
+        use_react_tools = bool(with_tools and effective_tools)
+        history_entries = _extract_history_entries(chat, conversation_messages, message)
+        prompt = _build_claude_prompt(
+            message=message,
+            system_prompt=effective_system if isinstance(effective_system, str) else "",
+            history_entries=history_entries,
+            tools=effective_tools if use_react_tools else None,
+        )
+        if not prompt.strip():
+            raise InvalidPromptError("Prompt must be non-empty")
+        return prompt, effective_tools, use_react_tools
+
     async def _send_with_fallback(
         self,
         chat: Any,
@@ -599,41 +780,35 @@ class LLMGateway:
         images: list[dict] | None = None,
         gemini_tools_override: list[dict] | None = None,
     ) -> tuple[str, str, Any, TokenUsage]:
-        """Send message with tier-based routing, native function calling, and cascade fallback.
+        """Send a message down the fallback chain.
 
-        Implements intelligent model selection with automatic degradation:
-        1. Try requested tier (Pro/Flash/Lite) with native function calling
-        2. On quota/error: cascade to next cheaper tier
-        3. Final fallback: OpenRouter (third-party) with regex parsing
-
-        This ensures high availability while optimizing costs.
-
-        Args:
-            chat: Active chat session (unused in new SDK, kept for API compatibility)
-            message: User message or continuation prompt
-            system_prompt: System instructions (used for OpenRouter fallback)
-            model_tier: Requested tier (TIER_PRO=2, TIER_FLASH=0, TIER_LITE=1)
-            enable_function_calling: Whether to enable native function calling (default: True)
-            conversation_messages: Message history for OpenRouter
-            images: Optional list of images for vision capability
-            gemini_tools_override: Optional per-call tool-declaration
-                override forwarded to `_call_model` (see `send_message`
-                docstring — None reproduces today's shared-list behaviour).
+        Honours the circuit breaker, the per-query cost cap and the maximum
+        fallback depth. There is no third-party fallback: when every slug in the
+        chain fails the call fails closed.
 
         Returns:
-            Tuple of (response_text, model_name_used, response_object)
-            response_object contains parts that may include function_call
+            (response_text, model_name_used, response_object, token_usage)
 
         Raises:
-            RuntimeError: If all models fail (including OpenRouter)
-
-        Note:
-            - Uses new google-genai SDK with client.aio.models.generate_content
-            - Logs all tier transitions for monitoring
-            - Extracts user query from structured prompts for OpenRouter
-            - Native function calling enabled for Gemini models
+            RuntimeError: If all models in the chain fail.
         """
-        # Get fallback chain
+        # Validate the assembled prompt ONCE before checking availability,
+        # circuit breakers, cost cap, or fallback depth: a caller-invalid
+        # prompt must never be misclassified as a provider outage or increment
+        # ``llm_all_models_failed_total`` or ``llm_circuit_breaker_open_total``.
+        try:
+            self._prepare_prompt(
+                with_tools=enable_function_calling,
+                chat=chat,
+                message=message,
+                system_prompt=system_prompt,
+                gemini_tools_override=gemini_tools_override,
+                conversation_messages=conversation_messages,
+            )
+        except InvalidPromptError as e:
+            logger.warning("LLMGateway: prompt rejected before routing (%s)", type(e).__name__)
+            raise
+
         models_to_try = self._get_fallback_chain(model_tier)
 
         for model_name in models_to_try:
@@ -660,12 +835,11 @@ class LLMGateway:
                 llm_max_depth_reached_total.inc()
                 break
 
-            # Check if model is available
+            # Check if a seat is available
             if not self._available:
                 continue
 
             try:
-                # Try model
                 text_content, response, token_usage = await self._call_model(
                     model_name,
                     with_tools=enable_function_calling,
@@ -674,9 +848,9 @@ class LLMGateway:
                     images=images,
                     _system_prompt=system_prompt,
                     gemini_tools_override=gemini_tools_override,
+                    conversation_messages=conversation_messages,
                 )
 
-                # Success - reset circuit breaker
                 self._record_success(model_name)
                 query_cost_tracker["cost"] += token_usage.cost_usd
                 query_cost_tracker["depth"] += 1
@@ -684,56 +858,46 @@ class LLMGateway:
                 llm_fallback_depth.observe(query_cost_tracker["depth"])
                 llm_query_cost_usd.observe(query_cost_tracker["cost"])
 
-                logger.debug("✅ LLMGateway: %s response received", model_name)
+                logger.debug("LLMGateway: %s response received", model_name)
                 return (text_content, model_name, response, token_usage)
 
-            except ResourceExhausted as e:
-                # Quota exceeded - record failure with error classification
+            except InvalidPromptError as e:
+                # Same prompt, same refusal on every slug: not a model failure,
+                # so no circuit-breaker strike and no fallback attempt.
+                logger.warning("LLMGateway: prompt rejected before CLI (%s)", type(e).__name__)
+                raise
+
+            except ClaudeOAuthError as e:
                 self._record_failure(model_name, e)
-                logger.warning("Quota exhausted for %s: %s", model_name, e)
-                llm_quota_exhausted_total.labels(model=model_name).inc()
+                logger.warning("Console seats failed for %s", model_name)
+                if _classify_quota_exhaustion(e) is not None:
+                    llm_quota_exhausted_total.labels(model=model_name).inc()
+                else:
+                    llm_model_error_total.labels(
+                        model=model_name, error_type=type(e).__name__
+                    ).inc()
                 metrics_collector.record_llm_fallback(model_name, "next_model")
                 continue
 
-            except ServiceUnavailable as e:
-                # Service unavailable - record failure with error classification
+            except (ClaudeOAuthNotAvailable, asyncio.TimeoutError) as e:
                 self._record_failure(model_name, e)
-                logger.warning("Service unavailable for %s: %s", model_name, e)
+                logger.warning(
+                    "Claude Console unavailable for %s (%s)", model_name, type(e).__name__
+                )
                 llm_service_unavailable_total.labels(model=model_name).inc()
                 metrics_collector.record_llm_fallback(model_name, "next_model")
                 continue
 
             except Exception as e:
-                # Other errors - record failure with error classification
                 self._record_failure(model_name, e)
                 error_type = type(e).__name__
-                logger.warning("Error with %s: %s", model_name, e)
+                logger.warning("Error with %s: %s", model_name, error_type)
                 llm_model_error_total.labels(model=model_name, error_type=error_type).inc()
                 metrics_collector.record_llm_fallback(model_name, "next_model")
                 continue
 
-        # All Gemini models failed - try OpenRouter as final fallback
-        logger.warning("⚠️ LLMGateway: All Gemini models failed, attempting OpenRouter fallback")
-        try:
-            # Build messages list for OpenRouter (it expects role/content format)
-            openrouter_messages = conversation_messages or [{"role": "user", "content": message}]
-
-            openrouter_response, token_usage = await self._call_openrouter(
-                openrouter_messages,
-                system_prompt,
-            )
-
-            # Record cost
-            query_cost_tracker["cost"] += token_usage.cost_usd
-            query_cost_tracker["depth"] += 1
-
-            return (openrouter_response, "openrouter", None, token_usage)
-        except Exception as openrouter_error:
-            logger.error("❌ LLMGateway: OpenRouter fallback also failed: %s", openrouter_error)
-            # All fallbacks exhausted
-            raise RuntimeError(
-                "All models in fallback chain failed (including OpenRouter)",
-            ) from None
+        logger.error("LLMGateway: every model in the fallback chain failed (fail-closed)")
+        raise RuntimeError("All Claude Console models in fallback chain failed") from None
 
     async def _call_model(
         self,
@@ -744,542 +908,145 @@ class LLMGateway:
         images: list[dict] | None = None,
         _system_prompt: str = "",
         gemini_tools_override: list[dict] | None = None,
+        conversation_messages: list[dict] | None = None,
     ) -> tuple[str, Any, TokenUsage]:
-        """Call a specific model and return (text, response, token_usage)."""
-        if not self._available:
-            raise RuntimeError("GenAI client not available")
-        client = self._get_genai_client()
-
-        # T-VIS (W0 safety pre-arm, 2026-07-25): `gemini_tools_override`
-        # lets a caller narrow the tool declarations for THIS call only,
-        # without mutating the shared `self._gemini_tools` (this gateway
-        # instance is reused across every concurrent request). `None` means
-        # "no override" -> shared list (today's behaviour, unchanged); `[]`
-        # means "override to nothing" and must NOT fall back to the shared
-        # list — the two are semantically distinct.
-        effective_gemini_tools = (
-            self._gemini_tools if gemini_tools_override is None else gemini_tools_override
+        """Call one model slug and return (text, response_object, token_usage)."""
+        # Validate first: an invalid prompt is the caller's fault whatever the
+        # seat state, so it must surface as InvalidPromptError, never as
+        # "no seats configured".
+        prompt, effective_tools, use_react_tools = self._prepare_prompt(
+            with_tools=with_tools,
+            chat=chat,
+            message=message,
+            system_prompt=_system_prompt,
+            gemini_tools_override=gemini_tools_override,
+            conversation_messages=conversation_messages,
         )
 
-        # Helper function to build multimodal content
-        def _build_multimodal_content(text: str, imgs: list[dict] | None) -> Any:
-            """Build content structure for multimodal input (text + images)."""
-            parts = [{"text": text}]
+        if not self._available:
+            raise ClaudeOAuthNotAvailable("No Claude Console seats configured")
 
-            if imgs:
-                for img in imgs:
-                    try:
-                        # Handle different image formats
-                        if img.get("format") == "base64":
-                            import base64
-
-                            image_data = base64.b64decode(img["data"])
-                        else:
-                            # Assume raw bytes
-                            image_data = img["data"]
-
-                        import mimetypes
-
-                        mime_type = img.get(
-                            "mime_type",
-                            mimetypes.guess_type(img.get("filename", ""))[0] or "image/jpeg",
-                        )
-
-                        # Import Part inline to avoid circular imports
-                        from google.genai.types import Part
-
-                        parts.append(
-                            Part.from_data(
-                                data=image_data,
-                                mime_type=mime_type,
-                            ),
-                        )
-                    except Exception as img_err:
-                        logger.warning("⚠️ Failed to process image: %s", img_err)
-
-            if not parts:
-                return text  # Fallback to plain text if no parts built
-
-            # Return as content structure for Gemini
-            return [{"parts": parts}]
-
-        # Helper function to build config
-        def _build_config(with_tools: bool = False, sys_prompt: str = "") -> Any:
-            """Build configuration for model generation."""
-            config_args = {}
-            if with_tools and effective_gemini_tools:
-                # Convert tool dicts to proper FunctionDeclaration format for new SDK
-                # (Same conversion as in the class-level _build_config method)
-                function_declarations = []
-                for tool_dict in effective_gemini_tools:
-                    params = tool_dict.get("parameters", {})
-                    func_decl = types.FunctionDeclaration(
-                        name=tool_dict["name"],
-                        description=tool_dict["description"],
-                        parameters=types.Schema(
-                            type=params.get("type", "OBJECT"),
-                            properties={
-                                k: types.Schema(
-                                    type=v.get("type", "STRING"),
-                                    description=v.get("description", ""),
-                                )
-                                for k, v in params.get("properties", {}).items()
-                            },
-                            required=params.get("required", []),
-                        ),
-                    )
-                    function_declarations.append(func_decl)
-                config_args["tools"] = [types.Tool(function_declarations=function_declarations)]
-                # Add tool_config to encourage function calling
-                import contextlib
-
-                with contextlib.suppress(AttributeError, TypeError):
-                    config_args["tool_config"] = types.ToolConfig(
-                        function_calling_config=types.FunctionCallingConfig(mode="AUTO"),
-                    )
-
-            # Inject system instruction if present
-            if sys_prompt:
-                config_args["system_instruction"] = sys_prompt
-
-            return types.GenerateContentConfig(**config_args)
-
-        # CRITICAL: Use chat session if available to maintain conversation context
-        # This ensures Gemini 3 maintains full conversation history across ReAct loop steps
-
-        # Build configuration first
-        config = _build_config(with_tools, sys_prompt=_system_prompt)
-
-        # Determine contents (history + new message)
-        contents = []
-
-        if chat and hasattr(chat, "history"):
-            logger.debug(f"💬 Using ChatSession with {len(chat.history)} history messages")
-
-            # 1. Convert history to correct format/roles
-            for item in chat.history:
-                role = item.get("role", "user")
-                # Fix common role errors
-                if role == "assistant":
-                    role = "model"
-
-                parts = item.get("parts", [])
-                # Ensure parts are valid
-                if parts:
-                    contents.append({"role": role, "parts": parts})
-
-            # 2. Add new message
-            # Reset text content holder
-            text_content = ""
-
-            # Build current message content
-            current_content_parts = []
-
-            # Handle text
-            if message:
-                current_content_parts.append({"text": message})
-
-            # Handle images (multimodal)
-            if images:
-                processed_images = _build_multimodal_content("", images)
-                if (
-                    isinstance(processed_images, list)
-                    and processed_images
-                    and "parts" in processed_images[0]
-                ):
-                    # _build_multimodal_content returns [{"parts": [...]}]
-                    current_content_parts.extend(processed_images[0]["parts"])
-
-            if current_content_parts:
-                contents.append({"role": "user", "parts": current_content_parts})
-
-            # 3. Call model with full history (with timeout to avoid hang)
-            _llm_call_t0 = time.perf_counter()
-            try:
-                response = await asyncio.wait_for(
-                    client._client.aio.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=config,
-                    ),
-                    timeout=HttpTimeoutConstants.DEFAULT_TIMEOUT,
-                )
-            except Exception as gen_exc:
-                # O1: best-effort operator alert on quota exhaustion, then
-                # re-raise unchanged — never alters the fallback cascade.
-                await _alert_quota_exhausted(model_name, gen_exc)
-                raise
-
-            # 4. Update chat history manually
-            # Extract response text with safety checks
-            text_content = ""
-            if hasattr(response, "text") and response.text:
-                text_content = response.text
-            elif hasattr(response, "candidates") and response.candidates:
-                # Try to extract from candidates if text property is empty
-                for candidate in response.candidates:
-                    if hasattr(candidate, "content") and candidate.content:
-                        for part in candidate.content.parts:
-                            if hasattr(part, "text") and part.text:
-                                text_content += part.text
-
-            # Log warning if response is empty (could be safety block)
-            if not text_content:
-                finish_reason = None
-                if hasattr(response, "candidates") and response.candidates:
-                    finish_reason = getattr(response.candidates[0], "finish_reason", None)
-                logger.warning(
-                    "⚠️ LLMGateway: Empty response from %s. Finish reason: %s. Possible safety block or content filter.",
-                    model_name,
-                    finish_reason,
-                )
-
-            # Add user message to history
-            chat.history.append({"role": "user", "parts": current_content_parts})
-
-            # Add model response to history (if text exists)
-            # Function calls are handled separately in response object but history needs text or parts
-            # For simplicity in history we store text if available
-            if text_content:
-                chat.history.append({"role": "model", "parts": [{"text": text_content}]})
-            elif hasattr(response, "function_calls") and response.function_calls:
-                # Store function call in history if needed, but for now we skip to avoid complexity
-                # as ReAct loop handles function calls via tool outputs
-                pass
-
-            # Extract token usage
-            prompt_tokens, completion_tokens, cached_tokens, thinking_tokens = (
-                extract_gemini_usage(getattr(response, "usage_metadata", None))
+        if images:
+            # Cloud vision is disabled (local OCR only): never serialise or forward bytes.
+            logger.warning(
+                "LLMGateway: ignoring %d image attachment(s); cloud vision is disabled",
+                len(images),
             )
 
-            # Indestructible cost ledger (see
-            # backend/services/observability/llm_cost_recorder.py). This call
-            # goes straight to the raw SDK (client._client.aio.models.
-            # generate_content) instead of GenAIClient.generate_content(), so
-            # it bypasses that method's own recording — record here to avoid
-            # undercounting the llm_cost_events ledger. Fail-open: recorder
-            # errors never break the chat response.
-            try:
-                from backend.services.llm_clients.pricing import calculate_cost
-                from backend.services.observability import record_llm_call
-
-                cost_usd = calculate_cost(
-                    prompt_tokens,
-                    completion_tokens,
-                    model_name,
-                    cached_tokens=cached_tokens,
-                    thinking_tokens=thinking_tokens,
-                )
-                await record_llm_call(
-                    provider="gemini",
-                    model=model_name,
-                    input_tokens=prompt_tokens,
-                    output_tokens=completion_tokens + thinking_tokens,
-                    cost_usd=cost_usd,
-                    success=True,
-                    latency_ms=round((time.perf_counter() - _llm_call_t0) * 1000),
-                    endpoint="rag.gateway.chat",
-                    cache_hit_tokens=cached_tokens,
-                )
-            except Exception as rec_exc:
-                logger.warning("llm_cost recorder failed for gateway: %s", rec_exc)
-
-            token_usage = create_token_usage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                model=model_name,
-                # Same counters the ledger row above just recorded: the spend
-                # cap and the ledger must price one call one way.
-                cached_tokens=cached_tokens,
-                thinking_tokens=thinking_tokens,
-            )
-            return text_content, response, token_usage
-
-        # Fallback: Build content directly (for backward compatibility or when chat is None)
-        # Build content (plain text or multimodal with images)
-        content = _build_multimodal_content(message, images)
-        has_images = images is not None and len(images) > 0
-
-        # 🔍 TRACING: Span for LLM call
         with trace_span(
             "backend.llm.call",
             {
                 "model": model_name,
-                "with_tools": with_tools,
+                "with_tools": use_react_tools,
                 "message_length": len(message),
-                "has_images": has_images,
+                "has_images": bool(images),
                 "image_count": len(images) if images else 0,
             },
         ):
-            config = _build_config(with_tools, sys_prompt=_system_prompt)
-
-            if has_images:
-                logger.info(f"🖼️ Vision mode: sending {len(images)} images to {model_name}")
-
-            _llm_call_t0 = time.perf_counter()
             try:
-                response = await asyncio.wait_for(
-                    client._client.aio.models.generate_content(
-                        model=model_name,
-                        contents=content,
-                        config=config,
-                    ),
-                    timeout=HttpTimeoutConstants.DEFAULT_TIMEOUT,
+                cl_resp = await complete_async(
+                    prompt,
+                    model=model_name,
+                    endpoint=GATEWAY_ENDPOINT,
+                    json_schema=_REACT_TURN_SCHEMA if use_react_tools else None,
+                    timeout_s=HttpTimeoutConstants.MEDIUM_TIMEOUT,
+                    total_timeout_s=HttpTimeoutConstants.LONG_TIMEOUT,
                 )
             except Exception as gen_exc:
-                # O1: best-effort operator alert on quota exhaustion, then
-                # re-raise unchanged — never alters the fallback cascade.
+                # O1: best-effort operator alert on a durable lane failure, then
+                # re-raise unchanged -- never alters the fallback cascade.
                 await _alert_quota_exhausted(model_name, gen_exc)
                 raise
 
-            # Extract token usage from response
-            prompt_tokens, completion_tokens, cached_tokens, thinking_tokens = (
-                extract_gemini_usage(getattr(response, "usage_metadata", None))
-            )
+            has_calls = False
+            allowed = {t["name"] for t in effective_tools if isinstance(t, dict) and t.get("name")}
+            if use_react_tools:
+                text_content, response_obj, has_calls = _parse_react_response(cl_resp, allowed)
+            else:
+                text_content = cl_resp.text or ""
+                response_obj = _plain_response(text_content)
 
-            # Indestructible cost ledger (see
-            # backend/services/observability/llm_cost_recorder.py). Same raw
-            # SDK bypass as the chat-history branch above — record here so
-            # the llm_cost_events ledger doesn't undercount. Fail-open.
-            try:
-                from backend.services.llm_clients.pricing import calculate_cost
-                from backend.services.observability import record_llm_call
-
-                cost_usd = calculate_cost(
-                    prompt_tokens,
-                    completion_tokens,
-                    model_name,
-                    cached_tokens=cached_tokens,
-                    thinking_tokens=thinking_tokens,
+            if with_tools:
+                # The loop that sent this turn reads calls out of free text too.
+                # Whatever the tools offered (none included), only offered names
+                # may survive in it.
+                defused = _defuse_unoffered_calls(
+                    text_content, allowed if use_react_tools else set()
                 )
-                await record_llm_call(
-                    provider="gemini",
-                    model=model_name,
-                    input_tokens=prompt_tokens,
-                    output_tokens=completion_tokens + thinking_tokens,
-                    cost_usd=cost_usd,
-                    success=True,
-                    latency_ms=round((time.perf_counter() - _llm_call_t0) * 1000),
-                    endpoint="rag.gateway.chat",
-                    cache_hit_tokens=cached_tokens,
-                )
-            except Exception as rec_exc:
-                logger.warning("llm_cost recorder failed for gateway: %s", rec_exc)
+                if defused != text_content:
+                    logger.warning("LLMGateway: defused a text-form call to an unoffered tool")
+                    text_content = defused
+                    response_obj.text = defused
 
-            token_usage = create_token_usage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                model=model_name,
-                # Same counters the ledger row above just recorded: the spend
-                # cap and the ledger must price one call one way.
-                cached_tokens=cached_tokens,
-                thinking_tokens=thinking_tokens,
-            )
+            if not text_content and not has_calls:
+                logger.warning("LLMGateway: empty response from %s", model_name)
 
-            # Log token usage for monitoring
-            logger.debug(
-                f"📊 [LLMGateway] Token usage: {prompt_tokens} prompt + {completion_tokens} completion "
-                f"= {token_usage.total_tokens} total (${token_usage.cost_usd:.6f})",
-            )
-            set_span_attribute("prompt_tokens", prompt_tokens)
-            set_span_attribute("completion_tokens", completion_tokens)
-            set_span_attribute("cost_usd", token_usage.cost_usd)
-
-            # Extract text, handling function call responses
-            try:
-                text_content = ""
-                if hasattr(response, "text") and response.text:
-                    text_content = response.text
-                elif hasattr(response, "candidates") and response.candidates:
-                    # Try to extract from candidates if text property is empty
-                    for candidate in response.candidates:
-                        if hasattr(candidate, "content") and candidate.content:
-                            for part in candidate.content.parts:
-                                if hasattr(part, "text") and part.text:
-                                    text_content += part.text
-
-                # text_content can be None/empty if Gemini returns a function call
-                if not text_content:
-                    # Check if this is a function call
-                    has_function_call = (
-                        hasattr(response, "function_calls") and response.function_calls
-                    ) or (
-                        hasattr(response, "candidates")
-                        and response.candidates
-                        and hasattr(response.candidates[0], "content")
-                        and response.candidates[0].content
-                        and any(
-                            hasattr(p, "function_call") and p.function_call
-                            for p in response.candidates[0].content.parts
-                        )
+            # Keep the session history current for the next step.
+            history = getattr(chat, "history", None) if chat is not None else None
+            if isinstance(history, list):
+                history.append({"role": "user", "parts": [{"text": message}]})
+                if has_calls:
+                    history.append(
+                        {
+                            "role": "model",
+                            "parts": [{"text": _tool_turn_summary(text_content, response_obj)}],
+                        }
                     )
-                    if has_function_call:
-                        set_span_attribute("has_function_call", "true")
-                    else:
-                        set_span_attribute("has_function_call", "false")
-                        # Log warning for truly empty responses
-                        finish_reason = (
-                            getattr(response.candidates[0], "finish_reason", None)
-                            if hasattr(response, "candidates") and response.candidates
-                            else None
-                        )
-                        logger.warning(
-                            "⚠️ LLMGateway: Empty text response from %s. Finish reason: %s. Possible safety block.",
-                            model_name,
-                            finish_reason,
-                        )
-                else:
-                    set_span_attribute("has_function_call", "false")
+                elif text_content:
+                    history.append({"role": "model", "parts": [{"text": text_content}]})
 
-                set_span_attribute("response_length", len(text_content))
-            except ValueError as e:
-                # Function call detected or other error - reasoning.py will extract it from response_obj
-                logger.warning("⚠️ LLMGateway: ValueError extracting text: %s", e)
-                text_content = ""
-                set_span_attribute("has_function_call", "true")
-                set_span_attribute("response_length", 0)
-
+            usage_basis = (
+                json.dumps(cl_resp.structured, ensure_ascii=False)
+                if cl_resp.structured is not None
+                else (cl_resp.text or "")
+            )
+            token_usage = create_token_usage(
+                prompt_tokens=max(1, len(prompt) // 4),
+                completion_tokens=max(1, len(usage_basis) // 4),
+                model=model_name,
+            )
+            # Downstream tracers (kg_orchestrator) read the token counts off the
+            # response object under the provider-neutral ``usage_metadata`` name.
+            response_obj.usage_metadata = SimpleNamespace(
+                prompt_token_count=token_usage.prompt_tokens,
+                candidates_token_count=token_usage.completion_tokens,
+                total_token_count=token_usage.total_tokens,
+            )
+            set_span_attribute("prompt_tokens", token_usage.prompt_tokens)
+            set_span_attribute("completion_tokens", token_usage.completion_tokens)
+            set_span_attribute("cost_usd", token_usage.cost_usd)
+            set_span_attribute("has_function_call", "true" if has_calls else "false")
+            set_span_attribute("response_length", len(text_content))
             set_span_status("ok")
-            return text_content, response, token_usage
-
-    async def _call_openrouter(
-        self,
-        messages: list[dict],
-        system_prompt: str,
-    ) -> tuple[str, TokenUsage]:
-        """Call OpenRouter as final fallback when Gemini models are unavailable.
-
-        Uses third-party OpenRouter API for model access. Requires user consent
-        in production environments for GDPR/privacy compliance.
-
-        Args:
-            messages: Conversation history as list of role/content dicts
-            system_prompt: System instructions for model behavior
-
-        Returns:
-            Tuple of (response_text, token_usage)
-
-        Raises:
-            RuntimeError: If OpenRouter client is not available
-        """
-
-        # Log that we're using third-party (for audit)
-        logger.warning("🌐 LLMGateway: Using OpenRouter fallback (third-party service)")
-
-        client = self._get_openrouter_client()
-        if not client:
-            raise RuntimeError("OpenRouter client not available")
-
-        # Build messages with system prompt
-        full_messages = [{"role": "system", "content": system_prompt}]
-        full_messages.extend(messages)
-
-        result = await client.complete(full_messages, tier=ModelTier.RAG)
-        logger.info(f"✅ LLMGateway: OpenRouter fallback used: {result.model_name}")
-
-        # Convert OpenRouter usage to TokenUsage object
-        usage = create_token_usage(
-            prompt_tokens=result.prompt_tokens,
-            completion_tokens=result.completion_tokens,
-            model=result.model_used,
-        )
-
-        return result.content, usage
+            return text_content, response_obj, token_usage
 
     async def health_check(self) -> dict[str, bool]:
-        """Check health of all LLM providers.
-
-        Tests connectivity and availability of Gemini models and OpenRouter.
-        Useful for monitoring and debugging.
+        """Check the Console lane with one tiny completion.
 
         Returns:
-            Dict mapping provider names to availability status:
-            {
-                "gemini_pro": bool,
-                "gemini_flash": bool,
-                "gemini_flash_lite": bool,
-                "openrouter": bool,
-            }
-
-        Example:
-            >>> status = await gateway.health_check()
-            >>> if status["gemini_flash"]:
-            ...     logger.info("Flash is available")
-            >>> else:
-            ...     logger.warning("Flash is down, will use fallback")
+            {"claude_console": bool, "primary": bool, "fallback": bool}. All False
+            (and no CLI is spawned) when no seat is configured.
         """
-        status = {
-            "gemini_pro": False,
-            "gemini_flash": False,
-            "gemini_flash_lite": False,
-            "openrouter": False,
-        }
+        status = {"claude_console": False, "primary": False, "fallback": False}
+        if not self._available:
+            logger.warning("LLMGateway Health: no Claude Console seat configured")
+            return status
 
-        if not self._genai_client or not self._available:
-            logger.warning("⚠️ LLMGateway Health: GenAI client not available")
-        else:
-            # Test Gemini Flash (most commonly used)
-            try:
-                result = await self._genai_client.generate_content(
-                    contents="ping",
-                    model=self.model_name_flash,
-                    max_output_tokens=8192,
-                )
-                if result and result.get("text"):
-                    status["gemini_flash"] = True
-                    logger.debug("✅ LLMGateway Health: Gemini Flash is healthy")
-            except Exception as e:
-                logger.warning("⚠️ LLMGateway Health: Gemini Flash check failed: %s", e)
-
-            # Test Gemini Pro
-            try:
-                result_pro = await self._genai_client.generate_content(
-                    contents="ping",
-                    model=self.model_name_pro,
-                    max_output_tokens=8192,
-                )
-                if result_pro and result_pro.get("text"):
-                    status["gemini_pro"] = True
-                    logger.debug("✅ LLMGateway Health: Gemini Pro is healthy")
-            except Exception as e:
-                logger.warning("⚠️ LLMGateway Health: Gemini Pro check failed: %s", e)
-
-            # Test Gemini Fallback (Stable)
-            try:
-                result_fallback = await self._genai_client.generate_content(
-                    contents="ping",
-                    model=self.model_name_fallback,
-                    max_output_tokens=8192,
-                )
-                if result_fallback and result_fallback.get("text"):
-                    status["gemini_flash_lite"] = True
-                    logger.debug("✅ LLMGateway Health: Gemini Fallback is healthy")
-            except Exception as e:
-                logger.warning("⚠️ LLMGateway Health: Gemini Fallback check failed: %s", e)
-
-        # Test OpenRouter (lazy init). A disabled egress must NOT report
-        # healthy — a green that lies is worse than a red (scar #2).
-        from backend.app.core.config import settings as app_settings
-
-        client = self._get_openrouter_client()
-        if client and app_settings.openrouter_enabled:
-            status["openrouter"] = True
-            logger.debug("✅ LLMGateway Health: OpenRouter client initialized")
-
+        try:
+            result = await complete_async(
+                "Reply with OK",
+                model=self.model_name_flash,
+                endpoint=GATEWAY_ENDPOINT,
+                max_output_tokens=16,
+                timeout_s=HttpTimeoutConstants.HEALTH_CHECK_TIMEOUT,
+                total_timeout_s=HttpTimeoutConstants.HEALTH_CHECK_TIMEOUT,
+            )
+            if (result.text or "").strip():
+                status = {"claude_console": True, "primary": True, "fallback": True}
+        except Exception as e:
+            logger.warning("LLMGateway Health: check failed (%s)", type(e).__name__)
         return status
 
     async def close(self) -> None:
-        """
-        Shut down all persistent LLM clients managed by this gateway.
-        Should be called during application shutdown via lifespan.
-        """
-        if self._openrouter_client:
-            try:
-                await self._openrouter_client.close()
-                logger.info("✅ LLMGateway: OpenRouter client closed")
-            except Exception as e:
-                logger.warning("⚠️ LLMGateway: Error closing OpenRouter client: %s", e)
-
-        # GenAI client pooling is managed by SDK, but we null it out for safety
-        self._genai_client = None
-        logger.info("✅ LLMGateway: All clients shut down")
+        """Shut down the gateway (no persistent client is held any more)."""
+        logger.info("LLMGateway: shut down")

@@ -2,21 +2,19 @@
 
 When the CRM pre-call finds nothing within the signed-in user's scope, the turn carries
 a note: any CRM fact in the answer must come from a tool result of this turn. The
-streaming loop sends the model up to six different messages in a turn, and a provider
-fallback is handed the current message alone, without the chat. So the note is appended
-to the text of every one of them.
+streaming loop sends the model up to six different messages in a turn. So the note is
+appended to the text of every one of them.
 
 Asserted where the provider is called. The reasoning engine, the gateway's send and its
-fallback chain, and the chat session are the real ones. Stood in: the Gemini SDK call
-(down, or answering), the OpenRouter client's ``complete``, the tool body, the evidence
-score that selects a branch, and the two telemetry writers that run after a provider
-has answered.
+fallback chain, and the chat session are the real ones. Stood in: the Claude Console
+completion call (``complete_async``, which records the prompt it is given), the Console
+seat lookup, the tool body, the evidence score that selects a branch, and the telemetry
+writer that runs after the provider has answered.
 """
 
 from __future__ import annotations
 
 import ast
-import copy
 import inspect
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -25,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.llm.claude_oauth_client import ClaudeOAuthResponse
 from backend.services.rag.agentic import reasoning as reasoning_module
 from backend.services.rag.agentic._reasoning_tier1 import (
     TRANSPARENCY_INSTRUCTION_FINAL,
@@ -50,8 +49,8 @@ CONSTRAINT = (
 NOTES = {
     "practice_stats": "The CRM holds no practices within the signed-in user's scope. " + CONSTRAINT,
     "expiring_documents": (
-        "The CRM holds no passport, visa or document expiring in the next 30 days within the "
-        "signed-in user's scope. " + CONSTRAINT
+        "The CRM holds no visa or stay-permit practice in progress within the signed-in user's "
+        "scope. " + CONSTRAINT
     ),
     "search_clients": (
         "The automatic CRM lookup matched no client for this question as typed; that is not a "
@@ -96,6 +95,9 @@ TURNS: dict[str, dict[str, Any]] = {
     },
 }
 
+# The prompt is: <system>, <history>, then the message verbatim and last.
+_HISTORY_END = "</conversation_history>\n\n"
+
 
 def _is_the_send_it_is_named_after(turn: str, message: str) -> bool:
     """The last message of a turn with no note, as main builds it."""
@@ -123,63 +125,25 @@ def _is_the_send_it_is_named_after(turn: str, message: str) -> bool:
     )
 
 
-class _OpenRouter:
-    """The fallback provider's client: keeps the messages it is sent."""
+class _Console:
+    """The completion call: answers from a script and keeps every prompt it is given."""
 
     def __init__(self, answers: list[str]) -> None:
         self._answers = answers
-        self.received: list[list[dict[str, Any]]] = []
+        self.prompts: list[str] = []
 
-    async def complete(self, messages: list[dict[str, Any]], **_: Any) -> SimpleNamespace:
-        self.received.append(copy.deepcopy(messages))
-        return SimpleNamespace(
-            content=self._answers.pop(0),
-            model_name="stand-in",
-            model_used="stand-in",
-            prompt_tokens=1,
-            completion_tokens=1,
+    async def complete(self, prompt: str, **_: Any) -> ClaudeOAuthResponse:
+        self.prompts.append(prompt)
+        return ClaudeOAuthResponse(
+            text=self._answers.pop(0), token_label="console_1", elapsed_s=0.0, attempts=1
         )
 
     def user_messages(self) -> list[str]:
-        assert all(
-            len(m) == 2 and m[0] == {"role": "system", "content": "system"} for m in self.received
-        )
-        assert all(m[1]["role"] == "user" for m in self.received)
-        return [m[1]["content"] for m in self.received]
-
-
-class _Gemini:
-    """The first provider's client: down when it has no answers, else keeps its input."""
-
-    is_available = True
-
-    def __init__(self, answers: list[str] | None) -> None:
-        self._answers = answers
-        self.received: list[list[dict[str, Any]]] = []
-        models = SimpleNamespace(generate_content=self._generate)
-        self._client = SimpleNamespace(aio=SimpleNamespace(models=models))
-
-    def start_chat(self, **_: Any) -> object:
-        # The gateway does not send through the SDK's own chat object: it rebuilds the
-        # model's input from the session's history at every call.
-        return object()
-
-    async def _generate(self, *, model: str, contents: Any, config: Any) -> SimpleNamespace:
-        self.received.append(copy.deepcopy(contents))
-        if self._answers is None:
-            raise RuntimeError("the provider is down")
-        return SimpleNamespace(
-            text=self._answers.pop(0), candidates=[], function_calls=None, usage_metadata=None
-        )
-
-    def user_messages(self) -> list[str]:
-        assert all(c[-1]["role"] == "user" and len(c[-1]["parts"]) == 1 for c in self.received)
-        return [c[-1]["parts"][0]["text"] for c in self.received]
+        assert all(_HISTORY_END in p for p in self.prompts)
+        return [p.split(_HISTORY_END, 1)[1] for p in self.prompts]
 
     def earlier_turns(self) -> list[str]:
-        return [
-            " ".join(p["text"] for c in sent[:-1] for p in c["parts"]) for sent in self.received
-        ]
+        return [p.split(_HISTORY_END, 1)[0] for p in self.prompts]
 
 
 def _retrieval(_response: Any, text: str) -> tuple[list[ToolCall], str]:
@@ -210,22 +174,22 @@ def _stage() -> Iterator[None]:
         ),
         # Telemetry written after a provider has answered; not on the message's way.
         patch("backend.services.rag.agentic.llm_gateway.emit_llm_metric", new_callable=AsyncMock),
-        patch("backend.services.observability.record_llm_call", new_callable=AsyncMock),
+        patch(
+            "backend.services.rag.agentic.llm_gateway.collect_seats",
+            return_value=[object()],
+        ),
     ):
         trace_span.return_value.__enter__ = MagicMock()
         trace_span.return_value.__exit__ = MagicMock(return_value=False)
         yield
 
 
-async def _turn(turn: str, note: str = "", *, gemini_answers: bool = False) -> SimpleNamespace:
+async def _turn(turn: str, note: str = "") -> SimpleNamespace:
     """One streamed turn through the real engine and the real gateway."""
     script = TURNS[turn]
     answers = list(script["answers"])
-    gemini = _Gemini(answers if gemini_answers else None)
-    openrouter = _OpenRouter([] if gemini_answers else answers)
+    console = _Console(answers)
     gateway = LLMGateway()
-    gateway._genai_client = gemini
-    gateway._openrouter_client = openrouter
     chat = gateway.create_chat_with_history(
         history_to_use=HISTORY, model_tier=TIER_FLASH, system_instruction="system"
     )
@@ -233,9 +197,15 @@ async def _turn(turn: str, note: str = "", *, gemini_answers: bool = False) -> S
     state.skip_rag = script.get("skip_rag", False)
     state.crm_scope_note = note
     engine = ReasoningEngine(tool_map={}, response_pipeline=None)
-    with patch(
-        "backend.services.rag.agentic.reasoning.compute_evidence_score",
-        return_value=script["evidence"],
+    with (
+        patch(
+            "backend.services.rag.agentic.llm_gateway.complete_async",
+            new=AsyncMock(side_effect=console.complete),
+        ),
+        patch(
+            "backend.services.rag.agentic.reasoning.compute_evidence_score",
+            return_value=script["evidence"],
+        ),
     ):
         events = [
             event
@@ -246,14 +216,14 @@ async def _turn(turn: str, note: str = "", *, gemini_answers: bool = False) -> S
                 initial_prompt=PROMPT,
                 system_prompt="system",
                 query=Q,
-                user_id="member.one@example.test",
+                user_id="team-member-placeholder",
                 model_tier=TIER_FLASH,
                 tool_execution_counter={"count": 0},
             )
         ]
     assert not [e for e in events if e.get("type") == "error"]
     assert answers == []  # every scripted answer was asked for
-    return SimpleNamespace(state=state, gemini=gemini, openrouter=openrouter)
+    return SimpleNamespace(state=state, console=console)
 
 
 def _suffix(note: str) -> str:
@@ -265,7 +235,7 @@ def _suffix(note: str) -> str:
 async def test_a_turn_with_no_note_sends_what_it_always_sent(turn: str) -> None:
     ran = await _turn(turn)
 
-    sent = ran.openrouter.user_messages()
+    sent = ran.console.user_messages()
     assert len(sent) == len(TURNS[turn]["answers"])
     assert sent[0] == PROMPT
     assert _is_the_send_it_is_named_after(turn, sent[-1])
@@ -276,37 +246,17 @@ async def test_a_turn_with_no_note_sends_what_it_always_sent(turn: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("query_type", list(NOTES))
 @pytest.mark.parametrize("turn", list(TURNS))
-async def test_with_the_first_provider_down_every_message_of_the_turn_ends_with_the_note(
-    turn: str, query_type: str
-) -> None:
+async def test_every_message_of_the_turn_ends_with_the_note(turn: str, query_type: str) -> None:
     note = NOTES[query_type]
     plain = await _turn(turn)
 
     noted = await _turn(turn, note)
 
-    assert noted.gemini.received  # the first provider was tried, and failed
-    sent = noted.openrouter.user_messages()
-    assert sent == [message + _suffix(note) for message in plain.openrouter.user_messages()]
+    sent = noted.console.user_messages()
+    assert sent == [message + _suffix(note) for message in plain.console.user_messages()]
     assert len(sent) == len(TURNS[turn]["answers"])
     assert all(message.endswith(note) for message in sent)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("query_type", list(NOTES))
-@pytest.mark.parametrize("turn", list(TURNS))
-async def test_with_the_first_provider_answering_every_message_it_is_given_ends_with_the_note(
-    turn: str, query_type: str
-) -> None:
-    note = NOTES[query_type]
-    plain = await _turn(turn, gemini_answers=True)
-
-    noted = await _turn(turn, note, gemini_answers=True)
-
-    assert noted.openrouter.received == []
-    sent = noted.gemini.user_messages()
-    assert sent == [message + _suffix(note) for message in plain.gemini.user_messages()]
-    assert len(sent) == len(TURNS[turn]["answers"])
-    assert _is_the_send_it_is_named_after(turn, plain.gemini.user_messages()[-1])
+    assert all(prompt.endswith(note) for prompt in noted.console.prompts)
 
 
 @pytest.mark.asyncio
@@ -316,16 +266,13 @@ async def test_with_the_first_provider_answering_every_message_it_is_given_ends_
 async def test_the_note_is_in_the_message_whenever_a_conflicting_count_is(turn: str) -> None:
     note = NOTES["practice_stats"]
 
-    down = await _turn(turn, note)
-    last = down.openrouter.user_messages()[-1]
+    ran = await _turn(turn, note)
+
+    # The provider is also given the earlier turns, with their own count.
+    assert all("57 clients" in earlier for earlier in ran.console.earlier_turns())
+    last = ran.console.user_messages()[-1]
     assert "99 clients" in last  # the retrieved text is in the regenerated prompt
     assert last.endswith(_suffix(note))
-
-    up = await _turn(turn, note, gemini_answers=True)
-    # The first provider is also given the earlier turns, with their own count.
-    assert all("57 clients" in earlier for earlier in up.gemini.earlier_turns())
-    assert "99 clients" in up.gemini.user_messages()[-1]
-    assert all(message.endswith(_suffix(note)) for message in up.gemini.user_messages())
 
 
 @pytest.mark.asyncio
