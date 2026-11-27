@@ -1122,7 +1122,7 @@ async def _generate_kbli_explanation(
         # Check if LLM gateway is available
         if not gateway._available:
             logger.error(
-                "❌ LLM Gateway not available - check GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS",
+                "❌ LLM Gateway not available - check ANTHROPIC_CONSOLE_KEY_<n> / ANTHROPIC_CONSOLE_WORKSPACE_<n>",
             )
             raise RuntimeError("LLM service not available")
 
@@ -1308,7 +1308,7 @@ async def chat_kbli(
     gateway = _get_llm_gateway()
     if not gateway._available:
         logger.error(
-            "❌ LLM Gateway not available - GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS may be missing",
+            "❌ LLM Gateway not available - ANTHROPIC_CONSOLE_KEY_<n> / ANTHROPIC_CONSOLE_WORKSPACE_<n> may be missing",
         )
     else:
         logger.debug("✅ LLM Gateway is available")
