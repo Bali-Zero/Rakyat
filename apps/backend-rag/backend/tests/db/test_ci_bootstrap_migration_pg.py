@@ -254,7 +254,9 @@ async def test_347_real_locks_and_post_ledger_failure_roll_back(
         assert await conn.fetchval(f"SELECT count(*) FROM {ledger} WHERE migration_number=347") == 0
 
 
-@pytest.mark.parametrize("table", ["hr_bonus_rates", "hr_payroll_periods"])
+@pytest.mark.parametrize(
+    "table", ["hr_bonus_rates", "hr_payroll_periods", "hr_leave_types", "hr_leave_balances"]
+)
 def test_delivery_payroll_prerequisites_match_legacy_068(table: str) -> None:
     """Keep the rate window, closed-month states and foreign keys in CI faithful to payroll."""
     import re
