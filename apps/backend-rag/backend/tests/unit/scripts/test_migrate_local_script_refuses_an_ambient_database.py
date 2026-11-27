@@ -41,9 +41,15 @@ def _make_script_directory(tmp_path: Path) -> tuple[Path, Path]:
     return workdir, record
 
 
-def _run_script(workdir: Path, record: Path, database_url: str) -> subprocess.CompletedProcess[str]:
+def _run_script(
+    workdir: Path,
+    record: Path,
+    database_url: str,
+    extra_environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     environment = {
         "DATABASE_URL": database_url,
+        **(extra_environment or {}),
         "MARKER_VALUE": "do-not-print-me",
         "MIGRATION_RECORD": str(record),
         "PATH": f"{record.parent / 'bin'}:{os.environ['PATH']}",
@@ -97,3 +103,70 @@ def test_local_database_runs_migration_and_preserves_spaced_values(tmp_path: Pat
         "args": ["-m", "backend.db.migrate", "apply-all"],
         "spaced": "plain fake value",
     }
+
+
+def test_non_local_migration_dsn_in_the_environment_is_refused(tmp_path: Path) -> None:
+    workdir, record = _make_script_directory(tmp_path)
+    (workdir / ".env.local").write_text("DATABASE_URL=postgresql://user@localhost/dev\n")
+    remote = "postgresql://u:p@db.example.test/x"
+
+    result = _run_script(
+        workdir,
+        record,
+        "postgresql://localhost/dev",
+        {"MIGRATION_DATABASE_URL": remote},
+    )
+
+    assert result.returncode == 2
+    assert not record.exists()
+    assert "db.example.test" not in result.stdout + result.stderr
+
+
+def test_non_local_migration_dsn_in_the_dotenv_file_is_refused(tmp_path: Path) -> None:
+    workdir, record = _make_script_directory(tmp_path)
+    (workdir / ".env.local").write_text("DATABASE_URL=postgresql://user@localhost/dev\n")
+    (workdir / ".env").write_text("MIGRATION_DATABASE_URL='postgresql://u:p@db.example.test/x'\n")
+
+    result = _run_script(workdir, record, "postgresql://localhost/dev")
+
+    assert result.returncode == 2
+    assert not record.exists()
+    assert "db.example.test" not in result.stdout + result.stderr
+
+
+def test_socket_query_does_not_override_a_named_host(tmp_path: Path) -> None:
+    workdir, record = _make_script_directory(tmp_path)
+    (workdir / ".env.local").write_text(
+        "DATABASE_URL=postgresql://u:p@remote.example.test/db?host=/tmp\n"
+    )
+
+    result = _run_script(workdir, record, "postgresql://localhost/dev")
+
+    assert result.returncode == 2
+    assert not record.exists()
+    assert "remote.example.test" not in result.stdout + result.stderr
+
+
+def test_local_migration_dsn_wins_over_a_non_local_database_url(tmp_path: Path) -> None:
+    workdir, record = _make_script_directory(tmp_path)
+    (workdir / ".env.local").write_text("DATABASE_URL=postgresql://u:p@db.example.test/prod\n")
+
+    result = _run_script(
+        workdir,
+        record,
+        "postgresql://db.example.test/prod",
+        {"MIGRATION_DATABASE_URL": "postgresql://u:p@localhost/x"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert record.exists()
+
+
+def test_socket_query_with_an_empty_host_is_local(tmp_path: Path) -> None:
+    workdir, record = _make_script_directory(tmp_path)
+    (workdir / ".env.local").write_text("DATABASE_URL=postgresql:///db?host=/tmp\n")
+
+    result = _run_script(workdir, record, "postgresql://db.example.test/prod")
+
+    assert result.returncode == 0, result.stderr
+    assert record.exists()
