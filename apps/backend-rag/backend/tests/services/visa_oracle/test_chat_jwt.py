@@ -190,19 +190,19 @@ async def test_chat_augments_system_prompt_when_jwt_valid(monkeypatch):
         _FakeSearch,
     )
 
-    # Capture the prompt passed to Gemini
+    # Capture the prompt passed to the model
     captured: dict = {}
 
-    class _FakeGemini:
-        async def generate_content(self, *, contents, **kw):
-            captured["contents"] = contents
-            return {"text": "E33G answer"}
+    async def _fake_complete(prompt, **_kw):
+        from backend.llm.claude_oauth_client import ClaudeOAuthResponse
 
-    # get_genai_client is lazy-imported inside chat; patch the module-level function
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _FakeGemini(),
-    )
+        captured["contents"] = prompt
+        return ClaudeOAuthResponse(
+            text="E33G answer", token_label="console_1", elapsed_s=0.1, attempts=1
+        )
+
+    # complete_async is lazy-imported inside chat; patch the module-level function
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _fake_complete)
 
     token = _make_jwt("abc1234567890000")
     req = _build_request(f"Bearer {token}")
@@ -257,12 +257,15 @@ async def test_chat_augments_system_prompt_for_clock_context(monkeypatch):
 
     captured: dict = {}
 
-    class _FakeGemini:
-        async def generate_content(self, *, contents, **kw):
-            captured["contents"] = contents
-            return {"text": "clock answer"}
+    async def _fake_complete(prompt, **_kw):
+        from backend.llm.claude_oauth_client import ClaudeOAuthResponse
 
-    monkeypatch.setattr("backend.llm.genai_client.get_genai_client", lambda: _FakeGemini())
+        captured["contents"] = prompt
+        return ClaudeOAuthResponse(
+            text="clock answer", token_label="console_1", elapsed_s=0.1, attempts=1
+        )
+
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _fake_complete)
 
     token = _make_jwt("clock11111111111")
     req = _build_request(f"Bearer {token}")

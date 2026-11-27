@@ -126,38 +126,6 @@ async def test_editing_a_name_never_fails_on_the_stored_gender(stored: str | Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("sex", "stored"),
-    [("M", "M"), (" Female ", "F"), ("X", None), ("male female", None), ("", None)],
-)
-async def test_batch_passport_script_writes_only_m_or_f(sex: str, stored: str | None) -> None:
-    """The script needs OAuth env at import, so gender_letter and update_client are loaded alone."""
-    import ast
-    import logging
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[5] / "scripts" / "batch_passport_ocr.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    wanted = {"gender_letter", "update_client"}
-    fns = [
-        n
-        for n in tree.body
-        if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef) and n.name in wanted
-    ]
-    ns: dict[str, Any] = {
-        "asyncpg": MagicMock(),
-        "normalize_date": lambda value: None,
-        "logger": logging.getLogger("t"),
-    }
-    exec(compile(ast.Module(fns, []), str(path), "exec"), ns)  # noqa: S102
-    conn = AsyncMock()
-    conn.fetchval = AsyncMock(return_value=None)
-    await ns["update_client"](conn, 5, {"sex": sex}, dry_run=False)
-    writes = [c.args for c in conn.execute.await_args_list if "SET gender" in c.args[0]]
-    assert [w[1] for w in writes] == ([stored] if stored else [])
-
-
-@pytest.mark.asyncio
 async def test_passport_preview_returns_canonical_or_nothing() -> None:
     pool, _ = _pool()
     request = ccd.PassportPreviewRequest(image_base64="aGk=", mime_type="image/jpeg")

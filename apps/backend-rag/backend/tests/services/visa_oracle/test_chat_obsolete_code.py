@@ -5,7 +5,7 @@ Prior behavior (round2 spec §6.6 step 2 / product-design.md §2 claim #2):
 when a user mentioned a retired visa code (e.g. B211A) AND the KB evidence
 was too weak to answer (top_score < 0.30, normally ABSTAIN), the endpoint
 promoted the outcome to CAUTIOUS "on the strength of pretraining context +
-SYSTEM_PROMPT rules" and let Gemini generate a free-form answer with no
+SYSTEM_PROMPT rules" and let the model generate a free-form answer with no
 grounded evidence. That promotion is removed: weak evidence now ALWAYS
 abstains, obsolete code or not. The obsolete-code signal is preserved only
 as a `review_reasons` annotation on the (still-safe) ABSTAIN response.
@@ -44,15 +44,23 @@ class _StubSearch:
         return {"results": self._results}
 
 
-class _NeverCalledGemini:
+async def _never_called_claude(*_a, **_kw):
     """Fails the test loudly if the LLM is invoked — weak evidence must
     never reach generation, obsolete code or not."""
+    raise AssertionError(
+        "Claude must not be called on weak evidence — ABSTAIN must not "
+        "be promoted to a generated answer (PR0 safety freeze, W2)."
+    )
 
-    async def generate_content(self, *_a, **_kw):
-        raise AssertionError(
-            "Gemini must not be called on weak evidence — ABSTAIN must not "
-            "be promoted to a generated answer (PR0 safety freeze, W2)."
-        )
+
+def _claude_says(text: str):
+    """A stand-in for ``complete_async`` that answers ``text``."""
+    from backend.llm.claude_oauth_client import ClaudeOAuthResponse
+
+    async def _complete(prompt, **_kw):
+        return ClaudeOAuthResponse(text=text, token_label="console_1", elapsed_s=0.1, attempts=1)
+
+    return _complete
 
 
 def _weak_search(score: float = 0.10) -> _StubSearch:
@@ -71,10 +79,7 @@ async def test_obsolete_code_weak_evidence_stays_abstain(monkeypatch):
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _weak_search(0.10),
     )
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _NeverCalledGemini(),
-    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _never_called_claude)
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="What about my B211A visa?")
@@ -97,10 +102,7 @@ async def test_obsolete_code_weak_evidence_sets_review_reasons(monkeypatch):
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _weak_search(0.10),
     )
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _NeverCalledGemini(),
-    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _never_called_claude)
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="What about my B211A visa?")
@@ -119,10 +121,7 @@ async def test_obsolete_code_no_search_results_stays_abstain_with_reason(monkeyp
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _StubSearch([]),
     )
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _NeverCalledGemini(),
-    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _never_called_claude)
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="Is B211 still valid?")
@@ -155,10 +154,7 @@ async def test_multiple_obsolete_codes_both_named_in_answer_and_reasons(monkeypa
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _StubSearch([]),
     )
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _NeverCalledGemini(),
-    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _never_called_claude)
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="Is B211 or B211A still valid?")
@@ -193,10 +189,7 @@ async def test_weak_evidence_without_obsolete_code_stays_abstain_no_reason(monke
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _weak_search(0.10),
     )
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _NeverCalledGemini(),
-    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _never_called_claude)
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="What visa do I need for surfing?")
@@ -227,11 +220,10 @@ async def test_obsolete_code_strong_evidence_still_answers_normally(monkeypatch)
         ),
     )
 
-    class _Gemini:
-        async def generate_content(self, *, contents, **_kw):
-            return {"text": "B211A was retired — use C1 Visa Wisata instead."}
-
-    monkeypatch.setattr("backend.llm.genai_client.get_genai_client", lambda: _Gemini())
+    monkeypatch.setattr(
+        "backend.llm.claude_oauth_client.complete_async",
+        _claude_says("B211A was retired — use C1 Visa Wisata instead."),
+    )
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="Is B211A still valid?")
@@ -253,10 +245,7 @@ async def test_high_score_but_empty_content_stays_abstain(monkeypatch):
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _StubSearch([{"content": "", "score": 0.9, "source": "x"}]),
     )
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _NeverCalledGemini(),
-    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _never_called_claude)
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="What visa do I need for surfing?")
@@ -276,10 +265,7 @@ async def test_whitespace_only_content_stays_abstain(monkeypatch):
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _StubSearch([{"content": "   \n\t  ", "score": 0.9, "source": "x"}]),
     )
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _NeverCalledGemini(),
-    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _never_called_claude)
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="What visa do I need for surfing?")
@@ -296,10 +282,6 @@ async def test_mixed_results_empty_content_row_dropped_real_content_kept(monkeyp
     the surviving real row's score (0.9 here) legitimately drives NORMAL."""
     from backend.app.routers import visa_oracle as mod
 
-    class _Gemini:
-        async def generate_content(self, *, contents, **_kw):
-            return {"text": "Real grounded answer."}
-
     monkeypatch.setattr(
         "backend.services.rag.hybrid_search.HybridSearchService",
         lambda: _StubSearch(
@@ -309,7 +291,9 @@ async def test_mixed_results_empty_content_row_dropped_real_content_kept(monkeyp
             ]
         ),
     )
-    monkeypatch.setattr("backend.llm.genai_client.get_genai_client", lambda: _Gemini())
+    monkeypatch.setattr(
+        "backend.llm.claude_oauth_client.complete_async", _claude_says("Real grounded answer.")
+    )
 
     req = _build_request()
     body = mod.ChatRequest(session_id="s1", message="What visa do I need for surfing?")

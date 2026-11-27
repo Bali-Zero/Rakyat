@@ -322,7 +322,7 @@ ABSTAIN_FALLBACK_BY_LANG: dict[str, str] = {
     ),
 }
 
-# Localized timeout fallback when Gemini takes >30s
+# Localized timeout fallback when the model takes >30s or its door is down
 TIMEOUT_FALLBACK_BY_LANG: dict[str, str] = {
     "en": (
         "Our AI is taking longer than usual. Please try again or contact "
@@ -1000,11 +1000,15 @@ async def chat(
 
     Confidence thresholds (vector similarity scores, no cross-encoder on Fly):
       < 0.30  → ABSTAIN  (no answer generated, WhatsApp handoff)
-      0.30-0.55 → CAUTIOUS (hedged answer via Gemini Flash)
-      > 0.55  → NORMAL   (standard answer via Gemini Flash)
+      0.30-0.55 → CAUTIOUS (hedged answer via Claude)
+      > 0.55  → NORMAL   (standard answer via Claude)
     """
     # Lazy imports — avoid loading heavy ML deps at startup
-    from backend.llm.genai_client import get_genai_client
+    from backend.llm.claude_oauth_client import (
+        ClaudeOAuthError,
+        ClaudeOAuthNotAvailable,
+        complete_async,
+    )
     from backend.services.rag.hybrid_search import HybridSearchService
 
     # Resolve response language early so every fallback branch (no results,
@@ -1245,21 +1249,26 @@ async def chat(
             f"=== QUESTION ===\n{body.message}"
         )
 
-        # --- Generate answer via Gemini Flash (30s timeout) ---
-        gemini = get_genai_client()
+        # --- Generate answer via Claude, Console door of the linked orgs (30s) ---
         try:
-            result = await asyncio.wait_for(
-                gemini.generate_content(
-                    contents=prompt,
+            completion = await asyncio.wait_for(
+                complete_async(
+                    prompt,
+                    endpoint="visa_oracle.chat",
                     max_output_tokens=1024,
-                    temperature=0.3,
+                    timeout_s=25.0,
+                    total_timeout_s=30.0,
                 ),
                 timeout=30.0,
             )
-            answer_text = result.get("text", "") if isinstance(result, dict) else str(result)
-        except asyncio.TimeoutError:
+            answer_text = completion.text
+            if not isinstance(answer_text, str) or not answer_text.strip():
+                raise ValueError("empty answer")
+        except (asyncio.TimeoutError, ClaudeOAuthError, ClaudeOAuthNotAvailable, ValueError) as exc:
+            # The exception TYPE only: its text may carry the prompt.
             logger.warning(
-                "visa-oracle /chat: Gemini timeout (30s) session=%s",
+                "visa-oracle /chat: Claude unavailable or timed out (%s) session=%s",
+                type(exc).__name__,
                 body.session_id[:12],
             )
             return ChatResponse(
