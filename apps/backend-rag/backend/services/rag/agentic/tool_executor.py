@@ -169,12 +169,52 @@ def parse_native_function_call(function_call_part: Any) -> ToolCall | None:
             logger.warning("🔧 [Native Function Call] Empty tool name detected (ignoring)")
             return None
 
-        logger.info("🔧 [Native Function Call] Detected: %s with args: %s", tool_name, arguments)
+        # Argument VALUES can carry client data: log the tool and the parameter
+        # names only.
+        logger.info(
+            "🔧 [Native Function Call] Detected: %s (arg_keys=%s)",
+            tool_name,
+            sorted(arguments.keys()),
+        )
         return ToolCall(tool_name=tool_name, arguments=arguments)
 
     except (AttributeError, TypeError, ValueError) as e:
         logger.warning("Failed to parse native function call: %s", e, exc_info=True)
         return None
+
+
+def _parse_tool_call_regex_pure(text: str) -> ToolCall | None:
+    """The ReAct ``ACTION: tool(args)`` text parser, with NO logging.
+
+    Shared by :func:`parse_tool_call_regex` (which logs the tool name and the
+    parameter names) and by callers that only need to know what the loops WOULD
+    parse out of a text (the gateway's allowlist check), which must not write
+    model-controlled argument values to the logs.
+    """
+    match = re.search(r"ACTION:\s*(\w+)\((.*)\)", text)
+    if match:
+        tool_name = match.group(1)
+        args_str = match.group(2)
+        try:
+            # Try to parse args as JSON-like key=value or just string
+            # This is very basic
+            if "=" in args_str:
+                args = dict(item.split("=") for item in args_str.split(","))
+                # Clean quotes
+                args = {k.strip(): v.strip().strip('"').strip("'") for k, v in args.items()}
+            else:
+                # Assume single arg 'query' or 'expression' based on tool
+                if tool_name in ["vector_search", "web_search"]:
+                    args = {"query": args_str.strip().strip('"')}
+                elif tool_name == "calculator":
+                    args = {"expression": args_str.strip().strip('"')}
+                else:
+                    args = {}
+
+            return ToolCall(tool_name=tool_name, arguments=args)
+        except (ValueError, KeyError, AttributeError):
+            return None
+    return None
 
 
 def parse_tool_call_regex(text: str) -> ToolCall | None:
@@ -196,34 +236,19 @@ def parse_tool_call_regex(text: str) -> ToolCall | None:
 
     Note:
         This parser is fragile and deprecated. Prefer native function calling.
+        Logs the text LENGTH, the tool name and the parameter names, never the
+        text or the argument values.
     """
-    logger.debug(f"[FALLBACK Regex Parser] Parsing text (first 500 chars): {text[:500]}...")
+    logger.debug("[FALLBACK Regex Parser] Parsing text (len=%d)", len(text))
 
-    match = re.search(r"ACTION:\s*(\w+)\((.*)\)", text)
-    if match:
-        tool_name = match.group(1)
-        args_str = match.group(2)
-        try:
-            # Try to parse args as JSON-like key=value or just string
-            # This is very basic
-            if "=" in args_str:
-                args = dict(item.split("=") for item in args_str.split(","))
-                # Clean quotes
-                args = {k.strip(): v.strip().strip('"').strip("'") for k, v in args.items()}
-            else:
-                # Assume single arg 'query' or 'expression' based on tool
-                if tool_name in ["vector_search", "web_search"]:
-                    args = {"query": args_str.strip().strip('"')}
-                elif tool_name == "calculator":
-                    args = {"expression": args_str.strip().strip('"')}
-                else:
-                    args = {}
-
-            logger.info("🔧 [Regex Fallback] Parsed: %s with args: %s", tool_name, args)
-            return ToolCall(tool_name=tool_name, arguments=args)
-        except (ValueError, KeyError, AttributeError):
-            return None
-    return None
+    parsed = _parse_tool_call_regex_pure(text)
+    if parsed is not None:
+        logger.info(
+            "🔧 [Regex Fallback] Parsed: %s (arg_keys=%s)",
+            parsed.tool_name,
+            sorted(parsed.arguments.keys()),
+        )
+    return parsed
 
 
 def parse_tool_call(text_or_part: Any, use_native: bool = True) -> ToolCall | None:

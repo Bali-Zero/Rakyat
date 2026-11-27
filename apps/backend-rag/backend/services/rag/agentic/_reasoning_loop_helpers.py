@@ -139,7 +139,7 @@ def _find_first_balanced_tool_object(text: str) -> str | None:
     return None
 
 
-def _tool_call_from_json(isolated_json: str) -> Any:
+def _tool_call_from_json(isolated_json: str, *, silent: bool = False) -> Any:
     """Build a ``ToolCall`` from a raw OpenRouter-style JSON slice.
 
     Accepts the output of :func:`_find_first_balanced_tool_object` — a
@@ -155,7 +155,9 @@ def _tool_call_from_json(isolated_json: str) -> Any:
     try:
         parsed = json.loads(isolated_json)
     except json.JSONDecodeError as exc:
-        logger.debug("regex_degraded JSON decode failed: %s", exc)
+        # Type only: the decoder's message quotes the model-controlled text.
+        if not silent:
+            logger.debug("regex_degraded JSON decode failed (%s)", type(exc).__name__)
         return None
 
     if not isinstance(parsed, dict):
@@ -182,6 +184,8 @@ def _tool_call_from_json(isolated_json: str) -> Any:
 def parse_tool_calls_from_response(
     response_obj: Any,
     text_response: str,
+    *,
+    silent: bool = False,
 ) -> tuple[list[Any], str]:
     """Parse tool calls from a model response (native → regex → regex_degraded).
 
@@ -200,6 +204,11 @@ def parse_tool_calls_from_response(
 
     The sync loop executes all returned calls in parallel; the streaming
     loop uses only the first element.
+
+    ``silent=True`` is for callers that only PROBE what the loops would parse
+    (the gateway's allowlist check): the text modes then run without writing a
+    single log record, so model-controlled argument values never reach the logs.
+    The default keeps today's behaviour exactly.
 
     ``parse_tool_call`` and ``is_valid_tool_call`` are resolved via the
     reasoning module at call time so tests that patch
@@ -228,7 +237,12 @@ def parse_tool_calls_from_response(
                 if tool_calls:
                     return tool_calls, "native"
 
-    tc = parse_tool_call(text_response, use_native=False)
+    if silent:
+        from backend.services.rag.agentic.tool_executor import _parse_tool_call_regex_pure
+
+        tc = _parse_tool_call_regex_pure(text_response)
+    else:
+        tc = parse_tool_call(text_response, use_native=False)
     if is_valid_tool_call(tc):
         return [tc], "regex"
 
@@ -244,12 +258,13 @@ def parse_tool_calls_from_response(
     unwrapped = _strip_nested_fences(text_response)
     isolated = _find_first_balanced_tool_object(unwrapped)
     if isolated is not None:
-        tc_degraded = _tool_call_from_json(isolated)
+        tc_degraded = _tool_call_from_json(isolated, silent=silent)
         if is_valid_tool_call(tc_degraded):
-            logger.debug(
-                "parse_tool_calls_from_response: recovered via regex_degraded (len=%d)",
-                len(isolated),
-            )
+            if not silent:
+                logger.debug(
+                    "parse_tool_calls_from_response: recovered via regex_degraded (len=%d)",
+                    len(isolated),
+                )
             return [tc_degraded], "regex_degraded"
 
     return [], "none"
