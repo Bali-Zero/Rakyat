@@ -259,6 +259,17 @@ _MAIL_FAILURES: list[tuple[str, Callable[[], Any], str]] = [
 ]
 
 
+def _audit_status(answer: Any) -> str:
+    if isinstance(answer, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+        return "failed"
+    if not isinstance(answer, Exception) and answer.status_code in {400, 401, 403, 404, 422}:
+        return "failed"
+    if not isinstance(answer, Exception) and answer.status_code == 200:
+        if answer.json().get("delivery_uncertain") is not True:
+            return "failed"
+    return "escalated"
+
+
 @pytest.mark.asyncio
 async def test_a_sent_welcome_mail_names_the_client_by_id(
     audit: SimpleNamespace, caplog: pytest.LogCaptureFixture
@@ -289,7 +300,7 @@ async def test_a_welcome_mail_that_is_not_sent_logs_a_reason_written_in_the_sour
     with caplog.at_level(logging.DEBUG):
         await welcome.process_pending_welcome_emails(_Db())
 
-    assert audit.recorded.await_args.kwargs["status"] == "failed"
+    assert audit.recorded.await_args.kwargs["status"] == _audit_status(answer())
     _line(_read(caplog), f"WelcomeEmail: send failed for client 7: {reason}")
 
 
@@ -378,7 +389,7 @@ async def test_the_audit_row_of_a_failed_welcome_keeps_its_diagnostic_unchanged(
     }
     assert audit.recorded.await_args.args == (db, 11)
     assert audit.recorded.await_args.kwargs == {
-        "status": "failed",
+        "status": _audit_status(answer()),
         "provider": "brevo",
         "error_message": _what_main_stores(answer()),
     }
@@ -811,15 +822,28 @@ async def test_a_kickoff_brochure_that_cannot_be_read_logs_one_word(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("statement", "helper_line"),
+    ("statement", "helper_line", "sender_line"),
     [
-        ("INSERT INTO email_send_log", "email_audit: log_email_attempt failed"),
-        ("UPDATE email_send_log", "email_audit: record_email_result failed for 11"),
+        (
+            "INSERT INTO email_send_log",
+            "email_audit: log_email_attempt failed",
+            # No audit row, no POST: the sender says so and the mail is not sent.
+            "WelcomeEmail: no audit row for client 7, nothing sent, queued again",
+        ),
+        (
+            "UPDATE email_send_log",
+            "email_audit: record_email_result failed for 11",
+            "WelcomeEmail: send failed for client 7: status=400",
+        ),
     ],
     ids=["the audit insert fails", "the audit update fails"],
 )
 async def test_when_the_audit_write_fails_the_senders_own_lines_stay_closed(
-    far_end: _FarEnd, caplog: pytest.LogCaptureFixture, statement: str, helper_line: str
+    far_end: _FarEnd,
+    caplog: pytest.LogCaptureFixture,
+    statement: str,
+    helper_line: str,
+    sender_line: str,
 ) -> None:
     """The audit helper is the real one. Its own records are the one named exception.
 
@@ -839,7 +863,4 @@ async def test_when_the_audit_write_fails_the_senders_own_lines_stay_closed(
         if record.name == AUDIT_LOGGER and helper_line in record.getMessage()
     ]
     assert any(statement in run for run in db.statements)
-    _line(
-        _read(caplog, unjudged=(AUDIT_LOGGER,)),
-        "WelcomeEmail: send failed for client 7: status=400",
-    )
+    _line(_read(caplog, unjudged=(AUDIT_LOGGER,)), sender_line)

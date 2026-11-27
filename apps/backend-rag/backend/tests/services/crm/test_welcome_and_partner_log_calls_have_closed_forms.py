@@ -554,6 +554,12 @@ TABLE: dict[str, list[tuple[str, str, str, tuple[str, ...]]]] = {
             ("id_fact(client_id)", "error_word(exc)"),
         ),
         (
+            "_requeue_welcome",
+            "logger.error",
+            "WelcomeEmail: failed to requeue for client %s: %s error",
+            ("id_fact(client_id)", "error_word(exc)"),
+        ),
+        (
             "_send_client_welcome_impl",
             "logger.warning",
             "WelcomeEmail: client %s not found",
@@ -594,6 +600,24 @@ TABLE: dict[str, list[tuple[str, str, str, tuple[str, ...]]]] = {
             "logger.warning",
             "WelcomeEmail: brochure unavailable for client %s",
             ("id_fact(client_id)",),
+        ),
+        (
+            "_send_client_welcome_impl",
+            "logger.info",
+            "WelcomeEmail: welcome cap reached before send",
+            (),
+        ),
+        (
+            "_send_client_welcome_impl",
+            "logger.warning",
+            "WelcomeEmail: no audit row for client %s, nothing sent, queued again",
+            ("id_fact(client_id)",),
+        ),
+        (
+            "_send_client_welcome_impl",
+            "logger.error",
+            "WelcomeEmail: failed to write sent alert for client %s: %s error",
+            ("id_fact(client_id)", "error_word(exc)"),
         ),
         (
             "_send_client_welcome_impl",
@@ -901,7 +925,7 @@ def test_every_log_call_of_a_module_has_a_closed_form_and_pinned_bindings(module
 
 def test_the_table_reads_the_whole_of_every_module() -> None:
     assert {module: len(rows) for module, rows in TABLE.items()} == {
-        "welcome_email_service": 13,
+        "welcome_email_service": 17,
         "welcome_practice_service": 16,
         "welcome_whatsapp_service": 8,
         "partners.emails": 15,

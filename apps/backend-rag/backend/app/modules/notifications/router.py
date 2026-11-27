@@ -32,6 +32,8 @@ from backend.services.notifications.recipient_redirects import redirect_recipien
 
 logger = logging.getLogger(__name__)
 
+_BREVO_REFUSED_STATUSES = frozenset({400, 401, 403, 404, 422})
+
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 
@@ -669,6 +671,7 @@ async def _send_via_brevo(
     if idempotency_key:
         if not is_brevo:
             return False
+        # Keyed sends stay Brevo-only: a fallback could duplicate an accepted request.
         payload["headers"] = {"idempotencyKey": idempotency_key}
     url = (
         "https://api.brevo.com/v3/smtp/email"
@@ -699,15 +702,18 @@ async def _send_via_brevo(
         if resp.status_code in (200, 201, 202):
             return True
         if idempotency_key:
-            if resp.status_code >= 500:
-                raise EmailDeliveryUncertain("provider_server_error")
-            try:
-                error = resp.json()
-            except (ValueError, AttributeError):
-                error = {}
-            if isinstance(error, dict) and error.get("code") == "duplicate_parameter":
-                # The provider does not give us the original acceptance receipt.
-                raise EmailDeliveryUncertain("provider_duplicate_ambiguous")
+            if resp.status_code in _BREVO_REFUSED_STATUSES:
+                if resp.status_code != 400:
+                    logger.error("Brevo request rejected: status=%s", resp.status_code)
+                    return False
+                try:
+                    error = resp.json()
+                except (ValueError, AttributeError):
+                    raise EmailDeliveryUncertain("provider_rejection_unreadable") from None
+                if isinstance(error, dict) and error.get("code") != "duplicate_parameter":
+                    logger.error("Brevo request rejected: status=%s", resp.status_code)
+                    return False
+            raise EmailDeliveryUncertain("provider_response_ambiguous")
         logger.error("Brevo request rejected: status=%s", resp.status_code)
         return False
     except EmailDeliveryUncertain:
