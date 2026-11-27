@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import warnings
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from backend.services.compliance import AlertSeverity, ComplianceType
-from backend.services.compliance.severity_calculator import SeverityCalculatorService
+from backend.services.compliance.severity_calculator import (
+    SeverityCalculatorService,
+    parse_deadline_utc,
+)
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
@@ -76,3 +79,56 @@ def test_explicit_offset_and_overdue_deadlines_keep_existing_classification() ->
 
     assert severity == AlertSeverity.URGENT
     assert overdue_severity == AlertSeverity.CRITICAL
+
+
+def _router_shaped_deadlines() -> list[datetime]:
+    # The track endpoint stores datetime.fromisoformat(request.deadline).
+    day = (_future_datetime(5)).date().isoformat()
+    return [
+        datetime.fromisoformat(f"{day}T00:00:00"),
+        datetime.fromisoformat(f"{day}T00:00:00+08:00"),
+    ]
+
+
+@pytest.mark.parametrize("deadline", _router_shaped_deadlines())
+def test_monitor_returns_alert_for_datetime_deadline_as_router_stores_it(deadline) -> None:
+    monitor = ProactiveComplianceMonitor()
+    monitor.add_compliance_item(
+        client_id="client-900004",
+        compliance_type=ComplianceType.DOCUMENT_EXPIRY,
+        title="Synthetic datetime deadline",
+        deadline=deadline,
+    )
+
+    assert len(monitor.check_compliance_items()) == 1
+
+
+@pytest.mark.parametrize("deadline", _router_shaped_deadlines())
+def test_tracker_lists_datetime_deadline_as_router_stores_it(deadline) -> None:
+    from backend.services.compliance.compliance_tracker import ComplianceTrackerService
+
+    tracker = ComplianceTrackerService()
+    tracker.add_compliance_item(
+        client_id="client-900005",
+        compliance_type=ComplianceType.DOCUMENT_EXPIRY,
+        title="Synthetic datetime deadline",
+        deadline=deadline,
+    )
+
+    assert len(tracker.get_upcoming_deadlines(days_ahead=30)) == 1
+
+
+def test_parse_deadline_utc_reads_datetime_and_date_instances() -> None:
+    naive = datetime(2026, 12, 20, 0, 0, 0)
+    aware = datetime.fromisoformat("2026-12-20T08:00:00+08:00")
+
+    assert parse_deadline_utc(naive) == datetime(2026, 12, 20, tzinfo=timezone.utc)
+    assert parse_deadline_utc(naive).utcoffset() == timedelta(0)
+    assert parse_deadline_utc(aware) == datetime(2026, 12, 20, tzinfo=timezone.utc)
+    assert parse_deadline_utc(aware).utcoffset() == timedelta(0)
+    assert parse_deadline_utc(date(2026, 12, 20)) == datetime(2026, 12, 20, tzinfo=timezone.utc)
+
+
+def test_parse_deadline_utc_rejects_other_types() -> None:
+    with pytest.raises(ValueError):
+        parse_deadline_utc(20261220)  # type: ignore[arg-type]
