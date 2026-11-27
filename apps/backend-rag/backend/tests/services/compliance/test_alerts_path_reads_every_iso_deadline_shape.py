@@ -118,15 +118,23 @@ def test_tracker_lists_datetime_deadline_as_router_stores_it(deadline) -> None:
     assert len(tracker.get_upcoming_deadlines(days_ahead=30)) == 1
 
 
+def _parsed(value):
+    try:
+        return parse_deadline_utc(value)
+    except ValueError:
+        return None
+
+
 def test_parse_deadline_utc_reads_datetime_and_date_instances() -> None:
     naive = datetime(2026, 12, 20, 0, 0, 0)
     aware = datetime.fromisoformat("2026-12-20T08:00:00+08:00")
+    expected = datetime(2026, 12, 20, tzinfo=timezone.utc)
 
-    assert parse_deadline_utc(naive) == datetime(2026, 12, 20, tzinfo=timezone.utc)
-    assert parse_deadline_utc(naive).utcoffset() == timedelta(0)
-    assert parse_deadline_utc(aware) == datetime(2026, 12, 20, tzinfo=timezone.utc)
-    assert parse_deadline_utc(aware).utcoffset() == timedelta(0)
-    assert parse_deadline_utc(date(2026, 12, 20)) == datetime(2026, 12, 20, tzinfo=timezone.utc)
+    assert _parsed(naive) == expected
+    assert _parsed(aware) == expected
+    assert _parsed(date(2026, 12, 20)) == expected
+    assert _parsed(naive).utcoffset() == timedelta(0)
+    assert _parsed(aware).utcoffset() == timedelta(0)
 
 
 def test_parse_deadline_utc_rejects_other_types() -> None:
