@@ -823,3 +823,119 @@ async def test_migration_390_backfills_legacy_november_proofs_and_zeroes_custom_
         )
         assert all(e["ledger_id"] is None for e in events.values())
         assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger") == 0
+
+
+@pytest.mark.asyncio
+async def test_plain_retry_of_the_completed_first_proof_returns_the_view(pool):
+    async with pool.acquire() as conn:
+        await add_practice(conn, 9, 3)
+    first = await service.upload(
+        pool, 9, "document_1", STAFF, final_file("eitap"), BackgroundTasks()
+    )
+    retry = await service.upload(
+        pool, 9, "document_1", STAFF, final_file("eitap"), BackgroundTasks()
+    )
+    assert retry["status"] == "completed"
+    assert retry["slots"][0]["document_id"] == first["slots"][0]["document_id"]
+    async with pool.acquire() as conn:
+        assert await counts(conn, 9) == {"events": 1, "ledger": 1, "completions": 1, "timeline": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", [("document_1", "document_2"), ("document_2", "document_1")])
+async def test_concurrent_uploads_of_different_slots_both_land_on_one_completion(pool, order):
+    # One upload completes the practice; the other attaches as a later document, never a 409.
+    for practice_id in (9, 10, 11):
+        async with pool.acquire() as conn:
+            await add_practice(conn, practice_id, 3)
+        results = await asyncio.gather(
+            *[
+                service.upload(
+                    pool,
+                    practice_id,
+                    key,
+                    STAFF,
+                    final_file(f"{key}-{practice_id}"),
+                    BackgroundTasks(),
+                )
+                for key in order
+            ],
+            return_exceptions=True,
+        )
+        assert all(isinstance(r, dict) for r in results), results
+        async with pool.acquire() as conn:
+            assert (
+                await conn.fetchval("SELECT status FROM practices WHERE id=$1", practice_id)
+                == "completed"
+            )
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM practice_delivery_slots WHERE practice_id=$1 AND document_id IS NOT NULL",
+                    practice_id,
+                )
+                == 2
+            )
+            assert await counts(conn, practice_id) == {
+                "events": 1,
+                "ledger": 1,
+                "completions": 1,
+                "timeline": 1,
+            }
+
+
+@pytest.mark.asyncio
+async def test_plain_upload_into_a_waived_slot_of_a_completed_practice_is_refused(pool):
+    await service.waive(pool, 8, "document_3", STAFF, "No separate manpower filing")
+    await service.upload(pool, 8, "document_1", STAFF, final_file("imk"), BackgroundTasks())
+    with pytest.raises(HTTPException) as refused:
+        await service.upload(
+            pool, 8, "document_3", STAFF, final_file("manpower"), BackgroundTasks()
+        )
+    assert refused.value.status_code == 409
+    async with pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT document_id IS NULL FROM practice_delivery_slots WHERE practice_id=8 AND slot_key='document_3'"
+        )
+
+
+async def custom_revision(conn, practice_id, completed_on):
+    await add_practice(conn, practice_id, 6, status="completed", completed_at=completed_on)
+
+
+@pytest.mark.asyncio
+async def test_completed_custom_practice_names_its_documents_then_earns_on_the_proof(pool):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO practice_types VALUES(6,'company_revision','Company revision','company');
+               INSERT INTO hr_bonus_rates(practice_type_code,is_active,effective_from,amount_idr)
+               VALUES('company_revision',true,'2025-01-01',350000)
+               ON CONFLICT (practice_type_code) DO UPDATE SET amount_idr=350000,
+                   forfeit_below_idr=NULL,is_active=true,effective_from='2025-01-01',effective_to=NULL"""
+        )
+        await custom_revision(conn, 12, datetime(2026, 11, 15, 4, tzinfo=timezone.utc))
+        await custom_revision(conn, 13, datetime(2026, 10, 15, 4, tzinfo=timezone.utc))
+    titled = await service.set_titles(pool, 12, STAFF, ["Amended deed"])
+    assert titled["status"] == "completed" and titled["slots"][0]["label"] == "Amended deed"
+    done = await service.upload(
+        pool, 12, "custom_1", STAFF, final_file("amended-deed"), BackgroundTasks()
+    )
+    assert done["slots"][0]["document_id"] and not done["delivery_recorded"]
+    async with pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT amount_idr FROM hr_delivery_bonus_events WHERE practice_id=12"
+            )
+            == 350000
+        )
+        assert await counts(conn, 12) == {"events": 1, "ledger": 1, "completions": 0, "timeline": 0}
+    # With a slot already staged the titles are frozen.
+    with pytest.raises(HTTPException, match="Documents are already staged"):
+        await service.set_titles(pool, 12, STAFF, ["Another title"])
+    # Completed before the cutoff: titles and proof are accepted, nothing is earned.
+    await service.set_titles(pool, 13, STAFF, ["Old deed"])
+    old = await service.upload(
+        pool, 13, "custom_1", STAFF, final_file("old-deed"), BackgroundTasks()
+    )
+    assert old["slots"][0]["document_id"]
+    async with pool.acquire() as conn:
+        assert (await counts(conn, 13))["events"] == 0

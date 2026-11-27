@@ -139,20 +139,19 @@ function StaffDeliveryCard({
     !chooseCompany ||
     companies?.some((company) => String(company.company_id) === companyId);
 
+  const completedManager =
+    practice.can_manage_delivery === true && data?.status === "completed";
   function repairable(slot?: Slot): boolean {
-    return (
-      practice.can_manage_delivery === true &&
-      data?.status === "completed" &&
-      slot?.can_repair === true
-    );
+    return completedManager && slot?.can_repair === true;
   }
 
   async function change(
     request: () => Promise<Delivery>,
     message: string,
     repairSlot?: Slot,
+    landed?: (state: Delivery) => boolean,
   ) {
-    if (pending.current || !(writable || repairable(repairSlot))) return;
+    if (pending.current || !(writable || completedManager)) return;
     pending.current = true;
     setWorking(true);
     setFailure("");
@@ -178,10 +177,13 @@ function StaffDeliveryCard({
       // A response can be lost after the server commits. Recover its actual state.
       const refreshed = await mutate().catch(() => undefined);
       if (writable && refreshed?.status === "completed") {
-        setFailure("");
-        setFeedback("Final documents delivered. Practice completed.");
         window.dispatchEvent(new Event("kita:delivery-changed"));
         onComplete();
+        // Another upload may have completed the practice: claim only what actually landed.
+        if (!landed || landed(refreshed)) {
+          setFailure("");
+          setFeedback("Final documents delivered. Practice completed.");
+        }
       }
     } finally {
       pending.current = false;
@@ -216,6 +218,7 @@ function StaffDeliveryCard({
       return;
     }
     setUploadingKey(slot.key);
+    const before = slot.document_id;
     void change(
       async () =>
         post<Delivery>(
@@ -236,6 +239,10 @@ function StaffDeliveryCard({
           ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
           : "Document saved.",
       slot,
+      (state) => {
+        const saved = state.slots.find((s) => s.key === slot.key)?.document_id;
+        return saved != null && saved !== before;
+      },
     ).finally(() => setUploadingKey(null));
   }
 
@@ -287,7 +294,7 @@ function StaffDeliveryCard({
           {practice.can_manage_delivery === false && (
             <p className={styles.hint}>View-only access</p>
           )}
-          {writable && data.needs_titles && (
+          {(writable || completedManager) && data.needs_titles && (
             <form
               className={styles.custom}
               onSubmit={(event) => {

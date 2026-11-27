@@ -207,7 +207,9 @@ async def set_titles(pool: Any, practice_id: int, user: dict, titles: list[str])
         raise HTTPException(422, "Use distinct document titles")
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        require_open(p)
+        # A custom practice completed before Final delivery names its documents to receive its proof.
+        if p["status"] != "completed":
+            require_open(p)
         if p["code"] not in {"other_custom", "company_revision"}:
             raise HTTPException(409, "This service has fixed delivery requirements")
         if await conn.fetchval(
@@ -578,6 +580,9 @@ async def upload(
 ) -> dict:
     async with pool.acquire() as conn:
         snapshot = await practice(conn, practice_id, user)
+        # A completed practice takes later documents on either route: a lost response's retry
+        # of the first proof, or a file whose twin first proof completed the practice meanwhile.
+        repair = repair or snapshot["status"] == "completed"
         if not repair:
             require_open(snapshot)
         initial_view = await state(conn, snapshot, user)
@@ -614,8 +619,8 @@ async def upload(
     await stage(pool, snapshot, initial_slot, user, request, marker, tasks, repair=repair)
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        # A retried first proof may arrive after its twin completed the practice.
-        if not repair and p["status"] != "completed":
+        repair = repair or p["status"] == "completed"
+        if not repair:
             require_open(p)
         view = await state(conn, p, user)
         slot = slot_for(view, key)
@@ -653,8 +658,6 @@ async def upload(
         # even if the separate combined-permit action also referenced it.
         if row["document_id"] == slot["document_id"]:
             return view
-        if not repair:
-            require_open(p)
         if any(
             other["key"] != key and other["document_id"] == row["document_id"]
             for other in view["slots"]

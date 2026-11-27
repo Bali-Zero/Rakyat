@@ -752,4 +752,87 @@ describe("Final delivery", () => {
     expect(await screen.findByText(/Bonus recorded/)).toBeVisible();
     expect(requests.post.mock.calls[0][1]).not.toHaveProperty("issued_on");
   });
+
+  describe("after a lost upload response", () => {
+    const permit = slot("document_1", "Renewed ITK — Visit Stay Permit");
+    const open = { ...initial, bonus_slot: null, slots: [permit] };
+    async function failUpload(refreshed: unknown) {
+      requests.get.mockResolvedValueOnce(open).mockResolvedValue(refreshed);
+      requests.post.mockRejectedValueOnce(new Error("Connection lost"));
+      const view = setup();
+      await view.user.upload(
+        await screen.findByLabelText("Upload Renewed ITK"),
+        new File(["permit"], "renewed-itk.pdf", { type: "application/pdf" }),
+      );
+      return view;
+    }
+
+    it("claims completion only when that slot now holds a new document", async () => {
+      const { complete } = await failUpload({
+        ...open,
+        status: "completed",
+        slots: [{ ...permit, document_id: 73, file_name: "renewed-itk.pdf" }],
+      });
+      expect(
+        await screen.findByText(
+          "Final documents delivered. Practice completed.",
+        ),
+      ).toBeVisible();
+      expect(screen.queryByText("Connection lost")).toBeNull();
+      await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    });
+
+    it("keeps the failure visible when another upload completed the practice and this slot is still empty", async () => {
+      const { complete } = await failUpload({ ...open, status: "completed" });
+      expect(await screen.findByText("Connection lost")).toBeVisible();
+      expect(
+        screen.queryByText("Final documents delivered. Practice completed."),
+      ).toBeNull();
+      await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    });
+  });
+
+  it("offers the titles form on a completed custom practice that has none yet", async () => {
+    requests.get.mockResolvedValue({
+      ...initial,
+      status: "completed",
+      bonus_slot: null,
+      slots: [],
+      needs_titles: true,
+    });
+    requests.post.mockResolvedValueOnce({
+      ...initial,
+      status: "completed",
+      bonus_slot: null,
+      slots: [slot("custom_1", "Signed handover record", { can_repair: true })],
+    });
+    const { user } = setup();
+    await user.type(
+      await screen.findByLabelText(
+        "Agreed final documents, one title per line",
+      ),
+      "Signed handover record",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save document titles" }),
+    );
+    expect(requests.post).toHaveBeenCalledWith(base + "/titles", {
+      titles: ["Signed handover record"],
+    });
+  });
+
+  it("hides the titles form from a completed practice the viewer cannot manage", async () => {
+    requests.get.mockResolvedValue({
+      ...initial,
+      status: "completed",
+      bonus_slot: null,
+      slots: [],
+      needs_titles: true,
+    });
+    setup("paid", false);
+    await screen.findByText("View-only access");
+    expect(
+      screen.queryByLabelText("Agreed final documents, one title per line"),
+    ).toBeNull();
+  });
 });
