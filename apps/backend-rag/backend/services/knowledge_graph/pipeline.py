@@ -109,21 +109,16 @@ class KGPipeline:
     4. Persistence to PostgreSQL
     """
 
-    def __init__(self, config: PipelineConfig | None = None) -> None:
+    def __init__(self, config: PipelineConfig | None = None, extractor: Any = None) -> None:
         """
         Initialize KG Pipeline
 
         Args:
             config: Pipeline configuration
+            extractor: Optional injected extractor (GeminiKGExtractor retired in Wave 2 Stage 3)
         """
         self.config = config or PipelineConfig()
-
-        # Initialize Gemini extractor (only production extractor)
-        from backend.services.knowledge_graph.extractor_gemini import GeminiKGExtractor
-
-        self.extractor = GeminiKGExtractor(
-            model=self.config.model,
-        )
+        self.extractor = extractor
         self.coreference = CoreferenceResolver(
             use_llm=False,
         )

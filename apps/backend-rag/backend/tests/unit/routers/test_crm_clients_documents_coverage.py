@@ -281,10 +281,7 @@ async def test_extract_passport_enhanced_ollama_error(mock_db_pool, mock_current
     mock_resp = MagicMock()
     mock_resp.status_code = 500
 
-    with (
-        patch("httpx.AsyncClient") as mock_cls,
-        patch("backend.llm.genai_client.GENAI_AVAILABLE", False),
-    ):
+    with patch("httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)

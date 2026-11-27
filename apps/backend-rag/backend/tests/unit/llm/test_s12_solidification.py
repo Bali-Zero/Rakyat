@@ -2,7 +2,6 @@
 S12 LLM Layer Solidification — targeted tests for the fixes applied.
 
 FIX-2: retry_handler.py   — error classification (429 / 503 / timeout) + jitter
-FIX-3: genai_client.py    — structured logging on generate_content / stream
 FIX-4: ollama_client.py   — structured logging on all Ollama calls
 FIX-5: ollama_client.py   — bare except -> explicit debug log in is_ollama_available
 """
@@ -128,66 +127,6 @@ class TestFix2RetryClassification:
 
 
 # ---------------------------------------------------------------------------
-# FIX-3: genai_client.py — structured logging
-# ---------------------------------------------------------------------------
-class TestFix3GenAIStructuredLogging:
-    @pytest.mark.asyncio
-    async def test_generate_content_logs_structured(self, caplog):
-        """generate_content must emit a log record with provider, model, latency_ms fields."""
-        import logging
-
-        from backend.llm.genai_client import GenAIClient
-
-        client = GenAIClient.__new__(GenAIClient)
-        client._available = True
-
-        mock_response = MagicMock()
-        mock_response.text = "Hello"
-        mock_response.usage_metadata = MagicMock(prompt_token_count=10, candidates_token_count=5)
-
-        mock_aio = MagicMock()
-        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
-        client._client = mock_client
-
-        with caplog.at_level(logging.INFO, logger="backend.llm.genai_client"):
-            result = await client.generate_content("test", model="gemini-2.0-flash")
-
-        assert result["text"] == "Hello"
-        # Find the structured log record
-        llm_records = [
-            r
-            for r in caplog.records
-            if "LLM call" in r.getMessage() or getattr(r, "provider", None) == "gemini"
-        ]
-        assert len(llm_records) >= 1
-
-    @pytest.mark.asyncio
-    async def test_generate_content_logs_on_error(self, caplog):
-        """generate_content must log even when the call fails."""
-        import logging
-
-        from backend.llm.genai_client import GenAIClient
-
-        client = GenAIClient.__new__(GenAIClient)
-        client._available = True
-
-        mock_aio = MagicMock()
-        mock_aio.models.generate_content = AsyncMock(side_effect=RuntimeError("API error"))
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
-        client._client = mock_client
-
-        with caplog.at_level(logging.ERROR, logger="backend.llm.genai_client"):
-            with pytest.raises(RuntimeError):
-                await client.generate_content("test", model="gemini-2.0-flash")
-
-        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        assert len(error_records) >= 1
-
-
-# ---------------------------------------------------------------------------
 # FIX-4: ollama_client.py — structured logging
 # ---------------------------------------------------------------------------
 class TestFix4OllamaStructuredLogging:
@@ -303,53 +242,6 @@ class TestR1StreamRetryClassification:
         assert "base_delay * (self.retry_handler.backoff_factor**attempt)" not in src, (
             "Raw backoff formula must be replaced by _compute_delay()"
         )
-
-
-# ---------------------------------------------------------------------------
-# R2: genai_client.py — DEFAULT_TIMEOUT_MS + HttpOptions in config
-# ---------------------------------------------------------------------------
-class TestR2TimeoutInConfig:
-    def test_default_timeout_ms_exists(self):
-        """GenAIClient must expose DEFAULT_TIMEOUT_MS class attribute."""
-        from backend.llm.genai_client import GenAIClient
-
-        assert hasattr(GenAIClient, "DEFAULT_TIMEOUT_MS")
-        assert GenAIClient.DEFAULT_TIMEOUT_MS > 0
-
-    def test_get_config_includes_http_options(self):
-        """_get_config must embed HttpOptions(timeout=...) in GenerateContentConfig."""
-
-        from backend.llm.genai_client import GenAIClient
-
-        client = GenAIClient.__new__(GenAIClient)
-        client._available = True
-
-        # Patch genai/types availability
-        config = client._get_config(max_output_tokens=512, temperature=0.5)
-        assert config is not None
-        assert config.http_options is not None
-        assert config.http_options.timeout == GenAIClient.DEFAULT_TIMEOUT_MS
-
-    def test_get_config_custom_timeout(self):
-        """_get_config with explicit timeout_ms overrides the default."""
-        from backend.llm.genai_client import GenAIClient
-
-        client = GenAIClient.__new__(GenAIClient)
-        client._available = True
-
-        config = client._get_config(timeout_ms=5_000)
-        assert config.http_options.timeout == 5_000
-
-    def test_generate_content_signature_has_timeout_ms(self):
-        """generate_content and generate_content_stream must accept timeout_ms kwarg."""
-        import inspect
-
-        from backend.llm.genai_client import GenAIClient
-
-        sig_gen = inspect.signature(GenAIClient.generate_content)
-        sig_stream = inspect.signature(GenAIClient.generate_content_stream)
-        assert "timeout_ms" in sig_gen.parameters
-        assert "timeout_ms" in sig_stream.parameters
 
 
 # ---------------------------------------------------------------------------

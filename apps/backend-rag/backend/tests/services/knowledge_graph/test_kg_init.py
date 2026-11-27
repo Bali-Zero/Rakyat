@@ -7,7 +7,6 @@ from backend.services.knowledge_graph.extractor import (
     ExtractedRelation,
     ExtractionResult,
 )
-from backend.services.knowledge_graph.extractor_gemini import GeminiKGExtractor
 from backend.services.knowledge_graph.ontology import EntityType, RelationType
 
 
@@ -18,7 +17,6 @@ def test_package_exports_public_knowledge_graph_symbols() -> None:
         "ExtractedEntity",
         "ExtractedRelation",
         "ExtractionResult",
-        "GeminiKGExtractor",
         "KGPipeline",
         "KGQualityFilter",
         "PipelineConfig",
@@ -31,7 +29,6 @@ def test_exported_symbols_point_to_expected_implementations() -> None:
     assert kg.ExtractedEntity is ExtractedEntity
     assert kg.ExtractedRelation is ExtractedRelation
     assert kg.ExtractionResult is ExtractionResult
-    assert kg.GeminiKGExtractor is GeminiKGExtractor
     assert kg.EntityType is EntityType
     assert kg.RelationType is RelationType
 

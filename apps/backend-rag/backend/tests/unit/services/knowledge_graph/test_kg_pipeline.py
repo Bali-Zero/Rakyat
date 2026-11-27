@@ -39,12 +39,10 @@ def pipeline_config():
 @pytest.fixture
 def kg_pipeline(pipeline_config):
     """Create KG pipeline instance"""
-    # Patch both extractor types and coreference resolver
-    with (
-        patch("backend.services.knowledge_graph.extractor_gemini.GeminiKGExtractor"),
-        patch("backend.services.knowledge_graph.pipeline.CoreferenceResolver"),
-    ):
-        return KGPipeline(config=pipeline_config)
+    mock_extractor = MagicMock()
+    mock_extractor.extract = AsyncMock()
+    with patch("backend.services.knowledge_graph.pipeline.CoreferenceResolver"):
+        return KGPipeline(config=pipeline_config, extractor=mock_extractor)
 
 
 class TestKGPipeline:
@@ -52,19 +50,13 @@ class TestKGPipeline:
 
     def test_init(self, pipeline_config):
         """Test initialization"""
-        with (
-            patch("backend.services.knowledge_graph.extractor_gemini.GeminiKGExtractor"),
-            patch("backend.services.knowledge_graph.pipeline.CoreferenceResolver"),
-        ):
+        with patch("backend.services.knowledge_graph.pipeline.CoreferenceResolver"):
             pipeline = KGPipeline(config=pipeline_config)
             assert pipeline.config == pipeline_config
 
     def test_init_default_config(self):
         """Test initialization with default config"""
-        with (
-            patch("backend.services.knowledge_graph.extractor_gemini.GeminiKGExtractor"),
-            patch("backend.services.knowledge_graph.pipeline.CoreferenceResolver"),
-        ):
+        with patch("backend.services.knowledge_graph.pipeline.CoreferenceResolver"):
             pipeline = KGPipeline()
             assert pipeline.config is not None
 

@@ -59,7 +59,6 @@ class Settings(BaseSettings):
         default=None,
         description="OpenAI API key - REQUIRED for embeddings. Set via OPENAI_API_KEY env var",
     )
-    google_api_key: str | None = None  # Set via GOOGLE_API_KEY env var (for Gemini AI)
     google_credentials_json: str | None = Field(
         default=None,
         description="Google Service Account JSON credentials. Set via GOOGLE_CREDENTIALS_JSON, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT, or GEMINI_SA_TOKEN env var",
@@ -86,9 +85,6 @@ class Settings(BaseSettings):
             return gemini_token
         return None
 
-    google_ai_studio_key: str | None = (
-        None  # Set via GOOGLE_AI_STUDIO_KEY env var (Google AI Studio with Ultra tier)
-    )
     stability_api_key: str | None = None  # Set via STABILITY_API_KEY env var (for Stability AI)
     brave_api_key: str | None = None  # Set via BRAVE_API_KEY env var (for Brave Web Search)
     tavily_api_key: str | None = (
@@ -142,15 +138,9 @@ class Settings(BaseSettings):
     # ========================================
     # ZANTARA AI CONFIGURATION (PRIMARY)
     # ========================================
-    zantara_ai_model: str = "gemini-2.5-flash"  # Set via ZANTARA_AI_MODEL
-    zantara_ai_cost_input: float = 0.00  # Preview is free? Or check updated pricing.
-    zantara_ai_cost_output: float = 0.00  # Preview is free? Or check updated pricing.
-    openrouter_api_key: str | None = None  # Set via OPENROUTER_API_KEY env var (free AI fallback)
-    # COS-LAW-013 (ratified 2026-07-11): OpenRouter egress is OFF by default.
-    # Client-channel content (WhatsApp/IG/webchat) reaches OpenRouter only as
-    # quota fallback — a third-party endpoint with no DPA = PII hole. Flip via
-    # OPENROUTER_ENABLED=true only with Zero's explicit authorization.
-    openrouter_enabled: bool = False
+    zantara_ai_model: str = "claude-sonnet-5-5"  # Set via ZANTARA_AI_MODEL
+    zantara_ai_cost_input: float = 0.00
+    zantara_ai_cost_output: float = 0.00
     fast_answer_enabled: bool = Field(
         default=False,
         description="Enable the single-search Claude answer path",

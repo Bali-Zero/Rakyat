@@ -202,17 +202,10 @@ class TestZeroLLMAcceptanceCriterion:
         def _explode(*_args: Any, **_kwargs: Any) -> Any:
             raise AssertionError("LLM invoked in codex package path")
 
-        monkeypatch.setattr("backend.llm.genai_client.get_genai_client", _explode)
         monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", _explode)
         monkeypatch.setattr("backend.llm.claude_oauth_client.complete", _explode)
         monkeypatch.setattr("backend.llm.ollama_client.ollama_generate", _explode)
         monkeypatch.setattr("backend.llm.ollama_client.ollama_chat", _explode)
-        # The retriever-fallback LLM (S2 review, finding 1): GeminiService is
-        # what SearchService's plain-search fallback would construct.
-        monkeypatch.setattr(
-            "backend.services.llm_clients.gemini_service.GeminiService",
-            _explode,
-        )
 
         fake_pricing = FakePricingService(_real_pricing_result(PRICING_VISA_QUERY))
         with patch.object(wpb_module, "get_pricing_service", return_value=fake_pricing):
