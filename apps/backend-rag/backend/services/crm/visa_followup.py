@@ -17,11 +17,15 @@ from backend.services.crm.delivery_catalog import delivery_policy
 OWNER_MAILBOX = "zero@balizero.com"
 
 
-async def record_visa_milestone(conn: Any, practice: dict, slot_key: str) -> None:
+async def record_visa_milestone(
+    conn: Any, practice: dict, slot_key: str, *, anchor_without_receipt: bool = False
+) -> None:
     """Caller owns the practice lock and transaction that accepted the file.
 
     The first eVisa starts the clock, irrespective of its printed issue date.
     The database also reacts to document archive/deletion and explicit reuse.
+    A practice completed before Final delivery may have no issuance receipt (a legacy bonus
+    suppresses it): ``anchor_without_receipt`` then starts the clock today, keeping any running one.
     """
     policy = delivery_policy(practice["code"]) or {}
     permit = policy.get("followup_slot")
@@ -44,7 +48,18 @@ async def record_visa_milestone(conn: Any, practice: dict, slot_key: str) -> Non
             permit,
             bool(policy.get("can_postpone")),
         )
-        if not has_receipt:
+        if not has_receipt and anchor_without_receipt and policy.get("followup_slot"):
+            today = business_today()
+            await conn.execute(
+                """INSERT INTO practice_visa_followups(practice_id,service_code,slot_key,started_on,due_on,allow_postpone)
+                   VALUES($1,$2,$3,$4::date,$4::date+30,$5) ON CONFLICT(practice_id) DO NOTHING""",
+                practice["id"],
+                practice["code"],
+                permit,
+                today,
+                bool(policy.get("can_postpone")),
+            )
+        elif not has_receipt:
             raise HTTPException(409, "The official visa upload receipt is missing")
     await conn.execute("SELECT refresh_practice_visa_followup($1)", practice["id"])
 

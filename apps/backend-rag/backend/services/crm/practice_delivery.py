@@ -42,6 +42,15 @@ OPERATORS = {
 }
 _LIVE = f"{admin_document_not_deleted_clause('d')} AND NOT COALESCE(d.is_archived, FALSE)"
 _PERMIT_TYPES = {"itk", "itas", "imk", "itap"}
+# Zero 2026-11-27: a practice completed in November 2026 (Bali) before Final delivery existed
+# earns when staff upload its proof. Older months were settled by the status-change rule.
+_LEGACY_FROM, _LEGACY_TO = date(2026, 11, 1), date(2026, 12, 1)
+# Every accepted slot write leaves one of these activity rows; they outlive the document and
+# the slot row, so they are the durable history of what was accepted as proof.
+_ACCEPTED = (
+    r"^(?:Final document uploaded|Missing final permit repaired|Final proof added after completion"
+    r"|Combined permit confirmed for slot): (.+)$"
+)
 _SCOPED = """d.practice_id = p.id AND d.client_id = p.client_id
              AND d.family_member_id IS NOT DISTINCT FROM p.family_member_id"""
 
@@ -87,6 +96,59 @@ def require_open(p: dict) -> None:
         raise HTTPException(409, "Final delivery requires a paid practice that is On Process")
 
 
+async def legacy_cohort(conn: Any, practice_id: int) -> bool:
+    """Completed in the cohort window, with no Final delivery completion record."""
+    return bool(
+        await conn.fetchval(
+            """SELECT p.status='completed'
+                  AND (p.completion_date AT TIME ZONE 'Asia/Makassar')::date >= $2
+                  AND (p.completion_date AT TIME ZONE 'Asia/Makassar')::date < $3
+                  AND NOT EXISTS (SELECT 1 FROM practice_delivery_completions c WHERE c.practice_id=p.id)
+               FROM practices p WHERE p.id=$1""",
+            practice_id,
+            _LEGACY_FROM,
+            _LEGACY_TO,
+        )
+    )
+
+
+async def accepted_keys(conn: Any, practice_id: int) -> set[str]:
+    rows = await conn.fetch(
+        """SELECT DISTINCT substring(description from $2) AS key FROM activity_log
+           WHERE entity_type='practice' AND entity_id=$1 AND description ~ $2""",
+        practice_id,
+        _ACCEPTED,
+    )
+    return {row["key"] for row in rows}
+
+
+async def has_ledger(conn: Any, practice_id: int) -> bool:
+    return bool(
+        await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM hr_bonus_ledger WHERE practice_id=$1)", practice_id
+        )
+    )
+
+
+async def bonus_instruction(
+    conn: Any, p: dict, slots: list[dict], bonus_slot: str | None
+) -> str | None:
+    """What a cohort practice still needs to record its bonus; None when it cannot earn any more."""
+    slot = next((s for s in slots if s["key"] == bonus_slot), None)
+    if not slot or slot["waiver_reason"] or slot["document_id"] or await has_ledger(conn, p["id"]):
+        return None
+    prior = await accepted_keys(conn, p["id"])
+    if slot["key"] in prior:
+        return None
+    # Waiving the bonus slot only helps while no other document has been accepted.
+    return "upload" if prior or any(s["document_id"] for s in slots) else "upload_or_waive"
+
+
+async def require_writable(conn: Any, p: dict) -> None:
+    if not (p["status"] == "completed" and await legacy_cohort(conn, p["id"])):
+        require_open(p)
+
+
 async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
     policy = delivery_policy(p["code"])
     if not policy:
@@ -130,14 +192,16 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         p["id"],
         p["code"],
     )
+    legacy = bool(completed and await legacy_cohort(conn, p["id"]))
     for slot in resolved:
         # A practice completed before Final delivery existed (2026-11-24) has no
-        # completion record, yet its issued permit must still reach the case.
+        # completion record, yet its issued permit must still reach the case. A November
+        # one takes every empty required document, its proof included.
         slot["can_repair"] = bool(
             completed
             and not slot["document_id"]
             and not slot["waiver_reason"]
-            and document_type(slot["key"], slot["label"]) in _PERMIT_TYPES
+            and (legacy or document_type(slot["key"], slot["label"]) in _PERMIT_TYPES)
         )
         if (
             slot["key"] == policy["bonus_slot"]
@@ -169,6 +233,12 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         ),
         "bonus_event": bonus["event_kind"] if bonus else None,
         "bonus_status": bonus.get("status") if bonus else None,
+        "legacy_proof": legacy,
+        "bonus_instruction": (
+            await bonus_instruction(conn, p, resolved, policy["bonus_slot"])
+            if legacy and not bonus
+            else None
+        ),
         "bonus_rate": await conn.fetchval(
             """SELECT amount_idr FROM hr_bonus_rates WHERE practice_type_code=$1 AND is_active
                AND effective_from<=$2 AND (effective_to IS NULL OR effective_to>=$2)""",
@@ -200,7 +270,7 @@ async def set_titles(pool: Any, practice_id: int, user: dict, titles: list[str])
         raise HTTPException(422, "Use distinct document titles")
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        require_open(p)
+        await require_writable(conn, p)
         if p["code"] not in {"other_custom", "company_revision"}:
             raise HTTPException(409, "This service has fixed delivery requirements")
         if await conn.fetchval(
@@ -222,7 +292,7 @@ async def set_titles(pool: Any, practice_id: int, user: dict, titles: list[str])
 async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) -> dict:
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        require_open(p)
+        await require_writable(conn, p)
         slot = slot_for(await state(conn, p, user), key)
         if not slot["condition"] or slot["document_id"]:
             raise HTTPException(409, "Only unfilled conditional slots may be marked inapplicable")
@@ -417,6 +487,8 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
         )
         if repair:
             await publish(conn, p, [key])
+            if view["legacy_proof"]:
+                await earn_legacy_proof(conn, p, view, key, None)
         else:
             await apply_document_milestone(conn, p, view, key)
         await retire_replaced_file(conn, p, previous)
@@ -580,7 +652,10 @@ async def upload(
             if (
                 snapshot["status"] != "completed"
                 or initial_slot["waiver_reason"]
-                or document_type(key, initial_slot["label"]) not in _PERMIT_TYPES
+                or not (
+                    initial_view["legacy_proof"]
+                    or document_type(key, initial_slot["label"]) in _PERMIT_TYPES
+                )
             ):
                 raise HTTPException(
                     409,
@@ -681,10 +756,18 @@ async def upload(
         )
         if repair:
             await publish(conn, p, [key])
+            if view["legacy_proof"]:
+                await earn_legacy_proof(conn, p, view, key, issued_on)
         else:
             await apply_document_milestone(conn, p, view, key, issued_on=issued_on)
         await retire_replaced_file(conn, p, previous)
-        description = "Missing final permit repaired" if repair else "Final document uploaded"
+        description = (
+            "Final document uploaded"
+            if not repair
+            else "Final proof added after completion"
+            if view["legacy_proof"]
+            else "Missing final permit repaired"
+        )
         await audit(conn, practice_id, user["email"], f"{description}: {key}")
         updated = await state(conn, p, user)
     await invalidate_delivery_cache(p)
@@ -707,6 +790,39 @@ async def apply_document_milestone(
         )
     if view["bonus_trigger"] == "electronic_visa_issued":
         await record_visa_milestone(conn, practice_row, key)
+
+
+async def earn_legacy_proof(
+    conn: Any, p: dict, view: dict, key: str, issued_on: date | None
+) -> None:
+    """Call under the practice lock, in the transaction of the slot write that was accepted.
+
+    A November practice completed before Final delivery earns at this acceptance only when this
+    write is its proof: the unwaived bonus slot, or, with no unwaived bonus slot, the first
+    document ever accepted. A waiver alone never earns, and a proof accepted earlier (read from
+    the durable activity history, not from slot occupancy) is never earned twice.
+    """
+    trigger = view["bonus_trigger"]
+    bonus_slot = next((s for s in view["slots"] if s["key"] == view["bonus_slot"]), None)
+    if view["bonus_event"] is None and not await has_ledger(conn, p["id"]):
+        prior = await accepted_keys(conn, p["id"])
+        kind = None
+        if bonus_slot and not bonus_slot["waiver_reason"]:
+            kind = trigger if key == bonus_slot["key"] and key not in prior else None
+        elif not prior and not any(s["document_id"] for s in view["slots"] if s["key"] != key):
+            kind = "service_delivered"
+        if kind:
+            await record_delivery_bonus(
+                conn,
+                p["id"],
+                p["code"],
+                p["assigned_to"],
+                kind,
+                issued_on=issued_on if kind == "electronic_visa_issued" else None,
+            )
+    if trigger == "electronic_visa_issued":
+        # The permit clock never depends on the bonus: a suppressed receipt still starts it.
+        await record_visa_milestone(conn, p, key, anchor_without_receipt=True)
 
 
 async def publish(conn: Any, p: dict, keys: list[str]) -> None:

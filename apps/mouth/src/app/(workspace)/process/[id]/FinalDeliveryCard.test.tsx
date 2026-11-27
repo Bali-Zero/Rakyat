@@ -518,6 +518,89 @@ describe("Final delivery", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  describe("a November practice completed before Final delivery", () => {
+    const legacy = (extras: Record<string, unknown> = {}) => ({
+      ...initial,
+      status: "completed",
+      legacy_proof: true,
+      bonus_instruction: "upload_or_waive",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", {
+          condition: "if issued online",
+          can_repair: true,
+        }),
+        slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+      ],
+      ...extras,
+    });
+    it("offers every empty document, asks for the issue date and tells how the bonus is recorded", async () => {
+      requests.get.mockResolvedValue(legacy());
+      requests.post.mockResolvedValue(legacy());
+      const { user, complete } = setup();
+      expect(
+        await screen.findByText(
+          "Upload the E-visa, or mark it not applicable before uploading another document, to record the bonus.",
+        ),
+      ).toBeVisible();
+      expect(screen.getByLabelText("Upload ITK")).toBeEnabled();
+      expect(
+        screen.queryByRole("button", { name: "Complete practice" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Mark as not applicable" }),
+      ).toBeVisible();
+      const visa = screen.getByLabelText("Upload E-visa");
+      expect(visa).toBeDisabled();
+      fireEvent.change(screen.getByLabelText("Electronic Visa issue date"), {
+        target: { value: workDayOf() },
+      });
+      await user.upload(
+        visa,
+        new File(["%PDF-1.7"], "evisa.pdf", { type: "application/pdf" }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/slots/electronic_visa/repair",
+          expect.objectContaining({
+            file_name: "evisa.pdf",
+            issued_on: workDayOf(),
+          }),
+        ),
+      );
+      expect(complete).not.toHaveBeenCalled();
+    });
+    it("says the bonus document is required once the waiver can no longer help, and says nothing otherwise", async () => {
+      requests.get.mockResolvedValue(legacy({ bonus_instruction: "upload" }));
+      setup();
+      expect(
+        await screen.findByText("The E-visa is required to record the bonus."),
+      ).toBeVisible();
+      cleanup();
+      requests.get.mockResolvedValue(legacy({ bonus_instruction: null }));
+      setup();
+      await screen.findByLabelText("Upload ITK");
+      expect(screen.queryByText(/to record the bonus/)).toBeNull();
+      expect(screen.queryByText(/is required to record/)).toBeNull();
+    });
+    it("shows no upload on a completed practice outside the cohort or to a view-only user", async () => {
+      requests.get.mockResolvedValue(
+        legacy({
+          legacy_proof: false,
+          bonus_instruction: null,
+          slots: [slot("electronic_visa", "Electronic Visa")],
+        }),
+      );
+      setup();
+      await screen.findByText("E-visa");
+      expect(screen.queryByLabelText("Upload E-visa")).toBeNull();
+      cleanup();
+      requests.get.mockResolvedValue(legacy());
+      setup("paid", false);
+      await screen.findByText("View-only access");
+      expect(screen.queryByLabelText("Upload ITK")).toBeNull();
+    });
+  });
+
   it("records a private not-entered note once against the original 60-day deadline", async () => {
     requests.get.mockResolvedValue({ ...initial, visa_followup: followup });
     const note = "Client confirmed entry is still pending.";
