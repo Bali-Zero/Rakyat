@@ -15,7 +15,13 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from backend.app.services.hr.hr_service import HRService, _open_year_balances
+from backend.app.services.hr.hr_service import (
+    HR_LEAVE_LOCK_NS,
+    HRService,
+    _lock_leave_balances,
+    _lock_leave_balances_a_year_opens_from,
+    _open_year_balances,
+)
 from backend.db.migration_base import split_migration_sql
 
 # The leave tables as migration_068_hr_payroll.py creates them, CHECKs included;
@@ -380,6 +386,46 @@ async def test_the_rollback_restores_both_checks_without_failing_on_debt(
     other = await _employee(pool, "Synthetic After Rollback")
     with pytest.raises(asyncpg.CheckViolationError):
         await _balance(pool, other, annual_id, 2026, 12, 13)
+
+
+@pytest.mark.asyncio
+async def test_forward_again_after_a_rollback_drops_both_checks(pool: asyncpg.Pool) -> None:
+    forward, rollback = split_migration_sql(_MIGRATION_388.read_text())
+    await pool.execute(rollback)
+
+    await pool.execute(forward)
+
+    left = await pool.fetch(
+        "SELECT conname FROM pg_constraint WHERE conrelid = 'hr_leave_balances'::regclass "
+        "AND conname IN ('ck_hr_leave_bal_nonneg', 'hr_leave_balances_carried_over_check')"
+    )
+    assert left == []
+    employee_id = await _employee(pool, "Synthetic Forward Again")
+    annual_id = await _leave_type(pool, "annual", 12)
+    await _balance(pool, employee_id, annual_id, 2026, 12, 14)
+    await pool.execute(
+        "UPDATE hr_leave_balances SET carried_over = -2 WHERE employee_id = $1", employee_id
+    )
+    assert (await _row(pool, employee_id, annual_id, 2026))["remaining"] == -4
+
+
+@pytest.mark.asyncio
+async def test_the_leave_lock_is_a_two_key_lock_in_its_own_namespace(pool: asyncpg.Pool) -> None:
+    employee_id = await _employee(pool, "Synthetic Lock Shape")
+    annual_id = await _leave_type(pool, "annual", 12)
+    await _balance(pool, employee_id, annual_id, 2026, 12, 0)
+
+    async with pool.acquire() as holder, pool.acquire() as observer:
+        async with holder.transaction():
+            await _lock_leave_balances(holder, employee_id)
+            await _lock_leave_balances_a_year_opens_from(holder, 2027)
+            held = await observer.fetch(
+                "SELECT classid::bigint AS ns, objid::bigint AS key, objsubid "
+                "FROM pg_locks WHERE locktype = 'advisory' AND pid = $1",
+                await holder.fetchval("SELECT pg_backend_pid()"),
+            )
+
+    assert [tuple(row) for row in held] == [(HR_LEAVE_LOCK_NS, employee_id, 2)]
 
 
 class _HeldConnection:
