@@ -73,7 +73,6 @@ class KGIncrementalBuilder:
                     os.environ.get("KG_GOOGLE_API_KEY")
                     or settings.google_api_key
                     or settings.google_ai_studio_key
-                    or settings.google_imagen_api_key
                 )
 
                 if not api_key:

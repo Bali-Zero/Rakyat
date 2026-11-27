@@ -430,7 +430,7 @@ class GenAIClient:
 
         Supports two authentication methods:
         1. Service Account (preferred for production) - via GOOGLE_CREDENTIALS_JSON (uses Vertex AI)
-        2. API Key (fallback) - via GOOGLE_API_KEY or GOOGLE_IMAGEN_API_KEY (uses AI Studio)
+        2. API Key (fallback) - via GOOGLE_API_KEY (uses AI Studio)
 
         Args:
             api_key: Google API key (defaults to settings.google_api_key)
@@ -442,12 +442,11 @@ class GenAIClient:
             _sa_setup_done = True
 
         # Try multiple API key sources
-        # Priority: GOOGLEAISTUDIO_API_KEY > GOOGLE_API_KEY > GOOGLE_IMAGEN_API_KEY
+        # Priority: GOOGLEAISTUDIO_API_KEY > GOOGLE_API_KEY
         self.api_key = (
             api_key
             or os.environ.get("GOOGLEAISTUDIO_API_KEY")
             or settings.google_api_key
-            or settings.google_imagen_api_key
         )
         self._client = None
         self._available = False

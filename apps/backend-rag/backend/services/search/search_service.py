@@ -972,7 +972,6 @@ class SearchService:
 
         Checks ``settings.reranker_backend`` (env ``RERANKER_BACKEND``):
           - ``"cross-encoder"`` -> local CrossEncoderReranker (free, ~75MB model)
-          - ``"zerank2"``       -> external Ze-Rank 2 API (requires API key)
 
         When ``reranker_backend`` is ``"cross-encoder"``, the reranker is
         explicitly enabled regardless of the legacy ``enable_reranker`` flag.
@@ -998,13 +997,6 @@ class SearchService:
                 logger.info(
                     f"🔧 CrossEncoderReranker initialized: enabled={self._reranker.enabled}, "
                     f"model={self._reranker.model_name}",
-                )
-            elif backend == "zerank2":
-                from backend.core.reranker import ReRanker
-
-                self._reranker = ReRanker()
-                logger.info(
-                    f"🔧 ReRanker (Ze-Rank 2) initialized: enabled={self._reranker.enabled}"
                 )
             else:
                 logger.warning(

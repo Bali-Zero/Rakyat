@@ -211,7 +211,7 @@ class TestKnowledgeServiceIntegration:
     @pytest.mark.asyncio
     async def test_reranking_integration(self, knowledge_service_integration):
         """Test integration with reranker"""
-        with patch("backend.core.reranker.ReRanker") as mock_reranker_class:
+        with patch("backend.services.rag.reranker.CrossEncoderReranker") as mock_reranker_class:
             # Setup reranker
             mock_reranker = MagicMock()
             mock_reranker.enabled = True
@@ -243,7 +243,7 @@ class TestKnowledgeServiceIntegration:
     @pytest.mark.asyncio
     async def test_reranking_disabled_integration(self, knowledge_service_integration):
         """Test reranking when disabled"""
-        with patch("backend.core.reranker.ReRanker") as mock_reranker_class:
+        with patch("backend.services.rag.reranker.CrossEncoderReranker") as mock_reranker_class:
             # Setup disabled reranker
             mock_reranker = MagicMock()
             mock_reranker.enabled = False

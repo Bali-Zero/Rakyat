@@ -1276,7 +1276,6 @@ import backend.core.embeddings as embeddings_mod
 import backend.llm.codex_exec_client as codex_mod
 import backend.services.integrations.whatsapp_service as wa_mod
 import backend.core.cache as cache_mod
-import backend.core.reranker as reranker_mod
 import backend.services.rag.reranker as reranker2_mod
 import backend.services.search.query_expander as expander_mod
 import backend.services.ingestion.collection_manager as cm_mod
@@ -1293,7 +1292,6 @@ _install(embeddings_mod, "create_embeddings_generator", "embedder factory must n
 _install(codex_mod.CodexExecClient, "generate", "Codex adapter must never be called")
 _install(wa_mod.WhatsAppService, "send_message", "WA sender must never be called")
 _install(cache_mod.CacheService, "set", "cache writer must never be called")
-_install(reranker_mod.ReRanker, "rerank", "Ze-Rank reranker must never be called")
 _install(reranker2_mod.CrossEncoderReranker, "rerank", "cross-encoder reranker must never be called")
 _install(expander_mod.QueryExpander, "expand", "query expander must never be called")
 
@@ -1371,7 +1369,6 @@ scenarios = {
     "codex": lambda: codex_mod.CodexExecClient.generate(None, "probe"),
     "send": lambda: wa_mod.WhatsAppService.send_message(None, phone="1", text="x"),
     "cache_set": lambda: cache_mod.CacheService.set(None, "k", "v"),
-    "rerank": lambda: reranker_mod.ReRanker.rerank(None, "q", [], top_k=1),
     "cross_rerank": lambda: reranker2_mod.CrossEncoderReranker.rerank(None, "q", [], top_k=1),
     "expand": lambda: expander_mod.QueryExpander.expand(None, "q"),
 }
@@ -1411,7 +1408,6 @@ print("ALL_HC7_OK")
             "codex",
             "send",
             "cache_set",
-            "rerank",
             "cross_rerank",
             "expand",
         ):

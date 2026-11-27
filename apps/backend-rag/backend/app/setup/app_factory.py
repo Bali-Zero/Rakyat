@@ -703,7 +703,6 @@ async def lifespan(app: FastAPI):
         ("backend.services.newsletter.publisher", "close_newsletter_publisher_client"),
         ("backend.services.visual.fireworks_fallback", "close_fireworks_client"),
         ("backend.services.visual.vision_qa", "close_vision_qa_client"),
-        ("backend.services.visual.imagen_client", "close_imagen_client"),
         ("backend.services.layout.layout_qa", "close_layout_qa_client"),
         ("backend.services.review.telegram_adapter", "close_review_telegram_client"),
         ("backend.services.measurer.meta_graph_sampler", "close_meta_graph_sampler_client"),

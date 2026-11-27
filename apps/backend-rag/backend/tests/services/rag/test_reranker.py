@@ -543,7 +543,6 @@ class TestGetReranker:
     @patch("backend.services.rag.reranker.settings")
     def test_get_reranker_cross_encoder(self, mock_settings):
         """Test factory returns CrossEncoderReranker by default."""
-        mock_settings.zerank_api_key = None
         mock_settings.enable_reranker = True
 
         reranker = get_reranker()
@@ -551,22 +550,18 @@ class TestGetReranker:
         assert isinstance(reranker, CrossEncoderReranker)
 
     @patch("backend.services.rag.reranker.settings")
-    def test_get_reranker_external_when_configured(self, mock_settings):
-        """Test factory returns external ReRanker when API key is set."""
-        mock_settings.zerank_api_key = "test-key"
-        mock_settings.zerank_api_url = "http://api.example.com"
+    def test_get_reranker_is_always_local(self, mock_settings):
+        """The external Ze-Rank API reranker was removed: even a stray key stays local."""
+        mock_settings.zerank_api_key = object()
+        mock_settings.enable_reranker = True
 
-        mock_external_reranker = MagicMock()
+        reranker = get_reranker()
 
-        with patch("backend.core.reranker.ReRanker", return_value=mock_external_reranker):
-            reranker = get_reranker()
-
-            assert reranker is mock_external_reranker
+        assert isinstance(reranker, CrossEncoderReranker)
 
     @patch("backend.services.rag.reranker.settings")
     def test_get_reranker_force_local(self, mock_settings):
         """Test factory returns CrossEncoderReranker when force_local=True."""
-        mock_settings.zerank_api_key = "test-key"
         mock_settings.enable_reranker = True
 
         reranker = get_reranker(force_local=True)
@@ -582,7 +577,6 @@ class TestRerankDocuments:
     async def test_rerank_documents(self, mock_settings):
         """Test convenience function for reranking."""
         mock_settings.enable_reranker = True
-        mock_settings.zerank_api_key = None
 
         mock_model = MagicMock()
         import numpy as np

@@ -318,9 +318,11 @@ class KnowledgeService:
     def _init_reranker(self):
         """Lazy load the re-ranker"""
         if not hasattr(self, "reranker"):
-            from backend.core.reranker import ReRanker
+            from backend.services.rag.reranker import CrossEncoderReranker
 
-            self.reranker = ReRanker()
+            self.reranker = CrossEncoderReranker(
+                enabled=getattr(settings, "enable_reranker", False)
+            )
 
     async def search_with_reranking(
         self,

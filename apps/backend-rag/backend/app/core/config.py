@@ -86,13 +86,9 @@ class Settings(BaseSettings):
             return gemini_token
         return None
 
-    google_imagen_api_key: str | None = (
-        None  # Set via GOOGLE_IMAGEN_API_KEY env var (for Imagen image generation)
-    )
     google_ai_studio_key: str | None = (
         None  # Set via GOOGLE_AI_STUDIO_KEY env var (Google AI Studio with Ultra tier)
     )
-    imagineart_api_key: str | None = None  # Set via IMAGINEART_API_KEY env var (for ImagineArt)
     stability_api_key: str | None = None  # Set via STABILITY_API_KEY env var (for Stability AI)
     brave_api_key: str | None = None  # Set via BRAVE_API_KEY env var (for Brave Web Search)
     tavily_api_key: str | None = (
@@ -339,7 +335,7 @@ class Settings(BaseSettings):
     # ========================================
     reranker_backend: str = Field(
         default="cross-encoder",
-        description="Reranker backend: 'cross-encoder' (local, free) or 'zerank2' (external API). "
+        description="Reranker backend: 'cross-encoder' (local, free) (the external ZeroEntropy backend was removed). "
         "Set via RERANKER_BACKEND env var. Default: cross-encoder (MiniLM-L-6-v2, ~75MB).",
     )
     enable_reranker: bool = False  # DISABLED: Saves ~5GB Docker image size
@@ -354,16 +350,6 @@ class Settings(BaseSettings):
     reranker_rate_limit_per_hour: int = 1000
     reranker_overfetch_count: int = 20
     reranker_return_count: int = 5
-
-    # ZeroEntropy Re-ranker Configuration (External API)
-    zerank_api_key: str | None = Field(
-        default=None,
-        description="ZeroEntropy API Key - Set via ZERANK_API_KEY env var",
-    )
-    zerank_api_url: str = Field(
-        default="https://api.zeroentropy.dev/v1/models/rerank",
-        description="ZeroEntropy Re-ranker API URL - Set via ZERANK_API_URL env var",
-    )
 
     # ========================================
     # SEARCH CONFIGURATION

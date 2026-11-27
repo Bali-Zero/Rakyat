@@ -351,7 +351,7 @@ class TestKnowledgeService:
     def test_init_reranker(self, knowledge_service):
         """Test _init_reranker lazy loading"""
         assert not hasattr(knowledge_service, "reranker")
-        with patch("backend.core.reranker.ReRanker") as mock_reranker_class:
+        with patch("backend.services.rag.reranker.CrossEncoderReranker") as mock_reranker_class:
             mock_reranker_instance = MagicMock()
             mock_reranker_class.return_value = mock_reranker_instance
             knowledge_service._init_reranker()
@@ -362,7 +362,7 @@ class TestKnowledgeService:
         """Test _init_reranker doesn't recreate if already exists"""
         existing_reranker = MagicMock()
         knowledge_service.reranker = existing_reranker
-        with patch("backend.core.reranker.ReRanker") as mock_reranker_class:
+        with patch("backend.services.rag.reranker.CrossEncoderReranker") as mock_reranker_class:
             knowledge_service._init_reranker()
             # Should not create new reranker
             assert knowledge_service.reranker == existing_reranker
