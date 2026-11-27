@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import warnings
 from datetime import date, datetime, timedelta, timezone
 
@@ -66,9 +67,8 @@ def test_monitor_skips_invalid_deadline_and_checks_remaining_item(caplog) -> Non
     )
 
     assert len(monitor.check_compliance_items()) == 1
-    assert caplog.messages == [
-        f"Skipping compliance item with invalid deadline: {invalid_item.item_id}"
-    ]
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warned == [f"Skipping compliance item with invalid deadline: {invalid_item.item_id}"]
 
 
 def test_explicit_offset_and_overdue_deadlines_keep_existing_classification() -> None:

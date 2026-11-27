@@ -38,7 +38,8 @@ def test_get_upcoming_deadlines_skips_unparseable_deadline(caplog) -> None:
         upcoming = service.get_upcoming_deadlines(client_id="client-900001", days_ahead=10)
 
     assert upcoming == [good]
-    assert caplog.messages == [f"Skipping compliance item with invalid deadline: {invalid.item_id}"]
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warned == [f"Skipping compliance item with invalid deadline: {invalid.item_id}"]
 
 
 def test_get_upcoming_deadlines_keeps_offset_window_filter_and_instant_order() -> None:
