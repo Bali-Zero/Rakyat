@@ -89,6 +89,8 @@ export function onRequestViolation(line: string): boolean {
 const SLHS_OK = new Set([10_000_000]);
 const STALE_SLHS_ON_REQUEST =
   /on request|atas permintaan|berdasarkan permintaan|sesuai permintaan|su richiesta|sur demande|по запросу/i;
+const WRONG_SLHS_ACRONYM =
+  /Sertifikat Laik Sehat\s*\(\s*SLHS\s*\)|\bSLHS\s*(?:=|—|-)\s*Sertifikat Laik Sehat\b/i;
 
 function invalidSlhsAmount(s: string): boolean {
   return (
@@ -97,14 +99,22 @@ function invalidSlhsAmount(s: string): boolean {
   );
 }
 
-/** SLHS was ruled at IDR 10,000,000 on 2026-11-27; an SLHS label may keep its price on the following non-empty line. */
+/** SLHS was ruled at IDR 10,000,000 on 2026-11-27; catches wrong amounts, wrong acronym expansion, and stale on-request (same or next line). */
 export function slhsViolation(line: string, nextNonEmpty = ""): boolean {
+  if (WRONG_SLHS_ACRONYM.test(line)) return true;
   if (!/\bSLHS\b/.test(line) || isFactAmount(line)) return false;
   if (!/\b(?:Halal|PIRT)\b/i.test(line) && STALE_SLHS_ON_REQUEST.test(line))
     return true;
   if (hasAmount(line) && invalidSlhsAmount(line)) return true;
+  if (nextNonEmpty.trimStart().startsWith("|")) return false;
+  if (
+    !/\b(?:Halal|PIRT|MERP|re-?entry|keluar-masuk|rientro|rentr[ée]e|въезд)\b/i.test(
+      nextNonEmpty,
+    ) &&
+    STALE_SLHS_ON_REQUEST.test(nextNonEmpty)
+  )
+    return true;
   return (
-    !nextNonEmpty.trimStart().startsWith("|") &&
     hasAmount(nextNonEmpty) &&
     !isFactAmount(nextNonEmpty) &&
     invalidSlhsAmount(nextNonEmpty)
@@ -423,6 +433,17 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
     expect(slhsViolation("assistance for **IDR 9,000,000**, SLHS")).toBe(true);
     expect(
       slhsViolation("| SLHS | Hygiene Sanitation Certificate | On request |"),
+    ).toBe(true);
+    expect(
+      slhsViolation(
+        "- Core License: Sertifikat Laik Sehat (SLHS) — Hygiene Certificate",
+      ),
+    ).toBe(true);
+    expect(
+      slhsViolation(
+        "- Core License: Sertifikat Laik Higiene Sanitasi (SLHS)",
+        "- Cost/Time: Price on request — contact Bali Zero; 3–4 weeks processing",
+      ),
     ).toBe(true);
     expect(
       onRequestViolation(

@@ -8,7 +8,8 @@ Pins:
   3. Invoice entity routing of the six CRM practice_types codes to
      PT Bali Nol Impresariat (mandiri_bali_nol_impresariat).
   4. Migration 389 forward/rollback/postconditions and exact name parity with
-     the PricingTool catalogue.
+     the PricingTool catalogue, plus CI bootstrap alignment of
+     practice_types.required_documents to text[].
   5. Automatic seeding of practice_required_documents from
      practice_types.required_documents on create and service switch.
 """
@@ -35,6 +36,7 @@ _BACKEND = Path(__file__).resolve().parents[3]
 _CATALOGUE = _BACKEND / "data" / "bali_zero_official_prices_2026.json"
 _SNAPSHOT = _BACKEND.parents[1] / "mouth" / "data" / "bali-zero-prices.json"
 _MIGRATION = _BACKEND / "db" / "migrations_v2" / "389_practice_types_hospitality_licences.sql"
+_CI_BOOTSTRAP = _BACKEND.parent / "scripts" / "ci_bootstrap_schema.py"
 
 _RULED_ROWS = {
     "SLHS (Sertifikat Laik Higiene Sanitasi)": {
@@ -151,11 +153,15 @@ def test_migration_389_inserts_six_reconciled_skus_with_checklists_and_rollback(
         assert f"'{code}'" in forward
         assert f"'{label}'" in forward
         assert raw_idr in forward
-        # Exact name parity guarantees test_price_store_reconciliation.py joins cleanly
         assert cat_rows[label]["name"] == label
         assert f"'{code}'" in rollback
 
     assert "is_active = false" in rollback
+
+
+def test_ci_bootstrap_aligns_practice_types_required_documents_to_text_array() -> None:
+    src = _CI_BOOTSTRAP.read_text(encoding="utf-8")
+    assert "ALTER COLUMN required_documents TYPE TEXT[]" in src
 
 
 def test_normalize_required_doc_slot_respects_column_widths_and_legacy_slugs() -> None:
@@ -180,10 +186,10 @@ async def test_seed_practice_required_documents_inserts_deduplicated_slots() -> 
         required_documents=[
             "Akta Pendirian & SK Kemenkumham",
             "Company NPWP & NIB (KBLI 56xxx)",
-            "Akta Pendirian & SK Kemenkumham",  # duplicate slug ignored
+            "Akta Pendirian & SK Kemenkumham",
             "",
         ],
-        created_by="krisna@balizero.com",
+        created_by="staff-member",
     )
     assert count == 2
     conn.execute.assert_awaited_once()
@@ -199,7 +205,7 @@ async def test_seed_practice_required_documents_inserts_deduplicated_slots() -> 
         "Akta Pendirian & SK Kemenkumham",
         "Company NPWP & NIB (KBLI 56xxx)",
     ]
-    assert author == "krisna@balizero.com"
+    assert author == "staff-member"
 
 
 @pytest.mark.asyncio
@@ -249,7 +255,7 @@ async def test_create_practice_seeds_required_documents_from_practice_type() -> 
         "quoted_price": Decimal("10000000"),
         "actual_price": None,
         "payment_status": "unpaid",
-        "assigned_to": "krisna@balizero.com",
+        "assigned_to": "staff-member",
         "start_date": None,
         "completion_date": None,
         "expiry_date": None,
@@ -258,7 +264,7 @@ async def test_create_practice_seeds_required_documents_from_practice_type() -> 
         "client_visible": True,
     }
     conn.fetchrow = AsyncMock(
-        side_effect=[type_row, {"assigned_to": "krisna@balizero.com"}, inserted_row]
+        side_effect=[type_row, {"assigned_to": "staff-member"}, inserted_row]
     )
     conn.execute = AsyncMock(return_value=None)
 
@@ -273,7 +279,7 @@ async def test_create_practice_seeds_required_documents_from_practice_type() -> 
             practice=PracticeCreate(client_id=42, practice_type_code="company_slhs"),
             background_tasks=MagicMock(),
             db_pool=pool,
-            current_user={"email": "krisna@balizero.com", "role": "admin"},
+            current_user={"email": "staff-member", "role": "admin"},
         )
 
     seed_calls = [
@@ -298,8 +304,8 @@ async def test_update_practice_seeds_required_documents_on_service_selection() -
         "status": "inquiry",
         "client_id": 42,
         "client_visible": True,
-        "created_by": "zero@balizero.com",
-        "assigned_to": "krisna@balizero.com",
+        "created_by": "admin-member",
+        "assigned_to": "staff-member",
         "practice_type_code": "open_inquiry",
     }
     new_type_row = {
@@ -337,7 +343,7 @@ async def test_update_practice_seeds_required_documents_on_service_selection() -
                 practice_type_code="company_sls_villa",
             ),
             db_pool=pool,
-            current_user={"email": "zero@balizero.com", "role": "admin"},
+            current_user={"email": "admin-member", "role": "admin"},
         )
 
     seed_calls = [
@@ -351,4 +357,3 @@ async def test_update_practice_seeds_required_documents_on_service_selection() -
         "villa_lease_title_deed_pbg_slf",
         "clean_water_pool_kan_lab_results",
     ]
-
