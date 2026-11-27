@@ -45,7 +45,7 @@ CREATE TABLE hr_employees(id int primary key,team_member_id varchar(36) REFERENC
 CREATE TABLE hr_bonus_rates(id serial primary key,practice_type_code text unique,is_active boolean,
     effective_from date,effective_to date,amount_idr bigint,notes text,updated_at timestamptz);
 CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text, payroll_period_id int,
-    bonus_rate_id int,amount_idr bigint,awarded_at timestamptz,status text);
+    bonus_rate_id int,amount_idr bigint,awarded_at timestamptz,status text,notes text);
 CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY,period_start date,payroll_month int,payroll_year int,status text);
 """
 STAFF = {"email": "consultant@example.test", "role": "consultant"}
