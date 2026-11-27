@@ -13,6 +13,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI
 
@@ -784,6 +785,110 @@ def _spawn_visa_oracle_sessions_purge_task(app: FastAPI) -> asyncio.Task | None:
     return asyncio.create_task(_run_visa_oracle_sessions_purge_scheduler(app))
 
 
+def _lead_intents_purge_enabled() -> bool:
+    """Kill switch for the lead-intent retention purge: `LEAD_INTENTS_PURGE_ENABLED`.
+
+    Same contract as `_visa_oracle_sessions_purge_enabled`: default ENABLED
+    (the table is written by a public endpoint, so bounding its growth is not an
+    opt-in feature); "false"/"0" disables; any other non-empty value is treated as
+    enabled with a warning."""
+
+    raw = os.getenv("LEAD_INTENTS_PURGE_ENABLED")
+    if raw is None:
+        return True
+    normalized = raw.strip().lower()
+    if normalized in {"false", "0"}:
+        return False
+    if normalized not in {"true", "1", ""}:
+        logger.warning(
+            "LEAD_INTENTS_PURGE_ENABLED=%r is not a recognised boolean — treating as enabled",
+            raw,
+        )
+    return True
+
+
+#: Same cadence and jitter shape as the visa purge above.
+_LEAD_INTENTS_PURGE_INITIAL_DELAY_MIN_SECONDS = 30.0
+_LEAD_INTENTS_PURGE_INITIAL_DELAY_MAX_SECONDS = 120.0
+_LEAD_INTENTS_PURGE_INTERVAL_SECONDS = 3600.0
+_LEAD_INTENTS_PURGE_JITTER_SECONDS = 300.0
+#: Rows per DELETE, and the cap on DELETEs per tick (so a tick removes at most
+#: batch x loops rows; any remainder waits for the next tick).
+_LEAD_INTENTS_PURGE_LIMIT = 500
+_LEAD_INTENTS_PURGE_MAX_LOOPS = 20
+#: Any row created this calendar month (<=31 days ago, expiring <=7 days later)
+#: survives, so the marketing widget's month-to-date `lead_nuovi` count is unchanged.
+_LEAD_INTENTS_PURGE_GRACE = timedelta(days=62)
+
+
+async def _run_lead_intents_purge_scheduler(app: FastAPI) -> None:
+    """Hourly in-process TTL purge for `lead_intents`.
+
+    `/api/lead/capture` is a public writer into `lead_intents` and
+    `LeadIntentRepository.purge_expired` had no caller, so the table grew
+    without bound. Same shape as the visa purge above: runs in the
+    `api` process group that serves the route, reuses this process's pool,
+    and the DELETE is idempotent so several machines running it is fine.
+
+    Each tick calls the bounded purge until a call deletes fewer rows than the
+    batch, with `_LEAD_INTENTS_PURGE_MAX_LOOPS` as a hard cap. NEVER RAISES
+    past this function; logs only counts and the exception CLASS name (no PII).
+    """
+
+    import random
+
+    from backend.services.lead_capture.repository import LeadIntentRepository
+
+    pool = app.state.db_pool
+    initial_delay = random.uniform(
+        _LEAD_INTENTS_PURGE_INITIAL_DELAY_MIN_SECONDS,
+        _LEAD_INTENTS_PURGE_INITIAL_DELAY_MAX_SECONDS,
+    )
+    logger.info(
+        "✅ lead-intents purge scheduler started (first run in %.0fs, then ~%.0fs ± %.0fs)",
+        initial_delay,
+        _LEAD_INTENTS_PURGE_INTERVAL_SECONDS,
+        _LEAD_INTENTS_PURGE_JITTER_SECONDS,
+    )
+    await asyncio.sleep(initial_delay)
+    repo = LeadIntentRepository(pool)
+    while True:
+        try:
+            total = 0
+            for _ in range(_LEAD_INTENTS_PURGE_MAX_LOOPS):
+                deleted = await repo.purge_expired(
+                    limit=_LEAD_INTENTS_PURGE_LIMIT, grace=_LEAD_INTENTS_PURGE_GRACE
+                )
+                total += deleted
+                if deleted < _LEAD_INTENTS_PURGE_LIMIT:
+                    break
+            if total:
+                logger.info("lead-intents purge removed %d expired rows", total)
+        except asyncio.CancelledError:
+            logger.info("🛑 lead-intents purge scheduler cancelled")
+            raise
+        except Exception as exc:
+            logger.warning("lead-intents purge tick failed: %s", type(exc).__name__)
+        jitter = random.uniform(
+            -_LEAD_INTENTS_PURGE_JITTER_SECONDS,
+            _LEAD_INTENTS_PURGE_JITTER_SECONDS,
+        )
+        await asyncio.sleep(_LEAD_INTENTS_PURGE_INTERVAL_SECONDS + jitter)
+
+
+def _spawn_lead_intents_purge_task(app: FastAPI) -> asyncio.Task | None:
+    """The spawn decision `_background_light_init` calls: kill switch, then db_pool guard."""
+
+    if not _lead_intents_purge_enabled():
+        logger.info("lead-intents purge scheduler disarmed (LEAD_INTENTS_PURGE_ENABLED=false/0)")
+        return None
+    if getattr(app.state, "db_pool", None) is None:
+        logger.warning("⚠️ lead-intents purge scheduler NOT started — db_pool unavailable")
+        return None
+    logger.info("✅ lead-intents purge scheduler spawned")
+    return asyncio.create_task(_run_lead_intents_purge_scheduler(app))
+
+
 @asynccontextmanager
 async def lifespan_light(app: FastAPI):
     """
@@ -816,6 +921,7 @@ async def lifespan_light(app: FastAPI):
             app.state.notification_scheduler = None
             app.state._wa_outbox_scheduler_tasks = []
             app.state._visa_oracle_sessions_purge_task = None
+            app.state._lead_intents_purge_task = None
         else:
             try:
                 from backend.app.modules.notifications.scheduler import init_scheduler
@@ -887,6 +993,7 @@ async def lifespan_light(app: FastAPI):
             # of it (council finding F10, round 1: the mirror stayed green
             # even with the real spawn deleted).
             app.state._visa_oracle_sessions_purge_task = _spawn_visa_oracle_sessions_purge_task(app)
+            app.state._lead_intents_purge_task = _spawn_lead_intents_purge_task(app)
 
             # Portal Champion bomb/penalty takeover producer (Round 2). A task, so
             # it never delays startup; singleton per tick via a Redis lock inside.
@@ -953,6 +1060,14 @@ async def lifespan_light(app: FastAPI):
         purge_task.cancel()
         try:
             await purge_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    lead_purge_task = getattr(app.state, "_lead_intents_purge_task", None)
+    if lead_purge_task is not None:
+        lead_purge_task.cancel()
+        try:
+            await lead_purge_task
         except (asyncio.CancelledError, Exception):
             pass
 
