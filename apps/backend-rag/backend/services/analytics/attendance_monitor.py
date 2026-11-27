@@ -1,18 +1,13 @@
 """
 Attendance Monitor Service
-Responsibility: Late check-in alerts and consecutive-absence detection.
+Responsibility: Late check-in alerts.
 
-Two automations:
+One automation:
 1. Late check-in alert  — triggered immediately when clock_in arrives after 09:30 Bali time.
    Sends a friendly email to the member (from zantara@balizero.com) + CC to zero@balizero.com.
 
-2. Absent alert — called daily at 10:00 Bali time (from scheduler or daily_checkin_notifier).
-   Finds members with no clock_in for 2+ consecutive working days (Mon–Fri) and sends a
-   single summary email to zero@balizero.com.
-
 Integration points:
 - check_late_checkin()  called from TeamTimesheetService.clock_in() after saving the record.
-- check_absent_members() called from DailyCheckinNotifier._send_daily_report() or scheduler loop.
 """
 
 from __future__ import annotations
@@ -82,9 +77,6 @@ _EMAIL_API_URL: str = os.getenv(
     "https://nuzantara-rag.fly.dev/api/notifications/send-email",
 )
 _EMAIL_API_KEY: str = os.getenv("NUZANTARA_API_KEY", "")
-
-# Number of consecutive working days without clock-in before triggering an alert
-ABSENT_THRESHOLD_DAYS: int = 2
 
 # ---------------------------------------------------------------------------
 # Late-incident escalation parameters
@@ -299,15 +291,14 @@ class AttendanceMonitor:
     """
     Monitors team attendance and dispatches email alerts for:
     - Late check-ins (gentle reminder + incident escalation state machine)
-    - Consecutive absences (2+ working days without any clock-in)
 
     Owns two long-running background tasks (started by ``start_schedulers``):
     - escalation_scan_task: every 15 minutes, calls ``run_escalation_scan``.
     - daily_digest_task:    every day at 18:00 WITA, calls
                             ``send_daily_telegram_digest``.
 
-    The ``check_late_checkin`` and ``check_absent_members`` methods can still
-    be invoked directly (e.g. from ``TeamTimesheetService.clock_in``).
+    The ``check_late_checkin`` method can still be invoked directly (e.g. from
+    ``TeamTimesheetService.clock_in``).
     """
 
     def __init__(self, db_pool: asyncpg.Pool) -> None:
@@ -558,69 +549,6 @@ class AttendanceMonitor:
         )
         await self._send_incident_opened_notification(email, full_name, checkin_time)
 
-    async def check_absent_members(self) -> None:
-        """
-        Called daily at 10:00 Bali time.
-
-        Finds every active team member whose last clock_in date is at least
-        ABSENT_THRESHOLD_DAYS working days before today (or who has never
-        clocked in).  Sends a single summary email to zero@balizero.com.
-        """
-        today: date = datetime.now(BALI_TZ).date()
-        logger.info("check_absent_members: running absence scan for %s", today)
-
-        active_members = await self._get_active_members()
-        if not active_members:
-            logger.info("check_absent_members: no active members found — skipping")
-            return
-
-        absent_members: list[dict] = []
-
-        for member in active_members:
-            member_email: str = member["email"]
-            last_date = await self._get_last_clockin_date(member_email)
-
-            if last_date is None:
-                # Never clocked in — treat as infinitely absent.
-                absent_members.append(
-                    {
-                        "email": member_email,
-                        "full_name": member["full_name"],
-                        "absent_days": None,  # "unknown / never clocked in"
-                        "last_seen": "mai",
-                    },
-                )
-                logger.debug("check_absent_members: %s has never clocked in", member_email)
-                continue
-
-            working_days_absent = await self._count_working_days_since(last_date, today)
-
-            if working_days_absent >= ABSENT_THRESHOLD_DAYS:
-                absent_members.append(
-                    {
-                        "email": member_email,
-                        "full_name": member["full_name"],
-                        "absent_days": working_days_absent,
-                        "last_seen": last_date.strftime("%d/%m/%Y"),
-                    },
-                )
-                logger.info(
-                    "check_absent_members: %s absent for %d working day(s) (last seen %s)",
-                    member_email,
-                    working_days_absent,
-                    last_date,
-                )
-
-        if not absent_members:
-            logger.info(
-                "check_absent_members: no absences >= %d working days found for %s",
-                ABSENT_THRESHOLD_DAYS,
-                today,
-            )
-            return
-
-        await self._send_absent_alert(absent_members)
-
     async def get_logged_in_not_clocked(self) -> list[dict]:
         """Find team members who logged in today but haven't clocked in."""
         async with self.pool.acquire() as conn:
@@ -711,22 +639,6 @@ class AttendanceMonitor:
             )
         return row is not None
 
-    async def _get_active_members(self) -> list[dict]:
-        """
-        Returns a list of {email, full_name} for all is_active=TRUE members
-        from the team_members table.
-        """
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT email, full_name
-                FROM team_members
-                WHERE is_active = TRUE
-                ORDER BY full_name
-                """,
-            )
-        return [{"email": row["email"], "full_name": row["full_name"]} for row in rows]
-
     async def _get_member_by_email(self, email: str) -> dict | None:
         """
         Returns {email, full_name} for a single member, or None if not found.
@@ -743,54 +655,6 @@ class AttendanceMonitor:
         if row is None:
             return None
         return {"email": row["email"], "full_name": row["full_name"]}
-
-    async def _get_last_clockin_date(self, email: str) -> date | None:
-        """
-        Returns the calendar date (in Bali timezone) of the most recent
-        clock_in action for the given email, or None if no record exists.
-        """
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    DATE(created_at AT TIME ZONE 'Asia/Makassar') AS last_date
-                FROM team_timesheet
-                WHERE email = $1
-                  AND action_type = 'clock_in'
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                email,
-            )
-        if row is None or row["last_date"] is None:
-            return None
-        return row["last_date"]
-
-    # ------------------------------------------------------------------
-    # Working-day counter (pure logic, kept async for interface symmetry)
-    # ------------------------------------------------------------------
-
-    async def _count_working_days_since(self, last_date: date, today: date) -> int:
-        """
-        Count Monday–Friday days strictly between last_date (exclusive) and
-        today (inclusive).
-
-        Examples
-        --------
-        last_date=Monday, today=Wednesday  → 2  (Tue + Wed)
-        last_date=Friday,  today=Monday    → 1  (Mon; weekend skipped)
-        last_date=today                    → 0
-        """
-        if last_date >= today:
-            return 0
-
-        count: int = 0
-        cursor: date = last_date + timedelta(days=1)
-        while cursor <= today:
-            if cursor.weekday() < 5:  # 0=Mon … 4=Fri
-                count += 1
-            cursor += timedelta(days=1)
-        return count
 
     # ------------------------------------------------------------------
     # Email senders
@@ -1568,187 +1432,3 @@ class AttendanceMonitor:
 
         await self._send_telegram("\n".join(lines).rstrip())
         return True
-
-    async def _send_absent_alert(self, absent_members: list[dict]) -> None:
-        """
-        Send a single absent-members summary email to zero@balizero.com.
-
-        Subject: "⚠️ Assenze team — [date]"
-        Body: HTML table listing absent members with days absent and last-seen date.
-        """
-        today_str: str = datetime.now(BALI_TZ).strftime("%d/%m/%Y")
-        subject: str = f"⚠️ Team absences — {today_str}"
-
-        # Build table rows
-        table_rows: str = ""
-        for m in absent_members:
-            days_label: str = (
-                f"{m['absent_days']} gg lavorativi"
-                if m["absent_days"] is not None
-                else "Nessun check-in registrato"
-            )
-            table_rows += f"""
-            <tr>
-                <td style="padding:10px 14px; border-bottom:1px solid #e8e8e8;">
-                    {m["full_name"]}
-                </td>
-                <td style="padding:10px 14px; border-bottom:1px solid #e8e8e8; color:#555;">
-                    {m["email"]}
-                </td>
-                <td style="padding:10px 14px; border-bottom:1px solid #e8e8e8; color:#e53e3e; font-weight:600;">
-                    {days_label}
-                </td>
-                <td style="padding:10px 14px; border-bottom:1px solid #e8e8e8; color:#777;">
-                    {m["last_seen"]}
-                </td>
-            </tr>"""
-
-        html_body: str = f"""<!DOCTYPE html>
-<html lang="it">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f5f5;
-            margin: 0;
-            padding: 20px;
-        }}
-        .container {{
-            max-width: 680px;
-            margin: 0 auto;
-            background: #ffffff;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }}
-        .header {{
-            background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
-            color: white;
-            padding: 28px 32px;
-        }}
-        .header h1 {{
-            margin: 0 0 6px 0;
-            font-size: 20px;
-            font-weight: 600;
-        }}
-        .header p {{
-            margin: 0;
-            opacity: 0.85;
-            font-size: 14px;
-        }}
-        .content {{
-            padding: 32px;
-            color: #333333;
-        }}
-        .summary-badge {{
-            display: inline-block;
-            background: #fff5f5;
-            border: 1px solid #fed7d7;
-            color: #c53030;
-            border-radius: 20px;
-            padding: 6px 16px;
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 24px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }}
-        thead tr {{
-            background: #f8f8f8;
-        }}
-        thead th {{
-            padding: 10px 14px;
-            text-align: left;
-            font-weight: 600;
-            color: #555555;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 2px solid #e8e8e8;
-        }}
-        .footer {{
-            text-align: center;
-            padding: 20px 32px;
-            color: #888888;
-            font-size: 12px;
-            border-top: 1px solid #f0f0f0;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>⚠️ Team absences</h1>
-            <p>Daily report — {today_str} · 10:00 WITA</p>
-        </div>
-        <div class="content">
-            <div class="summary-badge">
-                {len(absent_members)} member(s) absent ≥ {ABSENT_THRESHOLD_DAYS} working days
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Absence</th>
-                        <th>Last check-in</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {table_rows}
-                </tbody>
-            </table>
-            <p style="margin-top:24px; font-size:13px; color:#777;">
-                This report is generated automatically every morning at 10:00 WITA
-                for members with {ABSENT_THRESHOLD_DAYS}+ working days without check-in.
-            </p>
-        </div>
-        <div class="footer">
-            Bali Zero · Zantara Team Management
-        </div>
-    </div>
-</body>
-</html>"""
-
-        payload: dict = {
-            "to": ADMIN_EMAIL,
-            "subject": subject,
-            "body": html_body,
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    _EMAIL_API_URL,
-                    headers={"X-API-Key": _EMAIL_API_KEY},
-                    json=payload,
-                )
-                response.raise_for_status()
-            logger.info(
-                "_send_absent_alert: sent absence summary (%d members) to %s",
-                len(absent_members),
-                ADMIN_EMAIL,
-            )
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "_send_absent_alert: HTTP %s sending to %s — %s",
-                exc.response.status_code,
-                ADMIN_EMAIL,
-                exc.response.text,
-            )
-        except (httpx.TimeoutException, httpx.ConnectError, OSError) as exc:
-            logger.warning(
-                "_send_absent_alert: network error sending to %s — %s",
-                ADMIN_EMAIL,
-                exc,
-            )
-        except Exception as exc:
-            logger.exception(
-                "_send_absent_alert: failed to send — %s",
-                exc,
-            )
