@@ -317,11 +317,14 @@ async def test_stop_closes_a_healthy_connection_gracefully(listener):
 
 @pytest.mark.asyncio
 async def test_stop_on_a_dead_socket_returns_within_the_bound(listener, monkeypatch):
-    monkeypatch.setattr(psl, "_CLOSE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(psl, "_CLOSE_TIMEOUT_S", 0.1, raising=False)
     conn = _FakeConnection(hang_on_close=True)
     listener._conn = conn
 
-    await asyncio.wait_for(listener.stop(), _HANG_GUARD_S)
+    try:
+        await asyncio.wait_for(listener.stop(), _HANG_GUARD_S)
+    except asyncio.TimeoutError:
+        pytest.fail("stop() hung on a dead socket")
 
     assert conn.terminated, "stop() did not fall back to terminate()"
     assert listener._conn is None
