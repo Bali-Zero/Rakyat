@@ -32,7 +32,7 @@ CREATE TABLE practices(id int primary key,client_id int,family_member_id int,ass
 CREATE TABLE invoices(id serial primary key,practice_id int,amount_idr numeric);
 CREATE TABLE client_family_members(id int primary key,client_id int);
 CREATE TABLE documents(id serial primary key,practice_id int,client_id int,family_member_id int,
-    intake_idempotency_key text UNIQUE,file_id text,file_name text,content_hash text,document_type text,uploaded_source text,status text,
+    intake_idempotency_key text UNIQUE,file_id text,file_url text,google_drive_file_url text,file_name text,content_hash text,document_type text,uploaded_source text,status text,
     deleted_at timestamptz,deleted_by text,is_archived boolean,client_visible boolean,updated_at timestamptz);
 CREATE TABLE companies(id int primary key);
 CREATE TABLE company_documents(id serial primary key,company_id int,google_drive_file_id text,client_visible boolean);
@@ -77,6 +77,7 @@ async def pool(monkeypatch):
                 "386_visa_bonus_payout_hold.sql",
                 "388_bonus_rates_forfeit.sql",
                 "393_bonus_run_month_lock.sql",
+                "396_delivery_marker_follows_the_file.sql",
             ):
                 await conn.execute((folder / filename).read_text().split("-- === ROLLBACK ===")[0])
             await conn.execute("""
