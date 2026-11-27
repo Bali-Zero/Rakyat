@@ -33,7 +33,10 @@ def parse_deadline_utc(deadline: str | datetime | date) -> datetime:
 
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except OverflowError as error:
+        raise ValueError("Deadline UTC instant is out of range") from error
 
 
 class AlertSeverity(str, Enum):
