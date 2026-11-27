@@ -586,7 +586,7 @@ async def send_direct_email(
             )
             return SendEmailResponse(
                 success=True,
-                message=f"Email sent to {to_addr} via {name}",
+                message=f"Email sent via {name}",
             )
         logger.warning(
             "Provider %s failed for %s, trying next in chain",

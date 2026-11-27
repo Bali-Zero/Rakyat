@@ -67,6 +67,8 @@ async def test_a_200_with_success_false_is_recorded_failed_not_sent():
     [
         ("Email sent to x@example.invalid via zoho", "zoho"),
         ("Email sent to x@example.invalid via brevo", "brevo"),
+        ("Email sent via zoho", "zoho"),
+        ("Email sent via brevo", "brevo"),
         ("Email sent to x@example.invalid via resend", None),  # not an allowed audit provider
         ("Email accepted", None),
     ],
