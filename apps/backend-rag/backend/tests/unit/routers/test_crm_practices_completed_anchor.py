@@ -40,7 +40,7 @@ async def _patch(mock_db_pool, mock_db_conn, *, status="completed", admin=False,
     txn.__aenter__ = AsyncMock()
     txn.__aexit__ = AsyncMock(return_value=False)
     mock_db_conn.transaction = MagicMock(return_value=txn)
-    mock_db_conn.fetchrow = AsyncMock(side_effect=[_row(status), _row(status)])
+    mock_db_conn.fetchrow = AsyncMock(side_effect=[_row(status)] * 3)
     mock_db_conn.execute = AsyncMock(return_value="OK")
     user = {"email": "admin@example.invalid", "role": "admin"} if admin else CREATOR
     with (
