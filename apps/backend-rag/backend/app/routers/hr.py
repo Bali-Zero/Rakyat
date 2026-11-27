@@ -445,7 +445,8 @@ async def delivery_bonus_reviews(
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT e.practice_id, COALESCE(pt.name,e.service_code) AS service, e.earned_at,
-                      e.event_kind, e.employee_id, tm.full_name AS employee_name, e.amount_idr
+                      e.event_kind, e.employee_id, tm.full_name AS employee_name, e.amount_idr,
+                      hr_bonus_month_closed(date_trunc('month', e.awarded_at AT TIME ZONE 'Asia/Makassar')::date) AS month_closed
                FROM hr_delivery_bonus_events e LEFT JOIN hr_employees emp ON emp.id=e.employee_id
                LEFT JOIN team_members tm ON tm.id=COALESCE(emp.team_member_id, e.original_team_member_id)
                LEFT JOIN practice_types pt ON pt.code=e.service_code

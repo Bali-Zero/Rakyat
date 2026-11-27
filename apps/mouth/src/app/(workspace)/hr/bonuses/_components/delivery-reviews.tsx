@@ -18,6 +18,7 @@ type Item = {
   employee_name: string | null;
   earned_at: string;
   amount_idr: number | null;
+  month_closed: boolean;
 };
 type Reviews = { viewer_team_member_id: string; items: Item[] };
 
@@ -45,7 +46,7 @@ function Review({
     try {
       await api.post(`/api/hr/delivery-bonus-reviews/${item.practice_id}`, {
         amount_idr: rate,
-        use_current_period: carry,
+        use_current_period: item.month_closed && carry,
         employee_id:
           item.employee_id === null ? Number(beneficiary) : undefined,
       });
@@ -106,14 +107,16 @@ function Review({
           onChange={(e) => setAmount(e.target.value)}
         />
       </label>
-      <label className="flex gap-1">
-        <input
-          type="checkbox"
-          checked={carry}
-          onChange={(e) => setCarry(e.target.checked)}
-        />{" "}
-        Move a locked award to this month
-      </label>
+      {item.month_closed && (
+        <label className="flex gap-1">
+          <input
+            type="checkbox"
+            checked={carry}
+            onChange={(e) => setCarry(e.target.checked)}
+          />{" "}
+          Move a locked award to this month
+        </label>
+      )}
       <button
         className="rounded border px-2 py-1"
         type="submit"

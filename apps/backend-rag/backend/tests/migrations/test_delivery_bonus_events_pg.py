@@ -1,6 +1,6 @@
 """Exercise the real issuance trigger and payroll writer on an isolated PostgreSQL schema."""
 
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -15,6 +15,7 @@ from backend.app.services.hr.delivery_bonus import (
     record_delivery_bonus,
     resolve_delivery_bonus,
 )
+from backend.app.services.hr.hr_service import BonusPeriodLockedError
 from backend.tests.migrations.hr_bonus_fixture import install_delivery_payroll_migrations
 from backend.tests.migrations.test_migration_357_hr_bonus_manual import _DDL, _dsn, _parts
 
@@ -271,3 +272,138 @@ async def test_employee_hold_uses_service_catalog_document(db, service, slot, la
     (held,) = (await delivery_desk(db, "tm-1"))["holds"]
     assert held["slot_key"] == slot
     assert held["slot_label"] == label
+
+
+# --- Bonus reform C, PR2a: the bonus month locks on its own, not on the salary payroll ---
+
+
+def _freeze(monkeypatch, iso: str) -> None:
+    """Pin the clock the delivery writer reads (WITA conversion included)."""
+    fixed = datetime.fromisoformat(iso)
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed.astimezone(tz) if tz else fixed
+
+    monkeypatch.setattr(bonus, "datetime", Frozen)
+
+
+async def _completed_practice(db, practice_id: int) -> None:
+    await db.execute(
+        "INSERT INTO practices(id,status) VALUES ($1,'completed') ON CONFLICT (id) DO UPDATE SET status='completed'",
+        practice_id,
+    )
+
+
+async def _salary_paid(db, month: int, year: int = 2026) -> int:
+    return await db.fetchval(
+        "INSERT INTO hr_payroll_periods(period_start,payroll_month,payroll_year,status) "
+        "VALUES (make_date($2,$1,1),$1,$2,'paid') RETURNING id",
+        month,
+        year,
+    )
+
+
+async def _record(db, practice_id: int, code: str = "visa_demo"):
+    return await record_delivery_bonus(
+        db, practice_id, code, "consultant@example.invalid", "service_delivered"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a1_a_receipt_after_the_paid_november_salary_books_pending_in_november(
+    db, monkeypatch
+):
+    _freeze(monkeypatch, "2026-11-29T02:00:00+00:00")
+    await _salary_paid(db, 11)
+    await _completed_practice(db, 2)
+    result = await _record(db, 2)
+    assert result["status"] == "pending"
+    assert result["awarded_at"] == result["earned_at"]
+    row = await db.fetchrow(
+        "SELECT payroll_period_id, status, date_trunc('month', awarded_at AT TIME ZONE 'Asia/Makassar')::date AS m "
+        "FROM hr_bonus_ledger WHERE practice_id=2"
+    )
+    assert (row["status"], row["m"], row["payroll_period_id"]) == (
+        "pending",
+        date(2026, 11, 1),
+        None,
+    )
+    totals = (await delivery_desk(db, "tm-1"))["totals"]
+    assert (totals["pending"], totals["payroll_locked"]) == (125000, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("clock", "month"),
+    [
+        ("2026-11-30T15:59:59+00:00", date(2026, 11, 1)),
+        ("2026-11-30T16:00:00+00:00", date(2026, 12, 1)),
+    ],
+)
+async def test_a2_the_bonus_month_ends_at_midnight_bali(db, monkeypatch, clock, month):
+    _freeze(monkeypatch, clock)
+    await _salary_paid(db, 11)
+    await _completed_practice(db, 2)
+    assert (await _record(db, 2))["status"] == "pending"
+    booked = await db.fetchval(
+        "SELECT date_trunc('month', awarded_at AT TIME ZONE 'Asia/Makassar')::date "
+        "FROM hr_bonus_ledger WHERE practice_id=2"
+    )
+    assert booked == month
+
+
+@pytest.mark.asyncio
+async def test_a3_a_closed_november_run_refuses_novembers_receipts_and_the_carry_books_the_open_month(
+    db, monkeypatch
+):
+    await db.execute(
+        "INSERT INTO hr_bonus_runs(bonus_month,status) VALUES ('2026-11-01','approved')"
+    )
+    _freeze(monkeypatch, "2026-11-30T15:00:00+00:00")
+    await _completed_practice(db, 2)
+    assert (await _record(db, 2))["status"] == "payroll_locked"
+    assert await db.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=2") == 0
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__.return_value = db
+    response = await delivery_bonus_reviews({"role": "admin", "user_id": "reviewer"}, pool)
+    assert [(i["practice_id"], i["month_closed"]) for i in response["items"]] == [(2, True)]
+    with pytest.raises(BonusPeriodLockedError):
+        await resolve_delivery_bonus(db, 2, 125000, "hr-reviewer")
+    _freeze(monkeypatch, "2026-12-01T01:00:00+00:00")
+    carried = await resolve_delivery_bonus(db, 2, 125000, "hr-reviewer", use_current_period=True)
+    assert carried["status"] == "pending"
+    assert carried["awarded_at"].astimezone(bonus.WITA).date() == date(2026, 12, 1)
+    await _completed_practice(db, 3)
+    assert (await _record(db, 3))["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a4_an_open_novembers_receipt_cannot_be_carried_into_december(db, monkeypatch):
+    _freeze(monkeypatch, "2026-11-29T02:00:00+00:00")
+    await _salary_paid(db, 11)
+    await _completed_practice(db, 2)
+    assert (await _record(db, 2, "tax_demo"))["status"] == "awaiting_rate"
+    _freeze(monkeypatch, "2026-12-01T01:00:00+00:00")
+    with pytest.raises(ValueError, match="still open"):
+        await resolve_delivery_bonus(db, 2, 250000, "hr-reviewer", use_current_period=True)
+    booked = await resolve_delivery_bonus(db, 2, 250000, "hr-reviewer")
+    assert booked["status"] == "pending"
+    assert booked["awarded_at"].astimezone(bonus.WITA).date() == date(2026, 11, 29)
+
+
+@pytest.mark.asyncio
+async def test_a5_the_review_list_offers_the_carry_only_for_a_closed_month(db, monkeypatch):
+    await _salary_paid(db, 10)
+    await _salary_paid(db, 11)
+    await _completed_practice(db, 2)
+    await _completed_practice(db, 3)
+    _freeze(monkeypatch, "2026-10-15T02:00:00+00:00")
+    assert (await _record(db, 2))["status"] == "payroll_locked"
+    _freeze(monkeypatch, "2026-11-15T02:00:00+00:00")
+    assert (await _record(db, 3, "tax_demo"))["status"] == "awaiting_rate"
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__.return_value = db
+    response = await delivery_bonus_reviews({"role": "admin", "user_id": "reviewer"}, pool)
+    assert {i["practice_id"]: i["month_closed"] for i in response["items"]} == {2: True, 3: False}

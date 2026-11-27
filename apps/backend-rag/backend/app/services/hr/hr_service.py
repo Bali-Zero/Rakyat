@@ -50,7 +50,7 @@ MANUAL_BONUS_CODE = "manual"
 
 
 class BonusPeriodLockedError(Exception):
-    """The payroll month of a bonus is already approved or paid."""
+    """The bonus month is closed: its payroll is approved or paid, or its bonus run is closed."""
 
 
 class PayrollBonusesChangedError(Exception):
@@ -116,18 +116,36 @@ async def _lock_payroll_month(conn: Any, month: int, year: int, *, exclusive: bo
     await conn.execute(f"SELECT {fn}(hashtext($1))", payroll_month_lock_key(month, year))
 
 
-async def _refuse_if_payroll_closed(conn: Any, month: int, year: int) -> None:
-    """Raise BonusPeriodLockedError when the month's payroll is approved or paid.
+#: Owner rule 2026-11-27: from this Bali calendar month on, bonuses run in their own monthly cycle,
+#: separate from the salary payroll and paid after it. Mirrors hr_bonus_run_first_month() (393).
+BONUS_RUN_FIRST_MONTH = date(2026, 11, 1)
 
-    Only meaningful under the month lock, which makes this plain read race-free.
+
+def bonus_month_lock_key(month: int, year: int) -> str:
+    """Before the bonus cycle a bonus month IS its salary month: same key, so salary work still serialises."""
+    if date(year, month, 1) < BONUS_RUN_FIRST_MONTH:
+        return payroll_month_lock_key(month, year)
+    return f"hr_bonus_month:{year:04d}-{month:02d}"
+
+
+async def _lock_bonus_month(conn: Any, month: int, year: int, *, exclusive: bool) -> None:
+    """Adders hold it SHARED; whoever closes the month (salary before the cycle, the run from it) EXCLUSIVE.
+
+    Order: allocation lock, bonus row, this lock, then the period or run row.
     """
-    status = await conn.fetchval(
-        "SELECT status FROM hr_payroll_periods WHERE payroll_month = $1 AND payroll_year = $2",
-        month,
-        year,
-    )
-    if status in ("approved", "paid"):
-        msg = "That month's payroll is already approved"
+    fn = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+    await conn.execute(f"SELECT {fn}(hashtext($1))", bonus_month_lock_key(month, year))
+
+
+async def _refuse_if_bonus_month_closed(conn: Any, month: int, year: int) -> None:
+    """Under _lock_bonus_month only. Raises BonusPeriodLockedError when the month takes no more bonus money."""
+    first_day = date(year, month, 1)
+    if await conn.fetchval("SELECT hr_bonus_month_closed($1::date)", first_day):
+        msg = (
+            "That month's payroll is already approved"
+            if first_day < BONUS_RUN_FIRST_MONTH
+            else "That month's bonus run is already closed"
+        )
         raise BonusPeriodLockedError(msg)
 
 
@@ -706,9 +724,9 @@ class HRService:
                 if not cur or cur["status"] != "pending":
                     msg = f"Bonus {bonus_id} not found or not pending"
                     raise ValueError(msg)
-                await _lock_payroll_month(conn, cur["m"], cur["y"], exclusive=False)
+                await _lock_bonus_month(conn, cur["m"], cur["y"], exclusive=False)
                 if not cur.get("deferred_from"):
-                    await _refuse_if_payroll_closed(conn, cur["m"], cur["y"])
+                    await _refuse_if_bonus_month_closed(conn, cur["m"], cur["y"])
                 in_set = await conn.fetchval(
                     f"SELECT {payroll_set_sql()} FROM hr_employees e "
                     "JOIN team_members tm ON tm.id = e.team_member_id "
@@ -798,8 +816,8 @@ class HRService:
                     if not known:
                         msg = "Unknown or inactive service"
                         raise ValueError(msg)
-                await _lock_payroll_month(conn, awarded_on.month, awarded_on.year, exclusive=False)
-                await _refuse_if_payroll_closed(conn, awarded_on.month, awarded_on.year)
+                await _lock_bonus_month(conn, awarded_on.month, awarded_on.year, exclusive=False)
+                await _refuse_if_bonus_month_closed(conn, awarded_on.month, awarded_on.year)
                 row = await conn.fetchrow(
                     """
                     INSERT INTO hr_bonus_ledger (
