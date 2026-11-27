@@ -254,3 +254,27 @@ async def test_every_patch_locks_the_practice_row_before_the_company_link(
             await pool.fetchval("SELECT invoice_company_id FROM practices WHERE id=$1", practice_id)
             == company_id
         )
+
+
+@pytest.mark.asyncio
+async def test_the_patch_history_row_is_stamped_when_it_holds_the_row_lock(
+    pool: asyncpg.Pool,
+) -> None:
+    # now() is the transaction's start; a PATCH that waited for the row lock must date its row after
+    # the wait, or a first-proof reader would order it before the writer that had just committed.
+    practice_id = await owned_open_practice(pool)
+    async with pool.acquire() as other:
+        txn = other.transaction()
+        await txn.start()
+        await other.fetchval("SELECT id FROM practices WHERE id=$1 FOR UPDATE", practice_id)
+        mover = asyncio.create_task(patch(pool, practice_id, notes="a note"))
+        await blocked_on(pool, await other.fetchval("SELECT pg_backend_pid()"), mover)
+        await asyncio.sleep(0.3)
+        released = await pool.fetchval("SELECT clock_timestamp()")
+        await txn.commit()
+    await mover
+    stamped = await pool.fetchval(
+        "SELECT performed_at FROM activity_log WHERE entity_type='practice' AND entity_id=$1",
+        practice_id,
+    )
+    assert stamped >= released

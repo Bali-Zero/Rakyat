@@ -33,19 +33,11 @@ def sha(request):
 
 
 async def complete_like_the_first_proof(db, pid=7):
-    """The e-visa is in; the practice is completed with the ITK still to come."""
-    await service.upload(
+    """The e-visa is the first proof: it completes the practice with the ITK still to come."""
+    view = await service.upload(
         db, pid, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
     )
-    async with db.acquire() as conn:
-        await conn.execute(
-            """INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by)
-               VALUES($1,'visa_c1_tourism','staff')""",
-            pid,
-        )
-        await conn.execute(
-            "UPDATE practices SET status='completed',completion_date=now() WHERE id=$1", pid
-        )
+    assert view["status"] == "completed"
 
 
 def gate_after_stage(monkeypatch):
@@ -86,24 +78,17 @@ async def receipts(conn, pid=7):
 
 @pytest.mark.asyncio
 async def test_upload_overtaken_by_a_completion_attaches_on_the_completed_route(pool, monkeypatch):  # noqa: F811
-    await service.upload(
-        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
-    )
-    async with pool.acquire() as conn:
-        before = await receipts(conn)
-    reached, release, _ = gate_after_stage(monkeypatch)
+    reached, release, restore = gate_after_stage(monkeypatch)
     upload = asyncio.create_task(
         service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
     )
     await reached.wait()  # the draft is staged and private; the transaction has not started
+    restore()
     async with pool.acquire() as conn:
         assert await unattached_drafts(conn) == 1
-        await conn.execute(
-            "INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by) VALUES(7,'visa_c1_tourism','s')"
-        )
-        await conn.execute(
-            "UPDATE practices SET status='completed',completion_date=now() WHERE id=7"
-        )
+    await complete_like_the_first_proof(pool)  # the e-visa, a first proof, completes the practice
+    async with pool.acquire() as conn:
+        before = await receipts(conn)
     release.set()
     result = await asyncio.wait_for(upload, 15)
     assert result["status"] == "completed" and result["slots"][1]["document_id"] is not None
@@ -199,13 +184,6 @@ async def test_empty_slot_inherits_case_company(pool):  # noqa: F811
         final_file("electronic-visa").model_copy(update={"company_id": 5}),
         BackgroundTasks(),
     )
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by) VALUES(7,'visa_c1_tourism','s')"
-        )
-        await conn.execute(
-            "UPDATE practices SET status='completed',completion_date=now() WHERE id=7"
-        )
     with pytest.raises(HTTPException, match="cannot change the permit's company"):
         await service.upload(
             pool,
@@ -321,3 +299,112 @@ async def test_retry_of_a_first_proof_after_a_lost_response_keeps_one_receipt_an
         ids = [d["id"] for d in (await service.portal_files(conn, 7, 31))["documents"]]
         assert ids == [doc]  # no visible duplicate for the client
         assert (await slot_of(conn, "electronic_visa"))["document_id"] == doc  # no lost file
+
+
+@pytest.mark.asyncio
+async def test_a_company_upload_overtaken_by_the_first_proof_keeps_its_company(pool, monkeypatch):  # noqa: F811
+    # Carry 2: no other slot names a company when the completion lands under an upload sent with one.
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO companies VALUES(5)")
+        await conn.execute("INSERT INTO client_company_links VALUES(5,31)")
+    reached, release, restore = gate_after_stage(monkeypatch)
+    late = asyncio.create_task(
+        service.upload(
+            pool,
+            7,
+            ITK,
+            STAFF,
+            final_file("itk").model_copy(update={"company_id": 5}),
+            BackgroundTasks(),
+        )
+    )
+    await reached.wait()
+    restore()
+    await complete_like_the_first_proof(pool)  # the e-visa (no company) completes the practice
+    release.set()
+    result = await asyncio.wait_for(late, 15)  # not "Permit destination changed"
+    assert result["slots"][1]["document_id"] is not None
+    async with pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT company_id FROM practice_delivery_slots WHERE practice_id=7 AND slot_key=$1",
+                ITK,
+            )
+            == 5
+        )
+        assert (await slot_of(conn))["client_visible"] is True
+        assert await unattached_drafts(conn) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_company_upload_overtaken_for_an_unlinked_company_is_still_refused(
+    pool, monkeypatch
+):  # noqa: F811
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO companies VALUES(5)")  # not linked to the client
+    reached, release, restore = gate_after_stage(monkeypatch)
+    late = asyncio.create_task(
+        service.upload(
+            pool,
+            7,
+            ITK,
+            STAFF,
+            final_file("itk").model_copy(update={"company_id": 5}),
+            BackgroundTasks(),
+        )
+    )
+    await reached.wait()
+    restore()
+    await complete_like_the_first_proof(pool)
+    release.set()
+    with pytest.raises(HTTPException, match="not linked"):
+        await asyncio.wait_for(late, 15)
+
+
+@pytest.mark.asyncio
+async def test_a_delivered_practice_takes_an_empty_non_permit_slot(pool):  # noqa: F811
+    # Carry 3: a PT PMA's Akta is not a permit; once the NIB (the first proof) completes it, the
+    # Akta still attaches into its empty slot, published at once and without a second receipt.
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO practice_types VALUES(20,'company_pt_pma','New Company (PT PMA)','company')"
+        )
+        await conn.execute(
+            "INSERT INTO practices VALUES(20,31,null,$1,true,'on_process','paid',20,null,now())",
+            STAFF["email"],
+        )
+    first = await service.upload(
+        pool, 20, "document_3", STAFF, final_file("nib"), BackgroundTasks()
+    )
+    assert first["status"] == "completed"
+    async with pool.acquire() as conn:
+        before = await receipts(conn, 20)
+    view = await service.upload(
+        pool, 20, "document_1", STAFF, final_file("akta"), BackgroundTasks()
+    )
+    assert view["status"] == "completed"
+    async with pool.acquire() as conn:
+        assert (await slot_of(conn, "document_1", 20))["client_visible"] is True
+        assert await receipts(conn, 20) == before
+    assert len(before) == 1
+
+
+@pytest.mark.asyncio
+async def test_first_proof_retry_after_a_lost_response_on_the_completed_practice(pool):  # noqa: F811
+    # Carry 1: the retry now meets a completed practice. A 409 is allowed; nothing else changes.
+    visa = final_file("electronic-visa")
+    first = await service.upload(pool, 7, "electronic_visa", STAFF, visa, BackgroundTasks())
+    assert first["status"] == "completed"
+    doc = first["slots"][0]["document_id"]
+    try:
+        retry = await service.upload(pool, 7, "electronic_visa", STAFF, visa, BackgroundTasks())
+        assert retry["slots"][0]["document_id"] == doc
+    except HTTPException as refused:
+        assert refused.status_code == 409
+    async with pool.acquire() as conn:
+        assert len(await receipts(conn)) == 1
+        assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=7") == 1
+        assert (await slot_of(conn, "electronic_visa"))["document_id"] == doc
+        ids = [d["id"] for d in (await service.portal_files(conn, 7, 31))["documents"]]
+        assert ids == [doc]
+        assert await conn.fetchval("SELECT count(*) FROM practice_delivery_completions") == 1

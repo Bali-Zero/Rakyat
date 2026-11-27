@@ -785,6 +785,22 @@ def _spawn_visa_oracle_sessions_purge_task(app: FastAPI) -> asyncio.Task | None:
     return asyncio.create_task(_run_visa_oracle_sessions_purge_scheduler(app))
 
 
+def _first_proof_sweep_enabled() -> bool:
+    """Kill switch `FIRST_PROOF_SWEEP_ENABLED`: default on, "false"/"0" turns it off."""
+    return os.getenv("FIRST_PROOF_SWEEP_ENABLED", "true").strip().lower() not in {"false", "0"}
+
+
+def _spawn_first_proof_sweep_task(app: FastAPI) -> asyncio.Task | None:
+    """Spawn the sweep that completes practices an older machine left open on a first proof."""
+    pool = getattr(app.state, "db_pool", None)
+    if not _first_proof_sweep_enabled() or pool is None:
+        logger.info("first-proof sweep not started (disabled or db_pool unavailable)")
+        return None
+    from backend.services.crm.delivery_proof_sweep import run_first_proof_sweep_scheduler
+
+    return asyncio.create_task(run_first_proof_sweep_scheduler(pool))
+
+
 def _lead_intents_purge_enabled() -> bool:
     """Kill switch for the lead-intent retention purge: `LEAD_INTENTS_PURGE_ENABLED`.
 
@@ -922,6 +938,7 @@ async def lifespan_light(app: FastAPI):
             app.state._wa_outbox_scheduler_tasks = []
             app.state._visa_oracle_sessions_purge_task = None
             app.state._lead_intents_purge_task = None
+            app.state._first_proof_sweep_task = None
         else:
             try:
                 from backend.app.modules.notifications.scheduler import init_scheduler
@@ -994,6 +1011,7 @@ async def lifespan_light(app: FastAPI):
             # even with the real spawn deleted).
             app.state._visa_oracle_sessions_purge_task = _spawn_visa_oracle_sessions_purge_task(app)
             app.state._lead_intents_purge_task = _spawn_lead_intents_purge_task(app)
+            app.state._first_proof_sweep_task = _spawn_first_proof_sweep_task(app)
 
             # Portal Champion bomb/penalty takeover producer (Round 2). A task, so
             # it never delays startup; singleton per tick via a Redis lock inside.
@@ -1060,6 +1078,14 @@ async def lifespan_light(app: FastAPI):
         purge_task.cancel()
         try:
             await purge_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    sweep_task = getattr(app.state, "_first_proof_sweep_task", None)
+    if sweep_task is not None:
+        sweep_task.cancel()
+        try:
+            await sweep_task
         except (asyncio.CancelledError, Exception):
             pass
 

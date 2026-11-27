@@ -65,16 +65,26 @@ async def name_outputs(
 
 @staff.post("/{practice_id}/delivery/slots/{key}/reuse")
 async def use_combined_file(
-    practice_id: PracticeId, key: SlotKey, request: ReuseFile, user: Staff, pool: Pool
+    practice_id: PracticeId,
+    key: SlotKey,
+    request: ReuseFile,
+    user: Staff,
+    pool: Pool,
+    tasks: BackgroundTasks,
 ) -> dict[str, Any]:
-    return await delivery.reuse(pool, practice_id, key, user, request.document_id)
+    return await delivery.reuse(pool, practice_id, key, user, request.document_id, tasks)
 
 
 @staff.post("/{practice_id}/delivery/slots/{key}/waive")
 async def waive_slot(
-    practice_id: PracticeId, key: SlotKey, request: Waiver, user: Staff, pool: Pool
+    practice_id: PracticeId,
+    key: SlotKey,
+    request: Waiver,
+    user: Staff,
+    pool: Pool,
+    tasks: BackgroundTasks,
 ) -> dict[str, Any]:
-    return await delivery.waive(pool, practice_id, key, user, request.reason)
+    return await delivery.waive(pool, practice_id, key, user, request.reason, tasks)
 
 
 @staff.post("/{practice_id}/delivery/slots/{key}")
