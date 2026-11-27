@@ -63,7 +63,9 @@ class StructuredFormatter(logging.Formatter):
             log_entry["context"] = record.context
 
         # Add exception info if present
-        if record.exc_info:
+        if hasattr(record, "_api_exception"):
+            log_entry["exception"] = {**record._api_exception, "traceback": record.exc_text}
+        elif record.exc_info:
             log_entry["exception"] = {
                 "type": record.exc_info[0].__name__ if record.exc_info[0] else None,
                 "message": str(record.exc_info[1]) if record.exc_info[1] else None,
@@ -116,7 +118,9 @@ class DevelopmentFormatter(logging.Formatter):
             message += f"\n    {color}context:{self.RESET} {context_str}"
 
         # Add exception info
-        if record.exc_info:
+        if record.exc_text:
+            message += f"\n{record.exc_text}"
+        elif record.exc_info:
             message += f"\n{self.formatException(record.exc_info)}"
 
         return message
@@ -152,6 +156,9 @@ def configure_logging() -> None:
     In production: JSON-formatted logs to stdout + rotating file
     In development: Colored, readable logs to stdout
     """
+    from backend.app.setup.log_redaction import install_api_log_redaction
+
+    install_api_log_redaction()
     is_production = settings.environment == "production"
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 

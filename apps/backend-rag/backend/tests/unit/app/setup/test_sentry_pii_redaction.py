@@ -523,8 +523,8 @@ def test_before_send_handles_scrub_exception(monkeypatch, capsys):
     assert "extra" not in result
     # Failure surfaced to stderr so fly logs catch it.
     captured = capsys.readouterr()
-    assert "scrubber exploded" in captured.err
-    assert "_before_send raised" in captured.err
+    assert "scrubber exploded" not in captured.err
+    assert "_before_send raised RuntimeError" in captured.err
 
 
 # --------------------------------------------------------------------------- #
@@ -569,6 +569,8 @@ FREE_TEXT_GUILTY: dict[str, tuple[str, str]] = {
         PII_SAMPLES["phone_jid"],
     ),
     "phone intl parenthesised": ("callback to +62 (812) 3456-7890 failed", "3456-7890"),
+    "phone national hyphenated": ("phone=202-555-0148", "202-555-0148"),
+    "phone national parenthesised": ("contact (202) 555-0147", "(202) 555-0147"),
     "phone local 08": (
         f"Empty text body from {PII_SAMPLES['phone_local']}",
         PII_SAMPLES["phone_local"],

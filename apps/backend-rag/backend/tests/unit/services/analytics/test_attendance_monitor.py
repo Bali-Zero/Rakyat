@@ -203,6 +203,16 @@ class TestGetMemberByEmail:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.fixture
+def api_recipient(monkeypatch: pytest.MonkeyPatch) -> str:
+    from backend.app.setup.log_redaction import install_api_log_redaction
+
+    # Exercise the API policy and restore the process-wide logging hook on teardown.
+    monkeypatch.setattr(logging.Handler, "handle", logging.Handler.handle)
+    install_api_log_redaction()
+    return "recipient@example.invalid"
+
+
 class TestPostEmail:
     @pytest.mark.asyncio
     async def test_post_email_success(self, monitor: AttendanceMonitor) -> None:
@@ -230,6 +240,7 @@ class TestPostEmail:
         self,
         monitor: AttendanceMonitor,
         caplog: pytest.LogCaptureFixture,
+        api_recipient: str,
     ) -> None:
         import httpx
 
@@ -250,16 +261,18 @@ class TestPostEmail:
             # Should not raise — the HTTP error must be swallowed and logged,
             # not propagated to the caller.
             with caplog.at_level(logging.ERROR):
-                await monitor._post_email(to="c@b.com", subject="Test", html_body="<p>x</p>")
+                await monitor._post_email(to=api_recipient, subject="Test", html_body="<p>x</p>")
 
-        assert "500" in caplog.text
-        assert "c@b.com" in caplog.text
+        assert mock_client.post.await_args.kwargs["json"]["to"] == api_recipient
+        assert "HTTP 500" in caplog.text and "Internal Server Error" in caplog.text
+        assert "[REDACTED]" in caplog.text and api_recipient not in caplog.text
 
     @pytest.mark.asyncio
     async def test_post_email_connection_error(
         self,
         monitor: AttendanceMonitor,
         caplog: pytest.LogCaptureFixture,
+        api_recipient: str,
     ) -> None:
         with patch("backend.services.analytics.attendance_monitor.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
@@ -271,10 +284,11 @@ class TestPostEmail:
             # Should not raise — the connection error must be swallowed and
             # logged as a warning, not propagated to the caller.
             with caplog.at_level(logging.WARNING):
-                await monitor._post_email(to="c@b.com", subject="Test", html_body="<p>x</p>")
+                await monitor._post_email(to=api_recipient, subject="Test", html_body="<p>x</p>")
 
         assert "Network down" in caplog.text
-        assert "c@b.com" in caplog.text
+        assert mock_client.post.await_args.kwargs["json"]["to"] == api_recipient
+        assert "[REDACTED]" in caplog.text and api_recipient not in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

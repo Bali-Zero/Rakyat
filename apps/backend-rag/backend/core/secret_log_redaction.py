@@ -99,6 +99,14 @@ _URL_EMITTING_LOGGERS = (
 _FILTER_MARKER = "_nuzantara_secret_log_redaction"
 
 
+def redact_url_secrets(text: str) -> str:
+    lowered = text.lower()
+    for needle, pattern, replacement in _REDACTIONS:
+        if needle in lowered:
+            text = pattern.sub(replacement, text)
+    return text
+
+
 class SecretRedactionFilter(logging.Filter):
     """Rewrite any record whose rendered message carries a known URL-borne secret.
 
@@ -115,14 +123,7 @@ class SecretRedactionFilter(logging.Filter):
         except Exception:
             return True
 
-        lowered = rendered.lower()
-        # cheap reject for the overwhelming majority: skip unless SOME pattern could match
-        if not any(needle in lowered for needle, _, _ in _REDACTIONS):
-            return True
-
-        redacted = rendered
-        for _, pattern, replacement in _REDACTIONS:
-            redacted = pattern.sub(replacement, redacted)
+        redacted = redact_url_secrets(rendered)
         if redacted != rendered:
             # Collapse to a literal message: the secret may sit in msg OR in args
             # (%-formatting), and rewriting only one leaves the other to be

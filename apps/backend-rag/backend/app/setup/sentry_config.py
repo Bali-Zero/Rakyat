@@ -36,6 +36,8 @@ import threading
 from typing import Any
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
+from backend.core.secret_log_redaction import redact_url_secrets
+
 PII_REDACTION_PLACEHOLDER = "[REDACTED]"
 logger = logging.getLogger("zantara.backend")
 _SENTRY_INIT_LOCK = threading.Lock()
@@ -239,6 +241,11 @@ _NPWP_RE = re.compile(r"\b\d{2}\.\d{3}\.\d{3}\.\d-\d{3}\.\d{3}\b")
 # catastrophic backtracking (the ReDoS shape cured in core/legal/constants.py).
 _PHONE_INTL_FMT_RE = re.compile(r"\+\d{1,3}[\s()-]{1,3}\d[\d\s()-]{5,16}\d")
 _PHONE_INTL_RUN_RE = re.compile(r"\+\d{11,15}\b")
+
+# A North American national number needs punctuation here so a bare counter survives.
+_PHONE_NANP_RE = re.compile(
+    r"(?<![\w-])(?:\([2-9]\d{2}\)[ \t]?|[2-9]\d{2}-)[2-9]\d{2}-\d{4}(?![\w-])"
+)
 
 # SHAPE-anchored: Indonesian mobile in local (`08…`) form, with or without the
 # separators people actually type ("0812 3456 7890", "0812-3456-7890"). The
@@ -466,11 +473,12 @@ def _redact_string(s: str) -> str:
     See the free-text block above for the two tiers and for what this still
     cannot reach (bare personal names, unlabelled passport numbers).
     """
-    s = _redact_addresses(s)
+    s = _redact_addresses(redact_url_secrets(s))
     s = _CLIENT_ID_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _NPWP_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _PHONE_INTL_FMT_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _PHONE_INTL_RUN_RE.sub(PII_REDACTION_PLACEHOLDER, s)
+    s = _PHONE_NANP_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _PHONE_LOCAL_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     s = _PHONE_ID_RE.sub(PII_REDACTION_PLACEHOLDER, s)
     # Keep the label, drop the value: "NIB 1234567890123" -> "NIB [REDACTED]".
@@ -651,7 +659,7 @@ def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] 
         import sys
 
         print(  # noqa: T201 — see comment above; logger is unsafe here
-            f"[sentry_config] _before_send raised {type(exc).__name__}: {exc}",
+            f"[sentry_config] _before_send raised {type(exc).__name__}",
             file=sys.stderr,
         )
         # `exception` is the one field this fallback keeps, and it is exactly
@@ -680,6 +688,21 @@ def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] 
         }
 
 
+def _before_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
+    # Drop a malformed breadcrumb before the SDK can retain it for a later event.
+    from datetime import datetime
+
+    try:
+        from backend.app.setup.log_redaction import scrub_log_value
+
+        cleaned = scrub_log_value(crumb)
+        if isinstance(crumb.get("timestamp"), datetime):
+            cleaned["timestamp"] = crumb["timestamp"]
+        return _scrub(_scrub_url_fields(cleaned))
+    except Exception:
+        return None
+
+
 def _init_sentry_blocking(dsn: str) -> None:
     """Run the actual SDK import/init outside the API startup critical path."""
     import sentry_sdk
@@ -700,6 +723,7 @@ def _init_sentry_blocking(dsn: str) -> None:
         environment=env,
         release=os.getenv("SENTRY_RELEASE", "nuzantara-backend@1.0.0"),
         before_send=_before_send,
+        before_breadcrumb=_before_breadcrumb,
         # The SDK will NOT call `before_send` for transactions — it guards that
         # hook with `type != "transaction"` and dispatches transactions here
         # instead. Registering only the first is how a transaction filter ends
