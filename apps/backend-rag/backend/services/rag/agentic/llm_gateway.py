@@ -88,29 +88,29 @@ class PromptTooLargeError(ValueError):
     failure: it must never count against a model's circuit breaker."""
 
 
-# The ReAct loops also read a call out of free text (``ACTION: tool(...)`` and a
-# ``{"tool_name": ...}`` object). Only tools offered for THIS call may survive in
-# the text; anything else is defused before the loops see it.
-_ACTION_TEXT_RE = re.compile(r"ACTION:(\s*)(\w+)\(")
-_TOOL_NAME_JSON_RE = re.compile(r'"tool_name"(\s*:\s*)"([^"]*)"')
+# The ReAct loops also read a call out of free text (``ACTION: tool(...)``, a
+# ``{"tool_name": ...}`` object, in any fencing or escaping the parsers accept).
+# Spelling-based filters on that text were bypassed (JSON escapes, nested fences),
+# so the check asks the SAME parser the loops use what it would execute.
 
 
 def _defuse_unoffered_calls(text: str, allowed_tool_names: set[str]) -> str:
-    """Neutralise text-form tool calls to tools outside ``allowed_tool_names``."""
+    """Return ``text``, or "" when the loops' own text parser would execute a tool
+    outside ``allowed_tool_names`` from it.
+
+    The probe response carries no structured parts, so only the text modes
+    (regex, regex_degraded) are exercised: exactly what the loops fall back to.
+    """
     if not text:
         return text
+    from backend.services.rag.agentic._reasoning_loop_helpers import (
+        parse_tool_calls_from_response,
+    )
 
-    def _action(match: re.Match[str]) -> str:
-        if match.group(2) in allowed_tool_names:
-            return match.group(0)
-        return f"[blocked action]{match.group(1)}{match.group(2)}("
-
-    def _json_name(match: re.Match[str]) -> str:
-        if match.group(2) in allowed_tool_names:
-            return match.group(0)
-        return f'"blocked_tool_name"{match.group(1)}"{match.group(2)}"'
-
-    return _TOOL_NAME_JSON_RE.sub(_json_name, _ACTION_TEXT_RE.sub(_action, text))
+    tool_calls, _mode = parse_tool_calls_from_response(_plain_response(text), text)
+    if any(getattr(call, "tool_name", None) not in allowed_tool_names for call in tool_calls):
+        return ""
+    return text
 
 
 # Structured ReAct turn. ``arguments_json`` is a JSON object serialised as a
