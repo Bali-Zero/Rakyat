@@ -23,7 +23,7 @@ async def test_open_actions_returns_formatted_list() -> None:
             "id": 1,
             "title": "KITAS Extension",
             "type": "kitas_ext",
-            "pending_from_client": "passport_scan",
+            "pending_from_client": ["passport_scan"],
             "status": "waiting_documents",
             "updated_at": datetime.now(timezone.utc),
         },
@@ -31,7 +31,7 @@ async def test_open_actions_returns_formatted_list() -> None:
     actions = await _fetch_open_actions(mock_conn, 42)
     assert len(actions) == 1
     assert actions[0]["id"] == 1
-    assert actions[0]["pending_from_client"] == "passport_scan"
+    assert actions[0]["pending_from_client"] == ["passport_scan"]
 
 
 @pytest.mark.asyncio
