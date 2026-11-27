@@ -1070,6 +1070,22 @@ async def _resolve_upload_company(
     return int(row["id"])
 
 
+_DELIVERY_MARKER = re.compile(r"^case-delivery:[0-9]+:[0-9]+:[^:]+:([^:]*)(?::[0-9]+)?$")
+
+
+def _refuse_forged_delivery_marker(key: str | None, file_content: bytes) -> None:
+    """A `case-delivery:` key names the SHA-256 of its own file; the server checks it.
+
+    The delivery card trusts that digest to say which bytes a slot holds, so no writer may store the
+    reserved prefix over other content. Nothing is written when this raises.
+    """
+    if not key or not key.startswith("case-delivery:"):
+        return
+    match = _DELIVERY_MARKER.match(key)
+    if not match or match.group(1) != hashlib.sha256(file_content).hexdigest():
+        raise HTTPException(status_code=409, detail="Delivery marker does not match the file")
+
+
 async def _active_duplicate_document_id(
     conn: Any,
     client_id: int,
@@ -1148,6 +1164,7 @@ async def upload_document_base64(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid base64 file content")
 
+        _refuse_forged_delivery_marker(data.intake_idempotency_key, file_content)
         # Compute content hash for dedup
         content_hash = hashlib.md5(file_content).hexdigest()
 
@@ -1865,6 +1882,7 @@ async def _upload_company_document_impl(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 file content")
 
+    _refuse_forged_delivery_marker(data.intake_idempotency_key, file_content)
     if data.document_category:
         category = data.document_category
     else:
