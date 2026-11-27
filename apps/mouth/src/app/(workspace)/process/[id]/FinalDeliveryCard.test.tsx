@@ -691,6 +691,23 @@ describe("Final delivery", () => {
     });
   });
 
+  it("offers no upload on a filled slot of a completed practice", async () => {
+    const delivered = {
+      ...initial,
+      status: "completed",
+      delivery_recorded: true,
+      bonus_event: "electronic_visa_issued",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+        slot("itk", "ITK", { document_id: 72, file_name: "ITK.pdf" }),
+      ],
+    };
+    requests.get.mockResolvedValue(delivered);
+    setup();
+    expect(await screen.findByText("ITK.pdf")).toBeVisible();
+    expect(screen.queryByLabelText(/Upload|Replace|Restore/)).toBeNull();
+  });
+
   it("offers Upload, not Restore, on a delivered practice and says the document was added", async () => {
     const delivered = {
       ...initial,

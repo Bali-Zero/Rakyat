@@ -340,15 +340,10 @@ async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_co
         assert view["slots"][1]["can_repair"] and not view["slots"][0]["can_repair"]
         assert view["visa_followup"]["fulfilled_at"] is None
     tasks = BackgroundTasks()
-    async with pool.acquire() as conn:
-        audited = await conn.fetchval("SELECT count(*) FROM activity_log WHERE entity_id=7")
-    # The very file already in the slot: the current view, nothing written (A3a).
-    replay = await service.upload(
-        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), tasks, repair=True
-    )
-    assert replay["slots"][0]["document_id"] == view["slots"][0]["document_id"]
-    async with pool.acquire() as conn:
-        assert await conn.fetchval("SELECT count(*) FROM activity_log WHERE entity_id=7") == audited
+    with pytest.raises(HTTPException):
+        await service.upload(
+            pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), tasks, repair=True
+        )
     with pytest.raises(HTTPException):
         await service.upload(
             pool,
@@ -372,11 +367,10 @@ async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_co
         pool, 7, "document_2", STAFF, final_file("restored-itk"), tasks, repair=True
     )
     assert repeated["slots"][1]["document_id"] == repaired["slots"][1]["document_id"]
-    # A practice Final delivery completed takes a corrected file: it replaces the live one.
-    corrected = await service.upload(
-        pool, 7, "document_2", STAFF, final_file("different-live-itk"), tasks, repair=True
-    )
-    assert corrected["slots"][1]["document_id"] != repaired["slots"][1]["document_id"]
+    with pytest.raises(HTTPException):
+        await service.upload(
+            pool, 7, "document_2", STAFF, final_file("different-live-itk"), tasks, repair=True
+        )
     async with pool.acquire() as conn:
         assert original == await conn.fetchrow(
             "SELECT delivered_at,delivered_by FROM practice_delivery_completions WHERE practice_id=7"
@@ -388,7 +382,7 @@ async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_co
         assert await conn.fetchval("SELECT count(*) FROM timeline_events WHERE practice_id=7") == 1
         assert [d["file_name"] for d in (await service.portal_files(conn, 7, 31))["documents"]] == [
             "electronic-visa.pdf",
-            "different-live-itk.pdf",
+            "restored-itk.pdf",
         ]
 
 

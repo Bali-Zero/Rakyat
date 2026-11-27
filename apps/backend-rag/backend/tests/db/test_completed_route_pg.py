@@ -8,7 +8,6 @@ every case also holds for a practice a later release completes with documents st
 import asyncio
 import base64
 import hashlib
-import json
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -121,79 +120,6 @@ async def test_upload_overtaken_by_a_completion_attaches_on_the_completed_route(
             == 1
         )
         assert result["visa_followup"]["fulfilled_at"]  # the permit clock still runs
-
-
-@pytest.mark.asyncio
-async def test_overtaken_replacement_replaces_the_seen_document(pool, monkeypatch):  # noqa: F811
-    await service.upload(
-        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
-    )
-    first = await service.upload(pool, 7, ITK, STAFF, final_file("wrong-itk"), BackgroundTasks())
-    seen = first["slots"][1]["document_id"]
-    reached, release, _ = gate_after_stage(monkeypatch)
-    upload = asyncio.create_task(
-        service.upload(pool, 7, ITK, STAFF, final_file("right-itk"), BackgroundTasks())
-    )
-    await reached.wait()
-    await service.complete(pool, 7, STAFF, BackgroundTasks())  # the practice is completed meanwhile
-    release.set()
-    result = await asyncio.wait_for(upload, 15)
-    assert result["status"] == "completed" and result["slots"][1]["document_id"] != seen
-    async with pool.acquire() as conn:
-        assert (await slot_of(conn))["file_name"] == "right-itk.pdf"
-        assert (
-            await conn.fetchval("SELECT client_visible FROM documents WHERE id=$1", seen) is False
-        )
-
-
-@pytest.mark.asyncio
-async def test_replace_wrong_itk_retires_old_publishes_new(pool):  # noqa: F811
-    await service.upload(
-        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
-    )
-    await service.upload(pool, 7, ITK, STAFF, final_file("wrong-itk"), BackgroundTasks())
-    await service.complete(pool, 7, STAFF, BackgroundTasks())
-    async with pool.acquire() as conn:
-        old = (await slot_of(conn))["document_id"]
-    tasks = BackgroundTasks()
-    result = await service.upload(pool, 7, ITK, STAFF, final_file("right-itk"), tasks)
-    assert result["status"] == "completed" and not tasks.tasks  # no second completion message
-    async with pool.acquire() as conn:
-        assert (await slot_of(conn))["file_name"] == "right-itk.pdf"
-        assert await conn.fetchval("SELECT client_visible FROM documents WHERE id=$1", old) is False
-        names = [d["file_name"] for d in (await service.portal_files(conn, 7, 31))["documents"]]
-    assert names == ["electronic-visa.pdf", "right-itk.pdf"]
-
-
-@pytest.mark.asyncio
-async def test_stale_retry_after_a_replacement_is_409(pool, monkeypatch):  # noqa: F811
-    await service.upload(
-        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
-    )
-    await service.upload(pool, 7, ITK, STAFF, final_file("first-itk"), BackgroundTasks())
-    await service.complete(pool, 7, STAFF, BackgroundTasks())
-    newer = await service.upload(pool, 7, ITK, STAFF, final_file("newer-itk"), BackgroundTasks())
-
-    async def never(*args, **kwargs):
-        raise AssertionError("a stale retry must be refused before anything is staged")
-
-    monkeypatch.setattr(service, "stage", never)
-    with pytest.raises(HTTPException) as stale:
-        await service.upload(pool, 7, ITK, STAFF, final_file("first-itk"), BackgroundTasks())
-    assert stale.value.status_code == 409 and "replaced by a newer" in stale.value.detail
-    async with pool.acquire() as conn:
-        assert (await slot_of(conn))["document_id"] == newer["slots"][1]["document_id"]
-
-
-@pytest.mark.asyncio
-async def test_stale_retry_is_refused_on_an_open_practice_too(pool):  # noqa: F811
-    await service.upload(
-        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
-    )
-    await service.upload(pool, 7, ITK, STAFF, final_file("first-itk"), BackgroundTasks())
-    await service.upload(pool, 7, ITK, STAFF, final_file("newer-itk"), BackgroundTasks())
-    with pytest.raises(HTTPException, match="replaced by a newer"):
-        await service.upload(pool, 7, ITK, STAFF, final_file("first-itk"), BackgroundTasks())
 
 
 @pytest.mark.asyncio
@@ -320,134 +246,78 @@ async def test_a_completed_practice_without_a_delivery_record_keeps_its_old_rule
         assert await receipts(conn) == []
 
 
-# ── P7a: an exact replay vouches only for the file its acceptance recorded ─────────────────────────
-
-
-async def acceptance(conn, key=ITK):
-    return await conn.fetchrow(
-        """SELECT changes FROM activity_log WHERE entity_id=7 AND changes ? 'file_id'
-           AND changes->>'slot'=$1 ORDER BY performed_at DESC LIMIT 1""",
-        key,
-    )
-
-
 @pytest.mark.asyncio
-async def test_the_acceptance_row_records_slot_document_and_file_id(pool):  # noqa: F811
+async def test_a_delivered_practice_takes_an_upload_into_an_empty_slot_and_never_earns(pool):  # noqa: F811
     await complete_like_the_first_proof(pool)
+    async with pool.acquire() as conn:
+        before = await receipts(conn)
     view = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    doc = view["slots"][1]["document_id"]
+    assert view["status"] == "completed" and view["slots"][1]["document_id"] is not None
     async with pool.acquire() as conn:
-        changes = json.loads((await acceptance(conn))["changes"])
-        assert changes == {
-            "slot": ITK,
-            "document_id": doc,
-            "file_id": await conn.fetchval("SELECT file_id FROM documents WHERE id=$1", doc),
-        }
+        assert (await slot_of(conn))["client_visible"] is True  # published at once
+        assert await receipts(conn) == before
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("completed", [True, False])
-async def test_a_moved_file_id_then_replay_lands_the_file_anew_and_retires_the_old_document(  # noqa: F811
-    pool, completed
-):
-    if completed:
-        await complete_like_the_first_proof(pool)
-    else:
-        await service.upload(
-            pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
-        )
-    first = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    old = first["slots"][1]["document_id"]
-    async with pool.acquire() as conn:
-        receipts_before = await receipts(conn)
-        # The documents PATCH: the same document now points at another file (B).
-        await conn.execute(
-            "UPDATE documents SET file_id='drive-file-b', updated_at=NOW() WHERE id=$1", old
-        )
-    again = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    new = again["slots"][1]["document_id"]
-    assert new != old  # never reported as already there
-    async with pool.acquire() as conn:
-        assert (await slot_of(conn))["document_id"] == new
-        assert await conn.fetchval("SELECT client_visible FROM documents WHERE id=$1", old) is False
-        assert (
-            await conn.fetchval("SELECT client_visible FROM documents WHERE id=$1", new)
-            is completed
-        )
-        if completed:
-            ids = [d["id"] for d in (await service.portal_files(conn, 7, 31))["documents"]]
-            assert ids[-1] == new and old not in ids
-        assert await receipts(conn) == receipts_before  # a later document never earns twice
-        changes = json.loads((await acceptance(conn))["changes"])
-        assert changes["document_id"] == new
-    # And now the new file is the recorded one: an exact replay is the view again.
-    replay = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    assert replay["slots"][1]["document_id"] == new
-
-
-@pytest.mark.asyncio
-async def test_an_acceptance_row_without_a_file_id_never_vouches(pool):  # noqa: F811
+async def test_a_filled_slot_of_a_completed_practice_is_409_before_anything_is_staged(pool):  # noqa: F811
     await complete_like_the_first_proof(pool)
     first = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    old = first["slots"][1]["document_id"]
+    live = first["slots"][1]["document_id"]
+    with pytest.raises(HTTPException) as refused:
+        await service.upload(pool, 7, ITK, STAFF, final_file("another-itk"), BackgroundTasks())
+    assert refused.value.status_code == 409
     async with pool.acquire() as conn:
-        # What a row written before this release looks like: no changes at all.
-        await conn.execute("UPDATE activity_log SET changes=NULL WHERE entity_id=7")
-    again = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    assert again["slots"][1]["document_id"] != old
-    async with pool.acquire() as conn:
-        assert await conn.fetchval("SELECT client_visible FROM documents WHERE id=$1", old) is False
+        assert (await slot_of(conn))["document_id"] == live  # the slot is untouched
+        assert (
+            await unattached_drafts(conn) == 0
+        )  # refused at the snapshot, as on main: nothing staged
+        ids = [d["id"] for d in (await service.portal_files(conn, 7, 31))["documents"]]
+    assert live in ids and len(ids) == 2  # the client sees the e-visa and the live ITK only
 
 
 @pytest.mark.asyncio
-async def test_a_pointer_moved_between_snapshot_and_lock_is_refused_not_reported(pool, monkeypatch):  # noqa: F811
+async def test_a_slot_filled_and_completed_under_an_upload_leaves_its_draft_private(
+    pool, monkeypatch
+):  # noqa: F811
     await service.upload(
         pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), BackgroundTasks()
     )
-    first = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    reached, release, _ = gate_after_stage(monkeypatch)
-    replay = asyncio.create_task(
-        service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
+    reached, release, restore = gate_after_stage(monkeypatch)
+    late = asyncio.create_task(
+        service.upload(pool, 7, ITK, STAFF, final_file("late-itk"), BackgroundTasks())
     )
-    await reached.wait()  # the snapshot saw an unchanged file
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE documents SET file_id='drive-file-b' WHERE id=$1",
-            first["slots"][1]["document_id"],
-        )
+    await reached.wait()  # the draft is staged; the transaction has not started
+    restore()
+    winner = await service.upload(pool, 7, ITK, STAFF, final_file("winner-itk"), BackgroundTasks())
+    await service.complete(pool, 7, STAFF, BackgroundTasks())
     release.set()
-    with pytest.raises(HTTPException, match="stored file changed"):
-        await asyncio.wait_for(replay, 15)
-
-
-@pytest.mark.asyncio
-async def test_the_latest_acceptance_must_name_this_document_too(pool):  # noqa: F811
-    await complete_like_the_first_proof(pool)
-    first = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    old = first["slots"][1]["document_id"]
+    with pytest.raises(HTTPException) as refused:
+        await asyncio.wait_for(late, 15)
+    assert refused.value.status_code == 409
     async with pool.acquire() as conn:
-        file_id = await conn.fetchval("SELECT file_id FROM documents WHERE id=$1", old)
-        # A newer acceptance of the slot names another document (an older machine, a restore).
-        await conn.execute(
-            """INSERT INTO activity_log(entity_type,entity_id,action,performed_by,description,changes)
-               VALUES('practice',7,'updated','seed','Final document uploaded: document_2',$1::text::jsonb)""",
-            json.dumps({"slot": ITK, "document_id": old + 1000, "file_id": file_id}),
+        assert (await slot_of(conn))["document_id"] == winner["slots"][1]["document_id"]
+        # The staged draft is private and recoverable (a retry of the same bytes adopts it), as on main.
+        assert await unattached_drafts(conn) == 1
+        assert await conn.fetchval(
+            "SELECT client_visible IS NOT TRUE FROM documents WHERE file_name='late-itk.pdf'"
         )
-    again = await service.upload(pool, 7, ITK, STAFF, final_file("itk"), BackgroundTasks())
-    assert again["slots"][1]["document_id"] != old
 
 
 @pytest.mark.asyncio
-async def test_a_combined_permit_link_records_its_acceptance_too(pool):  # noqa: F811
-    first = await service.upload(
-        pool, 8, "document_1", STAFF, final_file("combined-permit"), BackgroundTasks()
-    )
+async def test_retry_of_a_first_proof_after_a_lost_response_keeps_one_receipt_and_no_lost_file(
+    pool,
+):  # noqa: F811
+    visa = final_file("electronic-visa")
+    first = await service.upload(pool, 7, "electronic_visa", STAFF, visa, BackgroundTasks())
     doc = first["slots"][0]["document_id"]
-    await service.reuse(pool, 8, "document_2", STAFF, doc)
+    try:  # the retry may answer today's 409; both answers are allowed
+        retry = await service.upload(pool, 7, "electronic_visa", STAFF, visa, BackgroundTasks())
+        assert retry["slots"][0]["document_id"] == doc
+    except HTTPException as refused:
+        assert refused.status_code == 409
     async with pool.acquire() as conn:
-        changes = await conn.fetchval(
-            """SELECT changes FROM activity_log WHERE entity_id=8
-               AND description='Combined permit confirmed for slot: document_2'"""
-        )
-        assert json.loads(changes)["slot"] == "document_2"
-        assert json.loads(changes)["document_id"] == doc
+        assert len(await receipts(conn)) == 1  # one receipt
+        assert await conn.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id=7") == 1
+        ids = [d["id"] for d in (await service.portal_files(conn, 7, 31))["documents"]]
+        assert ids == [doc]  # no visible duplicate for the client
+        assert (await slot_of(conn, "electronic_visa"))["document_id"] == doc  # no lost file

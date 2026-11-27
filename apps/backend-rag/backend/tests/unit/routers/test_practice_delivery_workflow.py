@@ -150,7 +150,6 @@ async def test_same_issuance_file_retry_does_not_requalify_bonus(db, writes, mon
         "staged_file",
         AsyncMock(return_value={"document_id": 9, "company_document_id": None}),
     )
-    monkeypatch.setattr(service, "file_unchanged", AsyncMock(return_value=True))
     await service.upload(
         pool, 7, "electronic_visa", STAFF, request(date(2026, 1, 15)), BackgroundTasks()
     )
@@ -645,29 +644,6 @@ async def test_completion_wording_failure_is_neutral_never_full(db, monkeypatch)
 
 
 # ── content identity, the earning instant and the visa clock of a delivered practice ──────────────
-
-
-@pytest.mark.parametrize(
-    ("key", "event", "clock"),
-    [
-        ("electronic_visa", None, False),  # no issuance receipt: nothing to anchor, never a 409
-        ("electronic_visa", "electronic_visa_issued", True),
-        ("itk", None, True),  # the permit slot only refreshes the follow-up
-        ("itk", "service_delivered", True),
-    ],
-)
-@pytest.mark.asyncio
-async def test_no_visa_clock_for_evisa_without_receipt(db, writes, key, event, clock):
-    view = {"bonus_trigger": "electronic_visa_issued", "bonus_event": event}
-    await service.delivered_visa_clock(db[1], PRACTICE, view, key)
-    assert writes["record_visa_milestone"].await_count == int(clock)
-
-
-@pytest.mark.asyncio
-async def test_a_delivered_service_without_the_visa_trigger_never_starts_a_clock(db, writes):
-    view = {"bonus_trigger": "service_delivered", "bonus_event": None}
-    await service.delivered_visa_clock(db[1], PRACTICE, view, "electronic_visa")
-    writes["record_visa_milestone"].assert_not_awaited()
 
 
 T1, T2, T3 = (datetime(2026, 11, d, 4, tzinfo=UTC) for d in (20, 25, 29))
