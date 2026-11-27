@@ -21,6 +21,9 @@ WHERE e.service_code = 'other_custom' AND e.amount_idr IS NULL AND e.ledger_id I
   AND r.effective_from <= (e.earned_at AT TIME ZONE 'Asia/Makassar')::date;
 
 -- === ROLLBACK ===
+-- Once 1165/1390 read 0 this refuses: roll forward instead. Rolling back only the image while 390
+-- stays applied makes the old writer try to book the 0 and hit the CHECK above (complete() of an
+-- other_custom practice fails in an open award month); set the other_custom rate is_active = FALSE first.
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM hr_delivery_bonus_events WHERE amount_idr = 0) THEN
         RAISE EXCEPTION 'Preserve no-bonus receipts before rolling back this migration';

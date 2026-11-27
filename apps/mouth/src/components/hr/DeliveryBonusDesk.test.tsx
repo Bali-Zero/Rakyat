@@ -1,5 +1,11 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DeliveryBonusDesk } from "./DeliveryBonusDesk";
 const mocks = vi.hoisted(() => ({
@@ -373,6 +379,15 @@ describe("DeliveryBonusDesk", () => {
     ).toBeVisible();
     fireEvent.click(screen.getByText("View 1 earlier delivery"));
     expect(screen.getByText("No bonus for this service")).toBeVisible();
+    for (const name of [/Custom/, /Extension B1 - VOA/]) {
+      const entry = screen
+        .getAllByRole("link", { name })
+        .map((link) => link.parentElement?.parentElement)
+        .find((node) => node?.textContent?.includes("No bonus"));
+      expect(entry).toBeTruthy();
+      expect(within(entry as HTMLElement).queryByText(/Rp/)).toBeNull();
+      expect(within(entry as HTMLElement).queryByText(/payroll/)).toBeNull();
+    }
   });
   it("says a next case of a no-bonus service earns nothing", async () => {
     const sample = desk();

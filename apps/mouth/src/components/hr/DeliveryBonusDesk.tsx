@@ -721,6 +721,8 @@ function RecentBonus({ row }: { row: Earned }) {
       : row.event_kind === "kitas_imk_uploaded"
         ? "Renewed IMK uploaded"
         : "Delivered";
+  // A receipt that carries no bonus or was forfeited never reaches a payroll.
+  const noPayroll = row.status === "no_bonus" || row.status === "forfeited";
   return (
     <div className={styles.entry}>
       <time className={styles.dateStamp} dateTime={row.earned_at}>
@@ -733,13 +735,23 @@ function RecentBonus({ row }: { row: Earned }) {
           <ArrowUpRight size={13} aria-hidden />
         </Link>
         <p className="text-xs leading-relaxed text-[var(--bz-text-2)]">
-          {milestone} ·{" "}
-          {baliDate(row.awarded_at, { month: "short", year: "numeric" })}{" "}
-          payroll
+          {milestone}
+          {!noPayroll && (
+            <>
+              {" "}
+              · {baliDate(row.awarded_at, {
+                month: "short",
+                year: "numeric",
+              })}{" "}
+              payroll
+            </>
+          )}
         </p>
       </div>
       <div className={styles.entryMoney}>
-        {row.amount_idr !== null && <strong>{money(row.amount_idr)}</strong>}
+        {row.amount_idr !== null && !noPayroll && (
+          <strong>{money(row.amount_idr)}</strong>
+        )}
         <span className="text-xs text-[var(--bz-text-2)]">
           {statusNames[row.status] ?? row.status}
         </span>

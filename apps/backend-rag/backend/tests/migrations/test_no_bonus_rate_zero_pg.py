@@ -61,6 +61,10 @@ async def test_a_custom_service_is_no_bonus_and_never_reaches_payroll_or_review(
         await resolve_delivery_bonus(db, pid, 50000, "hr-reviewer")
     assert await _ledger(db, pid) == 0
     assert pid not in await _reviews(db)
+    # Keep the receipt inside the desk's current month whatever today's day-28 roll does.
+    await db.execute(
+        "UPDATE hr_delivery_bonus_events SET awarded_at=now() WHERE practice_id=$1", pid
+    )
     desk = await delivery_desk(db, "tm-1")
     assert {r["practice_id"]: r["status"] for r in desk["recent"]}[pid] == "no_bonus"
     assert desk["totals"]["awaiting_rate"] == 0 and desk["totals"]["payroll_locked"] == 0
@@ -117,7 +121,9 @@ async def test_390_turns_unbooked_custom_receipts_into_no_bonus_and_spares_the_r
         """INSERT INTO hr_bonus_rates(practice_type_code, is_active, effective_from, amount_idr)
            VALUES ('other_custom', true, '2020-01-01', 50000)"""
     )
-    november, october, resolved, ineligible, other = [await _practice(db) for _ in range(5)]
+    november, october, resolved, ineligible, other, first_wita, last_wita, priced = [
+        await _practice(db) for _ in range(8)
+    ]
     await db.execute(
         """INSERT INTO hr_delivery_bonus_events(practice_id, employee_id, service_code, event_kind,
                earned_at, awarded_at, resolved_by, payroll_ineligible)
@@ -126,16 +132,26 @@ async def test_390_turns_unbooked_custom_receipts_into_no_bonus_and_spares_the_r
                         ($2, 1, 'other_custom', timestamptz '2026-10-20 08:00+00', NULL),
                         ($3, 1, 'other_custom', timestamptz '2026-11-25 08:00+00', 'hr-reviewer'),
                         ($4, NULL, 'other_custom', timestamptz '2026-11-25 08:00+00', NULL),
-                        ($5, 1, 'visa_demo', timestamptz '2026-11-25 08:00+00', NULL)
+                        ($5, 1, 'visa_demo', timestamptz '2026-11-25 08:00+00', NULL),
+                        ($6, 1, 'other_custom', timestamptz '2026-10-31 16:30+00', NULL),
+                        ($7, 1, 'other_custom', timestamptz '2026-10-31 15:59+00', NULL),
+                        ($8, 1, 'other_custom', timestamptz '2026-11-25 08:00+00', NULL)
                 ) x(p, e, code, at, r)""",
         november,
         october,
         resolved,
         ineligible,
         other,
+        first_wita,
+        last_wita,
+        priced,
     )
     await db.execute(
         "UPDATE hr_delivery_bonus_events SET amount_idr=7 WHERE practice_id=$1", resolved
+    )
+    # A receipt priced earlier but not booked keeps its amount.
+    await db.execute(
+        "UPDATE hr_delivery_bonus_events SET amount_idr=50000 WHERE practice_id=$1", priced
     )
     await db.execute(FORWARD)
     rate = await db.fetchrow(
@@ -155,6 +171,9 @@ async def test_390_turns_unbooked_custom_receipts_into_no_bonus_and_spares_the_r
         resolved: (7, None),
         ineligible: (None, None),
         other: (None, None),
+        first_wita: (0, rate["id"]),  # 2026-11-01 00:30 in Bali
+        last_wita: (None, None),  # 2026-10-31 23:59 in Bali
+        priced: (50000, None),
     }
     assert (await get_delivery_bonus(db, november))["status"] == "no_bonus"
     assert await db.fetchval("SELECT count(*) FROM hr_bonus_ledger WHERE practice_id <> 1") == 0
@@ -175,4 +194,5 @@ async def test_the_rollback_keeps_no_bonus_receipts_and_then_removes_the_rule(db
     )
     assert not await db.fetchval(
         "SELECT count(*) FROM pg_constraint WHERE conname='hr_delivery_bonus_events_booked_positive'"
+        " AND conrelid='hr_delivery_bonus_events'::regclass"
     )
