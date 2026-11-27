@@ -1303,7 +1303,7 @@ class CRMTool(BaseTool):
             "ALWAYS use this tool FIRST when the user asks:\n"
             "- 'How many clients?' → use query_type='client_stats'\n"
             "- 'Find client X' → use query_type='search_clients'\n"
-            "- 'Expiring visas/KITAS' → use query_type='expiring_documents'\n"
+            "- 'Expiring passports/visas/KITAS/documents' (within days_ahead days) → use query_type='expiring_documents'\n"
             "- 'Breakdown by service' → use query_type='practice_stats'\n"
             "- 'Recent/new clients' → use query_type='recent_clients'\n\n"
             "This is the ONLY tool that can give real client counts and practice data. "
@@ -1433,31 +1433,33 @@ class CRMTool(BaseTool):
                     return json.dumps([dict(r) for r in rows], default=str)
 
                 elif query_type == "expiring_documents":
+                    # The expiry dates of record, as the desk's expiry alerts read them:
+                    # the passports of clients and family members, the visas of family
+                    # members and the documents' own expiry dates. A row counts when it
+                    # expires after today and within days_ahead days, soonest first.
                     params = []
+                    params.append(days_ahead)
                     if scope.desk:
-                        # The desk holds a practice by its own assignee; the row carries a
-                        # client's name, so a deleted client is left out.
+                        # The desk's expiry alerts hold a row by its client's assignee,
+                        # under the practices list rule; a deleted client is left out.
                         inside = "c.deleted_at IS NULL"
                         if scope.practice_owners is not None:
                             params.append(scope.practice_owners)
-                            inside += f" AND p.assigned_to = ANY(${len(params)}::text[])"
+                            inside += f" AND v.assigned_to = ANY(${len(params)}::text[])"
                     else:
                         inside = _crm_client_filter(scope, params, "c")
                     params.append(limit)
                     rows = await conn.fetch(
                         f"""
-                        SELECT c.full_name, c.email, c.nationality,
-                               p.practice_type_id, p.status, p.notes,
-                               p.updated_at
-                        FROM practices p
-                        JOIN clients c ON c.id = p.client_id
-                        WHERE p.status IN ('on_process', 'waiting_documents', 'sending_invoice')
-                          AND p.practice_type_id IN (
-                              SELECT id FROM practice_types
-                              WHERE name ILIKE '%kitas%' OR name ILIKE '%visa%' OR name ILIKE '%kitap%'
-                          )
+                        SELECT v.client_id, v.client_name, v.entity_type, v.entity_name,
+                               v.document_type, v.expiry_date, v.days_until_expiry
+                        FROM client_expiry_alerts_view v
+                        JOIN clients c ON c.id = v.client_id
+                        WHERE v.expiry_date > CURRENT_DATE
+                          AND v.expiry_date <= CURRENT_DATE + make_interval(days => $1::int)
                           AND {inside}
-                        ORDER BY p.updated_at DESC
+                        ORDER BY v.expiry_date, v.client_id, v.entity_type, v.entity_id,
+                                 v.document_type
                         LIMIT ${len(params)}
                     """,
                         *params,

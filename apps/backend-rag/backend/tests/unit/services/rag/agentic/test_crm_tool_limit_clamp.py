@@ -174,18 +174,21 @@ class TestCRMToolLimitClampInnocence:
 
 # ---------------------------------------------------------------------------
 # days_ahead — same clamp class, exercised via the public execute() surface.
-# The `expiring_documents` branch does not currently thread `days_ahead`
-# into its SQL (pre-existing, out of scope to change here — see PR body),
-# so this asserts the clamp never raises / never crashes the call for any
-# input shape rather than a SQL-bound value.
+# The `expiring_documents` branch binds `days_ahead` as the first SQL
+# parameter (the window), so the clamped value is what reaches the driver.
 # ---------------------------------------------------------------------------
 
 
 class TestCRMToolDaysAheadClamp:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("days_ahead", [10_000, -30, 0, "garbage", None, [1, 2]])
-    async def test_expiring_documents_never_crashes_on_any_days_ahead_shape(self, days_ahead):
-        pool, _conn = _make_pool(fetch_return=[])
+    @pytest.mark.parametrize(
+        ("days_ahead", "bound"),
+        [(10_000, 365), (-30, 1), (0, 1), (45, 45), ("garbage", 30), (None, 30), ([1, 2], 30)],
+    )
+    async def test_expiring_documents_binds_a_clamped_window_for_any_days_ahead_shape(
+        self, days_ahead, bound
+    ):
+        pool, conn = _make_pool(fetch_return=[])
         tool = CRMTool(db_pool=pool)
 
         result = await tool.execute(
@@ -194,6 +197,7 @@ class TestCRMToolDaysAheadClamp:
 
         parsed = json.loads(result)
         assert "error" not in parsed
+        assert conn.fetch.call_args.args[1] == bound
 
 
 # ---------------------------------------------------------------------------
