@@ -7,6 +7,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from backend.app.routers.crm_practice_delivery import DeliveryFile
 from backend.services.crm import practice_delivery as service
+from backend.services.crm.delivery_progress import DeliveryProgress
 
 STAFF = {"email": "consultant@example.test", "role": "consultant"}
 PRACTICE = {
@@ -604,3 +605,28 @@ async def test_replaced_company_identity_comes_from_old_slot_and_respects_other_
     assert params == [7, 19, 93, 81]
     assert "cd.id=$3 AND cd.company_id=$4" in sql and "cd.google_drive_file_id=d.file_id" in sql
     assert "s.company_document_id=cd.id AND s.company_id=cd.company_id" in sql
+
+
+# ── completion timeline text and the wording helper ─────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "wording"),
+    [
+        (DeliveryProgress(True, True, False), "partial"),
+        (DeliveryProgress(False, True, False), "partial"),
+        (DeliveryProgress(False, False, False), "neutral"),
+        (DeliveryProgress(False, True, True), "full"),
+        (None, "legacy"),
+    ],
+)
+async def test_completion_wording_follows_the_helper(db, monkeypatch, answer, wording):
+    monkeypatch.setattr(service, "documents_pending", AsyncMock(return_value=answer))
+    assert await service.completion_wording(db[1], 7) == wording
+
+
+@pytest.mark.asyncio
+async def test_completion_wording_failure_is_neutral_never_full(db, monkeypatch):
+    monkeypatch.setattr(service, "documents_pending", AsyncMock(side_effect=RuntimeError("x")))
+    assert await service.completion_wording(db[1], 7) == "neutral"

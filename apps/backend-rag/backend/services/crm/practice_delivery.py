@@ -14,15 +14,18 @@ from backend.app.services.hr.delivery_bonus import get_delivery_bonus, record_de
 from backend.app.services.hr.hr_service import business_today
 from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin
+from backend.app.utils.logging_utils import get_logger
 from backend.app.utils.service_accounts import is_human_team_member, normalize_role
 from backend.core.cache import invalidate_cache
 from backend.services.crm.admin_document_visibility import admin_document_not_deleted_clause
 from backend.services.crm.delivery_catalog import delivery_policy
+from backend.services.crm.delivery_progress import NEUTRAL, PARTIAL, documents_pending, wording_of
 from backend.services.crm.documents import auto_categorize_document
 from backend.services.crm.practice_state_machine import normalize_state
 from backend.services.crm.visa_followup import get_followup, record_visa_milestone
 from backend.services.portal._document_visibility import document_visibility_clause
 
+logger = get_logger(__name__)
 # Same transport ceiling as the Kita base64 uploader.
 MAX_BYTES = 3 * 1024 * 1024
 OPERATORS = {
@@ -51,6 +54,11 @@ _ACCEPTED = (
     r"^(?:Final document uploaded|Missing final permit repaired|Final proof added after completion"
     r"|Combined permit confirmed for slot): (.+)$"
 )
+# Timeline text of the completion row, by what the client can see (delivery_progress.wording_of).
+_COMPLETION_NOTE = {
+    PARTIAL: "First final documents delivered; the remaining documents will follow",
+    NEUTRAL: "Case completed; your advisor will be in touch about the handover",
+}
 _SCOPED = """d.practice_id = p.id AND d.client_id = p.client_id
              AND d.family_member_id IS NOT DISTINCT FROM p.family_member_id"""
 
@@ -866,6 +874,16 @@ async def publish(conn: Any, p: dict, keys: list[str]) -> None:
     )
 
 
+async def completion_wording(conn: Any, practice_id: int) -> str:
+    """What the client may be told once the practice is completed; never FULL on a failure."""
+    try:
+        async with conn.transaction():  # a savepoint: a failed read must not abort the completion
+            return wording_of(await documents_pending(conn, practice_id))
+    except Exception:
+        logger.warning("completion wording failed for practice %s", practice_id, exc_info=True)
+        return NEUTRAL
+
+
 async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTasks) -> dict:
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
@@ -922,10 +940,13 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
         if p["client_visible"] is not False:
             await conn.execute(
                 """INSERT INTO timeline_events(client_id,practice_id,event_type,title,description,event_date,client_visible,color,created_by)
-                   VALUES($1,$2,'completion','Case completed','Final documents delivered',now(),true,'success',$3)""",
+                   VALUES($1,$2,'completion','Case completed',$4,now(),true,'success',$3)""",
                 p["client_id"],
                 practice_id,
                 user["email"],
+                _COMPLETION_NOTE.get(
+                    await completion_wording(conn, practice_id), "Final documents delivered"
+                ),
             )
         updated = await state(conn, {**p, "status": "completed"}, user)
     from backend.services.crm.completed_process_service import CompletedProcessService

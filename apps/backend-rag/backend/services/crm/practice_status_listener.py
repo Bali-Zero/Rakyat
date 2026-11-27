@@ -28,6 +28,13 @@ from backend.app.utils.logging_utils import get_logger
 from backend.security.pii_log_identifier import redact_identifier_for_log
 from backend.services.accounting.reconcile_service import recorded_without_notifications
 from backend.services.crm.automation import ProcessAutomationService
+from backend.services.crm.delivery_progress import (
+    LEGACY,
+    NEUTRAL,
+    PARTIAL,
+    documents_pending,
+    wording_of,
+)
 from backend.services.invoicing.accounting import ACCOUNTING_EMAIL
 from backend.services.notifications.email_audit import (
     _bounded_scrub,
@@ -488,7 +495,8 @@ Zantara — Bali Zero Team
         practice_type = practice_data.get("practice_type_name", "your application")
         team_member_email = practice_data.get("assigned_to")
 
-        subject, body = _milestone_content(client_name, practice_type, practice_id, status)
+        wording = await self._completion_wording(practice_id) if status == "completed" else LEGACY
+        subject, body = _milestone_content(client_name, practice_type, practice_id, status, wording)
 
         try:
             await self._send_logged(
@@ -515,6 +523,17 @@ Zantara — Bali Zero Team
                 redact_identifier_for_log(client_email),
                 _bounded_scrub(format_send_error(exc), 400),
             )
+
+    async def _completion_wording(self, practice_id: int) -> str:
+        """full/legacy keep the old text; any failure says less, never "fully complete"."""
+        try:
+            async with self._db_pool.acquire() as conn:
+                return wording_of(await documents_pending(conn, practice_id))
+        except Exception:
+            logger.warning(
+                "M5: completion wording failed for practice %s", practice_id, exc_info=True
+            )
+            return NEUTRAL
 
     async def _send_logged(
         self,
@@ -630,8 +649,12 @@ def _milestone_content(
     practice_type: str,
     practice_id: int,
     status: str,
+    wording: str = LEGACY,
 ) -> tuple[str, str]:
-    """Return (subject, plain-text body) for a given status milestone."""
+    """Return (subject, plain-text body) for a given status milestone.
+
+    ``wording`` only matters for "completed": partial/neutral claim no finished documents.
+    """
 
     portal_url = "https://my.balizero.com"
 
@@ -671,6 +694,26 @@ Next steps:
 View your case: {portal_url}
 
 Thank you for choosing Bali Zero. Congratulations! 🥂
+
+Warmly,
+Zantara — Bali Zero Team
+"""
+
+    elif status == "completed" and wording == PARTIAL:
+        subject = f"[CLIENT] Your {practice_type}: first documents delivered"
+        body = f"""Hi {client_name},
+
+The first final documents of your {practice_type} are ready in your portal ({portal_url}). The remaining documents will follow; we add them to your portal as soon as they are issued.
+
+Warmly,
+Zantara — Bali Zero Team
+"""
+
+    elif status == "completed" and wording == NEUTRAL:
+        subject = f"[CLIENT] Completed: Your {practice_type}"
+        body = f"""Hi {client_name},
+
+Your {practice_type} process is complete. Your advisor will be in touch shortly about the handover.
 
 Warmly,
 Zantara — Bali Zero Team

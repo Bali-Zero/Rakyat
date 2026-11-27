@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.app.dependencies import get_database_pool
 from backend.app.routers.portal import get_current_client
 from backend.app.utils.logging_utils import get_logger
+from backend.services.crm.delivery_progress import PARTIAL, documents_pending, wording_of
 
 logger = get_logger(__name__)
 
@@ -127,13 +128,18 @@ def _shape_matter(row: asyncpg.Record) -> dict[str, Any]:
     }
 
 
-def _shape_matter_detail(row: asyncpg.Record) -> dict[str, Any]:
+_PARTIAL_COMPLETE = "The first documents are delivered; the remaining documents will follow."
+
+
+def _shape_matter_detail(row: asyncpg.Record, wording: str | None = None) -> dict[str, Any]:
     matter = _shape_matter(row)
     status = row["status"]
     status_label, description = _STATUS_COPY.get(
         status,
         ("In review", "We are reviewing the latest status."),
     )
+    if status == "completed" and wording == PARTIAL:
+        description = _PARTIAL_COMPLETE
     return {
         **matter,
         "status_label": status_label,
@@ -364,7 +370,13 @@ async def get_matter_detail(
             if row is None:
                 raise HTTPException(status_code=404, detail="Matter not found")
 
-            matter = _shape_matter_detail(row)
+            wording = None
+            if row["status"] == "completed":
+                try:
+                    wording = wording_of(await documents_pending(conn, matter_id))
+                except Exception:
+                    logger.warning("matter %s completion wording failed", matter_id, exc_info=True)
+            matter = _shape_matter_detail(row, wording)
 
             rows = []
             category = str(row["category"] or "").lower()
