@@ -684,7 +684,7 @@ def main() -> int:
         )
     print("[bootstrap] hr_bonus_ledger legacy table ensured (for Migration 357)")
 
-    # Migration 388 drops two CHECKs of the legacy leave balances table with a plain
+    # Migration 395 drops two CHECKs of the legacy leave balances table with a plain
     # ALTER that must fail loudly when the table is missing; mirror its 068 shape.
     with engine.begin() as conn:
         conn.execute(
@@ -728,10 +728,10 @@ def main() -> int:
                 """
             )
         )
-    print("[bootstrap] hr_leave_balances legacy table ensured (for Migration 388)")
+    print("[bootstrap] hr_leave_balances legacy table ensured (for Migration 395)")
 
     # 068 also gives the leave tables an updated_at trigger and the balances an index; production
-    # keeps them after Migration 388, so CI carries them too. The same function and trigger names
+    # keeps them after Migration 395, so CI carries them too. The same function and trigger names
     # as 068 (hr_leave_requests is not created here, so it gets none).
     with engine.begin() as conn:
         conn.execute(

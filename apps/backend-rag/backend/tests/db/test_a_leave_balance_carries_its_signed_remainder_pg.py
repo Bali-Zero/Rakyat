@@ -25,7 +25,7 @@ from backend.app.services.hr.hr_service import (
 from backend.db.migration_base import split_migration_sql
 
 # The leave tables as migration_068_hr_payroll.py creates them, CHECKs included;
-# the forward part of migration 388 is then applied on top, exactly as it ships.
+# the forward part of migration 395 is then applied on top, exactly as it ships.
 _SCHEMA_068_SQL = """
 CREATE TABLE team_members (
     id VARCHAR(36) PRIMARY KEY,
@@ -86,11 +86,11 @@ CREATE TABLE hr_leave_requests (
 );
 """
 
-_MIGRATION_388 = (
+_MIGRATION_395 = (
     Path(__file__).resolve().parents[2]
     / "db"
     / "migrations_v2"
-    / "388_hr_leave_balance_may_go_negative.sql"
+    / "395_hr_leave_balance_may_go_negative.sql"
 )
 
 TEST_DSN = os.environ.get("TEST_DATABASE_URL", "")
@@ -109,7 +109,7 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
             TEST_DSN, min_size=1, max_size=4, server_settings={"search_path": schema}
         )
         await created.execute(_SCHEMA_068_SQL)
-        await created.execute(split_migration_sql(_MIGRATION_388.read_text())[0])
+        await created.execute(split_migration_sql(_MIGRATION_395.read_text())[0])
         yield created
     finally:
         if created is not None:
@@ -368,7 +368,7 @@ async def test_the_rollback_restores_both_checks_without_failing_on_debt(
     employee_id = await _employee(pool, "Synthetic Rollback")
     annual_id = await _leave_type(pool, "annual", 12)
     await _balance(pool, employee_id, annual_id, 2026, 12, 14)
-    _, rollback = split_migration_sql(_MIGRATION_388.read_text())
+    _, rollback = split_migration_sql(_MIGRATION_395.read_text())
     assert rollback
 
     await pool.execute(rollback)
@@ -390,7 +390,7 @@ async def test_the_rollback_restores_both_checks_without_failing_on_debt(
 
 @pytest.mark.asyncio
 async def test_forward_again_after_a_rollback_drops_both_checks(pool: asyncpg.Pool) -> None:
-    forward, rollback = split_migration_sql(_MIGRATION_388.read_text())
+    forward, rollback = split_migration_sql(_MIGRATION_395.read_text())
     await pool.execute(rollback)
 
     await pool.execute(forward)
